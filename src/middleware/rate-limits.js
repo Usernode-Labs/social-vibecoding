@@ -169,6 +169,20 @@ const proposalDiscussLimiter = makeLimiter({
   message: 'Too many messages — slow down for a minute.',
 });
 
+// #556: live title previews for the feedback modal (POST /api/feedback/
+// title). Same sizing rationale as chatLimiter — each call is a Haiku
+// spend against the daily LLM budget, so this must not become a faster
+// drain path. The FE debounces to ~1–3 calls per modal in honest use
+// (plus its own per-open cap), so 20/min never bites, while a scripted
+// loop bounces quickly. Per-user keyed for shared-NAT fairness.
+const feedbackTitleLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 20,
+  name: 'feedback-title',
+  keyByUser: true,
+  message: 'Too many title previews — slow down for a minute.',
+});
+
 // Dev-chat attachment uploads (#450): 30 / minute / user. Each upload is
 // a ≤4 MB bytea INSERT; honest use is a handful per message, so 30/min
 // never bites, while a scripted loop trying to balloon the DB bounces
@@ -193,4 +207,16 @@ const attributeVoteLimiter = makeLimiter({
   message: 'Too many updates — slow down for a minute.',
 });
 
-module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter };
+// #613: drag-and-drop reorder of Dev-board cards. Dragging is bursty (a
+// tester can reshuffle a column several times in a few seconds), so the
+// window is generous but still caps a scripted write loop. Per-user keyed,
+// mirroring attributeVoteLimiter.
+const boardOrderLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: 'board-order',
+  keyByUser: true,
+  message: 'Too many reorder updates — slow down for a minute.',
+});
+
+module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter, feedbackTitleLimiter, boardOrderLimiter };

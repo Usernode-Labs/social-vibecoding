@@ -34,6 +34,7 @@ async function migrate(config) {
   await seedStagingTopicScrollThreads(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
+  await seedStagingSharedSession(pool, config);
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingDemoAppCard(pool);
@@ -1353,6 +1354,108 @@ async function seedStagingActiveSessions(pool, config) {
     owner: owner.username,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// Fixture for the Dev board's shared-session cards: a session owned by a
+// synthetic OTHER user with shared_at set, so it renders at the bottom of
+// every tester's "In progress" area (chat_sessions is staging:private, so
+// nothing real is ever copied over). It is a REAL row — unlike the ?demo=1
+// mock rows in routes/sessions.js — so validateThread accepts posts on its
+// discussion thread and the comment flow works end-to-end. A couple of
+// seeded thread messages make the 💬 badge non-zero on first load.
+// Idempotent: session keyed on its fixture branch name, thread messages on
+// (app_id, content) — same pattern as the notification fixtures above.
+async function seedStagingSharedSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging shared-session fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  // Synthetic owner — never a real user. Random discarded password so the
+  // account can't log in (same posture as the capture users).
+  let demoUserId;
+  const { rows: demoRows } = await pool.query(
+    'SELECT id FROM users WHERE username = $1',
+    ['staging-demo-user']
+  );
+  if (demoRows.length) {
+    demoUserId = demoRows[0].id;
+  } else {
+    const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 12);
+    const { rows } = await pool.query(
+      `INSERT INTO users (username, password, is_admin, can_create_apps)
+       VALUES ('staging-demo-user', $1, FALSE, FALSE)
+       ON CONFLICT (username) DO NOTHING
+       RETURNING id`,
+      [hash]
+    );
+    demoUserId = rows[0]?.id;
+    if (!demoUserId) {
+      const { rows: again } = await pool.query(
+        'SELECT id FROM users WHERE username = $1', ['staging-demo-user']
+      );
+      demoUserId = again[0]?.id;
+    }
+  }
+  if (!demoUserId) {
+    log.warn('db', 'Staging shared-session fixture skipped: demo user missing');
+    return;
+  }
+
+  const fixtureBranch = 'staging-fixture/shared-session';
+  let sessionId;
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (existing.length) {
+    sessionId = existing[0].id;
+  } else {
+    const { rows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, session_title, status, shared_at, created_at)
+       VALUES
+         ($1, $2, $3, 9301, 'Staging demo shared session', 'paused',
+          NOW() - INTERVAL '45 minutes', NOW() - INTERVAL '2 hours')
+       RETURNING id`,
+      [appId, demoUserId, fixtureBranch]
+    );
+    sessionId = rows[0].id;
+  }
+
+  // Ensure the flag survives a tester having unshared it in an earlier
+  // preview boot only when the row was JUST created — an existing row's
+  // shared_at is left alone so testing the Hide flow sticks per build.
+  let threadInserted = 0;
+  for (const [i, content] of [
+    '[staging fixture] Shared-session comment: nice direction — does this cover the mobile layout too?',
+    '[staging fixture] Shared-session comment: yes, testing that next.',
+  ].entries()) {
+    const { rows: msgExisting } = await pool.query(
+      'SELECT id FROM chat_messages WHERE app_id = $1 AND content = $2 LIMIT 1',
+      [appId, content]
+    );
+    if (msgExisting.length) continue;
+    await pool.query(
+      `INSERT INTO chat_messages (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+       VALUES ($1, $2, $3, 'message', 'session', $4, NOW() - (($5::int) * INTERVAL '1 minute'))`,
+      [appId, demoUserId, content, sessionId, 40 - i * 5]
+    );
+    threadInserted++;
+  }
+
+  log.info('db', 'Staging shared-session fixture seeded', {
+    appId, sessionId, threadInserted,
   });
 }
 

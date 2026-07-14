@@ -5,6 +5,7 @@ const limits = require('../services/limits');
 const github = require('../services/github');
 const { pushIssueUpdate } = require('../services/ws');
 const { getPool } = require('../db/pool');
+const { feedbackTitleLimiter } = require('../middleware/rate-limits');
 
 // Derive `owner/repo` from a github.com URL. We do this at module
 // load (well, at route-factory load) so a malformed
@@ -64,6 +65,43 @@ function feedbackRoutes(config) {
   const pool = getPool(config);
   const { owner: feedbackOwner, repo: feedbackRepo } = parseGitHubRepo(config.platformRepoUrl);
 
+  // #556: live title preview for the feedback modal. The FE debounces
+  // calls while the user types the description and fills the editable
+  // Title field with the result; whatever ends up in that field is what
+  // POST /api/feedback below receives. Soft-degrades on every failure
+  // mode — LLM unavailable or a failed generation is a 200 with
+  // `title: null`, because an empty Title field is a fully working
+  // state (the server names the issue at submit time as before).
+  router.post('/api/feedback/title', feedbackTitleLimiter, async (req, res) => {
+    const { description } = req.body || {};
+    if (!description || typeof description !== 'string' || description.trim().length === 0) {
+      return res.status(400).json({ error: 'Description is required' });
+    }
+    if (description.length > 2000) {
+      return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
+    }
+    if (!llm.isEnabled()) {
+      return res.json({ title: null, note: 'unavailable' });
+    }
+    try {
+      const gen = await llm.generateIssueTitle({ description });
+      // Same ledger posture as the filing path below: record the Haiku
+      // spend against the user's daily ledger, but don't budget-gate —
+      // it's a few dozen tokens, and the per-user limiter plus the FE's
+      // debounce/dirty/cap logic bound repetition.
+      if (gen.usage && req.user?.id) {
+        const costCents = llm.estimateCostCents(gen.usage, gen.model);
+        await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
+      }
+      // Defensive clip to the Title field's maxlength; Haiku's 5-10-word
+      // titles never approach it.
+      res.json({ title: gen.title.slice(0, 200) });
+    } catch (err) {
+      log.warn('feedback', 'Title preview generation failed', { message: err.message });
+      res.json({ title: null, note: 'failed' });
+    }
+  });
+
   router.post('/api/feedback', async (req, res) => {
     const { description, appSlug } = req.body;
     if (!description || typeof description !== 'string' || description.trim().length === 0) {
@@ -71,6 +109,21 @@ function feedbackRoutes(config) {
     }
     if (description.length > 2000) {
       return res.status(400).json({ error: 'Description too long (max 2000 chars)' });
+    }
+
+    // #556: optional user-chosen title. When present (non-empty after
+    // trim) it is used verbatim and the Haiku naming call is skipped
+    // entirely; when absent/blank the title is auto-generated as before.
+    // Over-long titles are rejected rather than silently clipped.
+    let customTitle = null;
+    if (req.body.title !== undefined && req.body.title !== null && req.body.title !== '') {
+      if (typeof req.body.title !== 'string') {
+        return res.status(400).json({ error: 'title must be a string' });
+      }
+      if (req.body.title.length > 200) {
+        return res.status(400).json({ error: 'Title too long (max 200 chars)' });
+      }
+      customTitle = req.body.title.trim() || null;
     }
 
     // Normalise the feedback target. Anything other than the explicit
@@ -122,28 +175,35 @@ function feedbackRoutes(config) {
       : `usernode user (${req.user?.username || 'unknown'})`;
 
     try {
-      // Title via the shared Haiku helper (services/llm.js). On any failure
+      // Title via the shared Haiku helper (services/llm.js) — unless the
+      // user supplied one themselves (#556), in which case their exact
+      // title is used and no LLM call is made. On any generation failure
       // (LLM disabled, credits exhausted, API error) the issue is still
       // filed with the fallback template — feedback must never block on
       // LLM availability — and `titleFallback` drives a title_heal_queue
       // row below so the sweeper regenerates the title later.
       let title = llm.FEEDBACK_FALLBACK_TITLE;
       let titleFallback = true;
-      try {
-        const gen = await llm.generateIssueTitle({ description });
-        title = gen.title;
+      if (customTitle) {
+        title = customTitle;
         titleFallback = false;
-        // Track this Haiku call against the user's daily ledger even though
-        // we don't budget-gate it (it's a few dozen tokens per feedback).
-        // Without this, the user could spam /api/feedback for a small but
-        // unbounded platform spend off-budget. No-op when usage is missing
-        // or user_id is unset (e.g. anonymous feedback in the future).
-        if (gen.usage && req.user?.id) {
-          const costCents = llm.estimateCostCents(gen.usage, gen.model);
-          await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
+      } else {
+        try {
+          const gen = await llm.generateIssueTitle({ description });
+          title = gen.title;
+          titleFallback = false;
+          // Track this Haiku call against the user's daily ledger even though
+          // we don't budget-gate it (it's a few dozen tokens per feedback).
+          // Without this, the user could spam /api/feedback for a small but
+          // unbounded platform spend off-budget. No-op when usage is missing
+          // or user_id is unset (e.g. anonymous feedback in the future).
+          if (gen.usage && req.user?.id) {
+            const costCents = llm.estimateCostCents(gen.usage, gen.model);
+            await limits.recordSpend(pool, req.user.id, costCents, { byok: false });
+          }
+        } catch (err) {
+          log.warn('feedback', 'Title generation failed; filing with fallback title', { message: err.message });
         }
-      } catch (err) {
-        log.warn('feedback', 'Title generation failed; filing with fallback title', { message: err.message });
       }
 
       // Queue the filed issue for title regeneration (services/title-heal.js).

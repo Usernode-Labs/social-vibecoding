@@ -66,6 +66,15 @@ const AppView = {
   // General chat card).
   DEV_CARD_CHEVRON: '<svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>',
   DEV_CARD_HOVER_CLS: 'hover:border-violet-300 dark:hover:border-violet-700 cursor-pointer',
+  // Session-card variant of DEV_CARD_CLS: same visual tokens, but a block
+  // container instead of a single flex row. Session cards stack two inner
+  // rows (title row + actions row) so their many controls can never crush
+  // the flex-1 title to zero width (the "one letter per line, crazy tall
+  // card" bug in the busy state on narrow kanban columns).
+  SESSION_CARD_CLS: 'block w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/60 px-3.5 py-3 text-left transition-colors',
+  // Actions row beneath a session card's title row: wraps freely, indented
+  // to align under the title (w-9 icon + gap-3).
+  SESSION_CARD_ACTIONS_CLS: 'flex flex-wrap items-center gap-2 pl-12 mt-2',
 
   // Per-type tinted icon chips — the Dev list's identity system, a mini
   // version of the home tiles' avatar square. [tint classes, SVG path].
@@ -136,7 +145,7 @@ const AppView = {
   _getViewMode() {
     try {
       const stored = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
-      if (stored === 'kanban' || stored === 'list') return stored;
+      if (stored === 'kanban' || stored === 'list' || stored === 'pm') return stored;
       if (AppView._viewModeAutoDefault === null) {
         AppView._viewModeAutoDefault =
           (typeof window.matchMedia === 'function'
@@ -147,7 +156,7 @@ const AppView = {
     } catch { return 'list'; }
   },
   _setViewMode(mode) {
-    const next = mode === 'kanban' ? 'kanban' : 'list';
+    const next = (mode === 'kanban' || mode === 'pm') ? mode : 'list';
     try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
   },
   // #482: kanban filter-bar state. The active object always reflects the
@@ -190,13 +199,24 @@ const AppView = {
       }
     } catch {}
   },
-  // Refresh timer for the Your-sessions strip's busy indicators;
-  // self-clears when the strip leaves the DOM.
+  // Refresh timer for the session cards' busy indicators (see
+  // _syncSessionPolling); self-clears when #dev-body leaves the DOM.
   _stripTimer: null,
+  // Session caches for the In progress area — see _refreshSessionCaches.
+  _mySessions: [],
+  _sharedSessions: [],
+  _sharedById: {},
+  _archivedSessions: [],
+  _sessionsSig: null,
   // Cached Proposals-tab data for in-place re-renders.
   _proposals: [],
   _govProposals: [],
   _proposalsCtx: { majority: 1, activeUsers: 1, locked: false, lockedHint: '' },
+  // #613: manual drag-and-drop order overlay for the kanban Issues + In
+  // review columns, loaded by _loadDevData from GET /board-order. Shape
+  // { issues: [{type,ref}], review: [{type,ref}] }; empty arrays mean the
+  // default derived sort (today's board).
+  _boardOrder: { issues: [], review: [] },
   // One-shot flag set by the "Create proposal" button so the freshly
   // opened dev session renders a "promoting this PR creates the
   // proposal" hint.
@@ -649,7 +669,6 @@ const AppView = {
               <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
             </button>
           </div>
-          <div id="dev-sessions-strip" class="px-3 pt-2"></div>
           <!-- Body region: list mode mounts #dev-feed + #gc-merged here;
                kanban mode mounts #dev-kanban. _repaintDevBody() owns the
                swap. The wrapper node is stable across mode switches so the
@@ -683,7 +702,43 @@ const AppView = {
       // below would swallow it — handle it first, then bail.
       const askBtn = e.target.closest('.gc-ask-ai-btn');
       if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
+      // Session-card buttons (the pinned own-session block + shared
+      // cards render on every repaint, so their controls are delegated
+      // here rather than re-bound per paint). Handled before the
+      // generic button guard below, like the Ask AI pill.
+      const shareBtn = e.target.closest('[data-share-chip]');
+      if (shareBtn) { AppView._setSessionShared(parseInt(shareBtn.dataset.shareChip, 10), true, shareBtn); return; }
+      const unshareBtn = e.target.closest('[data-unshare-chip]');
+      if (unshareBtn) { AppView._setSessionShared(parseInt(unshareBtn.dataset.unshareChip, 10), false, unshareBtn); return; }
+      const archiveBtn = e.target.closest('[data-archive-chip]');
+      if (archiveBtn) {
+        (async () => {
+          const ok = await AppView._archiveSession(
+            parseInt(archiveBtn.dataset.archiveChip, 10), archiveBtn.dataset.name || 'this session');
+          if (ok) await AppView._loadDevFeed();
+        })();
+        return;
+      }
+      const unarchiveBtn = e.target.closest('[data-unarchive-chip]');
+      if (unarchiveBtn) { AppView._unarchiveSession(parseInt(unarchiveBtn.dataset.unarchiveChip, 10), unarchiveBtn); return; }
+      const archToggle = e.target.closest('[data-archived-toggle]');
+      if (archToggle) { AppView._toggleArchivedList(archToggle); return; }
+      const discussBtn = e.target.closest('[data-session-discuss]');
+      if (discussBtn) { AppView.openTopic('session', parseInt(discussBtn.dataset.sessionDiscuss, 10)); return; }
       if (e.target.closest('a, button, input, form')) return;
+      const sessionChip = e.target.closest('[data-session-chip]');
+      if (sessionChip) {
+        // Own session → the owner's dev chat, exactly as the old strip.
+        App.switchTab('dev', parseInt(sessionChip.dataset.sessionChip, 10), 'sessions');
+        return;
+      }
+      const sharedRow = e.target.closest('[data-shared-session-row]');
+      if (sharedRow) {
+        // Someone else's shared session → its public discussion topic
+        // (never their dev chat — that stays owner-scoped server-side).
+        AppView.openTopic('session', parseInt(sharedRow.dataset.sharedSessionRow, 10));
+        return;
+      }
       const issueRow = e.target.closest('[data-issue-row]');
       if (issueRow) {
         AppView.openTopic('issue', parseInt(issueRow.dataset.issueRow, 10));
@@ -697,9 +752,22 @@ const AppView = {
       const govRow = e.target.closest('[data-gov-row]');
       if (govRow) AppView.openTopic('gov', parseInt(govRow.dataset.govRow, 10));
     });
+    // Keyboard access for the session rows (role="button" divs): Enter /
+    // Space activate, mirroring the old strip's per-row keydown wiring.
+    bodyEl.addEventListener('keydown', (ev) => {
+      if (ev.key !== 'Enter' && ev.key !== ' ') return;
+      const el = ev.target.closest
+        && ev.target.closest('[data-session-chip], [data-shared-session-row]');
+      if (!el) return;
+      ev.preventDefault();
+      if (el.dataset.sessionChip) {
+        App.switchTab('dev', parseInt(el.dataset.sessionChip, 10), 'sessions');
+      } else {
+        AppView.openTopic('session', parseInt(el.dataset.sharedSessionRow, 10));
+      }
+    });
 
-    AppView._renderSessionsStrip();
-    AppView._syncStripPolling();
+    AppView._syncSessionPolling();
     await AppView._loadDevFeed();
 
     // Restore the saved scroll position now that the feed has painted.
@@ -798,6 +866,15 @@ const AppView = {
             ? AppView._topicProposal : null)
         || null;
     }
+    if (t.kind === 'session') {
+      // A shared in-flight session's public discussion. Others resolve
+      // from the shared list; the owner (opening via their card's 💬
+      // badge) from their own pinned rows. Un-shared / archived mid-view
+      // → miss → the topic view falls back to the card list.
+      return (AppView._sharedSessions || []).find((s) => s.id === t.id)
+        || (AppView._mySessions || []).find((s) => s.id === t.id)
+        || null;
+    }
     return (AppView._govProposals || []).find((i) => i.id === t.id) || null;
   },
 
@@ -872,6 +949,18 @@ const AppView = {
       // of the proposal body region, above proposer / linked issues / roster
       // and the discussion thread — mirroring _issueBodyHtml for issues.
       bodyHtml = AppView._proposalSummaryHtml(item) + AppView._proposalDetailsHtml(item);
+    } else if (t.kind === 'session') {
+      // A shared session's public page: the static card (no nav — we're
+      // already here) plus a one-line explainer. The discussion mounts
+      // beneath exactly like a proposal's. No Ask AI (the advisor is
+      // scoped to promoted/merging/merged sessions server-side), no vote
+      // panel — there's nothing to vote on yet.
+      // Shared rows carry username; the viewer's own rows (from
+      // /api/me/active-sessions) don't — the owner is the viewer then.
+      const ownerName = item.username || (App.user ? App.user.username : '') || 'someone';
+      const owner = escapeHtml(ownerName);
+      cardHtml = AppView._renderSharedSessionCard({ ...item, username: ownerName }, { noNav: true });
+      bodyHtml = `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">Live dev session by ${owner} — the discussion below is visible to everyone and carries over if this becomes a proposal.</div>`;
     } else {
       cardHtml = AppView._renderGovCard(item, { noNav: true });
       bodyHtml = item.description
@@ -1045,7 +1134,11 @@ const AppView = {
     const t = AppView._devTopic;
     const slot = document.getElementById('dev-topic-thread');
     if (!t || !slot || typeof GroupChat === 'undefined' || !GroupChat.mountThread) return;
-    const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance' };
+    // 'session' (a shared in-flight dev session) uses the same 'session'
+    // thread namespace as promoted proposals — the thread key is the
+    // chat_sessions id either way, which is exactly what makes comments
+    // carry over when the session is later promoted.
+    const typeMap = { issue: 'issue', proposal: 'session', gov: 'governance', session: 'session' };
     // Every topic thread — including merged proposals — mounts with a live,
     // editable composer. Merging settles the vote, not the conversation:
     // people keep posting follow-ups after a proposal lands. The WS handler
@@ -1167,16 +1260,20 @@ const AppView = {
     // List-lines icon (three rows) and a board/columns icon.
     const listSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>';
     const boardSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v6h-4z"/></svg>';
+    // People icon (two-person silhouette) for the PM assignment overview.
+    const peopleSvg = '<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-1a4 4 0 00-3-3.87M9 20H4v-1a4 4 0 013-3.87m6 4.87v-1a4 4 0 00-3-3.87M12 7a3 3 0 11-6 0 3 3 0 016 0zm7 3a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z"/></svg>';
     return `
       <div class="inline-flex items-center rounded-lg border border-zinc-200 dark:border-zinc-700 overflow-hidden mr-1" role="group" aria-label="Dev view mode">
         <button id="dev-view-list" data-view="list" class="${AppView._viewToggleBtnCls(mode === 'list')}" aria-pressed="${mode === 'list'}" title="List view" aria-label="List view">${listSvg}</button>
         <button id="dev-view-kanban" data-view="kanban" class="${AppView._viewToggleBtnCls(mode === 'kanban')}" aria-pressed="${mode === 'kanban'}" title="Kanban view" aria-label="Kanban view">${boardSvg}</button>
+        <button id="dev-view-pm" data-view="pm" class="${AppView._viewToggleBtnCls(mode === 'pm')}" aria-pressed="${mode === 'pm'}" title="PM view — tasks by assignee" aria-label="PM view">${peopleSvg}</button>
       </div>`;
   },
   _wireViewToggle(content) {
     content.querySelectorAll('.dev-view-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const mode = btn.dataset.view === 'kanban' ? 'kanban' : 'list';
+        const v = btn.dataset.view;
+        const mode = (v === 'kanban' || v === 'pm') ? v : 'list';
         if (mode === AppView._getViewMode()) return;
         AppView._setViewMode(mode);
         AppView._updateViewToggleUI();
@@ -1262,6 +1359,38 @@ const AppView = {
   // lock_changed). The feed re-render preserves the open accordion
   // card. The chat view only needs the vote snapshot refreshed; the
   // session and settings views have their own refresh paths.
+  // #607: polling fallback while any loaded proposal's checks are in
+  // progress ('pending', or fresh-NULL with no verdict recorded yet). The
+  // WS checks_ready broadcasts are the primary update channel; this only
+  // covers missed pushes (disconnect, laptop waking from sleep). Called
+  // after every dev-data load, so the interval self-clears on the load
+  // that finds nothing in progress.
+  _checksPollHandle: null,
+  _syncChecksPoll(proposals) {
+    const inProgress = Array.isArray(proposals) && proposals.some((pr) =>
+      pr && pr.status !== 'merged'
+      && (pr.check_state === 'pending' || (!pr.check_state && !pr.console_check_state)));
+    if (!inProgress) {
+      if (AppView._checksPollHandle) {
+        clearInterval(AppView._checksPollHandle);
+        AppView._checksPollHandle = null;
+      }
+      return;
+    }
+    if (AppView._checksPollHandle) return;
+    AppView._checksPollHandle = setInterval(() => {
+      // Leaving the dev tab (or the app view) ends the poll; a hidden tab
+      // just skips the tick and resumes when visible again.
+      if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') {
+        clearInterval(AppView._checksPollHandle);
+        AppView._checksPollHandle = null;
+        return;
+      }
+      if (document.hidden) return;
+      AppView.refreshDevData('checks-poll');
+    }, 20000);
+  },
+
   refreshDevData(kind) {
     if (!AppView.appData || typeof App === 'undefined' || App.currentTab !== 'dev') return;
     if (App.currentSubTab === 'chat') {
@@ -1275,8 +1404,9 @@ const AppView = {
       return;
     }
     if (App.currentSubTab !== 'forum') return;
+    // Session rows render inside the board/feed now, so the full-feed
+    // reload below covers session_update events too (no separate strip).
     AppView._loadDevFeed();
-    if (kind === 'session' || kind === 'all') AppView._renderSessionsStrip();
   },
 
   // Fetch the vote snapshot (promoted + merged) that powers the inline
@@ -1306,6 +1436,9 @@ const AppView = {
       if (typeof GroupChat !== 'undefined' && GroupChat.refreshVoteControls) {
         GroupChat.refreshVoteControls();
       }
+      // #607: keep the checks-in-progress polling fallback in sync on the
+      // chat sub-tab's vote-snapshot path too.
+      AppView._syncChecksPoll(promoted);
       return { promoted, merged, promotedData };
     } catch {
       return null;
@@ -1490,16 +1623,79 @@ const AppView = {
     return new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
   },
 
+  // Session caches for the Dev board's In progress area:
+  //   _mySessions        — the viewer's active/paused sessions on THIS app
+  //                        (pinned at the top of In progress), most recent
+  //                        activity first. From /api/me/active-sessions.
+  //   _sharedSessions    — OTHER users' shared sessions (bottom of In
+  //                        progress), oldest-shared first. Derived from
+  //                        /api/apps/:slug/shared-sessions.
+  //   _sharedById        — every shared row (own included) keyed by id, so
+  //                        the owner's pinned card can show its 💬 count.
+  //   _archivedSessions  — the viewer's archived rows for this app (the
+  //                        collapsed "Show archived" toggle).
+  // Refreshed with the full dev load AND by the 15s busy-indicator poll;
+  // returns true when anything changed (JSON signature) so the poll can
+  // skip repainting on idle ticks.
+  async _refreshSessionCaches(slug) {
+    const actTs = (s) => {
+      const t = Date.parse(s.last_activity_at || s.created_at || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    let mine = [];
+    let sharedAll = [];
+    let archived = [];
+    try {
+      const [activeRes, sharedRes, allRes] = await Promise.all([
+        // ?demo=1 forwarded so the staging mock own-session row (pinned
+        // block caption + Make visible button) renders in demo previews.
+        fetch(`/api/me/active-sessions${AppView._demoQS()}`).catch(() => null),
+        fetch(`/api/apps/${encodeURIComponent(slug)}/shared-sessions${AppView._demoQS()}`).catch(() => null),
+        // ?demo=1 forwarded here too so the staging mock archived row
+        // (the "Show archived" toggle demo anchor) renders in previews.
+        fetch(`/api/apps/${encodeURIComponent(slug)}/sessions${AppView._demoQS()}`).catch(() => null),
+      ]);
+      if (activeRes && activeRes.ok) {
+        const data = await activeRes.json().catch(() => ({}));
+        mine = (data.sessions || [])
+          .filter((s) => s.app_slug === slug && (s.status === 'active' || s.status === 'paused'))
+          .sort((a, b) => actTs(b) - actTs(a));
+      }
+      if (sharedRes && sharedRes.ok) {
+        const data = await sharedRes.json().catch(() => ({}));
+        sharedAll = data.sessions || [];
+      }
+      if (allRes && allRes.ok) {
+        const data = await allRes.json().catch(() => ({}));
+        archived = (data.sessions || [])
+          .filter((s) => s.status === 'archived')
+          .sort((a, b) => actTs(b) - actTs(a));
+      }
+    } catch { /* keep whatever loaded */ }
+    const sig = JSON.stringify([mine, sharedAll, archived]);
+    const changed = sig !== AppView._sessionsSig;
+    AppView._sessionsSig = sig;
+    AppView._mySessions = mine;
+    AppView._sharedById = Object.fromEntries(sharedAll.map((s) => [s.id, s]));
+    const myId = (typeof App !== 'undefined' && App.user) ? App.user.id : null;
+    AppView._sharedSessions = sharedAll
+      .filter((s) => s.user_id !== myId)
+      .sort((a, b) => (Date.parse(a.shared_at || '') || 0) - (Date.parse(b.shared_at || '') || 0));
+    AppView._archivedSessions = archived;
+    return changed;
+  },
+
   // Fetch + cache everything the dev surfaces render from (the same
   // four endpoints the old tabs used): GitHub issues, governance
   // proposals, open PR proposals, merged PRs, plus voteState for the
-  // chat's inline vote rows. Shared by the card list and the topic
-  // sub-view. Returns false on a failed load.
+  // chat's inline vote rows — plus the session caches above (the In
+  // progress area renders them now). Shared by the card list and the
+  // topic sub-view. Returns false on a failed load.
   async _loadDevData() {
     if (!AppView.appData) return false;
     const slug = AppView.appData.slug;
     try {
-      const [ghRes, issuesRes, promotedRes, mergedRes] = await Promise.all([
+      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = await Promise.all([
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         // Forward ?demo=1 here too so the staging mock GOVERNANCE rows
         // (stagingMockGovernance — rename / secret / close-issue cards)
@@ -1512,12 +1708,30 @@ const AppView = {
         // Server-side the demo append is gated on IS_STAGING, so this is a
         // no-op in production. votes.js stagingMockMerged() supplies the rows.
         fetch(`/api/apps/${slug}/merged${AppView._demoQS()}`),
+        // #613: the manual drag-and-drop order overlay for the Issues + In
+        // review columns. Forward ?demo=1 so a staging preview seeds a
+        // visibly non-default order; a no-op in production. `.catch` keeps a
+        // failed order fetch from sinking the whole board load — an absent
+        // order just means the default (derived) sort, i.e. today's board.
+        fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`).catch(() => null),
+        // Session caches (own + shared + archived) ride along in the same
+        // parallel load; the helper stores them on AppView directly, so
+        // there's no destructured slot for it.
+        AppView._refreshSessionCaches(slug),
       ]);
       const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
       const promotedData = promotedRes.ok ? await promotedRes.json() : { promoted: [] };
       const mergedData = mergedRes.ok ? await mergedRes.json() : { merged: [], hasMore: false };
       const merged = mergedData.merged || [];
+      // #613: manual card-order overlay per column. Shape { issues:[{type,ref}],
+      // review:[{type,ref}] }. Tolerates a missing/failed fetch (older server
+      // or transient error) by keeping the previous cache / defaulting empty.
+      const orderData = (orderRes && orderRes.ok) ? await orderRes.json().catch(() => null) : null;
+      AppView._boardOrder = {
+        issues: (orderData && Array.isArray(orderData.issues)) ? orderData.issues : [],
+        review: (orderData && Array.isArray(orderData.review)) ? orderData.review : [],
+      };
 
       AppView._ghIssues = Array.isArray(ghData.issues) ? ghData.issues : [];
       AppView._ghIssuesMeta = {
@@ -1582,6 +1796,9 @@ const AppView = {
       AppView._mergedTotal = (typeof mergedData.total === 'number')
         ? mergedData.total
         : merged.length;
+      // #607: keep the checks-in-progress polling fallback in sync with
+      // what this load actually saw.
+      AppView._syncChecksPoll(promoted);
       return true;
     } catch {
       return false;
@@ -1627,6 +1844,17 @@ const AppView = {
       AppView._repaintKanbanBoard();
       return;
     }
+    if (AppView._getViewMode() === 'pm') {
+      // PM view: a single scrolling container of per-assignee sections plus
+      // an Unassigned section. No filter bar, no #gc-merged block (merged +
+      // gov are excluded from this overview). The container node is rebuilt
+      // on switch-in; ordinary repaints replace only its innerHTML.
+      if (!document.getElementById('dev-pm')) {
+        body.innerHTML = '<div id="dev-pm"></div>';
+      }
+      AppView._repaintPmView();
+      return;
+    }
     // List mode: rebuild the two-container shell, then fill it exactly as
     // before. _rerenderFeed targets #dev-feed and re-attaches kudos/ask-AI
     // there; the Completed block is filled + wired here.
@@ -1668,8 +1896,10 @@ const AppView = {
       const t = Date.parse(v || '');
       return Number.isFinite(t) ? t : 0;
     };
-    // Lower group renders first. Proposals (both kinds) share a group.
-    const GROUP = { proposal: 0, gov: 0, issue: 1 };
+    // Lower group renders first. Proposals (both kinds) share a group;
+    // other users' shared sessions live inside the issues group (their
+    // in-tier rank places them below the in-progress issues).
+    const GROUP = { proposal: 0, gov: 0, issue: 1, 'shared-session': 1 };
     const items = [];
     for (const issue of AppView._visibleGhIssues()) {
       items.push({
@@ -1696,10 +1926,23 @@ const AppView = {
         t: Math.max(ts(g.created_at), ts(g.last_message_at)),
       });
     }
+    for (const s of AppView._sharedSessions || []) {
+      // Other users' shared sessions sit at the BOTTOM of the list's
+      // in-progress cluster: inside the issues group, ranked between
+      // 'ready' headless issues (1) and plain issues (2). Within the
+      // tier they order oldest-shared first (matching the kanban
+      // column), so t is the negated shared_at — the feed sorts t
+      // descending, and negation flips that into shared_at ascending.
+      items.push({
+        kind: 'shared-session', id: s.id, item: s, r: 1.5,
+        t: -(ts(s.shared_at)),
+      });
+    }
     // Array.prototype.sort is stable, so equal keys keep source order.
-    // Rank competes only within a group: the headless rank (0-2) inside
-    // the issues group, the merge-pipeline pin rank (0-3) inside the
-    // proposal group — the two never interleave because GROUP dominates.
+    // Rank competes only within a group: the headless rank (0-2, with
+    // shared sessions at 1.5) inside the issues group, the merge-pipeline
+    // pin rank (0-3) inside the proposal group — the two never interleave
+    // because GROUP dominates.
     return items.sort((a, b) =>
       (GROUP[a.kind] - GROUP[b.kind]) || (a.r - b.r) || (b.t - a.t));
   },
@@ -1709,7 +1952,10 @@ const AppView = {
     const meta = AppView._ghIssuesMeta || {};
     const items = AppView._feedItems();
 
-    let html = '';
+    // The viewer's own sessions are pinned above the feed proper (top of
+    // the list), outside the "Show more" pager, with the visibility
+    // caption + the archived toggle. Renders '' when there's nothing.
+    let html = AppView._mySessionsBlockHtml();
     if (!items.length) {
       const note = meta.note
         ? 'Couldn&#39;t load open issues right now. '
@@ -1724,6 +1970,7 @@ const AppView = {
       const it = items[i];
       if (it.kind === 'issue') html += AppView._renderIssueRow(it.item);
       else if (it.kind === 'proposal') html += AppView._renderProposalCard(it.item);
+      else if (it.kind === 'shared-session') html += AppView._renderSharedSessionCard(it.item);
       else html += AppView._renderGovCard(it.item);
     }
     html += '</div>';
@@ -1840,17 +2087,22 @@ const AppView = {
   // No DOM, no AppView state reads — everything comes in via `data` — so it
   // is unit-testable in isolation (see tests/dev-kanban-buckets.test.js).
   //
-  //   data = { issues, proposals, gov, merged }
-  //     issues    — visible GitHub issues (already env-twin-filtered)
-  //     proposals — promoted/merging PR sessions (carry linked_issues[])
-  //     gov       — governance proposals (secret_change / rename)
-  //     merged    — merged PR sessions
+  //   data = { issues, proposals, gov, merged, mySessions, sharedSessions }
+  //     issues         — visible GitHub issues (already env-twin-filtered)
+  //     proposals      — promoted/merging PR sessions (carry linked_issues[])
+  //     gov            — governance proposals (secret_change / rename)
+  //     merged         — merged PR sessions
+  //     mySessions     — the viewer's active/paused sessions on this app
+  //     sharedSessions — OTHER users' shared (shared_at-set) sessions
   //
   // Returns { issues, inProgress, inReview, done }:
   //   issues     — open issues with no proposal yet (headless none/failed/
   //                absent) AND not linked to any open promoted proposal
-  //   inProgress — open issues whose headless proposal is generating/ready
-  //                (work started, not yet up for a vote), same dedup
+  //   inProgress — TYPED entries {kind:'my-session'|'issue'|'shared-session',
+  //                item}: the viewer's sessions pinned first (most recent
+  //                activity first), then issues whose headless proposal is
+  //                generating/ready (same dedup as before), then other
+  //                users' shared sessions (oldest-shared first)
   //   inReview   — [{kind:'proposal'|'gov', item}] sorted by pin-rank then
   //                recency, exactly as the list feed's proposal group
   //   done       — merged proposals, most-recent-activity first
@@ -1860,6 +2112,8 @@ const AppView = {
     const proposals = Array.isArray(d.proposals) ? d.proposals : [];
     const gov = Array.isArray(d.gov) ? d.gov : [];
     const merged = Array.isArray(d.merged) ? d.merged : [];
+    const mySessions = Array.isArray(d.mySessions) ? d.mySessions : [];
+    const sharedSessions = Array.isArray(d.sharedSessions) ? d.sharedSessions : [];
 
     const ts = (v) => {
       const t = Date.parse(v || '');
@@ -1870,12 +2124,12 @@ const AppView = {
     const govT = (g) => Math.max(ts(g.created_at), ts(g.last_message_at));
     const mergedT = (m) => Math.max(ts(m.created_at), ts(m.last_message_at));
     // Mirror of _proposalPinRank, inlined to keep this helper self-contained
-    // (merging > resolving > conflict-failed > normal).
+    // (merging > resolving > conflict-failed/merge-conflict > normal).
     const pinRank = (pr) => {
       if (!pr) return 3;
       if (pr.status === 'merging') return 0;
       if (pr.resolving) return 1;
-      if (pr.merge_conflict_state === 'failed') return 2;
+      if (pr.merge_conflict_state === 'failed' || pr.merge_conflict_state === 'conflict') return 2;
       return 3;
     };
 
@@ -1908,12 +2162,75 @@ const AppView = {
 
     const done = merged.slice().sort((a, b) => mergedT(b) - mergedT(a));
 
+    // In progress = pinned own sessions (most recent activity first) →
+    // headless-working issues → other users' shared sessions (oldest
+    // shared_at first, so newly shared rows append at the bottom).
+    const sessT = (s) => Math.max(ts(s.last_activity_at), ts(s.created_at));
+    const mine = mySessions.slice().sort((a, b) => sessT(b) - sessT(a));
+    const shared = sharedSessions.slice()
+      .sort((a, b) => ts(a.shared_at) - ts(b.shared_at));
+    const inProgress = [
+      ...mine.map((s) => ({ kind: 'my-session', item: s })),
+      ...col2.map((i) => ({ kind: 'issue', item: i })),
+      ...shared.map((s) => ({ kind: 'shared-session', item: s })),
+    ];
+
     return {
       issues: col1,
-      inProgress: col2,
+      inProgress,
       inReview: review.map((x) => ({ kind: x.kind, item: x.item })),
       done,
     };
+  },
+
+  // ── Manual card order overlay (#613) ─────────────────────────────────
+  //
+  // Pure re-sort of one already-bucketed column against a stored manual
+  // order. `cards` is the column array in its derived (default) order;
+  // `orderRefs` is the saved [{type, ref}, …] list; `keyFn(card)` returns
+  // the card's identity string (or null if it has none). Cards whose
+  // identity appears in `orderRefs` come FIRST, in stored order; every
+  // remaining card follows in its original derived order (stable). Stale
+  // stored refs whose card is no longer in the column are simply skipped.
+  // No DOM, no AppView state — unit-testable in isolation (see
+  // tests/dev-board-order.test.js). Empty/absent order → array returned
+  // untouched, so the unordered board stays byte-identical to today.
+  _applyManualOrder(cards, orderRefs, keyFn) {
+    const arr = Array.isArray(cards) ? cards : [];
+    const order = Array.isArray(orderRefs) ? orderRefs : [];
+    if (!order.length || arr.length < 2) return arr.slice();
+    // Rank each stored identity by its position in the saved order.
+    const rank = new Map();
+    order.forEach((o, i) => {
+      if (!o) return;
+      rank.set(`${o.type}:${o.ref}`, i);
+    });
+    const placed = [];   // [{ card, r }] — cards with a stored position
+    const rest = [];     // cards without one, in derived order
+    for (const card of arr) {
+      const key = keyFn(card);
+      const r = (key != null) ? rank.get(key) : undefined;
+      if (r === undefined) rest.push(card);
+      else placed.push({ card, r });
+    }
+    placed.sort((a, b) => a.r - b.r);
+    return [...placed.map((p) => p.card), ...rest];
+  },
+
+  // Identity string for a bucketed card, matching the (card_type, card_ref)
+  // pairs the server stores and the data-*-row attributes the drag handler
+  // reads. `column` picks how to read the ref: Issues holds bare issue rows,
+  // In review holds { kind, item } entries (proposal | gov).
+  _cardOrderKey(column, entry) {
+    if (entry == null) return null;
+    if (column === 'issues') {
+      return (entry.number != null) ? `issue:${entry.number}` : null;
+    }
+    // 'review' — { kind: 'proposal'|'gov', item }
+    const it = entry.item || {};
+    if (entry.kind === 'proposal') return (it.id != null) ? `proposal:${it.id}` : null;
+    if (entry.kind === 'gov') return (it.id != null) ? `gov:${it.id}` : null;
+    return null;
   },
 
   // ── Kanban filters (#482) ───────────────────────────────────────────
@@ -2087,6 +2404,11 @@ const AppView = {
   // leaving the filter bar node untouched. Every filter-control event and
   // WS-driven kanban refresh routes through here.
   _repaintKanbanBoard() {
+    // #613: never rebuild the board out from under an in-progress drag — a
+    // mid-drag innerHTML swap (e.g. a WS board_order_update from another
+    // user) would drop the pointer capture and strand the card. The commit
+    // that ends the drag repaints once it lands.
+    if (AppView._dragState) return;
     const board = document.getElementById('dev-kanban-board');
     if (!board) return;
     // Every filter-control change (and Clear) funnels through here, so this
@@ -2101,6 +2423,128 @@ const AppView = {
     if (window.Kudos) Kudos.attach(board);
     AppView._applyAskAiCardAvailability(board);
     AppView._updateKanbanFilterBarUI();
+    AppView._initKanbanDrag(board);
+  },
+
+  // ── Drag-to-reorder within a column (#613) ───────────────────────────
+  //
+  // Pointer-events based (not native HTML5 DnD) so it works with touch and
+  // doesn't hijack the card's own click/vote/kudos handlers: a drag only
+  // starts from the grip handle in the card's left gutter. On drop the new
+  // order is optimistically applied to _boardOrder + repainted, then POSTed;
+  // a failed save reverts to server truth. _dragState is non-null for the
+  // life of one drag and blocks board repaints (see _repaintKanbanBoard).
+  _dragState: null,
+
+  _initKanbanDrag(board) {
+    if (!board || board._dragBound) return;
+    board._dragBound = true;
+    board.addEventListener('pointerdown', AppView._onDragPointerDown);
+  },
+
+  _onDragPointerDown(e) {
+    // Left mouse button only (touch/pen report button 0 / -1); ignore others.
+    if (typeof e.button === 'number' && e.button > 0) return;
+    const handle = e.target.closest && e.target.closest('.dev-drag-handle');
+    if (!handle) return;
+    const item = handle.closest('.dev-drag-item');
+    const list = item && item.closest('.dev-drag-list');
+    if (!item || !list || !item.dataset.orderKey) return;
+    e.preventDefault();
+    AppView._dragState = {
+      item, list, handle,
+      column: list.dataset.orderCol,
+      pointerId: e.pointerId,
+      moved: false,
+    };
+    try { handle.setPointerCapture(e.pointerId); } catch {}
+    item.classList.add('opacity-50');
+    handle.classList.add('cursor-grabbing');
+    document.addEventListener('pointermove', AppView._onDragPointerMove);
+    document.addEventListener('pointerup', AppView._onDragPointerUp);
+    document.addEventListener('pointercancel', AppView._onDragPointerUp);
+  },
+
+  _onDragPointerMove(e) {
+    const st = AppView._dragState;
+    if (!st) return;
+    st.moved = true;
+    // Insert the dragged item before the first sibling whose vertical
+    // midpoint is below the pointer; append when the pointer is past them
+    // all. Direct children only, so nested cards never confuse the scan.
+    const items = Array.from(st.list.children).filter((el) => el.classList.contains('dev-drag-item'));
+    const y = e.clientY;
+    let before = null;
+    for (const other of items) {
+      if (other === st.item) continue;
+      const rect = other.getBoundingClientRect();
+      if (y < rect.top + rect.height / 2) { before = other; break; }
+    }
+    if (before) {
+      if (st.item.nextElementSibling !== before) st.list.insertBefore(st.item, before);
+    } else if (st.list.lastElementChild !== st.item) {
+      st.list.appendChild(st.item);
+    }
+  },
+
+  _onDragPointerUp() {
+    const st = AppView._dragState;
+    if (!st) return;
+    document.removeEventListener('pointermove', AppView._onDragPointerMove);
+    document.removeEventListener('pointerup', AppView._onDragPointerUp);
+    document.removeEventListener('pointercancel', AppView._onDragPointerUp);
+    try { st.handle.releasePointerCapture(st.pointerId); } catch {}
+    st.item.classList.remove('opacity-50');
+    st.handle.classList.remove('cursor-grabbing');
+    const { list, column, moved } = st;
+    AppView._dragState = null;
+    if (!moved) return;
+    const keys = Array.from(list.children)
+      .filter((el) => el.classList.contains('dev-drag-item'))
+      .map((el) => el.dataset.orderKey)
+      .filter(Boolean);
+    AppView._commitBoardOrder(column, keys);
+  },
+
+  // Parse an identity string ('issue:123' / 'proposal:45') back into the
+  // { type, ref } the server stores. Returns null on a malformed key.
+  _orderKeyToRef(key) {
+    const idx = String(key || '').indexOf(':');
+    if (idx < 0) return null;
+    const type = key.slice(0, idx);
+    const ref = parseInt(key.slice(idx + 1), 10);
+    if (!Number.isFinite(ref)) return null;
+    return { type, ref };
+  },
+
+  // Persist a column's new order. Optimistically updates _boardOrder +
+  // repaints (so the order sticks and the handles re-bind), then POSTs. On
+  // failure, reverts to the pre-drag order and repaints.
+  async _commitBoardOrder(column, keys) {
+    if (column !== 'issues' && column !== 'review') return;
+    const order = (keys || []).map(AppView._orderKeyToRef).filter(Boolean);
+    const prev = AppView._boardOrder || { issues: [], review: [] };
+    AppView._boardOrder = { ...prev, [column]: order };
+    AppView._repaintKanbanBoard();
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    try {
+      const res = await fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ column, order }),
+      });
+      if (!res.ok) throw new Error('save failed');
+      const data = await res.json().catch(() => null);
+      if (data && Array.isArray(data.issues) && Array.isArray(data.review)) {
+        AppView._boardOrder = { issues: data.issues, review: data.review };
+        AppView._repaintKanbanBoard();
+      }
+    } catch {
+      AppView._boardOrder = prev;
+      AppView._repaintKanbanBoard();
+      alert('Couldn’t save the new order — reverted.');
+    }
   },
 
   // Render the kanban board (inner HTML for #dev-kanban-board) from cached
@@ -2112,21 +2556,36 @@ const AppView = {
       proposals: AppView._proposals || [],
       gov: AppView._govProposals || [],
       merged: AppView._merged || [],
+      mySessions: AppView._mySessions || [],
+      sharedSessions: AppView._sharedSessions || [],
     });
     const meta = AppView._ghIssuesMeta || {};
+
+    // #613: apply the manual drag order overlay to the Issues + In review
+    // columns BEFORE filtering, so hiding cards via the filter bar never
+    // disturbs the saved order. Empty order → no change (identical to the
+    // pre-#613 board).
+    const order = AppView._boardOrder || { issues: [], review: [] };
+    buckets.issues = AppView._applyManualOrder(
+      buckets.issues, order.issues, (c) => AppView._cardOrderKey('issues', c));
+    buckets.inReview = AppView._applyManualOrder(
+      buckets.inReview, order.review, (c) => AppView._cardOrderKey('review', c));
 
     // #482: apply the filter bar AFTER bucketing, per column. Filtering
     // the inputs instead would resurrect issues whose open proposal was
     // filtered out (the bucketer dedups linked_issues out of the issue
     // columns), so post-bucket filtering keeps every card's lifecycle
-    // placement identical to the unfiltered board.
+    // placement identical to the unfiltered board. Session entries are
+    // EXEMPT from the filter bar (its text/priority/assignee/needs-vote
+    // vocabulary doesn't apply to sessions) — only the In progress
+    // column's issue entries filter.
     const f = AppView._kanbanFilters || {};
     const filtering = AppView._kanbanFiltersActive();
     const kIssues = filtering
       ? buckets.issues.filter((i) => AppView._devCardMatches('issue', i, f))
       : buckets.issues;
     const kInProgress = filtering
-      ? buckets.inProgress.filter((i) => AppView._devCardMatches('issue', i, f))
+      ? buckets.inProgress.filter((e) => e.kind !== 'issue' || AppView._devCardMatches('issue', e.item, f))
       : buckets.inProgress;
     const kInReview = filtering
       ? buckets.inReview.filter((x) => AppView._devCardMatches(x.kind, x.item, f))
@@ -2180,9 +2639,18 @@ const AppView = {
     }
 
     const cols = [
-      { title: 'Issues', items: kIssues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter },
-      { title: 'In progress', items: kInProgress, render: (i) => AppView._renderIssueRow(i) },
-      { title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)) },
+      // #613: `orderCol` marks a column as drag-reorderable and names the
+      // stored column_key; `orderKey(item)` yields the card identity the
+      // overlay + drag handler share. Filtering disables dragging (the saved
+      // order applies to the full column, not a filtered subset).
+      { title: 'Issues', items: kIssues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter,
+        orderCol: 'issues', orderKey: (i) => AppView._cardOrderKey('issues', i) },
+      // In progress renders through a dedicated builder: pinned own
+      // sessions (+ the visibility caption and the archived toggle),
+      // then issue cards, then other users' shared sessions.
+      { title: 'In progress', items: kInProgress, cardsHtml: AppView._inProgressCardsHtml(kInProgress, filtering) },
+      { title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)),
+        orderCol: 'review', orderKey: (x) => AppView._cardOrderKey('review', x) },
       { title: 'Done', items: kDone, render: (m) => AppView._renderMergedCard(m), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
     ];
 
@@ -2192,9 +2660,21 @@ const AppView = {
       // be overridden (Done uses the server total) and falls back to the
       // loaded length for every other column.
       const count = (typeof col.count === 'number') ? col.count : col.items.length;
-      const cards = col.items.length
-        ? `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`
-        : `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">${filtering ? 'No matching cards' : 'Nothing here yet'}</div>`;
+      // Reorder is offered only on a reorderable column that isn't being
+      // filtered (a filtered view hides cards the saved order still covers).
+      const reorder = !!col.orderCol && !filtering;
+      let cards;
+      if (typeof col.cardsHtml === 'string') {
+        cards = col.cardsHtml;
+      } else if (!col.items.length) {
+        cards = `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">${filtering ? 'No matching cards' : 'Nothing here yet'}</div>`;
+      } else if (reorder) {
+        cards = `<div class="space-y-2 dev-drag-list" data-order-col="${col.orderCol}">`
+          + col.items.map((it) => AppView._wrapDraggable(col.orderKey(it), col.render(it))).join('')
+          + '</div>';
+      } else {
+        cards = `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`;
+      }
       const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
       html += `
         <div class="dev-kanban-col flex-1 basis-0 min-w-[16rem]">
@@ -2209,168 +2689,431 @@ const AppView = {
     return html;
   },
 
-  // ── Your-sessions strip ─────────────────────────────────────────────
-  // The viewer's in-progress (active/paused, not-yet-promoted) sessions
-  // on this app, as a compact chip row between the pinned chat and the
-  // feed. Promoted sessions are absent here — they render as proposal
-  // cards. Hidden when empty.
-  async _renderSessionsStrip() {
-    const el = document.getElementById('dev-sessions-strip');
-    if (!el || !AppView.appData) return;
-    const slug = AppView.appData.slug;
+  // #613: wrap one rendered card in a drag shell — a grip handle in a left
+  // gutter (44px tall for touch) plus the card. `key` is the card identity
+  // ('issue:123' / 'proposal:45'); a card with no identity (shouldn't happen
+  // for the reorderable columns) renders un-draggable so it can't be moved
+  // into an unsaveable state.
+  _wrapDraggable(key, cardHtml) {
+    if (!key) return `<div class="dev-drag-item">${cardHtml}</div>`;
+    const grip = '<svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4" aria-hidden="true">'
+      + '<circle cx="7" cy="5" r="1.4"/><circle cx="13" cy="5" r="1.4"/>'
+      + '<circle cx="7" cy="10" r="1.4"/><circle cx="13" cy="10" r="1.4"/>'
+      + '<circle cx="7" cy="15" r="1.4"/><circle cx="13" cy="15" r="1.4"/></svg>';
+    return `<div class="dev-drag-item relative pl-6" data-order-key="${escapeAttr(key)}">
+        <button type="button" class="dev-drag-handle absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 dark:hover:text-zinc-400 cursor-grab touch-none"
+          aria-label="Drag to reorder" title="Drag to reorder">${grip}</button>
+        ${cardHtml}
+      </div>`;
+  },
+
+  // ── PM view (tasks by assignee) ──────────────────────────────────────
+  //
+  // Pure grouping of the cached dev data into a project-manager's
+  // assignment overview. No DOM, no AppView state reads — everything comes
+  // in via `data` — so it is unit-testable in isolation (see
+  // tests/dev-pm-groups.test.js), mirroring _bucketDevItems.
+  //
+  //   data = { issues, proposals }
+  //     issues    — visible GitHub issues (env-twin-filtered; both the
+  //                 Issues and In-progress kanban buckets — i.e. every
+  //                 open issue), each carrying an { assignee: { top } }
+  //     proposals — open promoted/merging PR proposals
+  //   (merged + governance are deliberately NOT passed: completed work
+  //    isn't an open assignment, and gov cards never carry an assignee.)
+  //
+  // Returns { groups, unassigned, unassignedTotal }:
+  //   groups          — [{ name, count, items: [{kind, item}] }] for every
+  //                     person with ≥1 assigned task, ordered by count desc
+  //                     then name asc; items within a group newest-first
+  //   unassigned      — [{kind, item}] with no assignee, newest-first,
+  //                     capped to PM_UNASSIGNED_MAX
+  //   unassignedTotal — the pre-cap count, for the "+N more" note
+  PM_UNASSIGNED_MAX: 10,
+  _groupByAssignee(data) {
+    const d = data || {};
+    const issues = Array.isArray(d.issues) ? d.issues : [];
+    const proposals = Array.isArray(d.proposals) ? d.proposals : [];
+
+    const ts = (v) => {
+      const t = Date.parse(v || '');
+      return Number.isFinite(t) ? t : 0;
+    };
+    // Recency key per kind — mirrors _bucketDevItems' issueT / prT so the
+    // ordering matches the rest of the dev view.
+    const recency = (kind, it) => (kind === 'issue'
+      ? Math.max(ts(it.updatedAt), ts(it.lastMessageAt))
+      : Math.max(ts(it.promoted_at || it.created_at), ts(it.last_message_at)));
+
+    const assigneeTop = (it) => (it && it.assignee && it.assignee.top) || null;
+
+    // Flatten both kinds into one list carrying kind, item and its sort key.
+    const cards = [];
+    for (const i of issues) cards.push({ kind: 'issue', item: i, _t: recency('issue', i) });
+    for (const p of proposals) cards.push({ kind: 'proposal', item: p, _t: recency('proposal', p) });
+
+    // Bucket by case-folded assignee; first-seen casing is the display name.
+    const byKey = new Map(); // lower(top) -> { name, entries: [{kind,item,_t}] }
+    const unassigned = [];
+    for (const c of cards) {
+      const top = assigneeTop(c.item);
+      if (top == null || String(top).trim() === '') { unassigned.push(c); continue; }
+      const key = String(top).toLowerCase();
+      if (!byKey.has(key)) byKey.set(key, { name: String(top), entries: [] });
+      byKey.get(key).entries.push(c);
+    }
+
+    const groups = Array.from(byKey.values()).map((g) => {
+      const entries = g.entries.slice().sort((a, b) => b._t - a._t);
+      return { name: g.name, count: entries.length, items: entries.map((e) => ({ kind: e.kind, item: e.item })) };
+    });
+    groups.sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name));
+
+    const unassignedSorted = unassigned.slice().sort((a, b) => b._t - a._t);
+    const cap = AppView.PM_UNASSIGNED_MAX;
+    return {
+      groups,
+      unassigned: unassignedSorted.slice(0, cap).map((e) => ({ kind: e.kind, item: e.item })),
+      unassignedTotal: unassignedSorted.length,
+    };
+  },
+
+  // Render the PM view (inner HTML for #dev-pm) from cached data. Reuses the
+  // exact per-kind card renderers the list/kanban modes use, so every card
+  // keeps its buttons, badges, and data-*-row open hooks.
+  _renderPmInner() {
+    const { groups, unassigned, unassignedTotal } = AppView._groupByAssignee({
+      issues: AppView._visibleGhIssues(),
+      proposals: AppView._proposals || [],
+    });
+
+    const renderCard = (c) => (c.kind === 'proposal'
+      ? AppView._renderProposalCard(c.item)
+      : AppView._renderIssueRow(c.item));
+    const sectionHead = (inner) => `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5 flex items-center gap-1.5">${inner}</div>`;
+
+    let html = '<div class="space-y-5">';
+
+    // Tasks-by-assignee area.
+    if (groups.length) {
+      for (const g of groups) {
+        const head = sectionHead(
+          `${AppView._assigneeAvatarHtml(g.name)}<span class="normal-case text-zinc-700 dark:text-zinc-200">@${escapeHtml(g.name)}</span>`
+          + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${g.count}</span>`
+        );
+        html += `<div>${head}<div class="space-y-2">${g.items.map(renderCard).join('')}</div></div>`;
+      }
+    } else {
+      html += '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">No tasks are assigned to anyone yet.</div>';
+    }
+
+    // Unassigned section — always shown; lists the most recent open work
+    // with no assignee, capped, with a "+N more" note when truncated.
+    const unHead = sectionHead(
+      `${AppView._assigneeAvatarPlaceholderHtml()}<span class="normal-case">Unassigned</span>`
+      + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${unassignedTotal}</span>`
+    );
+    let unBody;
+    if (unassigned.length) {
+      unBody = `<div class="space-y-2">${unassigned.map(renderCard).join('')}</div>`;
+      if (unassignedTotal > unassigned.length) {
+        const moreCount = unassignedTotal - unassigned.length;
+        unBody += `<div class="mt-2"><span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more unassigned</span></div>`;
+      }
+    } else {
+      unBody = '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing unassigned.</div>';
+    }
+    html += `<div>${unHead}${unBody}</div>`;
+
+    html += '</div>';
+    return html;
+  },
+
+  // Repaint the PM container (#dev-pm) from cached data. Mirrors
+  // _repaintKanbanBoard: fill innerHTML, then re-attach kudos / ask-AI
+  // availability and keep the headless-state poller in sync.
+  _repaintPmView() {
+    const el = document.getElementById('dev-pm');
+    if (!el) return;
+    el.innerHTML = AppView._renderPmInner();
+    AppView._syncHeadlessPolling();
+    if (window.Kudos) Kudos.attach(el);
+    AppView._applyAskAiCardAvailability(el);
+  },
+
+  // ── Session cards in the In progress area ──────────────────────────
+  // The viewer's PRIVATE in-progress (active/paused, not-yet-promoted)
+  // sessions render pinned at the top of the In progress column (kanban)
+  // / top of the list (list view) under the "Only you can see" caption;
+  // their VISIBLE (shared) sessions render below the archived toggle
+  // under the "Visible to everyone." caption, signaling they appear on
+  // everyone's board; other users' shared sessions render at the bottom
+  // of the same area. Promoted sessions are absent — they render as
+  // proposal cards. All card controls are wired via the delegated
+  // #dev-body handler in renderDevView, so repaints stay cheap.
+
+  _sessionCardLabel(s) {
+    return escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
+  },
+
+  _sessionStatusTagHtml(s) {
+    return s.busy
+      ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
+      : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
+  },
+
+  // One of the viewer's own session cards. A clickable <div> (not
+  // <button>) so the inner Archive / visibility buttons are valid HTML.
+  // Two rows: title row (icon + wrapping title + chevron) and an actions
+  // row (status tag + buttons) that flex-wraps — the title can never be
+  // crushed by fixed-width controls. Clicking the card opens the owner's
+  // dev chat; the "Open chat" button (visible sessions only) opens the
+  // public discussion instead.
+  _renderMySessionCard(s) {
+    const label = AppView._sessionCardLabel(s);
+    const statusTag = AppView._sessionStatusTagHtml(s);
+    const shared = !!s.shared_at;
+    // Count comes from the shared-sessions row; a freshly-shared session
+    // may not be in _sharedById yet (background refresh pending) — the
+    // button still renders, with the count at 0.
+    const sh = shared ? (AppView._sharedById || {})[s.id] : null;
+    const chatBtn = shared
+      ? `<button type="button" class="gc-vote-btn inline-flex items-center gap-1" data-session-discuss="${s.id}" title="Open the public discussion on this session">Open chat ${AppView._devChatBadge(sh ? sh.chat_count : 0)}</button>`
+      : '';
+    const visBtn = shared
+      ? `<button type="button" class="gc-vote-btn" data-unshare-chip="${s.id}" title="Make this session private again (removes it from everyone's In progress area)">Hide</button>`
+      : `<button type="button" class="gc-vote-btn" data-share-chip="${s.id}" title="Show this session in everyone's In progress area — others can comment, but can't open your dev chat">Make visible</button>`;
+    return `<div data-session-chip="${s.id}" role="button" tabindex="0"
+      class="${AppView.SESSION_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
+      title="${s.busy ? 'AI is working — ' : ''}${label}">
+      <div class="flex items-center gap-3">
+        ${AppView._devCardIcon('session')}
+        <span class="flex-1 min-w-0">
+          <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
+          <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${shared ? 'Visible to everyone' : 'Your dev session'}</span>
+        </span>
+        ${AppView.DEV_CARD_CHEVRON}
+      </div>
+      <div class="${AppView.SESSION_CARD_ACTIONS_CLS}">
+        ${statusTag}
+        ${chatBtn}
+        ${visBtn}
+        <button type="button" class="dc-active-archive" data-archive-chip="${s.id}" data-name="${label}" title="Archive this session (closes the PR, frees the slot)">Archive</button>
+      </div>
+    </div>`;
+  },
+
+  // Another user's shared session. Opens the public discussion topic —
+  // never the owner's dev chat (those endpoints stay owner-scoped
+  // server-side). Preview mirrors the proposal-card affordance when the
+  // session has a staging build. `opts.noNav` renders the static header
+  // variant for the topic sub-view.
+  _renderSharedSessionCard(s, opts) {
+    const noNav = !!(opts && opts.noNav);
+    const label = AppView._sessionCardLabel(s);
+    const owner = escapeHtml(s.username || 'someone');
+    const statusTag = AppView._sessionStatusTagHtml(s);
+    const preview = s.staging_url
+      ? `<button type="button" class="gc-vote-btn gc-vote-btn-preview" title="Open this session's staging preview" onclick="AppView.swapToStagingForSession(${s.id}, '${s.staging_url}')">Preview</button>`
+      : '';
+    const nav = noNav ? '' : ` data-shared-session-row="${s.id}" role="button" tabindex="0"`;
+    const chevron = noNav ? '' : AppView.DEV_CARD_CHEVRON;
+    // Same two-row structure as the owner's cards (see _renderMySessionCard)
+    // — the Preview pill plus a busy tag can crush the title just the same.
+    return `<div${nav} class="${AppView.SESSION_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
+      <div class="flex items-center gap-3">
+        ${AppView._devCardIcon('session')}
+        <span class="flex-1 min-w-0">
+          <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
+          <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${owner} is working on this</span>
+        </span>
+        ${chevron}
+      </div>
+      <div class="${AppView.SESSION_CARD_ACTIONS_CLS}">
+        ${statusTag}
+        ${AppView._devChatBadge(s.chat_count)}
+        ${preview}
+      </div>
+    </div>`;
+  },
+
+  _sessionsCaptionHtml() {
+    return '<div class="text-xs text-zinc-500 dark:text-zinc-400 px-0.5">Only you can see your active sessions.</div>';
+  },
+
+  // Caption over the viewer's VISIBLE (shared) sessions — rendered below
+  // the archived toggle, outside the private area, to signal that these
+  // cards appear on everyone else's In progress board too.
+  _visibleSessionsCaptionHtml() {
+    return '<div class="text-xs text-zinc-500 dark:text-zinc-400 px-0.5">Visible to everyone.</div>';
+  },
+
+  // Archived toggle — collapsed by default on every render (no
+  // persistence). Hidden entirely when the viewer has no archived
+  // sessions for this app. Toggle + Unarchive are delegated.
+  _archivedToggleHtml() {
+    const archived = AppView._archivedSessions || [];
+    if (!archived.length) return '';
+    return `
+      <div class="pt-1" data-archived-block>
+        <button type="button" data-archived-toggle aria-expanded="false"
+          class="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 inline-flex items-center gap-1">
+          <svg data-archived-caret class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+          Show archived (${archived.length})
+        </button>
+        <div data-archived-list class="hidden space-y-2 pt-2">
+          ${archived.map((s) => {
+            const label = AppView._sessionCardLabel(s);
+            return `<div class="${AppView.DEV_CARD_CLS}">
+              ${AppView._devCardIcon('session')}
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 break-words">${label}</span>
+                <span class="block text-xs text-zinc-400 dark:text-zinc-500 truncate">Archived</span>
+              </span>
+              <button type="button" class="gc-vote-btn" data-unarchive-chip="${s.id}" title="Restore this session (reopens its PR)">Unarchive</button>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+  },
+
+  _toggleArchivedList(toggle) {
+    const block = toggle.closest('[data-archived-block]');
+    const listEl = block && block.querySelector('[data-archived-list]');
+    if (!listEl) return;
+    const caret = block.querySelector('[data-archived-caret]');
+    const open = listEl.classList.toggle('hidden') === false;
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (caret) caret.style.transform = open ? 'rotate(90deg)' : '';
+  },
+
+  // The pinned own-sessions block for LIST view, above the feed and
+  // outside its pager: private caption + private session cards, the
+  // archived toggle, then the "Visible to everyone" caption + the
+  // viewer's shared session cards. '' when the viewer has nothing to
+  // show.
+  _mySessionsBlockHtml() {
+    const mine = AppView._mySessions || [];
+    const priv = mine.filter((s) => !s.shared_at);
+    const vis = mine.filter((s) => !!s.shared_at);
+    const archivedHtml = AppView._archivedToggleHtml();
+    if (!mine.length && !archivedHtml) return '';
+    let html = '<div class="space-y-2 mb-2">';
+    if (priv.length) {
+      html += AppView._sessionsCaptionHtml();
+      html += priv.map((s) => AppView._renderMySessionCard(s)).join('');
+    }
+    html += archivedHtml;
+    if (vis.length) {
+      html += AppView._visibleSessionsCaptionHtml();
+      html += vis.map((s) => AppView._renderMySessionCard(s)).join('');
+    }
+    html += '</div>';
+    return html;
+  },
+
+  // The In progress KANBAN column's cards: pinned PRIVATE own sessions
+  // (caption + archived toggle beneath), then the viewer's VISIBLE own
+  // sessions under their own caption, then issue cards, then other users'
+  // shared sessions at the bottom. `entries` are the typed {kind, item}
+  // rows from _bucketDevItems (already filter-applied by the caller).
+  _inProgressCardsHtml(entries, filtering) {
+    const list = entries || [];
+    const mine = list.filter((e) => e.kind === 'my-session');
+    const priv = mine.filter((e) => !e.item.shared_at);
+    const vis = mine.filter((e) => !!e.item.shared_at);
+    const issues = list.filter((e) => e.kind === 'issue');
+    const shared = list.filter((e) => e.kind === 'shared-session');
+    const archivedHtml = AppView._archivedToggleHtml();
+    if (!list.length && !archivedHtml) {
+      return `<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">${filtering ? 'No matching cards' : 'Nothing here yet'}</div>`;
+    }
+    let html = '<div class="space-y-2">';
+    if (priv.length) {
+      html += AppView._sessionsCaptionHtml();
+      html += priv.map((e) => AppView._renderMySessionCard(e.item)).join('');
+    }
+    html += archivedHtml;
+    if (vis.length) {
+      html += AppView._visibleSessionsCaptionHtml();
+      html += vis.map((e) => AppView._renderMySessionCard(e.item)).join('');
+    }
+    html += issues.map((e) => AppView._renderIssueRow(e.item)).join('');
+    html += shared.map((e) => AppView._renderSharedSessionCard(e.item)).join('');
+    html += '</div>';
+    return html;
+  },
+
+  // Share / unshare one of the viewer's own sessions ("Make visible" /
+  // "Hide"). Optimistic: flips the cached row and repaints, then pulls
+  // server truth (💬 count and canonical shared_at) in the background.
+  async _setSessionShared(sessionId, shared, btn) {
+    if (!sessionId) return;
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
     try {
-      // Two sources: /api/me/active-sessions carries the live `busy`
-      // annotation for active/paused chips; /api/apps/:slug/sessions is
-      // the only endpoint that returns the viewer's *archived* rows
-      // (owner-scoped, includes every status). Fetch both in parallel.
-      const [activeRes, allRes] = await Promise.all([
-        fetch('/api/me/active-sessions'),
-        fetch(`/api/apps/${encodeURIComponent(slug)}/sessions`).catch(() => null),
-      ]);
-      if (!activeRes.ok) { el.innerHTML = ''; return; }
-      const data = await activeRes.json();
-      // Most-recent-activity-first, matching the feed's within-group
-      // order. last_activity_at folds in the latest session message;
-      // older servers without it fall back to created_at.
-      const actTs = (s) => {
-        const t = Date.parse(s.last_activity_at || s.created_at || '');
-        return Number.isFinite(t) ? t : 0;
-      };
-      const mine = (data.sessions || [])
-        .filter((s) => s.app_slug === slug && (s.status === 'active' || s.status === 'paused'))
-        .sort((a, b) => actTs(b) - actTs(a));
-      // Archived rows for this app (owner-scoped via the per-app
-      // endpoint). Tolerate a failed/older fetch by treating it as none.
-      let archived = [];
-      if (allRes && allRes.ok) {
-        const allData = await allRes.json().catch(() => ({}));
-        archived = (allData.sessions || [])
-          .filter((s) => s.status === 'archived')
-          .sort((a, b) => actTs(b) - actTs(a));
+      const resp = await fetch(`/api/sessions/${sessionId}/${shared ? 'share' : 'unshare'}`, { method: 'POST' });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(body.error || `Failed (HTTP ${resp.status}).`);
+        if (btn) { btn.disabled = false; btn.textContent = original; }
+        return;
       }
-      // The container may have been replaced while the fetch was in
-      // flight (tab switch) — re-resolve before painting.
-      const live = document.getElementById('dev-sessions-strip');
-      if (!live) return;
-      if (!mine.length && !archived.length) { live.innerHTML = ''; return; }
-
-      const chipsHtml = mine.map((s) => {
-        const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
-        const statusTag = s.busy
-          ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
-          : (s.status === 'paused' ? '<span class="text-xs text-zinc-500 shrink-0">paused</span>' : '');
-        // A clickable <div> (not <button>) so the inner Archive button is
-        // valid HTML. The row navigates on click; Archive stops propagation.
-        return `<div data-session-chip="${s.id}" role="button" tabindex="0"
-          class="${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
-          title="${s.busy ? 'AI is working — ' : ''}${label}">
-          ${AppView._devCardIcon('session')}
-          <span class="flex-1 min-w-0">
-            <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
-            <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">Your dev session</span>
-          </span>
-          ${statusTag}
-          <button type="button" class="dc-active-archive" data-archive-chip="${s.id}" data-name="${label}" title="Archive this session (closes the PR, frees the slot)">Archive</button>
-          <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-        </div>`;
-      }).join('');
-
-      // Archived toggle — collapsed by default on every render (no
-      // persistence). Hidden entirely when the viewer has no archived
-      // sessions for this app.
-      const archivedHtml = archived.length ? `
-        <div class="pt-1">
-          <button type="button" data-archived-toggle aria-expanded="false"
-            class="text-xs text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 inline-flex items-center gap-1">
-            <svg data-archived-caret class="w-3 h-3 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            Show archived (${archived.length})
-          </button>
-          <div data-archived-list class="hidden space-y-2 pt-2">
-            ${archived.map((s) => {
-              const label = escapeHtml(s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`);
-              return `<div class="${AppView.DEV_CARD_CLS}">
-                ${AppView._devCardIcon('session')}
-                <span class="flex-1 min-w-0">
-                  <span class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 break-words">${label}</span>
-                  <span class="block text-xs text-zinc-400 dark:text-zinc-500 truncate">Archived</span>
-                </span>
-                <button type="button" class="gc-vote-btn" data-unarchive-chip="${s.id}" title="Restore this session (reopens its PR)">Unarchive</button>
-              </div>`;
-            }).join('')}
-          </div>
-        </div>` : '';
-
-      live.innerHTML = `
-        <div class="space-y-2">
-          ${chipsHtml}
-          ${archivedHtml}
-        </div>`;
-
-      live.querySelectorAll('[data-session-chip]').forEach((row) => {
-        const go = () => App.switchTab('dev', parseInt(row.dataset.sessionChip, 10), 'sessions');
-        row.addEventListener('click', go);
-        row.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); go(); }
-        });
-      });
-      live.querySelectorAll('[data-archive-chip]').forEach((btn) => {
-        btn.addEventListener('click', async (ev) => {
-          ev.stopPropagation();
-          const id = parseInt(btn.dataset.archiveChip, 10);
-          const ok = await AppView._archiveSession(id, btn.dataset.name || 'this session');
-          if (!ok) return;
-          await AppView._renderSessionsStrip();
-          await AppView._loadDevFeed();
-        });
-      });
-      const toggle = live.querySelector('[data-archived-toggle]');
-      if (toggle) {
-        toggle.addEventListener('click', () => {
-          const listEl = live.querySelector('[data-archived-list]');
-          const caret = live.querySelector('[data-archived-caret]');
-          const open = listEl.classList.toggle('hidden') === false;
-          toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-          if (caret) caret.style.transform = open ? 'rotate(90deg)' : '';
+      const s = (AppView._mySessions || []).find((x) => x.id === sessionId);
+      if (s) s.shared_at = shared ? (body.shared_at || new Date().toISOString()) : null;
+      if (shared) {
+        // Seed the shared map so the freshly-shared card's 💬 badge has a
+        // target before the background refresh lands.
+        AppView._sharedById = { ...(AppView._sharedById || {}) };
+        if (!AppView._sharedById[sessionId]) {
+          AppView._sharedById[sessionId] = { id: sessionId, chat_count: 0 };
+        }
+      }
+      AppView._repaintDevBody();
+      if (AppView.appData) {
+        AppView._refreshSessionCaches(AppView.appData.slug).then((changed) => {
+          if (changed) AppView._repaintDevBody();
         });
       }
-      live.querySelectorAll('[data-unarchive-chip]').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-          const id = parseInt(btn.dataset.unarchiveChip, 10);
-          const original = btn.textContent;
-          btn.textContent = '...';
-          btn.disabled = true;
-          try {
-            const resp = await fetch(`/api/sessions/${id}/unarchive`, { method: 'POST' });
-            const body = await resp.json().catch(() => ({}));
-            if (!resp.ok) {
-              alert(body.error || 'Failed to unarchive session');
-              btn.textContent = original;
-              btn.disabled = false;
-              return;
-            }
-            if (body.ccPurged) {
-              alert("Session restored. Note: Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch.");
-            }
-          } catch (err) {
-            alert(`Unarchive failed: ${err.message}`);
-            btn.textContent = original;
-            btn.disabled = false;
-            return;
-          }
-          await AppView._renderSessionsStrip();
-          await AppView._loadDevFeed();
-        });
-      });
-    } catch {
-      el.innerHTML = '';
+    } catch (err) {
+      alert(`Failed: ${err.message}`);
+      if (btn) { btn.disabled = false; btn.textContent = original; }
     }
   },
 
+  // Restore an archived session (delegated from the archived toggle's
+  // Unarchive buttons).
+  async _unarchiveSession(sessionId, btn) {
+    if (!sessionId) return;
+    const original = btn.textContent;
+    btn.textContent = '...';
+    btn.disabled = true;
+    try {
+      const resp = await fetch(`/api/sessions/${sessionId}/unarchive`, { method: 'POST' });
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(body.error || 'Failed to unarchive session');
+        btn.textContent = original;
+        btn.disabled = false;
+        return;
+      }
+      if (body.ccPurged) {
+        alert("Session restored. Note: Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch.");
+      }
+    } catch (err) {
+      alert(`Unarchive failed: ${err.message}`);
+      btn.textContent = original;
+      btn.disabled = false;
+      return;
+    }
+    await AppView._loadDevFeed();
+  },
+
   // Shared archive flow for a dev session: confirm (proposal-card copy,
-  // since restore now lives in the strip's archived toggle, not a
-  // removed session-list screen) then POST /api/sessions/:id/archive.
-  // Owner-scoped server-side. Returns true on success so callers can
-  // re-render. Used by the dev-sessions strip's Archive button.
+  // since restore lives in the archived toggle beneath the pinned
+  // session block) then POST /api/sessions/:id/archive. Owner-scoped
+  // server-side. Returns true on success so callers can re-render. Used
+  // by the pinned session cards' Archive button (delegated handler).
   async _archiveSession(sessionId, name) {
     if (!sessionId) return false;
     const ok = await ConfirmModal.show({
@@ -2394,17 +3137,21 @@ const AppView = {
     return true;
   },
 
-  // Refresh the strip's busy indicators on a slow tick while the forum
-  // is mounted; self-clears when the strip leaves the DOM.
-  _syncStripPolling() {
+  // Refresh the session cards' busy indicators on a slow tick while the
+  // card list is mounted; self-clears when #dev-body leaves the DOM
+  // (topic/chat/settings sub-views — renderDevView re-arms on return).
+  // Dirty-checks via _refreshSessionCaches so an idle tick never
+  // repaints the board (keeping filter-input focus and scroll intact).
+  _syncSessionPolling() {
     if (AppView._stripTimer) return;
-    AppView._stripTimer = setInterval(() => {
-      if (!document.getElementById('dev-sessions-strip')) {
+    AppView._stripTimer = setInterval(async () => {
+      if (!document.getElementById('dev-body') || !AppView.appData) {
         clearInterval(AppView._stripTimer);
         AppView._stripTimer = null;
         return;
       }
-      AppView._renderSessionsStrip();
+      const changed = await AppView._refreshSessionCaches(AppView.appData.slug);
+      if (changed && document.getElementById('dev-body')) AppView._repaintDevBody();
     }, 15000);
   },
 
@@ -2707,9 +3454,25 @@ const AppView = {
   _checksDetailHtml(pr) {
     if (!pr) return '';
     const state = pr.check_state;
-    // #447: a never-recorded (legacy/clone) check still offers a manual
-    // re-run for owners/admins so it isn't stuck blocked with no way out.
     if (!state) {
+      // #607: a fresh proposal with nothing recorded yet — the first run
+      // hasn't stamped 'pending' (staging build still going). Show an
+      // explicit starting state instead of a bare "Re-run checks" button.
+      // The re-run escape hatch only appears once the proposal is old
+      // enough (10 min, mirroring the server's stale-checks sweep) that
+      // "starting" has plausibly wedged.
+      if (!pr.console_check_state) {
+        const stale = AppView._checksRunStale(pr.created_at);
+        return `
+        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
+          <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks are starting…</div>
+          <div class="mt-0.5 opacity-90">The staging preview is being prepared, then automated tests run against it. Merge is blocked until all tests pass.</div>
+          ${stale ? '<div class="mt-1 opacity-80">If this has been stuck for a while, the platform re-runs the checks automatically — or re-run them now.</div>' : ''}
+          ${stale ? AppView._recheckBtnHtml(pr) : ''}
+        </div>`;
+      }
+      // #447: a never-recorded legacy/clone check still offers a manual
+      // re-run for owners/admins so it isn't stuck blocked with no way out.
       const fallback = AppView._consoleCheckDetailHtml(pr);
       const rb = AppView._recheckBtnHtml(pr);
       return rb ? `${fallback}<div class="mt-1">${rb}</div>` : fallback;
@@ -2719,13 +3482,20 @@ const AppView = {
     if (state === 'pending') {
       // #447: stuck-'pending' checks now self-heal (the platform re-runs them
       // automatically once they've been running too long) and can be kicked
-      // manually — so this is no longer an indefinite, unexplained spinner.
+      // manually. #607: a FRESH run (under the ~10-min stale window) shows
+      // just the spinner + started-at line — offering "Re-run checks"
+      // seconds after a run began was the confusion in the issue report.
+      const stale = AppView._checksRunStale(pr.checks_checked_at);
+      const started = pr.checks_checked_at
+        ? `<div class="mt-0.5 opacity-80">Started ${escapeHtml(relTime(pr.checks_checked_at))}.</div>`
+        : '';
       return `
         <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
-          <div class="font-medium">Checks are still running…</div>
+          <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks are still running…</div>
           <div class="mt-0.5 opacity-90">The staging build is being tested. Merge is blocked until all tests pass.</div>
-          <div class="mt-1 opacity-80">If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.</div>
-          ${AppView._recheckBtnHtml(pr)}
+          ${started}
+          ${stale ? '<div class="mt-1 opacity-80">If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.</div>' : ''}
+          ${stale ? AppView._recheckBtnHtml(pr) : ''}
         </div>`;
     }
     if (state === 'error') {
@@ -2795,6 +3565,18 @@ const AppView = {
       </div>`;
   },
 
+  // #607: is an in-progress checks run old enough to count as stuck? A
+  // fresh run keeps the quiet spinner; past the window (mirrors the
+  // server's CHECKS_STALE_MS default) the detail offers the manual re-run
+  // escape hatch. A missing/unparseable timestamp counts as stale so a
+  // row with no bookkeeping is never left without a way out.
+  CHECKS_STALE_CLIENT_MS: 10 * 60 * 1000,
+  _checksRunStale(ts) {
+    if (!ts) return true;
+    const t = new Date(ts).getTime();
+    return !Number.isFinite(t) || (Date.now() - t) > AppView.CHECKS_STALE_CLIENT_MS;
+  },
+
   // #447: the "Re-run checks" action. Renders for the proposal's owner or an
   // admin when the checks are stuck running, couldn't run, were never
   // recorded, or are failing — never for a clean 'passing' run. Hitting it
@@ -2808,6 +3590,11 @@ const AppView = {
     // button is reviewable regardless of the demo viewer's owner/admin status;
     // real proposals never carry it and stay owner/admin-only.
     if (!owner && !App.user?.isAdmin && !pr.recheckable) return '';
+    // #607: a WS/poll-driven re-render mid-request must not resurrect an
+    // enabled button — keep it disabled while the request is in flight.
+    if (AppView._recheckInFlight.has(pr.id)) {
+      return `<button type="button" class="gc-vote-btn mt-1" disabled>Re-running…</button>`;
+    }
     return `<button type="button" class="gc-vote-btn mt-1" title="Rebuild the staging preview if needed and re-run the automated tests" onclick="AppView.castRecheck(${pr.id}, this)">Re-run checks</button>`;
   },
 
@@ -2828,7 +3615,19 @@ const AppView = {
         const data = await resp.json().catch(() => ({}));
         alert(data.error || `Re-run failed (HTTP ${resp.status}).`);
         if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+        return;
       }
+      const data = await resp.json().catch(() => ({}));
+      // Rechecks can't run inside a staging preview of the platform itself.
+      if (data.status === 'unavailable') {
+        alert('Re-running checks is unavailable in this preview.');
+        if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
+        return;
+      }
+      // #607: the server stamped 'pending' before responding — refresh so
+      // the spinning "Checks running…" badge renders immediately (the WS
+      // pending broadcast covers everyone else's screens).
+      AppView.refreshDevData('recheck');
     } catch (err) {
       alert(`Re-run failed: ${err.message}`);
       if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
@@ -2872,29 +3671,40 @@ const AppView = {
   // Lists the conflicting file paths and when the snapshot was last
   // checked, plus the standing guidance to run "Sync with main" from the
   // session's dev-chat.
-  // #386: only renders for the 'failed' state — an auto-resolve attempt
-  // actually ran and could not fix the conflict. A pre-attempt 'conflict'
-  // snapshot (or a clean/behind proposal) shows nothing here; the neutral
-  // card badge is enough while the auto-resolver does its work.
+  // #386: renders for the 'failed' state — an auto-resolve attempt actually
+  // ran and could not fix the conflict — and (since the silent-merge-failure
+  // fix) for 'conflict': a real merge attempt 405'd at GitHub. 'conflict'
+  // matters because the auto-resolver only picks up vote-eligible proposals,
+  // so a failed merge can otherwise sit with no visible record of the
+  // attempt and nothing telling anyone who has to act. While the resolver
+  // IS actively working the card shows "Resolving conflicts…" instead
+  // (the 'resolving' state outranks both in MergeStatus.lifecycle).
   _mergeConflictDetailHtml(pr) {
     const mcs = pr.merge_conflict_state;
-    if (mcs !== 'failed') return '';
+    if (mcs !== 'failed' && mcs !== 'conflict') return '';
+    if (pr.resolving) return '';
     const files = Array.isArray(pr.conflict_files) ? pr.conflict_files : [];
-    const heading = 'Automatic conflict resolution failed.';
+    const heading = mcs === 'failed'
+      ? 'Automatic conflict resolution failed.'
+      : 'A merge was attempted, but this proposal conflicts with main.';
     const fileList = files.length
       ? `<div class="mt-1">Conflicting files:</div>
          <ul class="mt-0.5 ml-3 list-disc space-y-0.5">${files.map((f) =>
            `<li class="font-mono text-[0.7rem] break-all">${escapeHtml(String(f))}</li>`).join('')}</ul>`
       : '';
     const checked = pr.conflict_checked_at
-      ? `<div class="mt-1 opacity-80">Last checked ${escapeHtml(relTime(pr.conflict_checked_at))}.</div>`
+      ? `<div class="mt-1 opacity-80">Last attempt ${escapeHtml(relTime(pr.conflict_checked_at))}.</div>`
       : '';
+    const creator = pr.username ? `<span class="font-medium">${escapeHtml(pr.username)}</span>` : 'the proposal\u2019s creator';
+    const guidance = mcs === 'failed'
+      ? `${creator} needs to resolve it: run "Sync with main" from the session's dev-chat.`
+      : `Automatic resolution may not run for this proposal — ${creator} needs to finish the merge: open the session's dev-chat and run "Sync with main".`;
     return `
       <div class="mt-2 rounded border border-red-500/30 bg-red-500/5 px-2 py-1.5 text-red-500">
         <div class="font-medium">${heading}</div>
         ${fileList}
         ${checked}
-        <div class="mt-1 opacity-80">The owner can run "Sync with main" from the session's dev-chat to resolve it.</div>
+        <div class="mt-1 opacity-80">${guidance}</div>
       </div>`;
   },
 
@@ -3337,11 +4147,7 @@ const AppView = {
     AppView._attrPopover = { field, targetType, targetRef, slug };
 
     // Position under the chip, clamped to the viewport.
-    const r = chip.getBoundingClientRect();
-    pop.style.position = 'fixed';
-    pop.style.top = `${Math.round(r.bottom + 4)}px`;
-    const left = Math.min(Math.round(r.left), window.innerWidth - 240);
-    pop.style.left = `${Math.max(8, left)}px`;
+    AppView._positionAttrPopover(pop, chip);
 
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes?field=${field}`);
@@ -3356,6 +4162,17 @@ const AppView = {
       const live = document.getElementById('attr-popover');
       if (live) live.innerHTML = '<div class="px-3 py-2 text-xs text-red-500">Couldn\'t load options.</div>';
     }
+  },
+
+  // Place the popover just under `chip`, clamped to the viewport. Shared
+  // by the initial open and the post-repaint re-anchor (#608) so both use
+  // the same math.
+  _positionAttrPopover(pop, chip) {
+    const r = chip.getBoundingClientRect();
+    pop.style.position = 'fixed';
+    pop.style.top = `${Math.round(r.bottom + 4)}px`;
+    const left = Math.min(Math.round(r.left), window.innerWidth - 240);
+    pop.style.left = `${Math.max(8, left)}px`;
   },
 
   // Render the popover contents from a { field, options, myValue } payload
@@ -3439,6 +4256,17 @@ const AppView = {
           } catch { /* ignore */ }
         }, 200);
       });
+      // #600: default the name box to the signed-in user's own username so
+      // "assign it to me" is one click of Add — but only when the viewer has
+      // no current pick (!data.myValue), so we never quietly overwrite a vote
+      // they already made. Setting .value programmatically does NOT fire the
+      // `input` listener above, so the typeahead stays closed; select() keeps
+      // "assign someone else" a first-keystroke away.
+      const me = (typeof App !== 'undefined' && App.user && App.user.username) || '';
+      if (me && !data.myValue) {
+        input.value = me;
+        input.select();
+      }
       input.focus();
     }
   },
@@ -3459,7 +4287,8 @@ const AppView = {
       if (!res.ok) { alert(data.error || 'Could not save your vote.'); return; }
       // Update the cached item's summary so re-renders show the new leader.
       AppView._applyAttrSummary(targetType, targetRef, field, data);
-      // Repaint cards (feed if mounted, topic head if open) and the popover.
+      // Repaint whichever card surface is mounted (list / kanban / PM /
+      // topic head) and the popover.
       AppView._refreshAttrCards();
       if (AppView._attrPopover && AppView._attrPopover.field === field
           && AppView._attrPopover.targetRef === targetRef) {
@@ -3486,20 +4315,36 @@ const AppView = {
     if (item) item[field] = summary;
   },
 
-  // Repaint surfaces that show chips, without disturbing the popover (which
-  // lives on <body>, positioned by coordinates).
+  // Repaint every surface that shows chips. #608: this used to repaint
+  // only #dev-feed / #gc-thread-head / #gc-merged, so in kanban and PM
+  // view modes (which mount #dev-kanban-board / #dev-pm instead) a vote
+  // updated the cache but the visible chips stayed stale until a reload.
+  // _repaintCards is mode-aware (list feed + Completed block, kanban
+  // board, PM view, plus the opened-topic head), all from cache. The
+  // popover lives on <body>, positioned by coordinates, so the repaint
+  // never removes it — but its chip's card can move (PM view regroups by
+  // assignee) or leave the board (kanban filter no longer matching), so
+  // re-anchor it to the freshly-rendered chip, or close it when the chip
+  // is gone.
   _refreshAttrCards() {
-    if (document.getElementById('dev-feed')) AppView._rerenderFeed();
-    if (typeof App !== 'undefined' && App.currentSubTab === 'topic'
-        && document.getElementById('gc-thread-head')) {
-      AppView._renderTopicHead();
-    }
-    const mergedEl = document.getElementById('gc-merged');
-    if (mergedEl && (AppView._merged || []).length) {
-      mergedEl.innerHTML = AppView._renderMergedInner();
-      if (window.Kudos) Kudos.attach(mergedEl);
-      AppView._applyAskAiCardAvailability(mergedEl);
-    }
+    AppView._repaintCards();
+    AppView._reanchorAttrPopover();
+  },
+
+  // Snap the open popover back under its chip's current position after a
+  // repaint; close it when the chip is no longer rendered anywhere.
+  _reanchorAttrPopover() {
+    const ctx = AppView._attrPopover;
+    if (!ctx) return;
+    const pop = document.getElementById('attr-popover');
+    if (!pop) return;
+    const chip = document.querySelector(
+      `[data-attr-chip][data-attr-field="${ctx.field}"]`
+      + `[data-attr-target-type="${ctx.targetType}"]`
+      + `[data-attr-target-ref="${ctx.targetRef}"]`
+    );
+    if (chip) AppView._positionAttrPopover(pop, chip);
+    else AppView._closeAttrPopover();
   },
 
   // Live badge bump for a thread the viewer doesn't have open (called
@@ -3672,17 +4517,19 @@ const AppView = {
   // the list position always agrees with the badge the user sees:
   //   0 — 'merging'  ("Merging…")            being merged right now
   //   1 — resolving  ("Resolving conflicts…")  auto-resolver sync in flight
-  //   2 — merge_conflict_state 'failed'        ("⚠ Conflict resolution failed")
+  //   2 — merge_conflict_state 'failed' ("⚠ Conflict resolution failed") or
+  //       'conflict' ("⚠ Merge failed — conflict"): a real attempt failed
+  //       and the auto-resolver may never pick it up (it only touches
+  //       vote-eligible proposals), so the card must stay visible until the
+  //       creator finishes the merge.
   //   3 — everything else (normal, by recency)
-  // A bare 'behind'/'conflict' snapshot is NOT pinned: both render as the
-  // neutral "Behind main · N" badge (a fresh 'conflict' bumps behind_main
-  // and flips `resolving` true shortly after, at which point rank 1 takes
-  // over), and many PRs can be behind main.
+  // A bare 'behind' snapshot is NOT pinned: it renders as the neutral
+  // "Behind main · N" badge, and many PRs can be behind main.
   _proposalPinRank(pr) {
     if (!pr) return 4;
     if (pr.status === 'merging') return 0;
     if (pr.resolving) return 1;
-    if (pr.merge_conflict_state === 'failed') return 2;
+    if (pr.merge_conflict_state === 'failed' || pr.merge_conflict_state === 'conflict') return 2;
     // #47: a proposal whose checks failed / couldn't run blocks merge and
     // needs the owner's attention — pin it just below the conflict-failed
     // affordance so it stays visible above ordinary chatter.
@@ -3832,6 +4679,17 @@ const AppView = {
     const rowTitle = issue.created_by_username
       ? `${issue.title} · ${issue.created_by_username}`
       : issue.title;
+    // #556: author-only inline title edit, topic head only (noNav) — feed
+    // cards are whole-card tap targets, so an inline editor there would
+    // fight the delegated open handler. The check is cosmetic (decides
+    // whether the pencil renders); the PATCH route's author check is the
+    // authoritative gate, and it re-derives the same created_by_username.
+    const canEditTitle = !!(noNav && issue.created_by_username
+      && typeof App !== 'undefined' && App.user
+      && issue.created_by_username === App.user.username);
+    const editTitleBtn = canEditTitle
+      ? ` <button type="button" class="align-middle text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors" title="Edit this issue's title (you created it)" aria-label="Edit title" onclick="AppView.beginIssueTitleEdit(${n})"><svg class="w-3.5 h-3.5 inline -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg></button>`
+      : '';
 
     html += `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" data-ref-issue="${n}"${noNav ? '' : ` data-issue-row="${n}" title="Open this issue's discussion"`}>
@@ -3839,7 +4697,7 @@ const AppView = {
         <div class="flex-1 min-w-0">
           <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
             <div class="dev-card-headline">
-              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}</div>
+              <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words"${canEditTitle ? ` data-issue-title="${n}"` : ''} title="${escapeHtml(rowTitle)}">${escapeHtml(issue.title)}${editTitleBtn}</div>
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta"><a href="${href}" target="_blank" rel="noopener" class="font-mono text-violet-400 hover:underline">#${n}</a>${issue.created_by_username ? ` · ${escapeHtml(issue.created_by_username)}` : ''}</div>
             </div>
             ${fallbackChip}
@@ -3852,6 +4710,67 @@ const AppView = {
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
     return html;
+  },
+
+  // #556: inline issue-title editor in the topic head. Swaps the title div
+  // (marked data-issue-title by _renderIssueRow's noNav variant) for an
+  // input + Save/Cancel. Cancel just repaints the head; Save PATCHes the
+  // rename route, then optimistically updates the cached _ghIssues row so
+  // this tab repaints even if its events socket is momentarily down (the
+  // server's issue_update broadcast covers everyone else).
+  beginIssueTitleEdit(n) {
+    const holder = document.querySelector(`#gc-thread-head [data-issue-title="${n}"]`);
+    const issue = (AppView._ghIssues || []).find((i) => i.number === n);
+    if (!holder || !issue) return;
+    holder.innerHTML = `
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="dev-issue-title-input" type="text" maxlength="200"
+          class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500">
+        <button type="button" class="gc-vote-btn" onclick="AppView.saveIssueTitle(${n})">Save</button>
+        <button type="button" class="gc-vote-btn" onclick="AppView.cancelIssueTitleEdit()">Cancel</button>
+        <span id="dev-issue-title-error" class="w-full text-xs text-red-400 hidden"></span>
+      </div>`;
+    const input = document.getElementById('dev-issue-title-input');
+    input.value = issue.title || '';
+    input.focus();
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); AppView.saveIssueTitle(n); }
+      if (e.key === 'Escape') { e.preventDefault(); AppView.cancelIssueTitleEdit(); }
+    });
+  },
+
+  cancelIssueTitleEdit() {
+    // Repaint the head from the cached row — drops the editor.
+    AppView._renderTopicHead();
+  },
+
+  async saveIssueTitle(n) {
+    const input = document.getElementById('dev-issue-title-input');
+    const errEl = document.getElementById('dev-issue-title-error');
+    const issue = (AppView._ghIssues || []).find((i) => i.number === n);
+    if (!input || input.disabled || !issue || !AppView.appData) return;
+    const newTitle = input.value.trim();
+    // Empty or unchanged → treat as cancel (the server would no-op too).
+    if (!newTitle || newTitle === issue.title) { AppView._renderTopicHead(); return; }
+    input.disabled = true;
+    const showError = (msg) => {
+      input.disabled = false;
+      if (errEl) { errEl.textContent = msg; errEl.classList.remove('hidden'); }
+    };
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/github-issues/${n}/title`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return showError(data.error || 'Failed to update the title');
+      issue.title = data.title || newTitle;
+      issue.title_fallback = false;
+      AppView._renderTopicHead();
+    } catch {
+      showError('Network error');
+    }
   },
 
   // ---- Merged (closed) PRs section ----------------------------------------
@@ -4091,10 +5010,13 @@ const AppView = {
   },
 
   // "Create proposal" / "Create new proposal" — spin up a fresh dev chat for
-  // this issue and seed the first turn with the issue's number/title/body so
-  // the Mayor links it (addresses_issues → linked_issues → `Closes #N`) and
-  // solves it. Mirrors DevChat.startNewChange's create→open→render flow, then
-  // sends the seed. Safe to call from either button state — each call spawns a
+  // this issue and PREFILL (never send) the composer with a kickoff message
+  // built from the issue's number/title/body, so the user can edit it before
+  // the agent starts (#609). Sending the default text as-is makes the Mayor
+  // link the issue (addresses_issues → linked_issues → `Closes #N`) and solve
+  // it. Mirrors DevChat.startNewChange's create→open→render flow; the seed
+  // lands in the box via the per-session draft (_setDraft → _restoreDraft on
+  // render). Safe to call from either button state — each call spawns a
   // brand-new session.
   async createPrForIssue(issueNumber) {
     const slug = AppView.appData && AppView.appData.slug;
@@ -4114,6 +5036,20 @@ const AppView = {
       if (typeof AppView._repaintCards === 'function') AppView._repaintCards();
     }
 
+    // Kickoff seed the user gets to edit before sending. Naming the number
+    // is what drives the merge-time bounty payout, so the default text keeps
+    // the `Closes #N` guidance intact.
+    const title = issue ? issue.title : '';
+    const body = issue && issue.body ? `\n\n${issue.body}` : '';
+    const seed =
+      `Please implement GitHub issue #${issueNumber}: "${title}".${body}\n\n`
+      + `Open a PR that closes this issue (include "Closes #${issueNumber}" so it links and closes the issue on merge).`;
+
+    // #609: stash the seed as the session's draft BEFORE navigating — the
+    // chat view's render path calls _restoreDraft(), which fills the
+    // composer (unsent) for us. Nothing is sent until the user hits Send.
+    if (typeof DevChat._setDraft === 'function') DevChat._setDraft(session.id, seed);
+
     // Land on the Dev Chat tab focused on the new session. switchTab
     // ('individual-chat') → renderDevChatTab(sessionId) opens the session,
     // renders the chat view, and syncs the hash for us.
@@ -4121,15 +5057,26 @@ const AppView = {
       await App.switchTab('dev', session.id, 'sessions');
     }
 
-    // Seed the first turn so the Mayor links the issue (addresses_issues →
-    // linked_issues → `Closes #N`) and solves it. Naming the number is what
-    // drives the merge-time bounty payout.
-    const title = issue ? issue.title : '';
-    const body = issue && issue.body ? `\n\n${issue.body}` : '';
-    const seed =
-      `Please implement GitHub issue #${issueNumber}: "${title}".${body}\n\n`
-      + `Open a PR that closes this issue (include "Closes #${issueNumber}" so it links and closes the issue on merge).`;
-    if (typeof DevChat.sendMessage === 'function') DevChat.sendMessage(seed);
+    // Fallback for localStorage-disabled browsers (_setDraft silently
+    // no-ops there): put the seed straight into the mounted textarea if the
+    // draft restore left it empty. Focus with the cursor parked at the end
+    // on fine-pointer devices only — focusing on touch would pop the
+    // on-screen keyboard over the chat (#568, same rule as the quick-reply
+    // pills).
+    const input = document.getElementById('dc-input');
+    if (input) {
+      if (!input.value) {
+        input.value = seed;
+        input.style.height = 'auto';
+        input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+      }
+      if (typeof DevChat._isCoarsePointer !== 'function' || !DevChat._isCoarsePointer()) {
+        try {
+          input.focus();
+          input.setSelectionRange(input.value.length, input.value.length);
+        } catch {}
+      }
+    }
   },
 
   // ---- Headless auto sessions (#155) --------------------------------------
@@ -4521,7 +5468,18 @@ const AppView = {
     // badge says it all; don't stack a redundant "✓ Checks passing".
     if (pr.status === 'merged') return '';
     const state = pr.check_state;
-    if (!state) return AppView.consoleWarningBadgeHtml(pr);
+    if (!state) {
+      // #607: a fresh proposal with NOTHING recorded yet (post-#47 rows
+      // dual-write console_check_state alongside every verdict, so both
+      // missing means the first run hasn't stamped 'pending' yet — e.g.
+      // the promote-time staging build is still going). Show the spinner
+      // instead of silence. Rows carrying a console snapshot are genuine
+      // pre-#47 legacy — keep their advisory fallback.
+      if (!pr.console_check_state) {
+        return `<span class="gc-checks-running-badge" title="The staging preview is being prepared and automated tests are about to run — merge is blocked until they pass."><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks starting…</span>`;
+      }
+      return AppView.consoleWarningBadgeHtml(pr);
+    }
     if (state === 'passing') {
       return `<span class="gc-merged-badge" title="All automated tests passed on the staging build">✓ Checks passing</span>`;
     }

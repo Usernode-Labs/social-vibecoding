@@ -67,6 +67,7 @@ function loadVotesWithFailingMerge(mergeError) {
 
   const voteUpdates = [];
   const resolverCalls = [];
+  const retryCalls = [];
 
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   stub(ids.pool, { getPool: () => makePool([]) });
@@ -77,11 +78,13 @@ function loadVotesWithFailingMerge(mergeError) {
   stub(ids.staging, {});
   stub(ids.docker, {});
   stub(ids.resolver, {
-    // The conflict / behind_main auto-resolve paths now funnel through the
-    // app-level drain (checkAndResolveConflicts) so resolves are serialized
-    // one-per-app, rather than firing a per-session resolveAndMaybeRetry.
+    // Vote-driven conflict / behind_main auto-resolve paths funnel through
+    // the app-level drain (checkAndResolveConflicts) so resolves are
+    // serialized one-per-app. A FORCED merge that conflicts instead fires a
+    // per-session resolveAndMaybeRetry carrying the force intent (the drain
+    // would re-apply the vote gate the admin just bypassed and skip the PR).
     checkAndResolveConflicts: async (...args) => { resolverCalls.push(args); return undefined; },
-    resolveAndMaybeRetry: async () => ({ ok: true }),
+    resolveAndMaybeRetry: async (...args) => { retryCalls.push(args); return { ok: true }; },
     isResolving: () => false,
   });
   stub(ids.ws, {
@@ -111,7 +114,7 @@ function loadVotesWithFailingMerge(mergeError) {
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, voteUpdates, resolverCalls, restore };
+  return { subject, voteUpdates, resolverCalls, retryCalls, restore };
 }
 
 const session = {
@@ -122,15 +125,17 @@ const session = {
 
 const pool = () => makePool([
   [/SELECT COUNT\(\*\) as cnt FROM pr_votes/, [{ cnt: '1' }]],
+  [/SELECT check_state, test_results/, [{ check_state: 'passing', test_results: [] }]],
   [/SET status = 'merging'/, [{ id: 7 }]],
   [/SET behind_main = GREATEST/, [{ behind_main: 1 }]],
 ]);
 
-test('checkAndMerge catch: 405 conflict failure broadcasts mergeFailed with resolving:true', async () => {
+test('checkAndMerge catch: forced 405 conflict fires the per-session resolver with force preserved', async () => {
   const err = Object.assign(new Error('Pull Request is not mergeable'), { status: 405 });
-  const { subject, voteUpdates, resolverCalls, restore } = loadVotesWithFailingMerge(err);
+  const { subject, voteUpdates, resolverCalls, retryCalls, restore } = loadVotesWithFailingMerge(err);
   try {
-    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool(), { ...session }, { force: true });
+    const forceBy = { id: 1, username: 'admin' };
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool(), { ...session }, { force: true, forceBy });
     assert.equal(r.merged, false);
     assert.equal(r.conflict, true);
 
@@ -139,7 +144,40 @@ test('checkAndMerge catch: 405 conflict failure broadcasts mergeFailed with reso
     assert.equal(failed[0].resolving, true, 'conflict + autoResolve → resolving rides along');
     assert.equal(failed[0].selfHosted, true);
     assert.equal(failed[0].sessionId, 7);
-    assert.equal(resolverCalls.length, 1, 'the auto-resolver was actually kicked off');
+
+    // Force-carry-through: the recovery must NOT be handed to the
+    // gate-filtered app drain (which would re-apply the vote gate the admin
+    // just bypassed and skip a below-threshold PR) — it resolves THIS
+    // session directly, with the force intent threaded so the post-sync
+    // retry merge stays forced.
+    assert.equal(resolverCalls.length, 0, 'forced conflicts skip the gate-filtered drain');
+    assert.equal(retryCalls.length, 1, 'a per-session resolve was dispatched');
+    const [, target, opts] = retryCalls[0];
+    assert.deepEqual(target, { sessionId: 7 });
+    assert.equal(opts.force, true, 'the force flag survives into the resolver');
+    assert.deepEqual(opts.forceBy, forceBy, 'the forcing admin rides along');
+    assert.equal(opts.mergeOnly, false, 'the worker sync is allowed');
+  } finally {
+    restore();
+  }
+});
+
+test('checkAndMerge catch: vote-driven 405 conflict still funnels through the app drain', async () => {
+  const err = Object.assign(new Error('Pull Request is not mergeable'), { status: 405 });
+  const { subject, voteUpdates, resolverCalls, retryCalls, restore } = loadVotesWithFailingMerge(err);
+  try {
+    // No force: the (stubbed always-mergeable) vote gate admits the merge,
+    // GitHub 405s, and recovery goes through the serialized app-level drain.
+    const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool(), { ...session }, {});
+    assert.equal(r.merged, false);
+    assert.equal(r.conflict, true);
+
+    const failed = voteUpdates.filter((u) => u.mergeFailed);
+    assert.equal(failed.length, 1);
+    assert.equal(failed[0].resolving, true);
+    assert.equal(resolverCalls.length, 1, 'the app-level drain was kicked off');
+    assert.deepEqual(resolverCalls[0][1], { app_id: 5 });
+    assert.equal(retryCalls.length, 0, 'no per-session force resolve on the vote path');
   } finally {
     restore();
   }
@@ -177,7 +215,7 @@ test('#384: checkAndMerge catch persists merge_conflict_state=conflict on a 405 
 });
 
 test('checkAndMerge catch: generic failure broadcasts mergeFailed with resolving:false', async () => {
-  const { subject, voteUpdates, resolverCalls, restore } =
+  const { subject, voteUpdates, resolverCalls, retryCalls, restore } =
     loadVotesWithFailingMerge(new Error('secondary rate limit'));
   try {
     const r = await subject.checkAndMerge({ jwtSecret: 's' }, pool(), { ...session }, { force: true });
@@ -188,6 +226,7 @@ test('checkAndMerge catch: generic failure broadcasts mergeFailed with resolving
     assert.equal(failed.length, 1);
     assert.equal(failed[0].resolving, false, 'no resolver coming → clients cancel as before');
     assert.equal(resolverCalls.length, 0, 'generic failures never fire the resolver');
+    assert.equal(retryCalls.length, 0);
   } finally {
     restore();
   }
@@ -195,11 +234,12 @@ test('checkAndMerge catch: generic failure broadcasts mergeFailed with resolving
 
 test('checkAndMerge catch: conflict failure with autoResolve:false broadcasts resolving:false', async () => {
   const err = Object.assign(new Error('merge conflict'), { status: 405 });
-  const { subject, voteUpdates, resolverCalls, restore } = loadVotesWithFailingMerge(err);
+  const { subject, voteUpdates, resolverCalls, retryCalls, restore } = loadVotesWithFailingMerge(err);
   try {
     // The resolver's own retry path calls checkAndMerge with
     // autoResolve:false — its conflict failure must not claim a
-    // resolver is coming (none is).
+    // resolver is coming (none is), even on the forced path (this bounds
+    // the forced resolve+retry to a single cycle too).
     const r = await subject.checkAndMerge(
       { jwtSecret: 's' }, pool(), { ...session }, { force: true, autoResolve: false }
     );
@@ -208,6 +248,7 @@ test('checkAndMerge catch: conflict failure with autoResolve:false broadcasts re
     assert.equal(failed.length, 1);
     assert.equal(failed[0].resolving, false);
     assert.equal(resolverCalls.length, 0);
+    assert.equal(retryCalls.length, 0, 'no re-entrant force resolve either');
   } finally {
     restore();
   }

@@ -86,31 +86,6 @@ async function healPrTitles(pool, { limit = 5 } = {}) {
   return { scanned: rows.length, healed };
 }
 
-// PATCH a healed title onto the GitHub issue. Platform-repo issues were
-// filed with the PAT (routes/feedback.js), app-repo issues via the GitHub
-// App installation — try the PAT first (covers both on the canonical
-// deploy, where the bot user owns app repos too), then fall back to the
-// installation octokit.
-async function patchIssueTitle(owner, repo, issueNumber, title) {
-  const pat = process.env.GITHUB_BOT_TOKEN;
-  if (pat) {
-    const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues/${issueNumber}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `token ${pat}`,
-        'User-Agent': 'usernode-social-vibecoding',
-      },
-      body: JSON.stringify({ title: github.safeMention(title) }),
-    });
-    if (res.ok) return;
-    log.warn('title-heal', 'PAT issue PATCH failed; trying installation token', {
-      repo: `${owner}/${repo}`, issueNumber, status: res.status,
-    });
-  }
-  await github.updateIssueTitle(owner, repo, issueNumber, title);
-}
-
 // Retry title generation for feedback issues in title_heal_queue. Success
 // deletes the row; failure bumps attempts with exponential backoff and
 // abandons the row past MAX_ISSUE_ATTEMPTS.
@@ -126,7 +101,9 @@ async function healIssueTitles(pool, { limit = 10 } = {}) {
   for (const row of rows) {
     try {
       const { title } = await llm.generateIssueTitle({ description: row.description });
-      await patchIssueTitle(row.owner, row.repo, row.issue_number, title);
+      // PAT-first PATCH with installation fallback — lives in github.js
+      // since #556 shares it with the author-rename route.
+      await github.patchIssueTitle(row.owner, row.repo, row.issue_number, title);
       await pool.query(`DELETE FROM title_heal_queue WHERE id = $1`, [row.id]);
       healed++;
       log.info('title-heal', 'Issue title regenerated', {

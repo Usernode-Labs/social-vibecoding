@@ -119,15 +119,70 @@
       "expectSelector": "#dev-kanban-search"
     },
     {
+      "name": "PM view toggle button renders in the dev view switcher",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-view-pm"
+    },
+    {
       "name": "Kanban cards show the assignee initial-avatar",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": ".attr-avatar"
+    },
+    {
+      "name": "Shared demo session renders in the In progress area",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Staging demo shared session"
+    },
+    {
+      "name": "Own sessions pin with the visibility caption",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Only you can see your active sessions"
+    },
+    {
+      "name": "Shared session cards show the owner subtitle",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "is working on this"
+    },
+    {
+      "name": "Busy own session card renders (working state, two-row layout)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "[Mock] Busy own session"
+    },
+    {
+      "name": "Visible own session renders under the Visible-to-everyone caption",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Visible to everyone."
+    },
+    {
+      "name": "Visible own session offers the Open chat action",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Open chat"
+    },
+    {
+      "name": "Demo archived row surfaces the Show archived toggle",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Show archived"
     },
     {
       "name": "Close-issue governance card renders in the dev board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#close-issue-form",
       "expectText": "Close issue #900001"
+    },
+    {
+      "name": "Issues + In review cards carry a drag-to-reorder handle",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": ".dev-drag-handle"
+    },
+    {
+      "name": "Issue topic head shows the author-only edit-title pencil",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
+      "expectSelector": "[data-issue-title='900008']"
+    },
+    {
+      "name": "Checks-starting mock proposal shows the in-progress badge",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Checks starting"
     },
     {
       "name": "Chromeless share-link view renders the Open-in-Usernode pill",

@@ -25,7 +25,13 @@ const topicAttrs = require('../services/topic-attributes');
 // a vote on one 404s harmlessly. Strictly a no-op in production.
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
-function stagingMockProposals() {
+// `viewer` (the requesting user's username, when known) seeds ONE mock
+// proposal's assignee as the viewer's own so the #600 "already voted"
+// assignee-dropdown state (name box empty, viewer's pick checked) is
+// reviewable on staging via ?demo=1; the rest stay assigned to
+// staging-tester with myValue null, so opening their dropdown pre-fills
+// the viewer's own username.
+function stagingMockProposals(viewer) {
   const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
   const hoursAhead = (h) => new Date(Date.now() + h * 3600 * 1000).toISOString();
   // gate = { required, windowEndsAt, contested } — precomputed because mock
@@ -226,7 +232,10 @@ function stagingMockProposals() {
     },
     // #47: a proposal still running its checks — the grey "Checks running…"
     // spinner badge is reviewable via ?demo=1, and the gate would block the
-    // merge until the run reports.
+    // merge until the run reports. #607: the run started ~2 minutes ago
+    // (checks_checked_at override), so the detail shows the fresh state —
+    // spinner + "Started 2 minutes ago" with NO re-run button (recheckable
+    // is set, but the freshness gate hides the escape hatch).
     {
       ...mk(9000008, 900108,
         '[Mock] Checks-pending test: tests are still running on the staging build',
@@ -234,6 +243,23 @@ function stagingMockProposals() {
       check_state: 'pending',
       recheckable: true,
       test_results: [],
+      checks_checked_at: hoursAgo(0.03),
+    },
+    // #607: a freshly promoted proposal whose first checks run hasn't even
+    // stamped 'pending' yet (staging build still going) — NO verdict, NO
+    // console snapshot. The grey "Checks starting…" spinner badge + the
+    // "Checks are starting…" detail block (with no re-run button, since the
+    // row is minutes old) are reviewable via ?demo=1.
+    {
+      ...mk(9000021, 900121,
+        '[Mock] Checks-starting test: just promoted, the first run has not begun yet',
+        0.05, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(71) }),
+      check_state: null,
+      console_check_state: null,
+      console_errors: [],
+      console_checked_at: null,
+      test_results: [],
+      checks_checked_at: null,
     },
     // #447: a proposal STUCK in 'pending' — it crossed the vote threshold but
     // its checks have been "running" far longer than any real run takes
@@ -301,7 +327,16 @@ function stagingMockProposals() {
     const o = attrOverrides.get(row.id);
     if (o) { row.priority = o.priority; row.assignee = o.assignee; }
   }
-  return rows;
+  return rows.map((p) => {
+    // #600: seed the FIRST mock proposal's assignee as the viewer's own so
+    // opening its dropdown shows the "already voted" state (name box empty,
+    // viewer's pick checked). Everyone else stays assigned to staging-tester
+    // with myValue null, so their dropdown pre-fills the viewer's username.
+    if (viewer && p.id === 9000001) {
+      return { ...p, assignee: { top: viewer, count: 2, myValue: viewer } };
+    }
+    return p;
+  });
 }
 
 // #194: staging demo rows for the Completed (merged) list, mirroring
@@ -668,6 +703,19 @@ function voteRoutes(config) {
             } catch {}
           }
           const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+          // #607: stamp 'pending' + broadcast before the (minutes-long)
+          // staging build so the freshly promoted proposal's card shows
+          // "Checks running…" instead of a bare NULL-verdict "Re-run
+          // checks" button. captureForSession re-stamps idempotently.
+          {
+            const visualsService = require('../services/visuals');
+            await visualsService.setChecksPending(
+              pool, session.id, commitHash === 'latest' ? null : commitHash
+            ).catch((err) => log.warn('votes', 'promote setChecksPending failed (non-fatal)', {
+              sessionId: session.id, err: err.message,
+            }));
+            visualsService.notifyChecksPending(session.id, commitHash === 'latest' ? null : commitHash);
+          }
           let result;
           try {
             result = await staging.buildAndDeployStaging(config, session, app, commitHash);
@@ -1187,7 +1235,7 @@ function voteRoutes(config) {
       // result. See stagingMockProposals above.
       if (IS_STAGING && req.query.demo === '1') {
         const have = new Set(rows.map((r) => r.id));
-        rows.push(...stagingMockProposals().filter((m) => !have.has(m.id)));
+        rows.push(...stagingMockProposals(req.user?.username).filter((m) => !have.has(m.id)));
       }
 
       const { active: activeUsers, majority } = await getActiveUserStats(pool, appRows[0].id);
@@ -2347,21 +2395,47 @@ async function checkAndMerge(config, pool, session, options = {}) {
       const label = session.pr_title
         ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
         : `PR #${session.pr_number || session.id}`;
+      // Honest wording: the auto-resolver drain only picks up proposals
+      // that are vote-eligible to merge, so "syncing automatically" was a
+      // false promise for anything below the gate. On the FORCED path the
+      // resolve really is about to run (dispatched directly below), so the
+      // message can promise it; otherwise lead with the creator's "Sync
+      // with main", which is the path that always works.
       await sendSystemMessage(pool, session.app_id,
-        `${label} hit a conflict with main — syncing automatically and will retry the merge. ${owner}: you can also resolve it from the session's dev-chat.`,
+        (force && autoResolve)
+          ? `${label} hit a conflict with main during an admin merge — resolving the conflict automatically and retrying the merge.`
+          : `${label} hit a conflict with main during a merge attempt. ${owner}: finish the merge by running "Sync with main" from the session's dev-chat. (Auto-resolution retries only when the proposal is eligible to merge on votes.)`,
         'system'
       );
       // Auto-heal the conflict the same way the behind_main gate does.
       // autoResolve guards against the resolver's own retry re-entering
       // this path (it calls checkAndMerge with autoResolve:false).
       if (autoResolve) {
-        // Same app-level drain as the behind_main path — serialized,
-        // one-proposal-at-a-time-per-app resolution.
-        checkAndResolveConflicts(config, { app_id: session.app_id }).catch((e) => {
-          log.error('votes', 'Auto-resolve (merge conflict) failed', {
-            sessionId: session.id, err: e.message,
+        if (force) {
+          // Force-carry-through: an admin explicitly asked for this merge,
+          // so the recovery must not be handed to the gate-filtered app
+          // drain (which re-applies the vote check the admin just bypassed
+          // and skips anything below threshold — the "starts auto merging,
+          // then nothing" dead end). Resolve THIS session directly — same
+          // worker sync the owner's "Sync with main" runs — and retry the
+          // merge with the force intent preserved.
+          const { resolveAndMaybeRetry } = require('../services/conflict-resolver');
+          resolveAndMaybeRetry(config, { sessionId: session.id }, {
+            mergeOnly: false, force: true, forceBy, trigger: 'force',
+          }).catch((e) => {
+            log.error('votes', 'Auto-resolve (forced merge conflict) failed', {
+              sessionId: session.id, err: e.message,
+            });
           });
-        });
+        } else {
+          // Same app-level drain as the behind_main path — serialized,
+          // one-proposal-at-a-time-per-app resolution.
+          checkAndResolveConflicts(config, { app_id: session.app_id }).catch((e) => {
+            log.error('votes', 'Auto-resolve (merge conflict) failed', {
+              sessionId: session.id, err: e.message,
+            });
+          });
+        }
       }
     } else {
       await sendSystemMessage(pool, session.app_id,
@@ -2370,7 +2444,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
       );
     }
     if (isConflict) {
-      dstep({ phase: 'conflict_detected', level: 'warn', message: 'GitHub rejected the merge as a conflict — auto-resolver ' + (autoResolve ? 'queued.' : 'not run (resolver re-entry).'), detail: { autoResolve } });
+      dstep({
+        phase: 'conflict_detected', level: 'warn',
+        message: 'GitHub rejected the merge as a conflict — '
+          + (!autoResolve ? 'auto-resolver not run (resolver re-entry).'
+            : force ? 'per-session resolver dispatched directly with the force intent preserved.'
+              : 'auto-resolver queued.'),
+        detail: { autoResolve, forced: !!force },
+      });
       dend(autoResolve ? 'conflict_resolving' : 'conflict_failed', 'Merge conflict at GitHub.');
     } else {
       dend('error', `Merge failed: ${err.message}`);

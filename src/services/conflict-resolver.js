@@ -428,7 +428,16 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
   // directly mergeable; one that needs a worker sync is deferred (no sync
   // run, no state change) so it can't block clean siblings. Phase 2 re-runs
   // with mergeOnly:false to actually resolve it.
-  const { mergeOnly = false } = options;
+  //
+  // Force-carry-through: `force`/`forceBy` arrive when this resolve was
+  // dispatched from an admin force-merge that hit a conflict (routes/
+  // votes.js). The synced-branch retry below re-enters checkAndMerge, and
+  // without the flag that retry would re-apply the vote gate the admin
+  // explicitly bypassed — landing right back in "below threshold, not
+  // merged" after a successful sync. The drain never sets these (its
+  // triggers are all vote/sweep-driven), so normal resolution semantics
+  // are unchanged.
+  const { mergeOnly = false, force = false, forceBy = null } = options;
   if (!github.isEnabled() || !session.repo_url || !session.pr_number) {
     return { ok: false, reason: 'github_disabled_or_no_pr' };
   }
@@ -587,9 +596,14 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
   if (mergeableNow !== true) {
     // null: GitHub hasn't finished recomputing within our budget. Don't
     // risk the null-window 405 — the next vote or drift sweep retries.
+    // Forced resolves get accurate guidance instead: a below-threshold PR
+    // won't be picked up by any sweep, but the branch IS synced now, so a
+    // second click of the admin merge button completes it.
     if (didSync) {
       await postGroupMessage(pool, session,
-        `PR #${session.pr_number} is synced with main and conflict-free — GitHub is still finalizing mergeability, the merge will complete on the next vote or sweep.`
+        force
+          ? `PR #${session.pr_number} is synced with main and conflict-free — GitHub is still finalizing mergeability. Retry the admin merge to complete it.`
+          : `PR #${session.pr_number} is synced with main and conflict-free — GitHub is still finalizing mergeability, the merge will complete on the next vote or sweep.`
       );
     }
     return { ok: true, reason: 'mergeable_recompute_pending', syncResult };
@@ -607,8 +621,12 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
   try {
     const { checkAndMerge } = require('../routes/votes');
     // Pass our run id so the retry merge's gate/merge steps nest under this
-    // conflict-resolution run instead of opening a second run.
-    mergeResult = await checkAndMerge(config, pool, fresh, { autoResolve: false, debugRunId: ctx.runId });
+    // conflict-resolution run instead of opening a second run. `force` and
+    // `forceBy` ride along so an admin-forced merge that conflicted stays
+    // forced on the post-sync retry (see the options doc at the top).
+    mergeResult = await checkAndMerge(config, pool, fresh, {
+      autoResolve: false, debugRunId: ctx.runId, force, forceBy,
+    });
   } catch (err) {
     log.error('conflict', 'retry checkAndMerge threw', { sessionId: session.id, err: err.message });
     await ctx.step({ phase: 'retry_merge', level: 'error', message: `Retry merge threw: ${err.message}` });

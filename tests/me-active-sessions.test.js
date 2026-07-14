@@ -86,6 +86,9 @@ test('query is owner-scoped and excludes archived/headless rows', async () => {
     assert.match(q.sql, /status IN \('active', 'promoted', 'paused'\)/);
     assert.match(q.sql, /is_headless = FALSE/);
     assert.match(q.sql, /ORDER BY last_activity_at DESC/);
+    // shared_at rides along so the owner's pinned cards can render their
+    // "Visible to everyone" / "Make visible" state.
+    assert.match(q.sql, /cs\.shared_at/);
   } finally {
     server.close();
   }
