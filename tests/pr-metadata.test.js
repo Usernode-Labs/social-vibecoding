@@ -14,7 +14,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 // Install module stubs before requiring the unit under test.
-function loadWithStubs({ onGenerate, githubCalls, createPR, summary = '' }) {
+function loadWithStubs({ onGenerate, githubCalls, createPR, summary = '', findOpenPrByBranch }) {
   const llmPath = require.resolve('../src/services/llm');
   const ghPath = require.resolve('../src/services/github');
   const subjectPath = require.resolve('../src/services/pr-metadata');
@@ -39,6 +39,8 @@ function loadWithStubs({ onGenerate, githubCalls, createPR, summary = '' }) {
     exports: {
       createPR: createPR || (async (owner, repo, opts) => { githubCalls.push({ type: 'create', owner, repo, opts }); return { number: 42, html_url: 'https://example/pr/42' }; }),
       updatePR: async (owner, repo, num, opts) => { githubCalls.push({ type: 'update', owner, repo, num, opts }); },
+      findOpenPrByBranch: findOpenPrByBranch
+        || (async (owner, repo, branch) => { githubCalls.push({ type: 'find', owner, repo, branch }); return null; }),
     },
     loaded: true, id: ghPath, filename: ghPath, paths: orig.gh ? orig.gh.paths : [],
   };
@@ -408,6 +410,109 @@ test('applyPrMetadata re-throws createPR "no_commits" so the caller can be hones
       (err) => err && err.code === 'no_commits',
       'the typed no_commits error propagates to the caller'
     );
+  } finally {
+    restore();
+  }
+});
+
+// ---- session 2262 (2026-07-14): adopt the PR that already exists ----
+//
+// The restart race: the old process created the PR on GitHub and died
+// before persisting pr_number, so every later createPR 422s "A pull
+// request already exists". applyPrMetadata must adopt the existing PR
+// (persist number/url, then run the normal update path) instead of
+// returning null forever.
+
+const prExists = async () => {
+  const e = new Error('A pull request already exists for acme:feat/x.');
+  e.code = 'pr_exists';
+  throw e;
+};
+
+test('createPR pr_exists → the existing open PR is adopted and brought up to date', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    createPR: prExists,
+    findOpenPrByBranch: async (owner, repo, branch) => {
+      githubCalls.push({ type: 'find', owner, repo, branch });
+      return { number: 77, html_url: 'https://example/pr/77', title: 'Old GitHub title' };
+    },
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    const res = await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+
+    // The lookup used the session's branch.
+    const find = githubCalls.find((c) => c.type === 'find');
+    assert.deepEqual(find, { type: 'find', owner: 'acme', repo: 'app', branch: 'feat/x' });
+
+    // Adoption persisted pr_number/pr_url/pr_title BEFORE any update, so a
+    // later failure can't lose the link again.
+    const adopt = pool.queries.find((q) => /UPDATE chat_sessions SET pr_number = \$1, pr_url = \$2, pr_title = \$3, session_title = COALESCE/.test(q.sql));
+    assert.ok(adopt, 'adoption UPDATE persisted');
+    assert.deepEqual(adopt.params, [77, 'https://example/pr/77', 'Old GitHub title', 1]);
+
+    // The generated title differs from the adopted one, so the normal
+    // existing-PR update path fired against the adopted number.
+    const update = githubCalls.find((c) => c.type === 'update');
+    assert.ok(update, 'existing-PR update fired after adoption');
+    assert.equal(update.num, 77);
+    assert.equal(update.opts.title, 'Cumulative title');
+
+    assert.deepEqual(res, { prNumber: 77, prUrl: 'https://example/pr/77', prTitle: 'Cumulative title' });
+    assert.equal(session.pr_number, 77);
+  } finally {
+    restore();
+  }
+});
+
+test('createPR pr_exists but the lookup finds nothing → best-effort null (no wedge, no throw)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls,
+    createPR: prExists,
+    findOpenPrByBranch: async () => null,
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    const res = await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    assert.equal(res, null);
+    assert.equal(session.pr_number, null, 'session not mutated when nothing was adopted');
+    assert.ok(!githubCalls.some((c) => c.type === 'update'), 'no blind update without a PR number');
+  } finally {
+    restore();
+  }
+});
+
+test('pr_exists adoption during an LLM outage keeps the real GitHub title (no fallback downgrade)', async () => {
+  const githubCalls = [];
+  const { subject, restore } = loadWithStubs({
+    // A throwing LLM drives the local generatePrMetadata wrapper onto its
+    // fallback-template path ("evan's changes", fallback: true).
+    onGenerate: () => { throw new Error('LLM unavailable'); }, githubCalls,
+    createPR: prExists,
+    findOpenPrByBranch: async () => ({ number: 77, html_url: 'https://example/pr/77', title: 'Real generated title' }),
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    const res = await subject.applyPrMetadata({
+      pool, session, repoOwner: 'acme', repoName: 'app',
+      userMessage: 'x', ccSummary: 'y', username: 'evan',
+    });
+    // Adopted, but the fallback title never overwrites the real one.
+    assert.equal(res.prNumber, 77);
+    assert.equal(res.prTitle, 'Real generated title');
+    assert.ok(!githubCalls.some((c) => c.type === 'update'), 'no GitHub update with a fallback title');
   } finally {
     restore();
   }

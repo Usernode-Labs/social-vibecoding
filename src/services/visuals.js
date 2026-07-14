@@ -464,17 +464,24 @@ async function storeChecksSkipped(pool, sessionId, commitSha, reason) {
 // would defeat the escalation + crash-loop short-circuit — so the streak is
 // preserved when checks_commit_sha is unchanged.
 async function setChecksPending(pool, sessionId, commitSha) {
+  // $2 is spliced into both an assignment to checks_commit_sha (varchar) and
+  // IS DISTINCT FROM comparisons (inferred text). Without the explicit ::text
+  // casts postgres refuses to prepare the statement — "inconsistent types
+  // deduced for parameter $2: text versus character varying" — which made
+  // this UPDATE silently no-op (it's .catch'd non-fatal at every call site)
+  // from the day the CASE clauses landed. Stale 'passing'/'error' verdicts
+  // then survived into the merge gate while a rebuild was in flight.
   await pool.query(
     `UPDATE chat_sessions
-       SET check_state = 'pending', checks_commit_sha = $2, checks_checked_at = NOW(),
+       SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
            check_next_retry_at = NULL,
-           consecutive_check_failures = CASE WHEN checks_commit_sha IS DISTINCT FROM $2
+           consecutive_check_failures = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                              THEN 0 ELSE consecutive_check_failures END,
-           first_check_failure_at  = CASE WHEN checks_commit_sha IS DISTINCT FROM $2
+           first_check_failure_at  = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                           THEN NULL ELSE first_check_failure_at END,
-           check_error_detail      = CASE WHEN checks_commit_sha IS DISTINCT FROM $2
+           check_error_detail      = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                           THEN NULL ELSE check_error_detail END,
-           check_error_notified_at = CASE WHEN checks_commit_sha IS DISTINCT FROM $2
+           check_error_notified_at = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                           THEN NULL ELSE check_error_notified_at END
      WHERE id = $1`,
     [sessionId, commitSha || null]

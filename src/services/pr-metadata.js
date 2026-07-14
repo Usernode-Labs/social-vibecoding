@@ -481,15 +481,59 @@ async function applyPrMetadata({
       if (broadcast) broadcast('pr_created', { prNumber: pr.number, prUrl: pr.html_url, prTitle });
       return { prNumber: pr.number, prUrl: pr.html_url, prTitle };
     } catch (err) {
-      log.warn('pr-metadata', 'PR creation failed', {
-        err: err.message, sessionId: session.id, code: err.code || null,
-      });
-      // Re-throw the typed "branch has no pushed commits" failure so the
-      // caller can give the user an honest, non-transient message
-      // instead of the generic "try again in a moment". Other failures
-      // stay best-effort (return null) as before.
-      if (err && err.code === 'no_commits') throw err;
-      return null;
+      // 422 "A pull request already exists for <branch>": the PR is real
+      // but this session row never learned its number — the restart race
+      // (the old process created the PR on GitHub and died before the DB
+      // write landed; session 2262, 2026-07-14). Every later createPR
+      // 422s forever, wedging staging recovery AND user-driven promotion
+      // ("Could not create the pull request... Please retry" in a loop).
+      // Heal by adopting the existing open PR: persist its number/url and
+      // fall through to the existing-PR update path below, which brings
+      // the title/body up to date exactly as a normal turn would.
+      if (err && err.code === 'pr_exists') {
+        let existing = null;
+        try {
+          existing = await github.findOpenPrByBranch(repoOwner, repoName, session.branch_name);
+        } catch (lookupErr) {
+          log.warn('pr-metadata', 'Existing-PR lookup failed after pr_exists', {
+            sessionId: session.id, err: lookupErr.message,
+          });
+        }
+        if (!existing) {
+          // 422 said it exists but the lookup can't see it (closed in the
+          // interim, or a transient API failure) — stay best-effort.
+          log.warn('pr-metadata', 'PR exists on GitHub but could not be adopted', {
+            sessionId: session.id, branch: session.branch_name,
+          });
+          return null;
+        }
+        session.pr_number = existing.number;
+        session.pr_url = existing.html_url;
+        // Adopt GitHub's current title as the known-applied title so the
+        // update gate below compares against reality (and #249's mirror
+        // keeps the session display name consistent in the meantime).
+        session.pr_title = existing.title || null;
+        session.session_title = existing.title || session.session_title;
+        await pool.query(
+          `UPDATE chat_sessions SET pr_number = $1, pr_url = $2, pr_title = $3, session_title = COALESCE($3, session_title) WHERE id = $4`,
+          [existing.number, existing.html_url, existing.title || null, session.id]
+        );
+        log.info('pr-metadata', 'Adopted existing PR after pr_exists', {
+          sessionId: session.id, prNumber: existing.number, branch: session.branch_name,
+        });
+        if (broadcast) broadcast('pr_created', { prNumber: existing.number, prUrl: existing.html_url, prTitle: existing.title });
+        // Fall through to the existing-PR path below.
+      } else {
+        log.warn('pr-metadata', 'PR creation failed', {
+          err: err.message, sessionId: session.id, code: err.code || null,
+        });
+        // Re-throw the typed "branch has no pushed commits" failure so the
+        // caller can give the user an honest, non-transient message
+        // instead of the generic "try again in a moment". Other failures
+        // stay best-effort (return null) as before.
+        if (err && err.code === 'no_commits') throw err;
+        return null;
+      }
     }
   }
 

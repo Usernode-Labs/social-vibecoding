@@ -4035,9 +4035,8 @@ const DevChat = {
               <select id="dc-model-select" class="rounded bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-xs text-zinc-700 dark:text-zinc-300 focus:outline-none focus:ring-2 focus:ring-violet-500">
                 ${modelOptions}
               </select>
-              <input type="file" id="dc-file-input" class="hidden" multiple
-                accept=".png,.jpg,.jpeg,.gif,.webp,.txt,.md,.markdown,.csv,.tsv,.json,.log,.yaml,.yml,.xml,.html,.css,.js,.jsx,.ts,.tsx,.py,.rb,.go,.rs,.java,.sql,.sh,image/png,image/jpeg,image/gif,image/webp">
-              <button type="button" id="dc-attach-btn" title="Attach files — images (PNG/JPEG/GIF/WebP, ≤4 MB) or text files (≤200 KB), up to 4 per message" aria-label="Attach files"
+              <input type="file" id="dc-file-input" class="hidden" multiple>
+              <button type="button" id="dc-attach-btn" title="Attach files — images (≤4 MB), text/code files (≤200 KB), zip archives (≤20 MB), or any other file (≤10 MB); up to 4 per message" aria-label="Attach files"
                 class="dc-attach-btn rounded border border-zinc-300 dark:border-zinc-700 bg-zinc-100 dark:bg-zinc-900 text-zinc-500 hover:text-violet-400 hover:border-violet-500 px-1.5 py-1 shrink-0 transition-colors">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
               </button>
@@ -4181,12 +4180,17 @@ const DevChat = {
   // or abandoned uploads are GC'd server-side after 24h.
   pendingAttachments: [],
 
+  // Any file type is accepted: images and .zip classify by extension,
+  // everything else is sniffed — readable UTF-8 under the text cap
+  // becomes 'text' (inlined into prompts), the rest rides the 'binary'
+  // pass-through (delivered to the coding agent as a workspace file).
   ATTACH_LIMITS: {
     maxPerMessage: 4,
     maxImageBytes: 4 * 1024 * 1024,
     maxTextBytes: 200 * 1024,
+    maxZipBytes: 20 * 1024 * 1024,
+    maxBinaryBytes: 10 * 1024 * 1024,
     imageExts: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
-    textExts: ['txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log', 'yaml', 'yml', 'xml', 'html', 'css', 'js', 'jsx', 'ts', 'tsx', 'py', 'rb', 'go', 'rs', 'java', 'sql', 'sh'],
   },
 
   _setupAttachments() {
@@ -4247,6 +4251,41 @@ const DevChat = {
     }
   },
 
+  // Mirror the server's four-way classifier (src/services/attachments.js
+  // validateUpload) closely enough to give instant feedback on obvious
+  // size problems; the server remains authoritative (zip safety
+  // validation is server-side only). Reads the file's bytes for the
+  // UTF-8 sniff — files are capped at 20 MB so this stays cheap.
+  async _classifyFile(file) {
+    const L = DevChat.ATTACH_LIMITS;
+    const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+    if (L.imageExts.includes(ext)) {
+      if (file.size > L.maxImageBytes) {
+        return { error: `"${file.name}" is too big — images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.` };
+      }
+      return { kind: 'image' };
+    }
+    if (ext === 'zip') {
+      if (file.size > L.maxZipBytes) {
+        return { error: `"${file.name}" is too big — zip archives max ${Math.round(L.maxZipBytes / 1024 / 1024)} MB.` };
+      }
+      return { kind: 'zip' };
+    }
+    if (file.size > L.maxBinaryBytes) {
+      return { error: `"${file.name}" is too big — files max ${Math.round(L.maxBinaryBytes / 1024 / 1024)} MB.` };
+    }
+    if (file.size <= L.maxTextBytes) {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (!bytes.includes(0)) {
+          new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+          return { kind: 'text' };
+        }
+      } catch {}
+    }
+    return { kind: 'binary' };
+  },
+
   async _addFiles(fileList) {
     if (!DevChat.currentSession || DevChat.isStreaming) return;
     DevChat._setAttachError(null);
@@ -4257,29 +4296,20 @@ const DevChat = {
         DevChat._setAttachError(`Up to ${L.maxPerMessage} files per message.`);
         break;
       }
-      const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
-      const isImage = L.imageExts.includes(ext);
-      const isText = L.textExts.includes(ext);
-      if (!isImage && !isText) {
-        DevChat._setAttachError(`"${file.name}" isn't supported — attach an image (PNG/JPEG/GIF/WebP) or a text file.`);
-        continue;
-      }
-      if (isImage && file.size > L.maxImageBytes) {
-        DevChat._setAttachError(`"${file.name}" is too big — images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.`);
-        continue;
-      }
-      if (isText && file.size > L.maxTextBytes) {
-        DevChat._setAttachError(`"${file.name}" is too big — text files max ${Math.round(L.maxTextBytes / 1024)} KB.`);
+      const classified = await DevChat._classifyFile(file);
+      if (classified.error) {
+        DevChat._setAttachError(classified.error);
         continue;
       }
       const entry = {
         sessionId: sid,
         uploading: true,
         id: null,
-        kind: isImage ? 'image' : 'text',
+        kind: classified.kind,
         filename: file.name,
         sizeBytes: file.size,
-        objectUrl: isImage ? URL.createObjectURL(file) : null,
+        meta: null,
+        objectUrl: classified.kind === 'image' ? URL.createObjectURL(file) : null,
       };
       DevChat.pendingAttachments.push(entry);
       DevChat._renderAttachStrip();
@@ -4293,6 +4323,7 @@ const DevChat = {
         if (!res.ok) throw new Error(data?.error || `Upload failed (HTTP ${res.status})`);
         entry.id = data.id;
         entry.kind = data.kind;
+        entry.meta = data.meta || null;
         entry.uploading = false;
       } catch (err) {
         DevChat.pendingAttachments = DevChat.pendingAttachments.filter((a) => a !== entry);
@@ -4332,6 +4363,18 @@ const DevChat = {
     return `${n} B`;
   },
 
+  // Small kind badge for zip/binary chips ("ZIP · 214 files", "BIN").
+  // '' for image/text, which stay visually as before.
+  _attachKindBadgeHtml(a) {
+    if (a.kind === 'zip') {
+      const count = a.meta && Number.isFinite(Number(a.meta.entryCount))
+        ? ` · ${a.meta.entryCount} files` : '';
+      return `<span class="dc-attach-kind">ZIP${count}</span>`;
+    }
+    if (a.kind === 'binary') return '<span class="dc-attach-kind">BIN</span>';
+    return '';
+  },
+
   _renderAttachStrip() {
     const strip = document.getElementById('dc-attachments');
     if (!strip) return;
@@ -4350,7 +4393,7 @@ const DevChat = {
       if (a.kind === 'image' && a.objectUrl) {
         return `<div class="dc-attach-item"><img class="dc-attach-thumb" src="${a.objectUrl}" alt="${name}" title="${name}">${removeBtn}</div>`;
       }
-      return `<div class="dc-attach-item dc-attach-chip" title="${name}"><span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span>${removeBtn}</div>`;
+      return `<div class="dc-attach-item dc-attach-chip" title="${name}">${DevChat._attachKindBadgeHtml(a)}<span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span>${removeBtn}</div>`;
     }).join('');
     strip.querySelectorAll('.dc-attach-remove').forEach((btn) => {
       btn.addEventListener('click', () => DevChat._removeAttachment(Number(btn.dataset.attachIdx)));
@@ -4373,7 +4416,7 @@ const DevChat = {
       if (a.kind === 'image') {
         return `<a href="${url}" target="_blank" rel="noopener" title="${name} — open full size"><img class="dc-msg-att-img" src="${url}" alt="${name}" loading="lazy"></a>`;
       }
-      return `<a class="dc-msg-att-chip" href="${url}" download="${name}" title="Download ${name}"><span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span></a>`;
+      return `<a class="dc-msg-att-chip" href="${url}" download="${name}" title="Download ${name}">${DevChat._attachKindBadgeHtml(a)}<span class="dc-attach-name">${name}</span><span class="dc-attach-size">${DevChat._humanSize(a.sizeBytes)}</span></a>`;
     }).filter(Boolean).join('');
     return items ? `<div class="dc-msg-attachments">${items}</div>` : '';
   },

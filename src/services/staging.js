@@ -44,7 +44,62 @@ class PrivateSecretMissingStagingDefaultError extends Error {
 // public/js/dev-host.js — this keeps laptop + phone-on-LAN working without
 // any env-var config.
 
+// Per-session staging-build serialization + same-commit coalescing.
+//
+// Staging builds for one session are triggered from several independent
+// places — a worker push, the startup/interval recovery sweeper, the
+// stale-pending vote kick, the manual deploy button — and nothing used to
+// stop two of them running concurrently. The failure mode is nasty
+// because a build's slowest step is cloning the prod DB (pg_dump |
+// pg_restore, minutes for big apps) and a build BEGINS by dropping any
+// prior clone via pg_terminate_backend: build B's teardown kills build
+// A's in-flight pg_restore mid-COPY ("server closed the connection
+// unexpectedly"), A dies loudly, records a checks 'error', and posts a
+// scary ⚠ to the session chat — for a failure that was pure friendly
+// fire (session 2258, 2026-07-14). The two builds also share the
+// /tmp/usernode-staging-<id> checkout dir, so B's rm -rf could yank A's
+// tree mid-build.
+//
+// Same single-process reasoning as serializeRebuild below: an in-process
+// chain keyed by session id is sufficient. Builds for one session run
+// one-at-a-time; different sessions still build in parallel. As a bonus,
+// a caller requesting the SAME commit as the in-flight/queued build joins
+// it and shares the result instead of rebuilding an identical image+clone
+// back-to-back ('latest' never coalesces — it can point at different
+// content at different times).
+const _stagingBuilds = new Map(); // sessionId -> { commitHash, promise, tail }
+
 async function buildAndDeployStaging(config, session, app, commitHash) {
+  const key = session.id;
+  const current = _stagingBuilds.get(key);
+  if (current && commitHash && commitHash !== 'latest' && current.commitHash === commitHash) {
+    log.info('staging', 'Joining in-flight staging build for same commit', {
+      sessionId: key, commitHash,
+    });
+    return current.promise;
+  }
+  const prevTail = current ? current.tail : Promise.resolve();
+  // Run after the predecessor settles either way — a failed build must
+  // not block the next one (it's often exactly the retry that heals it).
+  const promise = prevTail.then(
+    () => buildAndDeployStagingInner(config, session, app, commitHash),
+    () => buildAndDeployStagingInner(config, session, app, commitHash)
+  );
+  // The stored tail never rejects, so waiters always run and no unhandled
+  // rejection is parked on the chain; callers still get the real result
+  // or the real error via `promise`.
+  const tail = promise.then(() => {}, () => {});
+  const entry = { commitHash, promise, tail };
+  _stagingBuilds.set(key, entry);
+  tail.then(() => {
+    // Self-clean once we're the last link so idle sessions don't leak
+    // entries. Identity-guarded so a newer queued build isn't dropped.
+    if (_stagingBuilds.get(key) === entry) _stagingBuilds.delete(key);
+  });
+  return promise;
+}
+
+async function buildAndDeployStagingInner(config, session, app, commitHash) {
   const containerName = `usernode-staging-${app.slug}--${session.id}`;
   const imageName = `usernode-staging-${app.slug}-${session.id}:${commitHash.substring(0, 6)}`;
 
