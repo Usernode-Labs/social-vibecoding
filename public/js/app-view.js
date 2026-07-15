@@ -2042,13 +2042,20 @@ const AppView = {
   },
 
   // Compact "time remaining" label for the merge-window countdown pill.
-  // ~Xd above a day, ~Xh above an hour, ~Xm (min 1) below.
+  // Two-unit, floor-rounded (#627): ~Xd Yh above a day, ~Xh Ym above an
+  // hour, ~Xm (min 1) below — zero second units are omitted (~2d, ~5h).
   _fmtCountdown(ms) {
     const s = Math.max(0, Math.round(ms / 1000));
     const d = Math.floor(s / 86400);
-    if (d >= 1) return `~${d}d`;
+    if (d >= 1) {
+      const h = Math.floor((s % 86400) / 3600);
+      return h >= 1 ? `~${d}d ${h}h` : `~${d}d`;
+    }
     const h = Math.floor(s / 3600);
-    if (h >= 1) return `~${h}h`;
+    if (h >= 1) {
+      const m = Math.floor((s % 3600) / 60);
+      return m >= 1 ? `~${h}h ${m}m` : `~${h}h`;
+    }
     const m = Math.max(1, Math.floor(s / 60));
     return `~${m}m`;
   },
