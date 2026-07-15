@@ -1880,11 +1880,16 @@ const AppView = {
     }
     if (AppView._getViewMode() === 'pm') {
       // PM view: a single scrolling container of per-assignee sections plus
-      // an Unassigned section. No filter bar, no #gc-merged block (merged +
-      // gov are excluded from this overview). The container node is rebuilt
-      // on switch-in; ordinary repaints replace only its innerHTML.
-      if (!document.getElementById('dev-pm')) {
-        body.innerHTML = '<div id="dev-pm"></div>';
+      // an Unassigned section. No #gc-merged block (merged + gov are
+      // excluded from this overview). #625: the kanban filter bar mounts
+      // here too — same two-node shell as the kanban branch, sharing
+      // _kanbanFilters and its per-app persistence, so filters survive the
+      // kanban↔PM toggle and the bar node stays stable across repaints.
+      if (!document.getElementById('dev-kanban-filterbar')
+          || !document.getElementById('dev-pm')) {
+        AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
+        body.innerHTML = '<div id="dev-kanban-filterbar" class="mb-2"></div><div id="dev-pm"></div>';
+        AppView._renderKanbanFilterBar();
       }
       AppView._repaintPmView();
       return;
@@ -2360,10 +2365,19 @@ const AppView = {
         `<option value="${escapeAttr(name)}"${f.assignee === name ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('');
   },
 
+  // #625: the filter bar is shared between the kanban and PM views, but
+  // each mode repaints a different surface. Every bar control routes its
+  // change through this dispatcher instead of calling _repaintKanbanBoard
+  // directly (which no-ops when #dev-kanban-board isn't mounted).
+  _repaintBoardSurface() {
+    if (AppView._getViewMode() === 'pm') AppView._repaintPmView();
+    else AppView._repaintKanbanBoard();
+  },
+
   // Build the filter bar into #dev-kanban-filterbar and wire its controls.
-  // Called once per kanban mount (and by Clear, to reset control values);
-  // ordinary board repaints leave this node untouched so the search input
-  // keeps its focus and text.
+  // Called once per kanban / PM mount (and by Clear, to reset control
+  // values); ordinary board repaints leave this node untouched so the
+  // search input keeps its focus and text.
   _renderKanbanFilterBar() {
     const el = document.getElementById('dev-kanban-filterbar');
     if (!el) return;
@@ -2396,29 +2410,29 @@ const AppView = {
       clearTimeout(debounce);
       debounce = setTimeout(() => {
         AppView._kanbanFilters.q = input.value;
-        AppView._repaintKanbanBoard();
+        AppView._repaintBoardSurface();
       }, 150);
     });
     el.querySelector('#dev-kanban-priority').addEventListener('change', (ev) => {
       AppView._kanbanFilters.priority = ev.target.value || null;
-      AppView._repaintKanbanBoard();
+      AppView._repaintBoardSurface();
     });
     el.querySelector('#dev-kanban-assignee').addEventListener('change', (ev) => {
       AppView._kanbanFilters.assignee = ev.target.value || null;
-      AppView._repaintKanbanBoard();
+      AppView._repaintBoardSurface();
     });
     const chip = el.querySelector('#dev-kanban-needsvote');
     chip.addEventListener('click', () => {
       AppView._kanbanFilters.needsVote = !AppView._kanbanFilters.needsVote;
       chip.className = AppView._kanbanNeedsVoteChipCls(AppView._kanbanFilters.needsVote);
       chip.setAttribute('aria-pressed', AppView._kanbanFilters.needsVote ? 'true' : 'false');
-      AppView._repaintKanbanBoard();
+      AppView._repaintBoardSurface();
     });
     el.querySelector('#dev-kanban-clear').addEventListener('click', () => {
       AppView._kanbanFilters = AppView._defaultKanbanFilters();
       // Rebuild the bar so every control snaps back to its default value.
       AppView._renderKanbanFilterBar();
-      AppView._repaintKanbanBoard();
+      AppView._repaintBoardSurface();
     });
   },
 
@@ -2822,10 +2836,27 @@ const AppView = {
   // exact per-kind card renderers the list/kanban modes use, so every card
   // keeps its buttons, badges, and data-*-row open hooks.
   _renderPmInner() {
-    const { groups, unassigned, unassignedTotal } = AppView._groupByAssignee({
-      issues: AppView._visibleGhIssues(),
-      proposals: AppView._proposals || [],
-    });
+    // #625: apply the shared filter bar BEFORE grouping — unlike kanban's
+    // post-bucket rule, PM grouping has no cross-item dedup, so a
+    // filtered-out card simply vanishes and each person's header count
+    // reflects exactly the cards rendered under it. _groupByAssignee stays
+    // pure and filter-unaware.
+    const f = AppView._kanbanFilters || {};
+    const filtering = AppView._kanbanFiltersActive();
+    let issues = AppView._visibleGhIssues();
+    let proposals = AppView._proposals || [];
+    if (filtering) {
+      issues = issues.filter((i) => AppView._devCardMatches('issue', i, f));
+      proposals = proposals.filter((p) => AppView._devCardMatches('proposal', p, f));
+    }
+    const { groups, unassigned, unassignedTotal } = AppView._groupByAssignee({ issues, proposals });
+
+    // With a user filter active, the Unassigned section can never match —
+    // hide it rather than rendering a permanently-empty stub.
+    const showUnassigned = !f.assignee;
+    if (filtering && !groups.length && (!showUnassigned || unassignedTotal === 0)) {
+      return '<div class="space-y-5"><div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">No cards match the current filters.</div></div>';
+    }
 
     const renderCard = (c) => (c.kind === 'proposal'
       ? AppView._renderProposalCard(c.item)
@@ -2843,27 +2874,32 @@ const AppView = {
         );
         html += `<div>${head}<div class="space-y-2">${g.items.map(renderCard).join('')}</div></div>`;
       }
-    } else {
+    } else if (!filtering) {
+      // While filtering, an empty assigned area with matches below needs no
+      // placeholder — the Unassigned section speaks for itself.
       html += '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">No tasks are assigned to anyone yet.</div>';
     }
 
-    // Unassigned section — always shown; lists the most recent open work
-    // with no assignee, capped, with a "+N more" note when truncated.
-    const unHead = sectionHead(
-      `${AppView._assigneeAvatarPlaceholderHtml()}<span class="normal-case">Unassigned</span>`
-      + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${unassignedTotal}</span>`
-    );
-    let unBody;
-    if (unassigned.length) {
-      unBody = `<div class="space-y-2">${unassigned.map(renderCard).join('')}</div>`;
-      if (unassignedTotal > unassigned.length) {
-        const moreCount = unassignedTotal - unassigned.length;
-        unBody += `<div class="mt-2"><span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more unassigned</span></div>`;
+    // Unassigned section — shown unless a user filter is active; lists the
+    // most recent open work with no assignee, capped, with a "+N more" note
+    // when truncated. The cap and count apply AFTER filtering.
+    if (showUnassigned) {
+      const unHead = sectionHead(
+        `${AppView._assigneeAvatarPlaceholderHtml()}<span class="normal-case">Unassigned</span>`
+        + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${unassignedTotal}</span>`
+      );
+      let unBody;
+      if (unassigned.length) {
+        unBody = `<div class="space-y-2">${unassigned.map(renderCard).join('')}</div>`;
+        if (unassignedTotal > unassigned.length) {
+          const moreCount = unassignedTotal - unassigned.length;
+          unBody += `<div class="mt-2"><span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more unassigned</span></div>`;
+        }
+      } else {
+        unBody = '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing unassigned.</div>';
       }
-    } else {
-      unBody = '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing unassigned.</div>';
+      html += `<div>${unHead}${unBody}</div>`;
     }
-    html += `<div>${unHead}${unBody}</div>`;
 
     html += '</div>';
     return html;
@@ -2875,10 +2911,16 @@ const AppView = {
   _repaintPmView() {
     const el = document.getElementById('dev-pm');
     if (!el) return;
+    // #625: every PM-mode filter-control change funnels through here (via
+    // _repaintBoardSurface), so — mirroring _repaintKanbanBoard — persist
+    // the shared per-app filters and keep the bar's Clear link / assignee
+    // options in sync after the paint.
+    AppView._saveKanbanFilters(App.currentApp);
     el.innerHTML = AppView._renderPmInner();
     AppView._syncHeadlessPolling();
     if (window.Kudos) Kudos.attach(el);
     AppView._applyAskAiCardAvailability(el);
+    AppView._updateKanbanFilterBarUI();
   },
 
   // ── Session cards in the In progress area ──────────────────────────
