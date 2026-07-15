@@ -188,6 +188,13 @@ function missingRequired(manifest, storedKeys) {
  *                                deploys (the dapp running outside
  *                                the platform).
  *
+ * Platform-default keys the manifest does NOT declare are injected
+ * unconditionally (issue #629): declaring a platform-managed key like
+ * `NODE_RPC_URL` in dapp.json is optional, so an app that reads it
+ * without declaring it still gets the platform's value. Declared keys
+ * are untouched by this — they resolve exactly per the precedence
+ * above, including the private-in-staging rules below.
+ *
  * Private secrets in staging (sibling to the SQL `staging:private`
  * pattern — see app-conventions.md "Public vs private secrets"):
  *   When `opts.forStaging` is true and a manifest entry has
@@ -215,8 +222,10 @@ function mergeForDeploy(manifest, storedValues, platformDefaults, opts = {}) {
   const missingPrivateStagingDefault = [];
   const platform = platformDefaults || {};
   const stored = storedValues || {};
+  const declared = new Set();
 
   for (const s of manifest.secrets) {
+    declared.add(s.key);
     const isPrivateInStaging = forStaging && !!s.private;
 
     if (isPrivateInStaging) {
@@ -240,6 +249,17 @@ function mergeForDeploy(manifest, storedValues, platformDefaults, opts = {}) {
     } else if (s.required) {
       missing.push(s.key);
     }
+  }
+
+  // Platform-managed keys are injected even when the manifest never
+  // declares them (issue #629: an app reading NODE_RPC_URL without a
+  // dapp.json entry crash-looped because the platform value was
+  // silently dropped). Declared keys keep the full resolution above —
+  // this only fills keys the loop never saw.
+  for (const [key, value] of Object.entries(platform)) {
+    if (declared.has(key)) continue;
+    if (value == null) continue;
+    env[key] = value;
   }
 
   return { env, missingRequired: missing, missingPrivateStagingDefault };
