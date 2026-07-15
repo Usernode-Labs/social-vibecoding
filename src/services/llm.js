@@ -624,7 +624,7 @@ async function generateIssueTitle({ description, apiKey }) {
     max_tokens: 60,
     messages: [{
       role: 'user',
-      content: `Write a short GitHub issue title (5-10 words, no quotes) for this feedback:\n\n${stripLoneSurrogates(description).trim()}`,
+      content: `Write a short GitHub issue title (5-10 words, no quotes) for this feedback. Phrase it as an imperative action starting with a verb (e.g. "Fix broken leaderboard sort", "Add dark mode toggle"), not a noun phrase or description:\n\n${stripLoneSurrogates(description).trim()}`,
     }],
   });
   const title = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
