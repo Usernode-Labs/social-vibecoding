@@ -542,11 +542,14 @@ stored value):
 |---|---|---|
 | `NODE_RPC_URL` | platform's own `process.env.NODE_RPC_URL` | Points at `usernode-node` (in-network) in prod; `host.docker.internal:3001` in local-dev. Hardcoding either in the manifest breaks the other. |
 
-You may still declare these in `dapp.json` with a `default` — that
-becomes the fallback for standalone (non-platform) deploys. Just
-know that inside the platform the manifest default will be replaced
-with the platform's value automatically, unless a user explicitly
-stored an override.
+Declaring these in `dapp.json` is **optional** — the platform injects
+its value into every deploy (production and staging) whether or not
+the manifest mentions the key, so code may read
+`process.env.NODE_RPC_URL` without a manifest entry. You may still
+declare them with a `default` — that becomes the fallback for
+standalone (non-platform) deploys. Just know that inside the platform
+the manifest default will be replaced with the platform's value
+automatically, unless a user explicitly stored an override.
 
 **When the Mayor / Claude Code adds a feature that needs a new env var**:
 
