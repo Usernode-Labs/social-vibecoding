@@ -197,7 +197,7 @@ const Notifications = {
     // A live collab invite needs the authoritative pendingInvites list
     // (the notification row alone can't drive the actionable section) —
     // refresh re-pulls it along with the first page.
-    if (notif.kind === 'collab_invite') {
+    if (notif.kind === 'collab_invite' || notif.kind === 'approver_invite') {
       Notifications.refresh();
       return;
     }
@@ -507,18 +507,22 @@ const Notifications = {
     }
     const rows = Notifications.invites.map((inv) => {
       const who = inv.invitedBy ? `@${escapeHtml(inv.invitedBy)}` : 'Someone';
+      // #646: approver invites share the pinned section, with distinct
+      // copy and their own accept/decline endpoints.
+      const isApprover = inv.kind === 'approver';
+      const verb = isApprover ? 'invited you to be an approver on' : 'invited you to collaborate on';
       return `<div class="px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 bg-violet-500/5 border-l-2 border-l-violet-500" data-invite-app="${inv.appId}">
         <div class="text-xs text-zinc-500 dark:text-zinc-400 mb-1.5">
-          <span aria-hidden="true">✉️</span>
+          <span aria-hidden="true">${isApprover ? '🗳️' : '✉️'}</span>
           <span class="font-medium text-zinc-800 dark:text-zinc-200">${who}</span>
-          invited you to collaborate on
+          ${verb}
           <span class="font-medium text-zinc-700 dark:text-zinc-300">${escapeHtml(inv.appName || inv.appSlug || 'an app')}</span>
           <span class="text-zinc-500">· ${relativeTime(inv.createdAt)}</span>
         </div>
         <div class="flex gap-2">
-          <button data-invite-accept="${inv.appId}" data-invite-slug="${escapeHtml(inv.appSlug || '')}"
+          <button data-invite-accept="${inv.appId}" data-invite-slug="${escapeHtml(inv.appSlug || '')}" data-invite-kind="${isApprover ? 'approver' : 'collab'}"
             class="rounded-md bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white transition-colors">Accept</button>
-          <button data-invite-decline="${inv.appId}"
+          <button data-invite-decline="${inv.appId}" data-invite-kind="${isApprover ? 'approver' : 'collab'}"
             class="rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1 text-xs font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Decline</button>
         </div>
       </div>`;
@@ -533,26 +537,36 @@ const Notifications = {
     box.querySelectorAll('[data-invite-accept]').forEach((el) => {
       el.addEventListener('click', (e) => {
         e.stopPropagation();
-        Notifications._acceptInvite(Number(el.getAttribute('data-invite-accept')), el.getAttribute('data-invite-slug'));
+        Notifications._acceptInvite(
+          Number(el.getAttribute('data-invite-accept')),
+          el.getAttribute('data-invite-slug'),
+          el.getAttribute('data-invite-kind') || 'collab'
+        );
       });
     });
     box.querySelectorAll('[data-invite-decline]').forEach((el) => {
       el.addEventListener('click', (e) => {
         e.stopPropagation();
-        Notifications._declineInvite(Number(el.getAttribute('data-invite-decline')));
+        Notifications._declineInvite(
+          Number(el.getAttribute('data-invite-decline')),
+          el.getAttribute('data-invite-kind') || 'collab'
+        );
       });
     });
   },
 
-  _removeInviteLocal(appId) {
-    Notifications.invites = Notifications.invites.filter((i) => i.appId !== appId);
+  _removeInviteLocal(appId, kind) {
+    Notifications.invites = Notifications.invites.filter(
+      (i) => !(i.appId === appId && (i.kind || 'collab') === (kind || 'collab'))
+    );
     Notifications._renderBadge();
     Notifications._renderInvites();
   },
 
-  async _acceptInvite(appId, slug) {
+  async _acceptInvite(appId, slug, kind) {
+    const base = kind === 'approver' ? '/api/approver-invites' : '/api/invites';
     try {
-      const res = await fetch(`/api/invites/${appId}/accept`, { method: 'POST' });
+      const res = await fetch(`${base}/${appId}/accept`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         alert(data.error || `Accept failed (HTTP ${res.status})`);
@@ -560,9 +574,9 @@ const Notifications = {
         Notifications.refresh();
         return;
       }
-      Notifications._removeInviteLocal(appId);
-      // Pull the fresh state (the collab_invite row is now read) and
-      // refresh the home grid — a view-private app just became visible.
+      Notifications._removeInviteLocal(appId, kind);
+      // Pull the fresh state (the invite row is now read) and refresh
+      // the home grid — a view-private app just became visible.
       Notifications.refresh();
       if (typeof Home !== 'undefined' && document.getElementById('home-screen') &&
           !document.getElementById('home-screen').classList.contains('hidden')) {
@@ -577,14 +591,15 @@ const Notifications = {
     }
   },
 
-  async _declineInvite(appId) {
+  async _declineInvite(appId, kind) {
+    const base = kind === 'approver' ? '/api/approver-invites' : '/api/invites';
     try {
-      const res = await fetch(`/api/invites/${appId}/decline`, { method: 'POST' });
+      const res = await fetch(`${base}/${appId}/decline`, { method: 'POST' });
       if (!res.ok) {
         Notifications.refresh();
         return;
       }
-      Notifications._removeInviteLocal(appId);
+      Notifications._removeInviteLocal(appId, kind);
       Notifications.refresh();
     } catch (err) {
       console.warn('[notifications] declineInvite failed', err);
@@ -877,6 +892,8 @@ function previewText(n) {
     case 'spec_shared': return `\u{1F4CB} ${who} shared a spec with you`;
     case 'collab_invite':          return `✉️ ${who} invited you to collaborate`;
     case 'collab_invite_accepted': return `✅ ${who} accepted your invite`;
+    case 'approver_invite':          return `🗳️ ${who} invited you to be an approver`;
+    case 'approver_invite_accepted': return `✅ ${who} accepted your approver invite`;
     case 'session_done':           return `✅ Your dev session finished`;
     case 'auto_solve_done':
       return n.detail === 'failed'
@@ -1075,11 +1092,17 @@ function renderRow(n) {
   // Collab-invite history rows (the actionable Accept/Decline buttons
   // live ONLY in the pinned Invites section, driven by pendingInvites —
   // once resolved this is just a plain history row).
-  if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted') {
+  if (n.kind === 'collab_invite' || n.kind === 'collab_invite_accepted'
+    || n.kind === 'approver_invite' || n.kind === 'approver_invite_accepted') {
     const verb = n.kind === 'collab_invite'
       ? 'invited you to collaborate on'
-      : 'accepted your invite to collaborate on';
-    const icon = n.kind === 'collab_invite' ? '✉️' : '✅';
+      : n.kind === 'collab_invite_accepted'
+        ? 'accepted your invite to collaborate on'
+        : n.kind === 'approver_invite'
+          ? 'invited you to be an approver on'
+          : 'accepted your approver invite on';
+    const icon = n.kind === 'collab_invite' ? '✉️'
+      : n.kind === 'approver_invite' ? '🗳️' : '✅';
     return `<button data-notif-id="${n.id}" class="w-full text-left px-3 py-2.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800/60 transition-colors ${unreadCls}">
       <div class="text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-1 flex-wrap">
         ${dot}

@@ -1279,6 +1279,27 @@ const App = {
           AppView._renderMembersVisPills();
         }
       }
+    } else if (data.action === 'governance_changed') {
+      // Proposal-approval settings applied (a merged governance PR's
+      // deploy-time reconcile — issue #646). Patch the open app's
+      // in-memory row and re-render the modal's pills if it's open.
+      if (App.currentApp === data.appSlug
+          && typeof AppView !== 'undefined' && AppView.appData) {
+        AppView.appData.approver_policy = data.approverPolicy;
+        AppView.appData.approvals_required = data.approvalsRequired;
+        const membersModal = document.getElementById('members-modal');
+        if (membersModal && !membersModal.classList.contains('hidden')
+            && AppView._renderMembersGovPills) {
+          AppView._membersGov = {
+            policy: data.approverPolicy === 'invited' ? 'invited' : 'anyone',
+            atLeast: data.approvalsRequired != null ? Number(data.approvalsRequired) : null,
+          };
+          AppView._renderMembersGovPills();
+        }
+        if (App.currentTab === 'dev' && AppView.refreshDevData) {
+          AppView.refreshDevData('governance');
+        }
+      }
     }
   },
 
@@ -2477,15 +2498,20 @@ const App = {
       drs.classList.remove('hidden');
     }
     // Members & visibility drawer row: creator/admin always (visibility
-    // control), collaborators of an invite-only app too (member list +
-    // invites). Hidden for the self-app (no invites there) and for
-    // everyone else.
+    // + proposal-approval controls), collaborators of an invite-only app
+    // too (member list + invites), and anyone who can collaborate on an
+    // invited-approvers app (read-only approver roster). For the
+    // self-app (#646) the row shows for admins — the modal there hides
+    // the visibility/collaborator sections and offers only the
+    // Proposal-approvals + Approvers sections.
     const drm = document.getElementById('drawer-row-members');
     if (drm) {
       const a = AppView.appData;
-      const showMembers = !!a && !a.self_hosted && (
-        a.can_manage || (a.collab_visibility === 'private' && a.can_collaborate)
-      );
+      const showMembers = !!a && (a.self_hosted
+        ? a.can_manage
+        : (a.can_manage
+          || (a.collab_visibility === 'private' && a.can_collaborate)
+          || (a.approver_policy === 'invited' && a.can_collaborate)));
       drm.classList.toggle('hidden', !showMembers);
     }
     // The App tab iframes appData.url, which doesn't resolve for the self-

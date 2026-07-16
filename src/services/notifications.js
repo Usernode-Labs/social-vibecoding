@@ -371,24 +371,62 @@ async function createCollabInviteAcceptedNotification(pool, { appId, recipientId
   return rows;
 }
 
+// Approver-invite notification (kind='approver_invite', issue #646).
+// Mirror of createCollabInviteNotification: badge bump + history row;
+// the actionable accept/decline UI lives in the drawer's pinned
+// Invites section (listPendingInvites below).
+async function createApproverInviteNotification(pool, { appId, recipientId, inviterId }) {
+  if (!recipientId || !appId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
+     VALUES ($1, $2, $3, 'approver_invite')
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
+    [recipientId, appId, inviterId || null]
+  );
+  return rows;
+}
+
+// Inviter feedback (kind='approver_invite_accepted'): "@x accepted your
+// approver invite". Informational only, like collab_invite_accepted.
+async function createApproverInviteAcceptedNotification(pool, { appId, recipientId, accepterId }) {
+  if (!recipientId || !appId) return [];
+  const { rows } = await pool.query(
+    `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
+     VALUES ($1, $2, $3, 'approver_invite_accepted')
+     RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
+    [recipientId, appId, accepterId || null]
+  );
+  return rows;
+}
+
 // Pending invites for the drawer's pinned Invites section. Sourced from
-// app_collaborators (NOT the notifications table) so the section is
-// authoritative about what's still actionable — a collab_invite
-// notification row alone can't tell whether the invite was already
-// accepted/declined in another tab.
+// app_collaborators / app_approvers (NOT the notifications table) so
+// the section is authoritative about what's still actionable — a
+// collab_invite / approver_invite notification row alone can't tell
+// whether the invite was already accepted/declined in another tab.
+// Each row carries `kind: 'collab' | 'approver'` so the drawer wires
+// the right accept/decline endpoints and copy.
 async function listPendingInvites(pool, userId) {
   if (!userId) return [];
   const { rows } = await pool.query(
-    `SELECT ac.app_id, a.slug AS app_slug, a.name AS app_name,
+    `SELECT 'collab' AS kind, ac.app_id, a.slug AS app_slug, a.name AS app_name,
             ac.created_at, inv.username AS invited_by
        FROM app_collaborators ac
        JOIN apps a ON a.id = ac.app_id
        LEFT JOIN users inv ON inv.id = ac.invited_by
       WHERE ac.user_id = $1 AND ac.status = 'invited'
-      ORDER BY ac.created_at DESC`,
+     UNION ALL
+     SELECT 'approver' AS kind, ap.app_id, a.slug AS app_slug, a.name AS app_name,
+            ap.created_at, inv.username AS invited_by
+       FROM app_approvers ap
+       JOIN apps a ON a.id = ap.app_id
+       LEFT JOIN users inv ON inv.id = ap.invited_by
+      WHERE ap.user_id = $1 AND ap.status = 'invited'
+      ORDER BY created_at DESC`,
     [userId]
   );
   return rows.map((r) => ({
+    kind: r.kind,
     appId: r.app_id,
     appSlug: r.app_slug,
     appName: r.app_name,
@@ -405,6 +443,19 @@ async function markInviteNotificationsRead(pool, userId, appId) {
   const { rowCount } = await pool.query(
     `UPDATE notifications SET read_at = NOW()
       WHERE user_id = $1 AND app_id = $2 AND kind = 'collab_invite' AND read_at IS NULL`,
+    [userId, appId]
+  );
+  return rowCount || 0;
+}
+
+// Same for approver_invite rows (issue #646) — accepted, declined,
+// revoked, or auto-resolved by the app's policy flipping back to
+// 'anyone'. Idempotent.
+async function markApproverInviteNotificationsRead(pool, userId, appId) {
+  if (!userId || !appId) return 0;
+  const { rowCount } = await pool.query(
+    `UPDATE notifications SET read_at = NOW()
+      WHERE user_id = $1 AND app_id = $2 AND kind = 'approver_invite' AND read_at IS NULL`,
     [userId, appId]
   );
   return rowCount || 0;
@@ -660,8 +711,11 @@ module.exports = {
   createPrProposedNotifications,
   createCollabInviteNotification,
   createCollabInviteAcceptedNotification,
+  createApproverInviteNotification,
+  createApproverInviteAcceptedNotification,
   listPendingInvites,
   markInviteNotificationsRead,
+  markApproverInviteNotificationsRead,
   filterToCollaborators,
   listForUser,
   countUnread,

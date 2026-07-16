@@ -431,6 +431,11 @@ async function rebuildProductionInner(config, app) {
     // best-effort so it never fails the rebuild.
     await appManifest.reconcileAppVisibility(prodPool, app, manifest)
       .catch((err) => log.warn('staging', 'Visibility reconcile failed', { app: app.slug, err: err.message }));
+    // And the manifest's `governance` block (issue #646): a merged
+    // governance-change PR applies here, on the rebuild its merge
+    // triggered. No-op when the block is absent; best-effort.
+    await appManifest.reconcileAppGovernance(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Governance reconcile failed', { app: app.slug, err: err.message }));
     // And the manifest's `screenshot.deviceScaleFactor` (issue #360): a
     // merged PR that toggles the capture density applies here on the
     // rebuild it triggered. readScreenshot defaults to 2×, so this keeps
