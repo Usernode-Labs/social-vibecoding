@@ -246,6 +246,16 @@
       "expectText": "Staging demo read-only proposal"
     },
     {
+      "name": "Dev '+' menu holds rename and secrets directly, no App settings nesting (#645)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu [data-plus='rename']"
+    },
+    {
+      "name": "Dev '+' menu shows Members & visibility on a managed app (#645)",
+      "path": "/app/staging-demo-readonly/dev",
+      "expectSelector": "#dev-plus-menu [data-plus='members']"
+    },
+    {
       "name": "Errored app view shows the failure reason and build-log button",
       "path": "/app/staging-demo-failed-app",
       "expectText": "View build log",
