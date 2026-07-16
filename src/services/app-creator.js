@@ -201,6 +201,12 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
     await appManifest.reconcileAppVisibility(pool, { id: appId, slug }, manifest)
       .catch((err) => log.warn('app-creator', 'Visibility reconcile failed', { appId, err: err.message }));
 
+    // And the manifest's `governance` block (issue #646): an imported
+    // repo declaring proposal-approval settings gets them applied on
+    // this first deploy. No-op when the block is absent.
+    await appManifest.reconcileAppGovernance(pool, { id: appId, slug }, manifest)
+      .catch((err) => log.warn('app-creator', 'Governance reconcile failed', { appId, err: err.message }));
+
     // And the manifest's `screenshot.deviceScaleFactor` (issue #360):
     // persist the density the before/after preview shots are captured at
     // onto apps.screenshot_device_scale so the capture orchestrator can

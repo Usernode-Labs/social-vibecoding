@@ -2,7 +2,7 @@ const log = require('./logger');
 const github = require('./github');
 const limits = require('./limits');
 const { runSyncMain, persistConflictState } = require('./sync-main');
-const { getActiveUserStats, mergeGate } = require('./active-users');
+
 const { getPool } = require('../db/pool');
 
 // GitHub computes PR mergeability asynchronously: for a few seconds
@@ -192,7 +192,13 @@ async function drainApp(config, appId, excludeId) {
   while (true) {
     _appRekick.delete(appId);
 
-    const { active } = await getActiveUserStats(pool, appId);
+    // #646: governance-aware eligibility. Under the default settings
+    // this is the old active-user electorate + raw tallies; under
+    // 'invited' only approver votes qualify; under at-least-N the gate
+    // is the clock-free approval count.
+    const governance = require('./governance');
+    const gov = await governance.getGovernance(pool, appId);
+    const electorate = await governance.getElectorate(pool, appId, gov);
     // Highest-voted eligible promoted sibling, excluding the just-merged
     // trigger ($2) and any PR already attempted this drain ($3); tie-break
     // longest-waiting (promoted_at ASC NULLS LAST) then created_at for
@@ -228,8 +234,20 @@ async function drainApp(config, appId, excludeId) {
       const ms = Date.parse(v);
       return Number.isFinite(ms) ? ms : null;
     };
+    const qualifiedByRow = electorate.approverIds
+      ? await governance.qualifiedCountsBatch(
+        pool, 'pr', candidates.map((r) => r.id), electorate.approverIds
+      )
+      : null;
     const rows = candidates
-      .filter((r) => mergeGate(active, r.yes_count, r.no_count, r.promoted_at || r.created_at).mergeable)
+      .filter((r) => {
+        const q = qualifiedByRow
+          ? (qualifiedByRow.get(r.id) || { yes: 0, no: 0 })
+          : { yes: r.yes_count, no: r.no_count };
+        return governance.computeGate(
+          gov, electorate.active, q.yes, q.no, r.promoted_at || r.created_at
+        ).mergeable;
+      })
       .sort((a, b) => {
         if (a.unblocked !== b.unblocked) return a.unblocked ? -1 : 1;
         if (b.yes_count !== a.yes_count) return b.yes_count - a.yes_count;

@@ -119,6 +119,11 @@
       "expectSelector": ".voting-help-btn"
     },
     {
+      "name": "At-least-approvals proposal renders the approvals pill (#646)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
+      "expectText": "of 1 approval"
+    },
+    {
       "name": "Kanban filter bar renders above the board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-search"

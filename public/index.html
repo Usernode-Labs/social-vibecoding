@@ -639,6 +639,48 @@
         <div id="members-list" class="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"></div>
       </div>
 
+      <!-- Proposal approvals (issue #646): who can approve proposals +
+           how many approvals are needed. Shown to creator/admin; changes
+           open a dapp.json governance PR (POST .../governance-pr). -->
+      <div id="members-governance-section" class="hidden space-y-3 mb-4 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+        <p class="text-sm font-semibold">Proposal approvals</p>
+        <div>
+          <label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Who can approve proposals</label>
+          <div class="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+            <button type="button" data-m-approver-policy="anyone" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Everyone</button>
+            <button type="button" data-m-approver-policy="invited" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Invited approvers</button>
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">How many approvals are needed</label>
+          <div class="flex items-center gap-2">
+            <div class="flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium flex-1">
+              <button type="button" data-m-approvals-mode="default" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">Time &amp; majority</button>
+              <button type="button" data-m-approvals-mode="at_least" class="members-vis-pill flex-1 rounded-md px-3 py-1.5 transition-colors">At least</button>
+            </div>
+            <input id="members-approvals-n" type="number" min="1" max="50" value="1"
+              class="hidden w-16 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-2 py-1.5 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+          </div>
+          <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Changes open a proposal that is voted on under the current rules.</p>
+        </div>
+        <div id="members-governance-error" class="text-red-400 text-sm hidden"></div>
+      </div>
+
+      <!-- Approver roster + invite (issue #646). Shown to creator/admin
+           always (so a roster can be lined up before flipping the policy)
+           and to everyone when the policy is 'invited'. -->
+      <div id="members-approvers-section" class="hidden mb-4">
+        <p class="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Approvers</p>
+        <div id="members-approvers-list" class="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"></div>
+        <div id="members-approver-invite" class="hidden relative mt-2">
+          <input id="members-approver-invite-input" type="text" autocomplete="off" spellcheck="false"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+            placeholder="invite an approver by username">
+          <div id="members-approver-suggestions" class="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"></div>
+        </div>
+        <div id="members-approver-status" class="text-sm mt-2"></div>
+      </div>
+
       <div class="flex gap-3">
         <button type="button" id="members-close" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Close</button>
       </div>

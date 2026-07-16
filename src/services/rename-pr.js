@@ -215,6 +215,60 @@ async function createVisibilityPR(config, pool, app, { collab, view }, actor) {
   });
 }
 
+function governancePrTitle(policy, approvalsRequired) {
+  return `Change proposal approvals: ${appManifest.describeGovernance(policy, approvalsRequired)}`;
+}
+
+/**
+ * Open a governance-change PR for `app` (issue #646) — a manifest PR
+ * that sets dapp.json's top-level `governance` block to
+ * `{ approvers: policy, approvals: 'default' | { atLeast: N } }`.
+ * Caller owns validation (value set, differs-from-current,
+ * creator/admin gate, GitHub-enabled) and dedupe (findGovernancePr
+ * below). The change applies when the merged PR's production rebuild
+ * runs reconcileAppGovernance — or, for the self-hosted platform app,
+ * on the post-deploy boot's seedSelfApp reconcile.
+ */
+async function createGovernancePR(config, pool, app, { policy, approvalsRequired }, actor) {
+  const desc = appManifest.describeGovernance(policy, approvalsRequired);
+  return createManifestPR(config, pool, app, actor, {
+    mutate: (m) => {
+      m.governance = {
+        approvers: policy,
+        approvals: approvalsRequired != null ? { atLeast: approvalsRequired } : 'default',
+      };
+    },
+    branchPrefix: 'governance',
+    commitMessage: governancePrTitle(policy, approvalsRequired),
+    prTitle: governancePrTitle(policy, approvalsRequired),
+    prBody:
+      `${actor.username} (via Usernode) proposed changing "${app.name}"'s proposal-approval ` +
+      `settings to ${desc}.\n\n` +
+      `This PR updates the \`governance\` block in \`dapp.json\` (\`approvers\` = who can ` +
+      `approve proposals, \`approvals\` = how many approvals are needed). It still needs a ` +
+      `regular merge vote to land — vote in the app's group chat panel. The new settings ` +
+      `apply automatically once the PR merges and the app redeploys.`,
+    chatText: (prData, majority, activeUsers) =>
+      `${actor.username} proposed changing proposal approvals to ${desc}. Opened PR #${prData.number} — needs ${majority}/${activeUsers} votes to land.`,
+    eventMetadata: { governance: true },
+  });
+}
+
+// Returns the open governance-change PR session for an app, if any —
+// the dedupe check for POST /api/apps/:slug/governance-pr (one
+// governance proposal in flight per app, like visibility).
+async function findGovernancePr(pool, appId) {
+  const { rows } = await pool.query(
+    `SELECT id, pr_number, pr_url, pr_title FROM chat_sessions
+      WHERE app_id = $1 AND status IN ('promoted', 'merging')
+        AND branch_name LIKE 'governance/%'
+      ORDER BY id DESC
+      LIMIT 1`,
+    [appId]
+  );
+  return rows[0] || null;
+}
+
 // Returns the open visibility-change PR session for an app, if any —
 // the dedupe check for POST /api/apps/:slug/visibility-pr (only one
 // visibility proposal is allowed in flight per app, unlike renames
@@ -389,7 +443,9 @@ async function migrateOpenRenameIssues(config, pool) {
 module.exports = {
   createRenamePR,
   createVisibilityPR,
+  createGovernancePR,
   findVisibilityPr,
+  findGovernancePr,
   migrateOpenRenameIssues,
   findRenamePrForName,
   restoreIssueVotesToPr,

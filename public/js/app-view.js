@@ -1805,6 +1805,11 @@ const AppView = {
         majority,
         activeUsers,
         locked,
+        // #646: the app's configured approval settings, for the
+        // "How voting works" explainer copy.
+        approverPolicy: promotedData.approverPolicy || 'anyone',
+        approvalsRequired: promotedData.approvalsRequired != null
+          ? promotedData.approvalsRequired : null,
         lockedHint: locked
           ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
           : '',
@@ -3607,6 +3612,7 @@ const AppView = {
     + '<li>If enough people vote No, the proposal becomes <strong>Contested</strong> — the time-based path turns off and it needs a straight majority of Yes votes to merge.</li>'
     + '<li>A proposal that’s being voted down with little support is closed automatically after a countdown (“Rejecting in …”).</li>'
     + '<li>Even after winning the vote, a proposal only merges once its <strong>automated checks pass</strong> and it’s <strong>up to date with the main app</strong>. Locked apps also need an admin’s Yes.</li>'
+    + '<li>Apps can customize these rules: restricting approvals to <strong>invited approvers</strong> (everyone else’s votes stay visible but advisory) and/or requiring a fixed <strong>“at least N approvals”</strong> instead of the timed majority system.</li>'
     + '</ul>',
 
   // The live "This proposal, right now" line. Reads the serialized gate
@@ -3619,8 +3625,11 @@ const AppView = {
   _votingHelpText(pr) {
     if (!pr) return '';
     const ctx = AppView._proposalsCtx || {};
-    const yes = parseInt(pr.yes_count) || 0;
-    const no = parseInt(pr.no_count) || 0;
+    // #646: qualifying tallies when only invited approvers' votes count.
+    const yes = pr.qualified_yes_count != null
+      ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
+    const no = pr.qualified_no_count != null
+      ? (parseInt(pr.qualified_no_count) || 0) : (parseInt(pr.no_count) || 0);
     const snap = parseInt(pr.votes_required);
     const required = (Number.isFinite(snap) && snap > 0)
       ? snap : (parseInt(ctx.majority) || 1);
@@ -3654,6 +3663,28 @@ const AppView = {
       blocker = 'it’s behind the main app and will sync automatically before merging';
     } else if (reached && ctx.locked) {
       blocker = 'the app is locked, so it also needs an admin’s Yes';
+    }
+
+    // #646: "at least N approvals" mode — clock-free, so none of the
+    // countdown/contested branches below apply. Describe the configured
+    // rule, the current progress, and any merge blocker.
+    if (pr.approvals_required != null) {
+      const n = parseInt(pr.approvals_required) || 1;
+      const who = pr.approval_policy === 'invited'
+        ? 'its invited approvers' : 'any user';
+      let s;
+      if (reached) {
+        s = blocker
+          ? `It has the approvals it needs (${yes} of ${n}), but it can’t merge yet: ${blocker}.`
+          : `It has the approvals it needs (${yes} of ${n}) — queued to merge shortly.`;
+      } else {
+        s = `This app requires at least ${n} approval${n === 1 ? '' : 's'} from ${who}. Currently ${yes} of ${n}.`;
+        if (blocker) s += ` Note: ${blocker}.`;
+      }
+      if (pr.approval_policy === 'invited') {
+        s += ' Everyone can still vote, but only approvers’ votes count toward the target.';
+      }
+      return s;
     }
 
     // Countdown geometry, mirroring voteCountPill.
@@ -4109,11 +4140,22 @@ const AppView = {
       if (!res.ok) { el.textContent = ''; return; }
       const data = await res.json();
       const ctx = AppView._proposalsCtx || {};
-      const fmt = (arr) => (arr && arr.length ? arr.map((u) => '@' + u).join(', ') : '—');
+      // #646: on invited-approver apps the endpoint lists which voters'
+      // votes QUALIFY — tag those names so advisory votes are legible.
+      const approverSet = new Set(data.approvers || []);
+      const fmt = (arr) => (arr && arr.length
+        ? arr.map((u) => '@' + u + (approverSet.has(u) ? '&nbsp;✓' : '')).join(', ')
+        : '—');
+      const pr = (AppView._proposals || []).find((p) => p.id === sessionId) || {};
+      const needs = pr.approvals_required != null
+        ? ` · needs at least ${pr.approvals_required} approval${pr.approvals_required === 1 ? '' : 's'}${data.approvers ? ' from invited approvers (✓)' : ''}`
+        : (data.approvers
+          ? ` · only invited approvers' (✓) votes count`
+          : ` · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users`);
       el.innerHTML =
-        `<span class="text-emerald-500 font-medium">Yes (${(data.yes || []).length}):</span> ${escapeHtml(fmt(data.yes))}`
-        + ` &nbsp;<span class="text-red-400 font-medium">No (${(data.no || []).length}):</span> ${escapeHtml(fmt(data.no))}`
-        + `<span class="text-zinc-500"> · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users</span>`;
+        `<span class="text-emerald-500 font-medium">Yes (${(data.yes || []).length}):</span> ${fmt((data.yes || []).map((u) => escapeHtml(u)))}`
+        + ` &nbsp;<span class="text-red-400 font-medium">No (${(data.no || []).length}):</span> ${fmt((data.no || []).map((u) => escapeHtml(u)))}`
+        + `<span class="text-zinc-500">${escapeHtml(needs)}</span>`;
     } catch {
       el.textContent = '';
     }
@@ -5721,9 +5763,33 @@ const AppView = {
     const snap = parseInt(pr.votes_required);
     const hasSnap = Number.isFinite(snap) && snap > 0;
     const maj = hasSnap ? snap : (majority || 1);
-    const yes = parseInt(pr.yes_count) || 0;
-    const no = parseInt(pr.no_count) || 0;
+    // #646: when only invited approvers' votes count, the pill fills
+    // from the QUALIFYING tallies (qualified_*_count, serialized by
+    // /promoted); raw tallies keep rendering in the roster/labels.
+    const yes = pr.qualified_yes_count != null
+      ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
+    const no = pr.qualified_no_count != null
+      ? (parseInt(pr.qualified_no_count) || 0) : (parseInt(pr.no_count) || 0);
     const state = yes >= maj ? 'yes' : no >= maj ? 'no' : 'pending';
+
+    // #646: "at least N" mode — a clock-free approvals-progress pill
+    // ("x of N approvals"). The server never arms a merge/rejection
+    // window in this mode, so the countdown branches below can't fire.
+    if (pr.approvals_required != null && pr.status !== 'merged' && pr.status !== 'merging') {
+      const n = parseInt(pr.approvals_required) || 1;
+      const reached = yes >= n;
+      const who = pr.approval_policy === 'invited' ? 'invited approvers' : 'any user';
+      const title = reached
+        ? `Approval target reached (${yes} of ${n}) — merges as soon as checks pass`
+        : `Needs at least ${n} approval${n === 1 ? '' : 's'} from ${who} to merge`;
+      const fills = reached
+        ? `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
+        : `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${Math.min(100, (yes / n) * 100)}%"></span>`;
+      return `<span class="gc-vote-count gc-vote-count-${reached ? 'yes' : 'pending'}" title="${title}">`
+        + fills
+        + `<span class="gc-vote-count-label">${yes} of ${n} approval${n === 1 ? '' : 's'}</span>`
+        + `</span>`;
+    }
 
     // Countdown state: a merge clock is running. Two ways one arms (both
     // serialized by the server as merge_window_ends_at — see mergeGate in
@@ -7181,8 +7247,11 @@ const AppView = {
       visStatus.className = 'text-red-400 text-sm hidden';
     }
     if (visSection) {
-      visSection.classList.toggle('hidden', !appData.can_manage);
-      if (appData.can_manage) {
+      // Self-hosted platform app: visibility stays out of repo control
+      // (the server 400s visibility-pr for it), so hide the pills — the
+      // modal is reachable there for the Proposal-approvals sections.
+      visSection.classList.toggle('hidden', !appData.can_manage || !!appData.self_hosted);
+      if (appData.can_manage && !appData.self_hosted) {
         AppView._renderMembersVisPills();
         if (!appData.repo_url) {
           visSection.querySelectorAll('[data-m-collab-vis], [data-m-view-vis]')
@@ -7194,6 +7263,48 @@ const AppView = {
         }
       }
     }
+
+    // Proposal-approvals section (issue #646): creator/admin only, like
+    // the visibility pills; changes open a dapp.json governance PR, so
+    // a repo is required.
+    AppView._membersGov = {
+      policy: appData.approver_policy === 'invited' ? 'invited' : 'anyone',
+      atLeast: appData.approvals_required != null ? Number(appData.approvals_required) : null,
+    };
+    const govSection = document.getElementById('members-governance-section');
+    const govStatus = document.getElementById('members-governance-error');
+    if (govStatus) { govStatus.textContent = ''; govStatus.className = 'text-red-400 text-sm hidden'; }
+    if (govSection) {
+      govSection.classList.toggle('hidden', !appData.can_manage);
+      if (appData.can_manage) {
+        AppView._renderMembersGovPills();
+        if (!appData.repo_url) {
+          govSection.querySelectorAll('[data-m-approver-policy], [data-m-approvals-mode], #members-approvals-n')
+            .forEach((p) => { p.disabled = true; });
+          if (govStatus) {
+            govStatus.textContent = 'Approval-settings changes are proposed as a dapp.json pull request — this app has no GitHub repository, so they\'re unavailable.';
+            govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+            govStatus.classList.remove('hidden');
+          }
+        }
+      }
+    }
+
+    // Approvers roster: creator/admin always (a roster can be lined up
+    // before flipping the policy); everyone else sees it read-only when
+    // the policy is 'invited'.
+    const approversSection = document.getElementById('members-approvers-section');
+    const showApprovers = appData.can_manage
+      || (appData.approver_policy === 'invited' && appData.can_collaborate);
+    if (approversSection) approversSection.classList.toggle('hidden', !showApprovers);
+    const approverInviteBox = document.getElementById('members-approver-invite');
+    if (approverInviteBox) approverInviteBox.classList.toggle('hidden', !appData.can_manage);
+    const apStatus = document.getElementById('members-approver-status');
+    if (apStatus) { apStatus.textContent = ''; apStatus.className = 'text-sm mt-2'; }
+    const apInput = document.getElementById('members-approver-invite-input');
+    if (apInput) apInput.value = '';
+    AppView._hideApproverSuggestions();
+
     AppView._wireMembersModal();
 
     // Member list + invite input: collab-private apps only.
@@ -7208,6 +7319,7 @@ const AppView = {
     if (input) input.value = '';
     AppView._hideInviteSuggestions();
     if (isPrivate && appData.can_collaborate) await AppView.loadCollaborators();
+    if (showApprovers) await AppView.loadApprovers();
   },
 
   hideMembersModal() {
@@ -7243,6 +7355,77 @@ const AppView = {
           if (name) AppView.sendInvite(name);
         }
         if (e.key === 'Escape') AppView._hideInviteSuggestions();
+      });
+    }
+
+    // Proposal-approvals pills + at-least count (issue #646).
+    document.querySelectorAll('#members-governance-section [data-m-approver-policy]')
+      .forEach((pill) => {
+        const fresh = pill.cloneNode(true);
+        pill.parentNode.replaceChild(fresh, pill);
+        fresh.addEventListener('click', () => {
+          AppView._proposeGovernance({
+            policy: fresh.dataset.mApproverPolicy,
+            atLeast: AppView._membersGov.atLeast,
+          });
+        });
+      });
+    document.querySelectorAll('#members-governance-section [data-m-approvals-mode]')
+      .forEach((pill) => {
+        const fresh = pill.cloneNode(true);
+        pill.parentNode.replaceChild(fresh, pill);
+        fresh.addEventListener('click', () => {
+          if (fresh.dataset.mApprovalsMode === 'default') {
+            AppView._proposeGovernance({ policy: AppView._membersGov.policy, atLeast: null });
+          } else {
+            // Reveal the count input and let the user pick N; the
+            // proposal opens on Enter / change (see below).
+            const n = document.getElementById('members-approvals-n');
+            if (n) {
+              n.classList.remove('hidden');
+              n.value = String(AppView._membersGov.atLeast || 1);
+              n.focus();
+            }
+            const govStatus = document.getElementById('members-governance-error');
+            if (govStatus) {
+              govStatus.textContent = 'Set the number of approvals and press Enter to open the proposal.';
+              govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+            }
+          }
+        });
+      });
+    const nInput = document.getElementById('members-approvals-n');
+    if (nInput) {
+      const freshN = nInput.cloneNode(true);
+      nInput.parentNode.replaceChild(freshN, nInput);
+      const proposeN = () => {
+        const n = Math.max(1, Math.min(50, parseInt(freshN.value, 10) || 1));
+        AppView._proposeGovernance({ policy: AppView._membersGov.policy, atLeast: n });
+      };
+      freshN.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); proposeN(); }
+      });
+      freshN.addEventListener('change', proposeN);
+    }
+
+    // Approver invite typeahead.
+    const apInput = document.getElementById('members-approver-invite-input');
+    if (apInput) {
+      const freshAp = apInput.cloneNode(true);
+      apInput.parentNode.replaceChild(freshAp, apInput);
+      freshAp.addEventListener('input', () => {
+        clearTimeout(AppView._approverInviteDebounce);
+        AppView._approverInviteDebounce = setTimeout(
+          () => AppView._searchApproverUsers(freshAp.value.trim()), 200
+        );
+      });
+      freshAp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const name = freshAp.value.trim();
+          if (name) AppView.sendApproverInvite(name);
+        }
+        if (e.key === 'Escape') AppView._hideApproverSuggestions();
       });
     }
   },
@@ -7429,6 +7612,187 @@ const AppView = {
       }
       if (input) input.value = '';
       AppView.loadCollaborators();
+    } catch (err) {
+      if (status) {
+        status.textContent = err.message;
+        status.className = 'text-sm mt-2 import-status--err';
+      }
+    }
+  },
+
+  // ── Proposal-approval governance (issue #646) ───────────────────────
+
+  _membersGov: { policy: 'anyone', atLeast: null },
+  _approverInviteDebounce: null,
+
+  _renderMembersGovPills() {
+    const { policy, atLeast } = AppView._membersGov;
+    document.querySelectorAll('#members-governance-section [data-m-approver-policy]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.mApproverPolicy === policy);
+    });
+    const mode = atLeast != null ? 'at_least' : 'default';
+    document.querySelectorAll('#members-governance-section [data-m-approvals-mode]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.mApprovalsMode === mode);
+    });
+    const n = document.getElementById('members-approvals-n');
+    if (n) {
+      n.classList.toggle('hidden', atLeast == null);
+      if (atLeast != null) n.value = String(atLeast);
+    }
+  },
+
+  // Pill click → confirm → open a governance-change proposal (a PR that
+  // edits dapp.json's `governance` block). NOT optimistic, like the
+  // visibility pills: the controls keep showing the current settings
+  // until the proposal passes, merges, and the redeploy's reconcile
+  // fires the `governance_changed` WS event (handled in app.js).
+  async _proposeGovernance({ policy, atLeast }) {
+    const cur = AppView._membersGov;
+    const targetPolicy = policy === 'invited' ? 'invited' : 'anyone';
+    const targetN = atLeast != null ? Math.max(1, Math.min(50, Number(atLeast) || 1)) : null;
+    if (targetPolicy === cur.policy && (targetN ?? null) === (cur.atLeast ?? null)) return;
+
+    const statusEl = document.getElementById('members-governance-error');
+    const setStatus = (msg, isError) => {
+      if (!statusEl) return;
+      statusEl.textContent = msg;
+      statusEl.className = `text-sm ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
+      statusEl.classList.toggle('hidden', !msg);
+    };
+    setStatus('', false);
+
+    if (!window.confirm(
+      'Changing the approval settings opens a proposal that is voted on under the current rules. '
+      + 'The change applies after the vote passes and the app redeploys. Open the proposal?'
+    )) return;
+
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/governance-pr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approverPolicy: targetPolicy,
+          approvalsRequired: targetN,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        setStatus('A governance change is already up for vote — see the proposal in the Dev tab\'s vote panel.', false);
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setStatus(
+        `Proposal opened (PR #${data.prNumber}) — it needs the group's vote in the Dev tab's vote panel before the new settings apply.`,
+        false
+      );
+    } catch (err) {
+      setStatus(`Could not open the governance proposal: ${err.message}`, true);
+    }
+  },
+
+  async loadApprovers() {
+    const list = document.getElementById('members-approvers-list');
+    if (!list || !AppView.appData) return;
+    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">Loading…</div>';
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/approvers`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      AppView._renderApprovers(data.approvers || []);
+    } catch (err) {
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load approvers: ${escapeHtml(err.message)}</div>`;
+    }
+  },
+
+  _renderApprovers(rows) {
+    const list = document.getElementById('members-approvers-list');
+    if (!list) return;
+    const me = (typeof App !== 'undefined' && App.user) ? App.user : {};
+    const canManage = !!AppView.appData?.can_manage;
+    if (!rows.length) {
+      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">No approvers yet.'
+        + (canManage ? ' Invite one below.' : '') + '</div>';
+      return;
+    }
+    list.innerHTML = rows.map((r) => {
+      const pending = r.status === 'invited';
+      const tag = pending
+        ? '<span class="text-[0.65rem] text-amber-500 font-medium ml-1">invited</span>'
+        : '<span class="text-[0.65rem] text-violet-500 font-medium ml-1">approver</span>';
+      // Remove/revoke: creator/admin for anyone; approvers may remove
+      // themselves (leave). Mirrors the server rules.
+      const canRemove = canManage || r.userId === me.id;
+      const removeBtn = canRemove
+        ? `<button data-remove-approver="${r.userId}" class="text-xs text-zinc-400 hover:text-red-500 px-2 py-1" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Stop being an approver' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
+        : '';
+      return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
+        ${removeBtn}
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-remove-approver]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const res = await fetch(
+            `/api/apps/${AppView.appData.slug}/approvers/${btn.dataset.removeApprover}`,
+            { method: 'DELETE' }
+          );
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          AppView.loadApprovers();
+        } catch (err) {
+          alert(`Remove failed: ${err.message}`);
+          btn.disabled = false;
+        }
+      });
+    });
+  },
+
+  async _searchApproverUsers(q) {
+    const box = document.getElementById('members-approver-suggestions');
+    if (!box || !AppView.appData) return;
+    if (!q) { AppView._hideApproverSuggestions(); return; }
+    try {
+      const params = new URLSearchParams({ q });
+      const res = await fetch(`/api/users/search?${params.toString()}`);
+      if (!res.ok) return;
+      const { users } = await res.json();
+      if (!users || !users.length) { AppView._hideApproverSuggestions(); return; }
+      box.innerHTML = users.map((u) =>
+        `<button data-approver-user="${escapeAttr(u.username)}" class="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
+      ).join('');
+      box.classList.remove('hidden');
+      box.querySelectorAll('[data-approver-user]').forEach((btn) => {
+        btn.addEventListener('click', () => AppView.sendApproverInvite(btn.dataset.approverUser));
+      });
+    } catch { /* typeahead is best-effort */ }
+  },
+
+  _hideApproverSuggestions() {
+    const box = document.getElementById('members-approver-suggestions');
+    if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+  },
+
+  async sendApproverInvite(username) {
+    const status = document.getElementById('members-approver-status');
+    const input = document.getElementById('members-approver-invite-input');
+    AppView._hideApproverSuggestions();
+    if (status) { status.textContent = 'Inviting…'; status.className = 'text-sm mt-2'; }
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/approver-invites`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (status) {
+        status.textContent = `✓ Invited @${data.username || username} as an approver`;
+        status.className = 'text-sm mt-2 import-status--ok';
+      }
+      if (input) input.value = '';
+      AppView.loadApprovers();
     } catch (err) {
       if (status) {
         status.textContent = err.message;

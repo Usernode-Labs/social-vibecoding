@@ -3,7 +3,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const github = require('../services/github');
 const { sendSystemMessage, pushAppUpdate, pushIssueUpdate } = require('../services/ws');
-const { getActiveUserStats, mergeGate } = require('../services/active-users');
+const { getActiveUserStats } = require('../services/active-users');
 const { isAppLocked, hasAdminUpVote } = require('../services/admin-approval');
 const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
@@ -284,6 +284,19 @@ function issueRoutes(config) {
 
       const { active: activeUsers, majority } = await getActiveUserStats(pool, appId);
 
+      // #646: governance-aware per-row gate (mirrors /promoted). Under
+      // the default settings this is the old mergeGate over the raw
+      // tallies; under 'invited' only approver votes qualify (batched in
+      // one query); under at-least-N the gate is the clock-free count.
+      const governanceSvc = require('../services/governance');
+      const gov = await governanceSvc.getGovernance(pool, appId);
+      const electorate = await governanceSvc.getElectorate(pool, appId, gov);
+      const qualifiedByRow = electorate.approverIds
+        ? await governanceSvc.qualifiedCountsBatch(
+          pool, 'issue', rows.map((r) => r.id), electorate.approverIds
+        )
+        : null;
+
       // Strip ciphertext from secret_change rows before serializing —
       // the value should never be readable from this endpoint, even
       // by other admins. The committed value lands in app_secrets via
@@ -293,12 +306,19 @@ function issueRoutes(config) {
       // the PR /promoted endpoint so governance pills get the same
       // countdown/Contested treatment.
       const sanitized = rows.map((r) => {
-        const gate = mergeGate(activeUsers, r.up_count, r.down_count, r.created_at);
+        const q = qualifiedByRow
+          ? (qualifiedByRow.get(r.id) || { yes: 0, no: 0 })
+          : { yes: r.up_count, no: r.down_count };
+        const gate = governanceSvc.computeGate(gov, electorate.active, q.yes, q.no, r.created_at);
         const withGate = {
           ...r,
           votes_required: gate.required,
           merge_window_ends_at: gate.windowEndsAt,
           contested: gate.contested,
+          approval_policy: gate.policy,
+          approvals_required: gate.approvalsRequired,
+          qualified_yes_count: gate.qualifiedYes,
+          qualified_no_count: gate.qualifiedNo,
         };
         if (withGate.kind !== 'secret_change' || !withGate.payload) return withGate;
         const { valueEnc, ...rest } = withGate.payload;
@@ -1385,22 +1405,18 @@ function issueRoutes(config) {
 // UPDATE on the issue row so two near-simultaneous tripping votes can't
 // double-apply).
 async function maybeApplyRenameProposal(pool, issue) {
-  const { active, majority } = await getActiveUserStats(pool, issue.app_id);
+  const { majority } = await getActiveUserStats(pool, issue.app_id);
 
-  const { rows: upRows } = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM issue_votes WHERE issue_id = $1 AND vote = 'up'`,
-    [issue.id]
-  );
-  const upCount = parseInt(upRows[0].cnt, 10) || 0;
-  // down votes feed both governance gates, mirroring PRs: they raise the
-  // eased threshold and push the visibility window out. The window is
-  // anchored on the issue's created_at (no separate promote step exists).
-  const { rows: downRows } = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM issue_votes WHERE issue_id = $1 AND vote = 'down'`,
-    [issue.id]
-  );
-  const downCount = parseInt(downRows[0].cnt, 10) || 0;
-  const gate = mergeGate(active, upCount, downCount, issue.created_at);
+  // #646: governance-aware gate. Down votes feed both governance gates,
+  // mirroring PRs; the window is anchored on the issue's created_at (no
+  // separate promote step exists). Under 'invited' only approver votes
+  // qualify; under at-least-N the gate is the clock-free count.
+  const governanceSvc = require('../services/governance');
+  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
+    kind: 'issue', id: issue.id, openedAt: issue.created_at,
+  });
+  const upCount = gate.qualifiedYes;
+  const active = gate.activeCount;
   const required = gate.required;
   // Apply paths mirror PR merges (services/active-users.js → mergeGate):
   // threshold met + window elapsed, OR the lazy-consensus clock elapsed
@@ -1548,21 +1564,16 @@ async function maybeApplyRenameProposal(pool, issue) {
  */
 async function maybeApplySecretChangeProposal(config, pool, issue, options = {}) {
   const force = !!options.force;
-  const { active, majority } = await getActiveUserStats(pool, issue.app_id);
+  const { majority } = await getActiveUserStats(pool, issue.app_id);
 
-  const { rows: upRows } = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM issue_votes WHERE issue_id = $1 AND vote = 'up'`,
-    [issue.id]
-  );
-  const upCount = parseInt(upRows[0].cnt, 10) || 0;
-  // down votes feed both gates (eased threshold + visibility window),
-  // anchored on created_at. An admin force-apply skips both, like force-merge.
-  const { rows: downRows } = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM issue_votes WHERE issue_id = $1 AND vote = 'down'`,
-    [issue.id]
-  );
-  const downCount = parseInt(downRows[0].cnt, 10) || 0;
-  const gate = mergeGate(active, upCount, downCount, issue.created_at);
+  // #646: governance-aware gate (down votes feed both gates, anchored
+  // on created_at). An admin force-apply skips it, like force-merge.
+  const governanceSvc = require('../services/governance');
+  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
+    kind: 'issue', id: issue.id, openedAt: issue.created_at,
+  });
+  const upCount = gate.qualifiedYes;
+  const active = gate.activeCount;
   const required = force ? upCount : gate.required;
   // Same two apply paths as maybeApplyRenameProposal (threshold or lazy
   // consensus); an admin force-apply skips both, like force-merge.
@@ -1857,21 +1868,15 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
     }
   }
 
-  const { active, majority } = await getActiveUserStats(pool, issue.app_id);
-
-  const { rows: upRows } = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM issue_votes WHERE issue_id = $1 AND vote = 'up'`,
-    [issue.id]
-  );
-  const upCount = parseInt(upRows[0].cnt, 10) || 0;
-  // down votes feed both gates (eased threshold + visibility window),
-  // anchored on created_at. An admin force-apply skips both, like force-merge.
-  const { rows: downRows } = await pool.query(
-    `SELECT COUNT(*) AS cnt FROM issue_votes WHERE issue_id = $1 AND vote = 'down'`,
-    [issue.id]
-  );
-  const downCount = parseInt(downRows[0].cnt, 10) || 0;
-  const gate = mergeGate(active, upCount, downCount, issue.created_at);
+  // #646: governance-aware gate (down votes feed both gates, anchored
+  // on created_at). An admin force-apply skips it, like force-merge.
+  const { majority } = await getActiveUserStats(pool, issue.app_id);
+  const governanceSvc = require('../services/governance');
+  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
+    kind: 'issue', id: issue.id, openedAt: issue.created_at,
+  });
+  const upCount = gate.qualifiedYes;
+  const active = gate.activeCount;
   const required = force ? upCount : gate.required;
   if (!force && !gate.mergeable) {
     return {

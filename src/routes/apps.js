@@ -1257,6 +1257,89 @@ function appRoutes(config) {
     }
   });
 
+  // Propose a proposal-approval governance change (issue #646). The two
+  // settings live in dapp.json's top-level `governance` block, so
+  // changing them is a manifest-editing PR — same lifecycle as a
+  // visibility change. Unlike visibility-pr, the self-hosted platform
+  // app is ALLOWED: its dapp.json lives in the platform repo and the
+  // merged change applies on the post-deploy boot (seedSelfApp's
+  // reconcileAppGovernance).
+  // Body: { approverPolicy: 'anyone'|'invited',
+  //         approvalsRequired: null | 1..MAX_APPROVALS_REQUIRED }.
+  router.post('/api/apps/:slug/governance-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+    const approverPolicy = req.body?.approverPolicy;
+    let approvalsRequired = req.body?.approvalsRequired;
+    if (approverPolicy !== 'anyone' && approverPolicy !== 'invited') {
+      return res.status(400).json({ error: 'approverPolicy must be "anyone" or "invited"' });
+    }
+    if (approvalsRequired === undefined || approvalsRequired === null || approvalsRequired === '') {
+      approvalsRequired = null;
+    } else {
+      approvalsRequired = Number(approvalsRequired);
+      if (!Number.isInteger(approvalsRequired) || approvalsRequired < 1
+        || approvalsRequired > appManifest.MAX_APPROVALS_REQUIRED) {
+        return res.status(400).json({
+          error: `approvalsRequired must be an integer between 1 and ${appManifest.MAX_APPROVALS_REQUIRED} (or null for the default strategy)`,
+        });
+      }
+    }
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (!req.user?.canAdminWrite && app.created_by !== req.user?.id) {
+        return res.status(403).json({ error: 'Only the app creator or an admin can propose a governance change' });
+      }
+
+      if (app.approver_policy === approverPolicy
+          && (app.approvals_required ?? null) === (approvalsRequired ?? null)) {
+        return res.status(400).json({ error: 'The app already has those approval settings' });
+      }
+
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Governance changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+
+      // One governance proposal in flight per app.
+      const existing = await renamePr.findGovernancePr(pool, app.id);
+      if (existing) {
+        return res.status(409).json({
+          error: 'A governance change is already up for vote',
+          sessionId: existing.id,
+          prNumber: existing.pr_number,
+          prUrl: existing.pr_url,
+        });
+      }
+
+      const result = await renamePr.createGovernancePR(
+        config, pool, app,
+        { policy: approverPolicy, approvalsRequired },
+        { id: req.user.id, username: req.user.username }
+      );
+
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+      });
+    } catch (err) {
+      log.error('apps', 'Governance PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
+    }
+  });
+
   // ── Edge-gate authorize hop (view-private apps) ─────────────────────
   //
   // Platform session cookies are host-only (deliberately — child apps

@@ -183,6 +183,68 @@ function describeVisibility(collab, view) {
     : 'invite-only build, public to view';
 }
 
+// Allowed values for the optional top-level `governance` block (issue
+// #646). `approvers` maps to apps.approver_policy; `approvals` maps to
+// apps.approvals_required (NULL = the default time-&-majority
+// strategy, N = "at least N" mode).
+const APPROVER_POLICY_VALUES = new Set(['anyone', 'invited']);
+const MAX_APPROVALS_REQUIRED = 50;
+
+// Normalize the optional top-level `governance` block:
+//   "governance": {
+//     "approvers": "anyone" | "invited",
+//     "approvals": "default" | { "atLeast": 1 }
+//   }
+// Each axis resolves independently:
+//   - approvers → 'anyone' | 'invited' | null (leave untouched),
+//   - approvals → 'default' | <int 1..50> | null (leave untouched),
+// with the same absent-field semantics as the `visibility` block.
+// Lenient like the rest of the reader: a non-object block, an absent
+// key, or any invalid value drops to null with a warn. Returns null
+// when the block is absent or carries nothing usable. Never throws.
+function readGovernance(parsed) {
+  const raw = parsed?.governance;
+  if (raw == null) return null;
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    log.warn('app-manifest', 'Ignoring non-object governance block');
+    return null;
+  }
+  let approvers = null;
+  if (raw.approvers != null) {
+    if (typeof raw.approvers === 'string' && APPROVER_POLICY_VALUES.has(raw.approvers)) {
+      approvers = raw.approvers;
+    } else {
+      log.warn('app-manifest', 'Ignoring invalid governance.approvers value', { value: raw.approvers });
+    }
+  }
+  let approvals = null;
+  if (raw.approvals != null) {
+    if (raw.approvals === 'default') {
+      approvals = 'default';
+    } else if (raw.approvals && typeof raw.approvals === 'object' && !Array.isArray(raw.approvals)
+      && Number.isInteger(raw.approvals.atLeast)
+      && raw.approvals.atLeast >= 1 && raw.approvals.atLeast <= MAX_APPROVALS_REQUIRED) {
+      approvals = raw.approvals.atLeast;
+    } else {
+      log.warn('app-manifest', 'Ignoring invalid governance.approvals value', { value: raw.approvals });
+    }
+  }
+  if (approvers == null && approvals == null) return null;
+  return { approvers, approvals };
+}
+
+// Human description of a (policy, approvalsRequired) governance pair —
+// shared by the reconcile chat message and the governance-PR title so
+// every surface describes the same state with the same words. Sibling
+// of describeVisibility above.
+function describeGovernance(policy, approvalsRequired) {
+  const who = policy === 'invited' ? 'invited approvers' : 'any user';
+  const howMany = approvalsRequired != null
+    ? `at least ${approvalsRequired} approval${approvalsRequired === 1 ? '' : 's'}`
+    : 'the default time-&-majority vote';
+  return `approvals by ${who}, requiring ${howMany}`;
+}
+
 // Bound on the consent dialog's purpose line — one short sentence, not
 // a marketing paragraph.
 const MAX_LLM_PURPOSE_LENGTH = 140;
@@ -329,9 +391,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
   }
 
   let parsed;
@@ -339,7 +401,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
   }
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
@@ -380,6 +442,7 @@ function read(cloneDir) {
     secrets,
     llm: readLlm(parsed),
     visibility: readVisibility(parsed),
+    governance: readGovernance(parsed),
     screenshot: readScreenshot(parsed),
     tests: readTests(parsed),
     icon: readIcon(parsed),
@@ -565,6 +628,164 @@ async function reconcileAppVisibility(pool, app, manifest) {
 }
 
 /**
+ * Apply a proposal-approval governance change to an app row (issue
+ * #646) — sibling of applyVisibilityChange, shared by the deploy-time
+ * reconcile below and any future caller:
+ *   - UPDATE both columns;
+ *   - policy invited→anyone: pending approver invites become
+ *     meaningless — delete them, mark their drawer notifications read,
+ *     ping clients (accepted 'member' rows are kept dormant so a later
+ *     flip back to 'invited' restores the roster);
+ *   - policy →invited with an EMPTY roster: auto-seed the app creator
+ *     as an approver member so a child app can never lock itself out
+ *     (the self-app has no created_by; the governed gate's full-admin
+ *     fallback covers it);
+ *   - flush the governance cache (services/governance.js);
+ *   - group-chat system message + `governance_changed` app update;
+ *   - GOVERNANCE_CHANGED analytics event.
+ * `app` must carry id, slug, approver_policy, approvals_required (the
+ * CURRENT values — used for transition checks and the event's `from`).
+ * All side effects beyond the column UPDATE are best-effort.
+ */
+async function applyGovernanceChange(pool, app, { approverPolicy, approvalsRequired }, { actorLabel = 'dapp.json', userId = null } = {}) {
+  await pool.query(
+    `UPDATE apps SET approver_policy = $1, approvals_required = $2 WHERE id = $3`,
+    [approverPolicy, approvalsRequired, app.id]
+  );
+
+  // invited → anyone: pending approver invites become meaningless.
+  if (app.approver_policy === 'invited' && approverPolicy === 'anyone') {
+    try {
+      const { rows: pending } = await pool.query(
+        `DELETE FROM app_approvers WHERE app_id = $1 AND status = 'invited'
+         RETURNING user_id`,
+        [app.id]
+      );
+      const notifications = require('./notifications');
+      const { pushNotificationToUser } = require('./ws');
+      for (const p of pending) {
+        await notifications.markApproverInviteNotificationsRead(pool, p.user_id, app.id)
+          .catch(() => {});
+        try { pushNotificationToUser(p.user_id, { type: 'notifications_changed' }); } catch {}
+      }
+    } catch (err) {
+      log.warn('app-manifest', 'Pending approver-invite cleanup failed', { appId: app.id, err: err.message });
+    }
+  }
+
+  // anyone → invited with an empty roster: seed the creator so the
+  // approval gate is never unreachable on a child app.
+  if (approverPolicy === 'invited') {
+    try {
+      const { rows: members } = await pool.query(
+        `SELECT 1 FROM app_approvers WHERE app_id = $1 AND status = 'member' LIMIT 1`,
+        [app.id]
+      );
+      if (!members.length) {
+        const { rows: creatorRows } = await pool.query(
+          'SELECT created_by FROM apps WHERE id = $1', [app.id]
+        );
+        const creatorId = creatorRows[0]?.created_by || null;
+        if (creatorId) {
+          await pool.query(
+            `INSERT INTO app_approvers (app_id, user_id, status, accepted_at)
+             VALUES ($1, $2, 'member', NOW())
+             ON CONFLICT (app_id, user_id) DO UPDATE SET status = 'member', accepted_at = COALESCE(app_approvers.accepted_at, NOW())`,
+            [app.id, creatorId]
+          );
+          log.info('app-manifest', 'Auto-seeded app creator as approver', { appId: app.id, creatorId });
+        }
+      }
+    } catch (err) {
+      log.warn('app-manifest', 'Approver creator auto-seed failed', { appId: app.id, err: err.message });
+    }
+  }
+
+  try {
+    require('./governance').invalidateGovernance(app.id);
+  } catch (err) {
+    log.warn('app-manifest', 'Governance cache invalidation failed', { appId: app.id, err: err.message });
+  }
+
+  try {
+    const { sendSystemMessage, pushAppUpdate } = require('./ws');
+    await sendSystemMessage(pool, app.id,
+      `This app's proposal-approval settings changed to ${describeGovernance(approverPolicy, approvalsRequired)} (set by ${actorLabel})`,
+      'system'
+    ).catch((err) => log.warn('app-manifest', 'Governance chat msg failed', { err: err.message }));
+    pushAppUpdate({
+      action: 'governance_changed',
+      appSlug: app.slug,
+      appId: app.id,
+      approverPolicy,
+      approvalsRequired,
+    });
+  } catch (err) {
+    log.warn('app-manifest', 'Governance broadcast failed', { appId: app.id, err: err.message });
+  }
+
+  try {
+    const events = require('./events');
+    events.record(pool, {
+      type: events.EVENT_TYPES.GOVERNANCE_CHANGED,
+      userId,
+      appId: app.id,
+      metadata: {
+        from: { approverPolicy: app.approver_policy, approvalsRequired: app.approvals_required },
+        to: { approverPolicy, approvalsRequired },
+        source: 'manifest',
+      },
+    });
+  } catch (err) {
+    log.warn('app-manifest', 'Governance event record failed', { appId: app.id, err: err.message });
+  }
+
+  log.info('app-manifest', 'Applied governance change', {
+    appId: app.id, slug: app.slug, approverPolicy, approvalsRequired, actorLabel,
+  });
+}
+
+/**
+ * Deploy-time governance reconcile (issue #646) — sibling of
+ * reconcileAppVisibility. The manifest's optional top-level
+ * `governance` block is the source of truth for apps.approver_policy
+ * ("approvers") / apps.approvals_required ("approvals"); an absent
+ * block / axis leaves the platform value untouched.
+ *
+ * Unlike the visibility reconcile, self_hosted apps are NOT skipped —
+ * the platform's own app is the primary consumer (its apply point is
+ * boot: db/migrate.js seedSelfApp calls this next to the name/icon
+ * reconciles, since the self-app deploys via GitHub Actions and never
+ * runs rebuildProduction).
+ *
+ * Best-effort like its siblings: callers fire-and-log; a failure here
+ * must never fail the deploy.
+ */
+async function reconcileAppGovernance(pool, app, manifest) {
+  const gov = manifest?.governance;
+  if (!gov || (gov.approvers == null && gov.approvals == null)) return false;
+
+  const { rows } = await pool.query(
+    `SELECT id, slug, approver_policy, approvals_required FROM apps WHERE id = $1`,
+    [app.id]
+  );
+  if (!rows.length) return false;
+  const cur = rows[0];
+
+  const approverPolicy = gov.approvers || cur.approver_policy;
+  // 'default' is the explicit spelling of the NULL column state.
+  const approvalsRequired = gov.approvals == null
+    ? cur.approvals_required
+    : (gov.approvals === 'default' ? null : gov.approvals);
+
+  if (approverPolicy === cur.approver_policy
+    && (approvalsRequired ?? null) === (cur.approvals_required ?? null)) return false;
+
+  await applyGovernanceChange(pool, cur, { approverPolicy, approvalsRequired }, { actorLabel: 'dapp.json', userId: null });
+  return true;
+}
+
+/**
  * Deploy-time screenshot-scale reconcile (issue #360) — sibling of
  * reconcileAppName / reconcileAppVisibility. The manifest's optional
  * top-level `screenshot.deviceScaleFactor` is the source of truth for
@@ -733,18 +954,23 @@ module.exports = {
   readName,
   readLlm,
   readVisibility,
+  readGovernance,
   readScreenshot,
   readTests,
   readIcon,
   MAX_TESTS,
   MAX_ICON_EMOJI_LENGTH,
   MAX_ICON_IMAGE_BYTES,
+  MAX_APPROVALS_REQUIRED,
   describeVisibility,
+  describeGovernance,
   reconcileAppName,
   reconcileAppVisibility,
+  reconcileAppGovernance,
   reconcileAppScreenshot,
   reconcileAppIcon,
   applyVisibilityChange,
+  applyGovernanceChange,
   RESERVED_KEYS,
   RESERVED_KEY_PREFIXES,
   KEY_RE,

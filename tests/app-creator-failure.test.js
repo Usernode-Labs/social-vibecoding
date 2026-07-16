@@ -69,6 +69,7 @@ function loadAppCreator({ dockerStubs = {}, ws = {} } = {}) {
     read: () => ({ secrets: [] }),
     reconcileAppName: async () => {},
     reconcileAppVisibility: async () => {},
+    reconcileAppGovernance: async () => {},
     reconcileAppScreenshot: async () => {},
     reconcileAppIcon: async () => {},
   });
