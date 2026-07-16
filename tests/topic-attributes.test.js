@@ -40,6 +40,24 @@ test('normalizeValue: assignee trims, rejects empty + over-long, keeps casing', 
   assert.equal(attrs.normalizeValue('bogus', 'x'), null);
 });
 
+test('normalizeValue: category accepts only the fixed slug set (case-folded, trimmed)', () => {
+  assert.equal(attrs.normalizeValue('category', 'bug'), 'bug');
+  assert.equal(attrs.normalizeValue('category', 'BUG'), 'bug'); // case-folded
+  assert.equal(attrs.normalizeValue('category', '  Feature '), 'feature'); // trimmed
+  assert.equal(attrs.normalizeValue('category', 'improvement'), 'improvement');
+  assert.equal(attrs.normalizeValue('category', 'urgent'), null); // not in the set
+  assert.equal(attrs.normalizeValue('category', ''), null);
+  assert.equal(attrs.normalizeValue('category', 7), null);
+  // The exported vocabulary is exactly the fixed set.
+  assert.deepEqual(attrs.CATEGORY_VALUES, ['feature', 'bug', 'improvement', 'design', 'docs', 'chore']);
+  assert.ok(attrs.FIELDS.includes('category'), 'category is a recognised field');
+});
+
+test('emptySummary carries a category slot', () => {
+  const s = attrs.emptySummary();
+  assert.deepEqual(s.category, { top: null, count: 0, myValue: null });
+});
+
 test('pickTop: count desc, then earliest first-suggestion, then alpha', () => {
   // Clear winner by count.
   assert.equal(attrs.pickTop([
@@ -242,13 +260,15 @@ test('POST then GET round-trips the option list + myValue', async () => {
 });
 
 // ── 3. Source guards ───────────────────────────────────────────────────
-test('feed routes attach the priority/assignee summary', () => {
+test('feed routes attach the priority/assignee/category summary', () => {
   const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
   assert.match(issuesSrc, /summarizeForTargets\([^)]*'issue'/s, 'issues route enriches issue targets');
   assert.match(issuesSrc, /issue\.priority = s\.priority/);
+  assert.match(issuesSrc, /issue\.category = s\.category/, 'issues route copies the category summary');
 
   const votesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf-8');
   assert.match(votesSrc, /summarizeForTargets\([^)]*'proposal'/s, 'votes route enriches proposal targets');
+  assert.match(votesSrc, /\.category = s\.category/, 'votes route copies the category summary onto proposals');
 });
 
 test('server wires the topic-attributes route', () => {
@@ -256,11 +276,14 @@ test('server wires the topic-attributes route', () => {
   assert.match(serverSrc, /topicAttributeRoutes\(config\)/);
 });
 
-test('card renderer emits the two chips', () => {
+test('card renderer emits the three chips (priority, category, assignee)', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
   assert.match(fe, /_attrChipsHtml\('issue'/, 'issue rows render chips');
   assert.match(fe, /_attrChipsHtml\('proposal'/, 'proposal cards render chips');
   assert.match(fe, /data-attr-chip/, 'chip carries the delegated-click hook');
+  assert.match(fe, /_attrChipHtml\('category'/, 'the category chip is rendered');
+  assert.match(fe, /ATTR_CATEGORY_VALUES: \['feature', 'bug', 'improvement', 'design', 'docs', 'chore'\]/,
+    'FE category vocabulary mirrors the service CATEGORY_VALUES');
 });
 
 // #600: the assignee dropdown pre-fills the name box with the viewer's own

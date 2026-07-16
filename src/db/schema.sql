@@ -703,9 +703,11 @@ CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DE
 -- which is keyed by (app_id, github_issue_number) because the Dev feed
 -- lists repo GitHub issues that may have no internal `issues` row) and at
 -- the chat_sessions.id (session id) when target_type='proposal'.
--- value holds 'low'|'medium'|'high' for priority, or the typed display
--- name (raw casing) for assignee — assignee dedupe is case-insensitive at
--- read time, never restricted to registered users. NOT staging:private:
+-- value holds 'low'|'medium'|'high' for priority, one of a fixed category
+-- slug set (feature|bug|improvement|design|docs|chore) for category, or the
+-- typed display name (raw casing) for assignee — assignee dedupe is
+-- case-insensitive at read time, never restricted to registered users.
+-- NOT staging:private:
 -- the tally is a public governance-style signal (closer to issue_votes
 -- than to the privacy-flavoured bounty/kudos ledgers), so leaving it
 -- copyable lets staging previews show real seeded data.
@@ -714,7 +716,7 @@ CREATE TABLE IF NOT EXISTS topic_attribute_votes (
   app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
   target_type VARCHAR(16) NOT NULL,   -- 'issue' | 'proposal'
   target_ref  INTEGER NOT NULL,       -- github_issue_number | chat_sessions.id
-  field       VARCHAR(16) NOT NULL,   -- 'priority' | 'assignee'
+  field       VARCHAR(16) NOT NULL,   -- 'priority' | 'assignee' | 'category'
   value       TEXT NOT NULL,
   user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),

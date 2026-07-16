@@ -88,10 +88,11 @@ function stagingMockProposals(viewer) {
       { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
     ],
     checks_checked_at: hoursAgo(hours),
-    // Community-voted priority + assignee chips. Populated so both card
-    // states are reviewable on staging via ?demo=1.
+    // Community-voted priority + assignee + category chips. Populated so
+    // the card states are reviewable on staging via ?demo=1.
     priority: { top: 'high', count: 2, myValue: null },
     assignee: { top: 'staging-tester', count: 3, myValue: null },
+    category: { top: 'improvement', count: 2, myValue: null },
   });
   const rows = [
     // Unopposed, thin support: threshold met but a multi-day visibility
@@ -319,13 +320,13 @@ function stagingMockProposals(viewer) {
   // the mock issues' (staging-demo-user, maya-builder), so filtering by one of
   // them catches cards across both the issue and proposal columns.
   const attrOverrides = new Map([
-    [9000001, { priority: { top: 'medium', count: 2, myValue: null }, assignee: { top: 'staging-demo-user', count: 2, myValue: null } }],
-    [9000002, { priority: { top: 'low', count: 1, myValue: null }, assignee: { top: 'maya-builder', count: 1, myValue: null } }],
-    [9000013, { priority: { top: 'low', count: 3, myValue: null }, assignee: { top: 'staging-demo-user', count: 1, myValue: null } }],
+    [9000001, { priority: { top: 'medium', count: 2, myValue: null }, assignee: { top: 'staging-demo-user', count: 2, myValue: null }, category: { top: 'improvement', count: 2, myValue: null } }],
+    [9000002, { priority: { top: 'low', count: 1, myValue: null }, assignee: { top: 'maya-builder', count: 1, myValue: null }, category: { top: 'design', count: 1, myValue: null } }],
+    [9000013, { priority: { top: 'low', count: 3, myValue: null }, assignee: { top: 'staging-demo-user', count: 1, myValue: null }, category: { top: 'chore', count: 2, myValue: null } }],
   ]);
   for (const row of rows) {
     const o = attrOverrides.get(row.id);
-    if (o) { row.priority = o.priority; row.assignee = o.assignee; }
+    if (o) { row.priority = o.priority; row.assignee = o.assignee; row.category = o.category; }
   }
   return rows.map((p) => {
     // #600: seed the FIRST mock proposal's assignee as the viewer's own so
@@ -1229,6 +1230,7 @@ function voteRoutes(config) {
         const s = promotedAttrs.get(row.id) || topicAttrs.emptySummary();
         row.priority = s.priority;
         row.assignee = s.assignee;
+        row.category = s.category;
       }
 
       // Staging-only demo mode (?demo=1): append long-title mock
@@ -1369,6 +1371,7 @@ function voteRoutes(config) {
         const s = mergedAttrs.get(row.id) || topicAttrs.emptySummary();
         row.priority = s.priority;
         row.assignee = s.assignee;
+        row.category = s.category;
       }
 
       // Staging-only demo mode (?demo=1): prepend mock merged rows so the
@@ -1442,6 +1445,7 @@ function voteRoutes(config) {
         const s = attrs.get(proposal.id) || topicAttrs.emptySummary();
         proposal.priority = s.priority;
         proposal.assignee = s.assignee;
+        proposal.category = s.category;
       }
 
       // Staging demo mode (?demo=1): the mock merged/promoted rows aren't in

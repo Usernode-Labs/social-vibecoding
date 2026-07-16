@@ -77,11 +77,15 @@ function topicAttributeRoutes(config) {
       }
       const value = attrs.normalizeValue(field, req.body?.value);
       if (value == null) {
-        return res.status(400).json({
-          error: field === 'priority'
-            ? 'Priority must be low, medium or high'
-            : `Name must be 1–${attrs.MAX_ASSIGNEE_LEN} characters`,
-        });
+        let error;
+        if (field === 'priority') {
+          error = 'Priority must be low, medium or high';
+        } else if (field === 'category') {
+          error = `Category must be one of ${attrs.CATEGORY_VALUES.join(', ')}`;
+        } else {
+          error = `Name must be 1–${attrs.MAX_ASSIGNEE_LEN} characters`;
+        }
+        return res.status(400).json({ error });
       }
 
       const data = await attrs.castVote(

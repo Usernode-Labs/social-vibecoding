@@ -134,6 +134,11 @@
       "expectSelector": ".attr-avatar"
     },
     {
+      "name": "Kanban filter bar shows the category filter",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-category"
+    },
+    {
       "name": "Shared demo session renders in the In progress area",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Staging demo shared session"
