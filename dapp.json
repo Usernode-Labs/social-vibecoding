@@ -281,6 +281,8 @@
   ],
   "governance": {
     "approvers": "invited",
-    "approvals": "default"
+    "approvals": {
+      "atLeast": 1
+    }
   }
 }
