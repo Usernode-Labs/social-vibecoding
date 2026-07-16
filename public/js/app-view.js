@@ -231,6 +231,11 @@ const AppView = {
   // { issues: [{type,ref}], review: [{type,ref}] }; empty arrays mean the
   // default derived sort (today's board).
   _boardOrder: { issues: [], review: [] },
+  // Manual drag-and-drop order overlay for the PM view, keyed by the
+  // case-folded assignee (a person), loaded by _loadDevData from GET
+  // /pm-order. Shape { "<assignee_key>": [{type,ref}], … }; an absent key
+  // means that person's section uses the default derived (recency) sort.
+  _pmOrder: {},
   // One-shot flag set by the "Create proposal" button so the freshly
   // opened dev session renders a "promoting this PR creates the
   // proposal" hint.
@@ -1724,7 +1729,7 @@ const AppView = {
     if (!AppView.appData) return false;
     const slug = AppView.appData.slug;
     try {
-      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes] = await Promise.all([
+      const [ghRes, issuesRes, promotedRes, mergedRes, orderRes, pmOrderRes] = await Promise.all([
         fetch(`/api/apps/${slug}/github-issues${AppView._demoQS()}`),
         // Forward ?demo=1 here too so the staging mock GOVERNANCE rows
         // (stagingMockGovernance — rename / secret / close-issue cards)
@@ -1743,6 +1748,10 @@ const AppView = {
         // failed order fetch from sinking the whole board load — an absent
         // order just means the default (derived) sort, i.e. today's board.
         fetch(`/api/apps/${slug}/board-order${AppView._demoQS()}`).catch(() => null),
+        // The PM view's per-person manual order overlay. Same tolerance +
+        // ?demo=1 forwarding as board-order; an absent map means every
+        // section uses the default recency sort (today's PM view).
+        fetch(`/api/apps/${slug}/pm-order${AppView._demoQS()}`).catch(() => null),
         // Session caches (own + shared + archived) ride along in the same
         // parallel load; the helper stores them on AppView directly, so
         // there's no destructured slot for it.
@@ -1761,6 +1770,12 @@ const AppView = {
         issues: (orderData && Array.isArray(orderData.issues)) ? orderData.issues : [],
         review: (orderData && Array.isArray(orderData.review)) ? orderData.review : [],
       };
+      // PM per-person order overlay. Shape { <assignee_key>: [{type,ref}] }.
+      // Tolerates a missing/failed fetch by defaulting to an empty map (every
+      // section falls back to the derived recency sort).
+      const pmOrderData = (pmOrderRes && pmOrderRes.ok) ? await pmOrderRes.json().catch(() => null) : null;
+      AppView._pmOrder = (pmOrderData && typeof pmOrderData === 'object' && !Array.isArray(pmOrderData))
+        ? pmOrderData : {};
 
       AppView._ghIssues = Array.isArray(ghData.issues) ? ghData.issues : [];
       AppView._ghIssuesMeta = {
@@ -2282,6 +2297,21 @@ const AppView = {
     return null;
   },
 
+  // Identity string for a PM-view card entry ({ kind, item }), matching the
+  // (card_type, card_ref) pairs the /pm-order server stores and the
+  // data-order-key attribute the drag handler reads. PM sections mix issues
+  // (ref = issue NUMBER) and proposals (ref = chat_sessions.id); no gov cards.
+  // A standalone fn (not `_cardOrderKey('issues', …)`) because both PM kinds
+  // arrive as { kind, item } entries, unlike the kanban Issues column's bare
+  // rows.
+  _pmCardOrderKey(entry) {
+    if (entry == null) return null;
+    const it = entry.item || {};
+    if (entry.kind === 'issue') return (it.number != null) ? `issue:${it.number}` : null;
+    if (entry.kind === 'proposal') return (it.id != null) ? `proposal:${it.id}` : null;
+    return null;
+  },
+
   // ── Kanban filters (#482) ───────────────────────────────────────────
   //
   // Pure card-level filter predicate for the kanban filter bar. kind ∈
@@ -2535,12 +2565,28 @@ const AppView = {
     const list = item && item.closest('.dev-drag-list');
     if (!item || !list || !item.dataset.orderKey) return;
     e.preventDefault();
-    AppView._dragState = {
-      item, list, handle,
-      column: list.dataset.orderCol,
-      pointerId: e.pointerId,
-      moved: false,
-    };
+    // PM view drags span multiple per-person lists (reorder within, reassign
+    // across); kanban drags stay inside one column. `scope` is the container
+    // the move handler hit-tests its sibling lists within.
+    const pmScope = item.closest && item.closest('#dev-pm');
+    if (pmScope) {
+      AppView._dragState = {
+        item, list, handle, pm: true,
+        scope: pmScope,
+        sourceList: list,
+        sourceAssignee: list.dataset.pmAssignee || null,
+        sourceName: list.dataset.pmName || null,
+        pointerId: e.pointerId,
+        moved: false,
+      };
+    } else {
+      AppView._dragState = {
+        item, list, handle,
+        column: list.dataset.orderCol,
+        pointerId: e.pointerId,
+        moved: false,
+      };
+    }
     try { handle.setPointerCapture(e.pointerId); } catch {}
     item.classList.add('opacity-50');
     handle.classList.add('cursor-grabbing');
@@ -2553,6 +2599,13 @@ const AppView = {
     const st = AppView._dragState;
     if (!st) return;
     st.moved = true;
+    // PM drags can cross into another person's list; re-target st.list to the
+    // drop list under the pointer first, so the card can move between sections
+    // (reassign) as well as within one (reorder). Kanban stays single-list.
+    if (st.pm) {
+      const target = AppView._pmListUnderPoint(st.scope, e.clientX, e.clientY);
+      if (target && target !== st.list) st.list = target;
+    }
     // Insert the dragged item before the first sibling whose vertical
     // midpoint is below the pointer; append when the pointer is past them
     // all. Direct children only, so nested cards never confuse the scan.
@@ -2571,6 +2624,25 @@ const AppView = {
     }
   },
 
+  // Find the PM drop list (.dev-drag-list) under a pointer within `scope`.
+  // Prefers a list whose bounding box contains the point; falls back to the
+  // list with the nearest vertical edge so a drop in the gap between sections
+  // still lands somewhere sensible. Returns null when there are no lists.
+  _pmListUnderPoint(scope, x, y) {
+    if (!scope) return null;
+    const lists = Array.from(scope.querySelectorAll('.dev-drag-list'));
+    if (!lists.length) return null;
+    let nearest = null;
+    let nearestDist = Infinity;
+    for (const list of lists) {
+      const r = list.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return list;
+      const dist = (y < r.top) ? (r.top - y) : (y > r.bottom ? y - r.bottom : 0);
+      if (dist < nearestDist) { nearestDist = dist; nearest = list; }
+    }
+    return nearest;
+  },
+
   _onDragPointerUp() {
     const st = AppView._dragState;
     if (!st) return;
@@ -2580,9 +2652,10 @@ const AppView = {
     try { st.handle.releasePointerCapture(st.pointerId); } catch {}
     st.item.classList.remove('opacity-50');
     st.handle.classList.remove('cursor-grabbing');
-    const { list, column, moved } = st;
+    const { list, column, moved, pm } = st;
     AppView._dragState = null;
     if (!moved) return;
+    if (pm) { AppView._onPmDrop(st); return; }
     const keys = Array.from(list.children)
       .filter((el) => el.classList.contains('dev-drag-item'))
       .map((el) => el.dataset.orderKey)
@@ -2629,6 +2702,132 @@ const AppView = {
       AppView._repaintKanbanBoard();
       alert('Couldn’t save the new order — reverted.');
     }
+  },
+
+  // ── PM view drag: reorder within / reassign across / unassign ─────────
+  //
+  // Reuses the shared pointer machinery above (_onDragPointerDown/Move/Up).
+  // A PM drag can end in three ways, decided purely from the source + drop
+  // list identities by _classifyPmDrop; _onPmDrop then performs the matching
+  // side effect (reassign = an assignee vote; unassign = withdraw that vote)
+  // plus a per-person order write for each affected section.
+
+  _initPmDrag(container) {
+    if (!container || container._dragBound) return;
+    if (AppView.readOnly) return; // no reordering for read-only viewers
+    container._dragBound = true;
+    container.addEventListener('pointerdown', AppView._onDragPointerDown);
+  },
+
+  // Pure classification of a completed PM drag. Given the source section key
+  // and the drop list's dataset ({ pmAssignee, pmName, pmUnassigned }),
+  // returns { action, ... }: 'reorder' (same person), 'reassign' (new person,
+  // carries destName), or 'unassign' (dropped on the Unassigned list). No DOM,
+  // no state — unit-tested directly.
+  _classifyPmDrop(sourceKey, destData) {
+    const d = destData || {};
+    if (d.pmUnassigned === '1' || d.pmUnassigned === true) return { action: 'unassign' };
+    const destKey = d.pmAssignee || null;
+    if (destKey == null) return { action: 'none' };
+    if (destKey === sourceKey) return { action: 'reorder' };
+    return { action: 'reassign', destName: d.pmName || destKey };
+  },
+
+  // Card identity keys ('issue:123' / 'proposal:45') currently in a list's DOM.
+  _pmListKeys(listEl) {
+    if (!listEl) return [];
+    return Array.from(listEl.children)
+      .filter((el) => el.classList && el.classList.contains('dev-drag-item'))
+      .map((el) => el.dataset && el.dataset.orderKey)
+      .filter(Boolean);
+  },
+
+  // Orchestrate a dropped PM card: classify, apply the reassign/unassign vote
+  // side effect, then persist the affected per-person orders. Optimistic —
+  // any failure reconciles by re-pulling the board (refreshDevData).
+  async _onPmDrop(st) {
+    const destList = st.list;
+    const cls = AppView._classifyPmDrop(st.sourceAssignee, destList && destList.dataset);
+    const ref = AppView._orderKeyToRef(st.item.dataset.orderKey);
+    // DOM already reflects the move: dest list holds the card, source doesn't.
+    const destKeys = AppView._pmListKeys(destList);
+    const sourceKeys = AppView._pmListKeys(st.sourceList);
+    const prev = AppView._pmOrder || {};
+    try {
+      if (cls.action === 'reorder') {
+        await AppView._commitPmOrder(st.sourceName, destKeys);
+      } else if (cls.action === 'reassign') {
+        if (ref) await AppView._castAssigneeForCard(ref.type, ref.ref, cls.destName);
+        await AppView._commitPmOrder(cls.destName, destKeys);
+        if (st.sourceName) await AppView._commitPmOrder(st.sourceName, sourceKeys);
+      } else if (cls.action === 'unassign') {
+        if (ref) await AppView._clearAssigneeForCard(ref.type, ref.ref);
+        if (st.sourceName) await AppView._commitPmOrder(st.sourceName, sourceKeys);
+        else AppView._repaintPmView();
+      } else {
+        AppView._repaintPmView();
+      }
+    } catch (err) {
+      AppView._pmOrder = prev;
+      // Reconcile against server truth (assignee summary + saved order) and
+      // repaint from the reloaded cache.
+      if (AppView.refreshDevData) AppView.refreshDevData('pm-order');
+      else AppView._repaintPmView();
+      alert('Couldn’t save that change — reverted.');
+    }
+  },
+
+  // Persist one person's new card order. Optimistically updates _pmOrder +
+  // repaints (so the order sticks and grips re-bind), then POSTs. On failure,
+  // throws so _onPmDrop reverts + reconciles. `assigneeName` is the display
+  // name; the server case-folds it to the storage key.
+  async _commitPmOrder(assigneeName, keys) {
+    const key = String(assigneeName == null ? '' : assigneeName).trim().toLowerCase();
+    if (!key) return;
+    const order = (keys || []).map(AppView._orderKeyToRef).filter(Boolean);
+    AppView._pmOrder = { ...(AppView._pmOrder || {}), [key]: order };
+    AppView._repaintPmView();
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    const res = await fetch(`/api/apps/${slug}/pm-order${AppView._demoQS()}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ assignee: assigneeName, order }),
+    });
+    if (!res.ok) throw new Error('pm-order save failed');
+    const data = await res.json().catch(() => null);
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      AppView._pmOrder = data;
+      AppView._repaintPmView();
+    }
+  },
+
+  // Cast the viewer's assignee vote for a card (reassign-by-drag). Mirrors the
+  // chip popover's _castAttrVote POST, then writes the refreshed summary onto
+  // the cached item so the regroup places the card under the new person.
+  async _castAssigneeForCard(targetType, targetRef, name) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) throw new Error('no app');
+    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field: 'assignee', value: name }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'reassign failed');
+    AppView._applyAttrSummary(targetType, targetRef, 'assignee', data);
+  },
+
+  // Withdraw the viewer's assignee vote for a card (drag-to-Unassigned).
+  async _clearAssigneeForCard(targetType, targetRef) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) throw new Error('no app');
+    const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes?field=assignee`, {
+      method: 'DELETE',
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'unassign failed');
+    AppView._applyAttrSummary(targetType, targetRef, 'assignee', data);
   },
 
   // Render the kanban board (inner HTML for #dev-kanban-board) from cached
@@ -2817,11 +3016,21 @@ const AppView = {
   //                     opts.cap — #633 passes Infinity while the
   //                     Unassigned filter is active)
   //   unassignedTotal — the pre-cap count, for the "+N more" note
+  //
+  //   opts.pmOrder — optional per-person manual order overlay, shape
+  //                  { "<assignee_key>": [{type,ref}], … } (AppView._pmOrder).
+  //                  When present, each group's items are re-sorted by
+  //                  _applyManualOrder AFTER the recency sort: cards absent
+  //                  from a person's saved order lead (newest-first), ranked
+  //                  cards follow in stored order (#617). The Unassigned
+  //                  bucket is NEVER reordered. Passed in explicitly (not read
+  //                  off AppView) so this helper stays pure + unit-testable.
   PM_UNASSIGNED_MAX: 10,
   _groupByAssignee(data, opts) {
     const d = data || {};
     const issues = Array.isArray(d.issues) ? d.issues : [];
     const proposals = Array.isArray(d.proposals) ? d.proposals : [];
+    const pmOrder = (opts && opts.pmOrder && typeof opts.pmOrder === 'object') ? opts.pmOrder : null;
 
     const ts = (v) => {
       const t = Date.parse(v || '');
@@ -2853,7 +3062,15 @@ const AppView = {
 
     const groups = Array.from(byKey.values()).map((g) => {
       const entries = g.entries.slice().sort((a, b) => b._t - a._t);
-      return { name: g.name, count: entries.length, items: entries.map((e) => ({ kind: e.kind, item: e.item })) };
+      let items = entries.map((e) => ({ kind: e.kind, item: e.item }));
+      // Apply this person's manual order overlay on top of the recency sort.
+      if (pmOrder) {
+        const savedOrder = pmOrder[g.name.toLowerCase()];
+        if (Array.isArray(savedOrder) && savedOrder.length) {
+          items = AppView._applyManualOrder(items, savedOrder, AppView._pmCardOrderKey);
+        }
+      }
+      return { name: g.name, count: items.length, items };
     });
     groups.sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name));
 
@@ -2887,8 +3104,14 @@ const AppView = {
     // lift the cap so the full unassigned backlog renders, no "+N more".
     const unassignedOnly = f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED;
     const { groups, unassigned, unassignedTotal } = AppView._groupByAssignee(
-      { issues, proposals }, unassignedOnly ? { cap: Infinity } : undefined
+      { issues, proposals },
+      { cap: unassignedOnly ? Infinity : undefined, pmOrder: AppView._pmOrder }
     );
+    // Reorder/reassign by drag is offered unless the filter bar is active (a
+    // saved order applies to the full section, not a filtered subset —
+    // mirroring the kanban rule at _renderKanbanInner). Read-only viewers get
+    // no grips either: _wrapDraggable omits them and _initPmDrag never binds.
+    const reorder = !filtering && !AppView.readOnly;
 
     // With a named-user filter active, the Unassigned section can never
     // match — hide it rather than rendering a permanently-empty stub.
@@ -2911,7 +3134,20 @@ const AppView = {
           `${AppView._assigneeAvatarHtml(g.name)}<span class="normal-case text-zinc-700 dark:text-zinc-200">@${escapeHtml(g.name)}</span>`
           + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${g.count}</span>`
         );
-        html += `<div>${head}<div class="space-y-2">${g.items.map(renderCard).join('')}</div></div>`;
+        let body;
+        if (reorder) {
+          // Each person's section is a drop-target list keyed by their
+          // case-folded assignee (data-pm-assignee) + display name
+          // (data-pm-name, used to cast the assignee vote on a cross-section
+          // drop). Cards carry a grip + data-order-key via _wrapDraggable.
+          const key = g.name.toLowerCase();
+          body = `<div class="space-y-2 dev-drag-list" data-pm-assignee="${escapeAttr(key)}" data-pm-name="${escapeAttr(g.name)}">`
+            + g.items.map((c) => AppView._wrapDraggable(AppView._pmCardOrderKey(c), renderCard(c))).join('')
+            + '</div>';
+        } else {
+          body = `<div class="space-y-2">${g.items.map(renderCard).join('')}</div>`;
+        }
+        html += `<div>${head}${body}</div>`;
       }
     } else if (!filtering) {
       // While filtering, an empty assigned area with matches below needs no
@@ -2929,7 +3165,18 @@ const AppView = {
       );
       let unBody;
       if (unassigned.length) {
-        unBody = `<div class="space-y-2">${unassigned.map(renderCard).join('')}</div>`;
+        if (reorder) {
+          // The Unassigned section is a DROP TARGET (drop a card here to
+          // withdraw your assignee vote) but its own cards carry no grip —
+          // _wrapDraggable(null, …) yields a .dev-drag-item with no handle /
+          // order-key, so its internal order stays recency-only (not
+          // user-sortable), per the spec.
+          unBody = '<div class="space-y-2 dev-drag-list" data-pm-unassigned="1">'
+            + unassigned.map((c) => AppView._wrapDraggable(null, renderCard(c))).join('')
+            + '</div>';
+        } else {
+          unBody = `<div class="space-y-2">${unassigned.map(renderCard).join('')}</div>`;
+        }
         if (unassignedTotal > unassigned.length) {
           // #633: clicking the note switches the assignee filter to
           // Unassigned, revealing the full uncapped list (wired in
@@ -2953,6 +3200,11 @@ const AppView = {
   // _repaintKanbanBoard: fill innerHTML, then re-attach kudos / ask-AI
   // availability and keep the headless-state poller in sync.
   _repaintPmView() {
+    // Never rebuild the PM view out from under an in-progress drag — a
+    // mid-drag innerHTML swap (e.g. a WS board_order_update from another user)
+    // would drop the pointer capture and strand the card. The commit that
+    // ends the drag repaints once it lands. Mirrors _repaintKanbanBoard.
+    if (AppView._dragState) return;
     const el = document.getElementById('dev-pm');
     if (!el) return;
     // #625: every PM-mode filter-control change funnels through here (via
@@ -2975,6 +3227,7 @@ const AppView = {
     if (window.Kudos) Kudos.attach(el);
     AppView._applyAskAiCardAvailability(el);
     AppView._updateKanbanFilterBarUI();
+    AppView._initPmDrag(el);
   },
 
   // ── Session cards in the In progress area ──────────────────────────

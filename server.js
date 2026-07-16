@@ -33,6 +33,7 @@ const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { proposalDiscussRoutes } = require('./src/routes/proposal-discuss');
 const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
+const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
@@ -333,6 +334,7 @@ app.use(userAgentFilesRoutes(config));
 app.use(proposalDiscussRoutes(config));
 app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
+app.use(pmOrderRoutes(config));
 app.use(debugRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {

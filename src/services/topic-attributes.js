@@ -339,6 +339,23 @@ async function castVote(pool, appId, targetType, ref, field, value, userId, link
   return listOptions(pool, appId, targetType, ref, field, userId, linkedIssues);
 }
 
+// Withdraw the caller's own vote for a (target, field), then return the
+// refreshed option list (same shape as castVote/listOptions) so the FE can
+// repaint chip + card in one round-trip. Only removes THIS user's row — the
+// card's top value only changes if no other votes remain. Backs the
+// drag-to-Unassigned gesture in the PM view (and could back an explicit
+// "clear" affordance on the chip). Idempotent: deleting a non-existent vote
+// is a no-op.
+async function clearVote(pool, appId, targetType, ref, field, userId) {
+  await pool.query(
+    `DELETE FROM topic_attribute_votes
+      WHERE app_id = $1 AND target_type = $2 AND target_ref = $3
+        AND field = $4 AND user_id = $5`,
+    [appId, targetType, ref, field, userId]
+  );
+  return listOptions(pool, appId, targetType, ref, field, userId);
+}
+
 module.exports = {
   TARGET_TYPES,
   FIELDS,
@@ -354,4 +371,5 @@ module.exports = {
   summarizeForProposals,
   listOptions,
   castVote,
+  clearVote,
 };
