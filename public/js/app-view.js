@@ -617,19 +617,6 @@ const AppView = {
       return;
     }
 
-    // App settings sub-page (reached from the "+" menu). Read-only
-    // viewers have nothing actionable there (rename / secrets /
-    // visibility / invites are all collab- or creator-gated
-    // server-side) — coerce back to the feed (#621).
-    if (subTab === 'settings') {
-      if (AppView.readOnly) {
-        subTab = null;
-      } else {
-        AppView._renderSettingsView(content);
-        return;
-      }
-    }
-
     // Full-screen topic (issue / proposal / governance) discussion.
     if (subTab === 'topic' && ref && ref.kind && ref.id) {
       await AppView._renderTopicSubView(content, ref);
@@ -652,7 +639,7 @@ const AppView = {
           <div class="relative ${AppView.readOnly && AppView.appData?.self_hosted ? 'hidden' : ''}">
             <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
               class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
-              title="${AppView.readOnly ? 'Fork this app' : 'Propose a change, file an issue, or open app settings'}">+</button>
+              title="${AppView.readOnly ? 'Fork this app' : 'Propose a change, file an issue, or manage this app'}">+</button>
             <div id="dev-plus-menu" class="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
               ${AppView.readOnly ? '' : `
               <button data-plus="proposal" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
@@ -663,9 +650,20 @@ const AppView = {
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
               </button>
-              <button data-plus="settings" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App settings</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">App secrets and display name</span>
+              ${AppView._plusMenuShowsMembers() ? `
+              <button data-plus="members" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Members &amp; visibility</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who can build and see this app</span>
+              </button>` : ''}
+              <button data-plus="rename" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App display name</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Renames are proposals — applied once voted in</span>
+              </button>
+              <button data-plus="secrets" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">App secrets
+                  <span id="dc-secrets-state" class="text-xs font-normal text-zinc-400 dark:text-zinc-500"></span>
+                </span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Set or update secret values</span>
               </button>`}
               ${AppView.appData?.self_hosted ? '' : `
               <button data-plus="fork" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors ${AppView.readOnly ? '' : 'border-t border-zinc-200 dark:border-zinc-800'}">
@@ -1223,56 +1221,9 @@ const AppView = {
     if (AppView.appData) AppView.loadVoteState(AppView.appData.slug);
   },
 
-  // ── App settings sub-page ───────────────────────────────────────────
-  // The App secrets / display-name flows as a dedicated page (reached
-  // from the "+" menu). Element ids are kept (#dc-edit-secrets /
-  // #dc-secrets-state / #dc-edit-rename) so refreshDevChatSecretsState
-  // and Secrets' post-save sync keep working unmodified. Secret-change
-  // proposals start from the App secrets row — the Secrets modal
-  // already routes non-admins into the vote-based proposal flow.
-  _renderSettingsView(content) {
-    const currentName = escapeHtml(AppView.appData?.name || '');
-    content.innerHTML = `
-      <div class="flex flex-col h-full min-h-0">
-        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <button id="dev-settings-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page">&larr;</button>
-          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">App settings</span>
-        </div>
-        <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-          <div class="px-3 py-3 space-y-2">
-            <button id="dc-edit-secrets"
-              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
-              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 014 4m-4-4a4 4 0 00-4 4 4 4 0 004 4 4 4 0 004-4 4 4 0 00-4-4zm-9.5 12.5L11 13"/></svg>
-              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App secrets</span>
-              <span id="dc-secrets-state" class="text-xs text-zinc-400 dark:text-zinc-500">Loading…</span>
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>
-            <button id="dc-edit-rename"
-              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
-              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App display name</span>
-              <span class="text-xs text-zinc-400 dark:text-zinc-500 truncate max-w-[40%]" title="${currentName}">${currentName}</span>
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>
-            <p class="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
-              Secret changes and renames are proposals — they apply once the app's
-              users vote them in (admins can apply secrets directly).
-            </p>
-          </div>
-        </div>
-      </div>`;
-
-    document.getElementById('dev-settings-back').addEventListener('click', () => {
-      App.switchTab('dev');
-    });
-    document.getElementById('dc-edit-secrets').addEventListener('click', () => {
-      if (window.Secrets) Secrets.openForCurrentApp();
-    });
-    document.getElementById('dc-edit-rename').addEventListener('click', () => {
-      AppView.promptRename();
-    });
-    AppView.refreshDevChatSecretsState();
-  },
+  // The App settings sub-page (secrets + display name behind a "+"
+  // menu entry) was dissolved in #645 — Rename and App secrets now sit
+  // directly in the "+" menu, alongside Members & visibility.
 
   // ── View-mode toggle (list ↔ kanban) ─────────────────────────────────
   // A two-button segmented control sitting to the LEFT of the "+" button.
@@ -1324,6 +1275,16 @@ const AppView = {
   },
 
   // ── "+" menu ────────────────────────────────────────────────────────
+  // Gate for the menu's Members & visibility item — same predicate the
+  // old hamburger-drawer row used (#645): creator/admin always
+  // (visibility control), collaborators of an invite-only app too
+  // (member list + invites). Never for the self-app (no invites there).
+  _plusMenuShowsMembers() {
+    const a = AppView.appData;
+    return !!a && !a.self_hosted && (
+      a.can_manage || (a.collab_visibility === 'private' && a.can_collaborate)
+    );
+  },
   _wirePlusMenu(content) {
     const btn = document.getElementById('dev-plus-btn');
     const menu = document.getElementById('dev-plus-menu');
@@ -1336,27 +1297,56 @@ const AppView = {
       e.stopPropagation();
       const open = menu.classList.toggle('hidden') === false;
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      // Refresh the App secrets item's "N required missing" state only
+      // when the menu actually opens — no fetch on every card-list mount.
+      if (open) AppView.refreshDevChatSecretsState();
     });
     // Outside-click dismiss, scoped to the dev view's lifetime (the
     // listener dies with the content innerHTML on the next render).
     content.addEventListener('click', (e) => {
       if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
     });
-    menu.querySelector('[data-plus="proposal"]').addEventListener('click', () => {
-      close();
-      AppView.createProposal();
-    });
-    menu.querySelector('[data-plus="issue"]').addEventListener('click', () => {
-      close();
-      // Open the shared Send Feedback modal with the dev-context mode:
-      // the open app is preselected as the target (Platform for the
-      // self-hosted app or while the repo doesn't exist yet) — #226.
-      App.openFeedbackModal({ fromDev: true });
-    });
-    menu.querySelector('[data-plus="settings"]').addEventListener('click', () => {
-      close();
-      App.switchTab('dev', null, 'settings');
-    });
+    // proposal/issue/rename/secrets render together in the non-read-only
+    // block; members is conditional within it (see _plusMenuShowsMembers),
+    // so its handler needs an existence check like fork's.
+    const proposalBtn = menu.querySelector('[data-plus="proposal"]');
+    if (proposalBtn) {
+      proposalBtn.addEventListener('click', () => {
+        close();
+        AppView.createProposal();
+      });
+    }
+    const issueBtn = menu.querySelector('[data-plus="issue"]');
+    if (issueBtn) {
+      issueBtn.addEventListener('click', () => {
+        close();
+        // Open the shared Send Feedback modal with the dev-context mode:
+        // the open app is preselected as the target (Platform for the
+        // self-hosted app or while the repo doesn't exist yet) — #226.
+        App.openFeedbackModal({ fromDev: true });
+      });
+    }
+    const membersBtn = menu.querySelector('[data-plus="members"]');
+    if (membersBtn) {
+      membersBtn.addEventListener('click', () => {
+        close();
+        AppView.openMembersModal();
+      });
+    }
+    const renameBtn = menu.querySelector('[data-plus="rename"]');
+    if (renameBtn) {
+      renameBtn.addEventListener('click', () => {
+        close();
+        AppView.promptRename();
+      });
+    }
+    const secretsBtn = menu.querySelector('[data-plus="secrets"]');
+    if (secretsBtn) {
+      secretsBtn.addEventListener('click', () => {
+        close();
+        if (window.Secrets) Secrets.openForCurrentApp();
+      });
+    }
     const forkBtn = menu.querySelector('[data-plus="fork"]');
     if (forkBtn) {
       forkBtn.addEventListener('click', () => {
@@ -6587,8 +6577,8 @@ const AppView = {
   // list / meta panel anymore — sessions are reached from the forum's
   // Your-sessions strip, proposal cards, and the "+" flow, and a
   // missing/unopenable id bounces back to the card list. The App
-  // secrets / display-name shortcuts that used to live here moved to
-  // the App settings sub-page (_renderSettingsView).
+  // secrets / display-name shortcuts that used to live here now sit
+  // directly in the "+" menu (#645).
   async renderDevChatTab(restoreSessionId) {
     const content = AppView._devContainer();
     if (!content) return;
@@ -6641,10 +6631,10 @@ const AppView = {
     }
   },
 
-  // Fetch the current secrets summary and paint the preview slot in
-  // the dev-chat Edit row. Called on tab mount and again from
-  // Secrets.handleSet/handleClear so direct admin edits reflect
-  // immediately without a tab reload. Silently no-ops when the row
+  // Fetch the current secrets summary and paint the state slot on the
+  // "+" menu's App secrets item (#dc-secrets-state). Called when the
+  // menu opens and again from Secrets.handleSet/handleClear so direct
+  // admin edits reflect immediately. Silently no-ops when the slot
   // isn't mounted (e.g. user is on a different tab).
   async refreshDevChatSecretsState() {
     const stateEl = document.getElementById('dc-secrets-state');
