@@ -252,3 +252,51 @@ test("_repaintDevBody routes 'pm' to the PM branch (mounts #dev-pm, calls _repai
   assert.equal(pmCalls, 1, 'PM branch invoked');
   assert.equal(kanbanCalls, 0, 'kanban branch not invoked');
 });
+
+// ── #637: drag-to-reassign drop→action mapping ───────────────────────────
+//
+// _pmDropAction is pure: (origin section assignee, target section assignee)
+// → the reassignment action. Empty/nullish marks the Unassigned section.
+
+// Compare across the vm realm boundary by stable scalar keys (deepEqual is
+// strict about prototypes, and the returned object was built in the sandbox).
+const actOf = (r) => (r && r.value !== undefined ? `${r.action}:${r.value}` : (r && r.action) || null);
+
+test('_pmDropAction: dropping onto a different person assigns to them', () => {
+  const AppView = makeAppView();
+  assert.equal(actOf(AppView._pmDropAction('alice', 'bob')), 'assign:bob');
+});
+
+test('_pmDropAction: dropping onto Unassigned clears the vote', () => {
+  const AppView = makeAppView();
+  assert.equal(actOf(AppView._pmDropAction('alice', '')), 'clear');
+  assert.equal(actOf(AppView._pmDropAction('alice', null)), 'clear');
+});
+
+test('_pmDropAction: dropping from Unassigned onto a person assigns', () => {
+  const AppView = makeAppView();
+  assert.equal(actOf(AppView._pmDropAction('', 'carol')), 'assign:carol');
+  assert.equal(actOf(AppView._pmDropAction(null, 'carol')), 'assign:carol');
+});
+
+test('_pmDropAction: same section is a no-op (case-insensitive, whitespace-tolerant)', () => {
+  const AppView = makeAppView();
+  assert.equal(actOf(AppView._pmDropAction('alice', 'alice')), 'noop');
+  assert.equal(actOf(AppView._pmDropAction('Alice', 'alice')), 'noop', 'case-insensitive');
+  assert.equal(actOf(AppView._pmDropAction('  bob ', 'bob')), 'noop', 'trims');
+  assert.equal(actOf(AppView._pmDropAction('', '')), 'noop', 'unassigned → unassigned');
+  assert.equal(actOf(AppView._pmDropAction(null, '')), 'noop', 'null and empty both mean unassigned');
+});
+
+test('_pmCardKey builds the issue/proposal identity _orderKeyToRef parses', () => {
+  const AppView = makeAppView();
+  assert.equal(AppView._pmCardKey({ kind: 'issue', item: { number: 42 } }), 'issue:42');
+  assert.equal(AppView._pmCardKey({ kind: 'proposal', item: { id: 7 } }), 'proposal:7');
+  assert.equal(AppView._pmCardKey({ kind: 'issue', item: {} }), null);
+  assert.equal(AppView._pmCardKey(null), null);
+  // Round-trips through the shared parser (compared by scalar fields).
+  const r1 = AppView._orderKeyToRef('issue:42');
+  assert.equal(r1.type, 'issue'); assert.equal(r1.ref, 42);
+  const r2 = AppView._orderKeyToRef('proposal:7');
+  assert.equal(r2.type, 'proposal'); assert.equal(r2.ref, 7);
+});

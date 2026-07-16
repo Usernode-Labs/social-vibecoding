@@ -2865,21 +2865,29 @@ const AppView = {
       return '<div class="space-y-5"><div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">No cards match the current filters.</div></div>';
     }
 
-    const renderCard = (c) => (c.kind === 'proposal'
-      ? AppView._renderProposalCard(c.item)
-      : AppView._renderIssueRow(c.item));
+    // #637: each card is wrapped in a drag shell (grip handle + stable
+    // identity) so it can be dragged between assignee sections to reassign.
+    // The wrap is a no-op for read-only viewers (no grip, plain card).
+    const renderCard = (c) => {
+      const cardHtml = (c.kind === 'proposal'
+        ? AppView._renderProposalCard(c.item)
+        : AppView._renderIssueRow(c.item));
+      return AppView._wrapPmDraggable(c, cardHtml);
+    };
     const sectionHead = (inner) => `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5 flex items-center gap-1.5">${inner}</div>`;
 
     let html = '<div class="space-y-5">';
 
-    // Tasks-by-assignee area.
+    // Tasks-by-assignee area. #637: every person section is a drop target
+    // tagged with its assignee name, so a card dropped onto it re-assigns
+    // to that person via the community assignee vote.
     if (groups.length) {
       for (const g of groups) {
         const head = sectionHead(
           `${AppView._assigneeAvatarHtml(g.name)}<span class="normal-case text-zinc-700 dark:text-zinc-200">@${escapeHtml(g.name)}</span>`
           + `<span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${g.count}</span>`
         );
-        html += `<div>${head}<div class="space-y-2">${g.items.map(renderCard).join('')}</div></div>`;
+        html += `<div class="dev-pm-section" data-pm-assignee="${escapeAttr(g.name)}">${head}<div class="space-y-2 dev-pm-list">${g.items.map(renderCard).join('')}</div></div>`;
       }
     } else if (!filtering) {
       // While filtering, an empty assigned area with matches below needs no
@@ -2897,15 +2905,19 @@ const AppView = {
       );
       let unBody;
       if (unassigned.length) {
-        unBody = `<div class="space-y-2">${unassigned.map(renderCard).join('')}</div>`;
+        unBody = `<div class="space-y-2 dev-pm-list">${unassigned.map(renderCard).join('')}</div>`;
         if (unassignedTotal > unassigned.length) {
           const moreCount = unassignedTotal - unassigned.length;
           unBody += `<div class="mt-2"><span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more unassigned</span></div>`;
         }
       } else {
-        unBody = '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing unassigned.</div>';
+        // Empty Unassigned still carries a list node so a card can be
+        // dropped into it (un-assign) even when nobody's currently unassigned.
+        unBody = '<div class="space-y-2 dev-pm-list"><div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing unassigned.</div></div>';
       }
-      html += `<div>${unHead}${unBody}</div>`;
+      // #637: the Unassigned section is a drop target too — dropping a card
+      // here withdraws the viewer's assignee vote (see _pmReassign).
+      html += `<div class="dev-pm-section" data-pm-unassigned="1">${unHead}${unBody}</div>`;
     }
 
     html += '</div>';
@@ -2918,6 +2930,10 @@ const AppView = {
   _repaintPmView() {
     const el = document.getElementById('dev-pm');
     if (!el) return;
+    // #637: never re-render out from under an in-flight drag — a WS-driven
+    // refresh mid-drag would destroy the card node the pointer is holding.
+    // Mirrors how _dragState blocks _repaintKanbanBoard.
+    if (AppView._pmDragState) return;
     // #625: every PM-mode filter-control change funnels through here (via
     // _repaintBoardSurface), so — mirroring _repaintKanbanBoard — persist
     // the shared per-app filters and keep the bar's Clear link / assignee
@@ -2928,6 +2944,162 @@ const AppView = {
     if (window.Kudos) Kudos.attach(el);
     AppView._applyAskAiCardAvailability(el);
     AppView._updateKanbanFilterBarUI();
+    AppView._initPmDrag(el);
+  },
+
+  // ── PM view drag-to-reassign (#637) ──────────────────────────────────
+  //
+  // Drag a card by its grip handle from one assignee section and drop it
+  // onto another to reassign it. Pointer-events based (touch + mouse),
+  // exactly like the kanban reorder (#613) — but the operation differs:
+  // kanban reorders WITHIN a column and persists a board order; PM moves a
+  // card ACROSS sections and reassigns via the community assignee vote
+  // (POST to cast, DELETE to clear). The drop re-uses the same
+  // _applyAttrSummary + _refreshAttrCards repaint the chip dropdown uses,
+  // so drag and chip can never disagree, and a non-decisive vote (the card
+  // has other voters) simply re-groups the card back where the tally puts
+  // it. Read-only viewers get no grip and no binding.
+
+  // Stable identity for a PM card entry ({ kind, item }) — the same
+  // 'issue:<n>' / 'proposal:<id>' shape _orderKeyToRef parses back.
+  _pmCardKey(c) {
+    if (!c || !c.item) return null;
+    if (c.kind === 'proposal') return (c.item.id != null) ? `proposal:${c.item.id}` : null;
+    return (c.item.number != null) ? `issue:${c.item.number}` : null;
+  },
+
+  // Wrap one rendered card in a PM drag shell: a grip handle in a left
+  // gutter (same markup/size as the kanban grip) plus the card. A card
+  // with no identity, or a read-only viewer, renders plain (undraggable).
+  _wrapPmDraggable(c, cardHtml) {
+    const key = AppView._pmCardKey(c);
+    if (!key || AppView.readOnly) return cardHtml;
+    const grip = '<svg viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4" aria-hidden="true">'
+      + '<circle cx="7" cy="5" r="1.4"/><circle cx="13" cy="5" r="1.4"/>'
+      + '<circle cx="7" cy="10" r="1.4"/><circle cx="13" cy="10" r="1.4"/>'
+      + '<circle cx="7" cy="15" r="1.4"/><circle cx="13" cy="15" r="1.4"/></svg>';
+    return `<div class="dev-drag-item relative pl-6" data-order-key="${escapeAttr(key)}">
+        <button type="button" class="dev-drag-handle absolute left-0 top-0 bottom-0 w-6 flex items-center justify-center text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 dark:hover:text-zinc-400 cursor-grab touch-none"
+          aria-label="Drag to reassign" title="Drag onto another person to reassign">${grip}</button>
+        ${cardHtml}
+      </div>`;
+  },
+
+  // Pure: given the origin + target section assignees for a drag, decide the
+  // reassignment action. An empty/nullish value marks the Unassigned
+  // section. Same person as origin (case-insensitively, mirroring the
+  // server's assignee grouping) → noop. Dropping onto Unassigned → clear.
+  // Otherwise → assign to that person. Unit-tested in dev-pm-groups.test.js.
+  _pmDropAction(fromAssignee, targetAssignee) {
+    const norm = (v) => (v == null ? '' : String(v).trim());
+    const from = norm(fromAssignee);
+    const to = norm(targetAssignee);
+    if (from.toLowerCase() === to.toLowerCase()) return { action: 'noop' };
+    if (to === '') return { action: 'clear' };
+    return { action: 'assign', value: to };
+  },
+
+  _pmDragState: null,
+
+  _initPmDrag(el) {
+    if (!el || el._pmDragBound) return;
+    if (AppView.readOnly) return; // #621: no reassigning for read-only viewers
+    el._pmDragBound = true;
+    el.addEventListener('pointerdown', AppView._onPmDragPointerDown);
+  },
+
+  _onPmDragPointerDown(e) {
+    // Left mouse button only (touch/pen report 0 / -1); ignore others.
+    if (typeof e.button === 'number' && e.button > 0) return;
+    const handle = e.target.closest && e.target.closest('.dev-drag-handle');
+    if (!handle) return;
+    const item = handle.closest('.dev-drag-item');
+    const fromSection = item && item.closest('.dev-pm-section');
+    if (!item || !fromSection || !item.dataset.orderKey) return;
+    e.preventDefault();
+    AppView._pmDragState = {
+      item, handle, fromSection,
+      pointerId: e.pointerId,
+      cardKey: item.dataset.orderKey,
+      moved: false,
+      dropSection: null,
+    };
+    try { handle.setPointerCapture(e.pointerId); } catch {}
+    item.classList.add('opacity-50');
+    handle.classList.add('cursor-grabbing');
+    document.addEventListener('pointermove', AppView._onPmDragPointerMove);
+    document.addEventListener('pointerup', AppView._onPmDragPointerUp);
+    document.addEventListener('pointercancel', AppView._onPmDragPointerUp);
+  },
+
+  // The PM section (drop target) under a viewport point, if any.
+  _pmSectionAtPoint(x, y) {
+    const el = document.elementFromPoint(x, y);
+    return (el && el.closest) ? el.closest('.dev-pm-section') : null;
+  },
+
+  _onPmDragPointerMove(e) {
+    const st = AppView._pmDragState;
+    if (!st) return;
+    st.moved = true;
+    const target = AppView._pmSectionAtPoint(e.clientX, e.clientY);
+    if (st.dropSection && st.dropSection !== target) {
+      st.dropSection.classList.remove('dev-pm-drop-over');
+    }
+    st.dropSection = target;
+    // Highlight only a section that would actually change the assignment.
+    if (target && target !== st.fromSection) target.classList.add('dev-pm-drop-over');
+  },
+
+  _sectionAssignee(section) {
+    if (!section) return '';
+    if (section.dataset.pmUnassigned === '1') return '';
+    return section.dataset.pmAssignee || '';
+  },
+
+  _onPmDragPointerUp() {
+    const st = AppView._pmDragState;
+    if (!st) return;
+    document.removeEventListener('pointermove', AppView._onPmDragPointerMove);
+    document.removeEventListener('pointerup', AppView._onPmDragPointerUp);
+    document.removeEventListener('pointercancel', AppView._onPmDragPointerUp);
+    try { st.handle.releasePointerCapture(st.pointerId); } catch {}
+    st.item.classList.remove('opacity-50');
+    st.handle.classList.remove('cursor-grabbing');
+    const target = st.dropSection;
+    if (target) target.classList.remove('dev-pm-drop-over');
+    const { fromSection, cardKey, moved } = st;
+    // Release BEFORE any repaint so _refreshAttrCards can re-render freely.
+    AppView._pmDragState = null;
+    if (!moved || !target) return;
+    const act = AppView._pmDropAction(
+      AppView._sectionAssignee(fromSection), AppView._sectionAssignee(target)
+    );
+    if (act.action === 'noop') return;
+    // Optimistic move into the target section's list for immediate feedback;
+    // the subsequent server round-trip + repaint is the source of truth.
+    const list = target.querySelector('.dev-pm-list');
+    if (list) list.appendChild(st.item);
+    AppView._pmReassign(cardKey, act);
+  },
+
+  // Persist a drag reassignment through the same assignee-vote path the chip
+  // dropdown uses: cast a vote for the dropped-onto person, or withdraw the
+  // viewer's vote when dropped onto Unassigned. Repaints from the server's
+  // refreshed tally either way; reverts (repaints from unchanged cache) on
+  // failure.
+  async _pmReassign(cardKey, act) {
+    const ref = AppView._orderKeyToRef(cardKey);
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!ref || !slug) { AppView._refreshAttrCards(); return; }
+    const ctx = { field: 'assignee', targetType: ref.type, targetRef: ref.ref, slug };
+    try {
+      await AppView._sendAttrVote(ctx, act.action === 'clear' ? null : act.value);
+      AppView._refreshAttrCards();
+    } catch (err) {
+      AppView._refreshAttrCards(); // snap back to server truth
+      alert(`Couldn't save the reassignment: ${err.message || 'please try again'}`);
+    }
   },
 
   // ── Session cards in the In progress area ──────────────────────────
@@ -4586,22 +4758,37 @@ const AppView = {
     }
   },
 
+  // Network + cache core shared by the chip dropdown (_castAttrVote) and the
+  // PM drag reassignment (_pmReassign). `value` non-null → POST (cast/move);
+  // `value` null → DELETE (withdraw). Writes the server's refreshed
+  // { top, count, myValue } onto the cached item via _applyAttrSummary and
+  // returns the raw payload. Throws on a non-2xx / network error with the
+  // server's error message so callers can surface it.
+  async _sendAttrVote(ctx, value) {
+    const { field, targetType, targetRef, slug } = ctx;
+    const url = `/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes`;
+    const res = value == null
+      ? await fetch(`${url}?field=${encodeURIComponent(field)}`, { method: 'DELETE' })
+      : await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ field, value }),
+      });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || 'save failed');
+    // Update the cached item's summary so re-renders show the new leader.
+    AppView._applyAttrSummary(targetType, targetRef, field, data);
+    return data;
+  },
+
   // POST the caller's vote for `value`, then repaint the on-card chips and
   // the open popover from the refreshed tally the server returns.
   async _castAttrVote(value) {
     const ctx = AppView._attrPopover;
     if (!ctx || !value) return;
-    const { field, targetType, targetRef, slug } = ctx;
+    const { field, targetRef } = ctx;
     try {
-      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ field, value }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) { alert(data.error || 'Could not save your vote.'); return; }
-      // Update the cached item's summary so re-renders show the new leader.
-      AppView._applyAttrSummary(targetType, targetRef, field, data);
+      const data = await AppView._sendAttrVote(ctx, value);
       // Repaint whichever card surface is mounted (list / kanban / PM /
       // topic head) and the popover.
       AppView._refreshAttrCards();

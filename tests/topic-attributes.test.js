@@ -131,6 +131,18 @@ function makeMockPool() {
         else store.push({ app_id: appId, target_type: type, target_ref: ref, field, value, user_id: userId, created_at: ts });
         return { rows: [] };
       }
+      // clearVote — delete only the caller's own row for this (target, field).
+      if (/DELETE FROM topic_attribute_votes/.test(sql)) {
+        const [appId, type, ref, field, userId] = params;
+        let removed = 0;
+        for (let i = store.length - 1; i >= 0; i -= 1) {
+          const r = store[i];
+          if (r.app_id === appId && r.target_type === type && r.target_ref === ref && r.field === field && r.user_id === userId) {
+            store.splice(i, 1); removed += 1;
+          }
+        }
+        return { rows: [], rowCount: removed };
+      }
       throw new Error(`unexpected SQL in mock: ${sql.slice(0, 60)}`);
     },
   };
@@ -175,6 +187,35 @@ test('summarizeForTargets returns top + count + myValue per target', async () =>
   assert.equal(map.get(7).assignee.top, null); // untouched field → placeholder
   assert.equal(map.get(8).assignee.top, 'alice');
   assert.equal(map.get(8).assignee.myValue, null); // user 3 didn't vote here
+});
+
+// #637: clearVote withdraws ONLY the caller's own vote (the PM "drag into
+// Unassigned" gesture). Other users' votes on the same target stand.
+test('clearVote removes only the caller row and returns the refreshed list', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 7, 'assignee', 'alice', 100);
+  await attrs.castVote(pool, 1, 'issue', 7, 'assignee', 'bob', 200);
+  assert.equal(pool.store.length, 2);
+
+  const after = await attrs.clearVote(pool, 1, 'issue', 7, 'assignee', 100);
+  // Caller (100) row gone; the other voter (200) survives.
+  assert.equal(pool.store.length, 1);
+  assert.equal(pool.store[0].user_id, 200);
+  // Returned list has the same shape as castVote/listOptions.
+  assert.equal(after.field, 'assignee');
+  assert.equal(after.myValue, null, 'caller no longer backs any option');
+  assert.equal(after.options.length, 1);
+  assert.equal(after.options[0].value, 'bob');
+  assert.equal(after.options[0].count, 1);
+});
+
+test('clearVote is a clean no-op when the caller had no vote', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 7, 'assignee', 'alice', 200);
+  const after = await attrs.clearVote(pool, 1, 'issue', 7, 'assignee', 100); // 100 never voted
+  assert.equal(pool.store.length, 1, 'nobody else affected');
+  assert.equal(after.myValue, null);
+  assert.equal(after.options[0].value, 'alice');
 });
 
 // ── HTTP endpoints ──────────────────────────────────────────────────────
@@ -241,6 +282,48 @@ test('POST then GET round-trips the option list + myValue', async () => {
   assert.equal(get.options.find((o) => o.value === 'medium').count, 1);
 });
 
+// #637: DELETE withdraws the caller's vote and returns the refreshed list.
+test('DELETE clears the caller vote and round-trips the refreshed list', async () => {
+  // Cast an assignee vote, then withdraw it via DELETE.
+  const post = await fetch(`${base}/api/apps/demo/topics/proposal/12/attributes`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field: 'assignee', value: 'alice' }),
+  });
+  assert.equal(post.status, 200);
+  assert.equal((await post.json()).myValue, 'alice');
+
+  const del = await fetch(`${base}/api/apps/demo/topics/proposal/12/attributes?field=assignee`, {
+    method: 'DELETE',
+  });
+  assert.equal(del.status, 200);
+  const cleared = await del.json();
+  assert.equal(cleared.field, 'assignee');
+  assert.equal(cleared.myValue, null, 'the caller no longer backs any assignee');
+  assert.equal(cleared.options.length, 0, 'no votes remain on this target');
+
+  // GET confirms the withdrawal persisted.
+  const get = await fetch(`${base}/api/apps/demo/topics/proposal/12/attributes?field=assignee`).then((x) => x.json());
+  assert.equal(get.myValue, null);
+});
+
+test('DELETE rejects an unknown field and a bad target type', async () => {
+  const bad1 = await fetch(`${base}/api/apps/demo/topics/issue/5/attributes?field=colour`, { method: 'DELETE' });
+  assert.equal(bad1.status, 400);
+  const bad2 = await fetch(`${base}/api/apps/demo/topics/widget/5/attributes?field=assignee`, { method: 'DELETE' });
+  assert.equal(bad2.status, 400);
+});
+
+test('DELETE is collab-gated — denied access yields 404', async () => {
+  const orig = appAccess.getAppForUser;
+  appAccess.getAppForUser = async () => null; // no collab access for this caller
+  try {
+    const r = await fetch(`${base}/api/apps/demo/topics/issue/5/attributes?field=assignee`, { method: 'DELETE' });
+    assert.equal(r.status, 404);
+  } finally {
+    appAccess.getAppForUser = orig; // restore for later tests
+  }
+});
+
 // ── 3. Source guards ───────────────────────────────────────────────────
 test('feed routes attach the priority/assignee summary', () => {
   const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
@@ -285,10 +368,35 @@ test('assignee dropdown defaults the name box to the viewer, gated on no prior v
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf-8');
   assert.doesNotMatch(css, /\.attr-assign-me/, 'no leftover assign-to-me button CSS');
 
+  // The standalone "Assign to me" button stays gone — but note the assignee
+  // dropdown's name box is the way to assign to a fresh name (drag-and-drop
+  // only moves between existing sections).
+  assert.doesNotMatch(fe, /_assignToMe/, 'no assign-to-me plumbing');
+});
+
+// #637: the unassign path (drag a card into the Unassigned section) is
+// implemented again — the DELETE route + clearVote service back it.
+test('unassign is served by a collab-gated DELETE route + clearVote helper', () => {
   const routeSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'topic-attributes.js'), 'utf-8');
-  assert.doesNotMatch(routeSrc, /router\.delete\(/, 'the unassign DELETE endpoint is removed');
+  assert.match(routeSrc, /router\.delete\(/, 'the unassign DELETE endpoint exists');
+  assert.match(routeSrc, /attrs\.clearVote\(/, 'the DELETE handler calls clearVote');
+  // Same collab gate + rate limiter as the POST.
+  assert.match(routeSrc, /router\.delete\([^)]*attributeVoteLimiter/s, 'DELETE is rate-limited like POST');
   const svc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'topic-attributes.js'), 'utf-8');
-  assert.doesNotMatch(svc, /clearVote/, 'clearVote service method is removed');
+  assert.match(svc, /async function clearVote\(/, 'clearVote service method exists');
+  assert.match(svc, /DELETE FROM topic_attribute_votes/, 'clearVote deletes the caller row');
+});
+
+// #637: the PM view wires drag-to-reassign — cards wrapped in a drag shell,
+// sections tagged as drop targets, and a pointer-drag binding.
+test('PM view renders drag shells + section drop targets and binds the drag', () => {
+  const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
+  assert.match(fe, /_wrapPmDraggable/, 'PM cards are wrapped in a drag shell');
+  assert.match(fe, /dev-pm-section/, 'PM sections are tagged as drop targets');
+  assert.match(fe, /data-pm-assignee=/, 'person sections carry their assignee name');
+  assert.match(fe, /data-pm-unassigned="1"/, 'the Unassigned section is a drop target');
+  assert.match(fe, /_initPmDrag\(el\)/, 'the PM repaint binds the drag handler');
+  assert.match(fe, /_sendAttrVote/, 'drag reassignment reuses the shared vote path');
 });
 
 // #600: staging seeds make BOTH assignee-dropdown states reviewable via

@@ -96,6 +96,15 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* #637: PM view drag-to-reassign — the assignee section the pointer is
+   over while dragging a card gets a dashed violet outline so the drop
+   target is unmistakable. Applied/removed by _onPmDragPointerMove. */
+.dev-pm-drop-over {
+  outline: 2px dashed rgb(139 92 246 / 0.6);
+  outline-offset: 3px;
+  border-radius: 0.5rem;
+}
+
 /* ── Home section headers ──────────────────────────────── */
 
 .home-section-header {

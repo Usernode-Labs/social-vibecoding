@@ -174,6 +174,23 @@ async function castVote(pool, appId, targetType, ref, field, value, userId) {
   return listOptions(pool, appId, targetType, ref, field, userId);
 }
 
+// Withdraw the caller's own vote for one (target, field), then return the
+// refreshed option list (same shape as castVote / listOptions). Deletes
+// only the caller's row — everyone else's votes stand — so the card's
+// displayed top value only clears when no other votes remain. Backs the
+// PM-view "drag a card into Unassigned" gesture, which un-assigns by
+// removing the dragging user's assignee vote. A no-op (0 rows) when the
+// caller had no vote; the refreshed list still comes back cleanly.
+async function clearVote(pool, appId, targetType, ref, field, userId) {
+  await pool.query(
+    `DELETE FROM topic_attribute_votes
+      WHERE app_id = $1 AND target_type = $2 AND target_ref = $3
+        AND field = $4 AND user_id = $5`,
+    [appId, targetType, ref, field, userId]
+  );
+  return listOptions(pool, appId, targetType, ref, field, userId);
+}
+
 module.exports = {
   TARGET_TYPES,
   FIELDS,
@@ -186,4 +203,5 @@ module.exports = {
   summarizeForTargets,
   listOptions,
   castVote,
+  clearVote,
 };
