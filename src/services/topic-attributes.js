@@ -11,19 +11,28 @@
 // then alphabetically (a stable tie-break so the chip never flickers).
 
 const TARGET_TYPES = ['issue', 'proposal'];
-const FIELDS = ['priority', 'assignee'];
+const FIELDS = ['priority', 'assignee', 'category'];
 const PRIORITY_VALUES = ['low', 'medium', 'high'];
+// Fixed, predefined category vocabulary — a controlled set (like priority,
+// unlike free-text assignee) so chip colours stay consistent and grouping /
+// filtering never fragments on casing ("bug" vs "Bug"). Adjust the taxonomy
+// by editing this list; no data migration needed since values are strings.
+const CATEGORY_VALUES = ['feature', 'bug', 'improvement', 'design', 'docs', 'chore'];
 const MAX_ASSIGNEE_LEN = 64;
 
 // Validate + normalize a submitted value for a field. Returns the string
 // to store (raw casing preserved for assignee) or null when invalid.
-// Priority is a fixed enum; assignee is free text (trimmed, length-capped)
-// — deliberately NOT restricted to registered usernames, since the
-// requirement is "type someone's name".
+// Priority + category are fixed enums; assignee is free text (trimmed,
+// length-capped) — deliberately NOT restricted to registered usernames,
+// since the requirement is "type someone's name".
 function normalizeValue(field, value) {
   if (field === 'priority') {
     const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
     return PRIORITY_VALUES.includes(v) ? v : null;
+  }
+  if (field === 'category') {
+    const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    return CATEGORY_VALUES.includes(v) ? v : null;
   }
   if (field === 'assignee') {
     const v = typeof value === 'string' ? value.trim() : '';
@@ -58,6 +67,7 @@ function emptySummary() {
   return {
     priority: { top: null, count: 0, myValue: null },
     assignee: { top: null, count: 0, myValue: null },
+    category: { top: null, count: 0, myValue: null },
   };
 }
 
@@ -333,6 +343,7 @@ module.exports = {
   TARGET_TYPES,
   FIELDS,
   PRIORITY_VALUES,
+  CATEGORY_VALUES,
   MAX_ASSIGNEE_LEN,
   normalizeValue,
   groupKey,

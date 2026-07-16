@@ -884,6 +884,7 @@ function issueRoutes(config) {
         const s = attrByNumber.get(issue.number) || topicAttrs.emptySummary();
         issue.priority = s.priority;
         issue.assignee = s.assignee;
+        issue.category = s.category;
       }
       // Staging: the [Mock] rows have no topic_attribute_votes, so seed a
       // synthetic summary onto a few so the chips' states are reviewable in
@@ -898,15 +899,19 @@ function issueRoutes(config) {
         // the name box PRE-FILLED with the viewer's username.
         const viewer = (req.user && req.user.username) || 'staging-tester';
         const mockAttrs = new Map([
-          // Clear leader on both fields; the viewer is their own assignee.
+          // Clear leader on all fields; the viewer is their own assignee.
           [900001, {
             priority: { top: 'high', count: 3, myValue: null },
             assignee: { top: viewer, count: 2, myValue: viewer },
+            // #504: a clear category leader (count 3) so the chip + colour
+            // and the category filter dropdown are reviewable.
+            category: { top: 'bug', count: 3, myValue: null },
           }],
           // A tie (count 1 vs 1) — the earlier-suggested value wins the chip.
           [900003, {
             priority: { top: 'low', count: 1, myValue: null },
             assignee: { top: 'staging-demo-user', count: 1, myValue: null },
+            category: { top: 'docs', count: 1, myValue: null },
           }],
           // #489: a third assignee whose first letter (M) differs from the
           // others (S), so the deterministic initial-avatar colouring is
@@ -914,16 +919,19 @@ function issueRoutes(config) {
           [900006, {
             priority: { top: 'medium', count: 2, myValue: null },
             assignee: { top: 'maya-builder', count: 3, myValue: null },
+            // A second, distinct category leader so the filter has choices.
+            category: { top: 'feature', count: 2, myValue: null },
           }],
           // 900002 deliberately left untouched → muted "Set priority" /
-          // "Unassigned"; opening its assignee dropdown pre-fills the
-          // viewer's own username.
+          // "Unassigned" / "Set category"; opening its assignee dropdown
+          // pre-fills the viewer's own username.
         ]);
         for (const issue of issues) {
           const m = mockAttrs.get(issue.number);
           if (m && (!issue.priority || !issue.priority.top) && (!issue.assignee || !issue.assignee.top)) {
             issue.priority = m.priority;
             issue.assignee = m.assignee;
+            issue.category = m.category;
           }
         }
       }

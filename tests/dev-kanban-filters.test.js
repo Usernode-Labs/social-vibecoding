@@ -67,7 +67,7 @@ function makeAppView() {
 }
 
 // Default (empty) filters — the fast-path that must match everything.
-const none = { q: '', priority: null, assignee: null, needsVote: false };
+const none = { q: '', priority: null, assignee: null, category: null, needsVote: false };
 
 const issue = (over) => ({
   number: 42, title: 'Dark mode toggle resets', created_by_username: 'evan',
@@ -154,6 +154,31 @@ test('priority filter matches the top-voted value; unset and gov cards fail', ()
   assert.equal(AppView._devCardMatches('gov', gov({}), f), false);
 });
 
+test('category filter matches the top-voted value; unset and gov cards fail', () => {
+  const AppView = makeAppView();
+  const f = { ...none, category: 'bug' };
+  assert.equal(AppView._devCardMatches('issue', issue({ category: { top: 'bug', count: 2 } }), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ category: { top: 'feature', count: 1 } }), f), false);
+  assert.equal(AppView._devCardMatches('issue', issue({ category: null }), f), false);
+  assert.equal(AppView._devCardMatches('proposal', prop({ category: { top: 'bug', count: 1 } }), f), true);
+  // Gov cards never carry a category — excluded by design under this filter.
+  assert.equal(AppView._devCardMatches('gov', gov({}), f), false);
+});
+
+test('category filter composes with priority, assignee and search', () => {
+  const AppView = makeAppView();
+  const card = prop({
+    pr_title: 'Tighten card spacing',
+    priority: { top: 'high', count: 2 },
+    assignee: { top: 'sam', count: 1 },
+    category: { top: 'improvement', count: 3 },
+    my_vote: null,
+  });
+  const f = { q: 'spacing', priority: 'high', assignee: 'sam', category: 'improvement', needsVote: true };
+  assert.equal(AppView._devCardMatches('proposal', card, f), true);
+  assert.equal(AppView._devCardMatches('proposal', card, { ...f, category: 'bug' }), false);
+});
+
 test('assignee filter matches the top-voted assignee; unassigned cards fail', () => {
   const AppView = makeAppView();
   const f = { ...none, assignee: 'sam' };
@@ -233,6 +258,8 @@ test('_kanbanFiltersActive reflects any non-default filter', () => {
   assert.equal(AppView._kanbanFiltersActive(), true);
   AppView._kanbanFilters = { q: '', priority: null, assignee: 'sam', needsVote: false };
   assert.equal(AppView._kanbanFiltersActive(), true);
+  AppView._kanbanFilters = { q: '', priority: null, assignee: null, category: 'bug', needsVote: false };
+  assert.equal(AppView._kanbanFiltersActive(), true, 'an active category filter counts');
   AppView._kanbanFilters = { q: '', priority: null, assignee: null, needsVote: true };
   assert.equal(AppView._kanbanFiltersActive(), true);
 });
@@ -278,10 +305,10 @@ test('_loadKanbanFilters returns defaults for unknown slug / empty store', () =>
 
 test('_saveKanbanFilters round-trips through _loadKanbanFilters under the slug', () => {
   const AppView = makeAppView();
-  AppView._kanbanFilters = { q: 'dark', priority: 'high', assignee: 'sam', needsVote: true };
+  AppView._kanbanFilters = { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true };
   AppView._saveKanbanFilters('my-app');
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'dark', priority: 'high', assignee: 'sam', needsVote: true });
+    { q: 'dark', priority: 'high', assignee: 'sam', category: 'bug', needsVote: true });
 });
 
 test('_saveKanbanFilters clears the key when filters are at defaults', () => {
@@ -314,7 +341,7 @@ test('_loadKanbanFilters merges over defaults for a partial stored object', () =
   store.setItem(`${AppView.KANBAN_FILTERS_KEY}:my-app`, JSON.stringify({ q: 'hi' }));
   // Missing fields fall back to their defaults rather than becoming undefined.
   assert.deepEqual(plain(AppView._loadKanbanFilters('my-app')),
-    { q: 'hi', priority: null, assignee: null, needsVote: false });
+    { q: 'hi', priority: null, assignee: null, category: null, needsVote: false });
 });
 
 test('_loadKanbanFilters yields defaults on corrupt stored JSON', () => {

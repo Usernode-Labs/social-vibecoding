@@ -181,10 +181,10 @@ const AppView = {
   // stored assignee values are trimmed server-side (topic-attributes
   // normalizeValue), so no assignee.top can ever begin with whitespace.
   KANBAN_ASSIGNEE_UNASSIGNED: ' __unassigned__',
-  _kanbanFilters: { q: '', priority: null, assignee: null, needsVote: false },
+  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false },
   // Single source of truth for the empty/default filter set.
   _defaultKanbanFilters() {
-    return { q: '', priority: null, assignee: null, needsVote: false };
+    return { q: '', priority: null, assignee: null, category: null, needsVote: false };
   },
   // Load the saved filters for an app slug, merged over the defaults so a
   // stored object missing a (future) field degrades gracefully. Returns
@@ -2329,6 +2329,9 @@ const AppView = {
     // without the attribute set — and gov cards, which never carry them —
     // fail the match by design.
     if (f.priority && !(it.priority && it.priority.top === f.priority)) return false;
+    // #504: category filter on the community-voted top value. Cards without a
+    // category set — and gov cards, which never carry one — fail by design.
+    if (f.category && !(it.category && it.category.top === f.category)) return false;
     if (f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED) {
       // #633: "Unassigned" matches cards whose assignee is unset. Gov cards
       // are excluded here too (mirroring the named-assignee rule): they can
@@ -2354,7 +2357,7 @@ const AppView = {
 
   _kanbanFiltersActive() {
     const f = AppView._kanbanFilters || {};
-    return !!((f.q && f.q.trim()) || f.priority || f.assignee || f.needsVote);
+    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote);
   },
 
   // Assignee dropdown options: the union of top-voted assignees across all
@@ -2409,6 +2412,8 @@ const AppView = {
     const ctlCls = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100';
     const priOpt = (v, label) =>
       `<option value="${v}"${f.priority === v ? ' selected' : ''}>${label}</option>`;
+    const catOpt = (v, label) =>
+      `<option value="${v}"${f.category === v ? ' selected' : ''}>${label}</option>`;
     el.innerHTML = `
       <div class="flex flex-wrap items-center gap-2">
         <input id="dev-kanban-search" type="search" placeholder="Filter by title, author or #number"
@@ -2417,6 +2422,10 @@ const AppView = {
         <select id="dev-kanban-priority" class="${ctlCls}" aria-label="Filter by priority">
           <option value="">Any priority</option>
           ${priOpt('high', 'High')}${priOpt('medium', 'Medium')}${priOpt('low', 'Low')}
+        </select>
+        <select id="dev-kanban-category" class="${ctlCls}" aria-label="Filter by category">
+          <option value="">Any category</option>
+          ${AppView.ATTR_CATEGORY_VALUES.map((v) => catOpt(v, AppView._categoryMeta(v).label)).join('')}
         </select>
         <select id="dev-kanban-assignee" class="${ctlCls}" aria-label="Filter by assignee">
           ${AppView._kanbanAssigneeOptionsHtml()}
@@ -2439,6 +2448,10 @@ const AppView = {
     });
     el.querySelector('#dev-kanban-priority').addEventListener('change', (ev) => {
       AppView._kanbanFilters.priority = ev.target.value || null;
+      AppView._repaintBoardSurface();
+    });
+    el.querySelector('#dev-kanban-category').addEventListener('change', (ev) => {
+      AppView._kanbanFilters.category = ev.target.value || null;
       AppView._repaintBoardSurface();
     });
     el.querySelector('#dev-kanban-assignee').addEventListener('change', (ev) => {
@@ -4323,6 +4336,27 @@ const AppView = {
     }
   },
 
+  // #504: the fixed category vocabulary (mirrors CATEGORY_VALUES in
+  // services/topic-attributes.js — keep the two in sync). Community-voted
+  // like priority: a small controlled set so chip colours stay consistent
+  // and filtering never fragments on casing.
+  ATTR_CATEGORY_VALUES: ['feature', 'bug', 'improvement', 'design', 'docs', 'chore'],
+
+  // Display label + colour classes for a category slug, drawn from the same
+  // badge palette family the priority chip / assignee avatars use. `cls` is
+  // the static tint; `hover` deepens it to /20 on the interactive chip.
+  _categoryMeta(value) {
+    switch (value) {
+      case 'feature': return { label: 'Feature', cls: 'bg-emerald-500/10 text-emerald-500', hover: 'hover:bg-emerald-500/20' };
+      case 'bug': return { label: 'Bug', cls: 'bg-red-500/10 text-red-500', hover: 'hover:bg-red-500/20' };
+      case 'improvement': return { label: 'Improvement', cls: 'bg-sky-500/10 text-sky-500', hover: 'hover:bg-sky-500/20' };
+      case 'design': return { label: 'Design', cls: 'bg-violet-500/10 text-violet-400', hover: 'hover:bg-violet-500/20' };
+      case 'docs': return { label: 'Docs', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
+      case 'chore': return { label: 'Chore', cls: 'bg-zinc-500/10 text-zinc-500', hover: 'hover:bg-zinc-500/20' };
+      default: return null;
+    }
+  },
+
   // #489: a small fixed palette of tint pairs (bg /20 + text 600/dark 300)
   // for the assignee initial-avatar, drawn from the same colour family the
   // card badges use so the circles sit consistently in light + dark themes.
@@ -4381,6 +4415,12 @@ const AppView = {
       const meta = AppView._priorityMeta(s.top);
       if (meta) { label = `&#9873; ${meta.label}`; cls = meta.cls; hover = meta.hover; }
       else { label = '&#9873; Set priority'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+    } else if (field === 'category') {
+      // #504: lead with a small colour swatch (the same attr-dot used in the
+      // popover) so the category reads at a glance, then the label.
+      const meta = AppView._categoryMeta(s.top);
+      if (meta) { label = `<span class="attr-dot ${meta.cls}"></span>${meta.label}`; cls = meta.cls; hover = meta.hover; }
+      else { label = '<span class="attr-dot bg-zinc-500/10 text-zinc-500"></span>Set category'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
     } else {
       // #489: the assignee now leads with a coloured initial-avatar (an at-a-
       // glance "who owns this") instead of the generic person emoji, and the
@@ -4398,9 +4438,14 @@ const AppView = {
     // Faint trailing count, matching how the ★ bounty pill shows its number.
     const countHtml = count > 1 ? ` <span class="opacity-60">&middot;${count}</span>` : '';
     const base = 'attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded';
-    const title = field === 'priority'
-      ? 'Vote on this card\'s priority'
-      : (s.top ? 'Suggest or vote on who should take this' : 'Assign someone to this task');
+    let title;
+    if (field === 'priority') {
+      title = 'Vote on this card\'s priority';
+    } else if (field === 'category') {
+      title = 'Vote on this card\'s category';
+    } else {
+      title = s.top ? 'Suggest or vote on who should take this' : 'Assign someone to this task';
+    }
     if (readonly) {
       return `<span class="${base} ${cls}">${label}${countHtml}</span>`;
     }
@@ -4413,6 +4458,7 @@ const AppView = {
   _attrChipsHtml(targetType, targetRef, item, opts) {
     const readonly = !!(opts && opts.readonly) || AppView.readOnly;
     return AppView._attrChipHtml('priority', targetType, targetRef, item && item.priority, readonly)
+      + AppView._attrChipHtml('category', targetType, targetRef, item && item.category, readonly)
       + AppView._attrChipHtml('assignee', targetType, targetRef, item && item.assignee, readonly);
   },
 
@@ -4551,6 +4597,16 @@ const AppView = {
       for (const v of AppView.ATTR_PRIORITY_VALUES) {
         const o = byVal.get(v);
         const meta = AppView._priorityMeta(v);
+        inner += optRow(`<span class="attr-dot ${meta.cls}"></span>${meta.label}`, v, o ? o.count : 0, !!(o && o.mine));
+      }
+    } else if (field === 'category') {
+      // #504: list the fixed category set (like priority), each with its
+      // colour swatch, showing counts + the viewer's current check.
+      const byVal = new Map((data.options || []).map((o) => [o.value, o]));
+      inner += '<div class="attr-pop-head">Category</div>';
+      for (const v of AppView.ATTR_CATEGORY_VALUES) {
+        const o = byVal.get(v);
+        const meta = AppView._categoryMeta(v);
         inner += optRow(`<span class="attr-dot ${meta.cls}"></span>${meta.label}`, v, o ? o.count : 0, !!(o && o.mine));
       }
     } else {
