@@ -80,6 +80,7 @@ stub('../src/services/app-access', {
 stub('../src/services/topic-attributes', {
   summarizeForTargets: async () => new Map(),
   emptySummary: () => ({ priority: null, assignee: null }),
+  applyIssueFallback: (p) => p || { priority: null, assignee: null },
 });
 
 const { checkAndMerge } = require('../src/routes/votes');

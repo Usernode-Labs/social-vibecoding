@@ -105,6 +105,10 @@ function loadVotes({ row = null, gateApp = { id: 1, slug: 'demo' }, staging = fa
   stub(ids.topicAttrs, {
     summarizeForTargets: async () => new Map(),
     emptySummary: () => ({ priority: null, assignee: null }),
+    // #639: the enrichment now applies a linked-issue fallback; with an
+    // empty summarize there is nothing to inherit, so pass the summary
+    // through unchanged.
+    applyIssueFallback: (p) => p || { priority: null, assignee: null },
   });
   stub(ids.visuals, { shapeAgg: () => null });
 
