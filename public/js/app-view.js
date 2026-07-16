@@ -7522,9 +7522,13 @@ const AppView = {
       visSection.classList.toggle('hidden', !appData.can_manage || !!appData.self_hosted);
       if (appData.can_manage && !appData.self_hosted) {
         AppView._renderMembersVisPills();
+        // Set (not just conditionally add) the disabled state: the pills are
+        // cloned on every wire, so a `disabled` left over from opening a
+        // repo-less app's modal would survive into this app's pills and eat
+        // every click.
+        visSection.querySelectorAll('[data-m-collab-vis], [data-m-view-vis]')
+          .forEach((p) => { p.disabled = !appData.repo_url; });
         if (!appData.repo_url) {
-          visSection.querySelectorAll('[data-m-collab-vis], [data-m-view-vis]')
-            .forEach((p) => { p.disabled = true; });
           if (visStatus) {
             visStatus.textContent = 'Visibility changes are proposed as a dapp.json pull request — this app has no GitHub repository, so they\'re unavailable.';
             visStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
@@ -7547,9 +7551,10 @@ const AppView = {
       govSection.classList.toggle('hidden', !appData.can_manage);
       if (appData.can_manage) {
         AppView._renderMembersGovPills();
+        // Same set-don't-add rationale as the visibility pills above.
+        govSection.querySelectorAll('[data-m-approver-policy], [data-m-approvals-mode], #members-approvals-n, #members-approvals-propose')
+          .forEach((p) => { p.disabled = !appData.repo_url; });
         if (!appData.repo_url) {
-          govSection.querySelectorAll('[data-m-approver-policy], [data-m-approvals-mode], #members-approvals-n')
-            .forEach((p) => { p.disabled = true; });
           if (govStatus) {
             govStatus.textContent = 'Approval-settings changes are proposed as a dapp.json pull request — this app has no GitHub repository, so they\'re unavailable.';
             govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
@@ -7644,37 +7649,39 @@ const AppView = {
         const fresh = pill.cloneNode(true);
         pill.parentNode.replaceChild(fresh, pill);
         fresh.addEventListener('click', () => {
+          // Switch the segmented control right away — the tap must visibly
+          // respond (the old handler left "Time & majority" highlighted, so
+          // tapping "At least" read as a dead click). The highlight is a
+          // display-only draft: _membersGov (the app's real settings) only
+          // changes when the governance proposal merges, and _proposeGovernance
+          // repaints from it if the user cancels or the proposal fails.
+          AppView._showMembersGovModeDraft(fresh.dataset.mApprovalsMode);
           if (fresh.dataset.mApprovalsMode === 'default') {
             AppView._proposeGovernance({ policy: AppView._membersGov.policy, atLeast: null });
-          } else {
-            // Reveal the count input and let the user pick N; the
-            // proposal opens on Enter / change (see below).
-            const n = document.getElementById('members-approvals-n');
-            if (n) {
-              n.classList.remove('hidden');
-              n.value = String(AppView._membersGov.atLeast || 1);
-              n.focus();
-            }
-            const govStatus = document.getElementById('members-governance-error');
-            if (govStatus) {
-              govStatus.textContent = 'Set the number of approvals and press Enter to open the proposal.';
-              govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
-            }
           }
         });
       });
+    // At-least count: Enter or the Propose button opens the proposal. No
+    // change-listener auto-propose — a number input fires `change` on every
+    // spinner click, which popped a confirm dialog mid-adjustment.
     const nInput = document.getElementById('members-approvals-n');
+    const proposeFromN = () => {
+      const el = document.getElementById('members-approvals-n');
+      const n = Math.max(1, Math.min(50, parseInt(el && el.value, 10) || 1));
+      AppView._proposeGovernance({ policy: AppView._membersGov.policy, atLeast: n });
+    };
     if (nInput) {
       const freshN = nInput.cloneNode(true);
       nInput.parentNode.replaceChild(freshN, nInput);
-      const proposeN = () => {
-        const n = Math.max(1, Math.min(50, parseInt(freshN.value, 10) || 1));
-        AppView._proposeGovernance({ policy: AppView._membersGov.policy, atLeast: n });
-      };
       freshN.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') { e.preventDefault(); proposeN(); }
+        if (e.key === 'Enter') { e.preventDefault(); proposeFromN(); }
       });
-      freshN.addEventListener('change', proposeN);
+    }
+    const proposeBtn = document.getElementById('members-approvals-propose');
+    if (proposeBtn) {
+      const freshP = proposeBtn.cloneNode(true);
+      proposeBtn.parentNode.replaceChild(freshP, proposeBtn);
+      freshP.addEventListener('click', proposeFromN);
     }
 
     // Approver invite typeahead.
@@ -7908,6 +7915,36 @@ const AppView = {
       n.classList.toggle('hidden', atLeast == null);
       if (atLeast != null) n.value = String(atLeast);
     }
+    const proposeBtn = document.getElementById('members-approvals-propose');
+    if (proposeBtn) proposeBtn.classList.toggle('hidden', atLeast == null);
+  },
+
+  // Paint a locally-selected approvals mode without touching _membersGov:
+  // the tapped pill highlights and the at-least count input + Propose
+  // button reveal (or hide, back on "Time & majority"). Display-only —
+  // the app's real settings still come from the merged governance PR;
+  // every openMembersModal()/_renderMembersGovPills() repaints from
+  // _membersGov, so an abandoned draft resets on the next open.
+  _showMembersGovModeDraft(mode) {
+    document.querySelectorAll('#members-governance-section [data-m-approvals-mode]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.mApprovalsMode === mode);
+    });
+    const showN = mode === 'at_least';
+    const n = document.getElementById('members-approvals-n');
+    if (n) {
+      n.classList.toggle('hidden', !showN);
+      if (showN) {
+        n.value = String(AppView._membersGov.atLeast || 1);
+        n.focus();
+      }
+    }
+    const proposeBtn = document.getElementById('members-approvals-propose');
+    if (proposeBtn) proposeBtn.classList.toggle('hidden', !showN);
+    const govStatus = document.getElementById('members-governance-error');
+    if (govStatus && showN) {
+      govStatus.textContent = 'Set the number of approvals, then tap Propose.';
+      govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+    }
   },
 
   // Pill click → confirm → open a governance-change proposal (a PR that
@@ -7933,7 +7970,12 @@ const AppView = {
     if (!window.confirm(
       'Changing the approval settings opens a proposal that is voted on under the current rules. '
       + 'The change applies after the vote passes and the app redeploys. Open the proposal?'
-    )) return;
+    )) {
+      // The pill click already painted the tapped mode (see
+      // _showMembersGovModeDraft) — snap back to the app's real settings.
+      AppView._renderMembersGovPills();
+      return;
+    }
 
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/governance-pr`, {
@@ -7946,6 +7988,7 @@ const AppView = {
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 409) {
+        AppView._renderMembersGovPills();
         setStatus('A governance change is already up for vote — see the proposal in the Dev tab\'s vote panel.', false);
         return;
       }
@@ -7955,6 +7998,9 @@ const AppView = {
         false
       );
     } catch (err) {
+      // No proposal opened — the draft highlight would misreport the
+      // app's settings, so repaint from the real ones.
+      AppView._renderMembersGovPills();
       setStatus(`Could not open the governance proposal: ${err.message}`, true);
     }
   },

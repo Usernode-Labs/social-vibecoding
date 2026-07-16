@@ -268,6 +268,11 @@
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
+      "name": "Approvals-mode control ships the count input + Propose button (at-least fix)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#members-governance-section #members-approvals-propose"
+    },
+    {
       "name": "Errored app view shows the failure reason and build-log button",
       "path": "/app/staging-demo-failed-app",
       "expectText": "View build log",
