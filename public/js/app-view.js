@@ -7564,13 +7564,18 @@ const AppView = {
       }
     }
 
-    // Approvers roster: creator/admin always (a roster can be lined up
-    // before flipping the policy); everyone else sees it read-only when
-    // the policy is 'invited'.
+    // Approvers roster: managers can always fetch it; everyone else only
+    // when the policy is 'invited' (read-only). The section itself stays
+    // hidden until the roster fetch decides (_renderApprovers): under the
+    // default 'anyone' policy an EMPTY roster keeps it hidden — the "No
+    // approvers yet" empty state only misled there, since approvers don't
+    // apply until the policy flips — while leftover rows (a dormant
+    // roster) still show, with an explanatory note.
     const approversSection = document.getElementById('members-approvers-section');
     const showApprovers = appData.can_manage
       || (appData.approver_policy === 'invited' && appData.can_collaborate);
-    if (approversSection) approversSection.classList.toggle('hidden', !showApprovers);
+    if (approversSection) approversSection.classList.add('hidden');
+    AppView._approversData = null;
     const approverInviteBox = document.getElementById('members-approver-invite');
     if (approverInviteBox) approverInviteBox.classList.toggle('hidden', !appData.can_manage);
     const apStatus = document.getElementById('members-approver-status');
@@ -7578,6 +7583,9 @@ const AppView = {
     const apInput = document.getElementById('members-approver-invite-input');
     if (apInput) apInput.value = '';
     AppView._hideApproverSuggestions();
+    // A previous open's abandoned initial-approvers draft must not leak
+    // into this one.
+    AppView._hideInitialApproversDraft();
 
     AppView._wireMembersModal();
 
@@ -7638,6 +7646,15 @@ const AppView = {
         const fresh = pill.cloneNode(true);
         pill.parentNode.replaceChild(fresh, pill);
         fresh.addEventListener('click', () => {
+          // Switching TO invited-approvers goes through the inline
+          // "Initial approvers" step instead of an immediate confirm —
+          // its Propose button is the explicit consent, and it lets the
+          // user line up the roster in the same gesture.
+          if (fresh.dataset.mApproverPolicy === 'invited'
+              && AppView._membersGov.policy !== 'invited') {
+            AppView._showInitialApproversDraft();
+            return;
+          }
           AppView._proposeGovernance({
             policy: fresh.dataset.mApproverPolicy,
             atLeast: AppView._membersGov.atLeast,
@@ -7703,6 +7720,48 @@ const AppView = {
         }
         if (e.key === 'Escape') AppView._hideApproverSuggestions();
       });
+    }
+
+    // Initial-approvers draft step (switching to invited-approvers).
+    const iaInput = document.getElementById('members-initial-approver-input');
+    if (iaInput) {
+      const freshIa = iaInput.cloneNode(true);
+      iaInput.parentNode.replaceChild(freshIa, iaInput);
+      freshIa.addEventListener('input', () => {
+        clearTimeout(AppView._initialApproverDebounce);
+        AppView._initialApproverDebounce = setTimeout(
+          () => AppView._searchInitialApprovers(freshIa.value.trim()), 200
+        );
+      });
+      freshIa.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const name = freshIa.value.trim();
+          if (name) AppView._addDraftApprover(name);
+        }
+        if (e.key === 'Escape') AppView._hideInitialApproverSuggestions();
+      });
+    }
+    const iaPropose = document.getElementById('members-initial-approvers-propose');
+    if (iaPropose) {
+      const freshIaP = iaPropose.cloneNode(true);
+      iaPropose.parentNode.replaceChild(freshIaP, iaPropose);
+      freshIaP.addEventListener('click', () => {
+        AppView._proposeGovernance({
+          policy: 'invited',
+          atLeast: AppView._membersGov.atLeast,
+          initialApprovers: [...AppView._govDraftApprovers],
+          skipConfirm: true,
+        });
+      });
+    }
+    const iaCancel = document.getElementById('members-initial-approvers-cancel');
+    if (iaCancel) {
+      const freshIaC = iaCancel.cloneNode(true);
+      iaCancel.parentNode.replaceChild(freshIaC, iaCancel);
+      // Abandon the draft: repaint from the app's real settings (which
+      // also collapses the block — see _renderMembersGovPills).
+      freshIaC.addEventListener('click', () => AppView._renderMembersGovPills());
     }
   },
 
@@ -7917,6 +7976,9 @@ const AppView = {
     }
     const proposeBtn = document.getElementById('members-approvals-propose');
     if (proposeBtn) proposeBtn.classList.toggle('hidden', atLeast == null);
+    // Repainting from the real settings always collapses the
+    // initial-approvers draft (cancel, failure, fresh open).
+    AppView._hideInitialApproversDraft();
   },
 
   // Paint a locally-selected approvals mode without touching _membersGov:
@@ -7947,12 +8009,124 @@ const AppView = {
     }
   },
 
+  // ── Initial-approvers draft (switching to invited-approvers) ────────
+  //
+  // Tapping the "Invited approvers" pill on an 'anyone' app reveals this
+  // inline step instead of an immediate confirm. It names who will be
+  // able to approve once the change lands — the creator is auto-seeded
+  // as the first approver by the merge-time reconcile when the roster is
+  // empty (services/app-manifest.js applyGovernanceChange); the self-app
+  // has no creator and falls back to full admins — and lets the user
+  // pick extra approvers to invite in the same gesture. Display-only
+  // like _showMembersGovModeDraft: _membersGov is untouched until the
+  // proposal merges, and _renderMembersGovPills() collapses the draft.
+  _govDraftApprovers: [],
+  _initialApproverDebounce: null,
+
+  _showInitialApproversDraft() {
+    document.querySelectorAll('#members-governance-section [data-m-approver-policy]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.mApproverPolicy === 'invited');
+    });
+    AppView._govDraftApprovers = [];
+    const block = document.getElementById('members-initial-approvers');
+    if (block) block.classList.remove('hidden');
+    const statusLine = document.getElementById('members-initial-approvers-status');
+    if (statusLine) {
+      const appData = AppView.appData || {};
+      const me = (typeof App !== 'undefined' && App.user) ? App.user : {};
+      const roster = ((AppView._approversData && AppView._approversData.approvers) || [])
+        .filter((r) => r.status === 'member');
+      if (roster.length) {
+        statusLine.textContent = `Current approvers stay in place: ${roster.map((r) => `@${r.username}`).join(', ')}. Add more people to invite below (optional).`;
+      } else if (appData.self_hosted) {
+        statusLine.textContent = 'Platform admins can approve proposals until invited approvers are added — pick some below.';
+      } else if (AppView._approversData && AppView._approversData.creatorId != null
+                 && AppView._approversData.creatorId !== me.id) {
+        statusLine.textContent = 'The app\'s creator will automatically become the first approver. Add more people to invite below (optional).';
+      } else {
+        statusLine.textContent = 'You\'ll automatically become this app\'s first approver. Add more people to invite below (optional).';
+      }
+    }
+    const input = document.getElementById('members-initial-approver-input');
+    if (input) { input.value = ''; input.focus(); }
+    AppView._renderDraftApprovers();
+    AppView._hideInitialApproverSuggestions();
+    const govStatus = document.getElementById('members-governance-error');
+    if (govStatus) {
+      govStatus.textContent = 'Review the initial approvers, then tap Propose.';
+      govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+    }
+  },
+
+  _hideInitialApproversDraft() {
+    const block = document.getElementById('members-initial-approvers');
+    if (block) block.classList.add('hidden');
+    AppView._govDraftApprovers = [];
+    AppView._hideInitialApproverSuggestions();
+  },
+
+  _renderDraftApprovers() {
+    const list = document.getElementById('members-initial-approvers-list');
+    if (!list) return;
+    list.innerHTML = AppView._govDraftApprovers.map((u) =>
+      `<div class="flex items-center justify-between px-3 py-1.5 rounded-lg bg-zinc-100 dark:bg-zinc-800">
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(u)}<span class="text-[0.65rem] text-amber-500 font-medium ml-1">will be invited</span></span>
+        <button type="button" data-remove-draft-approver="${escapeAttr(u)}" class="text-xs text-zinc-400 hover:text-red-500 px-2 py-1">Remove</button>
+      </div>`
+    ).join('');
+    list.querySelectorAll('[data-remove-draft-approver]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        AppView._govDraftApprovers = AppView._govDraftApprovers
+          .filter((u) => u !== btn.dataset.removeDraftApprover);
+        AppView._renderDraftApprovers();
+      });
+    });
+  },
+
+  _addDraftApprover(username) {
+    const name = String(username || '').replace(/^@/, '').trim();
+    if (!name) return;
+    const lower = name.toLowerCase();
+    if (!AppView._govDraftApprovers.some((u) => u.toLowerCase() === lower)) {
+      AppView._govDraftApprovers.push(name);
+    }
+    const input = document.getElementById('members-initial-approver-input');
+    if (input) input.value = '';
+    AppView._hideInitialApproverSuggestions();
+    AppView._renderDraftApprovers();
+  },
+
+  async _searchInitialApprovers(q) {
+    const box = document.getElementById('members-initial-approver-suggestions');
+    if (!box || !AppView.appData) return;
+    if (!q) { AppView._hideInitialApproverSuggestions(); return; }
+    try {
+      const params = new URLSearchParams({ q });
+      const res = await fetch(`/api/users/search?${params.toString()}`);
+      if (!res.ok) return;
+      const { users } = await res.json();
+      if (!users || !users.length) { AppView._hideInitialApproverSuggestions(); return; }
+      box.innerHTML = users.map((u) =>
+        `<button type="button" data-draft-approver-user="${escapeAttr(u.username)}" class="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
+      ).join('');
+      box.classList.remove('hidden');
+      box.querySelectorAll('[data-draft-approver-user]').forEach((btn) => {
+        btn.addEventListener('click', () => AppView._addDraftApprover(btn.dataset.draftApproverUser));
+      });
+    } catch { /* typeahead is best-effort */ }
+  },
+
+  _hideInitialApproverSuggestions() {
+    const box = document.getElementById('members-initial-approver-suggestions');
+    if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+  },
+
   // Pill click → confirm → open a governance-change proposal (a PR that
   // edits dapp.json's `governance` block). NOT optimistic, like the
   // visibility pills: the controls keep showing the current settings
   // until the proposal passes, merges, and the redeploy's reconcile
   // fires the `governance_changed` WS event (handled in app.js).
-  async _proposeGovernance({ policy, atLeast }) {
+  async _proposeGovernance({ policy, atLeast, initialApprovers, skipConfirm }) {
     const cur = AppView._membersGov;
     const targetPolicy = policy === 'invited' ? 'invited' : 'anyone';
     const targetN = atLeast != null ? Math.max(1, Math.min(50, Number(atLeast) || 1)) : null;
@@ -7967,7 +8141,9 @@ const AppView = {
     };
     setStatus('', false);
 
-    if (!window.confirm(
+    // The initial-approvers step's Propose button IS the explicit
+    // consent (skipConfirm) — every other path keeps the dialog.
+    if (!skipConfirm && !window.confirm(
       'Changing the approval settings opens a proposal that is voted on under the current rules. '
       + 'The change applies after the vote passes and the app redeploys. Open the proposal?'
     )) {
@@ -7977,6 +8153,7 @@ const AppView = {
       return;
     }
 
+    const picked = Array.isArray(initialApprovers) ? initialApprovers.filter(Boolean) : [];
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/governance-pr`, {
         method: 'POST',
@@ -7984,6 +8161,7 @@ const AppView = {
         body: JSON.stringify({
           approverPolicy: targetPolicy,
           approvalsRequired: targetN,
+          ...(picked.length ? { initialApprovers: picked } : {}),
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -7993,10 +8171,15 @@ const AppView = {
         return;
       }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-      setStatus(
-        `Proposal opened (PR #${data.prNumber}) — it needs the group's vote in the Dev tab's vote panel before the new settings apply.`,
-        false
-      );
+      AppView._hideInitialApproversDraft();
+      let msg = `Proposal opened (PR #${data.prNumber}) — it needs the group's vote in the Dev tab's vote panel before the new settings apply.`;
+      if (Array.isArray(data.inviteWarnings) && data.inviteWarnings.length) {
+        msg += ` Some approver invites could not be sent: ${data.inviteWarnings.join('; ')}.`;
+      }
+      setStatus(msg, false);
+      // Freshly-sent approver invites should appear in the roster right
+      // away (the section reveals now that rows exist).
+      if (picked.length) AppView.loadApprovers();
     } catch (err) {
       // No proposal opened — the draft highlight would misreport the
       // app's settings, so repaint from the real ones.
@@ -8004,6 +8187,12 @@ const AppView = {
       setStatus(`Could not open the governance proposal: ${err.message}`, true);
     }
   },
+
+  // Last-fetched /approvers payload (approvers + creatorId +
+  // approverPolicy) — feeds the initial-approvers draft's status line
+  // and the section-visibility rule in _renderApprovers. Reset on every
+  // modal open so one app's roster can't leak into another's.
+  _approversData: null,
 
   async loadApprovers() {
     const list = document.getElementById('members-approvers-list');
@@ -8013,8 +8202,12 @@ const AppView = {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/approvers`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      AppView._approversData = data;
       AppView._renderApprovers(data.approvers || []);
     } catch (err) {
+      // Reveal the section so the failure isn't silently hidden.
+      const section = document.getElementById('members-approvers-section');
+      if (section) section.classList.remove('hidden');
       list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load approvers: ${escapeHtml(err.message)}</div>`;
     }
   },
@@ -8023,12 +8216,25 @@ const AppView = {
     const list = document.getElementById('members-approvers-list');
     if (!list) return;
     const me = (typeof App !== 'undefined' && App.user) ? App.user : {};
-    const canManage = !!AppView.appData?.can_manage;
+    // Final section visibility (see openMembersModal): under the default
+    // 'anyone' policy the section only appears when leftover rows exist —
+    // an empty roster there is the normal state, not a problem to fix —
+    // and those dormant rows get an explanatory note.
+    const policy = (AppView._approversData && AppView._approversData.approverPolicy)
+      || (AppView.appData && AppView.appData.approver_policy) || 'anyone';
+    const invited = policy === 'invited';
+    const section = document.getElementById('members-approvers-section');
+    if (section) section.classList.toggle('hidden', !invited && !rows.length);
+    const dormantNote = document.getElementById('members-approvers-dormant-note');
+    if (dormantNote) dormantNote.classList.toggle('hidden', invited || !rows.length);
     if (!rows.length) {
-      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">No approvers yet.'
-        + (canManage ? ' Invite one below.' : '') + '</div>';
+      // Only visible when the policy is 'invited' — honest about the
+      // merge gate's empty-roster fallback (services/governance.js:
+      // full admins act as the approver set).
+      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">No approvers yet — platform admins can approve proposals until an approver is added.</div>';
       return;
     }
+    const canManage = !!AppView.appData?.can_manage;
     list.innerHTML = rows.map((r) => {
       const pending = r.status === 'invited';
       const tag = pending

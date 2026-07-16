@@ -1294,6 +1294,10 @@ const App = {
             atLeast: data.approvalsRequired != null ? Number(data.approvalsRequired) : null,
           };
           AppView._renderMembersGovPills();
+          // The policy flip changes whether the Approvers section shows
+          // (its visibility is roster-driven — see _renderApprovers) and
+          // the merge may have auto-seeded the creator — refetch.
+          if (AppView.loadApprovers) AppView.loadApprovers();
         }
         if (App.currentTab === 'dev' && AppView.refreshDevData) {
           AppView.refreshDevData('governance');
