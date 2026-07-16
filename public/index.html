@@ -121,15 +121,16 @@
     <!-- App secrets used to live as a header icon here; it's been moved
          into the dev-chat tab's "Edit" section (see AppView.renderDevChatTab).
          The badge it used to show now lives on the in-tab button. -->
-    <!-- The GitHub / Share / Members & visibility / Settings icons used
-         to live here as header buttons; they've been moved into the
-         slide-out drawer (#header-menu-panel below), which is now
-         available at every viewport width — see #122. -->
+    <!-- The GitHub / Share / Settings icons used to live here as header
+         buttons; they've been moved into the slide-out drawer
+         (#header-menu-panel below), which is now available at every
+         viewport width — see #122. Members & visibility lived in the
+         drawer too until #645 moved it into the Dev tab's "+" menu. -->
     <button id="feedback-btn" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Send feedback">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
     </button>
     <!-- Hamburger: shown at every width; opens the slide-out drawer
-         holding the secondary actions (GitHub, Share, Members, Settings). -->
+         holding the secondary actions (GitHub, Share, Settings). -->
     <button id="header-menu-btn" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open menu" aria-expanded="false">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
@@ -174,14 +175,8 @@
       <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.368 2.684 3 3 0 00-5.368-2.684z"/></svg>
       <span class="text-sm font-medium">Share App</span>
     </button>
-    <!-- Members & visibility — only shown when an app is open, for the
-         creator/admin (always) or collaborators of an invite-only app.
-         Opens #members-modal (AppView.openMembersModal). -->
-    <button id="drawer-row-members"
-            class="hidden flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
-      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87M16 3.13a4 4 0 010 7.75M13 7a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-      <span class="text-sm font-medium">Members &amp; visibility</span>
-    </button>
+    <!-- Members & visibility used to be a drawer row here; #645 moved it
+         into the Dev tab's "+" menu (see AppView._wirePlusMenu). -->
     <!-- Settings — always shown; green dot is the BYOK "key configured"
          indicator, toggled directly by settings.js _renderIndicator(). -->
     <button id="drawer-row-settings"
