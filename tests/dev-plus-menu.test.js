@@ -146,9 +146,16 @@ test('public non-managed app hides the members item (rename/secrets stay)', asyn
   assert.ok(html.includes('data-plus="secrets"'), 'secrets item still present');
 });
 
-test('self-hosted app never shows the members item', async () => {
+test('self-hosted app shows the item for managers, labelled Proposal approvals', async () => {
   const html = await renderCardListHtml({ ...BASE_APP, self_hosted: true, can_manage: true });
-  assert.ok(!html.includes('data-plus="members"'), 'members item absent for self-app');
+  assert.ok(html.includes('data-plus="members"'), 'members item present for self-app admin');
+  assert.ok(html.includes('Proposal approvals'), 'self-app label is Proposal approvals');
+  assert.ok(!html.includes('Members &amp; visibility'), 'self-app does not use the Members label');
+});
+
+test('self-hosted app hides the item without can_manage', async () => {
+  const html = await renderCardListHtml({ ...BASE_APP, self_hosted: true });
+  assert.ok(!html.includes('data-plus="members"'), 'members item absent for non-manager on self-app');
 });
 
 test('_plusMenuShowsMembers mirrors the old drawer-row predicate', () => {
@@ -156,14 +163,17 @@ test('_plusMenuShowsMembers mirrors the old drawer-row predicate', () => {
   const cases = [
     [{ ...BASE_APP, can_manage: true }, true],
     [{ ...BASE_APP, collab_visibility: 'private' }, true],
+    [{ ...BASE_APP, approver_policy: 'invited' }, true],
+    [{ ...BASE_APP, approver_policy: 'invited', can_collaborate: false }, false],
     [{ ...BASE_APP }, false],
-    [{ ...BASE_APP, self_hosted: true, can_manage: true }, false],
+    [{ ...BASE_APP, self_hosted: true, can_manage: true }, true],
+    [{ ...BASE_APP, self_hosted: true }, false],
     [null, false],
   ];
   for (const [appData, expected] of cases) {
     AppView.appData = appData;
     assert.equal(AppView._plusMenuShowsMembers(), expected,
-      `gate for ${JSON.stringify(appData && { m: appData.can_manage, v: appData.collab_visibility, s: appData.self_hosted })}`);
+      `gate for ${JSON.stringify(appData && { m: appData.can_manage, v: appData.collab_visibility, p: appData.approver_policy, s: appData.self_hosted })}`);
   }
 });
 

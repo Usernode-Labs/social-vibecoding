@@ -657,8 +657,11 @@ const AppView = {
               </button>
               ${AppView._plusMenuShowsMembers() ? `
               <button data-plus="members" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                ${AppView.appData?.self_hosted ? `
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Proposal approvals</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who approves proposals and how many approvals are needed</span>` : `
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Members &amp; visibility</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who can build and see this app</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who can build and see this app</span>`}
               </button>` : ''}
               <button data-plus="rename" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App display name</span>
@@ -1280,15 +1283,21 @@ const AppView = {
   },
 
   // ── "+" menu ────────────────────────────────────────────────────────
-  // Gate for the menu's Members & visibility item — same predicate the
-  // old hamburger-drawer row used (#645): creator/admin always
-  // (visibility control), collaborators of an invite-only app too
-  // (member list + invites). Never for the self-app (no invites there).
+  // Gate for the menu's Members & visibility item — the full predicate
+  // the old hamburger-drawer row used: creator/admin always (visibility
+  // + proposal-approval controls), collaborators of an invite-only app
+  // (member list + invites), and anyone who can collaborate on an
+  // invited-approvers app (read-only approver roster). For the self-app
+  // (#646) it shows for admins — the modal there hides the
+  // visibility/collaborator sections and offers only the
+  // Proposal-approvals + Approvers sections.
   _plusMenuShowsMembers() {
     const a = AppView.appData;
-    return !!a && !a.self_hosted && (
-      a.can_manage || (a.collab_visibility === 'private' && a.can_collaborate)
-    );
+    if (!a) return false;
+    if (a.self_hosted) return !!a.can_manage;
+    return !!(a.can_manage
+      || (a.collab_visibility === 'private' && a.can_collaborate)
+      || (a.approver_policy === 'invited' && a.can_collaborate));
   },
   _wirePlusMenu(content) {
     const btn = document.getElementById('dev-plus-btn');
@@ -7484,6 +7493,13 @@ const AppView = {
     // from ghost-clicking the backdrop closed. Sections are configured below
     // (the modal is already visible, but they only paint after this frame).
     AppView.revealModal(modal);
+
+    // Self-app: the only sections that apply are the approval ones, so
+    // the heading matches the "+" menu item's "Proposal approvals" label.
+    const modalTitle = document.getElementById('members-modal-title');
+    if (modalTitle) {
+      modalTitle.textContent = appData.self_hosted ? 'Proposal approvals' : 'Members & visibility';
+    }
 
     AppView._membersVis = {
       collab: appData.collab_visibility || 'public',
