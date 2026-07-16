@@ -33,6 +33,7 @@ const attachmentsSvc = require('../services/attachments');
 const appAccess = require('../services/app-access');
 const userAgentFiles = require('../services/user-agent-files');
 const debugAccess = require('../services/debug-access');
+const { announceIssueCreated } = require('../services/issue-announce');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
@@ -1179,6 +1180,13 @@ function sessionRoutes(config) {
       ).catch((err) => log.warn('sessions', 'Platform-issue metadata enrich failed', {
         msgId, err: err.message,
       }));
+
+      // #125/#192: seed the open-issues cache + created overlay and
+      // broadcast issue_update, so the new issue appears in the platform
+      // app's "Open Issues" panel (and every agent-facing issue listing)
+      // immediately instead of waiting out the fetchPublicIssues TTL.
+      // Best-effort by contract — the issue is already filed.
+      await announceIssueCreated(pool, owner, repo, issue, null);
 
       log.info('sessions', 'Platform issue filed after user confirm', {
         sessionId, msgId, number: issue.number, user: req.user.username,
@@ -5536,7 +5544,7 @@ that run against this repo outside the harness.${personalFilesNote}
 
 A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way.
 
-A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it ONLY for platform-level blockers that live OUTSIDE this app's repo (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, or the checks gate) — see "Platform-level problems: escalate, don't work around" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts; never use it for something you can fix in this app.
+A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.
 ${prodDebug ? `
 ${debugAccess.promptBlock()}
 ` : ''}
