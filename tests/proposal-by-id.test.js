@@ -104,6 +104,7 @@ function loadVotes({ row = null, gateApp = { id: 1, slug: 'demo' }, staging = fa
   });
   stub(ids.topicAttrs, {
     summarizeForTargets: async () => new Map(),
+    summarizeForProposals: async () => new Map(),
     emptySummary: () => ({ priority: null, assignee: null }),
   });
   stub(ids.visuals, { shapeAgg: () => null });
