@@ -176,6 +176,11 @@ const AppView = {
   // session, but auto-clear when the tab closes, so a filter can't land a
   // user on a mysteriously empty board days later.
   KANBAN_FILTERS_KEY: 'devKanbanFilters',
+  // #633: sentinel value for the assignee dropdown's "Unassigned" option.
+  // The leading space makes it collision-free against real assignees:
+  // stored assignee values are trimmed server-side (topic-attributes
+  // normalizeValue), so no assignee.top can ever begin with whitespace.
+  KANBAN_ASSIGNEE_UNASSIGNED: ' __unassigned__',
   _kanbanFilters: { q: '', priority: null, assignee: null, needsVote: false },
   // Single source of truth for the empty/default filter set.
   _defaultKanbanFilters() {
@@ -2324,7 +2329,16 @@ const AppView = {
     // without the attribute set — and gov cards, which never carry them —
     // fail the match by design.
     if (f.priority && !(it.priority && it.priority.top === f.priority)) return false;
-    if (f.assignee && !(it.assignee && it.assignee.top === f.assignee)) return false;
+    if (f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED) {
+      // #633: "Unassigned" matches cards whose assignee is unset. Gov cards
+      // are excluded here too (mirroring the named-assignee rule): they can
+      // never be assigned, so letting them all match would just flood the
+      // board whenever Unassigned is picked.
+      if (kind === 'gov') return false;
+      if (it.assignee && it.assignee.top) return false;
+    } else if (f.assignee && !(it.assignee && it.assignee.top === f.assignee)) {
+      return false;
+    }
     if (f.needsVote) {
       if (kind === 'proposal') {
         // Same condition as the card's pulsing "Vote" badge (isUnvoted).
@@ -2354,7 +2368,8 @@ const AppView = {
     (AppView._proposals || []).forEach(add);
     (AppView._merged || []).forEach(add);
     const cur = AppView._kanbanFilters && AppView._kanbanFilters.assignee;
-    if (cur) set.add(cur);
+    // The Unassigned sentinel is a fixed option, never a name in this list.
+    if (cur && cur !== AppView.KANBAN_ASSIGNEE_UNASSIGNED) set.add(cur);
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   },
 
@@ -2367,7 +2382,9 @@ const AppView = {
 
   _kanbanAssigneeOptionsHtml() {
     const f = AppView._kanbanFilters || {};
+    const un = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
     return '<option value="">Anyone</option>'
+      + `<option value="${escapeAttr(un)}"${f.assignee === un ? ' selected' : ''}>Unassigned</option>`
       + AppView._kanbanAssigneeOptions().map((name) =>
         `<option value="${escapeAttr(name)}"${f.assignee === name ? ' selected' : ''}>${escapeHtml(name)}</option>`).join('');
   },
@@ -2788,10 +2805,12 @@ const AppView = {
   //                     person with ≥1 assigned task, ordered by count desc
   //                     then name asc; items within a group newest-first
   //   unassigned      — [{kind, item}] with no assignee, newest-first,
-  //                     capped to PM_UNASSIGNED_MAX
+  //                     capped to PM_UNASSIGNED_MAX (override with
+  //                     opts.cap — #633 passes Infinity while the
+  //                     Unassigned filter is active)
   //   unassignedTotal — the pre-cap count, for the "+N more" note
   PM_UNASSIGNED_MAX: 10,
-  _groupByAssignee(data) {
+  _groupByAssignee(data, opts) {
     const d = data || {};
     const issues = Array.isArray(d.issues) ? d.issues : [];
     const proposals = Array.isArray(d.proposals) ? d.proposals : [];
@@ -2831,7 +2850,7 @@ const AppView = {
     groups.sort((a, b) => (b.count - a.count) || a.name.localeCompare(b.name));
 
     const unassignedSorted = unassigned.slice().sort((a, b) => b._t - a._t);
-    const cap = AppView.PM_UNASSIGNED_MAX;
+    const cap = (opts && opts.cap != null) ? opts.cap : AppView.PM_UNASSIGNED_MAX;
     return {
       groups,
       unassigned: unassignedSorted.slice(0, cap).map((e) => ({ kind: e.kind, item: e.item })),
@@ -2856,11 +2875,16 @@ const AppView = {
       issues = issues.filter((i) => AppView._devCardMatches('issue', i, f));
       proposals = proposals.filter((p) => AppView._devCardMatches('proposal', p, f));
     }
-    const { groups, unassigned, unassignedTotal } = AppView._groupByAssignee({ issues, proposals });
+    // #633: with the Unassigned filter active the section IS the view —
+    // lift the cap so the full unassigned backlog renders, no "+N more".
+    const unassignedOnly = f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED;
+    const { groups, unassigned, unassignedTotal } = AppView._groupByAssignee(
+      { issues, proposals }, unassignedOnly ? { cap: Infinity } : undefined
+    );
 
-    // With a user filter active, the Unassigned section can never match —
-    // hide it rather than rendering a permanently-empty stub.
-    const showUnassigned = !f.assignee;
+    // With a named-user filter active, the Unassigned section can never
+    // match — hide it rather than rendering a permanently-empty stub.
+    const showUnassigned = !f.assignee || unassignedOnly;
     if (filtering && !groups.length && (!showUnassigned || unassignedTotal === 0)) {
       return '<div class="space-y-5"><div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">No cards match the current filters.</div></div>';
     }
@@ -2899,8 +2923,13 @@ const AppView = {
       if (unassigned.length) {
         unBody = `<div class="space-y-2">${unassigned.map(renderCard).join('')}</div>`;
         if (unassignedTotal > unassigned.length) {
+          // #633: clicking the note switches the assignee filter to
+          // Unassigned, revealing the full uncapped list (wired in
+          // _repaintPmView after the paint).
           const moreCount = unassignedTotal - unassigned.length;
-          unBody += `<div class="mt-2"><span class="text-xs text-zinc-400 dark:text-zinc-500 italic">+${moreCount} more unassigned</span></div>`;
+          unBody += `<div class="mt-2"><button type="button" id="dev-pm-more-unassigned"
+            class="text-xs text-zinc-400 dark:text-zinc-500 italic hover:text-violet-500 hover:underline"
+            title="Show all unassigned cards">+${moreCount} more unassigned</button></div>`;
         }
       } else {
         unBody = '<div class="text-xs text-zinc-400 dark:text-zinc-500 italic py-2">Nothing unassigned.</div>';
@@ -2924,6 +2953,16 @@ const AppView = {
     // options in sync after the paint.
     AppView._saveKanbanFilters(App.currentApp);
     el.innerHTML = AppView._renderPmInner();
+    // #633: "+N more unassigned" jumps to the Unassigned filter; rebuild the
+    // bar so the assignee select snaps to the new value, then repaint.
+    const more = el.querySelector('#dev-pm-more-unassigned');
+    if (more && more.addEventListener) {
+      more.addEventListener('click', () => {
+        AppView._kanbanFilters.assignee = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
+        AppView._renderKanbanFilterBar();
+        AppView._repaintBoardSurface();
+      });
+    }
     AppView._syncHeadlessPolling();
     if (window.Kudos) Kudos.attach(el);
     AppView._applyAskAiCardAvailability(el);

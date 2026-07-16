@@ -258,6 +258,75 @@ test('_renderPmInner: priority filter recounts section headers and drops empty g
   assert.doesNotMatch(html, /Issue 2/);
 });
 
+// ── Unassigned filter (#633) ─────────────────────────────────────────────
+
+test('_renderPmInner: Unassigned filter shows only the uncapped Unassigned section', () => {
+  const AppView = makeAppView();
+  // 1 assigned card + 13 unassigned — more than PM_UNASSIGNED_MAX (10), so
+  // the lifted cap is observable: all 13 render, no "+N more" note.
+  const issues = [issue({ number: 100, a: 'alice' })];
+  for (let h = 1; h <= 13; h += 1) {
+    issues.push(issue({ number: h, updatedAt: at(h), lastMessageAt: at(h) }));
+  }
+  AppView._ghIssues = issues;
+  AppView._proposals = [];
+  AppView._kanbanFilters = { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED };
+  const html = AppView._renderPmInner();
+  assert.doesNotMatch(html, /@alice/, 'per-person groups are gone');
+  assert.doesNotMatch(html, /Issue 100\b/, 'the assigned card is filtered out');
+  assert.match(html, /Unassigned/);
+  assert.match(html, /· 13/, 'header counts all 13 unassigned cards');
+  for (let h = 1; h <= 13; h += 1) {
+    assert.match(html, new RegExp(`Issue ${h}\\b`), `unassigned card ${h} renders`);
+  }
+  assert.doesNotMatch(html, /more unassigned/, 'cap and +N more note are lifted');
+});
+
+test('_renderPmInner: Unassigned filter with nothing unassigned shows the empty note', () => {
+  const AppView = makeAppView();
+  AppView._ghIssues = [issue({ number: 1, a: 'alice' })];
+  AppView._proposals = [];
+  AppView._kanbanFilters = { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED };
+  const html = AppView._renderPmInner();
+  assert.match(html, /No cards match the current filters\./);
+});
+
+test('_renderPmInner: default render caps unassigned and the +N more note is a button', () => {
+  const AppView = makeAppView();
+  const issues = [];
+  for (let h = 1; h <= 12; h += 1) {
+    issues.push(issue({ number: h, updatedAt: at(h), lastMessageAt: at(h) }));
+  }
+  AppView._ghIssues = issues;
+  AppView._proposals = [];
+  AppView._kanbanFilters = { ...none };
+  const html = AppView._renderPmInner();
+  assert.match(html, /\+2 more unassigned/, 'cap still applies unfiltered');
+  assert.match(html, /id="dev-pm-more-unassigned"/, 'note carries the click hook');
+});
+
+test('assignee dropdown offers Unassigned right after Anyone, before names', () => {
+  const AppView = makeAppView();
+  AppView._ghIssues = [issue({ number: 1, a: 'alice' })];
+  AppView._envIssueNumbers = new Set();
+  AppView._proposals = [];
+  AppView._merged = [];
+  AppView._kanbanFilters = { ...none };
+  let html = AppView._kanbanAssigneeOptionsHtml();
+  const anyone = html.indexOf('>Anyone<');
+  const unassigned = html.indexOf('>Unassigned<');
+  const alice = html.indexOf('>alice<');
+  assert.ok(anyone !== -1 && unassigned !== -1 && alice !== -1, 'all three options render');
+  assert.ok(anyone < unassigned && unassigned < alice, 'order: Anyone, Unassigned, names');
+  assert.ok(html.includes(`value="${AppView.KANBAN_ASSIGNEE_UNASSIGNED}"`),
+    'option carries the sentinel value');
+  // With the sentinel active, its option is the selected one.
+  AppView._kanbanFilters = { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED };
+  html = AppView._kanbanAssigneeOptionsHtml();
+  assert.ok(html.includes(`value="${AppView.KANBAN_ASSIGNEE_UNASSIGNED}" selected`),
+    'sentinel option is marked selected');
+});
+
 // ── PM mount (DOM-level) ─────────────────────────────────────────────────
 
 // Stubbed document + localStorage forcing view mode 'pm'; asserts the PM

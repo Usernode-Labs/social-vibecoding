@@ -163,6 +163,31 @@ test('assignee filter matches the top-voted assignee; unassigned cards fail', ()
   assert.equal(AppView._devCardMatches('gov', gov({}), f), false);
 });
 
+test('Unassigned sentinel matches only cards with no top assignee; gov excluded', () => {
+  const AppView = makeAppView();
+  const f = { ...none, assignee: AppView.KANBAN_ASSIGNEE_UNASSIGNED };
+  assert.equal(AppView._devCardMatches('issue', issue({ assignee: null }), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ assignee: { top: null, count: 0 } }), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ assignee: null }), f), true);
+  assert.equal(AppView._devCardMatches('merged', merged({ assignee: null }), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ assignee: { top: 'sam', count: 1 } }), f), false);
+  assert.equal(AppView._devCardMatches('proposal', prop({ assignee: { top: 'kim', count: 2 } }), f), false);
+  assert.equal(AppView._devCardMatches('merged', merged({ assignee: { top: 'zoe', count: 1 } }), f), false);
+  // Gov cards never carry an assignee — excluded under Unassigned too,
+  // mirroring the named-assignee rule.
+  assert.equal(AppView._devCardMatches('gov', gov({}), f), false);
+});
+
+test('Unassigned sentinel composes with priority and search', () => {
+  const AppView = makeAppView();
+  const un = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
+  const card = issue({ priority: { top: 'high', count: 1 }, assignee: null });
+  assert.equal(AppView._devCardMatches('issue', card, { ...none, assignee: un, priority: 'high' }), true);
+  assert.equal(AppView._devCardMatches('issue', card, { ...none, assignee: un, priority: 'low' }), false);
+  assert.equal(AppView._devCardMatches('issue', card, { ...none, assignee: un, q: 'dark mode' }), true);
+  assert.equal(AppView._devCardMatches('issue', card, { ...none, assignee: un, q: 'leaderboard' }), false);
+});
+
 test('needsVote keeps only unvoted promoted proposals and unvoted gov proposals', () => {
   const AppView = makeAppView();
   const f = { ...none, needsVote: true };
@@ -230,6 +255,10 @@ test('_kanbanAssigneeOptions unions board data and keeps the current selection',
   // active filter never silently self-clears.
   AppView._kanbanFilters.assignee = 'evan';
   assert.deepEqual(names(), ['evan', 'kim', 'sam', 'zoe']);
+  // The Unassigned sentinel is a fixed dropdown option, never a name —
+  // an active Unassigned filter must not leak into the alphabetized list.
+  AppView._kanbanFilters.assignee = AppView.KANBAN_ASSIGNEE_UNASSIGNED;
+  assert.deepEqual(names(), ['kim', 'sam', 'zoe']);
 });
 
 // ── Persistence helpers (sessionStorage-backed, per app slug) ──────────

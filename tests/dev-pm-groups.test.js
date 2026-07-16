@@ -178,6 +178,11 @@ test('unassigned sorted newest-first and capped to PM_UNASSIGNED_MAX with overfl
     Array.from(r.unassigned, (c) => c.item.number),
     [13, 12, 11, 10, 9, 8, 7, 6, 5, 4]
   );
+  // #633: opts.cap overrides the default cap — Infinity lifts it entirely
+  // (used by _renderPmInner while the Unassigned filter is active).
+  const uncapped = AppView._groupByAssignee({ issues, proposals: [] }, { cap: Infinity });
+  assert.equal(uncapped.unassigned.length, 13);
+  assert.equal(uncapped.unassignedTotal, 13);
 });
 
 test('empty / null-top assignees count as unassigned', () => {
