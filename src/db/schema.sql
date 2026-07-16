@@ -753,6 +753,36 @@ CREATE TABLE IF NOT EXISTS dev_board_card_order (
 CREATE INDEX IF NOT EXISTS idx_dev_board_card_order_col
   ON dev_board_card_order (app_id, column_key, position);
 
+-- Manual drag-and-drop ordering of cards WITHIN one person's section of the
+-- Dev board's PM view ("tasks by assignee"). Sibling of dev_board_card_order,
+-- but keyed by the case-folded ASSIGNEE instead of a kanban column: the PM
+-- view groups cards by their top-voted assignee (see topic-attribute votes),
+-- so a manual order is scoped to a person, not a column. Same OVERLAY model —
+-- cards whose identity appears here sort first by `position` asc, everything
+-- else keeps the client's derived recency order (see _applyManualOrder in
+-- public/js/app-view.js). assignee_key = lower(display name), matching
+-- topic-attributes.groupKey so it lines up with the rendered section. A PM
+-- section only ever holds GitHub issues (card_ref = issue NUMBER) and promoted
+-- PR proposals (card_ref = chat_sessions.id) — never governance cards, which
+-- carry no assignee. One movable order per (app_id, assignee_key); writes
+-- REPLACE the whole set with a dense 0..N-1 sequence (last-write-wins). NOT
+-- staging:private — like dev_board_card_order it's a shared, governance-style
+-- signal everyone sees, so it must copy into staging clones.
+CREATE TABLE IF NOT EXISTS dev_pm_card_order (
+  id           SERIAL PRIMARY KEY,
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  assignee_key VARCHAR(64) NOT NULL,   -- lower(assignee display name)
+  card_type    VARCHAR(16) NOT NULL,   -- 'issue' | 'proposal'
+  card_ref     INTEGER NOT NULL,       -- github_issue_number | chat_sessions.id
+  position     INTEGER NOT NULL,
+  updated_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(app_id, assignee_key, card_type, card_ref)
+);
+-- Per-person ordered read (position asc within one app+assignee).
+CREATE INDEX IF NOT EXISTS idx_dev_pm_card_order_key
+  ON dev_pm_card_order (app_id, assignee_key, position);
+
 -- LLM usage tracking
 CREATE TABLE IF NOT EXISTS llm_usage (
   id              SERIAL PRIMARY KEY,

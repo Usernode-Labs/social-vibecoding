@@ -207,6 +207,99 @@ test('missing / non-array inputs are tolerated', () => {
   assert.equal(r.unassignedTotal, 0);
 });
 
+// ── Per-person manual order overlay (drag-to-reorder) ────────────────────
+
+test('opts.pmOrder re-sorts a person\'s items; unranked lead, ranked follow (#617)', () => {
+  const AppView = makeAppView();
+  // alice has 3 cards. Saved order ranks issue#2 then proposal#10; issue#1
+  // is absent from the order (arrived after the last drag) so it leads.
+  const r = AppView._groupByAssignee({
+    issues: [
+      issue({ number: 1, a: 'alice', updatedAt: at(1) }),
+      issue({ number: 2, a: 'alice', updatedAt: at(2) }),
+    ],
+    proposals: [prop({ id: 10, a: 'alice', promoted_at: at(3) })],
+  }, {
+    pmOrder: { alice: [{ type: 'issue', ref: 2 }, { type: 'proposal', ref: 10 }] },
+  });
+  const alice = r.groups.find((g) => g.name === 'alice');
+  // Unranked issue#1 first (recency), then the manual arrangement intact.
+  assert.deepEqual(tagsOf(alice.items), ['issue#1', 'issue#2', 'proposal#10']);
+  assert.equal(alice.count, 3);
+});
+
+test('pmOrder keys are case-folded to match the group (Evan ↔ evan)', () => {
+  const AppView = makeAppView();
+  const r = AppView._groupByAssignee({
+    issues: [
+      issue({ number: 1, a: 'Evan', updatedAt: at(3) }),
+      issue({ number: 2, a: 'Evan', updatedAt: at(2) }),
+    ],
+    proposals: [],
+  }, { pmOrder: { evan: [{ type: 'issue', ref: 2 }] } });
+  const evan = r.groups[0];
+  // issue#2 is ranked; issue#1 (unranked, newer) leads.
+  assert.deepEqual(tagsOf(evan.items), ['issue#1', 'issue#2']);
+});
+
+test('an absent / empty pmOrder leaves a person on the default recency sort', () => {
+  const AppView = makeAppView();
+  const data = {
+    issues: [
+      issue({ number: 1, a: 'alice', updatedAt: at(1) }),
+      issue({ number: 2, a: 'alice', updatedAt: at(5) }),
+    ],
+    proposals: [],
+  };
+  const base = AppView._groupByAssignee(data);
+  const withEmpty = AppView._groupByAssignee(data, { pmOrder: {} });
+  const baseTags = tagsOf(base.groups[0].items);
+  assert.deepEqual(baseTags, ['issue#2', 'issue#1'], 'default is newest-first');
+  assert.deepEqual(tagsOf(withEmpty.groups[0].items), baseTags, 'empty map = identical');
+});
+
+test('the Unassigned bucket is NEVER reordered by pmOrder', () => {
+  const AppView = makeAppView();
+  const r = AppView._groupByAssignee({
+    issues: [
+      issue({ number: 1, updatedAt: at(1) }), // unassigned
+      issue({ number: 2, updatedAt: at(5) }), // unassigned
+    ],
+    proposals: [],
+  }, {
+    // A stray key that could only apply if unassigned were sortable.
+    pmOrder: { '': [{ type: 'issue', ref: 1 }] },
+  });
+  // Still strictly newest-first.
+  assert.deepEqual(Array.from(r.unassigned, (c) => c.item.number), [2, 1]);
+});
+
+test('_pmCardOrderKey maps { kind, item } entries to the stored (type:ref) key', () => {
+  const AppView = makeAppView();
+  assert.equal(AppView._pmCardOrderKey({ kind: 'issue', item: { number: 7 } }), 'issue:7');
+  assert.equal(AppView._pmCardOrderKey({ kind: 'proposal', item: { id: 5 } }), 'proposal:5');
+  assert.equal(AppView._pmCardOrderKey({ kind: 'issue', item: {} }), null);
+  assert.equal(AppView._pmCardOrderKey(null), null);
+});
+
+// ── Drop classification (reorder / reassign / unassign) ──────────────────
+
+test('_classifyPmDrop distinguishes reorder, reassign, unassign', () => {
+  const AppView = makeAppView();
+  // Compare scalar fields (not deepEqual) — objects cross the vm realm and
+  // aren't reference-equal to host-realm literals.
+  const reorder = AppView._classifyPmDrop('alice', { pmAssignee: 'alice', pmName: 'alice' });
+  assert.equal(reorder.action, 'reorder');
+  // Different person → reassign, carrying the destination display name.
+  const reassign = AppView._classifyPmDrop('alice', { pmAssignee: 'bob', pmName: 'Bob' });
+  assert.equal(reassign.action, 'reassign');
+  assert.equal(reassign.destName, 'Bob');
+  // Dropped on the Unassigned list → unassign.
+  assert.equal(AppView._classifyPmDrop('alice', { pmUnassigned: '1' }).action, 'unassign');
+  // No identifiable destination → no-op.
+  assert.equal(AppView._classifyPmDrop('alice', {}).action, 'none');
+});
+
 // ── View-mode plumbing: 'pm' round-trips and routes ──────────────────────
 
 test("_setViewMode / _getViewMode round-trip the 'pm' value", () => {

@@ -131,6 +131,17 @@ function makeMockPool() {
         else store.push({ app_id: appId, target_type: type, target_ref: ref, field, value, user_id: userId, created_at: ts });
         return { rows: [] };
       }
+      // clearVote — delete the caller's own row for a (target, field).
+      if (/DELETE FROM topic_attribute_votes/.test(sql)) {
+        const [appId, type, ref, field, userId] = params;
+        for (let i = store.length - 1; i >= 0; i--) {
+          const r = store[i];
+          if (r.app_id === appId && r.target_type === type && r.target_ref === ref && r.field === field && r.user_id === userId) {
+            store.splice(i, 1);
+          }
+        }
+        return { rows: [] };
+      }
       throw new Error(`unexpected SQL in mock: ${sql.slice(0, 60)}`);
     },
   };
@@ -175,6 +186,26 @@ test('summarizeForTargets returns top + count + myValue per target', async () =>
   assert.equal(map.get(7).assignee.top, null); // untouched field → placeholder
   assert.equal(map.get(8).assignee.top, 'alice');
   assert.equal(map.get(8).assignee.myValue, null); // user 3 didn't vote here
+});
+
+test('clearVote removes only the caller\'s own vote, leaving others\' intact', async () => {
+  const pool = makeMockPool();
+  // Two users back different assignees on the same card.
+  await attrs.castVote(pool, 1, 'issue', 7, 'assignee', 'alice', 1);
+  await attrs.castVote(pool, 1, 'issue', 7, 'assignee', 'bob', 2);
+  assert.equal(pool.store.length, 2);
+
+  // User 1 withdraws — only their row goes; user 2's 'bob' vote survives and
+  // becomes the new leader.
+  const after = await attrs.clearVote(pool, 1, 'issue', 7, 'assignee', 1);
+  assert.equal(pool.store.length, 1);
+  assert.equal(pool.store[0].value, 'bob');
+  assert.equal(after.myValue, null, 'the caller no longer has a pick');
+  assert.equal(after.options[0].value, 'bob');
+
+  // Idempotent: clearing again is a no-op.
+  await attrs.clearVote(pool, 1, 'issue', 7, 'assignee', 1);
+  assert.equal(pool.store.length, 1);
 });
 
 // ── HTTP endpoints ──────────────────────────────────────────────────────
@@ -241,6 +272,31 @@ test('POST then GET round-trips the option list + myValue', async () => {
   assert.equal(get.options.find((o) => o.value === 'medium').count, 1);
 });
 
+test('DELETE withdraws the caller\'s assignee vote (drag-to-Unassigned)', async () => {
+  // Seed the caller's assignee vote on a fresh target.
+  const post = await fetch(`${base}/api/apps/demo/topics/issue/42/attributes`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field: 'assignee', value: 'tester' }),
+  });
+  assert.equal(post.status, 200);
+  assert.equal((await post.json()).myValue, 'tester');
+
+  // DELETE clears it; the option list comes back empty for this viewer.
+  const del = await fetch(`${base}/api/apps/demo/topics/issue/42/attributes?field=assignee`, {
+    method: 'DELETE',
+  });
+  assert.equal(del.status, 200);
+  const body = await del.json();
+  assert.equal(body.myValue, null);
+  assert.ok(!body.options.some((o) => o.value === 'tester'), 'the withdrawn vote is gone');
+
+  // A DELETE with an invalid field is rejected.
+  const bad = await fetch(`${base}/api/apps/demo/topics/issue/42/attributes?field=colour`, {
+    method: 'DELETE',
+  });
+  assert.equal(bad.status, 400);
+});
+
 // ── 3. Source guards ───────────────────────────────────────────────────
 test('feed routes attach the priority/assignee summary', () => {
   const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
@@ -285,10 +341,11 @@ test('assignee dropdown defaults the name box to the viewer, gated on no prior v
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf-8');
   assert.doesNotMatch(css, /\.attr-assign-me/, 'no leftover assign-to-me button CSS');
 
-  const routeSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'topic-attributes.js'), 'utf-8');
-  assert.doesNotMatch(routeSrc, /router\.delete\(/, 'the unassign DELETE endpoint is removed');
-  const svc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'topic-attributes.js'), 'utf-8');
-  assert.doesNotMatch(svc, /clearVote/, 'clearVote service method is removed');
+  // NOTE: the DELETE …/attributes endpoint + clearVote service method were
+  // REINTRODUCED (with a different purpose — the PM view's drag-to-Unassigned
+  // gesture) by the PM drag-and-drop feature. Their presence is covered by
+  // tests/topic-attributes.test.js (clearVote flow) and dev-pm-order.test.js;
+  // the old "these are removed" guards no longer apply.
 });
 
 // #600: staging seeds make BOTH assignee-dropdown states reviewable via
