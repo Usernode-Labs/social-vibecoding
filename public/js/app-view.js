@@ -8324,18 +8324,18 @@ const AppView = {
 
   // ── App LLM access consent flow (issue #34) ────────────────────────
   //
-  // The bridge's usernode.requestLlmAccess()/getLlmAccess() post a
-  // `__usernode_llm` message to window.parent; the shell (this file —
-  // it owns the app iframe) answers. The consent dialog is
-  // platform-owned: it renders over the app, from our origin, so an
-  // app cannot approve itself. Wired via the top-level message
-  // listener at the bottom of this file.
+  // The bridge's usernode.requestLlmAccess()/getLlmAccess()/
+  // getLlmUsage() post a `__usernode_llm` message to window.parent;
+  // the shell (this file — it owns the app iframe) answers. The
+  // consent dialog is platform-owned: it renders over the app, from
+  // our origin, so an app cannot approve itself. Wired via the
+  // top-level message listener at the bottom of this file.
 
   async handleLlmBridgeMessage(e) {
     const data = e.data;
     if (!data || !data.id) return;
     const type = data.__usernode_llm;
-    if (type !== 'request-access' && type !== 'get-access') return;
+    if (type !== 'request-access' && type !== 'get-access' && type !== 'get-usage') return;
 
     // Only the app iframes this shell owns may ask. The staging
     // preview iframe is accepted too so AI-consent flows are
@@ -8372,6 +8372,24 @@ const AppView = {
     }
 
     const active = info.grant && info.grant.status === 'active';
+
+    // Read-only usage meter (issue #655) — never opens the consent
+    // dialog. Both spend buckets are summed because the proxy's cap
+    // gate counts BYOK spend against the cap too.
+    if (type === 'get-usage') {
+      if (!active) {
+        reply({ granted: false });
+        return;
+      }
+      reply({
+        granted: true,
+        spentCentsToday:
+          (info.grant.spentTodayCents || 0) + (info.grant.byokSpentTodayCents || 0),
+        dailyCapCents: info.grant.dailyCapCents,
+      });
+      return;
+    }
+
     const current = active
       ? { granted: true, dailyCapCents: info.grant.dailyCapCents, allowByok: info.grant.allowByok }
       : { granted: false };

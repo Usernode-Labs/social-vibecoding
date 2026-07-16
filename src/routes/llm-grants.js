@@ -227,9 +227,17 @@ function llmGrantsRoutes(config) {
       const app = appRows[0];
       if (!app) return res.status(404).json({ error: 'App not found' });
 
+      // Today's spend rides along (issue #655) so the shell can answer
+      // the bridge's read-only usage query from this same bootstrap.
       const { rows: grantRows } = await pool.query(
-        `SELECT app_id, user_id, status, daily_cap_cents, allow_byok, created_at, revoked_at
-           FROM app_llm_grants WHERE app_id = $1 AND user_id = $2`,
+        `SELECT g.app_id, g.user_id, g.status, g.daily_cap_cents, g.allow_byok,
+                g.created_at, g.revoked_at,
+                u.total_cost_cents AS spent_today_cents,
+                u.byok_cost_cents  AS byok_spent_today_cents
+           FROM app_llm_grants g
+           LEFT JOIN app_llm_usage u
+             ON u.app_id = g.app_id AND u.user_id = g.user_id AND u.date = CURRENT_DATE
+          WHERE g.app_id = $1 AND g.user_id = $2`,
         [app.id, req.user.id]
       );
 

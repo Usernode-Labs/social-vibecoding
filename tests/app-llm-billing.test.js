@@ -1,6 +1,7 @@
 // Tests for the app-LLM proxy billing pieces (issue #34) —
-// resolveAppPayer (the grant-scoped limit-first payer matrix) and
-// recordAppSpend (the per-app ledger upsert), exported from
+// resolveAppPayer (the grant-scoped limit-first payer matrix),
+// recordAppSpend (the per-app ledger upsert), and the spend-meter
+// header serialization (issue #655), exported from
 // src/routes/app-llm-proxy.js. Extends the patterns in
 // limits-resolve-billing-path.test.js / limits-record-spend.test.js.
 //
@@ -11,7 +12,11 @@ const assert = require('node:assert/strict');
 
 const limits = require('../src/services/limits');
 const secrets = require('../src/services/secrets');
-const { resolveAppPayer, recordAppSpend } = require('../src/routes/app-llm-proxy');
+const {
+  resolveAppPayer,
+  recordAppSpend,
+  spentCentsHeaderValue,
+} = require('../src/routes/app-llm-proxy');
 
 const JWT_SECRET = 'test-jwt-secret';
 const USER_KEY = 'sk-ant-test-123';
@@ -121,4 +126,22 @@ test('recordAppSpend no-ops on zero/negative cost or missing ids', async () => {
 test('recordAppSpend swallows DB errors (bookkeeping never fails the request)', async () => {
   const pool = { async query() { throw new Error('boom'); } };
   await assert.doesNotReject(() => recordAppSpend(pool, 11, 7, 5));
+});
+
+test('spentCentsHeaderValue keeps fractional cents to 4 decimal places', () => {
+  assert.equal(spentCentsHeaderValue(4.7914), '4.7914');
+  assert.equal(spentCentsHeaderValue(0.0372), '0.0372');
+  assert.equal(spentCentsHeaderValue(37), '37');
+  // Float noise from summed liveDelta increments is trimmed.
+  assert.equal(spentCentsHeaderValue(0.1 + 0.2), '0.3');
+  assert.equal(spentCentsHeaderValue(0.00004), '0');
+});
+
+test('spentCentsHeaderValue clamps zero, negative, and garbage to "0"', () => {
+  assert.equal(spentCentsHeaderValue(0), '0');
+  assert.equal(spentCentsHeaderValue(-1), '0');
+  assert.equal(spentCentsHeaderValue(NaN), '0');
+  assert.equal(spentCentsHeaderValue(Infinity), '0');
+  assert.equal(spentCentsHeaderValue(undefined), '0');
+  assert.equal(spentCentsHeaderValue('not-a-number'), '0');
 });
