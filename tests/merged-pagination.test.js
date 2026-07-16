@@ -119,6 +119,9 @@ function loadVotes({ mergedRows, total }) {
   stub(ids.topicAttrs, {
     summarizeForTargets: async () => new Map(),
     emptySummary: () => ({ priority: null, assignee: null }),
+    // #639: enrichment now applies a linked-issue fallback; empty summarize
+    // means nothing to inherit, so pass the summary through unchanged.
+    applyIssueFallback: (p) => p || { priority: null, assignee: null },
   });
   stub(ids.visuals, { shapeAgg: () => null });
 

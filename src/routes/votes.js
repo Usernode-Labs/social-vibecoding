@@ -311,6 +311,22 @@ function stagingMockProposals(viewer) {
     mk(9000010, 900110,
       '[Mock] Ready-to-merge test: votes passed and checks are green — queued to merge',
       4, 9, 0, 3),
+    // #639: a proposal with NO priority/assignee votes of its own, linked to
+    // mock issue 900006 (seeded medium / maya-builder in issues.js). In prod
+    // the /promoted enrichment would inherit those chips via
+    // applyLinkedIssueAttrs; the mock rows never hit that path (they aren't
+    // in the DB), so we mirror the inherited result inline here — the card
+    // must show "Medium" + "maya-builder" rather than "Set priority" /
+    // "Unassigned", proving the issue → proposal chip carry-over.
+    {
+      ...mk(9000022, 900122,
+        '[Mock] Inherited-attrs test: proposal shows the linked issue’s priority and assignee',
+        7, 2, 0, 1, { required: 2, windowEndsAt: hoursAhead(50) }),
+      linked_issues: [900006],
+      created_from_issue_number: 900006,
+      priority: { top: 'medium', count: 2, myValue: null },
+      assignee: { top: 'maya-builder', count: 3, myValue: null },
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the
@@ -434,7 +450,22 @@ function stagingMockMerged() {
     0,
     3
   );
-  return [autoMerged].concat(titles.map((t, i) => mk(
+  // #639: a completed proposal with NO attribute votes of its own, linked to
+  // mock issue 900006 (seeded medium / maya-builder). Mirrors the inherited
+  // chips inline (the mock isn't in the DB, so it bypasses the /merged
+  // applyLinkedIssueAttrs enrichment) so the Done/Completed card proves the
+  // priority/assignee carry over after merge. Newest-but-one so it sorts near
+  // the top of the Completed list.
+  const inherited = {
+    ...mk(9100100, 910200,
+      '[Mock] Inherited-attrs test: completed card keeps the linked issue’s priority and assignee',
+      0, 2),
+    linked_issues: [900006],
+    created_from_issue_number: 900006,
+    priority: { top: 'medium', count: 2, myValue: null },
+    assignee: { top: 'maya-builder', count: 3, myValue: null },
+  };
+  return [autoMerged, inherited].concat(titles.map((t, i) => mk(
     9100001 + i,
     910101 + i,
     `[Mock] Completed: ${t}`,
@@ -442,6 +473,44 @@ function stagingMockMerged() {
     // Sprinkle a few discussion counts so the 💬 badge is visible.
     i % 3 === 0 ? 5 : 0
   )));
+}
+
+// #639: the primary issue a proposal addresses, for inheriting its
+// community-voted priority/assignee chips. Prefer created_from_issue_number
+// (the specific issue a "start work" session was created from, #287);
+// otherwise the first linked issue (the `Closes #N` set); otherwise none.
+function primaryIssueForProposal(row) {
+  const created = row.created_from_issue_number;
+  if (Number.isInteger(created) && created > 0) return created;
+  const linked = Array.isArray(row.linked_issues) ? row.linked_issues : [];
+  const first = linked.find((n) => Number.isInteger(n) && n > 0);
+  return first || null;
+}
+
+// #639: apply the per-field linked-issue fallback to a set of proposal
+// rows so their priority/assignee chips survive the issue → proposal →
+// merged lifecycle. `proposalAttrs` is the already-built 'proposal'
+// summary Map (keyed by session id); this adds ONE batched 'issue'
+// summarize over the distinct primary issue numbers and writes the merged
+// result onto row.priority / row.assignee. A proposal's own votes always
+// win per field; only a field with no proposal vote inherits the issue's.
+async function applyLinkedIssueAttrs(pool, appId, rows, proposalAttrs, userId) {
+  const issueNumbers = [];
+  for (const row of rows) {
+    const n = primaryIssueForProposal(row);
+    if (n && !issueNumbers.includes(n)) issueNumbers.push(n);
+  }
+  const issueAttrs = issueNumbers.length
+    ? await topicAttrs.summarizeForTargets(pool, appId, 'issue', issueNumbers, userId)
+    : new Map();
+  for (const row of rows) {
+    const own = proposalAttrs.get(row.id) || topicAttrs.emptySummary();
+    const n = primaryIssueForProposal(row);
+    const issueSummary = n ? issueAttrs.get(n) || null : null;
+    const merged = topicAttrs.applyIssueFallback(own, issueSummary);
+    row.priority = merged.priority;
+    row.assignee = merged.assignee;
+  }
 }
 
 // Shared SELECT column list + FROM/JOIN block for a "merged-shaped"
@@ -454,7 +523,7 @@ function stagingMockMerged() {
 // user id (for the per-viewer my_vote / my_kudos subqueries). Callers
 // append their own WHERE / ORDER / LIMIT.
 function mergedRowSelect() {
-  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+  return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, cs.created_from_issue_number, u.username, cs.created_at,
            cs.revert_of_session_id,
            -- #381: console-error check snapshot so the warning + detail
            -- block stay visible on a merged proposal for post-hoc review.
@@ -1133,7 +1202,7 @@ function voteRoutes(config) {
       // majority threshold is crossed and only reappears in the "merged"
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
-        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+        `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, cs.created_from_issue_number, u.username, cs.created_at,
            -- #361: persisted merge-conflict snapshot for the card badge +
            -- detail block (state, conflicting file paths, last-checked).
            cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,
@@ -1225,11 +1294,12 @@ function voteRoutes(config) {
       const promotedAttrs = await topicAttrs.summarizeForTargets(
         pool, appRows[0].id, 'proposal', rows.map((r) => r.id), userId
       );
-      for (const row of rows) {
-        const s = promotedAttrs.get(row.id) || topicAttrs.emptySummary();
-        row.priority = s.priority;
-        row.assignee = s.assignee;
-      }
+      // #639: fall back to the linked issue's voted priority/assignee for
+      // any field the proposal has no votes of its own, so the chips don't
+      // reset to "Set priority" / "Unassigned" when an issue is proposed
+      // for voting. Runs before the ?demo=1 mock append below (mock rows
+      // carry their own inline attrs).
+      await applyLinkedIssueAttrs(pool, appRows[0].id, rows, promotedAttrs, userId);
 
       // Staging-only demo mode (?demo=1): append long-title mock
       // proposals for layout verification. The id check keeps the
@@ -1365,11 +1435,9 @@ function voteRoutes(config) {
       const mergedAttrs = await topicAttrs.summarizeForTargets(
         pool, appRows[0].id, 'proposal', rows.map((r) => r.id), userId
       );
-      for (const row of rows) {
-        const s = mergedAttrs.get(row.id) || topicAttrs.emptySummary();
-        row.priority = s.priority;
-        row.assignee = s.assignee;
-      }
+      // #639: same linked-issue fallback so the chips stay visible on the
+      // Done/Completed cards after a PR merges.
+      await applyLinkedIssueAttrs(pool, appRows[0].id, rows, mergedAttrs, userId);
 
       // Staging-only demo mode (?demo=1): prepend mock merged rows so the
       // clickable Completed list + 💬 badge + "Load more" pager are
@@ -1439,9 +1507,9 @@ function voteRoutes(config) {
         const attrs = await topicAttrs.summarizeForTargets(
           pool, gatedApp.id, 'proposal', [proposal.id], userId
         );
-        const s = attrs.get(proposal.id) || topicAttrs.emptySummary();
-        proposal.priority = s.priority;
-        proposal.assignee = s.assignee;
+        // #639: same linked-issue fallback so a deep-linked / topic-head
+        // proposal view matches the list cards.
+        await applyLinkedIssueAttrs(pool, gatedApp.id, [proposal], attrs, userId);
       }
 
       // Staging demo mode (?demo=1): the mock merged/promoted rows aren't in

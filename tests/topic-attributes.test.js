@@ -177,6 +177,61 @@ test('summarizeForTargets returns top + count + myValue per target', async () =>
   assert.equal(map.get(8).assignee.myValue, null); // user 3 didn't vote here
 });
 
+// ── applyIssueFallback (#639): proposal chips inherit the linked issue ──
+const P = (top, count = top ? 1 : 0, myValue = null) => ({ top, count, myValue });
+const summary = (priority, assignee) => ({ priority, assignee });
+
+test('applyIssueFallback: proposal value wins when present', () => {
+  const proposal = summary(P('high', 2), P('bob', 3));
+  const issue = summary(P('low', 5), P('alice', 4));
+  const out = attrs.applyIssueFallback(proposal, issue);
+  assert.equal(out.priority.top, 'high');
+  assert.equal(out.priority.count, 2);
+  assert.equal(out.assignee.top, 'bob');
+  assert.equal(out.assignee.count, 3);
+});
+
+test('applyIssueFallback: per-field fallback (proposal has only one field)', () => {
+  // Proposal set priority but not assignee → assignee inherits the issue.
+  const proposal = summary(P('medium', 1), P(null));
+  const issue = summary(P('high', 9), P('carol', 6));
+  const out = attrs.applyIssueFallback(proposal, issue);
+  assert.equal(out.priority.top, 'medium', 'own priority kept');
+  assert.equal(out.assignee.top, 'carol', 'assignee inherited from issue');
+  assert.equal(out.assignee.count, 6, 'inherits the issue count');
+  assert.equal(out.assignee.myValue, null, 'never inherits the issue myValue');
+});
+
+test('applyIssueFallback: empty proposal inherits both fields from the issue', () => {
+  const out = attrs.applyIssueFallback(attrs.emptySummary(), summary(P('low', 2), P('dan', 3)));
+  assert.equal(out.priority.top, 'low');
+  assert.equal(out.assignee.top, 'dan');
+});
+
+test('applyIssueFallback: both empty stays empty', () => {
+  const out = attrs.applyIssueFallback(attrs.emptySummary(), attrs.emptySummary());
+  assert.equal(out.priority.top, null);
+  assert.equal(out.priority.count, 0);
+  assert.equal(out.assignee.top, null);
+});
+
+test('applyIssueFallback: null issue summary returns the proposal unchanged', () => {
+  const proposal = summary(P('high', 2), P(null));
+  const out = attrs.applyIssueFallback(proposal, null);
+  assert.equal(out.priority.top, 'high');
+  assert.equal(out.assignee.top, null, 'no linked issue → no inheritance');
+});
+
+test('applyIssueFallback: preserves the viewer myValue on an inherited field', () => {
+  // Viewer has cast their own assignee vote on the proposal (myValue set) but
+  // it is not the top → the chip inherits the issue top, keeps viewer myValue.
+  const proposal = summary(P(null), { top: null, count: 0, myValue: 'me' });
+  const issue = summary(P('high', 3), P('lead', 4));
+  const out = attrs.applyIssueFallback(proposal, issue);
+  assert.equal(out.assignee.top, 'lead', 'display inherits the issue top');
+  assert.equal(out.assignee.myValue, 'me', 'viewer own pick preserved');
+});
+
 // ── HTTP endpoints ──────────────────────────────────────────────────────
 const express = require('express');
 const poolMod = require('../src/db/pool');
