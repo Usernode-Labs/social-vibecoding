@@ -2372,7 +2372,7 @@ const DevChat = {
     )) return;
     DevChat.messages.push({
       role: 'system',
-      content: data.text || 'The AI thinks this may be a platform-level issue',
+      content: data.text || 'The AI suggests reporting this to the platform',
       platformIssueDraft: draft,
       created_at: new Date().toISOString(),
       _slug: Math.random().toString(36).slice(2, 8),
@@ -2589,7 +2589,7 @@ const DevChat = {
               <button class="dc-pr-btn dc-pr-btn-preview" onclick="DevChat.resolvePlatformIssueDraft(${d.msgId}, 'dismiss', this)">Dismiss</button>`;
           }
           return `
-            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#9873;</span> ${escapeHtml(msg.content || 'The AI thinks this may be a platform-level issue')}<span style="font-size:9px;opacity:0.4;margin-left:auto">${pId} ${pTs}</span></div>
+            <div class="dc-status-line"><span class="dc-status-icon dc-status-check" aria-hidden="true">&#9873;</span> ${escapeHtml(msg.content || 'The AI suggests reporting this to the platform')}<span style="font-size:9px;opacity:0.4;margin-left:auto">${pId} ${pTs}</span></div>
             <div class="dc-pr-card" data-platform-issue-msg="${d.msgId || ''}">
               <div class="dc-pr-card-header">
                 <span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Suggested platform report</span>

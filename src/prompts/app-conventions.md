@@ -950,11 +950,13 @@ feature):
   without console errors — it does **not** prove behaviour, so
   behavioural regressions slip through unless you add a test for them.
 
-## Platform-level problems: escalate, don't work around
+## Platform-level problems & missing capabilities: escalate, don't file workarounds
 
-You can only edit and push **this app's** repo. Some blockers don't
-live in this repo at all — they're in the platform or shared
-infrastructure:
+You can only edit and push **this app's** repo. Some things the app
+needs don't live in this repo at all — they're in the platform or
+shared infrastructure. Two categories are worth escalating:
+
+**Platform-level breakage** — something outside this repo is broken:
 
 - the shared bridge (`usernode-bridge.js`), wallet / signing, or the
   native mobile WebView (e.g. a file picker, camera, or share sheet
@@ -964,15 +966,25 @@ infrastructure:
 - the merge/checks gate, or a documented platform convention that
   appears wrong or impossible to satisfy
 
+**Missing platform capabilities** — a capability this app legitimately
+needs that the platform doesn't provide: a bridge API that doesn't
+exist, data the platform tracks but doesn't expose (e.g. per-app LLM
+spend), a platform limit or convention that blocks a reasonable app
+feature. **Feature requests are as valid as bug reports here** — don't
+build a fragile app-side approximation of something the platform
+should own without also drafting a report for the real capability.
+
 When you're confident the root cause is platform-level — you've ruled
-out an app-side fix, or you notice you're looping on the same failure
-without progress — **stop patching this app** rather than faking a
-workaround that only hides the problem. On a build turn a helper is
-available to escalate it:
+out an app-side fix, you've established the capability simply doesn't
+exist, or you notice you're looping on the same failure without
+progress — **stop patching this app** rather than faking a workaround
+that only hides the problem. On a build turn a helper is available to
+escalate it:
 
 ```
 usernode-report-platform-issue "<short title>" <<'EOF'
-What's broken, how to reproduce, and which app/flow hit it.
+What's broken or missing, how to reproduce / what the app needs it
+for, and which app/flow hit it.
 EOF
 ```
 

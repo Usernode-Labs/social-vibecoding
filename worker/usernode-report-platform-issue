@@ -1,12 +1,15 @@
 #!/bin/sh
-# Suggest escalating a PLATFORM-LEVEL problem from a build turn.
+# Suggest escalating a PLATFORM-LEVEL problem or missing capability
+# from a build turn.
 #
 # The worker can only edit + push its own app repo. Some blockers live
 # outside it — the shared bridge, wallet / native mobile WebView, the
-# staging/preview pipeline, the checks gate. When the build-turn agent
-# is confident the root cause is platform-level (rather than looping on
-# a fix it structurally cannot make), it uses this to DRAFT a report
-# instead of faking a workaround.
+# staging/preview pipeline, the checks gate — and some needs are
+# capabilities the platform simply doesn't provide yet (feature
+# requests are as valid as bug reports). When the build-turn agent is
+# confident the fix or capability lives platform-side (rather than
+# looping on a change it structurally cannot make), it uses this to
+# DRAFT a report instead of faking a workaround.
 #
 # Human-gated: nothing is filed on GitHub by this call. The platform
 # persists a draft card into the dev-chat timeline; a user must tap
@@ -26,6 +29,13 @@
 #   Tapping "Upload" calls <input type=file> but nothing happens inside
 #   the Usernode mobile WebView. Works in a desktop browser. Repro: open
 #   <app>, tap Upload on the profile screen.
+#   EOF
+#
+#   usernode-report-platform-issue "Expose per-app LLM spend to apps" <<'EOF'
+#   Feature request: the LLM proxy tracks per-user per-app spend but
+#   exposes no way for an app to read it, so a usage meter has to be
+#   approximated app-side. Requested: a spend field on proxy responses
+#   or a read-only bridge call.
 #   EOF
 
 set -u

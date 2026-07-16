@@ -790,7 +790,7 @@ function internalRoutes(_config) {
         appSlug: session.app_slug,
         appName: session.app_name,
       };
-      const content = 'The AI thinks this may be a platform-level issue';
+      const content = 'The AI suggests reporting this to the platform';
       let msgId;
       try {
         const { rows } = await pool.query(
