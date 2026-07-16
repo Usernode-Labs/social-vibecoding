@@ -58,12 +58,15 @@
     var behind = num(p.behind_main);
     var check = p.check_state;
 
+    // #646: an "at least N" app's target beats any app-level majority,
+    // and on invited-approver apps only the qualifying tally fills it.
     var majority = num(
-      opts.majority != null ? opts.majority
-        : (p.majority != null ? p.majority : p.votes_required)
+      p.approvals_required != null ? p.approvals_required
+        : opts.majority != null ? opts.majority
+          : (p.majority != null ? p.majority : p.votes_required)
     ) || 1;
     var hasVotes = p.yes_count !== null && p.yes_count !== undefined;
-    var yes = num(p.yes_count);
+    var yes = num(p.qualified_yes_count != null ? p.qualified_yes_count : p.yes_count);
     var reached = hasVotes && yes >= majority;
     var locked = opts.locked != null ? opts.locked : p.locked;
     var votes = hasVotes ? { yes: yes, majority: majority, reached: reached } : null;

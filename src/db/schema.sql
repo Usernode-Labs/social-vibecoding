@@ -703,9 +703,11 @@ CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DE
 -- which is keyed by (app_id, github_issue_number) because the Dev feed
 -- lists repo GitHub issues that may have no internal `issues` row) and at
 -- the chat_sessions.id (session id) when target_type='proposal'.
--- value holds 'low'|'medium'|'high' for priority, or the typed display
--- name (raw casing) for assignee — assignee dedupe is case-insensitive at
--- read time, never restricted to registered users. NOT staging:private:
+-- value holds 'low'|'medium'|'high' for priority, one of a fixed category
+-- slug set (feature|bug|improvement|design|docs|chore) for category, or the
+-- typed display name (raw casing) for assignee — assignee dedupe is
+-- case-insensitive at read time, never restricted to registered users.
+-- NOT staging:private:
 -- the tally is a public governance-style signal (closer to issue_votes
 -- than to the privacy-flavoured bounty/kudos ledgers), so leaving it
 -- copyable lets staging previews show real seeded data.
@@ -714,7 +716,7 @@ CREATE TABLE IF NOT EXISTS topic_attribute_votes (
   app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
   target_type VARCHAR(16) NOT NULL,   -- 'issue' | 'proposal'
   target_ref  INTEGER NOT NULL,       -- github_issue_number | chat_sessions.id
-  field       VARCHAR(16) NOT NULL,   -- 'priority' | 'assignee'
+  field       VARCHAR(16) NOT NULL,   -- 'priority' | 'assignee' | 'category'
   value       TEXT NOT NULL,
   user_id     INTEGER REFERENCES users(id) ON DELETE CASCADE,
   created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1148,6 +1150,24 @@ BEGIN
   END IF;
 END $$;
 
+-- Per-app proposal-approval governance (issue #646).
+--   approver_policy:    who can approve proposals. 'anyone' = every
+--     eligible voter's vote counts toward the merge gate (today's
+--     behavior); 'invited' = only votes from app_approvers members
+--     count — everyone else's votes are advisory.
+--   approvals_required: how many approvals are needed. NULL = the
+--     default time-&-majority strategy (services/active-users.js
+--     mergeGate); >= 1 = "at least N" mode — a proposal merges as soon
+--     as it has N qualifying yes votes, with no visibility window,
+--     lazy-consensus clock, contested state, or auto-rejection.
+-- Source of truth is dapp.json's top-level `governance` block,
+-- reconciled on every production deploy (services/app-manifest.js
+-- reconcileAppGovernance) and — unlike visibility — also at boot for
+-- the self-hosted platform app (db/migrate.js seedSelfApp). Defaults
+-- make every pre-migration app behave exactly as before.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS approver_policy VARCHAR(10) NOT NULL DEFAULT 'anyone';
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS approvals_required SMALLINT;
+
 -- Pixel density the platform captures this app's before/after preview
 -- screenshots at (issue #360). 2 = HiDPI/retina (the default, matching
 -- real laptops/phones — surfaces "only broken on retina" bugs as a
@@ -1225,6 +1245,29 @@ CREATE INDEX IF NOT EXISTS idx_app_collaborators_user ON app_collaborators(user_
 INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
   SELECT id, created_by, 'member', NOW() FROM apps WHERE created_by IS NOT NULL
 ON CONFLICT (app_id, user_id) DO NOTHING;
+
+-- Proposal approvers + invites (issue #646), a structural clone of
+-- app_collaborators: one table holds both approver members
+-- (status='member') and pending invites (status='invited'). A pending
+-- invite grants NOTHING — the merge-gate math counts only 'member'
+-- rows; declining/revoking deletes the row so re-invites work. Only
+-- consulted when apps.approver_policy = 'invited'; rows are kept
+-- dormant when the policy flips back to 'anyone'. Deliberately NOT
+-- staging:private (like app_collaborators): the roster carries no
+-- secrets and must survive into staging clones so the governed-gate
+-- math stays testable there. No creator backfill — approvers are
+-- opt-in (the reconcile auto-seeds the creator only at the moment an
+-- app first switches to 'invited' with an empty roster).
+CREATE TABLE IF NOT EXISTS app_approvers (
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status      VARCHAR(16) NOT NULL DEFAULT 'member',
+  invited_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  accepted_at TIMESTAMPTZ,
+  PRIMARY KEY (app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_approvers_user ON app_approvers(user_id, status);
 
 -- Before/after visuals on UI-affecting proposals (issue #195). Each row is
 -- one capture artifact produced by the one-shot usernode-capture container

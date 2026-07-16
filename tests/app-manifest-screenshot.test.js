@@ -77,7 +77,7 @@ test('unparseable manifest still yields the default screenshot block', () => {
 test('full read() return carries the screenshot key alongside the others', () => {
   withManifest({ secrets: [], screenshot: { deviceScaleFactor: 1 } }, (m) => {
     assert.deepEqual(Object.keys(m).sort(),
-      ['icon', 'llm', 'name', 'screenshot', 'secrets', 'tests', 'visibility'].sort());
+      ['governance', 'icon', 'llm', 'name', 'screenshot', 'secrets', 'tests', 'visibility'].sort());
     assert.equal(m.screenshot.deviceScaleFactor, 1);
   });
 });

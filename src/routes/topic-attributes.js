@@ -30,6 +30,20 @@ function parseTarget(req) {
   return { targetType, targetRef };
 }
 
+// #639: a promoted proposal inherits its priority/assignee tally from the
+// issue(s) it was started from, so the dropdown must know those linked issue
+// numbers to show the same options the card chip does. Look them up from the
+// session row (scoped to this app); non-proposal targets never inherit.
+async function linkedIssuesFor(pool, appId, t) {
+  if (t.targetType !== 'proposal') return [];
+  const { rows } = await pool.query(
+    'SELECT linked_issues FROM chat_sessions WHERE id = $1 AND app_id = $2',
+    [t.targetRef, appId]
+  );
+  const li = rows[0] && rows[0].linked_issues;
+  return Array.isArray(li) ? li : [];
+}
+
 function topicAttributeRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -50,8 +64,9 @@ function topicAttributeRoutes(config) {
         return res.status(400).json({ error: 'Invalid field' });
       }
 
+      const linkedIssues = await linkedIssuesFor(pool, app.id, t);
       const data = await attrs.listOptions(
-        pool, app.id, t.targetType, t.targetRef, field, req.user?.id || null
+        pool, app.id, t.targetType, t.targetRef, field, req.user?.id || null, linkedIssues
       );
       res.json(data);
     } catch (err) {
@@ -77,15 +92,20 @@ function topicAttributeRoutes(config) {
       }
       const value = attrs.normalizeValue(field, req.body?.value);
       if (value == null) {
-        return res.status(400).json({
-          error: field === 'priority'
-            ? 'Priority must be low, medium or high'
-            : `Name must be 1–${attrs.MAX_ASSIGNEE_LEN} characters`,
-        });
+        let error;
+        if (field === 'priority') {
+          error = 'Priority must be low, medium or high';
+        } else if (field === 'category') {
+          error = `Category must be one of ${attrs.CATEGORY_VALUES.join(', ')}`;
+        } else {
+          error = `Name must be 1–${attrs.MAX_ASSIGNEE_LEN} characters`;
+        }
+        return res.status(400).json({ error });
       }
 
+      const linkedIssues = await linkedIssuesFor(pool, app.id, t);
       const data = await attrs.castVote(
-        pool, app.id, t.targetType, t.targetRef, field, value, req.user.id
+        pool, app.id, t.targetType, t.targetRef, field, value, req.user.id, linkedIssues
       );
       res.json(data);
     } catch (err) {

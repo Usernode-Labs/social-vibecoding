@@ -13,9 +13,8 @@ const App = {
   currentTab: 'app',
   // Active Dev view: 'forum' (the card list, default), 'chat'
   // (full-screen general chat), 'topic' (an issue/proposal discussion
-  // open full-screen), 'sessions' (a dev session open full-screen), or
-  // 'settings' (the app-settings page). Only meaningful while
-  // currentTab === 'dev'.
+  // open full-screen), or 'sessions' (a dev session open full-screen).
+  // Only meaningful while currentTab === 'dev'.
   currentSubTab: 'forum',
   // Tracks whether the dedicated #leaderboard-screen is visible.
   // Sibling state to `currentApp`: home / app / leaderboard are the
@@ -1279,6 +1278,27 @@ const App = {
           AppView._renderMembersVisPills();
         }
       }
+    } else if (data.action === 'governance_changed') {
+      // Proposal-approval settings applied (a merged governance PR's
+      // deploy-time reconcile — issue #646). Patch the open app's
+      // in-memory row and re-render the modal's pills if it's open.
+      if (App.currentApp === data.appSlug
+          && typeof AppView !== 'undefined' && AppView.appData) {
+        AppView.appData.approver_policy = data.approverPolicy;
+        AppView.appData.approvals_required = data.approvalsRequired;
+        const membersModal = document.getElementById('members-modal');
+        if (membersModal && !membersModal.classList.contains('hidden')
+            && AppView._renderMembersGovPills) {
+          AppView._membersGov = {
+            policy: data.approverPolicy === 'invited' ? 'invited' : 'anyone',
+            atLeast: data.approvalsRequired != null ? Number(data.approvalsRequired) : null,
+          };
+          AppView._renderMembersGovPills();
+        }
+        if (App.currentTab === 'dev' && AppView.refreshDevData) {
+          AppView.refreshDevData('governance');
+        }
+      }
     }
   },
 
@@ -1371,7 +1391,7 @@ const App = {
 
   // Slide-out navigation drawer — available at every viewport width
   // (#122). Holds the secondary header actions: GitHub, Share,
-  // Members & visibility, Settings.
+  // Settings. (Members & visibility moved to the Dev "+" menu — #645.)
   HeaderMenu: {
     open() {
       const panel = document.getElementById('header-menu-panel');
@@ -1438,11 +1458,6 @@ const App = {
           App.HeaderMenu.close();
           if (window.AppView) AppView.openShareModal();
         });
-      document.getElementById('drawer-row-members')
-        .addEventListener('click', () => {
-          App.HeaderMenu.close();
-          if (window.AppView) AppView.openMembersModal();
-        });
       document.getElementById('drawer-row-settings')
         .addEventListener('click', () => {
           App.HeaderMenu.close();
@@ -1495,7 +1510,7 @@ const App = {
     App.setCreateVisibility('collab', 'public');
 
     // Members & visibility modal (close/backdrop; the open entry point
-    // is the drawer's Members row, wired in HeaderMenu.init).
+    // is the Dev "+" menu's Members item, wired in AppView._wirePlusMenu).
     const membersClose = document.getElementById('members-close');
     if (membersClose) membersClose.addEventListener('click', () => AppView.hideMembersModal());
     const membersModal = document.getElementById('members-modal');
@@ -1962,8 +1977,9 @@ const App = {
         // Card-list hashes (#194 revision): app/{slug}/app,
         // app/{slug}/dev (the card list), app/{slug}/dev/chat (general
         // chat), app/{slug}/dev/issues/{n} / dev/proposals/{id} /
-        // dev/governance/{id} (full-screen topic views),
-        // app/{slug}/dev/sessions/{id} (session view), dev/settings.
+        // dev/governance/{id} (full-screen topic views), and
+        // app/{slug}/dev/sessions/{id} (session view). The retired
+        // dev/settings form (#645) falls through to the card list.
         // Legacy hashes — group-chat, individual-chat[/{sessionId}], and
         // the old dev/chat|issues|proposals sub-tab forms — all map onto
         // the forum so old links and notification hrefs keep working.
@@ -1984,8 +2000,6 @@ const App = {
             // Full-screen general chat (also where legacy group-chat
             // links land — the old Chat sub-tab's original meaning).
             subTab = 'chat';
-          } else if (sec === 'settings') {
-            subTab = 'settings';
           } else if (sec === 'issues' && parts[4]) {
             subTab = 'topic';
             ref = { kind: 'issue', id: parseInt(parts[4]) || null };
@@ -2117,10 +2131,8 @@ const App = {
     document.getElementById('back-btn').classList.remove('hidden');
     const _drg = document.getElementById('drawer-row-github');
     const _drs = document.getElementById('drawer-row-share');
-    const _drm = document.getElementById('drawer-row-members');
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
-    if (_drm) _drm.classList.add('hidden');
     App.setHeaderTitle('Kudos leaderboard');
     App._inLeaderboard = true;
     // Apply the deep-linked sub-view (prs|users|history) or user
@@ -2163,8 +2175,6 @@ const App = {
           newHash = `#app/${App.currentApp}/dev/sessions/${DevChat.currentSession.id}`;
         } else if (App.currentSubTab === 'chat') {
           newHash = `#app/${App.currentApp}/dev/chat`;
-        } else if (App.currentSubTab === 'settings') {
-          newHash = `#app/${App.currentApp}/dev/settings`;
         } else if (App.currentSubTab === 'topic'
             && typeof AppView !== 'undefined' && AppView._devTopic) {
           const t = AppView._devTopic;
@@ -2194,12 +2204,12 @@ const App = {
     const targetFull = newHash.startsWith('#') ? newHash : '';
     if (currentFull === targetFull) return;
 
-    // Screen ids: every full-screen sub-view (chat, settings, topics,
-    // sessions) is its own screen — list ↔ sub-view pushes a history
-    // entry, so device/browser back mirrors the in-page back buttons —
-    // but which session/topic isn't part of the id (moving between two
-    // topics of the same kind replaces in place).
-    const SUB_SCREENS = new Set(['sessions', 'chat', 'settings', 'issues', 'proposals', 'governance', 'shared']);
+    // Screen ids: every full-screen sub-view (chat, topics, sessions)
+    // is its own screen — list ↔ sub-view pushes a history entry, so
+    // device/browser back mirrors the in-page back buttons — but which
+    // session/topic isn't part of the id (moving between two topics of
+    // the same kind replaces in place).
+    const SUB_SCREENS = new Set(['sessions', 'chat', 'issues', 'proposals', 'governance', 'shared']);
     const screenIdOf = (h) => {
       const segs = String(h || '').replace(/^#/, '').split('/');
       if (segs[0] === 'app' && segs[2] === 'dev') {
@@ -2477,15 +2487,20 @@ const App = {
       drs.classList.remove('hidden');
     }
     // Members & visibility drawer row: creator/admin always (visibility
-    // control), collaborators of an invite-only app too (member list +
-    // invites). Hidden for the self-app (no invites there) and for
-    // everyone else.
+    // + proposal-approval controls), collaborators of an invite-only app
+    // too (member list + invites), and anyone who can collaborate on an
+    // invited-approvers app (read-only approver roster). For the
+    // self-app (#646) the row shows for admins — the modal there hides
+    // the visibility/collaborator sections and offers only the
+    // Proposal-approvals + Approvers sections.
     const drm = document.getElementById('drawer-row-members');
     if (drm) {
       const a = AppView.appData;
-      const showMembers = !!a && !a.self_hosted && (
-        a.can_manage || (a.collab_visibility === 'private' && a.can_collaborate)
-      );
+      const showMembers = !!a && (a.self_hosted
+        ? a.can_manage
+        : (a.can_manage
+          || (a.collab_visibility === 'private' && a.can_collaborate)
+          || (a.approver_policy === 'invited' && a.can_collaborate)));
       drm.classList.toggle('hidden', !showMembers);
     }
     // The App tab iframes appData.url, which doesn't resolve for the self-
@@ -2506,10 +2521,8 @@ const App = {
     document.getElementById('back-btn').classList.add('hidden');
     const _drgH = document.getElementById('drawer-row-github');
     const _drsH = document.getElementById('drawer-row-share');
-    const _drmH = document.getElementById('drawer-row-members');
     if (_drgH) _drgH.classList.add('hidden');
     if (_drsH) _drsH.classList.add('hidden');
-    if (_drmH) _drmH.classList.add('hidden');
     App.setHeaderTitle('dApps');
     document.getElementById('app-content').innerHTML = '';
     App.updateHash();
@@ -2589,9 +2602,10 @@ const App = {
         : { tab: 'dev', subTab: 'forum', ref: null };
     }
 
-    // Full-screen sub-views with no deep-link payload.
+    // Full-screen sub-views with no deep-link payload. (The 'settings'
+    // sub-page is gone — #645 — so old dev/settings requests fall
+    // through to the card list below.)
     if (subTab === 'chat') return { tab: 'dev', subTab: 'chat', ref: null };
-    if (subTab === 'settings') return { tab: 'dev', subTab: 'settings', ref: null };
 
     // A typed topic ref — from the 'topic' sub-view itself or the
     // legacy issues/proposals sub-tab vocabulary — opens that topic
@@ -2629,8 +2643,7 @@ const App = {
       ref = null;
     }
     // #621: the Dev mode is visible to non-collaborators too, read-only
-    // (see AppView.readOnly). Only the settings sub-page stays
-    // collaborator-facing — renderDevView coerces it back to the feed.
+    // (see AppView.readOnly).
     App.currentTab = tab;
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
     document.querySelectorAll('.app-tab').forEach((btn) => {

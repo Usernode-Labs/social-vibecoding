@@ -665,6 +665,12 @@ async function seedSelfApp(pool, config) {
     // repo root stands in for the clone dir when the icon is an image.
     await appManifest.reconcileAppIcon(pool, selfRows[0], manifest, repoRoot)
       .catch((err) => log.warn('db', 'Self-app icon reconcile failed', { err: err.message }));
+    // And the `governance` block (issue #646). The self-app deploys via
+    // GitHub Actions (rebuildProduction never runs for it), so this
+    // boot-time reconcile is where a merged governance-change PR's
+    // proposal-approval settings actually apply.
+    await appManifest.reconcileAppGovernance(pool, selfRows[0], manifest)
+      .catch((err) => log.warn('db', 'Self-app governance reconcile failed', { err: err.message }));
   }
 
   log.info('db', 'Self-app row seeded', {
@@ -788,7 +794,22 @@ async function seedStagingNotifications(pool, config) {
     // (no source user) and deep-link into the dev tab when clicked.
     { kind: 'session_done', sessionId, sourceUserId: null, minutesAgo: 5 },
     { kind: 'auto_solve_done', sessionId, sourceUserId: null, detail: 'code', minutesAgo: 4 },
+    // #646: approver-invite badge/history row. The actionable pinned
+    // Invites card is driven by the app_approvers 'invited' row seeded
+    // below, this notification is the badge bump + history entry.
+    { kind: 'approver_invite', sourceUserId: source.id, minutesAgo: 3 },
   ];
+
+  // #646: pending approver invite for the target admin, so the drawer's
+  // pinned Invites section shows the new approver-invite card (Accept /
+  // Decline) on staging. Idempotent; accepting/declining in a preview
+  // just mutates the staging clone.
+  await pool.query(
+    `INSERT INTO app_approvers (app_id, user_id, status, invited_by)
+     VALUES ($1, $2, 'invited', $3)
+     ON CONFLICT (app_id, user_id) DO NOTHING`,
+    [appId, target.id, source.id]
+  );
 
   let inserted = 0;
   for (const f of fixtures) {

@@ -181,10 +181,10 @@ const AppView = {
   // stored assignee values are trimmed server-side (topic-attributes
   // normalizeValue), so no assignee.top can ever begin with whitespace.
   KANBAN_ASSIGNEE_UNASSIGNED: ' __unassigned__',
-  _kanbanFilters: { q: '', priority: null, assignee: null, needsVote: false },
+  _kanbanFilters: { q: '', priority: null, assignee: null, category: null, needsVote: false },
   // Single source of truth for the empty/default filter set.
   _defaultKanbanFilters() {
-    return { q: '', priority: null, assignee: null, needsVote: false };
+    return { q: '', priority: null, assignee: null, category: null, needsVote: false };
   },
   // Load the saved filters for an app slug, merged over the defaults so a
   // stored object missing a (future) field degrades gracefully. Returns
@@ -622,19 +622,6 @@ const AppView = {
       return;
     }
 
-    // App settings sub-page (reached from the "+" menu). Read-only
-    // viewers have nothing actionable there (rename / secrets /
-    // visibility / invites are all collab- or creator-gated
-    // server-side) — coerce back to the feed (#621).
-    if (subTab === 'settings') {
-      if (AppView.readOnly) {
-        subTab = null;
-      } else {
-        AppView._renderSettingsView(content);
-        return;
-      }
-    }
-
     // Full-screen topic (issue / proposal / governance) discussion.
     if (subTab === 'topic' && ref && ref.kind && ref.id) {
       await AppView._renderTopicSubView(content, ref);
@@ -657,7 +644,7 @@ const AppView = {
           <div class="relative ${AppView.readOnly && AppView.appData?.self_hosted ? 'hidden' : ''}">
             <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"
               class="rounded-lg bg-violet-600 hover:bg-violet-500 w-7 h-7 flex items-center justify-center text-base font-bold leading-none text-white transition-colors"
-              title="${AppView.readOnly ? 'Fork this app' : 'Propose a change, file an issue, or open app settings'}">+</button>
+              title="${AppView.readOnly ? 'Fork this app' : 'Propose a change, file an issue, or manage this app'}">+</button>
             <div id="dev-plus-menu" class="hidden absolute right-0 top-9 z-30 w-64 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-2xl overflow-hidden">
               ${AppView.readOnly ? '' : `
               <button data-plus="proposal" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
@@ -668,9 +655,20 @@ const AppView = {
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
               </button>
-              <button data-plus="settings" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
-                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App settings</span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">App secrets and display name</span>
+              ${AppView._plusMenuShowsMembers() ? `
+              <button data-plus="members" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Members &amp; visibility</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Who can build and see this app</span>
+              </button>` : ''}
+              <button data-plus="rename" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">App display name</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Renames are proposals — applied once voted in</span>
+              </button>
+              <button data-plus="secrets" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">App secrets
+                  <span id="dc-secrets-state" class="text-xs font-normal text-zinc-400 dark:text-zinc-500"></span>
+                </span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Set or update secret values</span>
               </button>`}
               ${AppView.appData?.self_hosted ? '' : `
               <button data-plus="fork" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors ${AppView.readOnly ? '' : 'border-t border-zinc-200 dark:border-zinc-800'}">
@@ -1228,56 +1226,9 @@ const AppView = {
     if (AppView.appData) AppView.loadVoteState(AppView.appData.slug);
   },
 
-  // ── App settings sub-page ───────────────────────────────────────────
-  // The App secrets / display-name flows as a dedicated page (reached
-  // from the "+" menu). Element ids are kept (#dc-edit-secrets /
-  // #dc-secrets-state / #dc-edit-rename) so refreshDevChatSecretsState
-  // and Secrets' post-save sync keep working unmodified. Secret-change
-  // proposals start from the App secrets row — the Secrets modal
-  // already routes non-admins into the vote-based proposal flow.
-  _renderSettingsView(content) {
-    const currentName = escapeHtml(AppView.appData?.name || '');
-    content.innerHTML = `
-      <div class="flex flex-col h-full min-h-0">
-        <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <button id="dev-settings-back" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 text-sm" title="Back to the dev page">&larr;</button>
-          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider">App settings</span>
-        </div>
-        <div class="flex-1 min-h-0 overflow-y-auto overscroll-contain">
-          <div class="px-3 py-3 space-y-2">
-            <button id="dc-edit-secrets"
-              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
-              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a4 4 0 014 4m-4-4a4 4 0 00-4 4 4 4 0 004 4 4 4 0 004-4 4 4 0 00-4-4zm-9.5 12.5L11 13"/></svg>
-              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App secrets</span>
-              <span id="dc-secrets-state" class="text-xs text-zinc-400 dark:text-zinc-500">Loading…</span>
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>
-            <button id="dc-edit-rename"
-              class="w-full flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm bg-zinc-50 dark:bg-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700 border border-zinc-200 dark:border-zinc-700 transition-colors text-left">
-              <svg class="w-4 h-4 text-zinc-500 dark:text-zinc-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
-              <span class="flex-1 text-zinc-800 dark:text-zinc-200">App display name</span>
-              <span class="text-xs text-zinc-400 dark:text-zinc-500 truncate max-w-[40%]" title="${currentName}">${currentName}</span>
-              <svg class="w-4 h-4 text-zinc-400 dark:text-zinc-500 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>
-            <p class="text-xs text-zinc-500 dark:text-zinc-400 pt-1">
-              Secret changes and renames are proposals — they apply once the app's
-              users vote them in (admins can apply secrets directly).
-            </p>
-          </div>
-        </div>
-      </div>`;
-
-    document.getElementById('dev-settings-back').addEventListener('click', () => {
-      App.switchTab('dev');
-    });
-    document.getElementById('dc-edit-secrets').addEventListener('click', () => {
-      if (window.Secrets) Secrets.openForCurrentApp();
-    });
-    document.getElementById('dc-edit-rename').addEventListener('click', () => {
-      AppView.promptRename();
-    });
-    AppView.refreshDevChatSecretsState();
-  },
+  // The App settings sub-page (secrets + display name behind a "+"
+  // menu entry) was dissolved in #645 — Rename and App secrets now sit
+  // directly in the "+" menu, alongside Members & visibility.
 
   // ── View-mode toggle (list ↔ kanban) ─────────────────────────────────
   // A two-button segmented control sitting to the LEFT of the "+" button.
@@ -1329,6 +1280,16 @@ const AppView = {
   },
 
   // ── "+" menu ────────────────────────────────────────────────────────
+  // Gate for the menu's Members & visibility item — same predicate the
+  // old hamburger-drawer row used (#645): creator/admin always
+  // (visibility control), collaborators of an invite-only app too
+  // (member list + invites). Never for the self-app (no invites there).
+  _plusMenuShowsMembers() {
+    const a = AppView.appData;
+    return !!a && !a.self_hosted && (
+      a.can_manage || (a.collab_visibility === 'private' && a.can_collaborate)
+    );
+  },
   _wirePlusMenu(content) {
     const btn = document.getElementById('dev-plus-btn');
     const menu = document.getElementById('dev-plus-menu');
@@ -1341,27 +1302,56 @@ const AppView = {
       e.stopPropagation();
       const open = menu.classList.toggle('hidden') === false;
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      // Refresh the App secrets item's "N required missing" state only
+      // when the menu actually opens — no fetch on every card-list mount.
+      if (open) AppView.refreshDevChatSecretsState();
     });
     // Outside-click dismiss, scoped to the dev view's lifetime (the
     // listener dies with the content innerHTML on the next render).
     content.addEventListener('click', (e) => {
       if (!e.target.closest('#dev-plus-menu, #dev-plus-btn')) close();
     });
-    menu.querySelector('[data-plus="proposal"]').addEventListener('click', () => {
-      close();
-      AppView.createProposal();
-    });
-    menu.querySelector('[data-plus="issue"]').addEventListener('click', () => {
-      close();
-      // Open the shared Send Feedback modal with the dev-context mode:
-      // the open app is preselected as the target (Platform for the
-      // self-hosted app or while the repo doesn't exist yet) — #226.
-      App.openFeedbackModal({ fromDev: true });
-    });
-    menu.querySelector('[data-plus="settings"]').addEventListener('click', () => {
-      close();
-      App.switchTab('dev', null, 'settings');
-    });
+    // proposal/issue/rename/secrets render together in the non-read-only
+    // block; members is conditional within it (see _plusMenuShowsMembers),
+    // so its handler needs an existence check like fork's.
+    const proposalBtn = menu.querySelector('[data-plus="proposal"]');
+    if (proposalBtn) {
+      proposalBtn.addEventListener('click', () => {
+        close();
+        AppView.createProposal();
+      });
+    }
+    const issueBtn = menu.querySelector('[data-plus="issue"]');
+    if (issueBtn) {
+      issueBtn.addEventListener('click', () => {
+        close();
+        // Open the shared Send Feedback modal with the dev-context mode:
+        // the open app is preselected as the target (Platform for the
+        // self-hosted app or while the repo doesn't exist yet) — #226.
+        App.openFeedbackModal({ fromDev: true });
+      });
+    }
+    const membersBtn = menu.querySelector('[data-plus="members"]');
+    if (membersBtn) {
+      membersBtn.addEventListener('click', () => {
+        close();
+        AppView.openMembersModal();
+      });
+    }
+    const renameBtn = menu.querySelector('[data-plus="rename"]');
+    if (renameBtn) {
+      renameBtn.addEventListener('click', () => {
+        close();
+        AppView.promptRename();
+      });
+    }
+    const secretsBtn = menu.querySelector('[data-plus="secrets"]');
+    if (secretsBtn) {
+      secretsBtn.addEventListener('click', () => {
+        close();
+        if (window.Secrets) Secrets.openForCurrentApp();
+      });
+    }
     const forkBtn = menu.querySelector('[data-plus="fork"]');
     if (forkBtn) {
       forkBtn.addEventListener('click', () => {
@@ -1830,6 +1820,11 @@ const AppView = {
         majority,
         activeUsers,
         locked,
+        // #646: the app's configured approval settings, for the
+        // "How voting works" explainer copy.
+        approverPolicy: promotedData.approverPolicy || 'anyone',
+        approvalsRequired: promotedData.approvalsRequired != null
+          ? promotedData.approvalsRequired : null,
         lockedHint: locked
           ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
           : '',
@@ -2359,6 +2354,9 @@ const AppView = {
     // without the attribute set — and gov cards, which never carry them —
     // fail the match by design.
     if (f.priority && !(it.priority && it.priority.top === f.priority)) return false;
+    // #504: category filter on the community-voted top value. Cards without a
+    // category set — and gov cards, which never carry one — fail by design.
+    if (f.category && !(it.category && it.category.top === f.category)) return false;
     if (f.assignee === AppView.KANBAN_ASSIGNEE_UNASSIGNED) {
       // #633: "Unassigned" matches cards whose assignee is unset. Gov cards
       // are excluded here too (mirroring the named-assignee rule): they can
@@ -2384,7 +2382,7 @@ const AppView = {
 
   _kanbanFiltersActive() {
     const f = AppView._kanbanFilters || {};
-    return !!((f.q && f.q.trim()) || f.priority || f.assignee || f.needsVote);
+    return !!((f.q && f.q.trim()) || f.priority || f.category || f.assignee || f.needsVote);
   },
 
   // Assignee dropdown options: the union of top-voted assignees across all
@@ -2439,6 +2437,8 @@ const AppView = {
     const ctlCls = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100';
     const priOpt = (v, label) =>
       `<option value="${v}"${f.priority === v ? ' selected' : ''}>${label}</option>`;
+    const catOpt = (v, label) =>
+      `<option value="${v}"${f.category === v ? ' selected' : ''}>${label}</option>`;
     el.innerHTML = `
       <div class="flex flex-wrap items-center gap-2">
         <input id="dev-kanban-search" type="search" placeholder="Filter by title, author or #number"
@@ -2447,6 +2447,10 @@ const AppView = {
         <select id="dev-kanban-priority" class="${ctlCls}" aria-label="Filter by priority">
           <option value="">Any priority</option>
           ${priOpt('high', 'High')}${priOpt('medium', 'Medium')}${priOpt('low', 'Low')}
+        </select>
+        <select id="dev-kanban-category" class="${ctlCls}" aria-label="Filter by category">
+          <option value="">Any category</option>
+          ${AppView.ATTR_CATEGORY_VALUES.map((v) => catOpt(v, AppView._categoryMeta(v).label)).join('')}
         </select>
         <select id="dev-kanban-assignee" class="${ctlCls}" aria-label="Filter by assignee">
           ${AppView._kanbanAssigneeOptionsHtml()}
@@ -2469,6 +2473,10 @@ const AppView = {
     });
     el.querySelector('#dev-kanban-priority').addEventListener('change', (ev) => {
       AppView._kanbanFilters.priority = ev.target.value || null;
+      AppView._repaintBoardSurface();
+    });
+    el.querySelector('#dev-kanban-category').addEventListener('change', (ev) => {
+      AppView._kanbanFilters.category = ev.target.value || null;
       AppView._repaintBoardSurface();
     });
     el.querySelector('#dev-kanban-assignee').addEventListener('change', (ev) => {
@@ -3857,6 +3865,7 @@ const AppView = {
     + '<li>If enough people vote No, the proposal becomes <strong>Contested</strong> — the time-based path turns off and it needs a straight majority of Yes votes to merge.</li>'
     + '<li>A proposal that’s being voted down with little support is closed automatically after a countdown (“Rejecting in …”).</li>'
     + '<li>Even after winning the vote, a proposal only merges once its <strong>automated checks pass</strong> and it’s <strong>up to date with the main app</strong>. Locked apps also need an admin’s Yes.</li>'
+    + '<li>Apps can customize these rules: restricting approvals to <strong>invited approvers</strong> (everyone else’s votes stay visible but advisory) and/or requiring a fixed <strong>“at least N approvals”</strong> instead of the timed majority system.</li>'
     + '</ul>',
 
   // The live "This proposal, right now" line. Reads the serialized gate
@@ -3869,8 +3878,11 @@ const AppView = {
   _votingHelpText(pr) {
     if (!pr) return '';
     const ctx = AppView._proposalsCtx || {};
-    const yes = parseInt(pr.yes_count) || 0;
-    const no = parseInt(pr.no_count) || 0;
+    // #646: qualifying tallies when only invited approvers' votes count.
+    const yes = pr.qualified_yes_count != null
+      ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
+    const no = pr.qualified_no_count != null
+      ? (parseInt(pr.qualified_no_count) || 0) : (parseInt(pr.no_count) || 0);
     const snap = parseInt(pr.votes_required);
     const required = (Number.isFinite(snap) && snap > 0)
       ? snap : (parseInt(ctx.majority) || 1);
@@ -3904,6 +3916,28 @@ const AppView = {
       blocker = 'it’s behind the main app and will sync automatically before merging';
     } else if (reached && ctx.locked) {
       blocker = 'the app is locked, so it also needs an admin’s Yes';
+    }
+
+    // #646: "at least N approvals" mode — clock-free, so none of the
+    // countdown/contested branches below apply. Describe the configured
+    // rule, the current progress, and any merge blocker.
+    if (pr.approvals_required != null) {
+      const n = parseInt(pr.approvals_required) || 1;
+      const who = pr.approval_policy === 'invited'
+        ? 'its invited approvers' : 'any user';
+      let s;
+      if (reached) {
+        s = blocker
+          ? `It has the approvals it needs (${yes} of ${n}), but it can’t merge yet: ${blocker}.`
+          : `It has the approvals it needs (${yes} of ${n}) — queued to merge shortly.`;
+      } else {
+        s = `This app requires at least ${n} approval${n === 1 ? '' : 's'} from ${who}. Currently ${yes} of ${n}.`;
+        if (blocker) s += ` Note: ${blocker}.`;
+      }
+      if (pr.approval_policy === 'invited') {
+        s += ' Everyone can still vote, but only approvers’ votes count toward the target.';
+      }
+      return s;
     }
 
     // Countdown geometry, mirroring voteCountPill.
@@ -4359,11 +4393,22 @@ const AppView = {
       if (!res.ok) { el.textContent = ''; return; }
       const data = await res.json();
       const ctx = AppView._proposalsCtx || {};
-      const fmt = (arr) => (arr && arr.length ? arr.map((u) => '@' + u).join(', ') : '—');
+      // #646: on invited-approver apps the endpoint lists which voters'
+      // votes QUALIFY — tag those names so advisory votes are legible.
+      const approverSet = new Set(data.approvers || []);
+      const fmt = (arr) => (arr && arr.length
+        ? arr.map((u) => '@' + u + (approverSet.has(u) ? '&nbsp;✓' : '')).join(', ')
+        : '—');
+      const pr = (AppView._proposals || []).find((p) => p.id === sessionId) || {};
+      const needs = pr.approvals_required != null
+        ? ` · needs at least ${pr.approvals_required} approval${pr.approvals_required === 1 ? '' : 's'}${data.approvers ? ' from invited approvers (✓)' : ''}`
+        : (data.approvers
+          ? ` · only invited approvers' (✓) votes count`
+          : ` · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users`);
       el.innerHTML =
-        `<span class="text-emerald-500 font-medium">Yes (${(data.yes || []).length}):</span> ${escapeHtml(fmt(data.yes))}`
-        + ` &nbsp;<span class="text-red-400 font-medium">No (${(data.no || []).length}):</span> ${escapeHtml(fmt(data.no))}`
-        + `<span class="text-zinc-500"> · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users</span>`;
+        `<span class="text-emerald-500 font-medium">Yes (${(data.yes || []).length}):</span> ${fmt((data.yes || []).map((u) => escapeHtml(u)))}`
+        + ` &nbsp;<span class="text-red-400 font-medium">No (${(data.no || []).length}):</span> ${fmt((data.no || []).map((u) => escapeHtml(u)))}`
+        + `<span class="text-zinc-500">${escapeHtml(needs)}</span>`;
     } catch {
       el.textContent = '';
     }
@@ -4576,6 +4621,27 @@ const AppView = {
     }
   },
 
+  // #504: the fixed category vocabulary (mirrors CATEGORY_VALUES in
+  // services/topic-attributes.js — keep the two in sync). Community-voted
+  // like priority: a small controlled set so chip colours stay consistent
+  // and filtering never fragments on casing.
+  ATTR_CATEGORY_VALUES: ['feature', 'bug', 'improvement', 'design', 'docs', 'chore'],
+
+  // Display label + colour classes for a category slug, drawn from the same
+  // badge palette family the priority chip / assignee avatars use. `cls` is
+  // the static tint; `hover` deepens it to /20 on the interactive chip.
+  _categoryMeta(value) {
+    switch (value) {
+      case 'feature': return { label: 'Feature', cls: 'bg-emerald-500/10 text-emerald-500', hover: 'hover:bg-emerald-500/20' };
+      case 'bug': return { label: 'Bug', cls: 'bg-red-500/10 text-red-500', hover: 'hover:bg-red-500/20' };
+      case 'improvement': return { label: 'Improvement', cls: 'bg-sky-500/10 text-sky-500', hover: 'hover:bg-sky-500/20' };
+      case 'design': return { label: 'Design', cls: 'bg-violet-500/10 text-violet-400', hover: 'hover:bg-violet-500/20' };
+      case 'docs': return { label: 'Docs', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
+      case 'chore': return { label: 'Chore', cls: 'bg-zinc-500/10 text-zinc-500', hover: 'hover:bg-zinc-500/20' };
+      default: return null;
+    }
+  },
+
   // #489: a small fixed palette of tint pairs (bg /20 + text 600/dark 300)
   // for the assignee initial-avatar, drawn from the same colour family the
   // card badges use so the circles sit consistently in light + dark themes.
@@ -4634,6 +4700,12 @@ const AppView = {
       const meta = AppView._priorityMeta(s.top);
       if (meta) { label = `&#9873; ${meta.label}`; cls = meta.cls; hover = meta.hover; }
       else { label = '&#9873; Set priority'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
+    } else if (field === 'category') {
+      // #504: lead with a small colour swatch (the same attr-dot used in the
+      // popover) so the category reads at a glance, then the label.
+      const meta = AppView._categoryMeta(s.top);
+      if (meta) { label = `<span class="attr-dot ${meta.cls}"></span>${meta.label}`; cls = meta.cls; hover = meta.hover; }
+      else { label = '<span class="attr-dot bg-zinc-500/10 text-zinc-500"></span>Set category'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
     } else {
       // #489: the assignee now leads with a coloured initial-avatar (an at-a-
       // glance "who owns this") instead of the generic person emoji, and the
@@ -4651,9 +4723,14 @@ const AppView = {
     // Faint trailing count, matching how the ★ bounty pill shows its number.
     const countHtml = count > 1 ? ` <span class="opacity-60">&middot;${count}</span>` : '';
     const base = 'attr-chip inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded';
-    const title = field === 'priority'
-      ? 'Vote on this card\'s priority'
-      : (s.top ? 'Suggest or vote on who should take this' : 'Assign someone to this task');
+    let title;
+    if (field === 'priority') {
+      title = 'Vote on this card\'s priority';
+    } else if (field === 'category') {
+      title = 'Vote on this card\'s category';
+    } else {
+      title = s.top ? 'Suggest or vote on who should take this' : 'Assign someone to this task';
+    }
     if (readonly) {
       return `<span class="${base} ${cls}">${label}${countHtml}</span>`;
     }
@@ -4666,6 +4743,7 @@ const AppView = {
   _attrChipsHtml(targetType, targetRef, item, opts) {
     const readonly = !!(opts && opts.readonly) || AppView.readOnly;
     return AppView._attrChipHtml('priority', targetType, targetRef, item && item.priority, readonly)
+      + AppView._attrChipHtml('category', targetType, targetRef, item && item.category, readonly)
       + AppView._attrChipHtml('assignee', targetType, targetRef, item && item.assignee, readonly);
   },
 
@@ -4804,6 +4882,16 @@ const AppView = {
       for (const v of AppView.ATTR_PRIORITY_VALUES) {
         const o = byVal.get(v);
         const meta = AppView._priorityMeta(v);
+        inner += optRow(`<span class="attr-dot ${meta.cls}"></span>${meta.label}`, v, o ? o.count : 0, !!(o && o.mine));
+      }
+    } else if (field === 'category') {
+      // #504: list the fixed category set (like priority), each with its
+      // colour swatch, showing counts + the viewer's current check.
+      const byVal = new Map((data.options || []).map((o) => [o.value, o]));
+      inner += '<div class="attr-pop-head">Category</div>';
+      for (const v of AppView.ATTR_CATEGORY_VALUES) {
+        const o = byVal.get(v);
+        const meta = AppView._categoryMeta(v);
         inner += optRow(`<span class="attr-dot ${meta.cls}"></span>${meta.label}`, v, o ? o.count : 0, !!(o && o.mine));
       }
     } else {
@@ -5928,9 +6016,33 @@ const AppView = {
     const snap = parseInt(pr.votes_required);
     const hasSnap = Number.isFinite(snap) && snap > 0;
     const maj = hasSnap ? snap : (majority || 1);
-    const yes = parseInt(pr.yes_count) || 0;
-    const no = parseInt(pr.no_count) || 0;
+    // #646: when only invited approvers' votes count, the pill fills
+    // from the QUALIFYING tallies (qualified_*_count, serialized by
+    // /promoted); raw tallies keep rendering in the roster/labels.
+    const yes = pr.qualified_yes_count != null
+      ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
+    const no = pr.qualified_no_count != null
+      ? (parseInt(pr.qualified_no_count) || 0) : (parseInt(pr.no_count) || 0);
     const state = yes >= maj ? 'yes' : no >= maj ? 'no' : 'pending';
+
+    // #646: "at least N" mode — a clock-free approvals-progress pill
+    // ("x of N approvals"). The server never arms a merge/rejection
+    // window in this mode, so the countdown branches below can't fire.
+    if (pr.approvals_required != null && pr.status !== 'merged' && pr.status !== 'merging') {
+      const n = parseInt(pr.approvals_required) || 1;
+      const reached = yes >= n;
+      const who = pr.approval_policy === 'invited' ? 'invited approvers' : 'any user';
+      const title = reached
+        ? `Approval target reached (${yes} of ${n}) — merges as soon as checks pass`
+        : `Needs at least ${n} approval${n === 1 ? '' : 's'} from ${who} to merge`;
+      const fills = reached
+        ? `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
+        : `<span class="gc-vote-fill gc-vote-fill-yes" style="width:${Math.min(100, (yes / n) * 100)}%"></span>`;
+      return `<span class="gc-vote-count gc-vote-count-${reached ? 'yes' : 'pending'}" title="${title}">`
+        + fills
+        + `<span class="gc-vote-count-label">${yes} of ${n} approval${n === 1 ? '' : 's'}</span>`
+        + `</span>`;
+    }
 
     // Countdown state: a merge clock is running. Two ways one arms (both
     // serialized by the server as merge_window_ends_at — see mergeGate in
@@ -6784,8 +6896,8 @@ const AppView = {
   // list / meta panel anymore — sessions are reached from the forum's
   // Your-sessions strip, proposal cards, and the "+" flow, and a
   // missing/unopenable id bounces back to the card list. The App
-  // secrets / display-name shortcuts that used to live here moved to
-  // the App settings sub-page (_renderSettingsView).
+  // secrets / display-name shortcuts that used to live here now sit
+  // directly in the "+" menu (#645).
   async renderDevChatTab(restoreSessionId) {
     const content = AppView._devContainer();
     if (!content) return;
@@ -6838,10 +6950,10 @@ const AppView = {
     }
   },
 
-  // Fetch the current secrets summary and paint the preview slot in
-  // the dev-chat Edit row. Called on tab mount and again from
-  // Secrets.handleSet/handleClear so direct admin edits reflect
-  // immediately without a tab reload. Silently no-ops when the row
+  // Fetch the current secrets summary and paint the state slot on the
+  // "+" menu's App secrets item (#dc-secrets-state). Called when the
+  // menu opens and again from Secrets.handleSet/handleClear so direct
+  // admin edits reflect immediately. Silently no-ops when the slot
   // isn't mounted (e.g. user is on a different tab).
   async refreshDevChatSecretsState() {
     const stateEl = document.getElementById('dc-secrets-state');
@@ -7388,8 +7500,11 @@ const AppView = {
       visStatus.className = 'text-red-400 text-sm hidden';
     }
     if (visSection) {
-      visSection.classList.toggle('hidden', !appData.can_manage);
-      if (appData.can_manage) {
+      // Self-hosted platform app: visibility stays out of repo control
+      // (the server 400s visibility-pr for it), so hide the pills — the
+      // modal is reachable there for the Proposal-approvals sections.
+      visSection.classList.toggle('hidden', !appData.can_manage || !!appData.self_hosted);
+      if (appData.can_manage && !appData.self_hosted) {
         AppView._renderMembersVisPills();
         if (!appData.repo_url) {
           visSection.querySelectorAll('[data-m-collab-vis], [data-m-view-vis]')
@@ -7401,6 +7516,48 @@ const AppView = {
         }
       }
     }
+
+    // Proposal-approvals section (issue #646): creator/admin only, like
+    // the visibility pills; changes open a dapp.json governance PR, so
+    // a repo is required.
+    AppView._membersGov = {
+      policy: appData.approver_policy === 'invited' ? 'invited' : 'anyone',
+      atLeast: appData.approvals_required != null ? Number(appData.approvals_required) : null,
+    };
+    const govSection = document.getElementById('members-governance-section');
+    const govStatus = document.getElementById('members-governance-error');
+    if (govStatus) { govStatus.textContent = ''; govStatus.className = 'text-red-400 text-sm hidden'; }
+    if (govSection) {
+      govSection.classList.toggle('hidden', !appData.can_manage);
+      if (appData.can_manage) {
+        AppView._renderMembersGovPills();
+        if (!appData.repo_url) {
+          govSection.querySelectorAll('[data-m-approver-policy], [data-m-approvals-mode], #members-approvals-n')
+            .forEach((p) => { p.disabled = true; });
+          if (govStatus) {
+            govStatus.textContent = 'Approval-settings changes are proposed as a dapp.json pull request — this app has no GitHub repository, so they\'re unavailable.';
+            govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+            govStatus.classList.remove('hidden');
+          }
+        }
+      }
+    }
+
+    // Approvers roster: creator/admin always (a roster can be lined up
+    // before flipping the policy); everyone else sees it read-only when
+    // the policy is 'invited'.
+    const approversSection = document.getElementById('members-approvers-section');
+    const showApprovers = appData.can_manage
+      || (appData.approver_policy === 'invited' && appData.can_collaborate);
+    if (approversSection) approversSection.classList.toggle('hidden', !showApprovers);
+    const approverInviteBox = document.getElementById('members-approver-invite');
+    if (approverInviteBox) approverInviteBox.classList.toggle('hidden', !appData.can_manage);
+    const apStatus = document.getElementById('members-approver-status');
+    if (apStatus) { apStatus.textContent = ''; apStatus.className = 'text-sm mt-2'; }
+    const apInput = document.getElementById('members-approver-invite-input');
+    if (apInput) apInput.value = '';
+    AppView._hideApproverSuggestions();
+
     AppView._wireMembersModal();
 
     // Member list + invite input: collab-private apps only.
@@ -7415,6 +7572,7 @@ const AppView = {
     if (input) input.value = '';
     AppView._hideInviteSuggestions();
     if (isPrivate && appData.can_collaborate) await AppView.loadCollaborators();
+    if (showApprovers) await AppView.loadApprovers();
   },
 
   hideMembersModal() {
@@ -7450,6 +7608,77 @@ const AppView = {
           if (name) AppView.sendInvite(name);
         }
         if (e.key === 'Escape') AppView._hideInviteSuggestions();
+      });
+    }
+
+    // Proposal-approvals pills + at-least count (issue #646).
+    document.querySelectorAll('#members-governance-section [data-m-approver-policy]')
+      .forEach((pill) => {
+        const fresh = pill.cloneNode(true);
+        pill.parentNode.replaceChild(fresh, pill);
+        fresh.addEventListener('click', () => {
+          AppView._proposeGovernance({
+            policy: fresh.dataset.mApproverPolicy,
+            atLeast: AppView._membersGov.atLeast,
+          });
+        });
+      });
+    document.querySelectorAll('#members-governance-section [data-m-approvals-mode]')
+      .forEach((pill) => {
+        const fresh = pill.cloneNode(true);
+        pill.parentNode.replaceChild(fresh, pill);
+        fresh.addEventListener('click', () => {
+          if (fresh.dataset.mApprovalsMode === 'default') {
+            AppView._proposeGovernance({ policy: AppView._membersGov.policy, atLeast: null });
+          } else {
+            // Reveal the count input and let the user pick N; the
+            // proposal opens on Enter / change (see below).
+            const n = document.getElementById('members-approvals-n');
+            if (n) {
+              n.classList.remove('hidden');
+              n.value = String(AppView._membersGov.atLeast || 1);
+              n.focus();
+            }
+            const govStatus = document.getElementById('members-governance-error');
+            if (govStatus) {
+              govStatus.textContent = 'Set the number of approvals and press Enter to open the proposal.';
+              govStatus.className = 'text-sm text-zinc-500 dark:text-zinc-400';
+            }
+          }
+        });
+      });
+    const nInput = document.getElementById('members-approvals-n');
+    if (nInput) {
+      const freshN = nInput.cloneNode(true);
+      nInput.parentNode.replaceChild(freshN, nInput);
+      const proposeN = () => {
+        const n = Math.max(1, Math.min(50, parseInt(freshN.value, 10) || 1));
+        AppView._proposeGovernance({ policy: AppView._membersGov.policy, atLeast: n });
+      };
+      freshN.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.preventDefault(); proposeN(); }
+      });
+      freshN.addEventListener('change', proposeN);
+    }
+
+    // Approver invite typeahead.
+    const apInput = document.getElementById('members-approver-invite-input');
+    if (apInput) {
+      const freshAp = apInput.cloneNode(true);
+      apInput.parentNode.replaceChild(freshAp, apInput);
+      freshAp.addEventListener('input', () => {
+        clearTimeout(AppView._approverInviteDebounce);
+        AppView._approverInviteDebounce = setTimeout(
+          () => AppView._searchApproverUsers(freshAp.value.trim()), 200
+        );
+      });
+      freshAp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const name = freshAp.value.trim();
+          if (name) AppView.sendApproverInvite(name);
+        }
+        if (e.key === 'Escape') AppView._hideApproverSuggestions();
       });
     }
   },
@@ -7636,6 +7865,187 @@ const AppView = {
       }
       if (input) input.value = '';
       AppView.loadCollaborators();
+    } catch (err) {
+      if (status) {
+        status.textContent = err.message;
+        status.className = 'text-sm mt-2 import-status--err';
+      }
+    }
+  },
+
+  // ── Proposal-approval governance (issue #646) ───────────────────────
+
+  _membersGov: { policy: 'anyone', atLeast: null },
+  _approverInviteDebounce: null,
+
+  _renderMembersGovPills() {
+    const { policy, atLeast } = AppView._membersGov;
+    document.querySelectorAll('#members-governance-section [data-m-approver-policy]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.mApproverPolicy === policy);
+    });
+    const mode = atLeast != null ? 'at_least' : 'default';
+    document.querySelectorAll('#members-governance-section [data-m-approvals-mode]').forEach((p) => {
+      p.classList.toggle('active', p.dataset.mApprovalsMode === mode);
+    });
+    const n = document.getElementById('members-approvals-n');
+    if (n) {
+      n.classList.toggle('hidden', atLeast == null);
+      if (atLeast != null) n.value = String(atLeast);
+    }
+  },
+
+  // Pill click → confirm → open a governance-change proposal (a PR that
+  // edits dapp.json's `governance` block). NOT optimistic, like the
+  // visibility pills: the controls keep showing the current settings
+  // until the proposal passes, merges, and the redeploy's reconcile
+  // fires the `governance_changed` WS event (handled in app.js).
+  async _proposeGovernance({ policy, atLeast }) {
+    const cur = AppView._membersGov;
+    const targetPolicy = policy === 'invited' ? 'invited' : 'anyone';
+    const targetN = atLeast != null ? Math.max(1, Math.min(50, Number(atLeast) || 1)) : null;
+    if (targetPolicy === cur.policy && (targetN ?? null) === (cur.atLeast ?? null)) return;
+
+    const statusEl = document.getElementById('members-governance-error');
+    const setStatus = (msg, isError) => {
+      if (!statusEl) return;
+      statusEl.textContent = msg;
+      statusEl.className = `text-sm ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
+      statusEl.classList.toggle('hidden', !msg);
+    };
+    setStatus('', false);
+
+    if (!window.confirm(
+      'Changing the approval settings opens a proposal that is voted on under the current rules. '
+      + 'The change applies after the vote passes and the app redeploys. Open the proposal?'
+    )) return;
+
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/governance-pr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          approverPolicy: targetPolicy,
+          approvalsRequired: targetN,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        setStatus('A governance change is already up for vote — see the proposal in the Dev tab\'s vote panel.', false);
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      setStatus(
+        `Proposal opened (PR #${data.prNumber}) — it needs the group's vote in the Dev tab's vote panel before the new settings apply.`,
+        false
+      );
+    } catch (err) {
+      setStatus(`Could not open the governance proposal: ${err.message}`, true);
+    }
+  },
+
+  async loadApprovers() {
+    const list = document.getElementById('members-approvers-list');
+    if (!list || !AppView.appData) return;
+    list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">Loading…</div>';
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/approvers`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      AppView._renderApprovers(data.approvers || []);
+    } catch (err) {
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load approvers: ${escapeHtml(err.message)}</div>`;
+    }
+  },
+
+  _renderApprovers(rows) {
+    const list = document.getElementById('members-approvers-list');
+    if (!list) return;
+    const me = (typeof App !== 'undefined' && App.user) ? App.user : {};
+    const canManage = !!AppView.appData?.can_manage;
+    if (!rows.length) {
+      list.innerHTML = '<div class="px-3 py-2 text-sm text-zinc-500">No approvers yet.'
+        + (canManage ? ' Invite one below.' : '') + '</div>';
+      return;
+    }
+    list.innerHTML = rows.map((r) => {
+      const pending = r.status === 'invited';
+      const tag = pending
+        ? '<span class="text-[0.65rem] text-amber-500 font-medium ml-1">invited</span>'
+        : '<span class="text-[0.65rem] text-violet-500 font-medium ml-1">approver</span>';
+      // Remove/revoke: creator/admin for anyone; approvers may remove
+      // themselves (leave). Mirrors the server rules.
+      const canRemove = canManage || r.userId === me.id;
+      const removeBtn = canRemove
+        ? `<button data-remove-approver="${r.userId}" class="text-xs text-zinc-400 hover:text-red-500 px-2 py-1" title="${pending ? 'Revoke invite' : (r.userId === me.id ? 'Stop being an approver' : 'Remove')}">${pending ? 'Revoke' : (r.userId === me.id ? 'Leave' : 'Remove')}</button>`
+        : '';
+      return `<div class="flex items-center justify-between px-3 py-2 ${pending ? 'opacity-70' : ''}">
+        <span class="text-sm text-zinc-700 dark:text-zinc-300 truncate">@${escapeHtml(r.username)}${tag}</span>
+        ${removeBtn}
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-remove-approver]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          const res = await fetch(
+            `/api/apps/${AppView.appData.slug}/approvers/${btn.dataset.removeApprover}`,
+            { method: 'DELETE' }
+          );
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          AppView.loadApprovers();
+        } catch (err) {
+          alert(`Remove failed: ${err.message}`);
+          btn.disabled = false;
+        }
+      });
+    });
+  },
+
+  async _searchApproverUsers(q) {
+    const box = document.getElementById('members-approver-suggestions');
+    if (!box || !AppView.appData) return;
+    if (!q) { AppView._hideApproverSuggestions(); return; }
+    try {
+      const params = new URLSearchParams({ q });
+      const res = await fetch(`/api/users/search?${params.toString()}`);
+      if (!res.ok) return;
+      const { users } = await res.json();
+      if (!users || !users.length) { AppView._hideApproverSuggestions(); return; }
+      box.innerHTML = users.map((u) =>
+        `<button data-approver-user="${escapeAttr(u.username)}" class="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
+      ).join('');
+      box.classList.remove('hidden');
+      box.querySelectorAll('[data-approver-user]').forEach((btn) => {
+        btn.addEventListener('click', () => AppView.sendApproverInvite(btn.dataset.approverUser));
+      });
+    } catch { /* typeahead is best-effort */ }
+  },
+
+  _hideApproverSuggestions() {
+    const box = document.getElementById('members-approver-suggestions');
+    if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+  },
+
+  async sendApproverInvite(username) {
+    const status = document.getElementById('members-approver-status');
+    const input = document.getElementById('members-approver-invite-input');
+    AppView._hideApproverSuggestions();
+    if (status) { status.textContent = 'Inviting…'; status.className = 'text-sm mt-2'; }
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/approver-invites`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (status) {
+        status.textContent = `✓ Invited @${data.username || username} as an approver`;
+        status.className = 'text-sm mt-2 import-status--ok';
+      }
+      if (input) input.value = '';
+      AppView.loadApprovers();
     } catch (err) {
       if (status) {
         status.textContent = err.message;

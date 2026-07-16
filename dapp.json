@@ -119,6 +119,11 @@
       "expectSelector": ".voting-help-btn"
     },
     {
+      "name": "At-least-approvals proposal renders the approvals pill (#646)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
+      "expectText": "of 1 approval"
+    },
+    {
       "name": "Kanban filter bar renders above the board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-search"
@@ -132,6 +137,11 @@
       "name": "Kanban cards show the assignee initial-avatar",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": ".attr-avatar"
+    },
+    {
+      "name": "Kanban filter bar shows the category filter",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-category"
     },
     {
       "name": "Shared demo session renders in the In progress area",
@@ -239,6 +249,16 @@
       "name": "Read-only demo app's Dev tab renders its seeded proposal (#621)",
       "path": "/app/staging-demo-readonly/dev",
       "expectText": "Staging demo read-only proposal"
+    },
+    {
+      "name": "Dev '+' menu holds rename and secrets directly, no App settings nesting (#645)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu [data-plus='rename']"
+    },
+    {
+      "name": "Dev '+' menu shows Members & visibility on a managed app (#645)",
+      "path": "/app/staging-demo-readonly/dev",
+      "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
       "name": "Errored app view shows the failure reason and build-log button",

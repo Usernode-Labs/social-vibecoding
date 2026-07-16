@@ -41,6 +41,12 @@ const EVENT_TYPES = Object.freeze({
   COLLAB_INVITED: 'collab_invited',
   COLLAB_JOINED: 'collab_joined',
   VISIBILITY_CHANGED: 'visibility_changed',
+  // Proposal-approval governance (issue #646): settings change applied
+  // from dapp.json, and the approver-invite lifecycle (mirrors
+  // COLLAB_INVITED / COLLAB_JOINED).
+  GOVERNANCE_CHANGED: 'governance_changed',
+  APPROVER_INVITED: 'approver_invited',
+  APPROVER_JOINED: 'approver_joined',
   // Sync-with-main completed (issue: make sync emit session activity).
   // Attributed to the session owner (sync bills the owner), recorded on
   // the terminal path with { syncResult, behind, sha, pushOk, trigger }.

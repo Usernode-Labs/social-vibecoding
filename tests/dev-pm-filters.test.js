@@ -110,17 +110,18 @@ function makeAppView(over) {
   return makeCtx(over).__AppView;
 }
 
-const none = { q: '', priority: null, assignee: null, needsVote: false };
+const none = { q: '', priority: null, assignee: null, category: null, needsVote: false };
 
 const at = (h) => `2026-06-01T${String(h).padStart(2, '0')}:00:00Z`;
 
-// `a` / `p` are the top-voted assignee / priority (omitted → unset).
+// `a` / `p` / `c` are the top-voted assignee / priority / category (omitted → unset).
 const issue = (over) => ({
   number: over.number, title: `Issue ${over.number}`,
   updatedAt: over.updatedAt || at(1), lastMessageAt: over.lastMessageAt || at(1),
   headless: null,
   assignee: over.a === undefined ? null : { top: over.a, count: 1, myValue: null },
   priority: over.p === undefined ? null : { top: over.p, count: 1, myValue: null },
+  category: over.c === undefined ? null : { top: over.c, count: 1, myValue: null },
   ...over,
 });
 const prop = (over) => ({
@@ -130,6 +131,7 @@ const prop = (over) => ({
   last_message_at: over.last_message_at || at(1),
   assignee: over.a === undefined ? null : { top: over.a, count: 1, myValue: null },
   priority: over.p === undefined ? null : { top: over.p, count: 1, myValue: null },
+  category: over.c === undefined ? null : { top: over.c, count: 1, myValue: null },
   ...over,
 });
 
@@ -158,6 +160,39 @@ test('priority filter drops non-matching and attribute-less cards; group counts 
   assert.deepEqual(Array.from(r.groups, (g) => g.name), ['alice']);
   assert.equal(r.groups[0].count, 2, 'alice keeps only her two high cards');
   assert.equal(r.unassignedTotal, 1, 'unassigned recounts post-filter');
+});
+
+test('category filter drops non-matching cards; group counts recompute', () => {
+  const AppView = makeAppView();
+  const r = pmGroups(AppView, {
+    issues: [
+      issue({ number: 1, a: 'alice', c: 'bug' }),
+      issue({ number: 2, a: 'alice', c: 'feature' }),
+      issue({ number: 3, a: 'alice' }), // no category → fails the match
+      issue({ number: 4, a: 'bob', c: 'feature' }),
+      issue({ number: 5, c: 'bug' }), // unassigned but matching
+    ],
+    proposals: [prop({ id: 10, a: 'bob', c: 'bug' })],
+  }, { ...none, category: 'bug' });
+  // Only bug-tagged cards survive: alice #1, bob's proposal, unassigned #5.
+  assert.deepEqual(Array.from(r.groups, (g) => g.name), ['alice', 'bob']);
+  assert.equal(r.groups.find((g) => g.name === 'alice').count, 1);
+  assert.equal(r.groups.find((g) => g.name === 'bob').count, 1);
+  assert.equal(r.unassignedTotal, 1, 'unassigned recounts post-filter');
+});
+
+test('category and assignee filters combine (intersection)', () => {
+  const AppView = makeAppView();
+  const r = pmGroups(AppView, {
+    issues: [
+      issue({ number: 1, a: 'alice', c: 'bug' }),
+      issue({ number: 2, a: 'alice', c: 'feature' }),
+      issue({ number: 3, a: 'bob', c: 'bug' }),
+    ],
+    proposals: [],
+  }, { ...none, category: 'bug', assignee: 'alice' });
+  assert.deepEqual(Array.from(r.groups, (g) => g.name), ['alice']);
+  assert.equal(r.groups[0].count, 1, 'only alice\'s bug card survives both filters');
 });
 
 test('assignee filter yields only that user\'s group; unassigned recomputes to zero', () => {

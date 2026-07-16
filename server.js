@@ -20,6 +20,7 @@ const { dashboardRoutes } = require('./src/routes/dashboard');
 const { feedbackRoutes } = require('./src/routes/feedback');
 const { notificationsRoutes } = require('./src/routes/notifications');
 const { collaboratorRoutes } = require('./src/routes/collaborators');
+const { approverRoutes } = require('./src/routes/approvers');
 const { statusRoutes } = require('./src/routes/status');
 const { internalRoutes } = require('./src/routes/internal');
 const { appErrorRoutes } = require('./src/routes/app-error');
@@ -327,6 +328,7 @@ app.use(dashboardRoutes(config));
 app.use(feedbackRoutes(config));
 app.use(notificationsRoutes(config));
 app.use(collaboratorRoutes(config));
+app.use(approverRoutes(config));
 app.use(llmGrantsRoutes(config));
 app.use(userAgentFilesRoutes(config));
 app.use(proposalDiscussRoutes(config));
@@ -1991,7 +1993,7 @@ function startStalePrSweeper(config) {
   });
   const { checkAndMerge } = require('./src/routes/votes');
   const issuesModule = require('./src/routes/issues');
-  const { getActiveUserStats, mergeGate } = require('./src/services/active-users');
+  const governance = require('./src/services/governance');
   stalePrSweeperHandle = setInterval(async () => {
     if (lifecycle.isShuttingDown()) return;
 
@@ -2015,19 +2017,16 @@ function startStalePrSweeper(config) {
             AND (cs.behind_main IS NULL OR cs.behind_main = 0)
           LIMIT 100`
       );
-      const statsCache = new Map();
       for (const session of rows) {
         if (worker.isInFlight(session.id)) continue;
         try {
-          let stats = statsCache.get(session.app_id);
-          if (!stats) {
-            stats = await getActiveUserStats(pool, session.app_id);
-            statsCache.set(session.app_id, stats);
-          }
-          const gate = mergeGate(
-            stats.active, session.yes_count, session.no_count,
-            session.promoted_at || session.created_at
-          );
+          // #646: governance-aware gate — honors the app's approver
+          // policy + at-least-N mode (governance/electorate lookups are
+          // TTL-cached in the service, so no per-app cache needed here).
+          const gate = await governance.governedGate(pool, session.app_id, {
+            kind: 'pr', id: session.id,
+            openedAt: session.promoted_at || session.created_at,
+          });
           // Merge takes precedence: a row that just became mergeable should
           // merge, not reject. checkAndMerge re-confirms both gates atomically.
           if (gate.mergeable) {
@@ -2088,19 +2087,16 @@ function startStalePrSweeper(config) {
           WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue')
           LIMIT 100`
       );
-      const statsCache = new Map();
       for (const issue of rows) {
         try {
           if (issue.kind === 'close_issue') {
             await issuesModule.maybeApplyCloseIssueProposal(pool, issue);
             continue;
           }
-          let stats = statsCache.get(issue.app_id);
-          if (!stats) {
-            stats = await getActiveUserStats(pool, issue.app_id);
-            statsCache.set(issue.app_id, stats);
-          }
-          const gate = mergeGate(stats.active, issue.up_count, issue.down_count, issue.created_at);
+          // #646: governance-aware gate for issue-vote proposals too.
+          const gate = await governance.governedGate(pool, issue.app_id, {
+            kind: 'issue', id: issue.id, openedAt: issue.created_at,
+          });
           if (!gate.mergeable) continue;
           if (issue.kind === 'rename') {
             await issuesModule.maybeApplyRenameProposal(pool, issue);

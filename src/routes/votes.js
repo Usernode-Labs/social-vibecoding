@@ -6,7 +6,7 @@ const staging = require('../services/staging');
 const docker = require('../services/docker');
 const { checkAndResolveConflicts, isResolving } = require('../services/conflict-resolver');
 const { sendSystemMessage, pushNotificationToUser } = require('../services/ws');
-const { getActiveUserStats, isUserActive, mergeGate } = require('../services/active-users');
+const { getActiveUserStats, isUserActive } = require('../services/active-users');
 const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
@@ -88,10 +88,11 @@ function stagingMockProposals(viewer) {
       { name: 'Home loads', path: '/', status: 'pass', consoleErrors: [], failureReason: '' },
     ],
     checks_checked_at: hoursAgo(hours),
-    // Community-voted priority + assignee chips. Populated so both card
-    // states are reviewable on staging via ?demo=1.
+    // Community-voted priority + assignee + category chips. Populated so
+    // the card states are reviewable on staging via ?demo=1.
     priority: { top: 'high', count: 2, myValue: null },
     assignee: { top: 'staging-tester', count: 3, myValue: null },
+    category: { top: 'improvement', count: 2, myValue: null },
   });
   const rows = [
     // Unopposed, thin support: threshold met but a multi-day visibility
@@ -311,6 +312,48 @@ function stagingMockProposals(viewer) {
     mk(9000010, 900110,
       '[Mock] Ready-to-merge test: votes passed and checks are green — queued to merge',
       4, 9, 0, 3),
+    // #646: an "at least N approvals" proposal awaiting its approval —
+    // approval_policy/approvals_required drive the clock-free
+    // "x of N approvals" pill and the new How-voting-works copy. The raw
+    // tally carries an advisory community vote (yes_count 1) while the
+    // QUALIFYING count is still 0, so the advisory-vs-approver split is
+    // reviewable via ?demo=1.
+    {
+      ...mk(9000023, 900123,
+        '[Mock] Approvals test: needs 1 approval from an invited approver before it merges',
+        3, 1, 0, 2, { required: 1, windowEndsAt: null }),
+      approval_policy: 'invited',
+      approvals_required: 1,
+      qualified_yes_count: 0,
+      qualified_no_count: 0,
+    },
+    // #646: the reached counterpart — the approval target is met, so the
+    // pill fills green ("2 of 2 approvals") and the help text reads
+    // "queued to merge shortly".
+    {
+      ...mk(9000024, 900124,
+        '[Mock] Approvals test: target reached — 2 of 2 approvals, merging shortly',
+        5, 3, 0, 1, { required: 2, windowEndsAt: null }),
+      approval_policy: 'invited',
+      approvals_required: 2,
+      qualified_yes_count: 2,
+      qualified_no_count: 0,
+    },
+    // #639: an issue-linked proposal that carries NO attribute votes of its
+    // own, so its priority/assignee chips are INHERITED from the origin issue
+    // (#900006, seeded medium / maya-builder in the issues feed). This makes
+    // the "chips no longer vanish when a task is proposed for voting" fix
+    // reviewable on the In-review card via ?demo=1. linked_issues points the
+    // card at that mock issue; the inline priority/assignee stand in for what
+    // the inheritance query computes (mock rows bypass the DB summarize path).
+    {
+      ...mk(9000022, 900122,
+        '[Mock] Inherited-attrs test: promoted from issue #900006 — chips carry over',
+        7, 2, 0, 1, { required: 2, windowEndsAt: hoursAhead(50) }),
+      linked_issues: [900006],
+      priority: { top: 'medium', count: 2, myValue: null },
+      assignee: { top: 'maya-builder', count: 3, myValue: null },
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the
@@ -319,13 +362,13 @@ function stagingMockProposals(viewer) {
   // the mock issues' (staging-demo-user, maya-builder), so filtering by one of
   // them catches cards across both the issue and proposal columns.
   const attrOverrides = new Map([
-    [9000001, { priority: { top: 'medium', count: 2, myValue: null }, assignee: { top: 'staging-demo-user', count: 2, myValue: null } }],
-    [9000002, { priority: { top: 'low', count: 1, myValue: null }, assignee: { top: 'maya-builder', count: 1, myValue: null } }],
-    [9000013, { priority: { top: 'low', count: 3, myValue: null }, assignee: { top: 'staging-demo-user', count: 1, myValue: null } }],
+    [9000001, { priority: { top: 'medium', count: 2, myValue: null }, assignee: { top: 'staging-demo-user', count: 2, myValue: null }, category: { top: 'improvement', count: 2, myValue: null } }],
+    [9000002, { priority: { top: 'low', count: 1, myValue: null }, assignee: { top: 'maya-builder', count: 1, myValue: null }, category: { top: 'design', count: 1, myValue: null } }],
+    [9000013, { priority: { top: 'low', count: 3, myValue: null }, assignee: { top: 'staging-demo-user', count: 1, myValue: null }, category: { top: 'chore', count: 2, myValue: null } }],
   ]);
   for (const row of rows) {
     const o = attrOverrides.get(row.id);
-    if (o) { row.priority = o.priority; row.assignee = o.assignee; }
+    if (o) { row.priority = o.priority; row.assignee = o.assignee; row.category = o.category; }
   }
   return rows.map((p) => {
     // #600: seed the FIRST mock proposal's assignee as the viewer's own so
@@ -434,7 +477,19 @@ function stagingMockMerged() {
     0,
     3
   );
-  return [autoMerged].concat(titles.map((t, i) => mk(
+  // #639: a COMPLETED proposal whose chips were inherited from its origin
+  // issue (#900006, seeded medium / maya-builder). Confirms priority/assignee
+  // stay visible (read-only) in the Done column after "close done", not just
+  // while in review — the second half of the reported loss. linked_issues +
+  // inline chip values mirror the promoted inherited-attrs mock above.
+  const inheritedAttrs = {
+    ...mk(9100027, 910127,
+      '[Mock] Completed: inherited priority/assignee from issue #900006', 0, 2),
+    linked_issues: [900006],
+    priority: { top: 'medium', count: 2, myValue: null },
+    assignee: { top: 'maya-builder', count: 3, myValue: null },
+  };
+  return [autoMerged, inheritedAttrs].concat(titles.map((t, i) => mk(
     9100001 + i,
     910101 + i,
     `[Mock] Completed: ${t}`,
@@ -970,11 +1025,15 @@ function voteRoutes(config) {
     }
   });
 
-  // Get vote tally for a session
+  // Get vote tally for a session. #646: when the app restricts
+  // approvals to invited approvers, `approvers` lists the usernames
+  // whose votes QUALIFY (the roster, incl. the full-admin fallback) so
+  // the FE can tag approver votes; it's absent under the default
+  // 'anyone' policy.
   router.get('/api/sessions/:id/votes', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT pv.vote, u.username
+        `SELECT pv.vote, u.username, pv.user_id
          FROM pr_votes pv JOIN users u ON pv.user_id = u.id
          WHERE pv.session_id = $1`,
         [req.params.id]
@@ -983,7 +1042,27 @@ function voteRoutes(config) {
       const yes = rows.filter((r) => r.vote === 'yes');
       const no = rows.filter((r) => r.vote === 'no');
 
-      res.json({ yes: yes.map((r) => r.username), no: no.map((r) => r.username) });
+      const out = { yes: yes.map((r) => r.username), no: no.map((r) => r.username) };
+
+      try {
+        const { rows: sessRows } = await pool.query(
+          'SELECT app_id FROM chat_sessions WHERE id = $1', [req.params.id]
+        );
+        const appId = sessRows[0]?.app_id;
+        if (appId) {
+          const governance = require('../services/governance');
+          const gov = await governance.getGovernance(pool, appId);
+          if (gov.approverPolicy === 'invited') {
+            const { ids } = await governance.getApproverSet(pool, appId);
+            const idSet = new Set(ids);
+            out.approvers = rows.filter((r) => idSet.has(r.user_id)).map((r) => r.username);
+          }
+        }
+      } catch (err) {
+        log.warn('votes', 'approver tagging failed (non-fatal)', { err: err.message });
+      }
+
+      res.json(out);
     } catch (err) {
       log.error('votes', 'Failed to get votes', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1027,28 +1106,46 @@ function voteRoutes(config) {
       // Per-app active-user majority (the denominator for the tally
       // pill). One getActiveUserStats call per distinct app, cached in
       // a map — most users have proposals on a handful of apps at most.
+      // #646: plus the per-app governance settings + electorate, so the
+      // gate matches the app's configured approval mode.
+      const governanceSvc = require('../services/governance');
       const appIds = [...new Set([...sessions, ...governance].map((r) => r.app_id))];
       const statsByApp = {};
+      const govByApp = {};
+      const electorateByApp = {};
       for (const appId of appIds) {
         statsByApp[appId] = await getActiveUserStats(pool, appId);
+        govByApp[appId] = await governanceSvc.getGovernance(pool, appId);
+        electorateByApp[appId] = await governanceSvc.getElectorate(pool, appId, govByApp[appId]);
       }
 
-      const proposals = sessions.map((s) => {
-        const active = statsByApp[s.app_id]?.active || 1;
+      const proposals = [];
+      for (const s of sessions) {
+        const gov = govByApp[s.app_id];
+        const electorate = electorateByApp[s.app_id];
+        const q = electorate?.approverIds
+          ? await governanceSvc.qualifiedCounts(pool, 'pr', s.id, electorate.approverIds)
+          : { yes: s.yes_count, no: s.no_count };
         // Per-row dynamic merge gate + rejection countdown, mirroring
         // /api/apps/:slug/promoted (same anchor: promoted_at || created_at).
-        const gate = mergeGate(active, s.yes_count, s.no_count, s.promoted_at || s.created_at);
-        return {
+        const gate = governanceSvc.computeGate(
+          gov, electorate?.active || 1, q.yes, q.no, s.promoted_at || s.created_at
+        );
+        proposals.push({
           ...s,
           majority: statsByApp[s.app_id]?.majority || 1,
-          activeUsers: active,
+          activeUsers: statsByApp[s.app_id]?.active || 1,
           votes_required: gate.required,
           merge_window_ends_at: gate.windowEndsAt,
           contested: gate.contested,
           reject_window_ends_at: gate.rejectionEndsAt,
           rejection_armed: gate.rejectionArmed,
-        };
-      });
+          approval_policy: gate.policy,
+          approvals_required: gate.approvalsRequired,
+          qualified_yes_count: gate.qualifiedYes,
+          qualified_no_count: gate.qualifiedNo,
+        });
+      }
 
       // #405: staging-only demo rows (?demo=1) so the home "Your proposals"
       // strip's canonical merge-lifecycle chips — In vote, Behind, Resolving
@@ -1092,22 +1189,33 @@ function voteRoutes(config) {
         proposals.push(...demoRows);
       }
 
+      const governanceRows = [];
+      for (const g of governance) {
+        const gov = govByApp[g.app_id];
+        const electorate = electorateByApp[g.app_id];
+        const q = electorate?.approverIds
+          ? await governanceSvc.qualifiedCounts(pool, 'issue', g.id, electorate.approverIds)
+          : { yes: g.up_count, no: g.down_count };
+        // Governance proposals have no promote step — created_at is the
+        // visibility-window anchor. down votes feed both gates.
+        const gate = governanceSvc.computeGate(
+          gov, electorate?.active || 1, q.yes, q.no, g.created_at
+        );
+        governanceRows.push({
+          ...g,
+          majority: statsByApp[g.app_id]?.majority || 1,
+          activeUsers: statsByApp[g.app_id]?.active || 1,
+          votes_required: gate.required,
+          merge_window_ends_at: gate.windowEndsAt,
+          contested: gate.contested,
+          approval_policy: gate.policy,
+          approvals_required: gate.approvalsRequired,
+        });
+      }
+
       res.json({
         proposals,
-        governance: governance.map((g) => {
-          const active = statsByApp[g.app_id]?.active || 1;
-          // Governance proposals have no promote step — created_at is the
-          // visibility-window anchor. down votes feed both gates.
-          const gate = mergeGate(active, g.up_count, g.down_count, g.created_at);
-          return {
-            ...g,
-            majority: statsByApp[g.app_id]?.majority || 1,
-            activeUsers: active,
-            votes_required: gate.required,
-            merge_window_ends_at: gate.windowEndsAt,
-            contested: gate.contested,
-          };
-        }),
+        governance: governanceRows,
       });
     } catch (err) {
       log.error('votes', 'Failed to list my proposals', { message: err.message });
@@ -1222,13 +1330,15 @@ function voteRoutes(config) {
       // keyed by session id (target_type='proposal'). Same minimal shape
       // the issue feed attaches; the dropdown lazy-loads the full tally
       // from /api/apps/:slug/topics/proposal/:id/attributes.
-      const promotedAttrs = await topicAttrs.summarizeForTargets(
-        pool, appRows[0].id, 'proposal', rows.map((r) => r.id), userId
+      const promotedAttrs = await topicAttrs.summarizeForProposals(
+        pool, appRows[0].id,
+        rows.map((r) => ({ id: r.id, linked_issues: r.linked_issues })), userId
       );
       for (const row of rows) {
         const s = promotedAttrs.get(row.id) || topicAttrs.emptySummary();
         row.priority = s.priority;
         row.assignee = s.assignee;
+        row.category = s.category;
       }
 
       // Staging-only demo mode (?demo=1): append long-title mock
@@ -1253,10 +1363,33 @@ function voteRoutes(config) {
       // they can't be a single app-level number. Mock rows (?demo=1) already
       // carry precomputed values that bypass the live `active` lookup — leave
       // those untouched.
+      //
+      // #646: governance-aware. Under the default settings this is the
+      // old per-row mergeGate over the raw tallies; under
+      // approver_policy='invited' the qualifying counts (approver votes
+      // only) are batch-fetched in one query and the electorate is the
+      // approver roster; under approvals_required=N the gate is the
+      // clock-free "at least N" check. Every live row also carries
+      // approval_policy / approvals_required / qualified_* so the vote
+      // pill + help text can describe the configured mode.
+      const governance = require('../services/governance');
+      const gov = await governance.getGovernance(pool, appRows[0].id);
+      const electorate = await governance.getElectorate(pool, appRows[0].id, gov);
+      let qualifiedByRow = null;
+      if (electorate.approverIds) {
+        qualifiedByRow = await governance.qualifiedCountsBatch(
+          pool, 'pr',
+          rows.filter((r) => r.votes_required == null).map((r) => r.id),
+          electorate.approverIds
+        );
+      }
       for (const row of rows) {
         if (row.votes_required != null) continue;
-        const gate = mergeGate(
-          activeUsers, row.yes_count, row.no_count,
+        const q = qualifiedByRow
+          ? (qualifiedByRow.get(row.id) || { yes: 0, no: 0 })
+          : { yes: row.yes_count, no: row.no_count };
+        const gate = governance.computeGate(
+          gov, electorate.active, q.yes, q.no,
           row.promoted_at || row.created_at
         );
         row.votes_required = gate.required;
@@ -1264,6 +1397,10 @@ function voteRoutes(config) {
         row.contested = gate.contested;
         row.reject_window_ends_at = gate.rejectionEndsAt;
         row.rejection_armed = gate.rejectionArmed;
+        row.approval_policy = gate.policy;
+        row.approvals_required = gate.approvalsRequired;
+        row.qualified_yes_count = gate.qualifiedYes;
+        row.qualified_no_count = gate.qualifiedNo;
       }
 
       res.json({
@@ -1276,6 +1413,10 @@ function voteRoutes(config) {
         // sections without a second round-trip. See loadVotePanel in
         // public/js/app-view.js.
         locked: !!appRows[0].locked,
+        // #646: the app's configured approval settings, for the vote
+        // panel context (_proposalsCtx in public/js/app-view.js).
+        approverPolicy: gov.approverPolicy,
+        approvalsRequired: gov.approvalsRequired,
       });
     } catch (err) {
       log.error('votes', 'Failed to list promoted', { message: err.message });
@@ -1362,13 +1503,15 @@ function voteRoutes(config) {
 
       // Same priority + assigned-person summary on completed proposals, so
       // the read-only chips stay visible after a PR merges.
-      const mergedAttrs = await topicAttrs.summarizeForTargets(
-        pool, appRows[0].id, 'proposal', rows.map((r) => r.id), userId
+      const mergedAttrs = await topicAttrs.summarizeForProposals(
+        pool, appRows[0].id,
+        rows.map((r) => ({ id: r.id, linked_issues: r.linked_issues })), userId
       );
       for (const row of rows) {
         const s = mergedAttrs.get(row.id) || topicAttrs.emptySummary();
         row.priority = s.priority;
         row.assignee = s.assignee;
+        row.category = s.category;
       }
 
       // Staging-only demo mode (?demo=1): prepend mock merged rows so the
@@ -1436,12 +1579,14 @@ function voteRoutes(config) {
       let proposal = rows[0] || null;
       if (proposal) {
         // Same read-only priority + assigned-person chips the list rows carry.
-        const attrs = await topicAttrs.summarizeForTargets(
-          pool, gatedApp.id, 'proposal', [proposal.id], userId
+        const attrs = await topicAttrs.summarizeForProposals(
+          pool, gatedApp.id,
+          [{ id: proposal.id, linked_issues: proposal.linked_issues }], userId
         );
         const s = attrs.get(proposal.id) || topicAttrs.emptySummary();
         proposal.priority = s.priority;
         proposal.assignee = s.assignee;
+        proposal.category = s.category;
       }
 
       // Staging demo mode (?demo=1): the mock merged/promoted rows aren't in
@@ -1665,27 +1810,26 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // autoResolve:false so its own conflict paths don't re-trigger the
   // resolver — this bounds the resolve+retry to a single cycle.
   const { force = false, forceBy = null, autoResolve = true } = options;
-  const { active: activeCount, majority } = await getActiveUserStats(pool, session.app_id);
-
-  const { rows: yesRows } = await pool.query(
-    `SELECT COUNT(*) as cnt FROM pr_votes WHERE session_id = $1 AND vote = 'yes'`,
-    [session.id]
-  );
-  const yesCount = parseInt(yesRows[0].cnt);
-
-  // No votes now feed BOTH merge gates: they raise the eased Yes threshold
-  // (`required`) and push the visibility window back out. See
-  // services/active-users.js → mergeGate.
-  const { rows: noRows } = await pool.query(
-    `SELECT COUNT(*) as cnt FROM pr_votes WHERE session_id = $1 AND vote = 'no'`,
-    [session.id]
-  );
-  const noCount = parseInt(noRows[0].cnt);
 
   // The proposal's "opened for voting" anchor is promoted_at (falls back to
-  // created_at defensively). Both gates derive from one snapshot.
+  // created_at defensively). All gates derive from one snapshot.
+  //
+  // #646: the gate is now governance-aware (services/governance.js).
+  // Under the default settings this is bit-for-bit the old
+  // getActiveUserStats + pr_votes counts + mergeGate; under
+  // approver_policy='invited' only approver votes count (and the
+  // electorate is the approver roster); under approvals_required=N the
+  // proposal is mergeable as soon as it has N qualifying yes votes,
+  // with every clock (window / lazy / rejection) off.
   const openedAt = session.promoted_at || session.created_at || null;
-  const gate = mergeGate(activeCount, yesCount, noCount, openedAt);
+  const governance = require('../services/governance');
+  const gate = await governance.governedGate(pool, session.app_id, {
+    kind: 'pr', id: session.id, openedAt,
+  });
+  const yesCount = gate.qualifiedYes;
+  const noCount = gate.qualifiedNo;
+  const activeCount = gate.activeCount;
+  const majority = Math.floor(activeCount / 2) + 1;
   const required = gate.required;
 
   // Admin /debug capture. We deliberately do NOT open a run for the
@@ -1740,10 +1884,12 @@ async function checkAndMerge(config, pool, session, options = {}) {
     await startDebugIfNeeded();
     dstep({
       phase: 'gate:majority',
-      message: gate.thresholdMet
-        ? `Vote threshold reached: ${yesCount} yes votes (needed ${required}) with the visibility window elapsed.`
-        : `Lazy-consensus window elapsed: ${yesCount} yes vote${yesCount === 1 ? '' : 's'} (threshold ${required}) with no opposition — silence is consent.`,
-      detail: { yesCount, required, majority, noCount, activeCount, lazyArmed: gate.lazyArmed },
+      message: gate.mode === 'at_least'
+        ? `Approval target reached: ${yesCount} qualifying approval${yesCount === 1 ? '' : 's'} (needed at least ${required}${gate.policy === 'invited' ? ' from invited approvers' : ''}).`
+        : gate.thresholdMet
+          ? `Vote threshold reached: ${yesCount} yes votes (needed ${required}) with the visibility window elapsed.`
+          : `Lazy-consensus window elapsed: ${yesCount} yes vote${yesCount === 1 ? '' : 's'} (threshold ${required}) with no opposition — silence is consent.`,
+      detail: { yesCount, required, majority, noCount, activeCount, lazyArmed: gate.lazyArmed, mode: gate.mode, policy: gate.policy },
     });
 
     // Locked apps additionally require at least one admin yes vote (see

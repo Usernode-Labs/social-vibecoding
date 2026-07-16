@@ -40,6 +40,24 @@ test('normalizeValue: assignee trims, rejects empty + over-long, keeps casing', 
   assert.equal(attrs.normalizeValue('bogus', 'x'), null);
 });
 
+test('normalizeValue: category accepts only the fixed slug set (case-folded, trimmed)', () => {
+  assert.equal(attrs.normalizeValue('category', 'bug'), 'bug');
+  assert.equal(attrs.normalizeValue('category', 'BUG'), 'bug'); // case-folded
+  assert.equal(attrs.normalizeValue('category', '  Feature '), 'feature'); // trimmed
+  assert.equal(attrs.normalizeValue('category', 'improvement'), 'improvement');
+  assert.equal(attrs.normalizeValue('category', 'urgent'), null); // not in the set
+  assert.equal(attrs.normalizeValue('category', ''), null);
+  assert.equal(attrs.normalizeValue('category', 7), null);
+  // The exported vocabulary is exactly the fixed set.
+  assert.deepEqual(attrs.CATEGORY_VALUES, ['feature', 'bug', 'improvement', 'design', 'docs', 'chore']);
+  assert.ok(attrs.FIELDS.includes('category'), 'category is a recognised field');
+});
+
+test('emptySummary carries a category slot', () => {
+  const s = attrs.emptySummary();
+  assert.deepEqual(s.category, { top: null, count: 0, myValue: null });
+});
+
 test('pickTop: count desc, then earliest first-suggestion, then alpha', () => {
   // Clear winner by count.
   assert.equal(attrs.pickTop([
@@ -208,6 +226,113 @@ test('clearVote removes only the caller\'s own vote, leaving others\' intact', a
   assert.equal(pool.store.length, 1);
 });
 
+// ── #639: proposal inheritance from linked issue(s) ────────────────────
+//
+// Priority/assignee are voted while a task is an open issue, but once it is
+// promoted the card is keyed ('proposal', sessionId) instead of ('issue', N).
+// summarizeForProposals bridges the two via the proposal's linked_issues with
+// a per-field fallback so the chips no longer vanish on "propose for voting"
+// or "close done".
+
+test('mergeBuckets: folds same-value buckets across targets (sum, earliest, casing)', () => {
+  const merged = attrs.mergeBuckets('assignee', [
+    [{ value: 'Evan', count: 1, firstAt: '2026-01-02T00:00:00Z' }],
+    [{ value: 'evan', count: 2, firstAt: '2026-01-01T00:00:00Z' }],
+    [{ value: 'Sam', count: 1, firstAt: '2026-01-03T00:00:00Z' }],
+  ]);
+  const evan = merged.find((b) => b.value.toLowerCase() === 'evan');
+  assert.equal(evan.count, 3, 'counts sum across the two casings');
+  assert.equal(evan.firstAt, '2026-01-01T00:00:00Z', 'earliest first-suggestion wins');
+  assert.equal(evan.value, 'evan', 'display casing follows the higher-count member');
+  assert.equal(merged.length, 2, 'Evan/evan collapse; Sam stays separate');
+});
+
+test('summarizeForProposals: proposal with own votes ignores the linked issue', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 42, 'priority', 'low', 1);   // issue says low
+  await attrs.castVote(pool, 1, 'proposal', 7, 'priority', 'high', 2); // proposal says high
+  const map = await attrs.summarizeForProposals(pool, 1, [{ id: 7, linked_issues: [42] }], 2);
+  assert.equal(map.get(7).priority.top, 'high', 'own votes win outright');
+  assert.equal(map.get(7).priority.myValue, 'high');
+});
+
+test('summarizeForProposals: no own votes → inherits from a single linked issue', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 42, 'priority', 'high', 1);
+  await attrs.castVote(pool, 1, 'issue', 42, 'priority', 'high', 2);
+  await attrs.castVote(pool, 1, 'issue', 42, 'assignee', 'Alex', 3);
+  const map = await attrs.summarizeForProposals(pool, 1, [{ id: 7, linked_issues: [42] }], 9);
+  assert.equal(map.get(7).priority.top, 'high');
+  assert.equal(map.get(7).priority.count, 2);
+  assert.equal(map.get(7).assignee.top, 'Alex');
+});
+
+test('summarizeForProposals: inherits the combined tally across multiple linked issues', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 42, 'priority', 'high', 1);
+  await attrs.castVote(pool, 1, 'issue', 43, 'priority', 'high', 2); // same value, other issue
+  await attrs.castVote(pool, 1, 'issue', 43, 'priority', 'low', 3);
+  const map = await attrs.summarizeForProposals(pool, 1, [{ id: 7, linked_issues: [42, 43] }], 9);
+  assert.equal(map.get(7).priority.top, 'high', 'high (1+1) beats low (1) once folded');
+  assert.equal(map.get(7).priority.count, 2);
+});
+
+test('summarizeForProposals: per-field mix — own priority, inherited assignee', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'proposal', 7, 'priority', 'low', 1);  // own priority
+  await attrs.castVote(pool, 1, 'issue', 42, 'assignee', 'Alex', 2);   // inherited assignee
+  const map = await attrs.summarizeForProposals(pool, 1, [{ id: 7, linked_issues: [42] }], 9);
+  assert.equal(map.get(7).priority.top, 'low', 'own priority stands');
+  assert.equal(map.get(7).assignee.top, 'Alex', 'assignee inherited from the issue');
+});
+
+test('summarizeForProposals: no linked issues → empty summary (unchanged behaviour)', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 42, 'priority', 'high', 1);   // unrelated issue
+  const map = await attrs.summarizeForProposals(pool, 1, [{ id: 7, linked_issues: [] }], 9);
+  assert.equal(map.get(7).priority.top, null);
+  assert.equal(map.get(7).assignee.top, null);
+});
+
+test('summarizeForProposals: assignee casing dedupes across the issue→proposal boundary', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 42, 'assignee', 'evan', 1);
+  await attrs.castVote(pool, 1, 'issue', 42, 'assignee', 'Evan', 2);
+  const map = await attrs.summarizeForProposals(pool, 1, [{ id: 7, linked_issues: [42] }], 9);
+  assert.equal(map.get(7).assignee.top, 'Evan', 'most-recent casing shows');
+  assert.equal(map.get(7).assignee.count, 2, 'two casings count as one assignee');
+});
+
+test('summarizeForProposals: myValue resolves proposal vote else issue vote', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 42, 'priority', 'high', 5); // viewer voted on the issue
+  const inherited = await attrs.summarizeForProposals(pool, 1, [{ id: 7, linked_issues: [42] }], 5);
+  assert.equal(inherited.get(7).priority.myValue, 'high', 'falls back to the issue vote');
+
+  await attrs.castVote(pool, 1, 'proposal', 7, 'priority', 'low', 5); // viewer re-votes on the proposal
+  const own = await attrs.summarizeForProposals(pool, 1, [{ id: 7, linked_issues: [42] }], 5);
+  assert.equal(own.get(7).priority.myValue, 'low', 'proposal vote overrides the issue vote');
+});
+
+test('listOptions: proposal dropdown inherits options from its linked issue, then detaches on cast', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 42, 'priority', 'high', 1);
+  await attrs.castVote(pool, 1, 'issue', 42, 'priority', 'low', 5); // viewer (5) backs low
+
+  // Proposal has no votes yet → dropdown shows the inherited issue tally.
+  const inherited = await attrs.listOptions(pool, 1, 'proposal', 7, 'priority', 5, [42]);
+  assert.equal(inherited.options.length, 2, 'both inherited options surface');
+  assert.equal(inherited.myValue, 'low', 'viewer\'s issue pick pre-selects');
+  assert.ok(inherited.options.find((o) => o.value === 'low').mine);
+
+  // Casting on the proposal writes the proposal key and detaches the field.
+  await attrs.castVote(pool, 1, 'proposal', 7, 'priority', 'medium', 5, [42]);
+  const own = await attrs.listOptions(pool, 1, 'proposal', 7, 'priority', 5, [42]);
+  assert.equal(own.options.length, 1, 'only the proposal-level vote now');
+  assert.equal(own.options[0].value, 'medium');
+  assert.equal(own.myValue, 'medium');
+});
+
 // ── HTTP endpoints ──────────────────────────────────────────────────────
 const express = require('express');
 const poolMod = require('../src/db/pool');
@@ -298,13 +423,18 @@ test('DELETE withdraws the caller\'s assignee vote (drag-to-Unassigned)', async 
 });
 
 // ── 3. Source guards ───────────────────────────────────────────────────
-test('feed routes attach the priority/assignee summary', () => {
+test('feed routes attach the priority/assignee/category summary', () => {
   const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
   assert.match(issuesSrc, /summarizeForTargets\([^)]*'issue'/s, 'issues route enriches issue targets');
   assert.match(issuesSrc, /issue\.priority = s\.priority/);
+  assert.match(issuesSrc, /issue\.category = s\.category/, 'issues route copies the category summary');
 
   const votesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf-8');
-  assert.match(votesSrc, /summarizeForTargets\([^)]*'proposal'/s, 'votes route enriches proposal targets');
+  // #639: proposal cards enrich via the proposal-aware summary so their
+  // priority/assignee chips inherit from the linked origin issue(s).
+  assert.match(votesSrc, /summarizeForProposals\(/, 'votes route enriches proposal targets');
+  assert.match(votesSrc, /linked_issues: r\.linked_issues/, 'passes each proposal its linked issues');
+  assert.match(votesSrc, /\.category = s\.category/, 'votes route copies the category summary onto proposals');
 });
 
 test('server wires the topic-attributes route', () => {
@@ -312,11 +442,14 @@ test('server wires the topic-attributes route', () => {
   assert.match(serverSrc, /topicAttributeRoutes\(config\)/);
 });
 
-test('card renderer emits the two chips', () => {
+test('card renderer emits the three chips (priority, category, assignee)', () => {
   const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
   assert.match(fe, /_attrChipsHtml\('issue'/, 'issue rows render chips');
   assert.match(fe, /_attrChipsHtml\('proposal'/, 'proposal cards render chips');
   assert.match(fe, /data-attr-chip/, 'chip carries the delegated-click hook');
+  assert.match(fe, /_attrChipHtml\('category'/, 'the category chip is rendered');
+  assert.match(fe, /ATTR_CATEGORY_VALUES: \['feature', 'bug', 'improvement', 'design', 'docs', 'chore'\]/,
+    'FE category vocabulary mirrors the service CATEGORY_VALUES');
 });
 
 // #600: the assignee dropdown pre-fills the name box with the viewer's own
