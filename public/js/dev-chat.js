@@ -2309,8 +2309,28 @@ const DevChat = {
     }
   },
 
-  async promotePR() {
+  async promotePR(btn = null) {
     if (!DevChat.currentSession?.id) return;
+    // #558: disable + spinner the moment the button is clicked so a slow
+    // request can't be double-submitted by impatient clicking. Re-entry
+    // guard (an already-disabled button means a request is in flight),
+    // then swap the label for a spinner while preserving the original
+    // text so the failure paths can restore it (success re-renders the
+    // whole card, so only failures need cleanup).
+    let originalLabel = null;
+    if (btn) {
+      if (btn.disabled) return;
+      originalLabel = btn.innerHTML;
+      btn.disabled = true;
+      btn.setAttribute('aria-busy', 'true');
+      btn.innerHTML = '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span> Proposing…';
+    }
+    const restoreBtn = () => {
+      if (!btn) return;
+      btn.disabled = false;
+      btn.removeAttribute('aria-busy');
+      if (originalLabel != null) btn.innerHTML = originalLabel;
+    };
     try {
       const res = await fetch(`/api/sessions/${DevChat.currentSession.id}/promote`, { method: 'POST' });
       if (res.ok) {
@@ -2333,9 +2353,11 @@ const DevChat = {
       } else {
         const data = await res.json();
         alert(data.error || 'Failed to promote');
+        restoreBtn();
       }
     } catch {
       alert('Network error');
+      restoreBtn();
     }
   },
 
@@ -2696,7 +2718,7 @@ const DevChat = {
                 ${previewBtnHtml}
                 ${testBtn}
                 ${prUrl ? `<a href="${prUrl}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">View on GitHub</a>` : ''}
-                ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR()">Propose to group</button>` : ''}
+                ${session?.status === 'active' ? `<button class="dc-pr-btn dc-pr-btn-promote" onclick="DevChat.promotePR(this)">Propose to group</button>` : ''}
                 ${cardStatusHtml}
               </div>
               ${previewNote}
