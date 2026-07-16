@@ -601,7 +601,10 @@
   <div id="members-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
     <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
     <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
-      <h2 class="text-lg font-bold mb-4">Members &amp; visibility</h2>
+      <!-- Heading is set per app in openMembersModal: "Proposal approvals"
+           on the self-app (whose only sections are the approval ones),
+           "Members & visibility" everywhere else. -->
+      <h2 id="members-modal-title" class="text-lg font-bold mb-4">Members &amp; visibility</h2>
 
       <div id="members-visibility-section" class="hidden space-y-3 mb-4">
         <div>

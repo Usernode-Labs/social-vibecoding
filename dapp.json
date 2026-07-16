@@ -261,6 +261,11 @@
       "expectSelector": "#dev-plus-menu [data-plus='members']"
     },
     {
+      "name": "Dev '+' menu shows Proposal approvals on the self-app (#646)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu [data-plus='members']"
+    },
+    {
       "name": "Errored app view shows the failure reason and build-log button",
       "path": "/app/staging-demo-failed-app",
       "expectText": "View build log",

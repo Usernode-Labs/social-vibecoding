@@ -2486,23 +2486,8 @@ const App = {
     if (drs && AppView.appData?.status === 'running' && AppView.appData?.url) {
       drs.classList.remove('hidden');
     }
-    // Members & visibility drawer row: creator/admin always (visibility
-    // + proposal-approval controls), collaborators of an invite-only app
-    // too (member list + invites), and anyone who can collaborate on an
-    // invited-approvers app (read-only approver roster). For the
-    // self-app (#646) the row shows for admins — the modal there hides
-    // the visibility/collaborator sections and offers only the
-    // Proposal-approvals + Approvers sections.
-    const drm = document.getElementById('drawer-row-members');
-    if (drm) {
-      const a = AppView.appData;
-      const showMembers = !!a && (a.self_hosted
-        ? a.can_manage
-        : (a.can_manage
-          || (a.collab_visibility === 'private' && a.can_collaborate)
-          || (a.approver_policy === 'invited' && a.can_collaborate)));
-      drm.classList.toggle('hidden', !showMembers);
-    }
+    // Members & visibility moved from the drawer into the Dev tab's "+"
+    // menu (#645) — AppView._plusMenuShowsMembers() is the single gate.
     // The App tab iframes appData.url, which doesn't resolve for the self-
     // hosted platform row (no per-slug subdomain). Land on the Dev forum
     // instead — that's where votes/discussion happen and what users
