@@ -1,5 +1,7 @@
 {
-  "icon": { "emoji": "🏗️" },
+  "icon": {
+    "emoji": "🏗️"
+  },
   "secrets": [
     {
       "key": "GITHUB_APP_ID",
@@ -271,5 +273,9 @@
       "expectText": "View build log",
       "allowConsoleErrors": true
     }
-  ]
+  ],
+  "governance": {
+    "approvers": "invited",
+    "approvals": "default"
+  }
 }
