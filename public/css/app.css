@@ -564,41 +564,6 @@ html, body {
 /* ── File attachments (#450) ───────────────────────────── */
 
 /* Pending strip above the composer. Hidden when empty. */
-/* Drag-and-drop file-upload overlay (#634). Covers the whole chat pane
-   while files are dragged over it; hidden otherwise. Toggled by JS in
-   DevChat._setupAttachments. */
-.dc-dropzone {
-  display: none;
-  position: absolute;
-  inset: 0;
-  z-index: 30;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  background: color-mix(in srgb, var(--bg-primary, #0b0b0e) 72%, transparent);
-  backdrop-filter: blur(1px);
-  pointer-events: none; /* let the pane's own drop handler receive the event */
-}
-.dc-dropzone.dc-dropzone-active { display: flex; }
-
-.dc-dropzone-inner {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  text-align: center;
-  color: var(--text-secondary);
-  border: 2px dashed #8b5cf6; /* violet, matching the composer accent */
-  border-radius: 12px;
-  background: var(--bg-primary, #0b0b0e);
-  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
-  padding: 22px 28px;
-  max-width: 90%;
-}
-.dc-dropzone-inner svg { color: #8b5cf6; }
-.dc-dropzone-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
-.dc-dropzone-hint { font-size: 11px; color: var(--text-muted); }
-
 .dc-attach-strip { display: none; }
 .dc-attach-strip.dc-attach-strip-active {
   display: flex;
@@ -2097,7 +2062,6 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 .dc-chat-pane {
   min-width: 0; /* allow flex shrink so the chat pane truncates rather than overflows when the viewer is open */
-  position: relative; /* positioning context for the drag-and-drop overlay (.dc-dropzone) */
 }
 
 .dc-spec-viewer {

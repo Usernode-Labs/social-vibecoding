@@ -4028,13 +4028,6 @@ const DevChat = {
       ${DevChat._renderCreditsBannerHtml()}
       <div class="dc-session-body flex-1 flex min-h-0">
         <div id="dc-tab-chat" class="dc-chat-pane flex-1 flex flex-col min-h-0">
-          <div id="dc-dropzone" class="dc-dropzone" aria-hidden="true">
-            <div class="dc-dropzone-inner">
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              <div class="dc-dropzone-title">Drop files to attach</div>
-              <div class="dc-dropzone-hint">Images ≤4 MB · text/code ≤200 KB · zip ≤20 MB · other ≤10 MB · up to 4 per message</div>
-            </div>
-          </div>
           <div id="dc-messages" class="dc-messages-container flex-1 overflow-y-auto py-2"></div>
           <div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
             <div class="flex items-center gap-2 mb-2">
@@ -4245,58 +4238,13 @@ const DevChat = {
       });
     }
 
-    // Drag-and-drop onto the whole chat pane, with a highlighted drop
-    // zone. Scoped to #dc-tab-chat so drags over the sibling spec viewer
-    // are unaffected. Drops funnel into _addFiles — identical to a
-    // paperclip pick.
-    const pane = document.getElementById('dc-tab-chat')
-      || (messagesEl && messagesEl.parentElement);
-    const dropzone = document.getElementById('dc-dropzone');
-    if (pane && dropzone) {
-      // Only react to file drags — ignore text/element drags (e.g. the
-      // spec-viewer resize handle) so the zone never flashes spuriously.
-      const isFileDrag = (e) =>
-        Array.from(e.dataTransfer?.types || []).includes('Files');
-      // Files can only be attached to an open, idle session — mirror the
-      // guard in _addFiles so we never highlight a drop we'd then ignore.
-      const canAccept = () =>
-        !!DevChat.currentSession && !DevChat.isStreaming;
-
-      // dragleave fires when the pointer crosses into child elements, so
-      // a naive show/hide flickers. Track enter/leave depth and only hide
-      // when it returns to zero.
-      let dragDepth = 0;
-      const showZone = () => {
-        dropzone.classList.add('dc-dropzone-active');
-        dropzone.setAttribute('aria-hidden', 'false');
-      };
-      const hideZone = () => {
-        dragDepth = 0;
-        dropzone.classList.remove('dc-dropzone-active');
-        dropzone.setAttribute('aria-hidden', 'true');
-      };
-
-      pane.addEventListener('dragenter', (e) => {
-        if (!isFileDrag(e) || !canAccept()) return;
-        e.preventDefault();
-        dragDepth += 1;
-        showZone();
-      });
-      pane.addEventListener('dragover', (e) => {
-        if (!isFileDrag(e) || !canAccept()) return;
-        e.preventDefault();
-        if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
-      });
-      pane.addEventListener('dragleave', (e) => {
-        if (!isFileDrag(e)) return;
-        dragDepth = Math.max(0, dragDepth - 1);
-        if (dragDepth === 0) hideZone();
-      });
-      pane.addEventListener('drop', (e) => {
-        if (!isFileDrag(e)) return;
-        e.preventDefault();
-        hideZone();
-        if (canAccept() && e.dataTransfer?.files?.length) {
+    // Drag-and-drop onto the message area or the composer.
+    for (const el of [messagesEl, document.getElementById('dc-form')]) {
+      if (!el) continue;
+      el.addEventListener('dragover', (e) => { e.preventDefault(); });
+      el.addEventListener('drop', (e) => {
+        if (e.dataTransfer?.files?.length) {
+          e.preventDefault();
           DevChat._addFiles(e.dataTransfer.files);
         }
       });
