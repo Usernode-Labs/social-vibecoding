@@ -49,6 +49,14 @@ const APP_ROW = {
 let currentUser = { id: 1, username: 'creator', isAdmin: false };
 let appRow;
 let openGovernanceSession;
+// initialApprovers plumbing (services/approver-invites.js): known users,
+// recorded app_approvers inserts, and switches for the conflict /
+// collaborator-membership branches.
+let knownUsers;
+let approverInserts;
+let approverInsertConflicts; // usernames whose insert should no-op
+let existingApproverStatus;  // status returned by the post-conflict lookup
+let collaboratorIds;         // user ids that count as collab members
 
 function defaultHandler() {
   return async (sql, params) => {
@@ -63,6 +71,24 @@ function defaultHandler() {
     }
     if (/COUNT\(DISTINCT a\.user_id\) AS cnt/.test(sql)) {
       return { rows: [{ cnt: '3' }] };
+    }
+    if (/SELECT id, username FROM users WHERE LOWER\(username\)/.test(sql)) {
+      const uname = String(params[0]).toLowerCase();
+      const id = knownUsers[uname];
+      return { rows: id ? [{ id, username: uname }] : [] };
+    }
+    if (/FROM app_collaborators WHERE app_id/.test(sql)) {
+      return { rows: collaboratorIds.includes(params[1]) ? [{ 1: 1 }] : [] };
+    }
+    if (/INSERT INTO app_approvers/.test(sql)) {
+      const conflicted = Object.entries(knownUsers)
+        .some(([name, id]) => id === params[1] && approverInsertConflicts.includes(name));
+      if (conflicted) return { rows: [] };
+      approverInserts.push({ appId: params[0], userId: params[1], invitedBy: params[2] });
+      return { rows: [{ user_id: params[1] }] };
+    }
+    if (/SELECT status FROM app_approvers/.test(sql)) {
+      return { rows: [{ status: existingApproverStatus }] };
     }
     return { rows: [] };
   };
@@ -89,6 +115,11 @@ test.beforeEach(() => {
   appRow = { ...APP_ROW };
   openGovernanceSession = null;
   currentUser = { id: 1, username: 'creator', isAdmin: false };
+  knownUsers = { alice: 21, bob: 22 };
+  approverInserts = [];
+  approverInsertConflicts = [];
+  existingApproverStatus = 'member';
+  collaboratorIds = [21, 22];
   poolQueryHandler = defaultHandler();
 });
 
@@ -193,4 +224,112 @@ test('admins can propose on apps they did not create', async () => {
   assert.equal(res.status, 201);
   const pr = ghCalls.find((c) => c.op === 'pr');
   assert.match(pr.title, /at least 2 approvals/);
+});
+
+// ── initialApprovers: invites sent alongside the switch to 'invited' ─────
+
+test('initialApprovers must be an array of usernames (400 otherwise)', async () => {
+  let res = await propose({ approverPolicy: 'invited', approvalsRequired: null, initialApprovers: 'alice' });
+  assert.equal(res.status, 400);
+  res = await propose({ approverPolicy: 'invited', approvalsRequired: null, initialApprovers: [42] });
+  assert.equal(res.status, 400);
+  assert.equal(approverInserts.length, 0);
+});
+
+test('initialApprovers is capped at 20 usernames', async () => {
+  const many = Array.from({ length: 21 }, (_, i) => `user${i}`);
+  const res = await propose({ approverPolicy: 'invited', approvalsRequired: null, initialApprovers: many });
+  assert.equal(res.status, 400);
+  assert.match((await res.json()).error, /capped at 20/);
+});
+
+test('initialApprovers creates invited rows after the PR opens; unknown users become warnings', async () => {
+  const res = await propose({
+    approverPolicy: 'invited', approvalsRequired: null,
+    initialApprovers: ['alice', 'ghost'],
+  });
+  assert.equal(res.status, 201);
+  const body = await res.json();
+  assert.equal(body.prNumber, 777, 'the PR still opened');
+  assert.equal(approverInserts.length, 1, 'one invite row inserted');
+  assert.equal(approverInserts[0].userId, 21);
+  assert.equal(approverInserts[0].appId, 11);
+  assert.equal(approverInserts[0].invitedBy, 1);
+  assert.deepEqual(body.inviteWarnings, ['@ghost: User not found']);
+  assert.ok(ghCalls.find((c) => c.op === 'pr'), 'PR was created before invites went out');
+});
+
+test('initialApprovers are trimmed and deduped case-insensitively', async () => {
+  const res = await propose({
+    approverPolicy: 'invited', approvalsRequired: null,
+    initialApprovers: [' alice ', 'ALICE', '', 'alice'],
+  });
+  assert.equal(res.status, 201);
+  assert.equal(approverInserts.length, 1, 'only one insert for the deduped name');
+  const body = await res.json();
+  assert.equal(body.inviteWarnings, undefined, 'no warnings for a clean list');
+});
+
+test('initialApprovers is ignored when switching to anyone', async () => {
+  appRow.approver_policy = 'invited';
+  appRow.approvals_required = 1;
+  const res = await propose({
+    approverPolicy: 'anyone', approvalsRequired: null,
+    initialApprovers: ['alice'],
+  });
+  assert.equal(res.status, 201);
+  assert.equal(approverInserts.length, 0, 'no invites for an anyone-policy proposal');
+  assert.equal((await res.json()).inviteWarnings, undefined);
+});
+
+test('collab-private apps warn (not fail) for non-collaborator initial approvers', async () => {
+  appRow.collab_visibility = 'private';
+  collaboratorIds = [21]; // alice is a member, bob is not
+  const res = await propose({
+    approverPolicy: 'invited', approvalsRequired: null,
+    initialApprovers: ['alice', 'bob'],
+  });
+  assert.equal(res.status, 201);
+  assert.equal(approverInserts.length, 1, 'only the collaborator got an invite');
+  assert.equal(approverInserts[0].userId, 21);
+  const body = await res.json();
+  assert.equal(body.inviteWarnings.length, 1);
+  assert.match(body.inviteWarnings[0], /@bob: .*must be a collaborator first/);
+});
+
+test('already-invited / already-member initial approvers are a silent no-op', async () => {
+  approverInsertConflicts = ['alice'];
+  existingApproverStatus = 'member';
+  const res = await propose({
+    approverPolicy: 'invited', approvalsRequired: null,
+    initialApprovers: ['alice'],
+  });
+  assert.equal(res.status, 201);
+  assert.equal(approverInserts.length, 0);
+  assert.equal((await res.json()).inviteWarnings, undefined, 'dupes are not warnings');
+});
+
+test('a 409 (governance PR already open) sends no invites', async () => {
+  openGovernanceSession = { id: 88, pr_number: 654, pr_url: 'https://github.com/o/r/pull/654' };
+  const res = await propose({
+    approverPolicy: 'invited', approvalsRequired: null,
+    initialApprovers: ['alice'],
+  });
+  assert.equal(res.status, 409);
+  assert.equal(approverInserts.length, 0);
+});
+
+test('a failed PR creation sends no invites', async () => {
+  const origCreatePR = github.createPR;
+  github.createPR = async () => { throw new Error('boom'); };
+  try {
+    const res = await propose({
+      approverPolicy: 'invited', approvalsRequired: null,
+      initialApprovers: ['alice'],
+    });
+    assert.equal(res.status, 500);
+    assert.equal(approverInserts.length, 0, 'invites only go out after the PR exists');
+  } finally {
+    github.createPR = origCreatePR;
+  }
 });

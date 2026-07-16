@@ -41,6 +41,7 @@ async function migrate(config) {
   await seedStagingFailedApp(pool);
   await seedStagingForkLineage(pool);
   await seedStagingMembersPanel(pool);
+  await seedStagingApproverPanel(pool);
   await seedStagingReadonlyDevTab(pool);
   await seedStagingYourApps(pool, config);
   await seedStagingAppQuotaUsers(pool);
@@ -2176,6 +2177,58 @@ async function seedStagingMembersPanel(pool) {
     log.info('db', 'Staging members-panel fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging members-panel seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the reworked Approvers section in the Members &
+// visibility panel: under the default 'anyone' policy the section is
+// hidden while the roster is empty (any ordinary prod-cloned app demos
+// that for free) and shows a dormant-roster note when leftover rows
+// exist; under 'invited' it renders with the admin-fallback empty-state
+// copy when empty. Seeds two demo apps owned by staging-demo-user
+// (900001, from seedStagingDemoAppCard, which runs first):
+//   - 900011 'anyone' policy + one member + one pending invite → the
+//     dormant-roster branch (note + Revoke control). Carries a fake
+//     repo_url so the governance pills are enabled and the
+//     "Invited approvers" tap reveals the Initial-approvers step.
+//   - 900012 'invited' policy + one member → the normal invited-mode
+//     roster; the merge gate reads the same rows.
+// app_approvers is NOT staging:private (rows must survive into clones),
+// but these fixture apps are created empty here, so their rosters are
+// seeded too. Ids in the free 9000xx ranges; idempotent via fixed ids +
+// ON CONFLICT DO NOTHING; strictly a no-op outside staging.
+async function seedStagingApproverPanel(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES
+         (900025, 'staging-demo-approver',         'staging-demo-not-a-login'),
+         (900026, 'staging-demo-approver-invitee', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility,
+                         created_by, approver_policy, repo_url)
+       VALUES
+         (900011, 'Staging demo dormant approvers', 'staging-demo-dormant-approvers', 'running',
+          'public', 'public', 900001, 'anyone', 'https://github.com/staging-demo/dormant-approvers'),
+         (900012, 'Staging demo invited approvers', 'staging-demo-invited-approvers', 'running',
+          'public', 'public', 900001, 'invited', 'https://github.com/staging-demo/invited-approvers')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_approvers (app_id, user_id, status, invited_by, accepted_at)
+       VALUES
+         (900011, 900025, 'member',  900001, NOW()),
+         (900011, 900026, 'invited', 900001, NULL),
+         (900012, 900025, 'member',  900001, NOW())
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    log.info('db', 'Staging approver-panel fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging approver-panel seeding failed', { message: err.message });
   }
 }
 

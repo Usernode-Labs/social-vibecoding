@@ -29,6 +29,7 @@ const appAccess = require('../services/app-access');
 const notifications = require('../services/notifications');
 const events = require('../services/events');
 const governance = require('../services/governance');
+const approverInvites = require('../services/approver-invites');
 const { drainGuard } = require('../services/lifecycle');
 
 function canManageApprovers(app, user) {
@@ -79,7 +80,11 @@ function approverRoutes(config) {
     }
   });
 
-  // Invite a user as an approver. Creator / full admin only.
+  // Invite a user as an approver. Creator / full admin only. The
+  // single-invite core (target lookup, invite-only-app collaborator
+  // rule, idempotent insert, notification + event) lives in
+  // services/approver-invites.js, shared with the governance-pr
+  // route's initialApprovers list.
   router.post('/api/apps/:slug/approver-invites', drainGuard, async (req, res) => {
     const username = typeof req.body?.username === 'string' ? req.body.username.trim() : '';
     if (!username) return res.status(400).json({ error: 'username is required' });
@@ -92,68 +97,19 @@ function approverRoutes(config) {
         return res.status(403).json({ error: 'Only the app creator or an admin can invite approvers' });
       }
 
-      const { rows: userRows } = await pool.query(
-        'SELECT id, username FROM users WHERE LOWER(username) = LOWER($1)',
-        [username]
-      );
-      if (!userRows.length) return res.status(404).json({ error: 'User not found' });
-      const target = userRows[0];
-
-      // On an invite-only-build app, non-collaborators can't vote at
-      // all, so an approver row for one would be dead weight.
-      if (!app.self_hosted && app.collab_visibility === 'private') {
-        const isMember = await appAccess.isCollaborator(pool, app.id, target.id);
-        if (!isMember) {
-          return res.status(400).json({
-            error: `@${target.username} must be a collaborator first — invite them as a collaborator, then as an approver`,
-          });
-        }
-      }
-
-      const { rows: inserted } = await pool.query(
-        `INSERT INTO app_approvers (app_id, user_id, status, invited_by)
-         VALUES ($1, $2, 'invited', $3)
-         ON CONFLICT (app_id, user_id) DO NOTHING
-         RETURNING user_id`,
-        [app.id, target.id, req.user.id]
-      );
-      if (!inserted.length) {
-        const { rows: existing } = await pool.query(
-          'SELECT status FROM app_approvers WHERE app_id = $1 AND user_id = $2',
-          [app.id, target.id]
-        );
-        const status = existing[0]?.status;
+      const result = await approverInvites.inviteApprover(pool, app, username, req.user);
+      if (!result.created) {
         return res.status(409).json({
-          error: status === 'member'
-            ? `@${target.username} is already an approver`
-            : `@${target.username} already has a pending approver invite`,
+          error: result.existingStatus === 'member'
+            ? `@${result.username} is already an approver`
+            : `@${result.username} already has a pending approver invite`,
         });
       }
-
-      // Badge bump + drawer history row, pushed live.
-      try {
-        const notifRows = await notifications.createApproverInviteNotification(pool, {
-          appId: app.id,
-          recipientId: target.id,
-          inviterId: req.user.id,
-        });
-        await notifications.hydrateAndPush(pool, notifRows[0]);
-      } catch (err) {
-        log.warn('approvers', 'invite notify failed', { err: err.message });
-      }
-
-      events.record(pool, {
-        type: events.EVENT_TYPES.APPROVER_INVITED,
-        userId: req.user.id,
-        appId: app.id,
-        metadata: { invitedUserId: target.id },
-      });
-
-      log.info('approvers', 'Approver invite sent', {
-        slug: app.slug, invitee: target.username, by: req.user.username,
-      });
-      res.status(201).json({ ok: true, username: target.username });
+      res.status(201).json({ ok: true, username: result.username });
     } catch (err) {
+      if (err instanceof approverInvites.ApproverInviteError) {
+        return res.status(err.status).json({ error: err.message });
+      }
       log.error('approvers', 'invite failed', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }

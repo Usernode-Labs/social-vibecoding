@@ -16,6 +16,11 @@ const deployFailure = require('../services/deploy-failure');
 const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
+const approverInvites = require('../services/approver-invites');
+
+// Cap on the `initialApprovers` list a governance-pr request may carry
+// (see that route below) — a sanity bound, not a product limit.
+const MAX_INITIAL_APPROVERS = 20;
 
 const VISIBILITY_VALUES = new Set(['public', 'private']);
 
@@ -1265,7 +1270,16 @@ function appRoutes(config) {
   // merged change applies on the post-deploy boot (seedSelfApp's
   // reconcileAppGovernance).
   // Body: { approverPolicy: 'anyone'|'invited',
-  //         approvalsRequired: null | 1..MAX_APPROVALS_REQUIRED }.
+  //         approvalsRequired: null | 1..MAX_APPROVALS_REQUIRED,
+  //         initialApprovers?: string[] }.
+  // `initialApprovers` (capped at MAX_INITIAL_APPROVERS) is the roster
+  // picked in the panel's "Initial approvers" step when switching to
+  // 'invited': approver invites are sent as soon as the PR opens (not
+  // at merge time), so invitees can accept while the vote runs —
+  // pending rows are harmless under 'anyone' (they only count once
+  // accepted AND the policy lands). Ignored for 'anyone'; per-user
+  // failures never fail the proposal, they come back as
+  // `inviteWarnings` on the 201.
   router.post('/api/apps/:slug/governance-pr', drainGuard, issueCreateLimiter, async (req, res) => {
     const approverPolicy = req.body?.approverPolicy;
     let approvalsRequired = req.body?.approvalsRequired;
@@ -1282,6 +1296,31 @@ function appRoutes(config) {
           error: `approvalsRequired must be an integer between 1 and ${appManifest.MAX_APPROVALS_REQUIRED} (or null for the default strategy)`,
         });
       }
+    }
+    let initialApprovers = req.body?.initialApprovers ?? [];
+    if (!Array.isArray(initialApprovers) || initialApprovers.some((u) => typeof u !== 'string')) {
+      return res.status(400).json({ error: 'initialApprovers must be an array of usernames' });
+    }
+    if (initialApprovers.length > MAX_INITIAL_APPROVERS) {
+      return res.status(400).json({
+        error: `initialApprovers is capped at ${MAX_INITIAL_APPROVERS} usernames`,
+      });
+    }
+    // Trim + case-insensitive dedupe; the list only means something when
+    // the target policy is 'invited'.
+    if (approverPolicy === 'invited') {
+      const seen = new Set();
+      initialApprovers = initialApprovers
+        .map((u) => u.trim())
+        .filter((u) => {
+          if (!u) return false;
+          const k = u.toLowerCase();
+          if (seen.has(k)) return false;
+          seen.add(k);
+          return true;
+        });
+    } else {
+      initialApprovers = [];
     }
     try {
       const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
@@ -1328,11 +1367,33 @@ function appRoutes(config) {
         { id: req.user.id, username: req.user.username }
       );
 
+      // Initial-approver invites go out only after the PR exists (a
+      // failed proposal must not leave invites behind). Already-member /
+      // already-pending users are a silent no-op; validation failures
+      // become warnings, never a failed response — the proposal is open
+      // either way.
+      const inviteWarnings = [];
+      for (const username of initialApprovers) {
+        try {
+          await approverInvites.inviteApprover(
+            pool, app, username, { id: req.user.id, username: req.user.username }
+          );
+        } catch (err) {
+          inviteWarnings.push(`@${username.replace(/^@/, '')}: ${err.message}`);
+          if (!(err instanceof approverInvites.ApproverInviteError)) {
+            log.warn('apps', 'Initial approver invite failed', {
+              slug: app.slug, username, message: err.message,
+            });
+          }
+        }
+      }
+
       res.status(201).json({
         ok: true,
         sessionId: result.sessionId,
         prNumber: result.prNumber,
         prUrl: result.prUrl,
+        ...(inviteWarnings.length ? { inviteWarnings } : {}),
       });
     } catch (err) {
       log.error('apps', 'Governance PR failed', { slug: req.params.slug, message: err.message });

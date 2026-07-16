@@ -273,6 +273,16 @@
       "expectSelector": "#members-governance-section #members-approvals-propose"
     },
     {
+      "name": "Initial-approvers draft step ships in the governance section",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#members-governance-section #members-initial-approvers-propose"
+    },
+    {
+      "name": "Approvers dormant-roster note ships in the approvers section",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#members-approvers-section #members-approvers-dormant-note"
+    },
+    {
       "name": "Errored app view shows the failure reason and build-log button",
       "path": "/app/staging-demo-failed-app",
       "expectText": "View build log",

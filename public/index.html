@@ -668,15 +668,41 @@
           </div>
           <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Changes open a proposal that is voted on under the current rules.</p>
         </div>
+        <!-- Initial-approvers draft step: revealed when "Invited approvers"
+             is tapped on an app currently set to Everyone. Display-only
+             until Propose (which replaces the confirm dialog for this
+             path) — see _showInitialApproversDraft in app-view.js. -->
+        <div id="members-initial-approvers" class="hidden space-y-2 rounded-lg border border-zinc-200 dark:border-zinc-800 p-3">
+          <p class="text-sm font-medium">Initial approvers</p>
+          <p id="members-initial-approvers-status" class="text-xs text-zinc-500 dark:text-zinc-400"></p>
+          <div id="members-initial-approvers-list" class="space-y-1"></div>
+          <div class="relative">
+            <input id="members-initial-approver-input" type="text" autocomplete="off" spellcheck="false"
+              class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              placeholder="add approvers to invite (optional)">
+            <div id="members-initial-approver-suggestions" class="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"></div>
+          </div>
+          <div class="flex gap-2">
+            <button type="button" id="members-initial-approvers-propose"
+              class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white transition-colors">Propose</button>
+            <button type="button" id="members-initial-approvers-cancel"
+              class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+          </div>
+        </div>
         <div id="members-governance-error" class="text-red-400 text-sm hidden"></div>
       </div>
 
-      <!-- Approver roster + invite (issue #646). Shown to creator/admin
-           always (so a roster can be lined up before flipping the policy)
-           and to everyone when the policy is 'invited'. -->
+      <!-- Approver roster + invite (issue #646). Final visibility is
+           decided after the roster fetch (_renderApprovers): shown when
+           the policy is 'invited' (creator/admin + collaborators) or —
+           for anyone who can see it — when leftover rows exist under
+           'anyone', with the dormant-roster note below. An empty roster
+           on an 'anyone' app keeps the whole section hidden: approvers
+           don't apply there, so "No approvers yet" only misled. -->
       <div id="members-approvers-section" class="hidden mb-4">
         <p class="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Approvers</p>
         <div id="members-approvers-list" class="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"></div>
+        <p id="members-approvers-dormant-note" class="hidden text-xs text-zinc-500 dark:text-zinc-400 mt-1">Approvers only take effect when &ldquo;Who can approve proposals&rdquo; is set to Invited approvers.</p>
         <div id="members-approver-invite" class="hidden relative mt-2">
           <input id="members-approver-invite-input" type="text" autocomplete="off" spellcheck="false"
             class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
