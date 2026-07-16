@@ -54,11 +54,19 @@ function makeDevChat() {
       createElement: () => ({ ...noopEl }),
       body: { appendChild: () => {} },
     },
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    // #558: fetch is delegated through a mutable holder so promote tests can
+    // swap in a deferred / failing implementation per-case; defaults to an
+    // OK empty response (the shape the render tests rely on).
+    fetch: async (...args) => sandbox.__fetchImpl(...args),
+    // #558: promotePR() calls alert() on both failure paths; record calls so
+    // tests can assert the message without a real dialog.
+    alert: (msg) => { sandbox.__alerts.push(msg); },
     navigator: { sendBeacon: () => {} },
     setTimeout, clearTimeout, setInterval, clearInterval,
     localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
   };
+  sandbox.__fetchImpl = async () => ({ ok: true, json: async () => ({}) });
+  sandbox.__alerts = [];
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   sandbox.window.addEventListener = () => {};
@@ -69,12 +77,28 @@ function makeDevChat() {
   DevChat.renderMarkdown = (t) => String(t || '');
   return {
     DevChat,
+    alerts: sandbox.__alerts,
+    setFetch(fn) { sandbox.__fetchImpl = fn; },
+    getHtml() { return captured; },
     render(messages, session) {
       DevChat.messages = messages;
       DevChat.currentSession = session || null;
       DevChat.renderMessages();
       return captured;
     },
+  };
+}
+
+// #558: a minimal stand-in for the <button> the inline onclick passes as
+// `this`. Tracks disabled state + innerHTML the way promotePR() drives them.
+function makeButton() {
+  return {
+    disabled: false,
+    innerHTML: 'Propose to group',
+    _attrs: {},
+    setAttribute(k, v) { this._attrs[k] = v; },
+    removeAttribute(k) { delete this._attrs[k]; },
+    getAttribute(k) { return this._attrs[k] ?? null; },
   };
 }
 
@@ -167,4 +191,90 @@ test('View on GitHub uses the message-carried prUrl when the session row lacks o
   ], activeSession({ pr_url: null, pr_number: null }));
   assert.match(html, /View on GitHub/, 'GitHub link rendered from the marker');
   assert.match(html, /pull\/123/, 'links to the carried PR url');
+});
+
+// ── #558: Propose-to-group button disable + spinner on click ──────────────
+// promotePR(btn) must, the instant it's clicked, disable the button and swap
+// its label for a spinner so a slow request can't be double-submitted; the
+// success path re-renders the card away, and both failure paths restore the
+// button so the user can retry.
+
+test('promotePR disables the button and shows the spinner while the request is in flight (#558)', async () => {
+  const h = makeDevChat();
+  h.DevChat.currentSession = { id: 7, status: 'active' };
+  // Deferred fetch so we can inspect the button mid-flight.
+  let release;
+  h.setFetch(() => new Promise((res) => { release = () => res({ ok: true, json: async () => ({}) }); }));
+
+  const btn = makeButton();
+  const p = h.DevChat.promotePR(btn);
+
+  // Pending: greyed out (disabled) + spinner swapped in, aria-busy set.
+  assert.equal(btn.disabled, true, 'button is disabled while pending');
+  assert.match(btn.innerHTML, /dc-status-spinner-arc/, 'spinner shown while pending');
+  assert.match(btn.innerHTML, /Proposing/, 'label reads "Proposing…" while pending');
+  assert.equal(btn.getAttribute('aria-busy'), 'true', 'aria-busy set while pending');
+
+  release();
+  await p;
+});
+
+test('promotePR re-entry guard: a second click while pending is a no-op (#558)', async () => {
+  const h = makeDevChat();
+  h.DevChat.currentSession = { id: 7, status: 'active' };
+  let calls = 0;
+  let release;
+  h.setFetch(() => { calls++; return new Promise((res) => { release = () => res({ ok: true, json: async () => ({}) }); }); });
+
+  const btn = makeButton();
+  const p1 = h.DevChat.promotePR(btn);   // disables btn, fetch #1
+  await h.DevChat.promotePR(btn);        // btn.disabled → early return, no fetch
+  assert.equal(calls, 1, 'the disabled button blocks a second submit');
+
+  release();
+  await p1;
+});
+
+test('promotePR success re-renders the card without the Propose button (#558)', async () => {
+  const h = makeDevChat();
+  // A changes-ready card is on screen for the active session.
+  h.render([
+    { role: 'system', content: 'Staging deployed!', changesReady: true,
+      stagingUrl: 'https://preview.example.org', _slug: 'prm001' },
+  ], activeSession({ id: 7 }));
+  assert.match(h.getHtml(), /Propose to group/, 'button present before promote');
+
+  h.setFetch(async () => ({ ok: true, json: async () => ({ prNumber: 42, prUrl: 'https://github.com/x/y/pull/42' }) }));
+  await h.DevChat.promotePR(makeButton());
+
+  // status flipped to 'promoted' → renderMessages drops the (active-only) button.
+  assert.equal(h.DevChat.currentSession.status, 'promoted', 'session promoted');
+  assert.doesNotMatch(h.getHtml(), /Propose to group/, 'button gone after success re-render');
+});
+
+test('promotePR failure (non-OK) re-enables the button and restores its label (#558)', async () => {
+  const h = makeDevChat();
+  h.DevChat.currentSession = { id: 7, status: 'active' };
+  h.setFetch(async () => ({ ok: false, json: async () => ({ error: 'Nope' }) }));
+
+  const btn = makeButton();
+  await h.DevChat.promotePR(btn);
+
+  assert.equal(btn.disabled, false, 'button re-enabled after a failed response');
+  assert.equal(btn.innerHTML, 'Propose to group', 'original label restored');
+  assert.equal(btn.getAttribute('aria-busy'), null, 'aria-busy cleared');
+  assert.deepEqual(h.alerts, ['Nope'], 'server error surfaced via alert');
+});
+
+test('promotePR failure (network error) re-enables the button and restores its label (#558)', async () => {
+  const h = makeDevChat();
+  h.DevChat.currentSession = { id: 7, status: 'active' };
+  h.setFetch(async () => { throw new Error('boom'); });
+
+  const btn = makeButton();
+  await h.DevChat.promotePR(btn);
+
+  assert.equal(btn.disabled, false, 'button re-enabled after a thrown error');
+  assert.equal(btn.innerHTML, 'Propose to group', 'original label restored');
+  assert.deepEqual(h.alerts, ['Network error'], 'network error surfaced via alert');
 });
