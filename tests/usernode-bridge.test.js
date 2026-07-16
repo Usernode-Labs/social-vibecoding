@@ -36,10 +36,12 @@ test('hosted bridge exposes the LLM-access consent API', () => {
 
   assert.match(bridge, /window\.usernode\.requestLlmAccess/);
   assert.match(bridge, /window\.usernode\.getLlmAccess/);
-  // Message family + the two request types the shell dispatches on.
+  assert.match(bridge, /window\.usernode\.getLlmUsage/);
+  // Message family + the three request types the shell dispatches on.
   assert.match(bridge, /__usernode_llm/);
   assert.match(bridge, /"request-access"/);
   assert.match(bridge, /"get-access"/);
+  assert.match(bridge, /"get-usage"/);
   // Two-stage timeout: a short ack window detects a missing/old shell;
   // after the ack the user may take minutes on the consent dialog.
   assert.match(bridge, /_LLM_ACK_TIMEOUT_MS/);
@@ -66,6 +68,9 @@ test('shell side handles the same LLM message family', () => {
   assert.match(shell, /__usernode_llm/);
   assert.match(shell, /'request-access'/);
   assert.match(shell, /'get-access'/);
+  assert.match(shell, /'get-usage'/);
+  // The usage reply shape the bridge's getLlmUsage() resolves with.
+  assert.match(shell, /spentCentsToday/);
   assert.match(shell, /showLlmConsentModal/);
 });
 

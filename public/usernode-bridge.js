@@ -3795,7 +3795,8 @@
   };
 
   // =====================================================================
-  //  Public API: LLM access (usernode.requestLlmAccess / getLlmAccess)
+  //  Public API: LLM access (usernode.requestLlmAccess / getLlmAccess /
+  //  getLlmUsage)
   // =====================================================================
   //
   // Consent flow for the platform's app-LLM proxy (issue #34). These do
@@ -3809,8 +3810,13 @@
   //   usernode.requestLlmAccess()  → same shape (plus declined: true
   //       when the user picked "Not now"); opens the consent dialog
   //       when no active grant exists.
+  //   usernode.getLlmUsage()       → { granted: true, spentCentsToday,
+  //       dailyCapCents } or { granted: false } (issue #655) —
+  //       read-only usage meter: today's per-app spend vs the cap.
+  //       spentCentsToday may be fractional cents and is
+  //       approximately real-time. Never opens the consent dialog.
   //
-  // Both reject on a short ack-timeout when there is no parent shell
+  // All reject on a short ack-timeout when there is no parent shell
   // (standalone page, non-SV host, or an old shell that predates the
   // feature). After the shell acks, requestLlmAccess waits much longer
   // — the user is reading a dialog.
@@ -3890,6 +3896,11 @@
     if (typeof window.usernode.getLlmAccess !== "function") {
       window.usernode.getLlmAccess = function getLlmAccess() {
         return llmCall("get-access");
+      };
+    }
+    if (typeof window.usernode.getLlmUsage !== "function") {
+      window.usernode.getLlmUsage = function getLlmUsage() {
+        return llmCall("get-usage");
       };
     }
   })();

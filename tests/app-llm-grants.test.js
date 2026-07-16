@@ -18,6 +18,9 @@ const state = {
   userLimit: 2500,
   grants: new Map(), // `${appId}:${userId}` -> row
   apps: new Map([['demo-app', { id: 11, name: 'Demo App', slug: 'demo-app', manifest_snapshot: null }]]),
+  // Today's app_llm_usage row joined by the bootstrap query (issue
+  // #655). NUMERIC(10,4) comes back from pg as strings.
+  usage: { spent: null, byok: null },
 };
 
 function mockQuery(sql, params) {
@@ -70,6 +73,20 @@ function mockQuery(sql, params) {
     if (/allow_byok = \$4/.test(sql)) row.allow_byok = rest[1];
     return { rows: [row] };
   }
+  // Bootstrap query: one (app, user) grant LEFT JOINed with today's
+  // spend (issue #655). Must be matched before the list-endpoint
+  // branch below — both SQL shapes contain `FROM app_llm_grants g`.
+  if (/FROM app_llm_grants g[\s\S]*WHERE g\.app_id = \$1 AND g\.user_id = \$2/.test(sql)) {
+    const row = state.grants.get(`${params[0]}:${params[1]}`);
+    if (!row) return { rows: [] };
+    return {
+      rows: [{
+        ...row,
+        spent_today_cents: state.usage.spent,
+        byok_spent_today_cents: state.usage.byok,
+      }],
+    };
+  }
   if (/FROM app_llm_grants g/.test(sql)) {
     const userId = params[0];
     const rows = [...state.grants.values()]
@@ -80,10 +97,6 @@ function mockQuery(sql, params) {
         spent_today_cents: 0, byok_spent_today_cents: 0,
       }));
     return { rows };
-  }
-  if (/FROM app_llm_grants WHERE app_id/.test(sql)) {
-    const row = state.grants.get(`${params[0]}:${params[1]}`);
-    return { rows: row ? [row] : [] };
   }
   return { rows: [] };
 }
@@ -118,6 +131,7 @@ beforeEach(() => {
   limits.invalidate();
   state.grants.clear();
   state.userLimit = 2500;
+  state.usage = { spent: null, byok: null };
   delete process.env.USERNODE_ENV;
 });
 
@@ -222,6 +236,38 @@ test('?demo=1 injects fabricated grants ONLY in staging', async () => {
     res = await fetch(`${base}/api/me/llm-grants`);
     body = await res.json();
     assert.equal(body.grants.length, 0);
+  });
+});
+
+test("bootstrap endpoint includes today's spend on the grant (issue #655)", async () => {
+  await withServer(async (base) => {
+    await fetch(`${base}/api/me/llm-grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appSlug: 'demo-app', dailyCapCents: 500 }),
+    });
+    // pg returns NUMERIC(10,4) columns as strings; grantJson numbers them.
+    state.usage = { spent: '12.3400', byok: '0.5000' };
+    const res = await fetch(`${base}/api/apps/demo-app/llm-grant`);
+    assert.equal(res.status, 200);
+    const { grant } = await res.json();
+    assert.equal(grant.dailyCapCents, 500);
+    assert.equal(grant.spentTodayCents, 12.34);
+    assert.equal(grant.byokSpentTodayCents, 0.5);
+  });
+});
+
+test('bootstrap endpoint reports zero spend when no usage row exists today', async () => {
+  await withServer(async (base) => {
+    await fetch(`${base}/api/me/llm-grants`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ appSlug: 'demo-app' }),
+    });
+    const res = await fetch(`${base}/api/apps/demo-app/llm-grant`);
+    const { grant } = await res.json();
+    assert.equal(grant.spentTodayCents, 0);
+    assert.equal(grant.byokSpentTodayCents, 0);
   });
 });
 

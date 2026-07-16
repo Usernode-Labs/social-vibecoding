@@ -753,6 +753,24 @@ The body/response are standard Anthropic Messages API shapes
 - `429 { code: 'budget_exceeded' }` — the user's overall daily budget
   is exhausted.
 
+Every response after successful auth (successful calls, upstream
+errors, and the two 429s above) also carries a spend meter as
+response headers — **read these instead of keeping your own
+token-price table**:
+
+- `x-usernode-llm-spent-cents` — the user's cumulative spend through
+  this app today, in cents, as of the **start** of the call (the
+  call's own cost settles after the response ends). May be fractional
+  (e.g. `4.7914`) and can lag a few seconds; treat it as an
+  approximately-real-time meter, not a settlement record. Resets at
+  midnight UTC, same as the cap.
+- `x-usernode-llm-cap-cents` — the grant's daily cap for this app
+  (integer cents).
+
+Together they let a server show "used $X of $Y today" with zero extra
+requests, warn near the cap, or disable AI features gracefully before
+hitting `app_cap_exceeded`.
+
 ### Requesting consent (frontend, via the bridge)
 
 The hosted bridge (see "Bridge") provides:
@@ -763,9 +781,16 @@ The hosted bridge (see "Bridge") provides:
   `{ granted: false, declined: true }`. The dialog is platform-owned;
   an app cannot approve itself.
 - `usernode.getLlmAccess()` — read-only grant state, same shape.
+- `usernode.getLlmUsage()` — read-only usage meter for a frontend
+  display: resolves `{ granted: true, spentCentsToday, dailyCapCents }`
+  (today's spend through this app vs the user's cap — the same
+  numbers the platform's Settings panel shows; `spentCentsToday` may
+  be fractional cents) or `{ granted: false }` when the user hasn't
+  granted access. Never opens the consent dialog.
 
-Both reject when there's no platform shell (standalone/dev) — treat a
-rejection like `LLM_ENABLED === false`.
+All of these reject when there's no platform shell (standalone/dev) —
+treat a rejection like `LLM_ENABLED === false` (for `getLlmUsage`,
+"usage unavailable").
 
 Recommended pattern: call the proxy; on `grant_required`, have the
 frontend `await usernode.requestLlmAccess()` and retry once granted.

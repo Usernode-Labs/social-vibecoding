@@ -33,6 +33,14 @@ const log = require('../services/logger');
 //   4. Settlement — spend is written to BOTH ledgers: llm_usage via
 //      limits.recordSpend (platform-wide caps + /api/budget stay
 //      correct) and app_llm_usage (per-app breakdown in Settings).
+//
+// Every post-auth response additionally carries the spend-meter
+// headers (issue #655): x-usernode-llm-spent-cents (today's spend for
+// this app+user at the START of the call — both buckets, the same
+// figure the cap gate compares) and x-usernode-llm-cap-cents (the
+// grant's daily cap). They're set before forwarding, so they ride
+// successful streams and the route's own 429s alike; apps read them
+// instead of keeping their own token-price tables.
 
 const ROUTE_PREFIX = '/api/app-llm/';
 
@@ -122,6 +130,16 @@ async function resolveAppPayer(pool, jwtSecret, userId, grant) {
   return { error: budget.error };
 }
 
+// Serialize the spend meter for the x-usernode-llm-spent-cents
+// response header (issue #655). Ledger values are NUMERIC(10,4) —
+// fractional cents — so round to 4 decimal places, trimming the float
+// noise the cache's liveDelta additions accumulate.
+function spentCentsHeaderValue(spentCents) {
+  const n = Number(spentCents);
+  if (!Number.isFinite(n) || n <= 0) return '0';
+  return String(Math.round(n * 10000) / 10000);
+}
+
 // Settlement upsert into the per-app ledger, mirroring
 // limits.recordSpend's shape and tolerance (billing bookkeeping must
 // never fail the request that incurred the spend).
@@ -172,6 +190,17 @@ function appLlmProxyRoutes(config) {
 
     const { appId, appSlug, userId, grant } = req.appLlm;
 
+    // Spend-meter headers (issue #655), set before ANY response body
+    // so they ride every post-auth outcome — successful streams,
+    // upstream errors, and the gate 429s below. The value is the
+    // cumulative spend at the START of this call (the call's own cost
+    // isn't known until after headers have flushed).
+    const capCents = grant.dailyCapCents;
+    const appUsage = await refreshAppUsage(pool, appId, userId);
+    const appSpentBefore = appUsage.totalAtCheckpointCents + appUsage.liveDeltaCents;
+    res.setHeader('x-usernode-llm-spent-cents', spentCentsHeaderValue(appSpentBefore));
+    res.setHeader('x-usernode-llm-cap-cents', String(capCents));
+
     // 1. Payer resolution (limit-first, grant-scoped BYOK spillover).
     const payer = await resolveAppPayer(pool, config.jwtSecret, userId, grant);
     if (payer.error) {
@@ -184,9 +213,6 @@ function appLlmProxyRoutes(config) {
 
     // 2. Per-app cap gate (both payment paths — the cap bounds total
     // spend through this app regardless of who pays Anthropic).
-    const capCents = grant.dailyCapCents;
-    const appUsage = await refreshAppUsage(pool, appId, userId);
-    const appSpentBefore = appUsage.totalAtCheckpointCents + appUsage.liveDeltaCents;
     if (appSpentBefore >= capCents) {
       log.info('app-llm-proxy', 'Per-app cap gate fired', {
         appId, appSlug, userId, spentCents: appSpentBefore, capCents,
@@ -276,6 +302,8 @@ function appLlmProxyRoutes(config) {
 }
 
 module.exports = appLlmProxyRoutes;
-// Exposed for tests (payer matrix, cap gates, dual-ledger settlement).
+// Exposed for tests (payer matrix, cap gates, dual-ledger settlement,
+// spend-meter header serialization).
 module.exports.resolveAppPayer = resolveAppPayer;
 module.exports.recordAppSpend = recordAppSpend;
+module.exports.spentCentsHeaderValue = spentCentsHeaderValue;
