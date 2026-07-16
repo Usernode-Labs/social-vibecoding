@@ -312,6 +312,21 @@ function stagingMockProposals(viewer) {
     mk(9000010, 900110,
       '[Mock] Ready-to-merge test: votes passed and checks are green — queued to merge',
       4, 9, 0, 3),
+    // #639: an issue-linked proposal that carries NO attribute votes of its
+    // own, so its priority/assignee chips are INHERITED from the origin issue
+    // (#900006, seeded medium / maya-builder in the issues feed). This makes
+    // the "chips no longer vanish when a task is proposed for voting" fix
+    // reviewable on the In-review card via ?demo=1. linked_issues points the
+    // card at that mock issue; the inline priority/assignee stand in for what
+    // the inheritance query computes (mock rows bypass the DB summarize path).
+    {
+      ...mk(9000022, 900122,
+        '[Mock] Inherited-attrs test: promoted from issue #900006 — chips carry over',
+        7, 2, 0, 1, { required: 2, windowEndsAt: hoursAhead(50) }),
+      linked_issues: [900006],
+      priority: { top: 'medium', count: 2, myValue: null },
+      assignee: { top: 'maya-builder', count: 3, myValue: null },
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the
@@ -435,7 +450,19 @@ function stagingMockMerged() {
     0,
     3
   );
-  return [autoMerged].concat(titles.map((t, i) => mk(
+  // #639: a COMPLETED proposal whose chips were inherited from its origin
+  // issue (#900006, seeded medium / maya-builder). Confirms priority/assignee
+  // stay visible (read-only) in the Done column after "close done", not just
+  // while in review — the second half of the reported loss. linked_issues +
+  // inline chip values mirror the promoted inherited-attrs mock above.
+  const inheritedAttrs = {
+    ...mk(9100027, 910127,
+      '[Mock] Completed: inherited priority/assignee from issue #900006', 0, 2),
+    linked_issues: [900006],
+    priority: { top: 'medium', count: 2, myValue: null },
+    assignee: { top: 'maya-builder', count: 3, myValue: null },
+  };
+  return [autoMerged, inheritedAttrs].concat(titles.map((t, i) => mk(
     9100001 + i,
     910101 + i,
     `[Mock] Completed: ${t}`,
@@ -1223,8 +1250,9 @@ function voteRoutes(config) {
       // keyed by session id (target_type='proposal'). Same minimal shape
       // the issue feed attaches; the dropdown lazy-loads the full tally
       // from /api/apps/:slug/topics/proposal/:id/attributes.
-      const promotedAttrs = await topicAttrs.summarizeForTargets(
-        pool, appRows[0].id, 'proposal', rows.map((r) => r.id), userId
+      const promotedAttrs = await topicAttrs.summarizeForProposals(
+        pool, appRows[0].id,
+        rows.map((r) => ({ id: r.id, linked_issues: r.linked_issues })), userId
       );
       for (const row of rows) {
         const s = promotedAttrs.get(row.id) || topicAttrs.emptySummary();
@@ -1364,8 +1392,9 @@ function voteRoutes(config) {
 
       // Same priority + assigned-person summary on completed proposals, so
       // the read-only chips stay visible after a PR merges.
-      const mergedAttrs = await topicAttrs.summarizeForTargets(
-        pool, appRows[0].id, 'proposal', rows.map((r) => r.id), userId
+      const mergedAttrs = await topicAttrs.summarizeForProposals(
+        pool, appRows[0].id,
+        rows.map((r) => ({ id: r.id, linked_issues: r.linked_issues })), userId
       );
       for (const row of rows) {
         const s = mergedAttrs.get(row.id) || topicAttrs.emptySummary();
@@ -1439,8 +1468,9 @@ function voteRoutes(config) {
       let proposal = rows[0] || null;
       if (proposal) {
         // Same read-only priority + assigned-person chips the list rows carry.
-        const attrs = await topicAttrs.summarizeForTargets(
-          pool, gatedApp.id, 'proposal', [proposal.id], userId
+        const attrs = await topicAttrs.summarizeForProposals(
+          pool, gatedApp.id,
+          [{ id: proposal.id, linked_issues: proposal.linked_issues }], userId
         );
         const s = attrs.get(proposal.id) || topicAttrs.emptySummary();
         proposal.priority = s.priority;
