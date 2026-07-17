@@ -795,6 +795,10 @@ const DevChat = {
           if (m.metadata.stagingMissingKeys) m.stagingMissingKeys = m.metadata.stagingMissingKeys;
           if (m.metadata.prNumber != null) m.prNumber = m.metadata.prNumber;
           if (m.metadata.prUrl) m.prUrl = m.metadata.prUrl;
+          // #664: the worker proxy's one-time "switched to your API key"
+          // notice — rehydrate the marker so the row keeps its subtle
+          // inline-notice styling on reload.
+          if (m.metadata.billingSwitch) m.billingSwitch = true;
           if (m.metadata.ccLog) m.ccLog = m.metadata.ccLog;
           if (m.metadata.ccOutput) m.ccOutput = m.metadata.ccOutput;
           if (m.metadata.ccSummary) m.ccSummary = m.metadata.ccSummary;
@@ -1623,6 +1627,16 @@ const DevChat = {
       }
       case 'platform_issue_draft':
         DevChat._pushPlatformIssueDraft(data);
+        break;
+      case 'billing_switched':
+        // #664: mid-turn switch onto the user's own API key — mirror the
+        // WS handler (app.js) so the notice also lands when only the
+        // resumable channel is live. The system row is already persisted
+        // server-side; this is the live render + meter refresh.
+        DevChat.messages.push({ role: 'system', content: data.text, billingSwitch: true, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8) });
+        DevChat.renderMessages();
+        DevChat.scrollToBottom();
+        DevChat.refreshBudget();
         break;
       case 'staging_ready':
         DevChat._removeSpinner();
@@ -2784,6 +2798,14 @@ const DevChat = {
         if (msg.ccOutput) {
           const outerPid = DevChat._detailsId(msg, 'ccout');
           return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${elapsedHtml}${chevron}${tsSpan}</summary><div class="dc-cc-attached-md">${DevChat.renderMarkdown(msg.ccOutput)}</div></details>`;
+        }
+
+        // #664: mid-turn payer switch onto the user's own API key. A
+        // subtle inline notice — key glyph instead of the pipeline
+        // check mark, so it reads as an FYI rather than a completed
+        // build step.
+        if (msg.billingSwitch) {
+          return `<div class="dc-status-line" style="opacity:0.8"><span class="dc-status-icon" aria-hidden="true">&#128273;</span> ${escapeHtml(msg.content)}${tsSpan}</div>`;
         }
 
         return `<div class="dc-status-line">${iconHtml} ${msg.content} ${elapsedHtml}${tsSpan}</div>`;
