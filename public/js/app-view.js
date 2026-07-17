@@ -947,6 +947,19 @@ const AppView = {
     }
   },
 
+  // #665: pure predicate behind _renderTopicHead's repaint guard — true
+  // when the repaint must be SKIPPED because the inline issue-title editor
+  // (beginIssueTitleEdit) is open on the mounted topic. Blocks only when
+  // the topic is the issue being edited AND the editor element is actually
+  // in the DOM; the caller supplies that DOM lookup so this stays
+  // node-testable (tests/issue-title-edit-guard.test.js).
+  _titleEditBlocksRepaint(topic, editingIssueNumber, editorInDom) {
+    return !!(topic && topic.kind === 'issue'
+      && editingIssueNumber != null
+      && editingIssueNumber === topic.id
+      && editorInDom);
+  },
+
   // Paint (or live-refresh) the topic title + header card + body.
   // Leaves #dev-topic-thread untouched so the mounted thread survives
   // WS-driven refreshes.
@@ -960,6 +973,20 @@ const AppView = {
     const item = AppView._findTopicItem();
     // Closed / merged away mid-view: keep the last render readable.
     if (!item) return;
+
+    // #665: while the inline title editor is open, skip the repaint —
+    // head.innerHTML below would destroy the editor and any typed text.
+    // Every refresh trigger (checks poll, WS events, _repaintCards, the
+    // post-withdraw/close repaints) converges here, so this one guard
+    // covers them all. Data still refreshes in the background (_loadDevData
+    // runs regardless); save/cancel clear the flag and repaint from the
+    // fresh cache.
+    const editorInDom = !!document.getElementById('dev-issue-title-input');
+    if (AppView._titleEditBlocksRepaint(t, AppView._editingIssueTitle, editorInDom)) return;
+    // Proceeding wipes any editor markup, so a still-set flag is stale by
+    // definition — drop it (self-healing: a torn-down editor can never
+    // freeze future repaints).
+    AppView._editingIssueTitle = null;
 
     let cardHtml;
     let bodyHtml;
@@ -1198,6 +1225,9 @@ const AppView = {
     // Drop any on-demand proposal cached for a previous topic so its row
     // can never be mistaken for the one being opened now.
     AppView._topicProposal = null;
+    // #665: an inline title edit never carries across topics — a stale
+    // flag here would freeze the next issue's header repaints.
+    AppView._editingIssueTitle = null;
     if (typeof App !== 'undefined' && App.switchTab) {
       App.switchTab('dev', { kind, id }, 'topic');
     }
@@ -5422,10 +5452,19 @@ const AppView = {
   // rename route, then optimistically updates the cached _ghIssues row so
   // this tab repaints even if its events socket is momentarily down (the
   // server's issue_update broadcast covers everyone else).
+  //
+  // #665: the issue number being edited, or null. While set (and the editor
+  // is actually in the DOM) _renderTopicHead skips its repaint so the
+  // WS/poll-driven refresh cycle can't clobber the editor mid-typing.
+  // Cleared on cancel, on save success/no-op (NOT on save error — the
+  // editor stays open showing the error), and on openTopic.
+  _editingIssueTitle: null,
+
   beginIssueTitleEdit(n) {
     const holder = document.querySelector(`#gc-thread-head [data-issue-title="${n}"]`);
     const issue = (AppView._ghIssues || []).find((i) => i.number === n);
     if (!holder || !issue) return;
+    AppView._editingIssueTitle = n;
     holder.innerHTML = `
       <div class="flex flex-wrap items-center gap-2">
         <input id="dev-issue-title-input" type="text" maxlength="200"
@@ -5444,7 +5483,9 @@ const AppView = {
   },
 
   cancelIssueTitleEdit() {
-    // Repaint the head from the cached row — drops the editor.
+    // Repaint the head from the cached row — drops the editor. The flag
+    // clears FIRST so the repaint guard doesn't block this paint.
+    AppView._editingIssueTitle = null;
     AppView._renderTopicHead();
   },
 
@@ -5455,7 +5496,11 @@ const AppView = {
     if (!input || input.disabled || !issue || !AppView.appData) return;
     const newTitle = input.value.trim();
     // Empty or unchanged → treat as cancel (the server would no-op too).
-    if (!newTitle || newTitle === issue.title) { AppView._renderTopicHead(); return; }
+    if (!newTitle || newTitle === issue.title) {
+      AppView._editingIssueTitle = null;
+      AppView._renderTopicHead();
+      return;
+    }
     input.disabled = true;
     const showError = (msg) => {
       input.disabled = false;
@@ -5471,6 +5516,7 @@ const AppView = {
       if (!res.ok) return showError(data.error || 'Failed to update the title');
       issue.title = data.title || newTitle;
       issue.title_fallback = false;
+      AppView._editingIssueTitle = null;
       AppView._renderTopicHead();
     } catch {
       showError('Network error');
