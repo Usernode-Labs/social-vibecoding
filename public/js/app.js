@@ -49,6 +49,11 @@ const App = {
     App.PlatformUpdating.restoreFromSessionStorage();
 
     try {
+      // Offline note (#487): the service worker serves this network-first
+      // with a cached fallback, so an offline reload by a logged-in user
+      // resolves `res.ok` from the last successful copy and boot proceeds
+      // to the cached shell. A real 401 (only reachable online — errors
+      // never enter the SW cache) still lands in the redirect below.
       const res = await fetch('/api/auth/me');
       if (!res.ok) {
         // Keep the fragment so login can bounce back to the deep link
@@ -84,6 +89,11 @@ const App = {
         document.body.classList.add('is-view-as-non-admin');
       }
     } catch {
+      // Network failure with no service-worker-cached /api/auth/me —
+      // i.e. offline on a device that never logged in (or predates the
+      // SW). login.html is precached, so this shows the login page with
+      // its own offline note instead of a browser error; no loop, since
+      // login.html never bounces back here on its own.
       window.location.href = '/login.html' + window.location.hash;
       return;
     }
@@ -740,6 +750,9 @@ const App = {
       const isReconnect = App._eventsWsHasConnected;
       App._eventsWsHasConnected = true;
       console.log(`[ws] Global events ${isReconnect ? 'reconnected' : 'connected'}`);
+      // A (re)opened socket proves we're online — clear the offline
+      // banner immediately instead of waiting for the slow re-probe loop.
+      if (window.Offline) Offline.nudge();
       if (isReconnect) App.resyncCurrentView();
     };
 
@@ -838,6 +851,10 @@ const App = {
     };
 
     App.eventsWs.onclose = () => {
+      // A dropped global-events socket is the strongest early signal that
+      // we've gone offline — nudge the connectivity probe so the offline
+      // banner appears without waiting for a browser `offline` event.
+      if (window.Offline) Offline.nudge();
       setTimeout(() => App.connectEvents(), 3000);
     };
   },

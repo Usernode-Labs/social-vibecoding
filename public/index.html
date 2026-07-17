@@ -39,6 +39,13 @@
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.4/dist/purify.min.js" integrity="sha384-ljaibG+rFiOlF9Y2x5ulbWhmu7GWQMKeAPHRiLXj0iozfwSIrIs1Ud1WeQ0Z+FqY" crossorigin="anonymous"></script>
   <link rel="stylesheet" href="/css/app.css">
+  <!-- PWA (#487): installable shell + read-only offline mode. The service
+       worker is registered by /js/offline.js (loaded with the app bundle
+       below). -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#08080f">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col" style="height:100dvh">
 
@@ -148,6 +155,13 @@
          apps exist). See public/js/home.js. -->
     </div>
   </header>
+
+  <!-- Offline indicator (#487): shown by /js/offline.js while the /health
+       connectivity probe fails; everything on screen is the last version
+       that loaded successfully. Hidden the moment the probe succeeds. -->
+  <div id="offline-banner" class="hidden shrink-0 bg-amber-500/15 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs text-center px-3 py-1.5">
+    You're offline — showing saved content
+  </div>
 
   <!-- Slide-out navigation drawer (all viewport widths — #122).
        Overlay dims the page; panel slides in from the right. Both are
@@ -1102,6 +1116,7 @@
     </div>
   </div>
 
+  <script src="/js/offline.js"></script>
   <script src="/js/dev-host.js"></script>
   <script src="/js/header-layout.js"></script>
   <script src="/js/dev-console.js"></script>
