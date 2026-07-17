@@ -231,6 +231,43 @@ if [ "$MODE" = "build" ] && [ -f "$BROWSER_MCP_CONFIG" ]; then
   BROWSER_MCP_FLAGS="--mcp-config $BROWSER_MCP_CONFIG --strict-mcp-config"
 fi
 
+# ── In-loop local Postgres (build turns only, #659) ──────────────────
+# INLOOP_DATABASE_URL points the agent's local app launch at
+# postgres://postgres:postgres@127.0.0.1:5432/inloop. Make that URL
+# resolvable: start the image's node-owned Postgres (data dir initialized
+# at image-build time, see worker/Dockerfile) if it isn't already running,
+# then recreate the `inloop` database so every build turn gets the
+# documented FRESH, EMPTY local DB — even though the warm container (and
+# any app process a prior turn left running) persists across turns.
+#
+# Guarded on the binaries + data dir existing so containers still on an
+# older image degrade exactly as before (agent skips the check). Every
+# failure is a __USERNODE_WARN__, never a die: the in-loop environment
+# must never block or fail the turn.
+INLOOP_PGDATA=/home/node/pgdata
+if [ "$MODE" = "build" ] && command -v pg_ctl >/dev/null 2>&1 \
+  && [ -d "$INLOOP_PGDATA" ]; then
+  INLOOP_PG_OK=1
+  if ! pg_ctl -D "$INLOOP_PGDATA" status >/dev/null 2>&1; then
+    pg_ctl -D "$INLOOP_PGDATA" -w -l /tmp/inloop-postgres.log start \
+      >/dev/null 2>&1 \
+      || { echo "__USERNODE_WARN__ in-loop postgres failed to start"; INLOOP_PG_OK=0; }
+  fi
+  if [ "$INLOOP_PG_OK" = "1" ]; then
+    # Kick stray connections from a prior turn's leftover app process so
+    # the dropdb below can't hang on an in-use database.
+    psql -h 127.0.0.1 -U postgres -d postgres -c \
+      "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'inloop' AND pid <> pg_backend_pid()" \
+      >/dev/null 2>&1 || true
+    if dropdb --if-exists -h 127.0.0.1 -U postgres inloop >/dev/null 2>&1 \
+      && createdb -h 127.0.0.1 -U postgres inloop >/dev/null 2>&1; then
+      echo "__USERNODE_PHASE__ inloop-db"
+    else
+      echo "__USERNODE_WARN__ in-loop postgres inloop-db recreate failed"
+    fi
+  fi
+fi
+
 # stream-json emits one JSON object per line. The host parses this via
 # the docker-exec child's stdout (long-lived path) or `docker logs -f`
 # (legacy single-shot path) — same pipeline, different transport.

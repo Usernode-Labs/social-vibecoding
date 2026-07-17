@@ -30,11 +30,15 @@
 // collide with the throwaway one the agent spins up for the check.
 const INLOOP_PORT = 3100;
 
-// Throwaway local DB pointer. The app boots with USERNODE_ENV=staging, so
-// it follows the same fresh-empty-DB + manifest staging_default secret
-// contract a real staging container does. If no Postgres is reachable (or
-// required secrets are missing), the app won't boot — the guidance tells
-// the agent to skip the check and commit anyway (graceful degradation).
+// Local DB for the in-loop launch. This URL resolves for real (#659): the
+// worker image ships a container-local Postgres 15 with trust auth on
+// loopback (worker/Dockerfile), and run-cc.sh starts it and recreates the
+// `inloop` database FRESH at the start of every build turn. The app boots
+// with USERNODE_ENV=staging, so it follows the same fresh-empty-DB +
+// manifest staging_default secret contract a real staging container does.
+// If the app still won't boot (a missing required secret, a crash on
+// start), the guidance tells the agent to skip the check and commit
+// anyway (graceful degradation).
 const INLOOP_DATABASE_URL = 'postgres://postgres:postgres@127.0.0.1:5432/inloop';
 
 // True only for build turns. Scout must stay read-only/browser-free; sync
@@ -76,8 +80,10 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     (or the entrypoint this app's \`dapp.json\` declares), then point the
     browser at \`http://127.0.0.1:$INLOOP_PORT\` joined with the SAME route(s)
     you put in the TESTING block's \`path:\` lines. The app boots in staging
-    mode against a FRESH, EMPTY local database, so seed any data your route
-    needs in this same commit per the "Staging mock data" convention.
+    mode against a FRESH, EMPTY local database — a real Postgres runs in
+    this container and the \`inloop\` DB is recreated for each build turn —
+    so seed any data your route needs in this same commit per the "Staging
+    mock data" convention.
   - A BLANK or empty-looking page usually means MISSING SEED DATA, not a bug —
     the local DB starts empty. Add the \`IS_STAGING\` seed (or a
     \`?demo=1\` route) and re-check, rather than "fixing" working code.
@@ -85,10 +91,10 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
     route after the \`#\` (e.g. \`http://127.0.0.1:$INLOOP_PORT/#/leaderboard\`)
     or the page just boots to the home feed.
   - Keep it tight: budget at most a couple of launch→check→fix cycles and a
-    minute or two of wall-clock. If the app won't boot (no local Postgres,
-    missing required secrets, crash on start), DON'T fight it — note that you
-    skipped the visual check and commit your work anyway. The in-loop browser
-    must never block or fail the turn.
+    minute or two of wall-clock. If the app won't boot (a missing required
+    secret, a crash on start), DON'T fight it — note that you skipped the
+    visual check and commit your work anyway. The in-loop browser must never
+    block or fail the turn.
   - PROPOSAL CHECKS ("CI for proposals"): the platform runs automated
     headless-browser tests against your staging build, and a proposal whose
     checks aren't passing is BLOCKED from merging. Tests are declared in
