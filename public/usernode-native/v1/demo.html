@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <!-- viewport-fit=cover per the kit's safe-area adoption contract -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>usernode-native v1 — demo</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = {
+    darkMode: 'class',
+    future: { hoverOnlyWhenSupported: true },
+  }</script>
+  <link rel="stylesheet" href="./native.css">
+  <script src="./native.js"></script>
+</head>
+<body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100" style="min-height:100dvh">
+
+  <!-- Screen A (the demo itself) -->
+  <div id="screen-a">
+    <header class="un-safe-top-extend sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800">
+      <h1 class="text-base font-semibold flex-1">usernode-native v1</h1>
+      <span id="platform-pill" class="text-xs px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300"></span>
+      <button id="theme-toggle" class="un-touch-target text-sm text-zinc-500" aria-label="Toggle dark mode">◐</button>
+    </header>
+
+    <main class="max-w-md mx-auto px-4 pb-16 space-y-8">
+
+      <p class="text-xs text-zinc-500 pt-4">
+        Kit demo &amp; tuning page. Add <code>?un-platform=ios|android</code> to force a skin,
+        <code>?un-tune=1</code> for the spring tuner. Best judged on a real phone.
+      </p>
+
+      <!-- Buttons -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Buttons — pressed states</h2>
+        <div class="flex items-center gap-3">
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Primary</button>
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Secondary</button>
+          <button class="un-touch-target w-8 h-8 flex items-center justify-center rounded-full border border-zinc-300 dark:border-zinc-700 text-lg leading-none" aria-label="Icon button">+</button>
+        </div>
+        <p class="text-xs text-zinc-500 mt-2">No tap flash; press engages instantly, release springs back.</p>
+      </section>
+
+      <!-- Switches -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Switches</h2>
+        <div class="space-y-3">
+          <label class="flex items-center justify-between gap-4">
+            <span class="text-sm">Notifications</span>
+            <input type="checkbox" class="un-switch" checked>
+          </label>
+          <label class="flex items-center justify-between gap-4">
+            <span class="text-sm">Auto-refresh</span>
+            <input type="checkbox" class="un-switch">
+          </label>
+          <label class="flex items-center justify-between gap-4">
+            <span class="text-sm text-zinc-400">Disabled option</span>
+            <input type="checkbox" class="un-switch" disabled checked>
+          </label>
+        </div>
+      </section>
+
+      <!-- Swipe to act -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Swipe to act (drag a row left)</h2>
+        <div id="swipe-list" class="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden divide-y divide-zinc-200 dark:divide-zinc-800"></div>
+        <p class="text-xs text-zinc-500 mt-2">Partial swipe reveals actions; a full swipe (or a hard flick) deletes. Catch a springing row mid-motion — it follows your finger from where it is.</p>
+      </section>
+
+      <!-- Pull to refresh -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Pull to refresh (touch devices)</h2>
+        <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden" style="position:relative">
+          <div id="ptr-list" class="h-64 overflow-y-auto divide-y divide-zinc-200 dark:divide-zinc-800" style="overscroll-behavior-y: contain"></div>
+        </div>
+        <p class="text-xs text-zinc-500 mt-2">Spinner grows with the pull — release past the line (or yank) to refresh; a new row lands after ~1s.</p>
+      </section>
+
+      <!-- Transitions -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Page transitions</h2>
+        <button id="push-btn" class="px-5 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Push screen B →</button>
+        <p class="text-xs text-zinc-500 mt-2">iOS: slide + parallax. Android: shared-axis fade. Old browsers: instant cut.</p>
+      </section>
+
+      <!-- Re-themed section: proves the CSS-variable theming contract -->
+      <section id="rethemed" style="--un-accent:#059669; --un-accent-contrast:#ffffff; --un-action-danger:#b45309; --un-radius:0.25rem; --un-radius-full:0.5rem;">
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Re-themed (via --un-* overrides only)</h2>
+        <div class="rounded-lg border border-emerald-300 dark:border-emerald-900 p-4 space-y-4">
+          <label class="flex items-center justify-between gap-4">
+            <span class="text-sm">Emerald accent, square radii</span>
+            <input type="checkbox" class="un-switch" checked>
+          </label>
+          <div id="rethemed-swipe" class="rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden"></div>
+          <button class="px-4 py-2 text-sm font-medium text-white" style="background:var(--un-accent); border-radius:var(--un-radius)">Themed button</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Screen B (transition target) -->
+  <div id="screen-b" class="hidden" style="min-height:100dvh">
+    <header class="un-safe-top-extend sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800">
+      <button id="pop-btn" class="un-touch-target text-sm" style="color:var(--un-accent)">‹ Back</button>
+      <h1 class="text-base font-semibold">Screen B</h1>
+    </header>
+    <main class="max-w-md mx-auto px-4 py-8 space-y-4">
+      <p class="text-sm text-zinc-500">This screen was pushed with <code>unNative.transition(fn, {type:'push'})</code>. Tap Back to pop.</p>
+      <div class="h-40 rounded-xl" style="background:var(--un-accent); opacity:0.15"></div>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      document.getElementById('platform-pill').textContent = unNative.platform;
+
+      document.getElementById('theme-toggle').addEventListener('click', function () {
+        document.documentElement.classList.toggle('dark');
+      });
+
+      // ── Swipeable list (static in-memory rows) ─────────────────────
+      var swipeList = document.getElementById('swipe-list');
+      function makeRow(title, subtitle) {
+        var row = document.createElement('div');
+        row.className = 'px-4 py-3 bg-white dark:bg-zinc-950';
+        row.innerHTML = '<div class="text-sm font-medium">' + title + '</div>' +
+          '<div class="text-xs text-zinc-500">' + subtitle + '</div>';
+        return row;
+      }
+      function addSwipeRow(container, title, subtitle) {
+        var row = makeRow(title, subtitle);
+        container.appendChild(row);
+        unNative.attachSwipeActions(row, {
+          actions: [
+            { label: 'Mark read', handler: function () { row.style.opacity = '0.45'; } },
+            { label: 'Delete', destructive: true, handler: function () { /* row already removed by the kit */ } },
+          ],
+        });
+      }
+      ['Design review notes', 'Deploy pipeline green', 'New comment on your proposal', 'Weekly digest', 'Session archived'].forEach(function (t, i) {
+        addSwipeRow(swipeList, t, 'Demo row ' + (i + 1) + ' — swipe me left');
+      });
+
+      // Re-themed swipe row
+      addSwipeRow(document.getElementById('rethemed-swipe'), 'Amber delete button', 'Same physics, different theme');
+
+      // ── Pull-to-refresh list ───────────────────────────────────────
+      var ptrList = document.getElementById('ptr-list');
+      var ptrCount = 0;
+      function addPtrRow(label) {
+        ptrCount += 1;
+        var row = makeRow(label, 'Item #' + ptrCount);
+        row.classList.add('shrink-0');
+        ptrList.insertBefore(row, ptrList.firstChild);
+      }
+      for (var i = 0; i < 12; i++) addPtrRow('Feed item');
+      unNative.attachPullToRefresh(ptrList, function () {
+        return new Promise(function (resolve) {
+          setTimeout(function () { addPtrRow('Fresh item ✨'); resolve(); }, 1000);
+        });
+      });
+
+      // ── Push / pop transitions ─────────────────────────────────────
+      var a = document.getElementById('screen-a');
+      var b = document.getElementById('screen-b');
+      document.getElementById('push-btn').addEventListener('click', function () {
+        unNative.transition(function () {
+          a.classList.add('hidden');
+          b.classList.remove('hidden');
+        }, { type: 'push' });
+      });
+      document.getElementById('pop-btn').addEventListener('click', function () {
+        unNative.transition(function () {
+          b.classList.add('hidden');
+          a.classList.remove('hidden');
+        }, { type: 'pop' });
+      });
+    })();
+  </script>
+</body>
+</html>

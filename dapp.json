@@ -76,6 +76,12 @@
   ],
   "tests": [
     {
+      "name": "Native-feel UI kit demo renders",
+      "path": "/usernode-native/v1/demo.html",
+      "expectSelector": ".un-switch",
+      "expectText": "usernode-native v1"
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"

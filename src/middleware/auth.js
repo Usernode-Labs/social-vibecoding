@@ -29,6 +29,10 @@ const PUBLIC_PATHS = [
   '/js/',
   '/usernode-bridge.js',
   '/usernode-bridge/',
+  // Native-feel UI kit (public/usernode-native/v1/) — centrally hosted for
+  // child apps exactly like the bridge, so it must be fetchable anonymously
+  // from any dapp origin. Static CSS/JS + demo page only, no data access.
+  '/usernode-native/',
   // PWA shell assets (#487). The service-worker script, manifest and
   // icons must be fetchable without a session: the browser requests them
   // from login.html (pre-auth) and during background SW update checks,

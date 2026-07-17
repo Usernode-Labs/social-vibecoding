@@ -887,6 +887,122 @@ Rules:
   the bridge from upstream prod, or fork the dapps and edit the URL.
   See [SELF-HOSTING.md](../../SELF-HOSTING.md) for details.
 
+## Native-feel UI kit — centrally hosted (`usernode-native`)
+
+An **opt-in** CSS + JS kit that makes an app's mobile UI feel native on
+iOS and Android: platform-adaptive switches, native pressed states,
+swipe-to-act list rows, pull-to-refresh, and animated push/pop screen
+transitions — all in vanilla JS + CSS, no build step, attaching to the
+app's existing DOM. It is **available and recommended for mobile-facing
+UI**; adopting it is each app's choice (typically driven from dev chat),
+not a requirement.
+
+Like the bridge, it is centrally hosted — never vendor it:
+
+```html
+<link rel="stylesheet" href="https://social-vibecoding.usernodelabs.org/usernode-native/v1/native.css">
+<script src="https://social-vibecoding.usernodelabs.org/usernode-native/v1/native.js"></script>
+```
+
+Canonical source: `social-vibecoding/public/usernode-native/v1/`. The
+same rules as the bridge apply: fixes ship platform-side and propagate
+on the next page load; `/v1/` is a frozen API surface (additive changes
+in place, breaking changes bump to `/v2/`). A live demo of every
+component is served beside the kit at `/usernode-native/v1/demo.html`
+(`?un-platform=ios|android` forces a skin, `?un-tune=1` shows the
+spring tuner).
+
+### What the kit provides
+
+Loading `native.js` sets `html.un-ios` / `html.un-android` /
+`html.un-desktop` (platform skins hang off these) and exposes
+`window.unNative`:
+
+- **Touch polish (automatic).** `native.css` removes the grey tap
+  highlight and gives every `button` / `[role="button"]` /
+  `.un-pressable` an instant pressed state (scale + dim, engages with
+  zero latency, springs back on release). `.un-touch-target` expands a
+  small icon button's hit area to ≥44px without changing layout.
+- **Switches.** Add class `un-switch` to an existing
+  `<input type="checkbox">` — nothing else. iOS pill on iPhones,
+  Material 3 track/thumb on Android, pure CSS.
+- **Swipe-to-act rows.**
+  `unNative.attachSwipeActions(rowEl, { actions: [{ label, destructive,
+  handler, color? }] })`. Reveals action buttons behind the row on a
+  left drag; when the **last** action is `destructive: true`, a full
+  swipe (or hard flick) commits it. On a destructive commit the kit
+  collapses and removes the row from the DOM, **then** calls
+  `handler()` — do the API call / re-render there. Returns
+  `{ close(), detach() }`.
+- **Pull-to-refresh.**
+  `unNative.attachPullToRefresh(scrollEl, onRefresh)` on a scrollable
+  list container; `onRefresh()` returns a Promise and the spinner holds
+  until it settles. Give the container `overscroll-behavior-y: contain`
+  (the kit also sets it defensively). No-op on desktop.
+- **Screen transitions.** `unNative.transition(fn, { type: 'push' |
+  'pop' | 'none' })` wraps your DOM mutation in a View Transition (iOS
+  slide+parallax / Android shared-axis fade; instant cut where the API
+  is missing). Use `'push'`/`'pop'` for real screen navigation ONLY;
+  tab switches, menus and panel toggles must use `'none'` — repeated
+  animation on high-frequency UI reads as lag, not polish.
+- **Safe areas.** Opt-in helpers `.un-safe-top` / `.un-safe-top-extend`
+  / `.un-safe-bottom` / `.un-safe-bottom-extend` / `.un-safe-x` apply
+  `env(safe-area-inset-*)` padding to fixed bars. They require
+  `viewport-fit=cover` in the page's viewport meta.
+- **Spring engine.** `unNative.spring(elOrCallback, { from, to,
+  velocity, preset })` — the kit's own rAF damped-spring integrator,
+  available for custom gestures so they match the kit's motion family.
+
+### Fidelity rules (why the kit feels native — don't undo them)
+
+The kit implements, and custom UI in an adopting app should follow:
+**1:1 finger tracking** (during a drag the element is a pure function
+of the finger; nothing animates 0→1 after a threshold), **interruptible
+motion** (a touch mid-spring grabs the element at its current position
+and velocity), **momentum commits** (release velocity is projected —
+a short hard flick commits; drifting back past the line cancels),
+**spring releases** (no fixed duration+bezier on gesture releases), 
+**destructive actions fire only on gesture end**, and **no animation on
+high-frequency interactions** (tabs, menus, panels). Don't wrap kit
+gestures in your own CSS transitions and don't add entrance animations
+to frequently-used controls.
+
+### Theming — override `--un-*` variables, never fork the CSS
+
+Every color and radius in the kit routes through CSS custom properties
+with platform-violet defaults (and built-in `.dark` values). Re-theme
+by overriding them on `:root` / `.dark` / any wrapper — never by
+out-specificity-ing kit selectors or copying the stylesheet:
+
+- `--un-accent`, `--un-accent-contrast` — active/on color and what's
+  drawn on top of it
+- `--un-switch-track-off`, `--un-switch-thumb`
+- `--un-action-danger`, `--un-action-neutral`, `--un-action-text` —
+  swipe-action buttons
+- `--un-surface` — kit chrome (pull-to-refresh puck, tray backing)
+- `--un-radius`, `--un-radius-full`
+
+Physics, thresholds and gesture geometry are deliberately **not**
+themeable — the native feel stays uniform across differently-branded
+apps.
+
+### Adoption steps (what "switch this app to the kit" means)
+
+1. Add the two hosted tags above to the HTML shell's `<head>`.
+2. Add `viewport-fit=cover` to the viewport meta; put `.un-safe-top` /
+   `.un-safe-bottom` (or the `-extend` variants) on fixed headers /
+   bottom bars.
+3. Add `future: { hoverOnlyWhenSupported: true }` to the page's inline
+   `tailwind.config` so `hover:` styles stop sticking after taps on
+   touch screens.
+4. Swap checkbox-style toggles to `class="un-switch"`.
+5. Wire `attachSwipeActions` on list rows with row-level actions
+   (delete / archive / mark read) and `attachPullToRefresh` on
+   refreshable lists.
+6. Route real screen navigations through `unNative.transition`
+   (`'push'`/`'pop'`); leave tabs/menus/panels instant.
+7. Optionally override `--un-*` variables to match the app's branding.
+
 ## Vendored shared files
 
 Several other files are **vendored across the platform fleet**: one
