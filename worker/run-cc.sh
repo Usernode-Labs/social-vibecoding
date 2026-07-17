@@ -295,6 +295,9 @@ if [ "$MODE" = "scout" ]; then
   # of stream-json's `result` event and writes it into spec_md.
   # behind=0 because scout never modifies the tree; the real number
   # gets refreshed by the next build/sync turn.
+  # Terminal phase marker so the progress card ends on "Finished"
+  # instead of freezing on the last action line.
+  echo "__USERNODE_PHASE__ done"
   echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=scout"
   exit "$CC_EXIT"
 fi
@@ -328,5 +331,15 @@ AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
 BEHIND=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
 SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
 
+# Terminal phase marker: the dev-chat progress card's collapsed label is
+# the LAST line of the log, so without this every build turn ends frozen
+# on "[push]" ("Pushing"). The UI maps done → "Finished" and
+# push_failed → "Push failed"; the platform side can append a healing
+# [done] if it re-pushes the branch itself.
+if [ "$PUSH_OK" = "1" ]; then
+  echo "__USERNODE_PHASE__ done"
+else
+  echo "__USERNODE_PHASE__ push_failed"
+fi
 echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build"
 exit "$CC_EXIT"

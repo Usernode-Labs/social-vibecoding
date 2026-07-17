@@ -1569,6 +1569,10 @@ async function seedStagingCcProgressRun(pool, config) {
     '  ⎿ 3 lines',
     '[commit]',
     '[push]',
+    // Terminal marker (run-cc.sh emits it after the push) so the seeded
+    // finished run's collapsed card shows "Finished", not a frozen
+    // "Pushing" — reviewable in staging without triggering a real turn.
+    '[done]',
   ];
 
   const ccOutput = [

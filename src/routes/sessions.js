@@ -48,6 +48,7 @@ const { runSyncMain, persistBehindMain } = syncMainSvc;
 // shared module so services/sync-main.js writes to the same instance
 // the chat handler and server.js's drain logic read.
 const { activeWorkers, getActiveWorkerCount } = require('../services/active-workers');
+const turnWatchdog = require('../services/turn-watchdog');
 
 // Per-session stop handles, populated while a chat turn is in flight.
 // Shape: { abort: AbortController, workerName: string|null, phase: 'mayor1'|'cc'|'mayor2', stopped: boolean, stoppedBy: string|null }
@@ -4239,7 +4240,20 @@ async function failHeadlessRun(pool, session, message) {
   });
 }
 
-async function resumeOneHeadlessRun({ pool, config, session }) {
+async function resumeOneHeadlessRun(args) {
+  // Register the whole resumed run in the shared activeWorkers set so
+  // the auto-pause / staging-GC sweepers see the session as busy for the
+  // full recovery (journal tail + staging + wrap-up) — mirrors
+  // resumeDetachedTurn in server.js (pause-proof finalization).
+  activeWorkers.add(args.session.id);
+  try {
+    return await resumeOneHeadlessRunInner(args);
+  } finally {
+    activeWorkers.delete(args.session.id);
+  }
+}
+
+async function resumeOneHeadlessRunInner({ pool, config, session }) {
   const { broadcastGlobal } = require('../services/ws');
   const issueNumber = session.headless_issue_number;
   const user = { id: session.user_id, username: session.username };
@@ -4324,6 +4338,20 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
         }
       },
     });
+    // Terminal marker for the recovered turn's progress card (dedup:
+    // journals from new worker images already end with their own
+    // [done]/[push_failed] marker). Decided before flushing so the
+    // wholesale progressLog rewrite carries it.
+    const producedAnythingEarly = result.execExitSeen || result.resultSeen
+      || !!(result.lastResultText || '').trim();
+    const headlessTerminal = !producedAnythingEarly
+      ? '[interrupted]'
+      : (activeTurn.mode !== 'scout' && result.pushOk === false && result.ahead > 0)
+        ? '[push_failed]'
+        : '[done]';
+    if (turnWatchdog.appendTerminalLine(progressLines, headlessTerminal)) {
+      broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text: headlessTerminal });
+    }
     flushProgress();
     await worker.clearActiveTurn(session.id);
 
@@ -5431,6 +5459,14 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
+    // Turn completion counts as activity: a fresh idle window so the
+    // auto-pause sweeper can't pause the session moments after a long
+    // scout finishes (its last_activity_at is otherwise still the user
+    // message that started it).
+    await pool.query(
+      `UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`,
+      [session.id]
+    ).catch(() => {});
     // No destroyWorker here — the warm container stays so the next
     // dispatch (build or another scout) can reuse it. Idle eviction
     // and session archive both own teardown.
@@ -6070,6 +6106,44 @@ path: /another/changed/view
     // turn is an opportunity to learn the branch drifted.
     await persistBehindMain(pool, session, result.behind || 0);
 
+    // Append one line to this turn's persisted progress log + live tabs.
+    // Used to overwrite run-cc.sh's [push_failed] terminal marker with
+    // [done] after a successful platform-side re-push heal (the card's
+    // collapsed label is the log's LAST line).
+    const appendTurnProgressLine = (text) => {
+      send('cc_progress', { text });
+      return pool.query(
+        `UPDATE chat_session_messages SET metadata = jsonb_set(
+          metadata, '{progressLog}',
+          (COALESCE(metadata->'progressLog', '[]'::jsonb) || $1::jsonb)
+        ) WHERE id = $2`,
+        [JSON.stringify([text]), progressMsgId]
+      ).catch(() => {});
+    };
+
+    // Platform-side re-push heal: run-cc.sh's usernode-push callback
+    // failed (push_ok=0 — e.g. a transient network/platform hiccup while
+    // the worker called back). The commit exists only in the worker, so
+    // re-push it from the platform side — the identical heal the restart
+    // recovery path (finalizeRecoveredTurn in server.js) already uses —
+    // before deciding the turn failed.
+    const healPush = async () => {
+      try {
+        await worker.execPushFromWorker(session.id, session.branch_name);
+        result.pushOk = true;
+        log.info('sessions', 'Push heal: re-pushed un-pushed branch', {
+          sessionId: session.id, branch: session.branch_name,
+        });
+        await appendTurnProgressLine('[done]');
+        return true;
+      } catch (err) {
+        log.warn('sessions', 'Push heal failed', {
+          sessionId: session.id, branch: session.branch_name, err: err.message,
+        });
+        return false;
+      }
+    };
+
     if (result.fatalError) {
       isError = true;
       const msg = `Worker error: ${result.fatalError.substring(0, 200)}`;
@@ -6094,6 +6168,17 @@ path: /another/changed/view
       }
       await sendStatus(msg);
       summaryParts.push(msg);
+    } else if (!result.pushOk && !(await healPush())) {
+      // Terminal push failure (heal included): the branch on GitHub is
+      // stale or absent, so PR creation would 422 and staging would
+      // preview the wrong code — skip both and end the turn as a visible
+      // error instead of the old easy-to-miss warning. The warm worker
+      // keeps the only copy of the commit; the next turn (or a retry)
+      // re-pushes it (#295), so nothing is lost.
+      isError = true;
+      const msg = 'Push to GitHub failed — your changes are committed in the session\'s worker but not on GitHub. Retry your request to re-push and open the PR.';
+      await sendStatus(msg, { error: msg });
+      summaryParts.push(msg);
     } else if (headless) {
       // Success path, headless variant (#155/#183): the commit was already
       // pushed by run-cc.sh inside the worker. Persist testing guidance so
@@ -6102,10 +6187,8 @@ path: /another/changed/view
       // cloning — while still skipping PR creation. The PR is opened
       // lazily on a CLONE's branch when its owner hits "Propose to group"
       // (routes/votes.js); the auto branch itself never gets a PR.
-      if (!result.pushOk) {
-        await sendStatus('Warning: push reported a failure — the branch may be stale.');
-        summaryParts.push('Push reported a failure; the branch may be missing the commit.');
-      }
+      // pushOk is guaranteed here — a failed push (after the platform-
+      // side heal) takes the terminal error branch above instead.
       summaryParts.push(`Commit ${commitHash.substring(0, 8)} pushed to ${session.branch_name}.`);
       if (testing.testingMd || testing.testingPath) {
         await pool.query(
@@ -6212,10 +6295,8 @@ path: /another/changed/view
         + 'to review the change and propose it to the group — the PR is created on their cloned branch at propose time.'
       );
     } else {
-      if (!result.pushOk) {
-        await sendStatus('Warning: push reported a failure — staging may be stale.');
-        summaryParts.push('Push reported a failure; staging may be stale.');
-      }
+      // pushOk is guaranteed here — a failed push (after the platform-
+      // side heal) takes the terminal error branch above instead.
       summaryParts.push(`Commit ${commitHash.substring(0, 8)} pushed to ${session.branch_name}.`);
 
       // #127: persist the turn's testing guidance BEFORE applyPrMetadata so
@@ -6469,6 +6550,14 @@ path: /another/changed/view
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
+    // Turn completion counts as activity: a fresh idle window so the
+    // auto-pause sweeper can't pause the session moments after a long
+    // build finishes (its last_activity_at is otherwise still the user
+    // message that started it).
+    await pool.query(
+      `UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`,
+      [session.id]
+    ).catch(() => {});
     // Warm container intentionally NOT destroyed — the next dispatch
     // (build or scout) reuses it. Idle eviction (worker.evictWorker via
     // the sweeper in server.js) and session archive own teardown.

@@ -17,4 +17,20 @@ function getActiveWorkerCount() {
   return activeWorkers.size;
 }
 
-module.exports = { activeWorkers, getActiveWorkerCount };
+// Shared "any part of a turn is running" predicate — the same one the
+// /api/sessions/:id/status endpoint and the session-list routes use.
+// `activeWorkers` covers the chat handler's full window (added before
+// ensureWorker, deleted in run(Scout|ClaudeCode)Tool's finally — i.e.
+// including the post-exec PR/staging tail) plus the restart-recovery
+// flows; `worker.isInFlight` covers the inner docker-exec window. The
+// auto-pause / staging-GC sweepers in server.js MUST use this instead
+// of the bare isInFlight, or they can tear a session down mid-wrap-up
+// (the sessions 2391/2386 incident).
+function isSessionBusy(sessionId) {
+  // Lazy require: worker.js is pulled in by the route layer that also
+  // requires this module — a top-level require here would be a cycle.
+  const worker = require('./worker');
+  return activeWorkers.has(sessionId) || worker.isInFlight(sessionId);
+}
+
+module.exports = { activeWorkers, getActiveWorkerCount, isSessionBusy };
