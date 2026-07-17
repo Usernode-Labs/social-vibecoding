@@ -6,6 +6,52 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates unzip \
   && rm -rf /var/lib/apt/lists/*
 
+# ── Local Postgres for the in-loop browser (build turns only, #659) ────
+# INLOOP_DATABASE_URL (src/services/in-loop-browser.js) points at
+# postgres://postgres:postgres@127.0.0.1:5432/inloop — a server that must
+# actually exist INSIDE this container, or every backend app crashes with
+# ECONNREFUSED the moment the agent boots it for the in-loop visual
+# check. We install bookworm's postgresql-15 (+contrib, for common app
+# extensions like pgcrypto/uuid-ossp) and pre-initialize a node-owned
+# data dir at image-build time; run-cc.sh starts the server lazily on
+# build turns and recreates the `inloop` database fresh each turn, so
+# scout/sync-only sessions pay zero runtime cost.
+#
+# create_main_cluster=false stops the Debian postinst from initializing
+# an unused, root-owned "main" cluster — we run our own data dir instead.
+# This layer sits BEFORE the CLAUDE_CODE_CACHE_BUST ARG below on purpose,
+# so the apt install and initdb stay layer-cached across the daily
+# Claude-Code rebuild.
+RUN mkdir -p /etc/postgresql-common/createcluster.conf.d \
+  && echo 'create_main_cluster = false' \
+       > /etc/postgresql-common/createcluster.conf.d/no-main-cluster.conf \
+  && apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-15 postgresql-contrib-15 \
+  && rm -rf /var/lib/apt/lists/*
+
+# Debian keeps the server binaries (pg_ctl/initdb/postgres) off PATH —
+# only client tools get pg_wrapper shims. Surface them for run-cc.sh and
+# for the agent itself (`pg_ctl status`, direct `psql`).
+ENV PATH=/usr/lib/postgresql/15/bin:$PATH
+
+# Pre-initialize the throwaway data dir as node (initdb refuses root; the
+# permanent USER node switch only happens further down). Trust auth on
+# loopback makes the URL's postgres:postgres credentials work verbatim —
+# the password is simply never checked, which is fine for a container-
+# local, disposable verification DB. Unix sockets go to /tmp (node can't
+# write /var/run/postgresql); shared_buffers stays small under the
+# worker's 2g --memory limit. The data dir lives on the container fs, NOT
+# the ~/.claude volume: it must be throwaway and die with the container.
+USER node
+RUN initdb -U postgres --auth=trust -D /home/node/pgdata \
+  && { \
+       echo "listen_addresses = '127.0.0.1'"; \
+       echo "port = 5432"; \
+       echo "unix_socket_directories = '/tmp'"; \
+       echo "shared_buffers = 32MB"; \
+     } >> /home/node/pgdata/postgresql.conf
+USER root
+
 # Cache-bust the Claude Code install so the worker tracks the latest CLI
 # instead of freezing at whatever version was current when this layer was
 # first built. ensureWorkerImage() passes today's date as
