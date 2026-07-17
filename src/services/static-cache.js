@@ -23,7 +23,7 @@ const REVALIDATE = 'no-cache, must-revalidate';
 // Returns the Cache-Control value for a shell asset path, or null if the
 // path isn't a revalidate-every-load shell asset (let the default apply).
 function shellAssetCacheControl(filePath) {
-  return /\.(?:html|js|css)$/i.test(String(filePath)) ? REVALIDATE : null;
+  return /\.(?:html|js|css|webmanifest)$/i.test(String(filePath)) ? REVALIDATE : null;
 }
 
 module.exports = { shellAssetCacheControl, REVALIDATE };

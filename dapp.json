@@ -293,6 +293,16 @@
       "path": "/app/staging-demo-failed-app",
       "expectText": "View build log",
       "allowConsoleErrors": true
+    },
+    {
+      "name": "PWA manifest is linked from the shell (#487)",
+      "path": "/",
+      "expectSelector": "link[rel='manifest']"
+    },
+    {
+      "name": "Offline banner element ships in the shell (#487)",
+      "path": "/",
+      "expectSelector": "#offline-banner"
     }
   ],
   "governance": {

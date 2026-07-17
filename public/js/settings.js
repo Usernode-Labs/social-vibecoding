@@ -569,7 +569,30 @@
         // will still treat the user as logged out once the cookie is
         // cleared (server clears it on the response) or expires.
       }
+      // Offline mode (#487): the service worker caches GET /api/* responses
+      // per-URL, not per-user — wipe them so the next account on this
+      // device can't see this user's cached feed. Belt-and-braces: the SW
+      // also clears the API cache when it sees the logout POST above.
+      try { await this._clearSwApiCache(); } catch (_) {}
       window.location.href = '/login.html';
+    },
+
+    // Ask the active service worker to drop its API cache; resolves on ack
+    // or after a short timeout so logout never hangs on a wedged worker.
+    _clearSwApiCache() {
+      const sw = navigator.serviceWorker && navigator.serviceWorker.controller;
+      if (!sw) return Promise.resolve();
+      return new Promise((resolve) => {
+        const timer = setTimeout(resolve, 1000);
+        try {
+          const channel = new MessageChannel();
+          channel.port1.onmessage = () => { clearTimeout(timer); resolve(); };
+          sw.postMessage({ type: 'clear-api-cache' }, [channel.port2]);
+        } catch (_) {
+          clearTimeout(timer);
+          resolve();
+        }
+      });
     },
 
     async remove() {

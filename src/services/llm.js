@@ -624,7 +624,16 @@ async function generateIssueTitle({ description, apiKey }) {
     max_tokens: 60,
     messages: [{
       role: 'user',
-      content: `Write a short GitHub issue title (5-10 words, no quotes) for this feedback. Phrase it as an imperative action starting with a verb (e.g. "Fix broken leaderboard sort", "Add dark mode toggle"), not a noun phrase or description:\n\n${stripLoneSurrogates(description).trim()}`,
+      content: `Write a short GitHub issue title (no quotes) for this feedback. Phrase it as an imperative action starting with a verb (e.g. "Fix broken leaderboard sort", "Add dark mode toggle"), not a noun phrase or description.
+
+If the feedback describes one problem, keep the title to 5-10 words. A single problem described with several symptoms, or one problem plus context or steps to reproduce, still counts as one problem — do not use the multi-issue form for it.
+
+If the feedback describes more than one distinct problem, the title must convey that instead of describing only the first. When the problems share a topic, name the topic and gist the problems (e.g. "Fix multiple leaderboard issues: broken sort and stale totals"). When they share no topic, gist each briefly (e.g. "Fix multiple issues: leaderboard sort, dark-mode persistence, export 404"). Multi-issue titles may run up to 15 words.
+
+Respond with only the title.
+
+FEEDBACK:
+${stripLoneSurrogates(description).trim()}`,
     }],
   });
   const title = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();

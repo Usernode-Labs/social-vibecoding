@@ -33,6 +33,14 @@ const PUBLIC_PATHS = [
   // child apps exactly like the bridge, so it must be fetchable anonymously
   // from any dapp origin. Static CSS/JS + demo page only, no data access.
   '/usernode-native/',
+  // PWA shell assets (#487). The service-worker script, manifest and
+  // icons must be fetchable without a session: the browser requests them
+  // from login.html (pre-auth) and during background SW update checks,
+  // and a 302-to-login HTML body would fail registration/install. Static
+  // branding assets only — same public tier as /css/ and /js/.
+  '/sw.js',
+  '/manifest.webmanifest',
+  '/icons/',
 ];
 
 // SELF-HOSTING.md "Self-staging — iframe-auth login flow":

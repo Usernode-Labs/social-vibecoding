@@ -46,6 +46,15 @@ const log = require('../services/logger');
 // BYOK turns bypass the proxy entirely (worker.js sets the user's key
 // directly in ANTHROPIC_API_KEY and leaves ANTHROPIC_BASE_URL unset),
 // so this enforcement only applies to the platform-key code path.
+//
+// #664: for build/scout turns the payer is resolved PER CALL, mirroring
+// the app-LLM proxy (routes/app-llm-proxy.js): while the daily allowance
+// (user cap AND global cap) has headroom the platform key pays; the
+// moment it's exhausted, calls from users with a BYOK key on file switch
+// to that key mid-turn instead of erroring (the first switched call also
+// posts a one-time in-chat notice). Keyless users keep the exact 429 /
+// mid-stream-kill behaviour they had. Sync turns never spill onto a
+// user's key — platform housekeeping bills the system budget only.
 
 const ROUTE_PREFIX = '/api/internal/anthropic/';
 
@@ -142,6 +151,101 @@ async function refreshUserBudget(pool, userId) {
   }
 }
 
+// #664: process-local mirror of userBudgetCache for the GLOBAL daily cap
+// (sum across every user's platform-billed spend today). One tracker, same
+// checkpoint+liveDelta shape; platform-billed call costs fold into it at
+// settlement alongside the per-user tracker so a mid-turn global-cap
+// crossing is visible to the per-call payer decision.
+let globalBudgetCache = null; // { totalAtCheckpointCents, fetchedAt, liveDeltaCents }
+
+async function refreshGlobalSpend(pool) {
+  const now = Date.now();
+  if (globalBudgetCache && now - globalBudgetCache.fetchedAt < BUDGET_CACHE_TTL_MS) {
+    return globalBudgetCache;
+  }
+  try {
+    const { rows } = await pool.query(
+      'SELECT SUM(total_cost_cents) as total FROM llm_usage WHERE date = CURRENT_DATE'
+    );
+    const totalAtCheckpointCents = parseFloat(rows[0]?.total || 0);
+    globalBudgetCache = { totalAtCheckpointCents, fetchedAt: now, liveDeltaCents: 0 };
+    return globalBudgetCache;
+  } catch (err) {
+    log.warn('anthropic-proxy', 'Global spend refresh failed; failing open', { err: err.message });
+    globalBudgetCache = { totalAtCheckpointCents: 0, fetchedAt: now, liveDeltaCents: 0 };
+    return globalBudgetCache;
+  }
+}
+
+// #664: cheap cached "does this user have a BYOK key on file?" bit — an
+// EXISTS query, no decryption. Used to suppress the mid-stream kill on
+// the boundary call when a fallback exists (the NEXT call's gate does
+// the actual switch). Fails closed (false → kill stays active, exactly
+// today's behaviour) on a DB hiccup.
+const byokPresenceCache = new Map(); // userId -> { present, fetchedAt }
+
+async function hasByokKeyOnFile(pool, userId) {
+  const cached = byokPresenceCache.get(userId);
+  const now = Date.now();
+  if (cached && now - cached.fetchedAt < BUDGET_CACHE_TTL_MS) return cached.present;
+  try {
+    const { rows } = await pool.query(
+      'SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND anthropic_key_enc IS NOT NULL) AS present',
+      [userId]
+    );
+    const present = !!rows[0]?.present;
+    byokPresenceCache.set(userId, { present, fetchedAt: now });
+    return present;
+  } catch (err) {
+    log.warn('anthropic-proxy', 'BYOK key presence check failed; assuming none', {
+      userId, err: err.message,
+    });
+    byokPresenceCache.set(userId, { present: false, fetchedAt: now });
+    return false;
+  }
+}
+
+// #664: one-time (per turn) user-facing notice that the payer switched to
+// their own key mid-turn. Persists a system chat row (visible on reload)
+// and fans the event out live over the global WS + the session bus (the
+// resumable GET /events SSE) — the proxy has no handle on the turn's POST
+// SSE, but the dev-chat client listens on both side channels. Entirely
+// best-effort: a failed notice must never fail the API call.
+async function emitSwitchNotice(pool, sessionId, userId) {
+  const text = 'Your free daily AI credits ran out — this turn is continuing on your Anthropic API key.';
+  try {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [sessionId, text, JSON.stringify({ billingSwitch: true })]
+    );
+  } catch (err) {
+    log.warn('anthropic-proxy', 'Failed to persist billing-switch notice', {
+      sessionId, userId, err: err.message,
+    });
+  }
+  // A proxy-minted _seq can't collide with the chat handler's
+  // `${prefix}-${n}` stream, and the client dedups the WS/bus overlap on
+  // this exact string.
+  const seq = `byok-switch-${sessionId}-${Date.now().toString(36)}`;
+  try {
+    const { broadcastGlobal } = require('../services/ws');
+    broadcastGlobal({
+      type: 'session_event', sessionId, event: 'billing_switched',
+      _seq: seq, text,
+    });
+  } catch (err) {
+    log.warn('anthropic-proxy', 'Failed to broadcast billing switch', { sessionId, err: err.message });
+  }
+  try {
+    const sessionBus = require('../services/session-bus');
+    sessionBus.publish(sessionId, { type: 'billing_switched', _seq: seq, text });
+  } catch (err) {
+    log.warn('anthropic-proxy', 'Failed to publish billing switch to bus', { sessionId, err: err.message });
+  }
+  log.info('anthropic-proxy', 'Turn switched to BYOK key mid-turn', { sessionId, userId });
+}
+
 function anthropicProxyRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -179,10 +283,6 @@ function anthropicProxyRoutes(config) {
   // Catch-all under the proxy prefix. Express 4 / path-to-regexp v0
   // matches `*` against the remainder, accessible as req.params[0].
   router.all(`${ROUTE_PREFIX}*`, anthropicProxyAuth, proxyLimiter, async (req, res) => {
-    if (!config.anthropicApiKey) {
-      return res.status(502).json({ ok: false, code: 'no_platform_key' });
-    }
-
     const sessionId = req.workerSession?.sessionId;
     const userId = await resolveUserId(pool, sessionId);
     if (!userId) {
@@ -196,8 +296,10 @@ function anthropicProxyRoutes(config) {
     // bill the dedicated system-token budget, not the owner's allowance.
     // The worker records the in-flight turn's mode in its warm registry;
     // read it synchronously to decide which cap+tracker to gate against.
+    let workerMod = null;
+    try { workerMod = require('../services/worker'); } catch {}
     const isSyncTurn = (() => {
-      try { return require('../services/worker').getActiveTurnMode(sessionId) === 'sync'; }
+      try { return !!workerMod && workerMod.getActiveTurnMode(sessionId) === 'sync'; }
       catch { return false; }
     })();
 
@@ -215,12 +317,65 @@ function anthropicProxyRoutes(config) {
     const overMessage = isSyncTurn
       ? `System token budget reached ($${(capCents / 100).toFixed(2)}). Resets at midnight UTC.`
       : `Daily limit reached ($${(capCents / 100).toFixed(2)}). Resets at midnight UTC.`;
+    const spentBeforeCall = budget.totalAtCheckpointCents + budget.liveDeltaCents;
+
+    const upstreamPath = req.params[0] ? `/${req.params[0]}` : '/';
+    const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
+    const upstreamUrl = `${anthropicStream.ANTHROPIC_UPSTREAM}${upstreamPath}${qs}`;
+
+    // #664: per-call payer resolution for build/scout turns. The daily
+    // allowance is exhausted when EITHER the user's own cap or the
+    // platform-wide global cap is spent — in both cases a user with a
+    // BYOK key on file spills onto their own key instead of erroring.
+    // Sync turns never spill; keyless users fall through to the exact
+    // gate/kill behaviour below (the global-cap crossing deliberately
+    // does NOT add a new 429 for them — non-regressive).
+    if (!isSyncTurn) {
+      const userOver = spentBeforeCall >= capCents;
+      const globalCap = await limits.getGlobalLimitCents(pool);
+      const globalSpend = await refreshGlobalSpend(pool);
+      const globalOver =
+        globalSpend.totalAtCheckpointCents + globalSpend.liveDeltaCents >= globalCap;
+      if (userOver || globalOver) {
+        const byokKey = await limits.loadUserApiKey(pool, userId, config.jwtSecret);
+        if (byokKey) {
+          if (workerMod && workerMod.markTurnByokSwitched(sessionId)) {
+            await emitSwitchNotice(pool, sessionId, userId);
+          }
+          // The user's own key pays this call: no budget kill (it draws
+          // nothing from the allowance) and the observed cost lands in
+          // the per-turn BYOK tally for the split settlement at turn end.
+          const result = await anthropicStream.forwardCall({
+            req,
+            res,
+            upstreamUrl,
+            apiKey: byokKey,
+            logTag: 'anthropic-proxy',
+            logCtx: { sessionId, userId, upstreamPath, byok: true },
+          });
+          if (workerMod && result.costCents > 0) {
+            workerMod.noteTurnByokSpend(sessionId, result.costCents);
+          }
+          if (result.status === 401 || result.status === 403) {
+            log.warn('anthropic-proxy', 'BYOK key rejected by Anthropic upstream', {
+              sessionId, userId, status: result.status,
+            });
+          }
+          return;
+        }
+      }
+    }
+
+    if (!config.anthropicApiKey) {
+      return res.status(502).json({ ok: false, code: 'no_platform_key' });
+    }
 
     // Start-of-call gate: if we already know we're over cap, refuse
     // before opening any socket to Anthropic. The gate uses the cached
     // snapshot, so it's only as fresh as BUDGET_CACHE_TTL_MS — but
-    // mid-stream kill catches anything the gate misses.
-    const spentBeforeCall = budget.totalAtCheckpointCents + budget.liveDeltaCents;
+    // mid-stream kill catches anything the gate misses. Since #664 this
+    // only fires for callers with NO usable BYOK key (key-holders were
+    // switched above).
     if (spentBeforeCall >= capCents) {
       log.info('anthropic-proxy', 'Start-of-call gate fired', {
         sessionId, userId, isSyncTurn, spentCents: spentBeforeCall, capCents,
@@ -232,9 +387,14 @@ function anthropicProxyRoutes(config) {
       });
     }
 
-    const upstreamPath = req.params[0] ? `/${req.params[0]}` : '/';
-    const qs = req.originalUrl.includes('?') ? req.originalUrl.slice(req.originalUrl.indexOf('?')) : '';
-    const upstreamUrl = `${anthropicStream.ANTHROPIC_UPSTREAM}${upstreamPath}${qs}`;
+    // #664: when the caller HAS a key on file, don't truncate the
+    // boundary call — the stream-kill would surface as a hard API error
+    // to the CLI even though the very next call would switch payers.
+    // Let this one call finish on the platform key (overshoot bounded to
+    // one call's cost, logged below) and let the next call's gate do the
+    // switch. Keyless users and sync turns keep the kill.
+    const killSuppressed = !isSyncTurn && await hasByokKeyOnFile(pool, userId);
+    let suppressionLogged = false;
 
     const result = await anthropicStream.forwardCall({
       req,
@@ -252,6 +412,19 @@ function anthropicProxyRoutes(config) {
           (live ? live.totalAtCheckpointCents + live.liveDeltaCents : spentBeforeCall) +
           currentCallCents;
         if (spentEffectiveCents > capCents) {
+          if (killSuppressed) {
+            if (!suppressionLogged) {
+              suppressionLogged = true;
+              log.info('anthropic-proxy', 'Over budget mid-call — kill suppressed (BYOK fallback available)', {
+                sessionId, userId,
+                spentEffectiveCents: spentEffectiveCents.toFixed(2),
+                capCents,
+                currentCallCents: currentCallCents.toFixed(4),
+                model,
+              });
+            }
+            return null;
+          }
           log.info('anthropic-proxy', 'Mid-stream kill — over budget', {
             sessionId, userId,
             spentEffectiveCents: spentEffectiveCents.toFixed(2),
@@ -268,11 +441,16 @@ function anthropicProxyRoutes(config) {
     // Fold this call's cost into the user's running tracker so the
     // next request sees it. Even on kill we count what we sent — the
     // worker really did consume those tokens (Anthropic charges for
-    // partial generations).
+    // partial generations). Platform-billed user spend also counts
+    // toward the global tracker (#664) so the global-cap crossing is
+    // visible mid-turn.
     if (result.costCents > 0) {
       const live = isSyncTurn ? systemBudgetCache : userBudgetCache.get(userId);
       if (live) {
         live.liveDeltaCents += result.costCents;
+      }
+      if (!isSyncTurn && globalBudgetCache) {
+        globalBudgetCache.liveDeltaCents += result.costCents;
       }
     }
     if (result.killed) {

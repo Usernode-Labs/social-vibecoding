@@ -1584,6 +1584,9 @@ async function resumeDetachedTurn({
   try {
     result = await worker.resumeTurnFromJournal(sessionId, {
       journal: activeTurn.journal,
+      // #664: seed the per-turn BYOK tally from the persisted record so
+      // post-restart switched calls accumulate on top of pre-restart ones.
+      byokCentsSoFar: Number(activeTurn.byokCents || 0),
       onProgress: (text) => {
         emit('cc_progress', { text });
         progressLines.push(text);
@@ -1609,7 +1612,9 @@ async function resumeDetachedTurn({
   // without this debit a restart silently drops the CC turn's spend from
   // both ledger buckets. active_turn rows persisted before the byok flag
   // shipped fall back to key-on-file (presence of the encrypted key is
-  // enough; no decryption needed).
+  // enough; no decryption needed). #664: a platform-billed turn that
+  // switched onto the owner's key mid-run settles split across both
+  // buckets (getTurnByokCents covers pre- and post-restart spillover).
   if (result.costUsd) {
     let byok = activeTurn.byok;
     if (byok === undefined || byok === null) {
@@ -1623,7 +1628,10 @@ async function resumeDetachedTurn({
         byok = false;
       }
     }
-    await limits.recordSpend(pool, session.user_id, Math.round(result.costUsd * 100), { byok: !!byok });
+    await limits.settleTurnSpend(pool, session.user_id, Math.round(result.costUsd * 100), {
+      turnByok: !!byok,
+      byokObservedCents: worker.getTurnByokCents(sessionId),
+    });
   }
 
   try {

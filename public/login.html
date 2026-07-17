@@ -19,8 +19,21 @@
     }
   </script>
   <script src="/js/theme.js"></script>
+  <!-- PWA (#487): installable shell + read-only offline mode. offline.js
+       (loaded at the bottom) registers the service worker and drives the
+       offline banner below. -->
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#08080f">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen flex items-center justify-center">
+  <!-- Offline note (#487): logging in needs a connection; this page can be
+       served from the service-worker cache when a logged-out user opens
+       the platform offline. -->
+  <div id="offline-banner" class="hidden fixed top-0 inset-x-0 bg-amber-500/15 border-b border-amber-500/30 text-amber-600 dark:text-amber-400 text-xs text-center px-3 py-1.5">
+    You're offline — logging in needs a connection
+  </div>
   <div class="w-full max-w-sm px-6">
     <h1 class="text-2xl font-bold text-center mb-1">Usernode Social Vibecoding</h1>
     <p class="text-xs text-zinc-500 dark:text-zinc-400 text-center mb-8 italic">A place where users own and build apps together</p>
@@ -628,5 +641,6 @@
     }
   })();
   </script>
+  <script src="/js/offline.js"></script>
 </body>
 </html>
