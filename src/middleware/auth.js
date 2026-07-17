@@ -29,6 +29,10 @@ const PUBLIC_PATHS = [
   '/js/',
   '/usernode-bridge.js',
   '/usernode-bridge/',
+  // Native-feel UI kit (public/usernode-native/v1/) — centrally hosted for
+  // child apps exactly like the bridge, so it must be fetchable anonymously
+  // from any dapp origin. Static CSS/JS + demo page only, no data access.
+  '/usernode-native/',
 ];
 
 // SELF-HOSTING.md "Self-staging — iframe-auth login flow":

@@ -1,0 +1,450 @@
+/* usernode-native v1 — native.css
+ *
+ * The visual half of the Usernode native-feel UI kit. Centrally hosted
+ * (like usernode-bridge.js) at:
+ *
+ *   https://<USERNODE_DOMAIN>/usernode-native/v1/native.css
+ *
+ * Canonical source: social-vibecoding/public/usernode-native/v1/native.css.
+ * Never vendor per app; load the hosted URL together with native.js.
+ *
+ * THEMING CONTRACT — apps re-theme by overriding the --un-* custom
+ * properties below (on :root, .dark, or any wrapper element); never by
+ * fighting selector specificity or forking this file. Every color/radius
+ * in the kit routes through these variables. Physics, thresholds and
+ * gesture geometry are deliberately NOT themeable — native feel stays
+ * uniform across differently-branded apps. The variable list is part of
+ * the frozen /v1/ contract: additions are fine, renames/removals require
+ * /v2/.
+ *
+ * Platform skins hang off html.un-ios / html.un-android / html.un-desktop
+ * (set by native.js). Dark mode follows the platform idiom: a `.dark`
+ * class on <html> (same as app.css / the Tailwind config).
+ */
+
+:root {
+  /* Accent (defaults: the platform violet, per public/css/app.css) */
+  --un-accent: #7c3aed;
+  --un-accent-contrast: #ffffff;
+
+  /* Switches */
+  --un-switch-track-off: #d4d4e4;
+  --un-switch-thumb: #ffffff;
+
+  /* Swipe-action buttons */
+  --un-action-danger: #dc2626;
+  --un-action-neutral: #6e6e8a;
+  --un-action-text: #ffffff;
+
+  /* Kit-drawn chrome (PTR spinner puck, action-tray backing) */
+  --un-surface: #f4f4f5;
+
+  /* Radii */
+  --un-radius: 0.5rem;
+  --un-radius-full: 9999px;
+
+  /* Motion — linear() spring curves pre-computed from the SAME integrator
+     parameters native.js uses (mass/tension/friction: default 1/170/26,
+     stiff 1/250/30, gentle 1/120/24), so CSS and JS motion are one family.
+     The cubic-bezier values are the fallback for pre-linear() engines. */
+  --un-ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --un-ease-spring-stiff: cubic-bezier(0.3, 1, 0.4, 1);
+  --un-ease-spring-gentle: cubic-bezier(0.16, 1, 0.3, 1);
+  --un-dur-spring: 725ms;
+  --un-dur-spring-stiff: 532ms;
+  --un-dur-spring-gentle: 1006ms;
+}
+
+@supports (animation-timing-function: linear(0, 1)) {
+  :root {
+    --un-ease-spring: linear(0, 0.0838, 0.2508, 0.4201, 0.5677, 0.6861, 0.7786, 0.8446, 0.8922, 0.9259, 0.95, 0.9661, 0.9771, 0.9846, 0.9898, 0.9932, 0.9955, 0.997, 0.9981, 0.9987, 0.9992);
+    --un-ease-spring-stiff: linear(0, 0.0728, 0.2141, 0.3757, 0.5192, 0.6446, 0.7438, 0.8168, 0.8731, 0.9123, 0.9412, 0.9612, 0.9744, 0.9837, 0.9896, 0.9936, 0.9961, 0.9977, 0.9987, 0.9993, 0.9996);
+    --un-ease-spring-gentle: linear(0, 0.1045, 0.2929, 0.4691, 0.6124, 0.7233, 0.8029, 0.8603, 0.9013, 0.9309, 0.9513, 0.9657, 0.9761, 0.9832, 0.9882, 0.9917, 0.9942, 0.9959, 0.9971, 0.998, 0.9986);
+  }
+}
+
+.dark {
+  --un-accent: #a78bfa;
+  --un-accent-contrast: #1a1a30;
+  --un-switch-track-off: #2e2e50;
+  --un-switch-thumb: #eeeef6;
+  --un-action-danger: #ef4444;
+  --un-action-neutral: #4e4e6a;
+  --un-action-text: #ffffff;
+  --un-surface: #1a1a30;
+}
+
+/* ── Touch polish ──────────────────────────────────────────────────────
+   Applies globally when the stylesheet loads: kill the grey tap flash,
+   give interactive elements an immediate pressed state instead. The
+   pressed transform applies instantly on press (transition only eases
+   the release), so feedback has zero latency. */
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button,
+[role="button"],
+.un-pressable {
+  transition: transform 160ms var(--un-ease-spring-stiff), filter 160ms ease;
+}
+
+button:active,
+[role="button"]:active,
+.un-pressable:active {
+  transform: scale(0.97);
+  filter: brightness(0.92);
+  transition: none; /* engage instantly; the release eases back */
+}
+
+.dark button:active,
+.dark [role="button"]:active,
+.dark .un-pressable:active {
+  filter: brightness(1.15);
+}
+
+/* Never squash a row mid-swipe or a form field. */
+input:active,
+select:active,
+textarea:active,
+.un-swipe-row:active,
+.un-swipe:active {
+  transform: none;
+  filter: none;
+}
+
+/* ≥44px hit area for small icon buttons without changing layout. */
+.un-touch-target {
+  position: relative;
+}
+.un-touch-target::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  transform: translate(-50%, -50%);
+}
+
+/* ── Switches ──────────────────────────────────────────────────────────
+   <input type="checkbox" class="un-switch"> — pure CSS, no JS, no extra
+   markup. Base = iOS skin (51×31 pill, white thumb); html.un-android
+   swaps to the Material 3 track/thumb. Thumb motion rides the stiff
+   spring curve at a native-toggle duration. */
+
+.un-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  display: inline-block;
+  flex-shrink: 0;
+  width: 51px;
+  height: 31px;
+  margin: 0;
+  border: none;
+  border-radius: var(--un-radius-full);
+  background: var(--un-switch-track-off);
+  cursor: pointer;
+  vertical-align: middle;
+  transition: background-color 200ms ease;
+}
+.un-switch::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 27px;
+  height: 27px;
+  border-radius: var(--un-radius-full);
+  background: var(--un-switch-thumb);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25), 0 1px 1px rgba(0, 0, 0, 0.16);
+  transition: transform 260ms var(--un-ease-spring-stiff), width 260ms var(--un-ease-spring-stiff), height 260ms var(--un-ease-spring-stiff), background-color 200ms ease;
+}
+.un-switch:checked {
+  background: var(--un-accent);
+}
+.un-switch:checked::before {
+  transform: translateX(20px);
+}
+.un-switch:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.un-switch:focus-visible {
+  outline: 2px solid var(--un-accent);
+  outline-offset: 2px;
+}
+.un-switch:active {
+  transform: none; /* the global pressed scale would distort the track */
+}
+
+/* Material 3 skin */
+html.un-android .un-switch {
+  width: 52px;
+  height: 32px;
+  background: transparent;
+  border: 2px solid var(--un-switch-track-off);
+}
+html.un-android .un-switch::before {
+  top: 50%;
+  left: 6px;
+  width: 16px;
+  height: 16px;
+  margin-top: -8px;
+  background: var(--un-switch-track-off);
+  box-shadow: none;
+}
+html.un-android .un-switch:checked {
+  background: var(--un-accent);
+  border-color: var(--un-accent);
+}
+html.un-android .un-switch:checked::before {
+  transform: translateX(18px);
+  width: 24px;
+  height: 24px;
+  margin-top: -12px;
+  background: var(--un-accent-contrast);
+}
+
+/* ── Swipe-to-act rows ─────────────────────────────────────────────────
+   Structure built by unNative.attachSwipeActions(): the original row is
+   wrapped in .un-swipe with the action tray rendered behind it. The row
+   translates via inline transform (JS-owned, 1:1 with the finger); this
+   file only styles the chrome. */
+
+.un-swipe {
+  position: relative;
+  overflow: hidden;
+}
+.un-swipe.un-collapsing {
+  transition: height 300ms var(--un-ease-spring-stiff);
+}
+.un-swipe-row {
+  position: relative;
+  z-index: 1;
+  touch-action: pan-y; /* horizontal drags are ours; vertical stays scroll */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.un-swipe.un-dragging .un-swipe-row {
+  cursor: grabbing;
+}
+.un-swipe-tray {
+  position: absolute;
+  inset: 0 0 0 auto;
+  display: flex;
+  align-items: stretch;
+  background: var(--un-action-neutral);
+}
+.un-swipe-action {
+  min-width: 80px;
+  padding: 0 16px;
+  border: none;
+  font: inherit;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--un-action-text);
+  background: var(--un-action-neutral);
+  cursor: pointer;
+  transition: flex-grow 220ms var(--un-ease-spring-stiff);
+  flex-grow: 0;
+}
+.un-swipe-action.un-destructive {
+  background: var(--un-action-danger);
+}
+/* Full-swipe preview: past the commit point the destructive button grows
+   to fill the tray (a reversible, lightweight cue — nothing fires until
+   the finger lifts). */
+.un-swipe.un-commit-armed .un-swipe-action.un-destructive {
+  flex-grow: 8;
+}
+.un-swipe.un-committing .un-swipe-action {
+  pointer-events: none;
+}
+
+/* ── Pull-to-refresh ───────────────────────────────────────────────────
+   Puck injected by unNative.attachPullToRefresh(); scale/opacity/rotation
+   are driven per-frame by pull progress (never popping at a threshold). */
+
+.un-ptr-puck {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 2;
+  width: 34px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--un-radius-full);
+  background: var(--un-surface);
+  color: var(--un-accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+.un-ptr-puck svg {
+  width: 18px;
+  height: 18px;
+}
+.un-ptr-puck.un-armed {
+  color: var(--un-accent);
+}
+.un-ptr-puck.un-refreshing svg {
+  animation: un-ptr-spin 800ms linear infinite;
+}
+@keyframes un-ptr-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ── Page transitions ──────────────────────────────────────────────────
+   Driven by unNative.transition(fn, {type:'push'|'pop'}) which sets
+   data-un-vt on <html> for the duration. iOS: slide + parallax + dim.
+   Android: Material shared-axis fade-through. High-frequency UI (tabs,
+   menus, panels) must use type:'none' — no keyframes exist for it on
+   purpose. */
+
+html[data-un-vt]::view-transition-old(root),
+html[data-un-vt]::view-transition-new(root) {
+  animation-duration: 420ms;
+  animation-timing-function: var(--un-ease-spring);
+}
+
+/* iOS push: new screen slides in from the right over the old, which
+   parallaxes left and dims. */
+html.un-ios[data-un-vt="push"]::view-transition-new(root) {
+  animation-name: un-vt-slide-in-right;
+  z-index: 2;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.2);
+}
+html.un-ios[data-un-vt="push"]::view-transition-old(root) {
+  animation-name: un-vt-parallax-out-left;
+}
+/* iOS pop: old screen slides away right, previous parallaxes back in. */
+html.un-ios[data-un-vt="pop"]::view-transition-old(root) {
+  animation-name: un-vt-slide-out-right;
+  z-index: 2;
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.2);
+}
+html.un-ios[data-un-vt="pop"]::view-transition-new(root) {
+  animation-name: un-vt-parallax-in-left;
+}
+
+@keyframes un-vt-slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes un-vt-slide-out-right {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+@keyframes un-vt-parallax-out-left {
+  from { transform: translateX(0); filter: brightness(1); }
+  to { transform: translateX(-30%); filter: brightness(0.82); }
+}
+@keyframes un-vt-parallax-in-left {
+  from { transform: translateX(-30%); filter: brightness(0.82); }
+  to { transform: translateX(0); filter: brightness(1); }
+}
+
+/* Android (and desktop fallback): Material shared-axis fade-through —
+   quicker, no slide theatrics. */
+html.un-android[data-un-vt]::view-transition-old(root),
+html.un-android[data-un-vt]::view-transition-new(root),
+html.un-desktop[data-un-vt]::view-transition-old(root),
+html.un-desktop[data-un-vt]::view-transition-new(root) {
+  animation-duration: 240ms;
+}
+html.un-android[data-un-vt="push"]::view-transition-old(root),
+html.un-desktop[data-un-vt="push"]::view-transition-old(root) {
+  animation-name: un-vt-fade-out;
+}
+html.un-android[data-un-vt="push"]::view-transition-new(root),
+html.un-desktop[data-un-vt="push"]::view-transition-new(root) {
+  animation-name: un-vt-fade-up-in;
+}
+html.un-android[data-un-vt="pop"]::view-transition-old(root),
+html.un-desktop[data-un-vt="pop"]::view-transition-old(root) {
+  animation-name: un-vt-fade-down-out;
+}
+html.un-android[data-un-vt="pop"]::view-transition-new(root),
+html.un-desktop[data-un-vt="pop"]::view-transition-new(root) {
+  animation-name: un-vt-fade-in;
+}
+
+@keyframes un-vt-fade-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes un-vt-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes un-vt-fade-up-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes un-vt-fade-down-out {
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(10px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-un-vt]::view-transition-old(root),
+  html[data-un-vt]::view-transition-new(root) {
+    animation: none;
+  }
+}
+
+/* ── Safe areas ────────────────────────────────────────────────────────
+   Opt-in helpers for fixed bars on pages that set viewport-fit=cover.
+   Inside the Flutter shell env() reports whatever the WebView exposes —
+   if the shell already insets the WebView these resolve to 0 and are
+   no-ops, so they are safe in both hosts. */
+
+@supports (padding: env(safe-area-inset-top)) {
+  .un-safe-top {
+    padding-top: calc(env(safe-area-inset-top)) !important;
+  }
+  .un-safe-top-extend {
+    padding-top: calc(0.75rem + env(safe-area-inset-top)) !important;
+  }
+  .un-safe-bottom {
+    padding-bottom: calc(env(safe-area-inset-bottom)) !important;
+  }
+  .un-safe-bottom-extend {
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom)) !important;
+  }
+  .un-safe-x {
+    padding-left: calc(env(safe-area-inset-left)) !important;
+    padding-right: calc(env(safe-area-inset-right)) !important;
+  }
+}
+
+/* ── Spring tuner (?un-tune=1, demo/tuning aid) ───────────────────────── */
+
+.un-tuner {
+  position: fixed;
+  right: 8px;
+  bottom: 8px;
+  z-index: 99999;
+  width: 240px;
+  padding: 10px 12px;
+  border-radius: var(--un-radius);
+  background: rgba(10, 10, 20, 0.88);
+  color: #e7edf7;
+  font: 11px/1.6 ui-monospace, monospace;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.un-tuner label {
+  display: block;
+}
+.un-tuner input[type="range"] {
+  width: 100%;
+  display: block;
+  margin: 0 0 6px;
+}
