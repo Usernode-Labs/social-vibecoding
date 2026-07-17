@@ -1847,6 +1847,20 @@ function sessionRoutes(config) {
         send('phase', { phase });
       };
 
+      // Each status event is its own immutable system message. Declared
+      // OUTSIDE the try below so the catch can persist a turn-failure
+      // status — a live 'error' SSE event dies with the stream, and
+      // without a persisted row a mid-turn provider error looks like a
+      // silent turn after refresh.
+      const sendStatus = async (text, metadata) => {
+        send('status', { text, ...(metadata || {}) });
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [session.id, text, JSON.stringify(metadata || {})]
+        ).catch(() => {});
+      };
+
       // #249: first-message naming — a brand-new session (no title yet,
       // no PR) gets a readable display name from its opening ask, long
       // before any code lands. Fire-and-forget: the turn never waits on
@@ -1882,16 +1896,6 @@ function sessionRoutes(config) {
           res.end();
           return;
         }
-
-        // Each status event is its own immutable system message
-        const sendStatus = async (text, metadata) => {
-          send('status', { text, ...(metadata || {}) });
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-             VALUES ($1, 'system', $2, $3)`,
-            [session.id, text, JSON.stringify(metadata || {})]
-          ).catch(() => {});
-        };
 
         // Fable 5 classifier fallback: every fallback-served Mayor call
         // gets an admin record (log.warn + events row), but the in-chat
@@ -2184,13 +2188,11 @@ function sessionRoutes(config) {
             modelRefusal: { requested: selectedModel, category: refusalCategory },
           });
           mayor1.toolUses = [];
-        } else if (!mayorText1.trim() && mayor1.toolUses.length === 0) {
-          // Fallback text when the model jumps straight to a tool_use
-          // with no preamble — the user otherwise stares at a silent
-          // "Thinking…" until CC spins up, which looks broken.
-          mayorText1 = '_(Mayor returned no response — try sending again.)_';
-          send('token', { text: mayorText1 });
         }
+        // (The empty-reply fallback runs below, AFTER the suggestion
+        // resolution — a tool-only suggest_answers/suggest_replies reply
+        // is salvaged into visible text first, and only a turn that would
+        // still end with nothing visible gets the generic fallback.)
 
         // Defense in depth: if the Mayor wrote a fake "[CODING AGENT
         // COMPLETED]" marker into its plain-text reply WITHOUT actually
@@ -2224,6 +2226,36 @@ function sessionRoutes(config) {
         // Quick-reply pills (#285): dropped when a dispatch (regenerated in
         // phase-2 post-build) or suggest_answers (inline chips win) co-occurs.
         const quickReplies = resolveQuickReplies(mayor1.toolUses);
+
+        // Silent-turn guard (session 2383): a reply whose ENTIRE content is
+        // a suggest_answers/suggest_replies tool_use used to be dropped —
+        // the persist block below is text-gated, so the model's questions
+        // and chips vanished and the turn ended with nothing visible.
+        // Salvage the tool content into assistant text; if nothing is
+        // salvageable and no dispatch tool will produce output either
+        // (covers the data-tool-cap break leaving a dangling data call),
+        // substitute an explicit fallback so the turn never ends silently.
+        // Refusal turns are excluded — they already persisted a status.
+        if (!mayorText1.trim() && mayor1.stopReason !== 'refusal') {
+          const salvaged = salvageAssistantText(mayorText1, suggestions, quickReplies);
+          if (salvaged.trim()) {
+            mayorText1 = salvaged;
+            send('token', { text: mayorText1 });
+            log.warn('sessions', 'Mayor reply was tool-only — salvaged suggest content into text', {
+              sessionId: session.id,
+              stopReason: mayor1.stopReason,
+              toolNames: mayor1.toolUses.map((t) => t.name),
+            });
+          } else if (needsEmptyReplyFallback(mayorText1, mayor1.toolUses)) {
+            mayorText1 = '_The assistant ended its turn without a reply — please send your message again._';
+            send('token', { text: mayorText1 });
+            log.warn('sessions', 'Mayor turn produced no visible output — substituting fallback text', {
+              sessionId: session.id,
+              stopReason: mayor1.stopReason,
+              toolNames: mayor1.toolUses.map((t) => t.name),
+            });
+          }
+        }
 
         // Always debit the Mayor's phase-1 spend — even on tool-only
         // turns where mayorText1 is empty (the Anthropic call still
@@ -2545,6 +2577,19 @@ function sessionRoutes(config) {
         workerProgress.clear(session.id);
         log.error('sessions', 'Chat error', { message: err.message, stack: err.stack });
         send('error', { error: err.message });
+        // Persist the failure as a status row so it survives refresh —
+        // the 'error' event above is SSE-only and dies with the stream,
+        // which used to make a mid-turn provider error (429 rate limit,
+        // 529 overload) indistinguishable from a silent turn afterwards.
+        // A user-initiated stop is a deliberate end, not a failure — the
+        // stop paths persist their own "Stopped" status.
+        if (!stopHandle.stopped) {
+          const friendly = describeTurnError(err);
+          await sendStatus(
+            `This turn failed: ${friendly}${/[.!?]$/.test(friendly) ? '' : '.'} Send your message again to retry.`,
+            { turnError: true }
+          );
+        }
       } finally {
         // Clear the stop handle for this session only if it's still the
         // one we registered (another turn may have replaced it if the
@@ -3743,11 +3788,26 @@ async function runHeadlessSession({
       mayor1.toolUses = [];
     }
 
-    const mayorText1 = stripFakeCompletionMarker(mayor1.text, { sessionId: session.id });
+    let mayorText1 = stripFakeCompletionMarker(mayor1.text, { sessionId: session.id });
     // Q/A mode (#32): same suggestion handling as the interactive route —
     // persisted on the assistant row so the cloned session a human picks
     // up renders the answer chips. Dropped if a dispatch co-occurred.
     const { suggestions: headlessSuggestions } = resolveSuggestedAnswers(mayor1.toolUses);
+    // Silent-turn guard (mirrors the interactive handler): a lone
+    // suggest_answers with no text block must still leave the run a
+    // visible question — both for the cloned session and for the
+    // GitHub-issue comment posted from questionTextToPost below.
+    if (!mayorText1.trim() && mayor1.stopReason !== 'refusal') {
+      const salvaged = salvageAssistantText(mayorText1, headlessSuggestions, null);
+      if (salvaged.trim()) {
+        mayorText1 = salvaged;
+        log.warn('sessions', 'Headless Mayor reply was tool-only — salvaged suggest content into text', {
+          sessionId: session.id,
+          stopReason: mayor1.stopReason,
+          toolNames: mayor1.toolUses.map((t) => t.name),
+        });
+      }
+    }
     const servedModel1 = mayor1.servedModel || selectedModel;
     const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
     if (mayorText1.trim()) {
@@ -3770,6 +3830,17 @@ async function runHeadlessSession({
       // Pure text turn — the Mayor asked a question (or answered directly).
       // That IS the outcome; a human picks it up from a cloned session.
       outcome = 'question';
+      if (!mayorText1.trim() && mayor1.stopReason !== 'refusal') {
+        // Nothing visible at all (no text, nothing salvageable, no
+        // dispatch): persist an explicit note so the cloned session
+        // doesn't open onto silence. Refusals already persisted a status.
+        await sendStatus('The auto session ended its planning turn without a reply — re-run "Generate proposal" to retry.', { turnError: true });
+        log.warn('sessions', 'Headless Mayor turn produced no visible output — persisted fallback status', {
+          sessionId: session.id,
+          stopReason: mayor1.stopReason,
+          toolNames: mayor1.toolUses.map((t) => t.name),
+        });
+      }
       if (shouldPostHeadlessQuestionComment({ outcome, dispatchedTool: activeToolCall, mayorText: mayorText1 })) {
         questionTextToPost = mayorText1;
       }
@@ -4673,7 +4744,9 @@ const SUGGEST_ANSWERS_TOOL = {
     + 'Call this ONLY when your message asks clarifying questions per the CLARITY GATE — never on a normal reply, and NEVER alongside '
     + 'dispatch_scout or dispatch_claude_code (asking and dispatching in the same turn is forbidden; if both appear, the suggestions are dropped). '
     + 'Provide one entry per question, in the same order as the numbered questions in your text, with your suggested default FIRST. '
-    + 'Every answer must be a short (under 80 characters), self-contained reply the user could send verbatim.',
+    + 'Every answer must be a short (under 80 characters), self-contained reply the user could send verbatim. '
+    + 'The tool call renders NOTHING by itself — your response MUST also contain the questions as normal message text; '
+    + 'a tool-only response would show the user an empty reply.',
   input_schema: {
     type: 'object',
     properties: {
@@ -4766,7 +4839,9 @@ const SUGGEST_REPLIES_TOOL = {
     + 'Tapping a pill prefills the text box (the user can edit before sending), so each must read as a complete first-person message the user could send verbatim — e.g. "Preview the change", "Propose it to the group", "Make the button bigger". '
     + 'Call this on normal replies and post-build wrap-ups to offer the likely next step (built → preview / propose / tweak; spec drafted → build / revise; build running → check status / stop). '
     + 'Do NOT use this for formal clarifying questions — those use suggest_answers instead; never emit both in the same turn. '
-    + 'This does NOT count against the one-tool-per-message limit.',
+    + 'This does NOT count against the one-tool-per-message limit. '
+    + 'The tool call renders NOTHING by itself — always include normal message text in the same response; '
+    + 'a tool-only response would show the user an empty reply.',
   input_schema: {
     type: 'object',
     properties: {
@@ -4822,6 +4897,68 @@ function resolveQuickReplies(toolUses) {
   const hasSuggestAnswers = calls.some((t) => t && t.name === 'suggest_answers');
   if (hasDispatch || hasSuggestAnswers) return null;
   return sanitizeQuickReplies(repliesCall.input);
+}
+
+// Silent-turn salvage (session 2383): when the Mayor's reply is a lone
+// suggest_answers/suggest_replies tool_use with NO text block, the
+// content used to be dropped entirely (the persist path is text-gated)
+// and the turn ended with nothing visible. Synthesize assistant text
+// from the sanitized tool content instead: the questions become a
+// numbered message the answer chips attach to; bare pills get a short
+// generic line. Returns the original text untouched when it's non-empty,
+// and '' when there's nothing to salvage (caller falls through to the
+// generic empty-reply fallback). Exported for tests.
+function salvageAssistantText(mayorText, suggestions, quickReplies) {
+  if ((mayorText || '').trim()) return mayorText;
+  if (Array.isArray(suggestions) && suggestions.length) {
+    const labels = suggestions
+      .map((s) => (s && typeof s.question === 'string' ? s.question.trim() : ''))
+      .filter(Boolean);
+    if (labels.length) {
+      return labels.map((q, i) => `${i + 1}. ${q}`).join('\n');
+    }
+    // sanitizeSuggestedAnswers allows empty question labels when the
+    // answers themselves survived — the chips still render, so anchor
+    // them to a generic ask.
+    return 'I have a couple of clarifying questions — pick an answer below.';
+  }
+  if (Array.isArray(quickReplies) && quickReplies.length) {
+    return 'What would you like to do next?';
+  }
+  return '';
+}
+
+// Would the turn end with nothing visible? True when no text survived
+// (after salvage) AND no dispatch tool ran — a dispatch produces its own
+// persisted statuses plus a guaranteed phase-2 wrap-up, so it never needs
+// the fallback. Deliberately ignores whether OTHER tool_uses exist: a
+// dangling data call (the data-loop cap break) or an unusable suggest
+// call still leaves the user staring at silence. Exported for tests.
+function needsEmptyReplyFallback(mayorText, toolUses) {
+  if ((mayorText || '').trim()) return false;
+  const calls = Array.isArray(toolUses) ? toolUses : [];
+  return !calls.some((t) => t && (t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'));
+}
+
+// User-facing description of a mid-turn failure, persisted as a status
+// row by the chat handler's catch. Known provider failure modes get a
+// readable framing; everything else passes through the raw message (it
+// was already what the live 'error' event showed). Exported for tests.
+function describeTurnError(err) {
+  const message = String((err && err.message) || err || 'Unknown error');
+  const status = err && (err.status || err.statusCode);
+  if (status === 429) {
+    // The platform's own daily-limit message ("Daily limit reached
+    // ($20.00). Resets at midnight UTC.") is already user-readable —
+    // keep it verbatim; frame opaque provider 429s as rate limiting.
+    return /limit|budget/i.test(message)
+      ? message
+      : `The AI provider rate-limited this request: ${message}`;
+  }
+  if (status === 529 || /overloaded/i.test(message)) {
+    return 'The AI provider is overloaded right now — try again in a minute.';
+  }
+  return message;
 }
 
 // The Mayor's read-only DATA tools — resolved in-process and looped
@@ -6623,4 +6760,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, salvageAssistantText, needsEmptyReplyFallback, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER };
