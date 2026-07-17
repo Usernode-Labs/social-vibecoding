@@ -209,6 +209,39 @@ async function recordSpend(pool, userId, costCents, { byok = false } = {}) {
   }
 }
 
+// #664: turn-end settlement for a CC turn that may have SWITCHED payers
+// mid-flight. The worker Anthropic proxy falls back to the user's own
+// key per-call once the daily allowance is exhausted, so a single turn
+// can carry both platform-billed and BYOK-billed calls. Attributing the
+// whole turn to one bucket would either leak pre-switch platform spend
+// out of the capped bucket (ledger never reaches the cap → every turn
+// burns platform money before switching) or over-count the user's
+// key spend against their allowance. Split instead:
+//   turnByok: true  → the whole turn ran on the user's key (dispatch-time
+//     BYOK, proxy never involved) → all of it lands in the byok bucket.
+//   turnByok: false → platform-dispatched turn; `byokObservedCents` is
+//     the proxy's per-call tally of switched spend (an SSE-tee estimate,
+//     clamped to the turn total — CC's self-reported costUsd is the
+//     authoritative sum). Remainder is platform spend.
+// Returns { platformCents, byokCents } so call sites can emit per-bucket
+// usage events. Same swallow-and-log tolerance as recordSpend.
+async function settleTurnSpend(pool, userId, totalCents, { turnByok = false, byokObservedCents = 0 } = {}) {
+  const total = Number(totalCents);
+  if (!userId || !Number.isFinite(total) || !(total > 0)) {
+    return { platformCents: 0, byokCents: 0 };
+  }
+  if (turnByok) {
+    await recordSpend(pool, userId, total, { byok: true });
+    return { platformCents: 0, byokCents: total };
+  }
+  const observed = Number(byokObservedCents);
+  const byokCents = Math.min(Number.isFinite(observed) && observed > 0 ? observed : 0, total);
+  const platformCents = total - byokCents;
+  if (platformCents > 0) await recordSpend(pool, userId, platformCents, { byok: false });
+  if (byokCents > 0) await recordSpend(pool, userId, byokCents, { byok: true });
+  return { platformCents, byokCents };
+}
+
 // #361: gate for "may the platform incur another merge-conflict /
 // sync-resolution turn right now?". Reads today's accumulated
 // system-token spend and compares to the system cap. Returns
@@ -265,6 +298,7 @@ module.exports = {
   loadUserApiKey,
   resolveBillingPath,
   recordSpend,
+  settleTurnSpend,
   invalidate,
   KEY_USER,
   KEY_GLOBAL,

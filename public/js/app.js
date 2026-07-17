@@ -1015,6 +1015,16 @@ const App = {
         // Agent-suggested platform report (human gate) — see dev-chat.js.
         DevChat._pushPlatformIssueDraft(data);
         break;
+      case 'billing_switched':
+        // #664: the daily free allowance ran out mid-turn and the worker
+        // proxy switched the remaining calls onto the user's own key. The
+        // server already persisted the matching system row; render the
+        // notice live and refresh the meter so the "your key" split shows.
+        DevChat.messages.push({ role: 'system', content: data.text, billingSwitch: true, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });
+        DevChat.renderMessages();
+        DevChat.scrollToBottom();
+        DevChat.refreshBudget();
+        break;
       case 'staging_ready':
         DevChat._deactivateLastStatus();
         DevChat.messages.push({ role: 'system', content: 'Staging deployed!', stagingUrl: data.url, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8) });

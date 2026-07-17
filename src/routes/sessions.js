@@ -1683,7 +1683,10 @@ function sessionRoutes(config) {
       // the client can tell it apart from a chatLimiter throttle (#463).
       const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
       if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
-      const userApiKey = billing.apiKey;
+      // Mutable since #664: an expensive CC phase can exhaust the
+      // allowance mid-turn, so billing is re-resolved after the tool
+      // completes and the wrap-up phase bills the fresh payer.
+      let userApiKey = billing.apiKey;
 
       // #450: verify every attachment id is this user's, this session's,
       // and unlinked BEFORE inserting the message row (we're still in
@@ -2399,6 +2402,23 @@ function sessionRoutes(config) {
 
           ccLog = toolResult.ccLog;
           stagingUrl = toolResult.stagingUrl;
+        }
+
+        // #664: the dispatched phase may have drained the daily allowance.
+        // Re-resolve the payer so the wrap-up Mayor call (and its debit)
+        // bills the user's own key instead of silently overshooting the
+        // exhausted platform budget. Only relevant when the turn started
+        // platform-billed; an { error } (no headroom, no key) keeps the
+        // platform path — the wrap-up is cheap and ends the turn anyway.
+        if (!userApiKey) {
+          try {
+            const rebill = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
+            if (!rebill.error && rebill.apiKey) userApiKey = rebill.apiKey;
+          } catch (err) {
+            log.warn('sessions', 'Post-dispatch billing re-resolve failed (continuing platform-billed)', {
+              sessionId: session.id, err: err.message,
+            });
+          }
         }
 
         // --- Phase 2: Mayor wrap-up turn ---
@@ -3796,6 +3816,21 @@ async function runHeadlessSession({
         ? await runScoutTool({ ...toolArgs, headless: true })
         : await runClaudeCodeTool({ ...toolArgs, headless: true });
 
+      // #664: the dispatched phase may have drained the allowance — the
+      // later Mayor phases (decision turn, wrap-ups) bill the re-resolved
+      // payer. Mirrors the interactive chat handler; an { error } keeps
+      // the platform path (the wrap-up is cheap and ends the run).
+      if (!userApiKey) {
+        try {
+          const rebill = await limits.resolveBillingPath(pool, config.jwtSecret, user.id);
+          if (!rebill.error && rebill.apiKey) userApiKey = rebill.apiKey;
+        } catch (err) {
+          log.warn('sessions', 'Headless post-dispatch billing re-resolve failed (continuing platform-billed)', {
+            sessionId: session.id, err: err.message,
+          });
+        }
+      }
+
       if (toolResult.isError) {
         outcome = 'question';
       } else {
@@ -3951,6 +3986,18 @@ async function runHeadlessSession({
               buildResult = await runClaudeCodeTool({
                 ...toolArgs, userApiKey, toolPromptArg: buildPromptArg, headless: true,
               });
+              // #664: the build itself may have exhausted the allowance —
+              // re-resolve so the phase-3 wrap-up bills the fresh payer.
+              if (!userApiKey) {
+                try {
+                  const rebill = await limits.resolveBillingPath(pool, config.jwtSecret, user.id);
+                  if (!rebill.error && rebill.apiKey) userApiKey = rebill.apiKey;
+                } catch (err) {
+                  log.warn('sessions', 'Headless post-build billing re-resolve failed (continuing platform-billed)', {
+                    sessionId: session.id, err: err.message,
+                  });
+                }
+              }
             }
             // Build error degrades to 'spec' (NOT 'question' like the
             // phase-1 build path): the spec is the durable artifact and a
@@ -4244,6 +4291,9 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
     };
     const result = await worker.resumeTurnFromJournal(session.id, {
       journal: activeTurn.journal,
+      // #664: seed the per-turn BYOK tally from the persisted record so
+      // post-restart switched calls accumulate on top of pre-restart ones.
+      byokCentsSoFar: Number(activeTurn.byokCents || 0),
       onProgress: (text) => {
         broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text });
         progressLines.push(text);
@@ -4261,10 +4311,15 @@ async function resumeOneHeadlessRun({ pool, config, session }) {
     // invoice is paid whether or not the turn produced anything (same
     // rationale as the turn-end debit in runClaudeCodeTool). active_turn
     // rows persisted before the byok flag shipped fall back to
-    // key-on-file at resume time.
+    // key-on-file at resume time. #664: a platform-billed turn that
+    // switched onto the owner's key mid-run settles split across both
+    // buckets (getTurnByokCents covers pre- and post-restart spillover).
     if (result.costUsd) {
       const byok = activeTurn.byok ?? !!userApiKey;
-      await limits.recordSpend(pool, user.id, Math.round(result.costUsd * 100), { byok });
+      await limits.settleTurnSpend(pool, user.id, Math.round(result.costUsd * 100), {
+        turnByok: byok,
+        byokObservedCents: worker.getTurnByokCents(session.id),
+      });
     }
 
     const producedAnything = result.execExitSeen || result.resultSeen
@@ -5287,9 +5342,15 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
       // Scout costs land in the same llm_usage table as build dispatches —
-      // they're real Anthropic spend on the same daily budget.
-      await limits.recordSpend(pool, req.user.id, ccCostCents, { byok: !!userApiKey });
-      send('usage', { costCents: ccCostCents, model: `scout/${selectedModel}`, byok: !!userApiKey });
+      // they're real Anthropic spend on the same daily budget. #664: a
+      // platform-dispatched scout may have switched to the owner's key
+      // mid-turn — split the debit across both buckets accordingly.
+      const split = await limits.settleTurnSpend(pool, req.user.id, ccCostCents, {
+        turnByok: !!userApiKey,
+        byokObservedCents: worker.getTurnByokCents(session.id),
+      });
+      if (split.platformCents > 0) send('usage', { costCents: split.platformCents, model: `scout/${selectedModel}`, byok: false });
+      if (split.byokCents > 0) send('usage', { costCents: split.byokCents, model: `scout/${selectedModel}`, byok: true });
     }
   } finally {
     activeWorkers.delete(session.id);
@@ -6305,8 +6366,14 @@ path: /another/changed/view
     // debit BYOK runs against the platform limit by mistake).
     if (result.costUsd) {
       const ccCostCents = Math.round(result.costUsd * 100);
-      await limits.recordSpend(pool, req.user.id, ccCostCents, { byok: !!userApiKey });
-      send('usage', { costCents: ccCostCents, model: `claude-code/${selectedModel}`, byok: !!userApiKey });
+      // #664: split across buckets — the worker proxy may have switched
+      // this platform-dispatched turn onto the owner's key mid-run.
+      const split = await limits.settleTurnSpend(pool, req.user.id, ccCostCents, {
+        turnByok: !!userApiKey,
+        byokObservedCents: worker.getTurnByokCents(session.id),
+      });
+      if (split.platformCents > 0) send('usage', { costCents: split.platformCents, model: `claude-code/${selectedModel}`, byok: false });
+      if (split.byokCents > 0) send('usage', { costCents: split.byokCents, model: `claude-code/${selectedModel}`, byok: true });
     }
 
     if (ccText) {

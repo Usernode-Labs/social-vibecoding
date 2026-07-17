@@ -39,7 +39,7 @@ function stubModule(id, exports) {
 
 // Load ../src/routes/sessions fresh against a mock pool + stubbed
 // services. Captures every limits.recordSpend call into `spendCalls`.
-function loadSessions(mockPool, { recoveredResult, userKeyEnc, billing } = {}) {
+function loadSessions(mockPool, { recoveredResult, userKeyEnc, billing, turnByokCents } = {}) {
   const paths = {
     pool: require.resolve('../src/db/pool'),
     ws: require.resolve('../src/services/ws'),
@@ -89,6 +89,18 @@ function loadSessions(mockPool, { recoveredResult, userKeyEnc, billing } = {}) {
       recordSpend: async (_pool, userId, costCents, opts) => {
         spendCalls.push({ userId, costCents, byok: !!(opts && opts.byok) });
       },
+      // #664: the resume path settles through settleTurnSpend now —
+      // mirror the real split so bucket assertions stay meaningful.
+      settleTurnSpend: async (_pool, userId, totalCents, { turnByok = false, byokObservedCents = 0 } = {}) => {
+        if (!(totalCents > 0)) return { platformCents: 0, byokCents: 0 };
+        const byokCents = turnByok
+          ? totalCents
+          : Math.min(Math.max(byokObservedCents, 0), totalCents);
+        const platformCents = totalCents - byokCents;
+        if (platformCents > 0) spendCalls.push({ userId, costCents: platformCents, byok: false });
+        if (byokCents > 0) spendCalls.push({ userId, costCents: byokCents, byok: true });
+        return { platformCents, byokCents };
+      },
     })],
     [paths.events, stubModule(paths.events, {
       record: () => {},
@@ -100,6 +112,8 @@ function loadSessions(mockPool, { recoveredResult, userKeyEnc, billing } = {}) {
       ...require('../src/services/worker'),
       resumeTurnFromJournal: async () => recoveredResult,
       clearActiveTurn: async () => {},
+      // #664: proxy-observed BYOK spillover for the resumed turn.
+      getTurnByokCents: () => turnByokCents || 0,
     })],
     // Pretend decryption of the stored key always works in tests.
     [paths.secrets, stubModule(paths.secrets, {
@@ -201,9 +215,9 @@ async function waitFor(predicate, timeoutMs = 5000) {
 
 // Run the resume path to completion and return the recovered-cost debit
 // calls (the wrap-up Mayor debit is 0¢ in these tests; filter it out).
-async function runResume(activeTurn, { recoveredResult = RECOVERED, userKeyEnc = null, billing = null } = {}) {
+async function runResume(activeTurn, { recoveredResult = RECOVERED, userKeyEnc = null, billing = null, turnByokCents = 0 } = {}) {
   const pool = makeMockPool(makeSessionRow(activeTurn));
-  const loaded = loadSessions(pool, { recoveredResult, userKeyEnc, billing });
+  const loaded = loadSessions(pool, { recoveredResult, userKeyEnc, billing, turnByokCents });
   try {
     await loaded.subject.resumeHeadlessRuns({ jwtSecret: 'test' });
     assert.ok(await waitFor(() => pool.state.terminal), 'run reached a terminal state');
@@ -255,6 +269,18 @@ test('missing byok flag falls back to the resume-time payer: allowance headroom 
   );
   assert.equal(debits.length, 1);
   assert.deepEqual(debits[0], { userId: 7, costCents: 123, byok: false });
+});
+
+test('#664: a mid-turn payer switch splits the recovered cost across both buckets', async () => {
+  // active_turn.byok: false (platform dispatch) but the proxy observed
+  // 23¢ of spillover onto the owner's key before/after the restart.
+  const debits = await runResume(
+    { mode: 'scout', journal: '/home/node/.claude/turn-1.log', byok: false, byokCents: 23 },
+    { turnByokCents: 23 }
+  );
+  assert.equal(debits.length, 2);
+  assert.deepEqual(debits[0], { userId: 7, costCents: 100, byok: false });
+  assert.deepEqual(debits[1], { userId: 7, costCents: 23, byok: true });
 });
 
 test('zero recovered cost issues no debit', async () => {

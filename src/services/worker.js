@@ -930,7 +930,11 @@ async function execInWorker(sessionId, {
   // #361: record the in-flight turn's mode in the warm registry so the
   // Anthropic proxy can synchronously tell a sync turn from a build turn
   // and gate it against the system-token budget instead of the owner's.
-  _registryUpsert(sessionId, { inFlight: true, activeTurnMode: mode });
+  // #664: fresh per-turn BYOK spillover counters — see noteTurnByokSpend.
+  _registryUpsert(sessionId, {
+    inFlight: true, activeTurnMode: mode,
+    turnByokCents: 0, turnByokSwitched: false,
+  });
   await _persistActiveTurn(sessionId, {
     mode,
     journal,
@@ -981,6 +985,60 @@ async function execInWorker(sessionId, {
 function getActiveTurnMode(sessionId) {
   const meta = _warmRegistry.get(Number(sessionId));
   return (meta && meta.inFlight) ? (meta.activeTurnMode || null) : null;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// #664: per-turn BYOK spillover accounting
+// ──────────────────────────────────────────────────────────────────────
+//
+// The worker Anthropic proxy can switch a platform-dispatched turn onto
+// the owner's own key per-call once the daily allowance runs out. The
+// switched calls' observed costs accumulate here (registry, for the live
+// turn-end settlement) AND in chat_sessions.active_turn.byokCents (for
+// restart-resume — the SQL accumulate never clobbers pre-restart spend).
+// execInWorker resets both fields at dispatch; resumeTurnFromJournal
+// seeds them from the persisted record.
+
+// Record `cents` of BYOK-billed spend against the session's in-flight
+// turn. Fire-and-forget on the durable mirror: billing bookkeeping must
+// never fail the API call that incurred it.
+function noteTurnByokSpend(sessionId, cents) {
+  const sid = Number(sessionId);
+  if (!(cents > 0)) return;
+  const meta = _warmRegistry.get(sid);
+  _registryUpsert(sid, { turnByokCents: ((meta && meta.turnByokCents) || 0) + cents });
+  const pool = _getPoolSafe();
+  if (pool) {
+    pool.query(
+      `UPDATE chat_sessions
+         SET active_turn = jsonb_set(active_turn, '{byokCents}',
+           to_jsonb(COALESCE((active_turn->>'byokCents')::numeric, 0) + $1::numeric))
+       WHERE id = $2 AND active_turn IS NOT NULL`,
+      [cents, sid]
+    ).catch((err) => {
+      log.warn('worker', 'Failed to persist turn byok spend', { sessionId: sid, err: err.message });
+    });
+  }
+}
+
+// BYOK-billed cents the proxy observed for the session's most recent
+// turn. Read by the turn-end settlement (limits.settleTurnSpend) AFTER
+// execInWorker/resumeTurnFromJournal resolves — the registry entry
+// survives the turn's finally block, and the next dispatch resets it.
+function getTurnByokCents(sessionId) {
+  const meta = _warmRegistry.get(Number(sessionId));
+  return (meta && meta.turnByokCents) || 0;
+}
+
+// Flip the turn's "payer switched to BYOK" marker. Returns true exactly
+// once per turn (the false→true transition) so the proxy emits its
+// one-time in-chat notice on the first switched call only.
+function markTurnByokSwitched(sessionId) {
+  const sid = Number(sessionId);
+  const meta = _warmRegistry.get(sid);
+  if (meta && meta.turnByokSwitched) return false;
+  _registryUpsert(sid, { turnByokSwitched: true });
+  return true;
 }
 
 // ──────────────────────────────────────────────────────────────────────
@@ -1270,11 +1328,19 @@ async function syncUserAgentFiles(sessionId, files) {
 // post-turn processing and clearing chat_sessions.active_turn; this
 // just replays/follows the journal and returns the watch state, exactly
 // as if execInWorker had stayed attached the whole time.
-async function resumeTurnFromJournal(sessionId, { journal, onProgress } = {}) {
+async function resumeTurnFromJournal(sessionId, { journal, onProgress, byokCentsSoFar = 0 } = {}) {
   if (!journal) throw new Error('resumeTurnFromJournal: journal path required');
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerContainerName(sessionId);
-  _registryUpsert(sessionId, { inFlight: true, adopted: true });
+  // #664: seed the per-turn BYOK counters from the persisted active_turn
+  // record (callers pass active_turn.byokCents) so post-restart switched
+  // calls accumulate on top instead of restarting from zero, and the
+  // one-time switch notice doesn't re-fire for an already-switched turn.
+  const seedCents = Number(byokCentsSoFar) > 0 ? Number(byokCentsSoFar) : 0;
+  _registryUpsert(sessionId, {
+    inFlight: true, adopted: true,
+    turnByokCents: seedCents, turnByokSwitched: seedCents > 0,
+  });
   try {
     const state = newWatchState();
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
@@ -1601,6 +1667,11 @@ module.exports = {
   isInFlight,
   isWorkerExecuting,
   getActiveTurnMode,
+  // #664: per-turn BYOK spillover accounting (worker Anthropic proxy +
+  // turn-end settlement)
+  noteTurnByokSpend,
+  getTurnByokCents,
+  markTurnByokSwitched,
   // legacy / shared helpers
   watchWorker,
   listOrphanWorkers,
