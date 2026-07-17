@@ -38,6 +38,8 @@ const { debugRoutes } = require('./src/routes/debug');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
+const activeWorkersSvc = require('./src/services/active-workers');
+const turnWatchdog = require('./src/services/turn-watchdog');
 const sessionLifecycle = require('./src/services/session-lifecycle');
 const stagingRecovery = require('./src/services/staging-recovery');
 const limits = require('./src/services/limits');
@@ -1344,6 +1346,9 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // recoverSessions' staging heal picks the branch up. Clear the
     // record and let the user know.
     await worker.clearActiveTurn(sessionId);
+    // Terminal marker so the dead turn's progress card doesn't stay
+    // frozen on its last in-progress line ("Pushing", "Editing …").
+    await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', $2, $3)`,
@@ -1397,6 +1402,31 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
 // staging tail the live dev-turn path runs. `keepWorker` distinguishes
 // the long-lived warm contract (container stays adoptable) from the
 // legacy single-shot contract (container is reaped when done).
+// Append one line to the session's latest persisted progressLog row —
+// the same row flushProgress/onProgress write to. Used to stamp a
+// terminal marker ([interrupted] etc.) on turns whose journal can't
+// provide one, so the dev-chat progress card never ends frozen on an
+// in-progress label. Best-effort: a session with no progress row is a
+// clean no-op (the WHERE id subquery matches nothing).
+async function appendTerminalProgressLine(pool, sessionId, line) {
+  await pool.query(
+    `UPDATE chat_session_messages
+     SET metadata = jsonb_set(metadata, '{progressLog}',
+       (COALESCE(metadata->'progressLog', '[]'::jsonb) || $1::jsonb))
+     WHERE id = (
+       SELECT id FROM chat_session_messages
+       WHERE session_id = $2 AND role = 'system'
+         AND metadata->>'progressLog' IS NOT NULL
+       ORDER BY id DESC LIMIT 1
+     )`,
+    [JSON.stringify([line]), sessionId]
+  ).catch(() => {});
+}
+
+// Returns a terminal outcome for the recovered turn's progress card:
+// 'done' (turn wrapped up, including the no-changes case),
+// 'push_failed' (commit exists only in the worker — re-push heal failed),
+// or 'skip' (headless — owned by resumeHeadlessRuns).
 async function finalizeRecoveredTurn({
   config, pool, staging, session, sessionId, result, repoOwner, repoName,
   emit, containerName, keepWorker,
@@ -1410,7 +1440,7 @@ async function finalizeRecoveredTurn({
     log.info('server', 'Skipping recovered-turn finalize for headless session (owned by resumeHeadlessRuns)', {
       sessionId,
     });
-    return;
+    return 'skip';
   }
 
   // Capture the CC session id so the next turn can --resume, even though
@@ -1427,7 +1457,7 @@ async function finalizeRecoveredTurn({
   if (!hasChanges) {
     emit('status', { text: 'Recovered session produced no changes.' });
     if (!keepWorker) await worker.destroyWorker(containerName);
-    return;
+    return 'done';
   }
 
   // The turn committed locally (ahead/sha set) but the worker's
@@ -1466,7 +1496,7 @@ async function finalizeRecoveredTurn({
         ]
       ).catch(() => {});
       if (!keepWorker) await worker.destroyWorker(containerName);
-      return;
+      return 'push_failed';
     }
   }
 
@@ -1536,6 +1566,7 @@ async function finalizeRecoveredTurn({
   } finally {
     if (!keepWorker) await worker.destroyWorker(containerName);
   }
+  return 'done';
 }
 
 // Resume a detached CC turn after a restart. The turn kept running (or
@@ -1544,7 +1575,30 @@ async function finalizeRecoveredTurn({
 // 0 (rebuilding progress + result state), follows it live if the turn
 // is still going, then runs the standard post-turn tail. The warm
 // container stays registered for the session's next dispatch.
-async function resumeDetachedTurn({
+async function resumeDetachedTurn(args) {
+  const { pool, sessionId } = args;
+  // Register the whole recovery (journal tail + finalize's PR/staging
+  // work) in the shared activeWorkers set so the auto-pause/staging-GC
+  // sweepers see the session as busy — the sessions 2391/2386 incident
+  // was the sweeper pausing sessions and destroying their workers in
+  // the window between the journal tail ending and finalize completing.
+  activeWorkersSvc.activeWorkers.add(sessionId);
+  try {
+    return await resumeDetachedTurnInner(args);
+  } finally {
+    activeWorkersSvc.activeWorkers.delete(sessionId);
+    // Turn completion counts as activity: give the freshly recovered
+    // session a full idle window instead of leaving last_activity_at at
+    // the pre-restart user message (which made it instantly pause-
+    // eligible the moment the busy guard dropped).
+    await pool.query(
+      `UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = $1`,
+      [sessionId]
+    ).catch(() => {});
+  }
+}
+
+async function resumeDetachedTurnInner({
   config, pool, staging, broadcastGlobal, session, sessionId,
   containerName, activeTurn,
 }) {
@@ -1599,6 +1653,18 @@ async function resumeDetachedTurn({
   } catch (err) {
     log.warn('server', 'Detached-turn resume failed', { sessionId, err: err.message });
     await worker.clearActiveTurn(sessionId);
+    // Terminal marker: the card must not stay frozen on the last line
+    // the journal managed to deliver before the resume died. When the
+    // replay produced no lines at all, append to the persisted row
+    // instead — a wholesale flush of just ['[interrupted]'] would wipe
+    // the log the pre-restart process already persisted.
+    emit('cc_progress', { text: '[interrupted]' });
+    if (progressLines.length) {
+      turnWatchdog.appendTerminalLine(progressLines, '[interrupted]');
+      flushProgress();
+    } else {
+      await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
+    }
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', $2, $3)`,
@@ -1634,6 +1700,10 @@ async function resumeDetachedTurn({
     });
   }
 
+  // Terminal marker for the progress card: pessimistic default so a
+  // throw anywhere below still stamps [interrupted]; the happy paths
+  // overwrite it with [done] / [push_failed] before the finally runs.
+  let terminalLine = '[interrupted]';
   try {
     if (activeTurn.mode === 'scout') {
       // Scout turns push nothing — their product is the spec text.
@@ -1669,13 +1739,15 @@ async function resumeDetachedTurn({
           [newCcId, sessionId]
         ).catch(() => {});
       }
+      terminalLine = '[done]';
     } else {
-      await finalizeRecoveredTurn({
+      const finalizeOutcome = await finalizeRecoveredTurn({
         config, pool, staging, session, sessionId, result, repoOwner, repoName,
         emit, containerName,
         // Warm contract: the container outlives the turn.
         keepWorker: true,
       });
+      terminalLine = finalizeOutcome === 'push_failed' ? '[push_failed]' : '[done]';
     }
     // The dead SSE's Mayor phase-2 narration can't be resumed (matches
     // pre-existing recovery semantics) — drop a breadcrumb instead.
@@ -1707,6 +1779,13 @@ async function resumeDetachedTurn({
       });
     }
   } finally {
+    // Stamp the terminal marker on the rebuilt log (dedup: journals from
+    // new worker images already end with their own [done]/[push_failed])
+    // so the collapsed card label can't stay frozen on "Pushing".
+    if (turnWatchdog.appendTerminalLine(progressLines, terminalLine)) {
+      emit('cc_progress', { text: terminalLine });
+    }
+    flushProgress();
     await worker.clearActiveTurn(sessionId);
   }
 }
@@ -1810,18 +1889,24 @@ function startSessionAutoPauseSweeper(config) {
 
     // Pass 1: auto-pause idle 'active' sessions (worker + slot only;
     // staging is left up for the cheap-resume window). Never pause a
-    // session mid-turn.
+    // session mid-turn: `active_turn IS NULL` excludes detached turns at
+    // the SQL level (the watchdog pass below reaps stale rows, so this
+    // can't block pausing forever), and isSessionBusy covers the whole
+    // in-process window including the post-exec PR/staging tail — the
+    // bare isInFlight check used to miss that tail and paused sessions
+    // mid-wrap-up (sessions 2391/2386).
     try {
       const { rows } = await pool.query(
         `SELECT id FROM chat_sessions
          WHERE status = 'active'
+           AND active_turn IS NULL
            AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
          ORDER BY last_activity_at ASC
          LIMIT 50`,
         [config.sessionAutopauseIdleMs]
       );
       for (const row of rows) {
-        if (worker.isInFlight(row.id)) continue;
+        if (activeWorkersSvc.isSessionBusy(row.id)) continue;
         try {
           await sessionLifecycle.pauseSession({ pool, sessionId: row.id, reason: 'auto-idle' });
         } catch (err) {
@@ -1848,7 +1933,7 @@ function startSessionAutoPauseSweeper(config) {
           [config.stagingIdleTeardownMs]
         );
         for (const row of rows) {
-          if (worker.isInFlight(row.id)) continue;
+          if (activeWorkersSvc.isSessionBusy(row.id)) continue;
           try {
             await sessionLifecycle.teardownStagingForSession({ pool, sessionId: row.id, reason: 'idle-gc' });
           } catch (err) {
@@ -1858,6 +1943,80 @@ function startSessionAutoPauseSweeper(config) {
       } catch (err) {
         log.warn('server', 'Staging GC sweep failed', { err: err.message });
       }
+    }
+
+    // Stale active_turn watchdog: an active_turn row whose session is
+    // not busy in-process is orphaned — in healthy operation dispatch
+    // holds the warm-registry inFlight flag and the recovery flows hold
+    // activeWorkers for their full duration, so no live consumer means
+    // the process that owned the turn died (e.g. a crash between boot
+    // adoption and finalize). Left alone it looks "working" forever and
+    // (with Pass 1's active_turn guard) blocks auto-pause. Reap it:
+    // clear the record, stamp the progress card [interrupted], tell the
+    // user to retry, and notify like any other finished turn. The pure
+    // reap/skip policy lives in services/turn-watchdog.js.
+    try {
+      const { rows } = await pool.query(
+        `SELECT id, user_id, app_id, active_turn FROM chat_sessions
+         WHERE active_turn IS NOT NULL
+         ORDER BY (active_turn->>'startedAt') ASC NULLS FIRST
+         LIMIT 20`
+      );
+      const nowMs = Date.now();
+      const { broadcastGlobal } = require('./src/services/ws');
+      for (const row of rows) {
+        const busy = activeWorkersSvc.isSessionBusy(row.id);
+        // Cheap pre-filter (no docker probe): fresh or busy rows skip.
+        if (turnWatchdog.classifyStaleTurn({
+          activeTurn: row.active_turn, nowMs, busy, executing: false,
+        }) !== 'reap') continue;
+        // Only now pay for the container probe. A live (or unobservable)
+        // detached exec is left strictly alone — boot recovery or the
+        // next dispatch will consume its journal.
+        const executing = await worker.isWorkerExecuting(worker.workerContainerName(row.id));
+        const verdict = turnWatchdog.classifyStaleTurn({
+          activeTurn: row.active_turn, nowMs, busy, executing,
+        });
+        if (verdict !== 'reap') {
+          log.warn('server', 'Stale active_turn has a live/unobservable exec — leaving for recovery', {
+            sessionId: row.id, executing, startedAt: row.active_turn?.startedAt || null,
+          });
+          continue;
+        }
+        try {
+          log.warn('server', 'Reaping orphaned active_turn', {
+            sessionId: row.id, startedAt: row.active_turn?.startedAt || null,
+          });
+          await worker.clearActiveTurn(row.id);
+          await appendTerminalProgressLine(pool, row.id, '[interrupted]');
+          const msg = 'This coding turn was interrupted and could not be recovered — please retry your request.';
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+             VALUES ($1, 'system', $2, $3)`,
+            [row.id, msg, JSON.stringify({})]
+          ).catch(() => {});
+          broadcastGlobal({ type: 'session_event', sessionId: row.id, event: 'status', text: msg });
+          // Same "the owner cannot have watched this finish" rationale as
+          // the recovered-turn notify block in resumeDetachedTurn.
+          try {
+            const notifications = require('./src/services/notifications');
+            await pool.query(
+              `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
+              [row.id]
+            ).catch(() => {});
+            const created = await notifications.createSessionDoneNotification(pool, {
+              userId: row.user_id, appId: row.app_id, sessionId: row.id,
+            });
+            if (created.length) await notifications.hydrateAndPush(pool, created[0]);
+          } catch (err) {
+            log.warn('server', 'stale-turn reap notify failed', { sessionId: row.id, err: err.message });
+          }
+        } catch (err) {
+          log.warn('server', 'Stale active_turn reap failed', { sessionId: row.id, err: err.message });
+        }
+      }
+    } catch (err) {
+      log.warn('server', 'Stale active_turn watchdog sweep failed', { err: err.message });
     }
 
     // Pass 3: staging heal. The flip side of Pass 2 — rebuild the staging

@@ -112,6 +112,24 @@ test('ccPhaseLabel: unknown phases fall back to the raw phase text', () => {
   assert.equal(ccPhaseLabel('warm-ready'), 'warm-ready');
 });
 
+test('ccPhaseLabel: terminal markers map to terminal labels', () => {
+  assert.equal(ccPhaseLabel('done'), 'Finished');
+  assert.equal(ccPhaseLabel('push_failed'), 'Push failed');
+  assert.equal(ccPhaseLabel('interrupted'), 'Interrupted');
+});
+
+test('summarizeCcProgress: a log ending in [done] shows Finished, never a frozen verb', () => {
+  const { currentLabel } = summarizeCcProgress([
+    'Editing src/server.js',
+    '[commit]',
+    '[push]',
+    '[done]',
+  ]);
+  assert.equal(currentLabel, 'Finished');
+  assert.equal(summarizeCcProgress(['[push]', '[push_failed]']).currentLabel, 'Push failed');
+  assert.equal(summarizeCcProgress(['[push]', '[interrupted]']).currentLabel, 'Interrupted');
+});
+
 test('summarizeCcProgress: thinking lines are label candidates but not steps', () => {
   const { currentLabel, steps } = summarizeCcProgress([
     'Reading public/index.html',

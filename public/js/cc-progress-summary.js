@@ -60,6 +60,13 @@ function ccPhaseLabel(phase) {
   if (p === 'refresh') return 'Syncing branch';
   if (p === 'commit') return 'Committing';
   if (p === 'push') return 'Pushing';
+  // Terminal markers: run-cc.sh emits done/push_failed at the end of a
+  // turn, and the server appends done/push_failed/interrupted on the
+  // recovery/error paths — so the collapsed progress card always ends
+  // on a terminal label instead of freezing on "Pushing".
+  if (p === 'done') return 'Finished';
+  if (p === 'push_failed') return 'Push failed';
+  if (p === 'interrupted') return 'Interrupted';
   return p;
 }
 
