@@ -412,6 +412,25 @@ const AppView = {
       return;
     }
 
+    // Offline mode (#487): the running app lives on its own subdomain —
+    // a different origin the platform's service worker can't cache — so
+    // offline the iframe would render a broken frame. Show a placeholder
+    // instead and re-render automatically once connectivity returns.
+    if (window.Offline && Offline.isOffline()) {
+      content.innerHTML = `
+        <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
+          <p class="text-sm">This app needs a connection — reconnect to open it.</p>
+        </div>`;
+      const retry = (ev) => {
+        if (ev.detail && ev.detail.offline) return;
+        window.removeEventListener('usernode:offline-change', retry);
+        // Only re-render if this app's App tab is still what's on screen.
+        if (AppView.appData === appData) AppView.renderAppTab();
+      };
+      window.addEventListener('usernode:offline-change', retry);
+      return;
+    }
+
     const appUrl = resolveDevHost(appData.url);
     const iframeSrc = AppView.iframeToken
       ? `${appUrl}?token=${AppView.iframeToken}`
