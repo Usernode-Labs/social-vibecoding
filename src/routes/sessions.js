@@ -33,6 +33,10 @@ const attachmentsSvc = require('../services/attachments');
 const appAccess = require('../services/app-access');
 const userAgentFiles = require('../services/user-agent-files');
 const debugAccess = require('../services/debug-access');
+// Backs the Mayor's get_prod_status data tool (admin sessions on the
+// self-edit app only). Called through the module object so tests can
+// stub gather().
+const statusSvc = require('../services/status');
 const { announceIssueCreated } = require('../services/issue-announce');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
@@ -2008,7 +2012,21 @@ function sessionRoutes(config) {
         } catch (err) {
           log.warn('sessions', 'Agent-files metadata load failed (continuing without block)', { sessionId: session.id, err: err.message });
         }
-        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock, agentFilesBlock);
+        // Prod-debug awareness for the Mayor (#616 follow-up): admin-owned
+        // sessions on the self-edit app get an awareness block in the
+        // system prompt plus the get_prod_status data tool. Checked fresh
+        // per turn (admin revocation takes effect on the next message) and
+        // reused for the phase-2 rebuild below. Failure means no awareness
+        // — never a failed turn (mirrors the dispatch-site checks).
+        let prodDebugEligible = false;
+        try {
+          prodDebugEligible = await debugAccess.isEligible(pool, session.id);
+        } catch (err) {
+          log.warn('sessions', 'Prod-debug eligibility check failed (Mayor turn continues without)', {
+            sessionId: session.id, err: err.message,
+          });
+        }
+        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock, agentFilesBlock, prodDebugEligible);
         const messages = buildMayorMessages(history, historyAttachments);
 
         if (!llm.isEnabled()) {
@@ -2044,9 +2062,18 @@ function sessionRoutes(config) {
         // suggest_answers (#32) rides along in BOTH branches — it's not a
         // dispatch, so asking clarifying questions with tappable answers
         // is fine even while a worker is busy.
+        // get_prod_status is offered ONLY on prod-debug-eligible sessions
+        // (admin owner + self-edit app) — ineligible Mayors never see the
+        // tool, matching the prompt-block gating. Like the other data
+        // tools it stays available while a worker is busy: it's read-only
+        // and cheap.
+        const dataTools = [
+          LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL,
+          ...(prodDebugEligible ? [GET_PROD_STATUS_TOOL] : []),
+        ];
         const tools = isWorkerBusy
-          ? [SUGGEST_ANSWERS_TOOL, SUGGEST_REPLIES_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL]
-          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, SUGGEST_ANSWERS_TOOL, SUGGEST_REPLIES_TOOL, LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL];
+          ? [SUGGEST_ANSWERS_TOOL, SUGGEST_REPLIES_TOOL, ...dataTools]
+          : [DISPATCH_TOOL, DISPATCH_SCOUT_TOOL, SUGGEST_ANSWERS_TOOL, SUGGEST_REPLIES_TOOL, ...dataTools];
 
         setPhase('mayor1');
         let mayor1;
@@ -2129,7 +2156,7 @@ function sessionRoutes(config) {
 
             await sendStatus(dataToolStatusLine(dataCalls));
             const dataResults = await Promise.all(
-              dataCalls.map((tc) => resolveDataToolResult(tc, repoOwner, repoName))
+              dataCalls.map((tc) => resolveDataToolResult(tc, repoOwner, repoName, { pool, config, sessionId: session.id }))
             );
             mayorConvo = [
               ...mayorConvo,
@@ -2483,7 +2510,7 @@ function sessionRoutes(config) {
             phase2ToolResults.push({
               type: 'tool_result',
               tool_use_id: tu.id,
-              content: await resolveDataToolResult(tu, repoOwner, repoName),
+              content: await resolveDataToolResult(tu, repoOwner, repoName, { pool, config, sessionId: session.id }),
             });
           } else {
             phase2ToolResults.push({
@@ -2521,7 +2548,7 @@ function sessionRoutes(config) {
         // Same open-proposals block as phase-1 so the wrap-up turn sees a
         // consistent prompt (the instruction is scoped to "before
         // dispatching", so it's inert after a tool has already run).
-        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock, agentFilesBlock);
+        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock, agentFilesBlock, prodDebugEligible);
         const mayor2 = await llm.streamChat({
           messages: followUpMessages,
           systemPrompt: mayorPrompt,
@@ -4814,6 +4841,33 @@ const WEB_FETCH_TOOL = {
   },
 };
 
+// Fourth data tool (#616 follow-up): a read-only production health
+// snapshot for the Mayor, offered ONLY on prod-debug-eligible sessions
+// (admin owner + self-edit app — same gating as the agents' usernode-debug
+// CLI). Resolves in-process via statusSvc.gather({ isAdmin: true }) plus
+// the redacted platform log ring — the same payload `usernode-debug
+// status` gives dispatched agents. Deliberately the ONLY prod-debug
+// Mayor tool: SQL and container logs stay agent-side (dispatch_scout),
+// matching the Mayor's PM altitude.
+const GET_PROD_STATUS_TOOL = {
+  name: 'get_prod_status',
+  description:
+    'Fetch a read-only health snapshot of the LIVE PRODUCTION platform deployment (admin-only). '
+    + 'Returns JSON `{ status, recentLog }` — stuck/active sessions, warm workers, staging containers, '
+    + 'budgets, deploy state, plus recent platform log events — or `{ status: null, note }` when it '
+    + 'cannot be fetched. '
+    + 'Call it when the user asks about current production health ("is anything stuck?", "how is the '
+    + 'platform doing?") or before writing a dispatch prompt about a production problem, so your answer '
+    + 'reflects real production state. '
+    + 'It only READS a fixed snapshot — it cannot fix anything, run SQL, or read container logs; for '
+    + 'deeper digging dispatch the scout with a prod-debug-directed prompt. Takes no input. '
+    + 'Every call is audit-logged.',
+  input_schema: {
+    type: 'object',
+    properties: {},
+  },
+};
+
 // Q/A mode (#32): structured suggested answers attached to the Mayor's
 // clarifying questions. NOT a dispatch — the turn still ends as a plain
 // question turn. The input is sanitized server-side
@@ -5046,7 +5100,10 @@ function describeTurnError(err) {
 
 // The Mayor's read-only DATA tools — resolved in-process and looped
 // back as tool_results (unlike the terminal dispatch tools).
-const DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue', 'web_fetch']);
+// get_prod_status is in the set so the loop services it, but the tool
+// itself is only OFFERED on prod-debug-eligible sessions (see the
+// tools-array construction in the chat handler).
+const DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue', 'web_fetch', 'get_prod_status']);
 
 // Cap on how many consecutive data-tool fetches we'll service
 // within a single Mayor turn before forcing the model to move on. Bounds
@@ -5099,9 +5156,65 @@ async function resolveWebFetchToolResult(rawUrl) {
   return JSON.stringify(await webFetch.fetchUrl(rawUrl));
 }
 
+// Byte cap on the get_prod_status tool_result. The admin status payload
+// plus the log ring can get large; the Mayor only needs the headline
+// numbers, so we bound what enters its context.
+const PROD_STATUS_MAX_BYTES = 24 * 1024;
+
+// Resolve a get_prod_status tool call (#616 follow-up): the admin
+// status payload + the redacted platform log ring, the same snapshot
+// `usernode-debug status` serves dispatched agents. Never throws —
+// failures come back as { status: null, note } and the Mayor reasons
+// with the note. Defense in depth: eligibility is re-checked here at
+// resolution time, so a mid-turn admin revocation (or a stale replay)
+// yields a not_eligible note instead of production state.
+async function resolveProdStatusToolResult({ pool, config, sessionId }) {
+  let check;
+  try {
+    check = await debugAccess.checkSessionEligibility(pool, sessionId);
+  } catch (err) {
+    log.warn('prod-debug', 'Mayor status snapshot eligibility check failed', {
+      sessionId, err: err.message,
+    });
+    return JSON.stringify({ status: null, note: 'eligibility check failed' });
+  }
+  if (!check.eligible) {
+    log.warn('prod-debug', 'Mayor status snapshot rejected — session not eligible', { sessionId });
+    return JSON.stringify({ status: null, note: 'not_eligible' });
+  }
+  // Audit trail before executing, same shape as the internal prod-debug
+  // routes' per-call lines.
+  log.info('prod-debug', 'Mayor status snapshot', { sessionId, ownerId: check.ownerId });
+  try {
+    const status = await statusSvc.gather(config, { isAdmin: true });
+    let out = JSON.stringify({ status, recentLog: log.tail(100) });
+    if (out.length > PROD_STATUS_MAX_BYTES) {
+      // The log ring is the bulkiest, least structured part — drop it
+      // first and only then hard-truncate (leaving JSON invalid past the
+      // marker is acceptable: the note tells the model what happened).
+      out = JSON.stringify({ status, recentLog: [], note: 'recentLog omitted — payload too large' });
+    }
+    if (out.length > PROD_STATUS_MAX_BYTES) {
+      out = `${out.slice(0, PROD_STATUS_MAX_BYTES)}… [truncated]`;
+    }
+    return out;
+  } catch (err) {
+    log.warn('prod-debug', 'Mayor status snapshot failed', { sessionId, err: err.message });
+    return JSON.stringify({ status: null, note: `status unavailable: ${err.message}` });
+  }
+}
+
 // Route one data tool_use to its resolver. Callers guard on
-// DATA_TOOL_NAMES so `tu.name` is always one of the three.
-function resolveDataToolResult(tu, repoOwner, repoName) {
+// DATA_TOOL_NAMES so `tu.name` is always one of the four. `prodCtx`
+// ({ pool, config, sessionId }) is only passed by the interactive chat
+// handler — call sites that never offer get_prod_status (headless) omit
+// it, and a get_prod_status call without it resolves to not_eligible.
+function resolveDataToolResult(tu, repoOwner, repoName, prodCtx = null) {
+  if (tu.name === 'get_prod_status') {
+    return prodCtx
+      ? resolveProdStatusToolResult(prodCtx)
+      : Promise.resolve(JSON.stringify({ status: null, note: 'not_eligible' }));
+  }
   if (tu.name === 'web_fetch') {
     return resolveWebFetchToolResult(tu.input && tu.input.url);
   }
@@ -5114,6 +5227,9 @@ function resolveDataToolResult(tu, repoOwner, repoName) {
 // shows the hostname (not the full URL — the persisted system row stays
 // tidy); issue calls keep the historical wording.
 function dataToolStatusLine(calls) {
+  if (calls.some((tc) => tc.name === 'get_prod_status')) {
+    return 'Checking production status...';
+  }
   const wf = calls.find((tc) => tc.name === 'web_fetch');
   if (wf) {
     try {
@@ -6638,7 +6754,11 @@ path: /another/changed/view
   return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
 }
 
-function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '') {
+// `prodDebug` (default false — headless call sites never set it): the
+// session passed debugAccess.isEligible this turn, so append the
+// prod-debug awareness block. Ineligible Mayors never see it, same
+// secrecy posture as the agent-side promptBlock injection.
+function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false) {
   const specIsEmpty = !((currentSpec || '').trim());
 
   const toolNote = isWorkerBusy
@@ -6770,7 +6890,7 @@ Some assistant turns in this conversation contain "${CODING_AGENT_COMPLETED_MARK
 
 You MUST NOT, under any circumstances:
 - Write the literal string "${CODING_AGENT_COMPLETED_MARKER}" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
-- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prBlock}${openProposalsBlock || ''}${agentFilesBlock || ''}${specBlock}`;
+- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prodDebug ? debugAccess.mayorPromptBlock() : ''}${prBlock}${openProposalsBlock || ''}${agentFilesBlock || ''}${specBlock}`;
 }
 
 async function getFilesFromContainer(appSlug) {
@@ -6916,4 +7036,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, salvageAssistantText, needsEmptyReplyFallback, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, salvageAssistantText, needsEmptyReplyFallback, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };

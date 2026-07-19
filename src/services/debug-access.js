@@ -325,6 +325,29 @@ function promptBlock() {
 All output is JSON. This access is strictly READ-ONLY — writes are structurally impossible — and credential-bearing tables/columns (passwords, API keys, tokens, app secrets) are excluded at the database-grant level; do not attempt to read secrets or modify production state. Every call is audit-logged.`;
 }
 
+// Mayor-facing awareness block: appended to the Mayor system prompt
+// ONLY when the session is prod-debug eligible (same gating as
+// promptBlock above — ineligible Mayors must never learn the
+// capability exists). Kept here beside promptBlock so the two
+// capability descriptions stay in sync. Starts with the blank lines
+// the prompt-assembly concatenation expects (mirrors
+// getSelfHostedRefuseList in services/prompts.js).
+function mayorPromptBlock() {
+  return `
+
+==== PRODUCTION DEBUG (admin session on the self-edit app) ====
+
+This session qualifies for read-only production debugging: the session owner is an admin and this app is the platform itself. What that means for you:
+
+- Any scout or coding agent you dispatch gets a read-only \`usernode-debug\` CLI against the LIVE PRODUCTION deployment: \`sql\` (read-only queries on the production platform database), \`containers\` (container list with memory/CPU), \`logs <container>\` (recent log lines), and \`status\` (health snapshot plus recent platform log events). When the user reports a production problem — a stuck session, a failed merge, a broken app, resource issues — your dispatch prompt SHOULD explicitly direct the agent to inspect live production state FIRST instead of guessing from source, naming the relevant starting points: \`chat_sessions\` (incl. \`active_turn\`), \`merge_debug_runs\` / \`merge_debug_steps\` (step-by-step traces of every merge attempt), \`events\`, \`llm_usage\`, container logs.
+- YOU have a \`get_prod_status\` data tool: a quick, inline production health snapshot (stuck sessions, warm workers, staging, budgets, recent platform log events). Call it to answer questions like "is anything stuck right now?" or "how's the platform doing?" directly in chat. For anything deeper — SQL queries, container logs — dispatch the scout with a prod-debug-directed prompt rather than guessing, and say that's what you're doing.
+- Admin pages worth pointing the user at when they fit the question: /debug (step-by-step merge traces), /status (the health dashboard; admins see the full view), /admin (users, limits, codes).
+
+Everything here is strictly READ-ONLY and audit-logged; credential-bearing data (passwords, API keys, tokens, app secrets) is structurally unreadable. Never present these capabilities as available to non-admins or on other apps.
+
+==== END PRODUCTION DEBUG ====`;
+}
+
 module.exports = {
   ROLE,
   ensureRole,
@@ -333,6 +356,7 @@ module.exports = {
   checkSessionEligibility,
   isEligible,
   promptBlock,
+  mayorPromptBlock,
   isAllowedLogContainer,
   clampTail,
   MAX_LOG_BYTES,
