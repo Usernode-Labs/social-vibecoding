@@ -2258,6 +2258,89 @@ function sessionRoutes(config) {
         // phase-2 post-build) or suggest_answers (inline chips win) co-occurs.
         const quickReplies = resolveQuickReplies(mayor1.toolUses);
 
+        // Data-informed silent turn (session 2426): the model serviced one
+        // or more data tools this turn (e.g. get_prod_status), then ended
+        // tool-only — the findings it fetched would be silently discarded
+        // (the salvage below can only anchor chips with a generic line, not
+        // reconstruct the findings). Re-prompt ONCE — the tool results are
+        // still in mayorConvo, so a short continuation with tool_choice
+        // 'none' usually recovers the summary as plain text. When that
+        // ALSO yields nothing, the salvage below substitutes an explicit
+        // "fetched but failed to summarize" line instead of the generic
+        // chip anchor, so the failure isn't masked.
+        let dataSummaryFailed = false;
+        if (!mayorText1.trim() && mayor1.stopReason !== 'refusal'
+            && shouldRepromptForDataSummary(mayorText1, mayor1.toolUses, dataIters, mayor1.rawContent)) {
+          dataSummaryFailed = true;
+          // Bill the tool-only response now, like the intermediate
+          // data-loop iterations — the phase-1 accounting below prices
+          // mayor1.usage, which the retry's usage replaces on success.
+          const servedModelBase = mayor1.servedModel || selectedModel;
+          if (mayor1.usage) {
+            const baseCost = llm.estimateCostCents(mayor1.usage, servedModelBase);
+            await limits.recordSpend(pool, req.user.id, baseCost, { byok: !!userApiKey });
+            send('usage', { costCents: baseCost, model: servedModelBase, byok: !!userApiKey });
+          }
+          // Seal the (empty) bubble so the retry's tokens land in a fresh
+          // one below the status line, mirroring the data-loop flow.
+          send('assistant_message_end', {});
+          await sendStatus('Writing up what the data showed...');
+          try {
+            const retry = await llm.streamChat({
+              messages: [...mayorConvo, ...buildDataSummaryReprompt(mayor1.rawContent, mayor1.toolUses)],
+              systemPrompt: mayorPrompt,
+              model: selectedModel,
+              // Same tool defs (the convo carries tool_use blocks) but
+              // hard-disabled: this call must produce text, not chips.
+              tools,
+              toolChoice: { type: 'none' },
+              signal: stopHandle.abort.signal,
+              onToken: (text) => send('token', { text }),
+              apiKey: userApiKey,
+            });
+            await noteModelFallback(retry);
+            const retryText = retry.stopReason === 'refusal'
+              ? ''
+              : stripFakeCompletionMarker(retry.text, { sessionId: session.id });
+            if (retryText.trim()) {
+              // Adopt the retry's text + usage as the phase-1 reply.
+              // toolUses/rawContent keep the ORIGINAL reply's blocks so
+              // the already-resolved suggestions/quickReplies and the
+              // terminal-tool selection below are unaffected.
+              mayorText1 = retryText;
+              mayor1.usage = retry.usage || mayor1.usage;
+              mayor1.servedModel = retry.servedModel || mayor1.servedModel;
+              dataSummaryFailed = false;
+              log.info('sessions', 'Mayor data-summary re-prompt recovered text', {
+                sessionId: session.id,
+                textLen: retryText.length,
+              });
+            } else {
+              log.warn('sessions', 'Mayor data-summary re-prompt still produced no text', {
+                sessionId: session.id,
+                stopReason: retry.stopReason,
+              });
+            }
+          } catch (err) {
+            if (stopHandle.stopped) {
+              const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
+              await sendStatus(`Stopped${byStr}.`);
+              send('stopped', { phase: 'mayor1', by: stopHandle.stoppedBy });
+              send('done', {});
+              res.end();
+              if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+              setTimeout(() => sessionBus.clearSession(session.id), 30000);
+              return;
+            }
+            // Best-effort: a failed re-prompt falls through to the
+            // explicit salvage fallback rather than failing the turn.
+            log.warn('sessions', 'Mayor data-summary re-prompt failed', {
+              sessionId: session.id,
+              err: err.message,
+            });
+          }
+        }
+
         // Silent-turn guard (session 2383): a reply whose ENTIRE content is
         // a suggest_answers/suggest_replies tool_use used to be dropped —
         // the persist block below is text-gated, so the model's questions
@@ -2269,7 +2352,18 @@ function sessionRoutes(config) {
         // Refusal turns are excluded — they already persisted a status.
         if (!mayorText1.trim() && mayor1.stopReason !== 'refusal') {
           const salvaged = salvageAssistantText(mayorText1, suggestions, quickReplies);
-          if (salvaged.trim()) {
+          // Salvaged questions are the model's real content and still win;
+          // the generic chip anchor / empty-reply fallback would mask an
+          // unsummarized data fetch, so those get the explicit line.
+          const salvagedRealContent = Array.isArray(suggestions) && suggestions.length > 0 && salvaged.trim();
+          if (dataSummaryFailed && !salvagedRealContent) {
+            mayorText1 = DATA_SUMMARY_FALLBACK_TEXT;
+            send('token', { text: mayorText1 });
+            log.warn('sessions', 'Mayor data-informed turn ended textless after re-prompt — substituting explicit fallback', {
+              sessionId: session.id,
+              toolNames: mayor1.toolUses.map((t) => t.name),
+            });
+          } else if (salvaged.trim()) {
             mayorText1 = salvaged;
             send('token', { text: mayorText1 });
             log.warn('sessions', 'Mayor reply was tool-only — salvaged suggest content into text', {
@@ -5065,6 +5159,57 @@ function salvageAssistantText(mayorText, suggestions, quickReplies) {
   return '';
 }
 
+// Data-informed silent turn (session 2426): the model serviced one or
+// more read-only data tools this turn (get_prod_status in the observed
+// incident), then ended with a tool-only reply — the findings it fetched
+// would be discarded, since salvage can only anchor chips with a generic
+// line, not reconstruct the findings. Worth ONE re-prompt: the tool
+// results are still in the turn's conversation, so a short continuation
+// telling the model to write the summary as text usually recovers the
+// answer. Dispatch turns are excluded (needsEmptyReplyFallback) — a
+// dispatch produces its own phase-2 wrap-up. Exported for tests.
+function shouldRepromptForDataSummary(mayorText, toolUses, dataIters, rawContent) {
+  if (!dataIters) return false;
+  // The re-prompt replays the reply verbatim so its tool_use ids
+  // resolve; without raw content there is nothing valid to replay.
+  if (!Array.isArray(rawContent) || !rawContent.length) return false;
+  return needsEmptyReplyFallback(mayorText, toolUses);
+}
+
+// The two messages a data-summary re-prompt appends to the phase-1
+// conversation: the model's tool-only reply verbatim (so its tool_use
+// ids resolve), then a user message that closes off EVERY dangling
+// tool_use with a stub tool_result and instructs the model to write the
+// summary as plain text. Closing all of them matters — the tool-only
+// reply may carry suggest_replies AND a dangling data call (the
+// data-loop cap break), and any unanswered tool_use is an Anthropic 400.
+// Exported for tests.
+function buildDataSummaryReprompt(rawContent, toolUses) {
+  const calls = (Array.isArray(toolUses) ? toolUses : []).filter((t) => t && t.id);
+  return [
+    { role: 'assistant', content: rawContent },
+    {
+      role: 'user',
+      content: [
+        ...calls.map((tu) => ({
+          type: 'tool_result',
+          tool_use_id: tu.id,
+          content: 'Acknowledged.',
+        })),
+        {
+          type: 'text',
+          text: 'Your reply had no text, so the user saw nothing. In plain text, summarize what the data you fetched this turn showed and answer the user\'s question directly. Do not call any tools.',
+        },
+      ],
+    },
+  ];
+}
+
+// Explicit fallback for a data-informed turn whose re-prompt ALSO
+// produced no text — the generic "What would you like to do next?"
+// would mask that findings were fetched and lost. Exported for tests.
+const DATA_SUMMARY_FALLBACK_TEXT = '_I fetched the data but failed to summarize it — please ask again._';
+
 // Would the turn end with nothing visible? True when no text survived
 // (after salvage) AND no dispatch tool ran — a dispatch produces its own
 // persisted statuses plus a guaranteed phase-2 wrap-up, so it never needs
@@ -7036,4 +7181,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, salvageAssistantText, needsEmptyReplyFallback, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };

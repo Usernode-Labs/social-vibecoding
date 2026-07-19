@@ -19,6 +19,9 @@ const assert = require('node:assert/strict');
 const {
   salvageAssistantText,
   needsEmptyReplyFallback,
+  shouldRepromptForDataSummary,
+  buildDataSummaryReprompt,
+  DATA_SUMMARY_FALLBACK_TEXT,
   describeTurnError,
 } = require('../src/routes/sessions.js');
 
@@ -109,6 +112,88 @@ test('fallback: does NOT fire when text survived', () => {
 
 test('fallback: tolerates malformed tool-use entries', () => {
   assert.equal(needsEmptyReplyFallback('', [null, undefined, {}]), true);
+});
+
+// ---- shouldRepromptForDataSummary (session 2426) ----
+
+const RAW_SUGGEST_ONLY = [{ type: 'tool_use', id: 'tu_1', name: 'suggest_replies', input: { replies: ['Dig deeper'] } }];
+
+test('reprompt: fires for a tool-only reply after a serviced data round', () => {
+  assert.equal(
+    shouldRepromptForDataSummary('', [{ name: 'suggest_replies', id: 'tu_1' }], 1, RAW_SUGGEST_ONLY),
+    true
+  );
+});
+
+test('reprompt: fires for a fully empty reply after a data round with raw content', () => {
+  // stop_reason end_turn with a lone (unusable) tool block but no text.
+  assert.equal(shouldRepromptForDataSummary('   ', [], 2, RAW_SUGGEST_ONLY), true);
+});
+
+test('reprompt: does NOT fire when no data tools were serviced this turn', () => {
+  assert.equal(
+    shouldRepromptForDataSummary('', [{ name: 'suggest_replies', id: 'tu_1' }], 0, RAW_SUGGEST_ONLY),
+    false
+  );
+});
+
+test('reprompt: does NOT fire when the reply has text', () => {
+  assert.equal(
+    shouldRepromptForDataSummary('Here is what I found.', [{ name: 'suggest_replies', id: 'tu_1' }], 1, RAW_SUGGEST_ONLY),
+    false
+  );
+});
+
+test('reprompt: does NOT fire on dispatch turns — phase-2 produces output', () => {
+  assert.equal(
+    shouldRepromptForDataSummary('', [{ name: 'dispatch_claude_code', id: 'tu_1' }], 1, RAW_SUGGEST_ONLY),
+    false
+  );
+});
+
+test('reprompt: does NOT fire without replayable raw content', () => {
+  assert.equal(shouldRepromptForDataSummary('', [{ name: 'suggest_replies', id: 'tu_1' }], 1, []), false);
+  assert.equal(shouldRepromptForDataSummary('', [{ name: 'suggest_replies', id: 'tu_1' }], 1, null), false);
+});
+
+// ---- buildDataSummaryReprompt ----
+
+test('reprompt build: replays the reply verbatim and closes every tool_use', () => {
+  const toolUses = [
+    { id: 'tu_1', name: 'suggest_replies' },
+    { id: 'tu_2', name: 'get_prod_status' }, // dangling data call (cap break)
+  ];
+  const raw = [
+    { type: 'tool_use', id: 'tu_1', name: 'suggest_replies', input: {} },
+    { type: 'tool_use', id: 'tu_2', name: 'get_prod_status', input: {} },
+  ];
+  const msgs = buildDataSummaryReprompt(raw, toolUses);
+  assert.equal(msgs.length, 2);
+  assert.equal(msgs[0].role, 'assistant');
+  assert.equal(msgs[0].content, raw);
+  assert.equal(msgs[1].role, 'user');
+  const results = msgs[1].content.filter((b) => b.type === 'tool_result');
+  assert.deepEqual(results.map((b) => b.tool_use_id), ['tu_1', 'tu_2']);
+  // The instruction text comes last so it reads after the tool closes.
+  const last = msgs[1].content[msgs[1].content.length - 1];
+  assert.equal(last.type, 'text');
+  assert.match(last.text, /summarize/i);
+  assert.match(last.text, /Do not call any tools/);
+});
+
+test('reprompt build: tolerates malformed tool-use entries', () => {
+  const msgs = buildDataSummaryReprompt(RAW_SUGGEST_ONLY, [null, {}, { id: 'tu_1', name: 'suggest_replies' }]);
+  const results = msgs[1].content.filter((b) => b.type === 'tool_result');
+  assert.deepEqual(results.map((b) => b.tool_use_id), ['tu_1']);
+  // Still ends with the instruction even when no tool_use had an id.
+  const bare = buildDataSummaryReprompt(RAW_SUGGEST_ONLY, null);
+  assert.equal(bare[1].content.length, 1);
+  assert.equal(bare[1].content[0].type, 'text');
+});
+
+test('reprompt fallback text is explicit about the unsummarized fetch', () => {
+  assert.match(DATA_SUMMARY_FALLBACK_TEXT, /fetched the data/);
+  assert.notEqual(DATA_SUMMARY_FALLBACK_TEXT, 'What would you like to do next?');
 });
 
 // ---- describeTurnError ----
