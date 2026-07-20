@@ -69,6 +69,7 @@ const SHELL_ASSETS = [
   '/js/spec-sections.js',
   '/js/streaming-markdown.js',
   '/js/theme.js',
+  '/js/theme-toggle.js',
   '/manifest.webmanifest',
   '/icons/icon-192.png',
   '/icons/icon-512.png',

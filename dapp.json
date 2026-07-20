@@ -117,6 +117,16 @@
       "expectText": "Submitted features"
     },
     {
+      "name": "Theme toggle renders on the sign-in page (#576)",
+      "path": "/login.html",
+      "expectSelector": "#theme-toggle [data-theme-mode=system]"
+    },
+    {
+      "name": "Theme toggle renders on the status page (#576)",
+      "path": "/status",
+      "expectSelector": "#theme-toggle [data-theme-mode=system]"
+    },
+    {
       "name": "Dev tab defaults to kanban board on wide screens",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban"

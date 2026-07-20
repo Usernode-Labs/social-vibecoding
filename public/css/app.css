@@ -962,7 +962,10 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   font-size: 11px;
   font-weight: 600;
   white-space: nowrap;
-  background: #fff;
+  /* #576: was a hardcoded #fff, which stayed white in dark mode and made
+     the colored border/text sit on a jarring light chip. Route through the
+     page background token so the chip matches the surface in both themes. */
+  background: var(--bg-primary);
   border: 1.5px solid currentColor;
 }
 .gc-vote-voted-box-yes { color: #22c55e; }
@@ -1005,7 +1008,8 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  background: #fff;
+  /* #576: theme-adaptive chip background (was hardcoded #fff). */
+  background: var(--bg-primary);
   border: 1.5px solid currentColor;
   white-space: nowrap;
 }
@@ -1028,7 +1032,9 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-fill-full { top: 0; width: 100%; height: 100%; }
 .gc-vote-fill-full-yes { background: rgba(34, 197, 94, 0.40); }
 .gc-vote-fill-full-no { background: rgba(239, 68, 68, 0.40); }
-.gc-vote-count-label { position: relative; z-index: 1; color: #1f2937; }
+/* #576: was a fixed dark #1f2937, invisible on the now theme-adaptive
+   chip background in dark mode. Use the primary text token instead. */
+.gc-vote-count-label { position: relative; z-index: 1; color: var(--text-primary); }
 /* Dev-card headline cell (title + meta, left of the tally / 💬 pills).
    flex-basis:auto makes the cell's preferred width the title's natural
    single-line width, so on narrow screens the pills after it wrap to

@@ -19,7 +19,21 @@ const THEMED_PAGES = [
   'login.html',
   'register.html',
   'admin.html',
+  'admin-features.html',
   'dashboard.html',
+  'debug.html',
+  'status.html',
+];
+
+// Standalone pages that get the SHARED theme-toggle control (#576) —
+// every themed page EXCEPT index.html, which has its own drawer control.
+const TOGGLE_PAGES = [
+  'login.html',
+  'register.html',
+  'dashboard.html',
+  'admin.html',
+  'admin-features.html',
+  'debug.html',
   'status.html',
 ];
 
@@ -117,5 +131,75 @@ test('the theme button click handler does NOT close the drawer', () => {
   assert.ok(
     !window.includes('HeaderMenu.close()'),
     'theme selection must keep the drawer open (no HeaderMenu.close())',
+  );
+});
+
+// ── Shared theme-toggle module (#576) ────────────────────────────────────
+
+test('public/js/theme-toggle.js exists and reuses window.Theme', () => {
+  const src = read('js', 'theme-toggle.js');
+  assert.match(src, /window\.Theme/, 'theme-toggle.js must reference window.Theme');
+  assert.match(src, /Theme\.set\(/, 'theme-toggle.js must call Theme.set()');
+  assert.match(src, /Theme\.get\(/, 'theme-toggle.js must read Theme.get()');
+  assert.match(src, /Theme\.onChange\(/, 'theme-toggle.js must re-highlight on Theme.onChange');
+});
+
+test('theme-toggle.js renders the three data-theme-mode modes', () => {
+  const src = read('js', 'theme-toggle.js');
+  for (const mode of ['light', 'dark', 'system']) {
+    assert.ok(src.includes(`'${mode}'`), `theme-toggle.js must reference the '${mode}' mode`);
+  }
+  assert.match(src, /themeMode\s*=/, 'theme-toggle.js must set data-theme-mode on its buttons');
+});
+
+test('theme-toggle.js targets an id="theme-toggle" host', () => {
+  const src = read('js', 'theme-toggle.js');
+  assert.match(src, /getElementById\(\s*'theme-toggle'\s*\)/, 'must look up the #theme-toggle host');
+});
+
+// ── Per-page toggle control wiring (#576) ────────────────────────────────
+
+for (const page of TOGGLE_PAGES) {
+  test(`${page} loads /js/theme-toggle.js after /js/theme.js`, () => {
+    const src = read(page);
+    const themeIdx = src.indexOf('/js/theme.js');
+    const toggleIdx = src.indexOf('/js/theme-toggle.js');
+    assert.ok(themeIdx !== -1, `${page} must load /js/theme.js`);
+    assert.ok(toggleIdx !== -1, `${page} must load /js/theme-toggle.js`);
+    assert.ok(toggleIdx > themeIdx, `${page} must load theme-toggle.js AFTER theme.js`);
+  });
+
+  test(`${page} has a #theme-toggle container`, () => {
+    assert.ok(
+      read(page).includes('id="theme-toggle"'),
+      `${page} must carry a #theme-toggle container for the shared control`,
+    );
+  });
+}
+
+// index.html keeps its own drawer control and must NOT pull in the shared
+// module (avoids a duplicate toggle).
+test('index.html does NOT include the shared theme-toggle module', () => {
+  assert.ok(
+    !read('index.html').includes('/js/theme-toggle.js'),
+    'index.html uses the drawer control, not the shared theme-toggle module',
+  );
+});
+
+// ── CSS theme-invariant fixes (#576) ─────────────────────────────────────
+
+test('app.css routes the vote chips through theme variables (no #fff/#1f2937)', () => {
+  const css = read('css', 'app.css');
+  const votedBox = css.slice(css.indexOf('.gc-vote-voted-box {'), css.indexOf('.gc-vote-voted-box-yes'));
+  assert.ok(votedBox.includes('var(--bg-primary)'), '.gc-vote-voted-box must use var(--bg-primary)');
+  assert.ok(!votedBox.includes('background: #fff'), '.gc-vote-voted-box must not hardcode background: #fff');
+
+  const countPill = css.slice(css.indexOf('.gc-vote-count {'), css.indexOf('.gc-vote-count-pending'));
+  assert.ok(countPill.includes('var(--bg-primary)'), '.gc-vote-count must use var(--bg-primary)');
+
+  assert.match(
+    css,
+    /\.gc-vote-count-label\s*\{[^}]*color:\s*var\(--text-primary\)/,
+    '.gc-vote-count-label must use var(--text-primary), not the fixed #1f2937',
   );
 });

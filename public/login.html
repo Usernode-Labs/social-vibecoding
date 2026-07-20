@@ -19,6 +19,9 @@
     }
   </script>
   <script src="/js/theme.js"></script>
+  <!-- Light/Dark/System control (#576). Pre-auth users get a theme
+       toggle here even before they have access to the in-app drawer. -->
+  <script src="/js/theme-toggle.js"></script>
   <!-- PWA (#487): installable shell + read-only offline mode. offline.js
        (loaded at the bottom) registers the service worker and drives the
        offline banner below. -->
@@ -28,6 +31,8 @@
   <link rel="apple-touch-icon" href="/icons/icon-192.png">
 </head>
 <body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen flex items-center justify-center">
+  <!-- Theme toggle (#576): filled by /js/theme-toggle.js. -->
+  <div id="theme-toggle" class="fixed top-4 right-4 z-50"></div>
   <!-- Offline note (#487): logging in needs a connection; this page can be
        served from the service-worker cache when a logged-out user opens
        the platform offline. -->
