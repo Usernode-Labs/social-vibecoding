@@ -16,8 +16,16 @@
  *   unNative.presets                  — named spring presets (tunable)
  *   unNative.spring(target, opts)     — rAF spring integrator
  *   unNative.attachSwipeActions(row, {actions}) — swipe-to-act list rows
- *   unNative.attachPullToRefresh(scrollEl, onRefresh) — pull-to-refresh
+ *   unNative.attachPullToRefresh(scrollEl, onRefresh, opts?) — pull-to-refresh
+ *                                        (element container OR the window
+ *                                        scroller; never throws on bad input)
  *   unNative.transition(fn, {type})   — View Transitions wrapper
+ *   unNative.presentSheet(opts)       — bottom sheet (drag-to-dismiss)
+ *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
+ *   unNative.alert(opts)              — iOS alert dialog, Promise-based
+ *   unNative.attachNavBar(bar, opts)  — blurred nav bar + large-title collapse
+ *   unNative.gestures                 — the shared gesture arbiter
+ *                                        { claim, owner, release }
  *   unNative.physics                  — the pure math (also the node export)
  *
  * Fidelity requirements this file implements (binding; see the kit section
@@ -93,9 +101,20 @@
   // Momentum projection: where a gesture released at `position` with
   // velocity `velocity` (px/ms) would coast to under standard deceleration.
   // projected = position + velocity * decelRate / (1 - decelRate)
+  // Kept exported for compatibility; release decisions now use the bounded
+  // projectDisplacement below (the full coast ≈ v·499ms over-weights tiny
+  // flicks — issue #690).
   function projectMomentum(position, velocity, decelRate) {
     var d = decelRate == null ? DECEL_RATE : decelRate;
     return position + (velocity * d) / (1 - d);
+  }
+
+  // Bounded momentum projection for commit decisions: where the gesture
+  // lands within a short horizon (default COMMIT_HORIZON_MS, tunable via
+  // the ?un-tune=1 overlay). Matches the reference rebuild's x + v·0.12s.
+  function projectDisplacement(position, velocity, horizonMs) {
+    var h = horizonMs == null ? physics.COMMIT_HORIZON_MS : horizonMs;
+    return position + velocity * h;
   }
 
   // Release velocity from a short pointer-sample history. samples is an
@@ -145,7 +164,7 @@
   // Returns 'commit' | 'open' | 'close'. Commit only when the row has a
   // destructive full-swipe action (canCommit).
   function decideSwipeRelease(input) {
-    var projected = projectMomentum(input.x, input.v, input.decelRate);
+    var projected = projectDisplacement(input.x, input.v, input.horizonMs);
     if (input.canCommit && projected <= -0.6 * input.rowWidth) return 'commit';
     if (projected <= -0.5 * input.trayWidth) return 'open';
     return 'close';
@@ -155,7 +174,39 @@
   // projected momentum crossing the threshold (a fast short yank counts).
   function decidePtrRelease(input) {
     if (input.pull >= input.threshold) return true;
-    return projectMomentum(input.pull, input.v, input.decelRate) >= input.threshold;
+    return projectDisplacement(input.pull, input.v, input.horizonMs) >= input.threshold;
+  }
+
+  // Bottom-sheet release decision. y is the sheet's downward displacement
+  // from rest (>= 0), v the release velocity in px/ms (positive = down).
+  // Dismiss when the projected landing crosses half the sheet height.
+  function decideSheetRelease(input) {
+    return projectDisplacement(input.y, input.v, input.horizonMs) >= 0.5 * input.sheetHeight;
+  }
+
+  // Gesture arbiter core: one owner per gesture sequence, decided once —
+  // the first recognizer to claim a sequence wins it, everyone else backs
+  // off. Pure (no DOM); the kit wires one instance to real pointer/touch
+  // sequences and exposes it as unNative.gestures.
+  function createArbiter() {
+    var owners = Object.create(null);
+    return {
+      // First claim wins; re-claiming with the same token is idempotent.
+      claim: function (seq, token) {
+        if (seq == null || token == null) return false;
+        var key = String(seq);
+        if (key in owners) return owners[key] === token;
+        owners[key] = token;
+        return true;
+      },
+      owner: function (seq) {
+        var key = String(seq);
+        return key in owners ? owners[key] : null;
+      },
+      release: function (seq) {
+        delete owners[String(seq)];
+      },
+    };
   }
 
   var physics = {
@@ -163,15 +214,21 @@
     DECEL_RATE: DECEL_RATE,
     REST_VELOCITY: REST_VELOCITY,
     REST_DELTA: REST_DELTA,
+    // Default horizon (ms) for release-decision projection. Mutable via the
+    // ?un-tune=1 overlay; projectDisplacement reads it at call time.
+    COMMIT_HORIZON_MS: 120,
     springStep: springStep,
     simulateSpring: simulateSpring,
     projectMomentum: projectMomentum,
+    projectDisplacement: projectDisplacement,
     estimateVelocity: estimateVelocity,
     rubberband: rubberband,
     rubberbandInvert: rubberbandInvert,
     lockIntent: lockIntent,
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
+    decideSheetRelease: decideSheetRelease,
+    createArbiter: createArbiter,
   };
 
   // Node (unit tests): export the math and stop — no DOM below this line.
@@ -207,6 +264,42 @@
   try {
     prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   } catch (e) { /* ignore */ }
+
+  // Haptic tick for threshold crossings (arm/disarm cues). navigator.vibrate
+  // exists on Android; iOS Safari has no vibration API — silently no-ops.
+  function haptic(ms) {
+    try {
+      if (navigator.vibrate) navigator.vibrate(ms == null ? 10 : ms);
+    } catch (e) { /* ignore */ }
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   * Gesture arbiter — one intent lock across kit AND app gestures.
+   * Sequences: the primary touch (pointer or touch events) is 'touch' so
+   * pointer-driven swipe rows and touch-driven PTR contend for the same
+   * finger; non-touch pointers key by pointerId. Claims auto-clear when
+   * the sequence ends. App gestures join via unNative.gestures: claim at
+   * your own intent-lock moment (never before movement passes the lock
+   * threshold) and back off when claim() returns false.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  var gestures = createArbiter();
+
+  function gestureSeq(e) {
+    if (typeof e.pointerId === 'number') {
+      return e.pointerType === 'touch' && e.isPrimary !== false ? 'touch' : e.pointerId;
+    }
+    return 'touch';
+  }
+
+  window.addEventListener('pointerup', function (e) { gestures.release(gestureSeq(e)); }, true);
+  window.addEventListener('pointercancel', function (e) { gestures.release(gestureSeq(e)); }, true);
+  window.addEventListener('touchend', function (e) {
+    if (!e.touches || e.touches.length === 0) gestures.release('touch');
+  }, true);
+  window.addEventListener('touchcancel', function (e) {
+    if (!e.touches || e.touches.length === 0) gestures.release('touch');
+  }, true);
 
   /* ────────────────────────────────────────────────────────────────────
    * Runtime spring — rAF loop over the same integrator, fixed-timestep
@@ -330,14 +423,36 @@
     var activeSpring = null;
     var drag = null; // { pointerId, startX, startY, base, locked, samples }
     var committing = false;
+    var commitArmed = false;
+    var trayNaturalW = 0; // measured shrink-wrap width; re-measured per drag
 
-    function trayWidth() { return tray.offsetWidth || 1; }
+    function measureTray() {
+      tray.style.width = '';
+      trayNaturalW = tray.offsetWidth || 1;
+      return trayNaturalW;
+    }
+
+    function trayWidth() { return trayNaturalW || measureTray(); }
     function rowWidth() { return wrap.offsetWidth || 1; }
 
+    // Ride-along tray: the tray is anchored off the row's right edge and
+    // translates in lockstep with it, so nothing is ever painted BEHIND
+    // the row (rounded corners / margins / translucent rows stay clean).
+    // Past the tray's natural width it is stretched to keep its right
+    // edge flush while the destructive button grows to fill.
     function setOffset(x) {
       offset = x;
-      rowEl.style.transform = 'translateX(' + x + 'px)';
-      wrap.classList.toggle('un-commit-armed', canCommit && x <= -0.6 * rowWidth());
+      var t = 'translateX(' + x + 'px)';
+      rowEl.style.transform = t;
+      tray.style.transform = t;
+      var tw = trayWidth();
+      tray.style.width = -x > tw ? -x + 'px' : '';
+      var armed = canCommit && x <= -0.6 * rowWidth();
+      if (armed !== commitArmed) {
+        commitArmed = armed;
+        wrap.classList.toggle('un-commit-armed', armed);
+        haptic();
+      }
     }
 
     function springTo(to, velocity, preset, onRest) {
@@ -388,6 +503,11 @@
 
     function onPointerDown(e) {
       if (committing || e.button > 0) return;
+      // An already-open or mid-spring row re-drags immediately — which
+      // means claiming the gesture sequence up front.
+      var immediate = offset !== 0 || !!activeSpring;
+      if (immediate && !gestures.claim(gestureSeq(e), wrap)) return;
+      if (!activeSpring) measureTray();
       var base = offset;
       var seedV = 0;
       if (activeSpring) {
@@ -404,7 +524,7 @@
         startX: e.clientX,
         startY: e.clientY,
         base: base,
-        locked: base !== 0 ? 'x' : null, // an already-open row re-drags immediately
+        locked: immediate ? 'x' : null,
         samples: [{ t: e.timeStamp - 16, x: base - seedV * 16 }, { t: e.timeStamp, x: base }],
       };
     }
@@ -414,8 +534,14 @@
       var dx = e.clientX - drag.startX;
       var dy = e.clientY - drag.startY;
       if (!drag.locked) {
-        drag.locked = lockIntent(dx, dy);
-        if (drag.locked === 'x') {
+        var axis = lockIntent(dx, dy);
+        if (axis === 'x' && !gestures.claim(gestureSeq(e), wrap)) {
+          // Another recognizer owns this finger — back off for good.
+          drag = null;
+          return;
+        }
+        drag.locked = axis;
+        if (axis === 'x') {
           try { rowEl.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
           wrap.classList.add('un-dragging');
         }
@@ -505,38 +631,84 @@
   var PTR_LIMIT = 150; // rubber-band asymptote
   var PTR_COEFF = 0.4; // initial resistance slope (~dy/2.5)
 
-  // attachPullToRefresh(scrollEl, onRefresh) — scrollEl is the scrollable
-  // list container (needs `overscroll-behavior-y: contain`; the kit sets it
-  // as a belt-and-braces default). onRefresh() returns a Promise; the
-  // spinner holds until it settles. No-op on desktop. Returns { detach() }.
-  function attachPullToRefresh(scrollEl, onRefresh) {
-    if (platform === 'desktop') return { detach: function () {} };
+  // attachPullToRefresh(scrollEl, onRefresh, opts?) — scrollEl is either a
+  // scrollable list container (needs `overscroll-behavior-y: contain`; the
+  // kit sets it as a belt-and-braces default) OR the window scroller
+  // (window / document / document.scrollingElement / <html> / <body>). In
+  // window mode the rubberband translate is applied to opts.content
+  // (default: document.body.firstElementChild — the #app-style root — or
+  // document.body) and the puck is fixed-positioned. onRefresh() returns a
+  // Promise; the spinner holds until it settles. No-op on desktop. Invalid
+  // input NEVER throws: it warns once and returns a no-op { detach() }.
+  function attachPullToRefresh(scrollEl, onRefresh, opts) {
+    var noop = { detach: function () {} };
+    if (platform === 'desktop') return noop;
 
-    var parent = scrollEl.parentNode;
-    if (getComputedStyle(parent).position === 'static') parent.style.position = 'relative';
-    scrollEl.style.overscrollBehaviorY = 'contain';
+    var windowMode = scrollEl === window || scrollEl === document ||
+      scrollEl === document.scrollingElement ||
+      scrollEl === document.documentElement || scrollEl === document.body;
+
+    var content; // the element the rubberband translate is written to
+    var listenEl; // where the touch listeners live
+    var puckHome; // where the puck is inserted
+
+    if (windowMode) {
+      content = (opts && opts.content) || document.body.firstElementChild || document.body;
+      if (!content || content.nodeType !== 1) {
+        console.warn('[unNative] attachPullToRefresh: opts.content must be an Element — pull-to-refresh disabled.');
+        return noop;
+      }
+      listenEl = window;
+      puckHome = document.body;
+      // Suppress the browser's own overscroll / native PTR on the page.
+      document.documentElement.style.overscrollBehaviorY = 'contain';
+      document.body.style.overscrollBehaviorY = 'contain';
+    } else {
+      if (!scrollEl || scrollEl.nodeType !== 1 ||
+          !scrollEl.parentNode || scrollEl.parentNode.nodeType !== 1) {
+        console.warn('[unNative] attachPullToRefresh: pass a scrollable Element with an Element parent, or the window/document scroller — pull-to-refresh disabled.');
+        return noop;
+      }
+      content = scrollEl;
+      listenEl = scrollEl;
+      puckHome = scrollEl.parentNode;
+      if (getComputedStyle(puckHome).position === 'static') puckHome.style.position = 'relative';
+      scrollEl.style.overscrollBehaviorY = 'contain';
+    }
 
     var puck = document.createElement('div');
-    puck.className = 'un-ptr-puck';
+    puck.className = 'un-ptr-puck' + (windowMode ? ' un-ptr-puck-fixed' : '');
     puck.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" ' +
       'stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>';
-    parent.insertBefore(puck, scrollEl);
+    if (windowMode) puckHome.appendChild(puck);
+    else puckHome.insertBefore(puck, scrollEl);
 
+    var ptrToken = { ptr: true }; // arbiter owner token for this instance
     var display = 0; // current displayed pull (px)
     var refreshing = false;
     var activeSpring = null;
     var drag = null; // { startY, startX, baseRaw, locked, samples }
+    var armed = false;
+
+    function scrollTop() {
+      return windowMode ? (window.scrollY || 0) : scrollEl.scrollTop;
+    }
 
     function render(y) {
       display = y;
-      scrollEl.style.transform = y ? 'translateY(' + y + 'px)' : '';
+      content.style.transform = y ? 'translateY(' + y + 'px)' : '';
       var progress = Math.min(1, y / PTR_THRESHOLD);
       puck.style.opacity = String(progress);
       puck.style.transform =
         'translate(-50%, ' + (y * 0.55 - 40) + 'px) scale(' + (0.5 + 0.5 * progress) + ') ' +
         'rotate(' + y * 2.2 + 'deg)';
-      puck.classList.toggle('un-armed', !refreshing && y >= PTR_THRESHOLD);
+      var nowArmed = !refreshing && y >= PTR_THRESHOLD;
+      if (nowArmed !== armed) {
+        armed = nowArmed;
+        puck.classList.toggle('un-armed', armed);
+        if (armed) haptic();
+      }
     }
 
     function springTo(to, velocity, onRest) {
@@ -564,11 +736,13 @@
 
     function onTouchStart(e) {
       if (refreshing || e.touches.length !== 1) return;
-      if (scrollEl.scrollTop > 0 && !activeSpring && display === 0) return;
+      if (scrollTop() > 0 && !activeSpring && display === 0) return;
       var baseRaw = 0;
       if (activeSpring) {
-        // Catch the list mid-settle: re-enter the drag at the equivalent
-        // raw pull so rubberband(raw) === the current displayed offset.
+        // Catch the list mid-settle — which means claiming the sequence
+        // up front; re-enter the drag at the equivalent raw pull so
+        // rubberband(raw) === the current displayed offset.
+        if (!gestures.claim('touch', ptrToken)) return;
         activeSpring.stop();
         activeSpring = null;
         baseRaw = rubberbandInvert(display, PTR_LIMIT, PTR_COEFF);
@@ -587,11 +761,18 @@
       var dy = e.touches[0].clientY - drag.startY;
       var dx = e.touches[0].clientX - drag.startX;
       if (!drag.locked) {
-        if (scrollEl.scrollTop > 0) { drag = null; return; }
+        if (scrollTop() > 0) { drag = null; return; }
         var axis = lockIntent(dx, dy);
         if (axis === 'x') { drag = null; return; }
-        if (axis === 'y' && dy > 0) drag.locked = 'y';
-        else if (axis === 'y') { drag = null; return; }
+        if (axis === 'y' && dy > 0) {
+          if (!gestures.claim('touch', ptrToken)) {
+            // Another recognizer (a swipe row, an app gesture) owns this
+            // finger — back off for good.
+            drag = null;
+            return;
+          }
+          drag.locked = 'y';
+        } else if (axis === 'y') { drag = null; return; }
       }
       if (drag.locked !== 'y') return;
       var raw = drag.baseRaw + dy;
@@ -618,20 +799,20 @@
       else springTo(0, v);
     }
 
-    scrollEl.addEventListener('touchstart', onTouchStart, { passive: true });
-    scrollEl.addEventListener('touchmove', onTouchMove, { passive: false });
-    scrollEl.addEventListener('touchend', onTouchEnd, { passive: true });
-    scrollEl.addEventListener('touchcancel', onTouchEnd, { passive: true });
+    listenEl.addEventListener('touchstart', onTouchStart, { passive: true });
+    listenEl.addEventListener('touchmove', onTouchMove, { passive: false });
+    listenEl.addEventListener('touchend', onTouchEnd, { passive: true });
+    listenEl.addEventListener('touchcancel', onTouchEnd, { passive: true });
 
     return {
       detach: function () {
-        scrollEl.removeEventListener('touchstart', onTouchStart);
-        scrollEl.removeEventListener('touchmove', onTouchMove);
-        scrollEl.removeEventListener('touchend', onTouchEnd);
-        scrollEl.removeEventListener('touchcancel', onTouchEnd);
+        listenEl.removeEventListener('touchstart', onTouchStart);
+        listenEl.removeEventListener('touchmove', onTouchMove);
+        listenEl.removeEventListener('touchend', onTouchEnd);
+        listenEl.removeEventListener('touchcancel', onTouchEnd);
         if (activeSpring) activeSpring.stop();
         if (puck.parentNode) puck.parentNode.removeChild(puck);
-        scrollEl.style.transform = '';
+        content.style.transform = '';
       },
     };
   }
@@ -672,6 +853,351 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
+   * Bottom sheet — spring presentation, grabber, 1:1 drag-to-dismiss with
+   * momentum commit. A touch mid-spring inherits position + velocity.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  // presentSheet({ content | contentEl, onDismiss }) — content is an HTML
+  // string, contentEl an Element to adopt. Returns { dismiss(), el }.
+  function presentSheet(options) {
+    var opts = options || {};
+    var backdrop = document.createElement('div');
+    backdrop.className = 'un-backdrop';
+    var sheet = document.createElement('div');
+    sheet.className = 'un-sheet';
+    var grabber = document.createElement('div');
+    grabber.className = 'un-sheet-grabber';
+    sheet.appendChild(grabber);
+    var body = document.createElement('div');
+    body.className = 'un-sheet-body';
+    if (opts.contentEl) body.appendChild(opts.contentEl);
+    else if (opts.content != null) body.innerHTML = opts.content;
+    sheet.appendChild(body);
+    document.body.appendChild(backdrop);
+    document.body.appendChild(sheet);
+
+    var height = sheet.offsetHeight || 1;
+    var y = height; // translateY: 0 = presented, height = offscreen
+    var activeSpring = null;
+    var drag = null;
+    var closed = false;
+    var token = { sheet: true };
+
+    function render(val) {
+      y = val;
+      sheet.style.transform = 'translateY(' + val + 'px)';
+      backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / height)));
+    }
+
+    function springTo(to, velocity, onRest) {
+      if (activeSpring) activeSpring.stop();
+      activeSpring = spring(function (v) { render(v); }, {
+        from: y, to: to, velocity: velocity || 0, preset: 'default',
+        onRest: function () { activeSpring = null; if (onRest) onRest(); },
+      });
+    }
+
+    function teardown() {
+      if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+      if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
+      if (opts.onDismiss) opts.onDismiss();
+    }
+
+    function dismiss(velocity) {
+      if (closed) return;
+      closed = true;
+      springTo(height, velocity || 0, teardown);
+    }
+
+    backdrop.addEventListener('click', function () { dismiss(0); });
+
+    function onPointerDown(e) {
+      if (closed || e.button > 0) return;
+      var immediate = !!activeSpring;
+      if (immediate && !gestures.claim(gestureSeq(e), token)) return;
+      var base = y;
+      var seedV = 0;
+      if (activeSpring) {
+        var cur = activeSpring.current();
+        activeSpring.stop();
+        activeSpring = null;
+        base = cur.x;
+        seedV = cur.v;
+        render(base);
+      }
+      drag = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        base: base,
+        locked: immediate ? 'y' : null,
+        samples: [{ t: e.timeStamp - 16, x: base - seedV * 16 }, { t: e.timeStamp, x: base }],
+      };
+    }
+
+    function onPointerMove(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      var dx = e.clientX - drag.startX;
+      var dy = e.clientY - drag.startY;
+      if (!drag.locked) {
+        var axis = lockIntent(dx, dy);
+        if (axis === 'x') { drag = null; return; }
+        if (axis === 'y') {
+          if (!gestures.claim(gestureSeq(e), token)) { drag = null; return; }
+          drag.locked = 'y';
+          try { sheet.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        }
+      }
+      if (drag.locked !== 'y') return;
+      var raw = drag.base + dy;
+      // 1:1 downward; small elastic give above the rest position.
+      render(raw >= 0 ? raw : rubberband(raw, 32));
+      drag.samples.push({ t: e.timeStamp, x: y });
+      if (drag.samples.length > 24) drag.samples.shift();
+    }
+
+    function onPointerEnd(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      var wasLocked = drag.locked === 'y';
+      var samples = drag.samples;
+      drag = null;
+      if (!wasLocked || closed) return;
+      // Release-time sample so a held-still dwell decays momentum.
+      samples.push({ t: e.timeStamp, x: y });
+      var v = e.type === 'pointercancel' ? 0 : estimateVelocity(samples);
+      if (decideSheetRelease({ y: y, v: v, sheetHeight: height })) dismiss(v);
+      else springTo(0, v);
+    }
+
+    sheet.addEventListener('pointerdown', onPointerDown);
+    sheet.addEventListener('pointermove', onPointerMove);
+    sheet.addEventListener('pointerup', onPointerEnd);
+    sheet.addEventListener('pointercancel', onPointerEnd);
+
+    render(height);
+    springTo(0, 0);
+
+    return {
+      el: sheet,
+      dismiss: function () { dismiss(0); },
+    };
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   * Action sheet — iOS stack of actions + separate Cancel card. Resolves
+   * with the chosen action object, or null on cancel/backdrop.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  // actionSheet({ title?, actions: [{ label, destructive?, handler? }],
+  // cancelLabel? }) — returns a Promise.
+  function actionSheet(options) {
+    var opts = options || {};
+    var actions = opts.actions || [];
+    return new Promise(function (resolve) {
+      var backdrop = document.createElement('div');
+      backdrop.className = 'un-backdrop';
+      var wrap = document.createElement('div');
+      wrap.className = 'un-action-sheet';
+
+      var card = document.createElement('div');
+      card.className = 'un-action-card';
+      if (opts.title) {
+        var title = document.createElement('div');
+        title.className = 'un-action-title';
+        title.textContent = opts.title;
+        card.appendChild(title);
+      }
+      actions.forEach(function (action) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'un-action-btn' + (action.destructive ? ' un-destructive' : '');
+        btn.textContent = action.label;
+        btn.addEventListener('click', function () { settle(action); });
+        card.appendChild(btn);
+      });
+      wrap.appendChild(card);
+
+      var cancelCard = document.createElement('div');
+      cancelCard.className = 'un-action-card';
+      var cancelBtn = document.createElement('button');
+      cancelBtn.type = 'button';
+      cancelBtn.className = 'un-action-btn un-action-cancel';
+      cancelBtn.textContent = opts.cancelLabel || 'Cancel';
+      cancelBtn.addEventListener('click', function () { settle(null); });
+      cancelCard.appendChild(cancelBtn);
+      wrap.appendChild(cancelCard);
+
+      document.body.appendChild(backdrop);
+      document.body.appendChild(wrap);
+
+      var height = wrap.offsetHeight || 1;
+      var y = height;
+      var activeSpring = null;
+      var settled = false;
+
+      function render(val) {
+        y = val;
+        wrap.style.transform = 'translateY(' + val + 'px)';
+        backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / height)));
+      }
+
+      function springTo(to, onRest) {
+        if (activeSpring) activeSpring.stop();
+        activeSpring = spring(function (v) { render(v); }, {
+          from: y, to: to, velocity: 0, preset: 'default',
+          onRest: function () { activeSpring = null; if (onRest) onRest(); },
+        });
+      }
+
+      function settle(action) {
+        if (settled) return;
+        settled = true;
+        springTo(height, function () {
+          if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+          if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+          if (action && action.handler) action.handler();
+          resolve(action || null);
+        });
+      }
+
+      backdrop.addEventListener('click', function () { settle(null); });
+
+      render(height);
+      springTo(0);
+    });
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   * Alert dialog — the compact centered iOS alert. Fade + scale-down
+   * entrance (alerts don't spring from an edge). Resolves with
+   * { button, value } — value is the field text when a field was shown.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  // alert({ title, message?, field?: { placeholder?, value? },
+  // buttons?: [{ label, style?: 'cancel'|'default'|'destructive',
+  // handler? }] }) — returns a Promise. Named alertDialog internally so it
+  // can't be confused with window.alert; exposed as unNative.alert.
+  function alertDialog(options) {
+    var opts = options || {};
+    var buttons = opts.buttons && opts.buttons.length
+      ? opts.buttons
+      : [{ label: 'OK', style: 'default' }];
+    return new Promise(function (resolve) {
+      var backdrop = document.createElement('div');
+      backdrop.className = 'un-backdrop un-backdrop-fade';
+      var card = document.createElement('div');
+      card.className = 'un-alert';
+
+      var title = document.createElement('div');
+      title.className = 'un-alert-title';
+      title.textContent = opts.title || '';
+      card.appendChild(title);
+      if (opts.message) {
+        var msg = document.createElement('div');
+        msg.className = 'un-alert-message';
+        msg.textContent = opts.message;
+        card.appendChild(msg);
+      }
+      var field = null;
+      if (opts.field) {
+        field = document.createElement('input');
+        field.type = 'text';
+        field.className = 'un-alert-field';
+        if (opts.field.placeholder) field.placeholder = opts.field.placeholder;
+        if (opts.field.value != null) field.value = opts.field.value;
+        card.appendChild(field);
+      }
+
+      var row = document.createElement('div');
+      row.className = 'un-alert-buttons' + (buttons.length > 2 ? ' un-stacked' : '');
+      var settled = false;
+      buttons.forEach(function (button) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'un-alert-btn' +
+          (button.style === 'cancel' ? ' un-cancel' : '') +
+          (button.style === 'destructive' ? ' un-destructive' : '');
+        btn.textContent = button.label;
+        btn.addEventListener('click', function () {
+          if (settled) return;
+          settled = true;
+          var value = field ? field.value : undefined;
+          card.classList.remove('un-in');
+          backdrop.style.opacity = '0';
+          setTimeout(function () {
+            if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+            if (card.parentNode) card.parentNode.removeChild(card);
+            if (button.handler) button.handler(value);
+            resolve({ button: button, value: value });
+          }, 180);
+        });
+        row.appendChild(btn);
+      });
+      card.appendChild(row);
+
+      document.body.appendChild(backdrop);
+      document.body.appendChild(card);
+      // Next frame: engage the CSS entrance (scale 1.12 → 1, fade in).
+      requestAnimationFrame(function () {
+        backdrop.style.opacity = '1';
+        card.classList.add('un-in');
+        if (field) { try { field.focus(); } catch (e) { /* ignore */ } }
+      });
+    });
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   * Nav bars — blurred compact bar with hairline-on-scroll, optional
+   * collapsing large title.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  var NAVBAR_COLLAPSE_PX = 44; // scroll distance over which the large title fades
+
+  // attachNavBar(barEl, { scrollEl?, largeTitleEl? }) — barEl is a
+  // .un-navbar element; scrollEl defaults to the window scroller (same
+  // detection as attachPullToRefresh). Toggles .un-scrolled (hairline) and,
+  // when largeTitleEl is given, fades/scales it out and toggles
+  // .un-collapsed on the bar (revealing the compact .un-navbar-title).
+  // Returns { detach() }; never throws.
+  function attachNavBar(barEl, options) {
+    var noop = { detach: function () {} };
+    if (!barEl || barEl.nodeType !== 1) {
+      console.warn('[unNative] attachNavBar: barEl must be an Element — nav bar helper disabled.');
+      return noop;
+    }
+    var opts = options || {};
+    var scrollEl = opts.scrollEl;
+    var windowMode = !scrollEl || scrollEl === window || scrollEl === document ||
+      scrollEl === document.scrollingElement ||
+      scrollEl === document.documentElement || scrollEl === document.body;
+    var listenEl = windowMode ? window : scrollEl;
+    var large = opts.largeTitleEl && opts.largeTitleEl.nodeType === 1 ? opts.largeTitleEl : null;
+    if (large) barEl.classList.add('un-has-large');
+
+    function update() {
+      var top = windowMode ? (window.scrollY || 0) : scrollEl.scrollTop;
+      barEl.classList.toggle('un-scrolled', top > 1);
+      if (large) {
+        var p = Math.max(0, Math.min(1, top / NAVBAR_COLLAPSE_PX));
+        large.style.opacity = String(1 - p);
+        large.style.transform = 'scale(' + (1 - 0.1 * p) + ')';
+        barEl.classList.toggle('un-collapsed', p >= 1);
+      }
+    }
+
+    listenEl.addEventListener('scroll', update, { passive: true });
+    update();
+
+    return {
+      detach: function () {
+        listenEl.removeEventListener('scroll', update);
+        barEl.classList.remove('un-scrolled', 'un-collapsed', 'un-has-large');
+        if (large) { large.style.opacity = ''; large.style.transform = ''; }
+      },
+    };
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
    * Spring tuner (?un-tune=1) — device-tuning aid for the demo page.
    * Mutates unNative.presets live; springs read presets at start time.
    * ──────────────────────────────────────────────────────────────────── */
@@ -704,6 +1230,25 @@
         panel.appendChild(row);
       });
     });
+    // Commit-decision projection horizon (ms) — read at release time.
+    (function () {
+      var row = document.createElement('label');
+      var span = document.createElement('span');
+      var input = document.createElement('input');
+      input.type = 'range';
+      input.min = 40;
+      input.max = 400;
+      input.value = physics.COMMIT_HORIZON_MS;
+      function label() { span.textContent = 'commit.horizonMs = ' + physics.COMMIT_HORIZON_MS; }
+      input.addEventListener('input', function () {
+        physics.COMMIT_HORIZON_MS = Number(input.value);
+        label();
+      });
+      label();
+      row.appendChild(span);
+      row.appendChild(input);
+      panel.appendChild(row);
+    })();
     document.body.appendChild(panel);
   }
 
@@ -724,5 +1269,10 @@
     attachSwipeActions: attachSwipeActions,
     attachPullToRefresh: attachPullToRefresh,
     transition: transition,
+    presentSheet: presentSheet,
+    actionSheet: actionSheet,
+    alert: alertDialog,
+    attachNavBar: attachNavBar,
+    gestures: gestures,
   };
 })(typeof window !== 'undefined' ? window : globalThis);

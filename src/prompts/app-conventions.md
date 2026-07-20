@@ -891,9 +891,11 @@ Rules:
 
 An **opt-in** CSS + JS kit that makes an app's mobile UI feel native on
 iOS and Android: platform-adaptive switches, native pressed states,
-swipe-to-act list rows, pull-to-refresh, and animated push/pop screen
-transitions — all in vanilla JS + CSS, no build step, attaching to the
-app's existing DOM. It is **available and recommended for mobile-facing
+swipe-to-act list rows, pull-to-refresh (inner containers or the whole
+page), bottom sheets, action sheets, alert dialogs, blurred nav bars
+with collapsing large titles, inset-grouped list styling, and animated
+push/pop screen transitions — all in vanilla JS + CSS, no build step,
+attaching to the app's existing DOM. It is **available and recommended for mobile-facing
 UI**; adopting it is each app's choice (typically driven from dev chat),
 not a requirement.
 
@@ -928,17 +930,63 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   Material 3 track/thumb on Android, pure CSS.
 - **Swipe-to-act rows.**
   `unNative.attachSwipeActions(rowEl, { actions: [{ label, destructive,
-  handler, color? }] })`. Reveals action buttons behind the row on a
-  left drag; when the **last** action is `destructive: true`, a full
-  swipe (or hard flick) commits it. On a destructive commit the kit
+  handler, color? }] })`. Reveals action buttons on a left drag via a
+  **ride-along tray** that translates in lockstep with the row — nothing
+  is painted behind the row, so rounded rows, row margins, translucent
+  backgrounds and inset-grouped cards all render cleanly. When the
+  **last** action is `destructive: true`, a full swipe (or hard flick)
+  commits it, with a haptic tick as the delete cue arms/disarms (where
+  the device supports vibration). On a destructive commit the kit
   collapses and removes the row from the DOM, **then** calls
   `handler()` — do the API call / re-render there. Returns
   `{ close(), detach() }`.
 - **Pull-to-refresh.**
-  `unNative.attachPullToRefresh(scrollEl, onRefresh)` on a scrollable
-  list container; `onRefresh()` returns a Promise and the spinner holds
-  until it settles. Give the container `overscroll-behavior-y: contain`
-  (the kit also sets it defensively). No-op on desktop.
+  `unNative.attachPullToRefresh(scrollEl, onRefresh, opts?)` on a
+  scrollable list container **or the window scroller** (pass `window`,
+  `document`, or `document.scrollingElement` for pages that scroll as
+  one document). In window mode the rubberband translate is applied to
+  `opts.content` — default `document.body.firstElementChild` (the
+  `#app`-style root); pass it explicitly if your `<body>` has several
+  top-level children — and the spinner puck is fixed-positioned.
+  `onRefresh()` returns a Promise and the spinner holds until it
+  settles. For element containers, give them
+  `overscroll-behavior-y: contain` (the kit also sets it defensively).
+  No-op on desktop. Never throws: invalid input logs a console warning
+  and returns a no-op `{ detach() }`.
+- **Bottom sheet.** `unNative.presentSheet({ content | contentEl,
+  onDismiss })` — grabber, spring presentation, 1:1 drag-to-dismiss
+  with momentum commit (a touch mid-spring inherits position and
+  velocity), backdrop tap dismisses. Returns `{ dismiss(), el }`.
+- **Action sheet.** `unNative.actionSheet({ title?, actions: [{ label,
+  destructive?, handler? }], cancelLabel? })` — iOS-style stack with a
+  red destructive action and a separate Cancel card; backdrop cancels.
+  Resolves a Promise with the chosen action object, or `null`.
+- **Alert dialog.** `unNative.alert({ title, message?, field?:
+  { placeholder?, value? }, buttons?: [{ label, style?:
+  'cancel'|'default'|'destructive', handler? }] })` — the compact
+  270px centered iOS alert with optional inset text field. Resolves
+  `{ button, value }` (always write it `unNative.alert(...)` — it does
+  not replace `window.alert`).
+- **Nav bars.** Markup classes `un-navbar` (fixed, blurred, translucent),
+  `un-navbar-title`, `un-navbar-back` (tinted back chevron), and
+  `un-navbar-large` (large-title block in the page flow). Wire with
+  `unNative.attachNavBar(barEl, { scrollEl?, largeTitleEl? })` — shows
+  the hairline once scrolled and collapses the large title into the
+  compact bar; `scrollEl` defaults to the window scroller. Returns
+  `{ detach() }`.
+- **Inset-grouped lists (pure CSS).** `un-group` (rounded card),
+  `un-group-header` (uppercase inset section header), `un-group-row`
+  (inset hairline separators drawn on the static container, so they
+  hold still while a row swipes). The biggest "looks native" lever;
+  composes with `attachSwipeActions`.
+- **Gesture arbiter.** `unNative.gestures` — `{ claim(seq, token),
+  owner(seq), release(seq) }`, the single intent lock the kit's own
+  swipe and pull-to-refresh recognizers go through. App gestures
+  (long-press drag, custom pans) should join it: at your own
+  intent-lock moment (never before movement passes the lock threshold),
+  `claim(seq, yourToken)` — for the primary touch the sequence is the
+  string `'touch'`; for non-touch pointers, the `pointerId` — and back
+  off if it returns `false`. Claims auto-clear when the finger lifts.
 - **Screen transitions.** `unNative.transition(fn, { type: 'push' |
   'pop' | 'none' })` wraps your DOM mutation in a View Transition (iOS
   slide+parallax / Android shared-axis fade; instant cut where the API
@@ -979,8 +1027,12 @@ out-specificity-ing kit selectors or copying the stylesheet:
 - `--un-switch-track-off`, `--un-switch-thumb`
 - `--un-action-danger`, `--un-action-neutral`, `--un-action-text` —
   swipe-action buttons
-- `--un-surface` — kit chrome (pull-to-refresh puck, tray backing)
-- `--un-radius`, `--un-radius-full`
+- `--un-surface` — kit chrome (pull-to-refresh puck)
+- `--un-hairline`, `--un-muted` — separators and secondary text
+- `--un-group-bg`, `--un-sheet-bg`, `--un-navbar-bg`, `--un-backdrop`
+  — grouped-list cards, sheet/alert surfaces, nav-bar backing, overlay
+  dim
+- `--un-radius`, `--un-radius-full`, `--un-radius-card`
 
 Physics, thresholds and gesture geometry are deliberately **not**
 themeable — the native feel stays uniform across differently-branded

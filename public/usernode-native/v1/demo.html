@@ -67,20 +67,50 @@
         <p class="text-xs text-zinc-500 mt-2">Partial swipe reveals actions; a full swipe (or a hard flick) deletes. Catch a springing row mid-motion — it follows your finger from where it is.</p>
       </section>
 
+      <!-- Inset-grouped list + ride-along swipe tray -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Inset-grouped list (swipe a row left)</h2>
+        <div class="un-group-header">Grouped rows — rounded, with margins</div>
+        <div id="grouped-swipe" class="un-group shadow-sm"></div>
+        <p class="text-xs text-zinc-500 mt-2">The action tray rides along with the row — no corner fringe on the rounded card, and the inset hairline separators hold still during the swipe.</p>
+        <div class="un-group-header mt-6">Settings-style rows</div>
+        <div class="un-group shadow-sm">
+          <label class="un-group-row flex items-center justify-between gap-4 px-4 py-3">
+            <span class="text-sm">Wi-Fi</span>
+            <input type="checkbox" class="un-switch" checked>
+          </label>
+          <label class="un-group-row flex items-center justify-between gap-4 px-4 py-3">
+            <span class="text-sm">Bluetooth</span>
+            <input type="checkbox" class="un-switch">
+          </label>
+        </div>
+      </section>
+
+      <!-- Sheets & dialogs -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Sheets &amp; dialogs</h2>
+        <div class="flex flex-wrap items-center gap-3">
+          <button id="sheet-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Bottom sheet</button>
+          <button id="action-sheet-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Action sheet</button>
+          <button id="alert-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Alert</button>
+        </div>
+        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. Action sheet &amp; alert resolve a Promise with your choice.</p>
+      </section>
+
       <!-- Pull to refresh -->
       <section>
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Pull to refresh (touch devices)</h2>
         <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden" style="position:relative">
           <div id="ptr-list" class="h-64 overflow-y-auto divide-y divide-zinc-200 dark:divide-zinc-800" style="overscroll-behavior-y: contain"></div>
         </div>
-        <p class="text-xs text-zinc-500 mt-2">Spinner grows with the pull — release past the line (or yank) to refresh; a new row lands after ~1s.</p>
+        <p class="text-xs text-zinc-500 mt-2">Spinner grows with the pull — release past the line (or yank) to refresh; a new row lands after ~1s. The PAGE itself also refreshes: scroll to the very top and pull the whole page down (window-scroller mode).</p>
       </section>
 
-      <!-- Transitions -->
+      <!-- Transitions + nav bar -->
       <section>
-        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Page transitions</h2>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Page transitions &amp; nav bar</h2>
         <button id="push-btn" class="px-5 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Push screen B →</button>
-        <p class="text-xs text-zinc-500 mt-2">iOS: slide + parallax. Android: shared-axis fade. Old browsers: instant cut.</p>
+        <p class="text-xs text-zinc-500 mt-2">iOS: slide + parallax. Android: shared-axis fade. Old browsers: instant cut. Screen B shows the blurred nav bar with a collapsing large title.</p>
       </section>
 
       <!-- Re-themed section: proves the CSS-variable theming contract -->
@@ -98,15 +128,21 @@
     </main>
   </div>
 
-  <!-- Screen B (transition target) -->
+  <!-- Screen B (transition target + nav bar demo) -->
   <div id="screen-b" class="hidden" style="min-height:100dvh">
-    <header class="un-safe-top-extend sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800">
-      <button id="pop-btn" class="un-touch-target text-sm" style="color:var(--un-accent)">‹ Back</button>
-      <h1 class="text-base font-semibold">Screen B</h1>
-    </header>
-    <main class="max-w-md mx-auto px-4 py-8 space-y-4">
-      <p class="text-sm text-zinc-500">This screen was pushed with <code>unNative.transition(fn, {type:'push'})</code>. Tap Back to pop.</p>
+    <div id="navbar-b" class="un-navbar">
+      <button id="pop-btn" class="un-navbar-back un-touch-target">Back</button>
+      <div class="un-navbar-title">Screen B</div>
+      <span class="w-12"></span>
+    </div>
+    <main class="max-w-md mx-auto px-4 space-y-4" style="padding-top: calc(44px + env(safe-area-inset-top, 0px))">
+      <h1 id="large-title-b" class="un-navbar-large" style="padding-left:0; padding-right:0">Screen B</h1>
+      <p class="text-sm text-zinc-500">This screen was pushed with <code>unNative.transition(fn, {type:'push'})</code>. Scroll down: the large title collapses into the blurred bar and the hairline appears. Tap Back to pop.</p>
       <div class="h-40 rounded-xl" style="background:var(--un-accent); opacity:0.15"></div>
+      <div class="h-40 rounded-xl" style="background:var(--un-accent); opacity:0.1"></div>
+      <div class="h-40 rounded-xl" style="background:var(--un-accent); opacity:0.06"></div>
+      <div class="h-40 rounded-xl" style="background:var(--un-accent); opacity:0.04"></div>
+      <div class="h-16"></div>
     </main>
   </div>
 
@@ -146,6 +182,59 @@
       // Re-themed swipe row
       addSwipeRow(document.getElementById('rethemed-swipe'), 'Amber delete button', 'Same physics, different theme');
 
+      // ── Inset-grouped list with ride-along swipe trays ─────────────
+      // Rows are TRANSPARENT here — the ride-along tray means nothing is
+      // painted behind them, so the rounded group card stays clean.
+      var groupedSwipe = document.getElementById('grouped-swipe');
+      ['Groceries', 'Call the bank', 'Book flights'].forEach(function (t, i) {
+        var row = makeRow(t, 'Grouped row ' + (i + 1) + ' — swipe me left');
+        row.className = 'px-4 py-3';
+        groupedSwipe.appendChild(row);
+        unNative.attachSwipeActions(row, {
+          actions: [
+            { label: 'Pin', handler: function () { row.style.opacity = '0.45'; } },
+            { label: 'Delete', destructive: true, handler: function () { /* row already removed by the kit */ } },
+          ],
+        });
+      });
+
+      // ── Sheets & dialogs ───────────────────────────────────────────
+      var resultEl = document.getElementById('dialog-result');
+      document.getElementById('sheet-btn').addEventListener('click', function () {
+        unNative.presentSheet({
+          content:
+            '<div class="text-base font-semibold mb-2">Bottom sheet</div>' +
+            '<p class="text-sm text-zinc-500 mb-3">Slow drags track 1:1; a flick dismisses by momentum; drifting back cancels. Grab it mid-spring — it follows from where it is.</p>' +
+            '<div class="h-24 rounded-xl" style="background:var(--un-accent); opacity:0.15"></div>',
+          onDismiss: function () { resultEl.textContent = 'Sheet dismissed.'; },
+        });
+      });
+      document.getElementById('action-sheet-btn').addEventListener('click', function () {
+        unNative.actionSheet({
+          title: 'Demo row',
+          actions: [
+            { label: 'Share' },
+            { label: 'Duplicate' },
+            { label: 'Delete', destructive: true },
+          ],
+        }).then(function (action) {
+          resultEl.textContent = action ? 'Action sheet: ' + action.label : 'Action sheet: cancelled.';
+        });
+      });
+      document.getElementById('alert-btn').addEventListener('click', function () {
+        unNative.alert({
+          title: 'Rename item',
+          message: 'Enter a new name for this item.',
+          field: { placeholder: 'Name', value: 'Demo row' },
+          buttons: [
+            { label: 'Cancel', style: 'cancel' },
+            { label: 'OK' },
+          ],
+        }).then(function (r) {
+          resultEl.textContent = 'Alert: ' + r.button.label + (r.value != null ? ' — “' + r.value + '”' : '');
+        });
+      });
+
       // ── Pull-to-refresh list ───────────────────────────────────────
       var ptrList = document.getElementById('ptr-list');
       var ptrCount = 0;
@@ -162,19 +251,31 @@
         });
       });
 
-      // ── Push / pop transitions ─────────────────────────────────────
+      // Window-scroller PTR: pull the whole page down from the very top.
+      unNative.attachPullToRefresh(window, function () {
+        return new Promise(function (resolve) {
+          setTimeout(function () { addPtrRow('Page refresh ✨'); resolve(); }, 1000);
+        });
+      });
+
+      // ── Push / pop transitions + nav bar ───────────────────────────
       var a = document.getElementById('screen-a');
       var b = document.getElementById('screen-b');
+      unNative.attachNavBar(document.getElementById('navbar-b'), {
+        largeTitleEl: document.getElementById('large-title-b'),
+      });
       document.getElementById('push-btn').addEventListener('click', function () {
         unNative.transition(function () {
           a.classList.add('hidden');
           b.classList.remove('hidden');
+          window.scrollTo(0, 0);
         }, { type: 'push' });
       });
       document.getElementById('pop-btn').addEventListener('click', function () {
         unNative.transition(function () {
           b.classList.add('hidden');
           a.classList.remove('hidden');
+          window.scrollTo(0, 0);
         }, { type: 'pop' });
       });
     })();
