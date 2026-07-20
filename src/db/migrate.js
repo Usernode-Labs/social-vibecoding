@@ -34,6 +34,7 @@ async function migrate(config) {
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
+  await seedStagingImportedPrProposal(pool, config);
   await seedStagingRestartEligibleMerge(pool, config);
   await seedStagingProposalDiscussion(pool, config);
   await seedStagingOtherUserProposal(pool, config);
@@ -101,6 +102,19 @@ async function migrate(config) {
 // a clean no-op in that case rather than erroring on a missing relation.
 // A production run of the same query returned zero rows, so this is a silent
 // pass on the real boot; it only ever fires if data drifts into conflict.
+//
+// SCOPE — imported rows only. The invariant PR-import relies on (and the
+// deferred partial UNIQUE index) is `(app_id, pr_number) WHERE source =
+// 'imported'`. NATIVE sessions can legitimately share an (app_id, pr_number)
+// — most concretely, the staging seed fixtures deliberately reuse fake PR
+// numbers across different native fixtures, which a broad audit would (and
+// did) abort staging boot on, the very environment this feature is meant to
+// be testable in. The `source = 'imported'` (with the source column NULL for
+// every native/legacy row) filter keeps the prod result identical (zero — no
+// imported rows exist yet) while only ever guarding the rows the invariant
+// actually covers. The to_regclass guard also covers pre-Slice-1 databases
+// where the `source` column doesn't exist yet: the schema apply that follows
+// adds it, and a fresh DB skips entirely above.
 async function auditDuplicatePrSessions(pool) {
   // Fresh DB: the table is created by the schema apply that follows, so
   // there's nothing to audit yet. Skip cleanly.
@@ -112,10 +126,23 @@ async function auditDuplicatePrSessions(pool) {
     return;
   }
 
+  // The `source` column is added by the schema apply that runs AFTER this
+  // audit. On a pre-Slice-1 database it won't exist yet; since no imported
+  // rows can exist without it, there's nothing to audit — skip cleanly.
+  const { rows: col } = await pool.query(
+    `SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'chat_sessions'
+        AND column_name = 'source'`
+  );
+  if (!col.length) {
+    log.info('db', 'PR-import audit skipped — source column not present yet (pre-Slice-1 DB)');
+    return;
+  }
+
   const { rows } = await pool.query(
     `SELECT app_id, pr_number, array_agg(id ORDER BY id) AS session_ids, COUNT(*)
        FROM chat_sessions
-      WHERE pr_number IS NOT NULL
+      WHERE pr_number IS NOT NULL AND source = 'imported'
       GROUP BY app_id, pr_number
      HAVING COUNT(*) > 1`
   );
@@ -4522,6 +4549,160 @@ async function seedStagingMyOpenPr(pool, config) {
     appId,
     targetUser: target.username,
     sessionId,
+  });
+}
+
+// #687 (PR-import, Slice 2): staging fixtures for imported proposals so the
+// "Imported PR" badge, the GitHub-maintained note, and the hidden dev-side
+// controls are reviewable in a staging preview (imported rows are created by
+// the flag-gated import route, so a fresh staging DB has none). Two rows:
+//   1. A healthy imported proposal with passing checks and a couple of yes
+//      votes — exercises the badge + GitHub link + read-only rendering.
+//   2. An imported proposal whose PR head just moved: tally reset to zero and
+//      a "the PR was updated — please re-review" note in its thread, previewing
+//      the Slice 3 head-change behaviour.
+// Idempotent (keyed on branch name), obviously-fake "[staging fixture]"
+// content, strict no-op outside staging.
+async function seedStagingImportedPrProposal(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1', [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging imported-PR fixture skipped: self-app row missing', { slug: config.selfAppSlug });
+    return;
+  }
+
+  const { rows: users } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 3`
+  );
+  if (!users.length) {
+    log.warn('db', 'Staging imported-PR fixture skipped: no users');
+    return;
+  }
+  const importer = users[0];
+  const votesRequired = Math.max(1, Math.ceil(users.length / 2));
+
+  // Fixture 1: healthy imported proposal with passing checks + yes votes.
+  const headSha1 = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
+  const branch1 = 'staging-fixture/imported-pr';
+  let id1;
+  {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch1]
+    );
+    id1 = have[0]?.id;
+    if (!id1) {
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
+            status, source, imported_pr_head_sha, imported_pr_author,
+            check_state, test_results, checks_commit_sha, checks_checked_at,
+            votes_required, promoted_at, created_at)
+         VALUES
+           ($1, $2, $3, 9310, 'https://github.com/example/example/pull/9310',
+            '[staging fixture] Imported PR — feature from an external contributor',
+            'In plain terms: an outside contributor built this on GitHub and it was imported here so the group can vote on it.',
+            'promoted', 'imported', $4, 'octo-contributor',
+            'passing', '[{"name":"loads with no console errors","status":"pass"}]'::jsonb,
+            $4, NOW() - INTERVAL '10 minutes',
+            $5, NOW() - INTERVAL '12 minutes', NOW() - INTERVAL '12 minutes')
+         RETURNING id`,
+        [appId, importer.id, branch1, headSha1, votesRequired]
+      );
+      id1 = rows[0].id;
+    } else {
+      await pool.query(
+        `UPDATE chat_sessions
+            SET source = 'imported', imported_pr_head_sha = $2,
+                imported_pr_author = 'octo-contributor', check_state = 'passing',
+                checks_commit_sha = $2, checks_checked_at = NOW()
+          WHERE id = $1`,
+        [id1, headSha1]
+      );
+    }
+    // A yes vote or two so the tally pill fills.
+    await pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+       VALUES ($1, $2, 'yes', NOW() - INTERVAL '9 minutes')
+       ON CONFLICT (session_id, user_id) DO NOTHING`,
+      [id1, importer.id]
+    );
+    if (users.length > 1) {
+      await pool.query(
+        `INSERT INTO pr_votes (session_id, user_id, vote, created_at)
+         VALUES ($1, $2, 'yes', NOW() - INTERVAL '8 minutes')
+         ON CONFLICT (session_id, user_id) DO NOTHING`,
+        [id1, users[1].id]
+      );
+    }
+  }
+
+  // Fixture 2: imported proposal whose head just moved — tally reset, a
+  // re-review note in its thread, checks re-running against the new head.
+  const headSha2 = 'f0e9d8c7b6a5049382716f5e4d3c2b1a09f8e7d6';
+  const branch2 = 'staging-fixture/imported-pr-updated';
+  let id2;
+  {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch2]
+    );
+    id2 = have[0]?.id;
+    if (!id2) {
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
+            status, source, imported_pr_head_sha, imported_pr_author,
+            check_state, checks_commit_sha,
+            votes_required, promoted_at, created_at)
+         VALUES
+           ($1, $2, $3, 9311, 'https://github.com/example/example/pull/9311',
+            '[staging fixture] Imported PR — head updated, please re-review',
+            'In plain terms: the contributor pushed new code to this PR, so earlier votes were cleared and the checks are running again.',
+            'promoted', 'imported', $4, 'octo-contributor',
+            'pending', $4,
+            $5, NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '30 minutes')
+         RETURNING id`,
+        [appId, importer.id, branch2, headSha2, votesRequired]
+      );
+      id2 = rows[0].id;
+    } else {
+      await pool.query(
+        `UPDATE chat_sessions
+            SET source = 'imported', imported_pr_head_sha = $2,
+                imported_pr_author = 'octo-contributor', check_state = 'pending',
+                checks_commit_sha = $2
+          WHERE id = $1`,
+        [id2, headSha2]
+      );
+    }
+    // Tally reset: this row deliberately carries NO pr_votes. Post the
+    // re-review note into the proposal's own thread (idempotent — only when
+    // the thread has no message yet).
+    const { rows: msgHave } = await pool.query(
+      `SELECT 1 FROM chat_messages
+        WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $2
+        LIMIT 1`,
+      [appId, id2]
+    );
+    if (!msgHave.length) {
+      await pool.query(
+        `INSERT INTO chat_messages
+           (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+         VALUES ($1, NULL,
+           '[Mock] The pull request was updated on GitHub — earlier votes were cleared, please re-review the new changes.',
+           'system', 'session', $2, NOW() - INTERVAL '5 minutes')`,
+        [appId, id2]
+      );
+    }
+  }
+
+  log.info('db', 'Staging imported-PR fixtures seeded', {
+    appId, healthy: id1, headChanged: id2,
   });
 }
 

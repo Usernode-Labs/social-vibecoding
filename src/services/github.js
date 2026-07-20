@@ -468,6 +468,20 @@ async function findOpenPrByBranch(owner, repo, branch) {
   return (data && data[0]) || null;
 }
 
+// #687 (PR-import): list the repo's currently-open pull requests, newest
+// first. Used by the import picker to show candidates the user can pull in
+// as proposals. Returns the raw Octokit PR objects (number, title, user,
+// head, base, html_url, …); callers shape what they need. Same-repo scope —
+// fork heads are out of scope for the import flow (see spec Deferred work).
+async function listOpenPulls(owner, repo, { perPage = 50 } = {}) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.pulls.list({
+    owner, repo, state: 'open', sort: 'created', direction: 'desc',
+    per_page: perPage,
+  });
+  return data || [];
+}
+
 async function updatePR(owner, repo, prNumber, { title, body } = {}) {
   // Goes through getOctokit (PAT-preferred) so callers get a real
   // @octokit/rest instance with `.rest.pulls.update`, instead of the
@@ -1315,6 +1329,7 @@ module.exports = {
   createBranch,
   createPR,
   findOpenPrByBranch,
+  listOpenPulls,
   updatePR,
   closePR,
   reopenPR,

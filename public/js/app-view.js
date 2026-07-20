@@ -3791,6 +3791,12 @@ const AppView = {
     const unvotedBadge = isUnvoted
       ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0" title="You haven\'t voted on this yet"><span class="relative flex h-1.5 w-1.5"><span class="absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75 animate-ping"></span><span class="relative inline-flex rounded-full h-1.5 w-1.5 bg-violet-500"></span></span>Vote</span>'
       : '';
+    // #687: "Imported PR" provenance badge. Signals the code came from an
+    // external GitHub PR (author maintains it there) rather than the group's
+    // AI dev-chat. Amber to read as informational, not a warning.
+    const importedBadge = (pr.source === 'imported')
+      ? `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0" title="${pr.imported_pr_author ? ('Imported from GitHub — authored by ' + escapeHtml(pr.imported_pr_author)) : 'Imported from an external GitHub pull request'}">Imported PR</span>`
+      : '';
     // #405: the merge-state slot is now driven by the shared MergeStatus
     // lifecycle helper so labels/colours match the home strip and the dev
     // session header exactly. It renders the merge-pipeline / conflict /
@@ -3812,7 +3818,12 @@ const AppView = {
     // mine: the viewer authored this PR, so they own its dev session. Drives
     // both the "Open session" button and the violet "yours" chip below.
     const mine = !!(App.user && pr.user_id === App.user.id);
-    const sessionBtn = mine
+    // #687: an imported PR has no platform-owned dev session — its code is
+    // maintained on GitHub by an external author. Hide the dev-side entry
+    // point (Open session → continue-in-dev-chat / sync / edit) for imported
+    // rows; the "Imported PR" badge + GitHub link stand in for it.
+    const imported = pr.source === 'imported';
+    const sessionBtn = (mine && !imported)
       ? `<button class="gc-vote-btn" title="Open the dev session behind this proposal" onclick="AppView.openProposalSession(${pr.id})">Open session</button>`
       : '';
     // Withdraw sits beside "Open session" on your own live proposals only.
@@ -3857,6 +3868,7 @@ const AppView = {
               <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">${metaParts.join(' · ')}${closesPills ? ` ${closesPills}` : ''}</div>
             </div>
             ${fallbackChip}
+            ${importedBadge}
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
             ${stateBadge}
@@ -3884,10 +3896,18 @@ const AppView = {
     const chips = linked.map((n) =>
       `<a href="#app/${slug}/dev/issues/${n}" class="inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20" title="Open issue #${n}">#${n}</a>`
     ).join(' ');
+    const imported = pr.source === 'imported';
     const details = [];
     if (pr.pr_url) details.push(`<a href="${pr.pr_url}" target="_blank" rel="noopener" class="text-violet-400 hover:underline">View PR on GitHub</a>`);
-    details.push(`proposed by <span class="font-medium">${escapeHtml(pr.username || '')}</span>`);
+    details.push(`${imported ? 'imported by' : 'proposed by'} <span class="font-medium">${escapeHtml(pr.username || '')}</span>`);
     if (pr.created_at) details.push(escapeHtml(relTime(pr.created_at)));
+    // #687: imported proposals have no in-app dev session — the code is
+    // maintained on GitHub by its author, so there's no continue-in-dev-chat,
+    // sync-with-main, or in-app edit. Spell that out where those controls
+    // would otherwise be discovered.
+    const importedNote = imported
+      ? `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">Imported pull request${pr.imported_pr_author ? ` — authored by <span class="font-medium">${escapeHtml(pr.imported_pr_author)}</span>` : ''}. The code is maintained on GitHub; there's no in-app dev session for it. Voting and checks work the same as any proposal.</div>`
+      : '';
     const lockedNote = (ctx.locked && pr.status !== 'merged')
       ? '<div class="text-xs text-amber-500 mt-1">App is locked — this also needs at least one admin yes before it merges.</div>'
       : '';
@@ -3910,6 +3930,7 @@ const AppView = {
     return `
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
         <div>${details.join(' · ')}${helpBtn}</div>
+        ${importedNote}
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
         ${AppView._mergeConflictDetailHtml(pr)}
         ${AppView._checksDetailHtml(pr)}

@@ -12,6 +12,7 @@ const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const topicAttrs = require('../services/topic-attributes');
+const { isPrImportEnabled } = require('../config');
 
 // Staging-only mock PR proposals for GET /api/apps/:slug/promoted,
 // appended only when the request carries ?demo=1 (forwarded from the
@@ -511,6 +512,9 @@ function stagingMockMerged() {
 function mergedRowSelect() {
   return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            cs.revert_of_session_id,
+           -- #687 (PR-import): provenance for the "Imported PR" badge +
+           -- GitHub-maintained note (kept visible on merged rows too).
+           cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            -- #381: console-error check snapshot so the warning + detail
            -- block stay visible on a merged proposal for post-hoc review.
            cs.console_check_state, cs.console_errors, cs.console_checked_at,
@@ -874,6 +878,249 @@ function voteRoutes(config) {
       }
     } catch (err) {
       log.error('votes', 'Promote failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── #687: import an existing GitHub PR as a proposal ────────────────
+  //
+  // Everything here is dark unless PR_IMPORT_ENABLED is on. The three
+  // endpoints (candidate list, preview, import) let a collaborator pull an
+  // externally-authored PR into the vote flow instead of building it in the
+  // platform's AI dev-chat. Preview/candidates are read-only; import creates
+  // a `source='imported'` chat_sessions row promoted straight into voting.
+  //
+  // Parse owner/repo from an app's repo_url, or null.
+  const parseRepo = (url) => {
+    const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    return owner && repo ? { owner, repo } : null;
+  };
+
+  // Fire-and-forget: build the imported PR's staging preview pinned to its
+  // exact head SHA (Slice 1 clone fix) and run its checks, mirroring the
+  // post-promote path so an imported proposal gets a preview + checks verdict
+  // like any native one. Never throws into the request.
+  const kickImportedChecks = (session, app, headSha) => {
+    (async () => {
+      const visualsService = require('../services/visuals');
+      await visualsService.setChecksPending(pool, session.id, headSha || null)
+        .catch((err) => log.warn('votes', 'import setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
+      visualsService.notifyChecksPending(session.id, headSha || null);
+      let result;
+      try {
+        result = await staging.buildAndDeployStaging(config, session, app, headSha || 'latest');
+      } catch (err) {
+        const stagingRecovery = require('../services/staging-recovery');
+        await stagingRecovery.recordStagingBootFailure({
+          config, pool, session, commitHash: headSha || null, err,
+        }).catch((e) => log.warn('votes', 'import recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
+        throw err;
+      }
+      await pool.query(
+        `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
+        [result.containerId, result.stagingUrl, session.id]
+      );
+      await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+      visualsService.captureForSession(config, session, app, headSha || null, result)
+        .catch((err) => log.warn('votes', 'import visuals capture failed', { sessionId: session.id, err: err.message }));
+    })().catch((err) => log.warn('votes', 'import staging build failed', { sessionId: session.id, err: err.message }));
+  };
+
+  // Which of this app's PR numbers are already imported and still live/merged
+  // (so the picker + import guard don't offer/allow a duplicate). Archived
+  // imports are excluded so a withdrawn import can be re-imported.
+  const importedPrNumbers = async (appId) => {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT pr_number FROM chat_sessions
+        WHERE app_id = $1 AND source = 'imported' AND pr_number IS NOT NULL
+          AND status IN ('promoted', 'merging', 'merged')`,
+      [appId]
+    );
+    return new Set(rows.map((r) => r.pr_number));
+  };
+
+  // GET candidate PRs to import (open PRs on the app's repo not already
+  // imported). Collab access.
+  router.get('/api/apps/:slug/pr-import/candidates', async (req, res) => {
+    try {
+      if (!isPrImportEnabled()) return res.status(404).json({ error: 'Not found' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const repo = parseRepo(app.repo_url);
+      if (!github.isEnabled() || !repo) return res.json({ candidates: [] });
+
+      const imported = await importedPrNumbers(app.id);
+      let pulls = [];
+      try {
+        pulls = await github.listOpenPulls(repo.owner, repo.repo);
+      } catch (err) {
+        log.warn('votes', 'listOpenPulls failed', { slug: req.params.slug, err: err.message });
+        return res.json({ candidates: [] });
+      }
+      const candidates = pulls
+        .filter((p) => !imported.has(p.number))
+        .map((p) => ({
+          number: p.number,
+          title: p.title,
+          author: p.user?.login || null,
+          headBranch: p.head?.ref || null,
+          baseBranch: p.base?.ref || null,
+          headSha: p.head?.sha || null,
+          htmlUrl: p.html_url || null,
+        }));
+      res.json({ candidates });
+    } catch (err) {
+      log.error('votes', 'PR-import candidates failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET a read-only preview of a single PR before importing. Collab access.
+  router.get('/api/apps/:slug/pr-import/preview', async (req, res) => {
+    try {
+      if (!isPrImportEnabled()) return res.status(404).json({ error: 'Not found' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const repo = parseRepo(app.repo_url);
+      const prNumber = parseInt(req.query.pr, 10);
+      if (!Number.isFinite(prNumber) || prNumber <= 0) {
+        return res.status(400).json({ error: 'A valid PR number is required' });
+      }
+      if (!github.isEnabled() || !repo) {
+        return res.status(409).json({ error: 'GitHub is not configured for this app' });
+      }
+
+      let pr;
+      try {
+        pr = await github.getPR(repo.owner, repo.repo, prNumber);
+      } catch (err) {
+        return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+      }
+      const headSha = pr.head?.sha || null;
+      const baseRef = pr.base?.ref || 'main';
+      let changedFiles = [];
+      try {
+        changedFiles = await github.listChangedFiles(
+          repo.owner, repo.repo, `${baseRef}...${headSha || pr.head?.ref}`
+        );
+      } catch (err) {
+        log.warn('votes', 'PR-import preview listChangedFiles failed', { prNumber, err: err.message });
+      }
+      const imported = await importedPrNumbers(app.id);
+      res.json({
+        preview: {
+          number: pr.number,
+          title: pr.title,
+          author: pr.user?.login || null,
+          state: pr.state,
+          headBranch: pr.head?.ref || null,
+          baseBranch: baseRef,
+          headSha,
+          // GitHub's mergeable is true/false/null (null = still computing).
+          mergeable: pr.mergeable,
+          mergeableState: pr.mergeable_state || null,
+          changedFiles,
+          changedFileCount: changedFiles.length,
+          htmlUrl: pr.html_url || null,
+          alreadyImported: imported.has(pr.number),
+        },
+      });
+    } catch (err) {
+      log.error('votes', 'PR-import preview failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST import a PR as a proposal. Collab access. Creates a promoted
+  // `source='imported'` session and kicks its SHA-pinned checks build.
+  router.post('/api/apps/:slug/pr-import', async (req, res) => {
+    try {
+      if (!isPrImportEnabled()) return res.status(404).json({ error: 'Not found' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const repo = parseRepo(app.repo_url);
+      const prNumber = parseInt(req.body?.pr, 10);
+      if (!Number.isFinite(prNumber) || prNumber <= 0) {
+        return res.status(400).json({ error: 'A valid PR number is required' });
+      }
+      if (!github.isEnabled() || !repo) {
+        return res.status(409).json({ error: 'GitHub is not configured for this app' });
+      }
+
+      // 409 if this PR is already imported and still live/merged.
+      const imported = await importedPrNumbers(app.id);
+      if (imported.has(prNumber)) {
+        return res.status(409).json({ error: `PR #${prNumber} has already been imported.` });
+      }
+
+      let pr;
+      try {
+        pr = await github.getPR(repo.owner, repo.repo, prNumber);
+      } catch (err) {
+        return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+      }
+      if (pr.state !== 'open') {
+        return res.status(409).json({ error: `PR #${prNumber} is not open.` });
+      }
+      const headSha = pr.head?.sha || null;
+      const headBranch = pr.head?.ref || null;
+      if (!headBranch) {
+        return res.status(409).json({ error: 'Could not determine the PR head branch.' });
+      }
+
+      // Create the imported proposal row, promoted straight into voting.
+      const { rows: inserted } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
+            source, imported_pr_head_sha, imported_pr_author, promoted_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'promoted',
+            'imported', $7, $8, NOW(), NOW())
+         RETURNING id`,
+        [
+          app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
+          pr.title || `PR #${prNumber}`, headSha, pr.user?.login || null,
+        ]
+      );
+      const sessionId = inserted[0].id;
+      const session = {
+        id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
+        branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
+        repo_url: app.repo_url, staging_url: null, source: 'imported',
+      };
+
+      // Announce it for voting (group chat + the proposal's own thread),
+      // mirroring the native promote path.
+      const label = pr.title ? `PR #${prNumber} — ${pr.title}` : `PR #${prNumber}`;
+      await sendSystemMessage(pool, app.id,
+        `${req.user.username} imported ${label} for voting`,
+        'vote',
+        { vote: { sessionId, prNumber } }
+      ).catch(() => {});
+      await sendSystemMessage(pool, app.id,
+        `${req.user.username} imported ${label} for voting`,
+        'vote',
+        { vote: { sessionId, prNumber } },
+        { type: 'session', ref: sessionId }
+      ).catch(() => {});
+
+      const { pushSessionUpdate } = require('../services/ws');
+      pushSessionUpdate({ action: 'promoted', sessionId, appSlug: app.slug });
+      try {
+        events.record(pool, {
+          type: events.EVENT_TYPES.PR_PROMOTED,
+          userId: req.user.id, appId: app.id, sessionId,
+          metadata: { prNumber, source: 'imported' },
+        });
+      } catch { /* events are best-effort */ }
+
+      log.info('votes', 'PR imported as proposal', { sessionId, prNumber, appId: app.id });
+      res.json({ ok: true, sessionId, prNumber });
+
+      // Kick the SHA-pinned staging build + checks after responding.
+      const appForBuild = { id: app.id, slug: app.slug, name: app.name, repo_url: app.repo_url };
+      kickImportedChecks(session, appForBuild, headSha);
+    } catch (err) {
+      log.error('votes', 'PR-import failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -1242,6 +1489,10 @@ function voteRoutes(config) {
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+           -- #687 (PR-import): provenance so the client can render the
+           -- "Imported PR" badge + GitHub-maintained note and hide the
+           -- dev-side controls for externally-authored proposals.
+           cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            -- #361: persisted merge-conflict snapshot for the card badge +
            -- detail block (state, conflicting file paths, last-checked).
            cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,
