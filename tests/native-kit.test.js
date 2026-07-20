@@ -18,12 +18,15 @@ const {
   springStep,
   simulateSpring,
   projectMomentum,
+  projectDisplacement,
   estimateVelocity,
   rubberband,
   rubberbandInvert,
   lockIntent,
   decideSwipeRelease,
   decidePtrRelease,
+  decideSheetRelease,
+  createArbiter,
 } = physics;
 
 // ── Spring integrator ──────────────────────────────────────────────────
@@ -89,6 +92,17 @@ test('projectMomentum matches the closed form and degenerates to position at v=0
   assert.equal(DECEL_RATE, 0.998);
 });
 
+test('projectDisplacement is the bounded closed form and defaults to the 120ms commit horizon', () => {
+  assert.equal(physics.COMMIT_HORIZON_MS, 120);
+  // Explicit horizon: position + v * horizon
+  assert.equal(projectDisplacement(0, 1, 100), 100);
+  assert.equal(projectDisplacement(50, -0.5, 40), 30);
+  // Default horizon: the 120ms commit window (x + v·0.12s, issue #690)
+  assert.equal(projectDisplacement(-40, -1), -160);
+  // Degenerates to position at v=0
+  assert.equal(projectDisplacement(-40, 0, 500), -40);
+});
+
 // ── Release decisions (the fidelity requirements, as math) ─────────────
 
 test('swipe release: a short fast flick commits even far from the commit distance', () => {
@@ -100,9 +114,40 @@ test('swipe release: a short fast flick commits even far from the commit distanc
 
 test('swipe release: dragging past the line then back before release does NOT commit', () => {
   // Position is past 60% of the row (-230 < -216) but the finger was
-  // moving back toward closed at release.
+  // moving back toward closed at release: the commit is cancelled. With
+  // the bounded 120ms horizon the projected landing (-170) is still past
+  // the tray, so the row settles OPEN — matching iOS, where drifting back
+  // off the delete cue keeps the actions revealed. (The old full-coast
+  // projection overshot all the way to 'close'.)
   const d = decideSwipeRelease({ x: -230, v: 0.5, trayWidth: 160, rowWidth: 360, canCommit: true });
-  assert.equal(d, 'close');
+  assert.equal(d, 'open');
+  // Drifting back harder projects past the tray line and closes.
+  const d2 = decideSwipeRelease({ x: -230, v: 1.5, trayWidth: 160, rowWidth: 360, canCommit: true });
+  assert.equal(d2, 'close');
+});
+
+test('swipe release: issue #690 benchmark — a fast 70px flick opens a 204px tray', () => {
+  // 70px travelled at 1.2 px/ms projects to -214, past half the tray.
+  assert.equal(
+    decideSwipeRelease({ x: -70, v: -1.2, trayWidth: 204, rowWidth: 375, canCommit: false }),
+    'open'
+  );
+  // Drifting back from just past the tray cancels (projected -50 > -102).
+  assert.equal(
+    decideSwipeRelease({ x: -110, v: 0.5, trayWidth: 204, rowWidth: 375, canCommit: false }),
+    'close'
+  );
+});
+
+test('release decisions honor an explicit horizon override', () => {
+  // 30px pulled at 0.5 px/ms: 120ms horizon projects to 90 (commit)…
+  assert.equal(decidePtrRelease({ pull: 30, v: 0.5, threshold: 70 }), true);
+  // …a 40ms horizon only reaches 50 (no commit).
+  assert.equal(decidePtrRelease({ pull: 30, v: 0.5, threshold: 70, horizonMs: 40 }), false);
+  assert.equal(
+    decideSwipeRelease({ x: -70, v: -1.2, trayWidth: 204, rowWidth: 375, canCommit: false, horizonMs: 10 }),
+    'close'
+  );
 });
 
 test('swipe release: a slow reveal past half the tray opens; a shallow one closes', () => {
@@ -128,6 +173,39 @@ test('PTR release: commits on distance, commits on velocity, cancels on neither'
   assert.equal(decidePtrRelease({ pull: 30, v: 0, threshold: 70 }), false);
   // Moving back up at release: projection reduces, still under.
   assert.equal(decidePtrRelease({ pull: 60, v: -0.5, threshold: 70 }), false);
+});
+
+test('sheet release: flick dismisses, deep drag dismisses, shallow drag cancels', () => {
+  // Fast flick from a shallow position projects past half the sheet.
+  assert.equal(decideSheetRelease({ y: 60, v: 1.4, sheetHeight: 400 }), true);
+  // Deep slow drag past half the sheet dismisses on distance alone.
+  assert.equal(decideSheetRelease({ y: 260, v: 0, sheetHeight: 400 }), true);
+  // Shallow drag with no momentum cancels.
+  assert.equal(decideSheetRelease({ y: 80, v: 0, sheetHeight: 400 }), false);
+  // Past the line but drifting back UP at release: cancels.
+  assert.equal(decideSheetRelease({ y: 230, v: -1, sheetHeight: 400 }), false);
+});
+
+// ── Gesture arbiter ────────────────────────────────────────────────────
+
+test('gesture arbiter: first claim wins, owner re-claim is idempotent, release frees', () => {
+  const a = createArbiter();
+  const swipe = {};
+  const ptr = {};
+  assert.equal(a.claim('touch', swipe), true);
+  assert.equal(a.claim('touch', ptr), false, 'second claimant must lose');
+  assert.equal(a.claim('touch', swipe), true, 'owner re-claim is idempotent');
+  assert.equal(a.owner('touch'), swipe);
+  a.release('touch');
+  assert.equal(a.owner('touch'), null);
+  assert.equal(a.claim('touch', ptr), true, 'released sequence is claimable again');
+  // Sequences are independent.
+  assert.equal(a.claim(7, swipe), true);
+  assert.equal(a.owner(7), swipe);
+  assert.equal(a.owner('touch'), ptr);
+  // Degenerate input never claims.
+  assert.equal(a.claim(null, swipe), false);
+  assert.equal(a.claim('touch', null), false);
 });
 
 // ── Velocity estimator ─────────────────────────────────────────────────
