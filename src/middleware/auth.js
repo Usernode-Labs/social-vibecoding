@@ -85,6 +85,42 @@ function authMiddleware(config) {
         );
 
         if (rows.length > 0 && new Date(rows[0].expires_at) >= new Date()) {
+          // Staging identity switch: a request that carries a VALID iframe
+          // JWT for a DIFFERENT user than the cookie session re-mints as
+          // the token's user (replacing the cookie) instead of silently
+          // keeping the old identity. The parent shell is the token
+          // authority — when it hands the preview a fresh token (user
+          // switched accounts, or the proposal-checks runner navigating as
+          // the view-only admin after the screenshot pass minted a
+          // non-admin cookie), the token must win. Cookie-first-always is
+          // what downgraded the checks suite's admin token to the
+          // screenshot identity and gated every admin-only assertion.
+          // Same-user tokens and invalid/foreign tokens keep the existing
+          // session untouched; prod never reads tokens at all.
+          if (IS_STAGING) {
+            const qTok = typeof req.query?.token === 'string' ? req.query.token : null;
+            const hTok = req.headers['x-usernode-token'];
+            const switchTok = qTok || (typeof hTok === 'string' ? hTok : null);
+            if (switchTok) {
+              let tokenUserId = null;
+              try {
+                const payload = jwt.verify(switchTok, config.jwtSecret);
+                if (payload && typeof payload.id === 'number') tokenUserId = payload.id;
+              } catch (_) { /* invalid token → keep the cookie session */ }
+              if (tokenUserId != null && tokenUserId !== rows[0].user_id) {
+                const minted = await tryMintSessionFromIframeJwt(pool, config, switchTok, res);
+                if (minted) {
+                  req.user = minted;
+                  log.debug('auth', 'Staging iframe-JWT switched session identity', {
+                    from: rows[0].user_id, to: minted.id,
+                  });
+                  return next();
+                }
+                // Mint failed (user missing in the clone, etc.) — fall
+                // through to the still-valid cookie session.
+              }
+            }
+          }
           req.user = {
             id: rows[0].user_id,
             username: rows[0].username,
