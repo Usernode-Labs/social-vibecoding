@@ -42,9 +42,28 @@ function parseRepo(repoUrl) {
   return owner && repo ? { owner, repo } : null;
 }
 
-// Poll GitHub until it has computed PR mergeability. Returns the final
-// boolean (`true` mergeable / `false` conflicting) or `null` if it
-// never settled within the budget. Throws are surfaced to the caller.
+// Normalize a pulls.get payload into the three facts the resolver
+// decides on. `state`/`merged` matter as much as `mergeable`: GitHub
+// reports a CLOSED PR as unmergeable ('dirty') forever, so a caller
+// that only reads `mergeable` mistakes "closed" for "conflicting" and
+// loops on it (session 2398 / PR #26 — withdrawn, re-promoted without a
+// reopen, then every resolve ended still_conflicting).
+function prFacts(pr) {
+  return {
+    mergeable: pr.mergeable === true || pr.mergeable === false ? pr.mergeable : null,
+    state: pr.state || null,
+    merged: !!pr.merged,
+    mergeCommitSha: pr.merge_commit_sha || null,
+  };
+}
+
+// Poll GitHub until it has computed PR mergeability. Returns
+// { mergeable, state, merged } — `mergeable` is the settled boolean, or
+// null if it never settled within the budget. A non-open PR
+// short-circuits the poll immediately: GitHub never recomputes
+// mergeability for a closed PR, so waiting out the budget is pure
+// waste. Callers must check state/merged BEFORE acting on `mergeable`.
+// Throws are surfaced to the caller.
 async function pollMergeable(owner, repo, prNumber) {
   // getOctokit (PAT-preferred), NOT getInstallationOctokit: the
   // self-app's repo owner (e.g. Usernode-Labs) has no GitHub App
@@ -53,42 +72,49 @@ async function pollMergeable(owner, repo, prNumber) {
   // where a wrong merge decision hurts most. mergePR already goes
   // through the PAT path; mergeability reads must match.
   const octokit = await github.getOctokit(owner);
+  let last = { mergeable: null, state: null, merged: false };
   for (let i = 0; i < MERGEABLE_POLL_TRIES; i++) {
     const { data: pr } = await octokit.request(
       'GET /repos/{owner}/{repo}/pulls/{pull_number}',
       { owner, repo, pull_number: prNumber }
     );
-    if (pr.mergeable === true || pr.mergeable === false) return pr.mergeable;
+    last = prFacts(pr);
+    if (last.state === 'closed') return last;
+    if (last.mergeable !== null) return last;
     if (i < MERGEABLE_POLL_TRIES - 1) {
       await sleep(MERGEABLE_POLL_DELAY_MS);
     }
   }
-  return null;
+  return last;
 }
 
 // Wait specifically for `mergeable === true` (clean) before a merge
-// attempt. Returns true (clean), false (GitHub still sees a real
-// conflict), or null (never finished recomputing within budget — caller
-// should NOT merge, to avoid the null-window 405). `afterPush` adds a
-// short initial delay so we don't read the stale pre-push value.
+// attempt. Returns { mergeable, state, merged } with `mergeable` true
+// (clean), false (GitHub still sees a real conflict), or null (never
+// finished recomputing within budget — caller should NOT merge, to
+// avoid the null-window 405). A closed PR short-circuits immediately —
+// its mergeability will never flip true. `afterPush` adds a short
+// initial delay so we don't read the stale pre-push value.
 async function waitForMergeableTrue(owner, repo, prNumber, { afterPush = false } = {}) {
   // PAT-preferred for the same reason as pollMergeable above.
   const octokit = await github.getOctokit(owner);
   if (afterPush && MERGEABLE_AFTER_PUSH_INITIAL_MS > 0) {
     await sleep(MERGEABLE_AFTER_PUSH_INITIAL_MS);
   }
+  let last = { mergeable: null, state: null, merged: false };
   for (let i = 0; i < MERGEABLE_TRUE_TRIES; i++) {
     const { data: pr } = await octokit.request(
       'GET /repos/{owner}/{repo}/pulls/{pull_number}',
       { owner, repo, pull_number: prNumber }
     );
-    if (pr.mergeable === true) return true;
-    if (pr.mergeable === false) return false;
+    last = prFacts(pr);
+    if (last.state === 'closed') return last;
+    if (last.mergeable !== null) return last;
     if (i < MERGEABLE_TRUE_TRIES - 1) {
       await sleep(MERGEABLE_TRUE_DELAY_MS);
     }
   }
-  return null;
+  return last;
 }
 
 // Re-fetch a session joined with its app so callers always work from a
@@ -331,7 +357,7 @@ function isResolving(sessionId) {
 function resolutionOutcomeFor(reason) {
   if (reason === 'synced_and_merged' || reason === 'merged') return 'merged';
   if (reason === 'synced_awaiting_votes' || reason === 'mergeable_recompute_pending') return 'synced';
-  if (['unresolved_conflict', 'sync_threw', 'still_conflicting', 'over_budget', 'retry_threw'].includes(reason)) {
+  if (['unresolved_conflict', 'sync_threw', 'still_conflicting', 'over_budget', 'retry_threw', 'pr_closed'].includes(reason)) {
     return 'failed';
   }
   return 'noop';
@@ -409,6 +435,10 @@ function resolutionRunStatus(reason) {
   if (reason === 'mergeable_recompute_pending') return 'awaiting_github';
   if (reason === 'synced_awaiting_votes' || reason === 'awaiting_votes') return 'blocked';
   if (reason === 'over_budget' || reason === 'sync_threw' || reason === 'retry_threw') return 'error';
+  // The PR is closed on GitHub and couldn't be reopened — terminal, not a
+  // conflict (no amount of conflict-fixing makes a closed PR mergeable).
+  if (reason === 'pr_closed') return 'pr_closed';
+  // 'pr_already_merged' falls through to 'noop' — nothing was resolved.
   return 'noop';
 }
 
@@ -471,13 +501,90 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
   // Decide whether a worker sync is needed: recorded drift, or GitHub
   // currently reporting a real conflict (mergeable === false) once its
   // computation settles.
-  let mergeable0;
+  let pr0;
   try {
-    mergeable0 = await pollMergeable(repo.owner, repo.repo, session.pr_number);
+    pr0 = await pollMergeable(repo.owner, repo.repo, session.pr_number);
   } catch (err) {
     log.warn('conflict', 'pollMergeable failed', { sessionId: session.id, err: err.message });
-    mergeable0 = null;
+    pr0 = { mergeable: null, state: null, merged: false };
   }
+
+  // PR-state gate, BEFORE any sync/merge work. A closed PR reports
+  // mergeable=false forever, so without this the resolver mistakes it
+  // for a conflict, pays for a worker sync that can't help, and loops
+  // still_conflicting on every drain pass (session 2398 / PR #26).
+  if (pr0.merged) {
+    // Merged out-of-band (directly on GitHub). Mark the session merged —
+    // minimal bookkeeping only, same shape as checkAndMerge's
+    // deploy-failed path — so the proposal leaves the vote panel and the
+    // drain stops re-picking it. Prod catches up to main via the drift
+    // poller / "Check for updates", exactly like a deploy-failed merge.
+    await ctx.step({
+      phase: 'pr_state',
+      message: `PR #${session.pr_number} is already merged on GitHub — marking the proposal merged.`,
+      detail: { state: pr0.state, merged: true, sha: pr0.mergeCommitSha },
+    });
+    await pool.query(
+      `UPDATE chat_sessions
+          SET status = 'merged',
+              merged_at = COALESCE(merged_at, NOW()),
+              merge_commit_sha = COALESCE(merge_commit_sha, $2)
+        WHERE id = $1 AND status = 'promoted'`,
+      [session.id, pr0.mergeCommitSha]
+    ).catch((e) => log.warn('conflict', 'pr_already_merged mark failed', { sessionId: session.id, err: e.message }));
+    try {
+      const { pushVoteUpdate } = require('./ws');
+      pushVoteUpdate({ sessionId: session.id, appSlug: session.app_slug, merged: true });
+    } catch (_) { /* ws non-fatal */ }
+    await postGroupMessage(pool, session,
+      `PR #${session.pr_number} was already merged on GitHub — marked the proposal merged.`);
+    return { ok: true, reason: 'pr_already_merged' };
+  }
+  if (pr0.state === 'closed') {
+    // Closed-unmerged (typically: withdrawn, then re-promoted without a
+    // reopen). Reopen restores the vote — the branch still exists, so
+    // this almost always succeeds. When GitHub refuses (head branch
+    // deleted, a newer PR on the same head), the proposal is a dead end:
+    // take it off the vote panel instead of retrying forever.
+    try {
+      await github.reopenPR(repo.owner, repo.repo, session.pr_number);
+      await ctx.step({
+        phase: 'reopened_closed_pr',
+        message: `PR #${session.pr_number} was closed on GitHub — reopened it to restore the proposal.`,
+        detail: {},
+      });
+      // Re-poll: the reopen kicks off a fresh mergeability computation.
+      try {
+        pr0 = await pollMergeable(repo.owner, repo.repo, session.pr_number);
+      } catch (err) {
+        log.warn('conflict', 'pollMergeable after reopen failed', { sessionId: session.id, err: err.message });
+        pr0 = { mergeable: null, state: 'open', merged: false };
+      }
+    } catch (reopenErr) {
+      await ctx.step({
+        phase: 'pr_closed', level: 'error',
+        message: `PR #${session.pr_number} is closed on GitHub and couldn't be reopened: ${reopenErr.message}`,
+        detail: {},
+      });
+      // Drop out of 'promoted' so the drain's candidate query stops
+      // re-picking this session — that's what terminates the retry loop.
+      // 'paused' (not 'archived') keeps the branch + CC memory restorable
+      // and matches unarchive's restore target; the owner can re-propose.
+      await pool.query(
+        `UPDATE chat_sessions SET status = 'paused' WHERE id = $1 AND status = 'promoted'`,
+        [session.id]
+      ).catch((e) => log.warn('conflict', 'pr_closed pause failed', { sessionId: session.id, err: e.message }));
+      try {
+        const { pushSessionUpdate } = require('./ws');
+        pushSessionUpdate({ action: 'paused', sessionId: session.id, appSlug: session.app_slug });
+      } catch (_) { /* ws non-fatal */ }
+      await postGroupMessage(pool, session,
+        `PR #${session.pr_number} is closed on GitHub and couldn't be reopened — it has been taken off the vote panel. Re-propose it from the session's dev-chat.`);
+      return { ok: false, reason: 'pr_closed' };
+    }
+  }
+
+  const mergeable0 = pr0.mergeable;
   const behind = session.behind_main || 0;
   const needsSync = behind > 0 || mergeable0 === false;
 
@@ -577,7 +684,7 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
       await ctx.step({ phase: 'group_chat', message: "Posted to group chat: couldn't auto-merge — owner must resolve in dev-chat.", detail: { reason: 'unresolved_conflict' } });
       return { ok: false, reason: 'unresolved_conflict' };
     }
-    await ctx.step({ phase: 'sync_result', message: `Worker sync ${sync.syncResult}${sync.sha ? ` — pushed ${String(sync.sha).slice(0, 9)}` : ''}.`, detail: { syncResult: sync.syncResult, sha: sync.sha || null, behind: sync.behind } });
+    await ctx.step({ phase: 'sync_result', message: `Worker sync ${sync.syncResult}${sync.sha ? ` — pushed ${String(sync.sha).slice(0, 9)}` : ''}.`, detail: { syncResult: sync.syncResult, sha: sync.sha || null, behind: sync.behind, pushOk: !!sync.pushOk } });
   } else if (mergeable0 !== true) {
     // No recorded drift and GitHub never settled to a definite state
     // (null). Nothing actionable — don't risk a 405 on an unknown state.
@@ -590,7 +697,12 @@ async function resolveWithSessionInner(config, pool, session, options = {}, ctx 
   // clean (the failure mode on the first #25/#26 run).
   let mergeableNow;
   try {
-    mergeableNow = await waitForMergeableTrue(repo.owner, repo.repo, session.pr_number, { afterPush: didSync });
+    // A PR closed mid-flow (raced a withdraw) reports mergeable null/false
+    // here and exits via the still_conflicting / recompute-pending paths
+    // below; the NEXT drain pass hits the pr_closed gate above and
+    // terminates the loop.
+    const prNow = await waitForMergeableTrue(repo.owner, repo.repo, session.pr_number, { afterPush: didSync });
+    mergeableNow = prNow.mergeable;
   } catch (err) {
     log.warn('conflict', 'waitForMergeableTrue failed', { sessionId: session.id, err: err.message });
     mergeableNow = null;

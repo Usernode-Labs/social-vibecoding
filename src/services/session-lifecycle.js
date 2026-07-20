@@ -321,6 +321,29 @@ async function unarchiveSession({ pool, sessionId, userId = null }) {
         prReopened = true;
       } catch (err) {
         log.warn('session-lifecycle', 'Could not reopen PR on unarchive (branch may need re-proposing)', { sessionId, err: err.message });
+        // Self-heal: when GitHub definitively reports the PR
+        // closed-unmerged, drop the dead reference (keep pr_title for
+        // reuse) so the promote route's lazy PR creation mints a fresh
+        // PR on the same branch. Carrying the closed pr_number forward
+        // is what made a re-promoted proposal permanently unmergeable
+        // (session 2398 / PR #26). A transient GET failure leaves the
+        // row as-is — the promote-time reopen guard still catches it.
+        try {
+          const pr = await github.getPR(owner, repo, session.pr_number);
+          if (pr && pr.state === 'closed' && !pr.merged) {
+            await pool.query(
+              `UPDATE chat_sessions SET pr_number = NULL, pr_url = NULL WHERE id = $1`,
+              [sessionId]
+            );
+            log.info('session-lifecycle', 'Cleared closed-unmerged PR reference on unarchive', {
+              sessionId, pr: session.pr_number,
+            });
+          }
+        } catch (checkErr) {
+          log.warn('session-lifecycle', 'PR state check on unarchive failed (leaving PR reference)', {
+            sessionId, err: checkErr.message,
+          });
+        }
       }
     }
   }
