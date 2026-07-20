@@ -26,6 +26,10 @@ const ZIP_RATIO_FLOOR_BYTES = 4 * 1024;
 const MAX_BINARY_BYTES = 10 * 1024 * 1024;
 const MAX_PER_MESSAGE = 4;
 const MAX_SESSION_BYTES = 50 * 1024 * 1024;
+// ── Group-chat attachment limits (#694, mirrored in public/js/group-chat.js) ──
+const MAX_MARKDOWN_BYTES = 512 * 1024;
+const MAX_HTML_BYTES = 2 * 1024 * 1024;
+const MAX_APP_CHAT_BYTES = 200 * 1024 * 1024;
 // Per-file inline cap when text-file content is injected into a prompt.
 const INLINE_CHAR_CAP = 50000;
 // Aggregate inline cap across ALL text files in one dispatch block. The
@@ -263,6 +267,65 @@ function validateUpload({ filename, data }) {
   return { ok: true, kind: 'binary', contentType: 'application/octet-stream', meta: null };
 }
 
+// Group-chat upload classifier (#694). Five kinds: 'image' (inline
+// preview), 'markdown' (rendered in the chat side panel), 'html'
+// (sandbox-previewable via the /view route), 'text' (other UTF-8,
+// download-only), 'binary' (opaque download — zips ride this path too;
+// nothing extracts them in group chat, so no central-directory
+// validation is needed here). Oversized .md/.html files are rejected
+// with a clear error, not silently reclassified, matching images.
+function validateChatUpload({ filename, data }) {
+  const name = String(filename || '').trim();
+  if (!name || name.length > 256) {
+    return { ok: false, error: 'Bad filename (must be 1-256 characters)' };
+  }
+  if (!Buffer.isBuffer(data) || !data.length) {
+    return { ok: false, error: 'Empty file' };
+  }
+  const ext = fileExt(name);
+  if (IMAGE_EXT_TYPES[ext]) {
+    if (data.length > MAX_IMAGE_BYTES) {
+      return { ok: false, error: `Image too large (max ${Math.round(MAX_IMAGE_BYTES / 1024 / 1024)} MB)` };
+    }
+    const sniffed = sniffImageType(data);
+    if (!sniffed) {
+      return { ok: false, error: `"${name}" doesn't look like a valid PNG/JPEG/GIF/WebP image` };
+    }
+    if (sniffed !== IMAGE_EXT_TYPES[ext]) {
+      return { ok: false, error: `"${name}" extension doesn't match its actual image format` };
+    }
+    return { ok: true, kind: 'image', contentType: sniffed, meta: null };
+  }
+  if (ext === 'md' || ext === 'markdown') {
+    if (data.length > MAX_MARKDOWN_BYTES) {
+      return { ok: false, error: `Markdown file too large (max ${Math.round(MAX_MARKDOWN_BYTES / 1024)} KB)` };
+    }
+    if (!isUtf8Text(data)) {
+      return { ok: false, error: `"${name}" isn't valid UTF-8 text` };
+    }
+    return { ok: true, kind: 'markdown', contentType: 'text/markdown', meta: null };
+  }
+  if (ext === 'html' || ext === 'htm') {
+    if (data.length > MAX_HTML_BYTES) {
+      return { ok: false, error: `HTML file too large (max ${Math.round(MAX_HTML_BYTES / 1024 / 1024)} MB)` };
+    }
+    if (!isUtf8Text(data)) {
+      return { ok: false, error: `"${name}" isn't valid UTF-8 text` };
+    }
+    return { ok: true, kind: 'html', contentType: 'text/html', meta: null };
+  }
+  // Any other readable UTF-8 file under the text cap is 'text' (stored
+  // text/plain — keeps the .svg-is-text rule: SVG never serves as an
+  // image type). Bigger or non-UTF-8 files fall through to binary.
+  if (data.length <= MAX_TEXT_BYTES && isUtf8Text(data)) {
+    return { ok: true, kind: 'text', contentType: 'text/plain', meta: null };
+  }
+  if (data.length > MAX_BINARY_BYTES) {
+    return { ok: false, error: `File too large (max ${Math.round(MAX_BINARY_BYTES / 1024 / 1024)} MB)` };
+  }
+  return { ok: true, kind: 'binary', contentType: 'application/octet-stream', meta: null };
+}
+
 // attachmentIds from the chat POST body → deduped array of valid 32-hex
 // ids, or null when the input is malformed / over the per-message cap.
 function sanitizeAttachmentIds(raw) {
@@ -486,6 +549,9 @@ module.exports = {
   MAX_BINARY_BYTES,
   MAX_PER_MESSAGE,
   MAX_SESSION_BYTES,
+  MAX_MARKDOWN_BYTES,
+  MAX_HTML_BYTES,
+  MAX_APP_CHAT_BYTES,
   INLINE_CHAR_CAP,
   INLINE_TOTAL_CHAR_CAP,
   IMAGE_REPLAY_TURNS,
@@ -497,6 +563,7 @@ module.exports = {
   humanSize,
   validateZip,
   validateUpload,
+  validateChatUpload,
   sanitizeAttachmentIds,
   clipText,
   attachedFileBlock,

@@ -1573,7 +1573,13 @@ const AppView = {
               <!-- #15: "Replying to …" preview chip; populated by
                    GroupChat._renderQuotePreview when a quote is staged. -->
               <div id="gc-reply-preview" class="hidden"></div>
+              <!-- #694: file attachments — error line + pending strip above
+                   the composer (reuses the dev-chat dc-attach-* styles). -->
+              <div id="gc-attach-error" class="dc-attach-error hidden"></div>
+              <div id="gc-attachments" class="dc-attach-strip"></div>
               <form id="gc-form" class="flex gap-2 items-end">
+                <button type="button" id="gc-attach-btn" title="Attach files" aria-label="Attach files" class="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors">&#128206;</button>
+                <input type="file" id="gc-file-input" class="hidden" multiple>
                 <textarea
                   id="gc-input"
                   maxlength="${typeof GC_MAX_MESSAGE_LEN !== 'undefined' ? GC_MAX_MESSAGE_LEN : 8000}"
@@ -1627,7 +1633,13 @@ const AppView = {
 
     const submitGeneral = () => {
       const content = gcInput.value.trim();
-      if (!content) return;
+      // #694: an attachments-only send is allowed; a send while an upload
+      // is still in flight waits (input keeps its text).
+      if (GroupChat.attachmentsUploading(null)) {
+        GroupChat._setAttachError('Still uploading — one moment…', null);
+        return;
+      }
+      if (!content && !GroupChat.hasPendingAttachments(null)) return;
       GroupChat.send(content);
       gcInput.value = '';
       if (slugForDraft) GroupChat.setDraft(slugForDraft, '');
@@ -1638,6 +1650,10 @@ const AppView = {
       e.preventDefault();
       submitGeneral();
     });
+
+    // #694: paperclip / paste / drag-and-drop attachment wiring for the
+    // general composer (thread composers wire their own in mountThread).
+    GroupChat.setupAttachments(null);
 
     gcInput.addEventListener('input', () => {
       if (slugForDraft) GroupChat.setDraft(slugForDraft, gcInput.value);

@@ -1617,3 +1617,41 @@ CREATE TABLE IF NOT EXISTS title_heal_queue (
   UNIQUE (owner, repo, issue_number)
 );
 CREATE INDEX IF NOT EXISTS idx_title_heal_queue_due ON title_heal_queue(next_attempt_at);
+
+-- Group-chat file attachments (#694). Users attach files to group-chat
+-- messages (images, markdown, standalone HTML, anything else as a
+-- download). Same bytea-in-Postgres shape as chat_session_attachments
+-- (#450): ids are random 32-hex tokens generated in Node; message_id is
+-- NULL between upload and send — the WS 'chat' handler links it when the
+-- message posts, and server.js's sweeper GCs orphans older than 24h.
+-- Retention otherwise follows the parent message (ON DELETE CASCADE),
+-- bounded by a 200 MB per-app cap at upload time.
+CREATE TABLE IF NOT EXISTS chat_message_attachments (
+  id           VARCHAR(32) PRIMARY KEY,
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  message_id   INTEGER REFERENCES chat_messages(id) ON DELETE CASCADE,
+  user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  -- 'image' (png/jpeg/gif/webp, magic-byte verified) | 'markdown'
+  -- (.md/.markdown UTF-8, rendered in the chat's side panel) | 'html'
+  -- (.html/.htm UTF-8, previewable only via the sandboxed /view route)
+  -- | 'text' (other UTF-8, download-only) | 'binary' (opaque download)
+  kind         VARCHAR(8)   NOT NULL,
+  filename     VARCHAR(256) NOT NULL,
+  content_type VARCHAR(64)  NOT NULL,
+  size_bytes   INTEGER      NOT NULL,
+  meta         JSONB,
+  data         BYTEA        NOT NULL,
+  created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_chat_message_attachments_app ON chat_message_attachments(app_id);
+CREATE INDEX IF NOT EXISTS idx_chat_message_attachments_message ON chat_message_attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_chat_message_attachments_orphan
+  ON chat_message_attachments(created_at) WHERE message_id IS NULL;
+
+-- staging:private: chat_messages itself is staging-copied (group chat is
+-- shared content), but copying every app's attachment BLOBS into every
+-- staging clone would balloon clone size for no testing value — the
+-- migrate.js fixture seeds a demo message with attachments instead.
+-- Private-FK-to-public is the allowed direction for the migration linter
+-- (the forbidden combination is a public table FK'ing a private one).
+COMMENT ON TABLE chat_message_attachments IS 'staging:private';

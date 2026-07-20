@@ -512,3 +512,99 @@ test('safePathName: shell-hostile filenames sanitized in instructions', () => {
   assert.ok(block.includes('/home/node/attachments/we__rm_-rf_.bin'));
   assert.ok(!block.includes('attachments/we$('));
 });
+
+// ── validateChatUpload (#694 — group-chat classifier) ───────────────
+
+test('validateChatUpload: valid image passes with sniffed content type', () => {
+  const v = att.validateChatUpload({ filename: 'shot.png', data: PNG });
+  assert.deepEqual(v, { ok: true, kind: 'image', contentType: 'image/png', meta: null });
+});
+
+test('validateChatUpload: image extension must agree with magic bytes', () => {
+  const v = att.validateChatUpload({ filename: 'lies.png', data: JPEG });
+  assert.equal(v.ok, false);
+  assert.match(v.error, /extension doesn't match/);
+});
+
+test('validateChatUpload: markdown happy path (.md and .markdown)', () => {
+  const data = Buffer.from('# Title\n\n- list\n', 'utf8');
+  for (const name of ['notes.md', 'notes.markdown']) {
+    const v = att.validateChatUpload({ filename: name, data });
+    assert.deepEqual(v, { ok: true, kind: 'markdown', contentType: 'text/markdown', meta: null });
+  }
+});
+
+test('validateChatUpload: oversize markdown rejected, not reclassified', () => {
+  const v = att.validateChatUpload({
+    filename: 'big.md',
+    data: Buffer.alloc(att.MAX_MARKDOWN_BYTES + 1, 0x61),
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.error, /Markdown file too large/);
+});
+
+test('validateChatUpload: html happy path (.html and .htm)', () => {
+  const data = Buffer.from('<!doctype html><html><body>hi</body></html>', 'utf8');
+  for (const name of ['page.html', 'page.htm']) {
+    const v = att.validateChatUpload({ filename: name, data });
+    assert.deepEqual(v, { ok: true, kind: 'html', contentType: 'text/html', meta: null });
+  }
+});
+
+test('validateChatUpload: oversize html rejected, not reclassified', () => {
+  const v = att.validateChatUpload({
+    filename: 'big.html',
+    data: Buffer.alloc(att.MAX_HTML_BYTES + 1, 0x61),
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.error, /HTML file too large/);
+});
+
+test('validateChatUpload: non-UTF-8 html rejected', () => {
+  const data = Buffer.concat([Buffer.from('<html>'), Buffer.from([0xff, 0xfe, 0x00])]);
+  const v = att.validateChatUpload({ filename: 'weird.html', data });
+  assert.equal(v.ok, false);
+  assert.match(v.error, /isn't valid UTF-8/);
+});
+
+test('validateChatUpload: svg is text (never an image type)', () => {
+  const v = att.validateChatUpload({
+    filename: 'icon.svg',
+    data: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>', 'utf8'),
+  });
+  assert.equal(v.ok, true);
+  assert.equal(v.kind, 'text');
+  assert.equal(v.contentType, 'text/plain');
+});
+
+test('validateChatUpload: zip rides the binary path (no zip validation in group chat)', () => {
+  // Not even a valid zip — group chat treats .zip as an opaque download.
+  const v = att.validateChatUpload({
+    filename: 'stuff.zip',
+    data: Buffer.concat([Buffer.from('PK'), Buffer.alloc(64, 0xd0)]),
+  });
+  assert.equal(v.ok, true);
+  assert.equal(v.kind, 'binary');
+  assert.equal(v.contentType, 'application/octet-stream');
+});
+
+test('validateChatUpload: oversize binary rejected', () => {
+  const v = att.validateChatUpload({
+    filename: 'huge.bin',
+    data: Buffer.alloc(att.MAX_BINARY_BYTES + 1, 0xd0),
+  });
+  assert.equal(v.ok, false);
+  assert.match(v.error, /File too large/);
+});
+
+test('validateChatUpload: small UTF-8 file of any other extension is text', () => {
+  const v = att.validateChatUpload({ filename: 'config.json', data: Buffer.from('{"a":1}', 'utf8') });
+  assert.equal(v.ok, true);
+  assert.equal(v.kind, 'text');
+});
+
+test('validateChatUpload: empty file and bad filename rejected', () => {
+  assert.equal(att.validateChatUpload({ filename: 'a.md', data: Buffer.alloc(0) }).ok, false);
+  assert.equal(att.validateChatUpload({ filename: '', data: Buffer.from('x') }).ok, false);
+  assert.equal(att.validateChatUpload({ filename: 'x'.repeat(300), data: Buffer.from('x') }).ok, false);
+});

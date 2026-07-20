@@ -61,6 +61,7 @@ async function migrate(config) {
   await seedStagingCloneQuestionSuggestions(pool, config);
   await seedStagingCloneSpecPills(pool, config);
   await seedStagingChatAttachments(pool, config);
+  await seedStagingGroupChatAttachments(pool, config);
   await seedStagingSpecViewerSessions(pool, config);
   await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
@@ -3772,6 +3773,179 @@ async function seedStagingChatAttachments(pool, config) {
 
   log.info('db', 'Staging chat-attachments fixture seeded', {
     appId, owner: owner.username, sessionId,
+  });
+}
+
+
+// Minimal PNG encoder for the group-chat attachment fixture below: a
+// W×H violet-gradient truecolor PNG built with zlib + a local CRC32 —
+// keeps a visible-size demo image out of the source as a base64 blob.
+function buildFixturePng(width, height) {
+  const zlib = require('zlib');
+  const crcTable = [];
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    crcTable[n] = c >>> 0;
+  }
+  const crc32 = (buf) => {
+    let c = 0xffffffff;
+    for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type, data) => {
+    const len = Buffer.alloc(4);
+    len.writeUInt32BE(data.length);
+    const td = Buffer.concat([Buffer.from(type), data]);
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(td));
+    return Buffer.concat([len, td, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // truecolor
+  const rows = [];
+  for (let y = 0; y < height; y++) {
+    const row = Buffer.alloc(1 + width * 3); // filter byte 0 + RGB
+    for (let x = 0; x < width; x++) {
+      row[1 + x * 3] = 124 + Math.floor((60 * x) / width);
+      row[2 + x * 3] = 58 + Math.floor((40 * y) / height);
+      row[3 + x * 3] = 237;
+    }
+    rows.push(row);
+  }
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', ihdr),
+    chunk('IDAT', zlib.deflateSync(Buffer.concat(rows))),
+    chunk('IEND', Buffer.alloc(0)),
+  ]);
+}
+
+
+// Group-chat attachment fixture (#694). chat_message_attachments is
+// staging:private (schema-only in staging) while chat_messages itself is
+// staging-copied — so without this seed the group-chat attachment UI
+// (inline image thumbnail, the markdown chip + side-panel viewer, the
+// sandboxed HTML Preview, the download chips, and the file-only bubble
+// with its "📎 filename" quote fallback) would only be exercisable
+// against rows whose bytes 404 in the clone. Two seeded messages on the
+// self-app's general chat, authored by the first admin (the user the
+// tester logs in as): one with a caption plus a tiny PNG + notes.md +
+// demo.html (whose inline <script> mutates the DOM — proves the
+// sandboxed preview runs scripts), and one file-only message (empty
+// content) carrying a text file. Idempotent via the fixed-attachment-id
+// existence check; attachment inserts are ON CONFLICT DO NOTHING.
+async function seedStagingGroupChatAttachments(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging group-chat-attachments fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging group-chat-attachments fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  // Fixed ids (32-hex) — doubles as the idempotency check.
+  const pngId = 'e55e08293ef05694e55e08293ef05694';
+  const mdId = 'f66f19304f015694f66f19304f015694';
+  const htmlId = 'a77a20415a125694a77a20415a125694';
+  const txtId = 'b88b31526b235694b88b31526b235694';
+  const { rows: existing } = await pool.query(
+    'SELECT 1 FROM chat_message_attachments WHERE id = $1 LIMIT 1',
+    [pngId]
+  );
+  if (existing.length) return;
+
+  // 96×64 violet-gradient PNG, generated in code (no giant base64
+  // literal) — big enough that the inline thumbnail is actually visible
+  // in the bubble (a 1×1 pixel renders invisibly small).
+  const pngData = buildFixturePng(96, 64);
+  const mdData = Buffer.from(
+    '# Staging demo notes\n\nThis markdown file was attached to a group-chat message.\n\n- Click the chip to open this rendered view\n- Use the arrow to download the raw file\n\n```js\nconsole.log("markdown code fences render too");\n```\n',
+    'utf8'
+  );
+  const htmlData = Buffer.from(
+    '<!doctype html>\n<html>\n<head><meta charset="utf-8"><title>Staging demo HTML attachment</title></head>\n<body>\n<h1>Staging demo HTML attachment</h1>\n<p id="status">If scripts were blocked, this line would not change.</p>\n<script>document.getElementById("status").textContent = "Sandboxed script ran — this page is walled off from the platform.";</script>\n</body>\n</html>\n',
+    'utf8'
+  );
+  const txtData = Buffer.from(
+    'Staging demo file-only message\n\nThis text file was sent with no message text, so the bubble\nrenders attachments only and quoting it shows the file name.\n',
+    'utf8'
+  );
+
+  const atts1 = [
+    { id: pngId, kind: 'image', filename: 'staging-demo-screenshot.png', contentType: 'image/png', data: pngData },
+    { id: mdId, kind: 'markdown', filename: 'staging-demo-notes.md', contentType: 'text/markdown', data: mdData },
+    { id: htmlId, kind: 'html', filename: 'staging-demo-page.html', contentType: 'text/html', data: htmlData },
+  ];
+  const { rows: msg1Rows } = await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, created_at)
+     VALUES ($1, $2, $3, 'message', $4, NOW() - INTERVAL '7 minutes')
+     RETURNING id`,
+    [
+      appId, owner.id,
+      'Staging demo: a screenshot, my notes, and a standalone HTML page — try the image, the markdown viewer, and the sandboxed Preview.',
+      JSON.stringify({
+        attachments: atts1.map((a) => ({
+          id: a.id, kind: a.kind, filename: a.filename, sizeBytes: a.data.length,
+        })),
+      }),
+    ]
+  );
+  const msg1Id = msg1Rows[0].id;
+
+  const { rows: msg2Rows } = await pool.query(
+    `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, created_at)
+     VALUES ($1, $2, '', 'message', $3, NOW() - INTERVAL '6 minutes')
+     RETURNING id`,
+    [
+      appId, owner.id,
+      JSON.stringify({
+        attachments: [
+          { id: txtId, kind: 'text', filename: 'staging-demo-file-only.txt', sizeBytes: txtData.length },
+        ],
+      }),
+    ]
+  );
+  const msg2Id = msg2Rows[0].id;
+
+  await pool.query(
+    `INSERT INTO chat_message_attachments
+       (id, app_id, message_id, user_id, kind, filename, content_type, size_bytes, meta, data, created_at)
+     VALUES
+       ($1, $2, $3, $4, 'image', 'staging-demo-screenshot.png', 'image/png', $5, NULL, $6, NOW() - INTERVAL '7 minutes'),
+       ($7, $2, $3, $4, 'markdown', 'staging-demo-notes.md', 'text/markdown', $8, NULL, $9, NOW() - INTERVAL '7 minutes'),
+       ($10, $2, $3, $4, 'html', 'staging-demo-page.html', 'text/html', $11, NULL, $12, NOW() - INTERVAL '7 minutes'),
+       ($13, $2, $14, $4, 'text', 'staging-demo-file-only.txt', 'text/plain', $15, NULL, $16, NOW() - INTERVAL '6 minutes')
+     ON CONFLICT (id) DO NOTHING`,
+    [pngId, appId, msg1Id, owner.id, pngData.length, pngData,
+     mdId, mdData.length, mdData,
+     htmlId, htmlData.length, htmlData,
+     txtId, msg2Id, txtData.length, txtData]
+  );
+
+  log.info('db', 'Staging group-chat-attachments fixture seeded', {
+    appId, owner: owner.username, msg1Id, msg2Id,
   });
 }
 

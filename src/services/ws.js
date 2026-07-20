@@ -6,6 +6,7 @@ const log = require('./logger');
 const notifications = require('./notifications');
 const events = require('./events');
 const appAccess = require('./app-access');
+const attachmentsSvc = require('./attachments');
 
 // #328: server-side cap on a single chat message body. Must match the
 // composer `maxlength` (GC_MAX_MESSAGE_LEN in public/js/group-chat.js) — both
@@ -321,8 +322,21 @@ async function handleMessage(pool, client, msg) {
   }
   switch (msg.type) {
     case 'chat': {
-      if (!msg.content?.trim()) return;
-      const content = msg.content.trim().substring(0, MAX_CHAT_LEN);
+      // #694: optional file attachments, uploaded beforehand via
+      // POST /api/apps/:slug/chat-attachments. Malformed ids (or more
+      // than the per-message cap) drop the whole message — the sender's
+      // client is buggy or hostile either way.
+      const attIds = attachmentsSvc.sanitizeAttachmentIds(msg.attachmentIds);
+      if (attIds === null) {
+        log.warn('ws', 'chat message dropped: bad attachment ids', {
+          appId: client.appId, userId: client.user.id,
+        });
+        return;
+      }
+      // An attachments-only send is allowed (#694): content stays ''
+      // (column is NOT NULL) and the client renders no body.
+      const content = (msg.content || '').trim().substring(0, MAX_CHAT_LEN);
+      if (!content && !attIds.length) return;
 
       // #194: optional thread scoping. An invalid/spoofed ref drops the
       // whole message (never silently re-route a thread post into the
@@ -390,6 +404,12 @@ async function handleMessage(pool, client, msg) {
                 author = null; // system event — no person to attribute / notify
               } else {
                 snippet = r.content;
+                // #694: an attachments-only message has empty content —
+                // quote it as its first file instead of a blank snippet.
+                const quotedAtts = (r.metadata || {}).attachments;
+                if (!snippet && Array.isArray(quotedAtts) && quotedAtts.length) {
+                  snippet = `\u{1F4CE} ${quotedAtts[0].filename || 'file'}`;
+                }
                 author = r.username || null;
               }
               const normalizedSource = r.msg_type === 'spec_share'
@@ -414,15 +434,68 @@ async function handleMessage(pool, client, msg) {
         replyRecipientId = null;
       }
 
-      const metadata = quote ? { quote } : null;
-      const { rows } = await pool.query(
-        `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
+      // #694: verify ownership of every referenced attachment before
+      // linking — each id must belong to this app + this user and be
+      // unlinked. Any miss drops the whole send (hostile/stale client).
+      let attRows = [];
+      if (attIds.length) {
+        const { rows: found } = await pool.query(
+          `SELECT id, kind, filename, size_bytes, meta
+             FROM chat_message_attachments
+            WHERE id = ANY($1) AND app_id = $2 AND user_id = $3 AND message_id IS NULL`,
+          [attIds, client.appId, client.user.id]
+        );
+        if (found.length !== attIds.length) {
+          log.warn('ws', 'chat message dropped: attachment ownership check failed', {
+            appId: client.appId, userId: client.user.id,
+            requested: attIds.length, found: found.length,
+          });
+          return;
+        }
+        // Preserve the client's send order (the SELECT doesn't).
+        attRows = attIds.map((id) => found.find((r) => r.id === id));
+      }
+
+      const metadata = (quote || attRows.length) ? {} : null;
+      if (quote) metadata.quote = quote;
+      if (attRows.length) {
+        // Render-time summary rides in the message row's metadata so
+        // history loads and broadcasts need no join; the bytea rows are
+        // only touched by the serve routes.
+        metadata.attachments = attRows.map((r) => ({
+          id: r.id, kind: r.kind, filename: r.filename, sizeBytes: r.size_bytes,
+          ...(r.meta ? { meta: r.meta } : {}),
+        }));
+      }
+
+      const insertSql = `INSERT INTO chat_messages (app_id, user_id, content, msg_type, metadata, thread_type, thread_ref)
          VALUES ($1, $2, $3, 'message', $4, $5, $6)
-         RETURNING id, created_at`,
-        // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
-        [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
-         thread ? thread.type : null, thread ? thread.ref : null]
-      );
+         RETURNING id, created_at`;
+      // metadata is NOT NULL DEFAULT '{}', so always pass a JSON object.
+      const insertParams = [client.appId, client.user.id, content, JSON.stringify(metadata || {}),
+        thread ? thread.type : null, thread ? thread.ref : null];
+      let rows;
+      if (attRows.length) {
+        // Insert + link atomically — a half-linked send would render
+        // chips that 404 while the orphan sweeper still owns the rows.
+        const cx = await pool.connect();
+        try {
+          await cx.query('BEGIN');
+          ({ rows } = await cx.query(insertSql, insertParams));
+          await cx.query(
+            `UPDATE chat_message_attachments SET message_id = $1 WHERE id = ANY($2)`,
+            [rows[0].id, attIds]
+          );
+          await cx.query('COMMIT');
+        } catch (err) {
+          try { await cx.query('ROLLBACK'); } catch { /* connection gone */ }
+          throw err;
+        } finally {
+          cx.release();
+        }
+      } else {
+        ({ rows } = await pool.query(insertSql, insertParams));
+      }
 
       const outMsg = {
         type: 'chat',
