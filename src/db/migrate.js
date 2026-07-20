@@ -16,6 +16,12 @@ async function migrate(config) {
     'utf-8'
   );
 
+  // #687 (PR-import, Slice 1): READ-ONLY pre-flight guard. Run BEFORE the
+  // schema apply so we abort the boot cleanly (before any DDL) if the
+  // invariant the PR-import feature is about to rely on is already
+  // violated in this database. Read-and-throw only — it never mutates.
+  await auditDuplicatePrSessions(pool);
+
   log.info('db', 'Running migrations...');
   await pool.query(schema);
   log.info('db', 'Schema up to date');
@@ -79,6 +85,58 @@ async function migrate(config) {
   await backfillLinkedIssuesFromPrBodies(pool);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
+}
+
+// #687 (PR-import, Slice 1): READ-ONLY boot audit. The PR-import feature
+// treats (app_id, pr_number) as unique for imported proposals — the Slice 2
+// import route rejects a duplicate, and a partial UNIQUE index is planned
+// once imported rows exist. Before we commit to that invariant we verify it
+// holds in THIS database today, and abort the boot loudly if it doesn't so
+// nobody enables the feature on top of conflicting rows.
+//
+// Guardrails (this function is one of the two explicitly-approved migrate.js
+// edits): it is strictly READ-AND-THROW — no INSERT/UPDATE/DELETE, no DDL,
+// no backfill. It runs BEFORE the schema apply, so on a brand-new database
+// the chat_sessions table doesn't exist yet; the to_regclass check makes it
+// a clean no-op in that case rather than erroring on a missing relation.
+// A production run of the same query returned zero rows, so this is a silent
+// pass on the real boot; it only ever fires if data drifts into conflict.
+async function auditDuplicatePrSessions(pool) {
+  // Fresh DB: the table is created by the schema apply that follows, so
+  // there's nothing to audit yet. Skip cleanly.
+  const { rows: exists } = await pool.query(
+    `SELECT to_regclass('public.chat_sessions') AS reg`
+  );
+  if (!exists[0] || exists[0].reg === null) {
+    log.info('db', 'PR-import audit skipped — chat_sessions not created yet (fresh DB)');
+    return;
+  }
+
+  const { rows } = await pool.query(
+    `SELECT app_id, pr_number, array_agg(id ORDER BY id) AS session_ids, COUNT(*)
+       FROM chat_sessions
+      WHERE pr_number IS NOT NULL
+      GROUP BY app_id, pr_number
+     HAVING COUNT(*) > 1`
+  );
+
+  if (rows.length > 0) {
+    const detail = rows.map(
+      (r) => `app_id=${r.app_id} pr_number=${r.pr_number} sessions=[${(r.session_ids || []).join(', ')}]`
+    );
+    log.error('db', 'PR-import audit FAILED — duplicate (app_id, pr_number) sessions found', {
+      conflicts: rows.length,
+      detail,
+    });
+    throw new Error(
+      `PR-import boot audit: ${rows.length} duplicate (app_id, pr_number) group(s) in ` +
+      `chat_sessions violate the uniqueness invariant PR-import relies on. ` +
+      `Resolve the conflicting sessions before enabling PR_IMPORT_ENABLED. ` +
+      `Conflicts: ${detail.join('; ')}`
+    );
+  }
+
+  log.info('db', 'PR-import audit passed — no duplicate (app_id, pr_number) sessions');
 }
 
 // #155: headless runs interrupted by a restart used to be blanket-failed

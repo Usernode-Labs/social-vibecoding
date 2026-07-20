@@ -172,6 +172,14 @@ function load() {
     // protection, 2i Mayor refuse-list, 2k import block) stay in
     // place; this flag is purely about audience.
     selfAppPublicVoting: process.env.SELF_APP_PUBLIC_VOTING !== 'false',
+    // #687 (PR-import): master off-by-default switch for importing an
+    // existing GitHub PR as a proposal. OFF unless PR_IMPORT_ENABLED=true.
+    // Slice 1 only adds the schema/config/clone-fix foundations behind
+    // this flag; the routes, rendering, poller and exact-SHA merge in
+    // later slices are all gated on it, so merging the feature changes
+    // nothing observable until an operator flips this on (safe to test
+    // in a staging preview first, then leave off in prod until sign-off).
+    prImportEnabled: process.env.PR_IMPORT_ENABLED === 'true',
   };
 
   console.log('[config] Loaded:');
@@ -200,8 +208,18 @@ function load() {
   console.log(`  SELF_APP_SLUG=${config.selfAppSlug} (db=${config.selfAppDbName})`);
   console.log(`  SELF_APP_CONTAINER=${config.selfAppContainer}`);
   console.log(`  SELF_APP_PUBLIC_VOTING=${config.selfAppPublicVoting} (Phase 4: ${config.selfAppPublicVoting ? 'enabled — all users can see + vote on self-app PRs' : 'disabled — self-app is admin-only'})`);
+  console.log(`  PR_IMPORT_ENABLED=${config.prImportEnabled} (#687: ${config.prImportEnabled ? 'enabled — GitHub PRs can be imported as proposals' : 'disabled (default) — PR-import feature is dark'})`);
 
   return config;
 }
 
-module.exports = { load };
+// #687 (PR-import): single accessor for the off-by-default PR-import flag,
+// used by the routes/poller/merge branches added in later slices to gate
+// themselves without threading the loaded config through every call site.
+// Reads the env var directly so it's stable regardless of whether a caller
+// holds the config object.
+function isPrImportEnabled() {
+  return process.env.PR_IMPORT_ENABLED === 'true';
+}
+
+module.exports = { load, isPrImportEnabled };
