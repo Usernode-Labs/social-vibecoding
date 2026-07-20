@@ -64,25 +64,32 @@ RUN echo "claude-code cache bust: ${CLAUDE_CODE_CACHE_BUST}" \
   && npm install -g @anthropic-ai/claude-code
 
 # ── Optional in-loop browser (build-mode turns only) ───────────────────
-# Playwright + a pinned Chromium and the Playwright MCP server give the
-# build-mode agent first-class browser_navigate / browser_console /
-# screenshot tools, so it can load the app it just edited and catch
-# render/JS errors before committing (see app-conventions.md "In-loop
-# browser", worker/run-cc.sh, src/services/in-loop-browser.js).
+# The Playwright MCP server + a matching Chromium give the build-mode
+# agent first-class browser_navigate / browser_console / screenshot
+# tools, so it can load the app it just edited and catch render/JS
+# errors before committing (see app-conventions.md "In-loop browser",
+# worker/run-cc.sh, src/services/in-loop-browser.js).
 #
-# Unlike the Claude Code layer above, these versions are PINNED (not
-# day-bumped): the Chromium build is tied to the Playwright version, so a
-# floating `latest` would re-download a different browser unpredictably.
-# Bump deliberately. `playwright install --with-deps chromium` pulls the
-# matching Chromium plus its apt runtime deps (runs as root, before the
-# USER node switch below). The browser launches LAZILY — only when the
-# agent actually calls a browser tool — so turns that never reach for it
-# pay no runtime cost; scout/sync never wire the MCP server at all.
-ARG PLAYWRIGHT_VERSION=1.49.1
+# Unlike the Claude Code layer above, the MCP version is PINNED (not
+# day-bumped) — bump deliberately. The MCP package bundles its OWN
+# `playwright` dependency, and the Chromium revision it launches is tied
+# to THAT version — not to any separately-pinned playwright. Installing
+# browsers with a standalone playwright pin is exactly what broke #688:
+# the image carried chromium-1148 (playwright 1.49.1) while the MCP's
+# bundled 1.56-alpha wanted chromium-1194, so every launch failed and
+# agents skipped the visual check. So the install step below `cd`s into
+# the MCP package directory and runs its package-local playwright CLI:
+# the downloaded Chromium revision can never drift from the server that
+# launches it, even across MCP pin bumps. `install --with-deps chromium`
+# also pulls Chromium's apt runtime deps (runs as root, before the USER
+# node switch below). The browser launches LAZILY — only when the agent
+# actually calls a browser tool — so turns that never reach for it pay
+# no runtime cost; scout/sync never wire the MCP server at all.
 ARG PLAYWRIGHT_MCP_VERSION=0.0.41
 ENV PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
-RUN npm install -g playwright@${PLAYWRIGHT_VERSION} @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
-  && npx --yes playwright@${PLAYWRIGHT_VERSION} install --with-deps chromium
+RUN npm install -g @playwright/mcp@${PLAYWRIGHT_MCP_VERSION} \
+  && cd /usr/local/lib/node_modules/@playwright/mcp \
+  && npx playwright install --with-deps chromium
 
 COPY worker-run.sh   /usr/local/bin/worker-run.sh
 COPY run-cc.sh       /usr/local/bin/run-cc.sh
@@ -139,6 +146,15 @@ RUN chmod +x /usr/local/bin/worker-run.sh \
 
 USER node
 WORKDIR /home/node/workspace
+
+# Build-time smoke test: launch the MCP's bundled Chromium headless (as
+# node, same channel + SwiftShader flags worker-run.sh seeds) and close
+# it. A future MCP pin bump that reintroduces a channel/revision mismatch
+# — the failure mode behind #688 — fails the image build loudly here,
+# instead of silently degrading every build turn to "skipped the
+# screenshot check".
+RUN cd /usr/local/lib/node_modules/@playwright/mcp \
+  && node -e "require('playwright').chromium.launch({channel:'chromium',headless:true,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']}).then(b=>b.close()).catch(e=>{console.error(e);process.exit(1);})"
 
 # The worker is "warm-by-default": MODE=warm clones the repo + restores
 # CC config + sleeps forever, and the host drives per-turn work via

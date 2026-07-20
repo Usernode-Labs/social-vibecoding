@@ -103,6 +103,17 @@ JSON
 # server. It lives on the container filesystem (re-created each bootstrap),
 # NOT the ~/.claude volume, so it can't go stale against an image rebuild.
 # Harmless for warm/scout/sync, which never reference it.
+#   --browser chromium : REQUIRED in this container (#688). The MCP
+#                server's default launch channel is BRANDED Google Chrome
+#                (its defaultConfig sets launchOptions.channel "chrome"),
+#                which the worker image deliberately does not ship — so
+#                without this flag every launch fails with "Chromium
+#                distribution 'chrome' is not found" and the agent skips
+#                the visual check. The flag maps to channel "chromium",
+#                the Playwright-bundled Chromium the image installs
+#                (worker/Dockerfile); CLI options merge LAST, so it beats
+#                the default channel while --config below still
+#                contributes the SwiftShader launch args.
 #   --headless : no display in the worker; Chromium runs headless.
 #   --isolated : ephemeral profile per session, no on-disk profile state.
 #   --config   : the software-WebGL launch args seeded just above.
@@ -115,7 +126,7 @@ cat > "$BROWSER_MCP_CONFIG" <<JSON
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["--yes", "@playwright/mcp", "--headless", "--isolated", "--config", "$BROWSER_PW_CONFIG"]
+      "args": ["--yes", "@playwright/mcp", "--browser", "chromium", "--headless", "--isolated", "--config", "$BROWSER_PW_CONFIG"]
     }
   }
 }
