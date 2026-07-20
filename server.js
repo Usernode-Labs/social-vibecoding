@@ -2129,6 +2129,20 @@ function startSessionAutoPauseSweeper(config) {
     } catch (err) {
       log.warn('server', 'Orphaned-attachment sweep failed', { err: err.message });
     }
+
+    // Same sweep for group-chat attachments (#694): uploads never linked
+    // to a message (removed from the composer, or the tab was abandoned)
+    // reclaim their bytea after 24h. Linked rows live with their message.
+    try {
+      const { rowCount } = await pool.query(
+        `DELETE FROM chat_message_attachments
+          WHERE message_id IS NULL
+            AND created_at < NOW() - INTERVAL '24 hours'`
+      );
+      if (rowCount) log.info('server', 'GC\'d orphaned group-chat attachments', { count: rowCount });
+    } catch (err) {
+      log.warn('server', 'Orphaned group-chat attachment sweep failed', { err: err.message });
+    }
   }, config.sessionSweepIntervalMs).unref();
 }
 

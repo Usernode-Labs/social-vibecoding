@@ -229,6 +229,12 @@
       "expectText": "Checks starting"
     },
     {
+      "name": "Group-chat attachments render: image thumbnail + file chips (#694)",
+      "path": "/app/usernode-2d5619/dev/chat",
+      "expectSelector": ".dc-msg-attachments",
+      "expectText": "staging-demo-notes.md"
+    },
+    {
       "name": "Chromeless share-link view renders the Open-in-Usernode pill",
       "path": "/#app/usernode-2d5619/full",
       "expectSelector": "#chromeless-pill"
