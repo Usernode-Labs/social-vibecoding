@@ -3324,12 +3324,19 @@ const AppView = {
     // may not be in _sharedById yet (background refresh pending) — the
     // button still renders, with the count at 0.
     const sh = shared ? (AppView._sharedById || {})[s.id] : null;
+    // #689: a PR exists once the first commit is pushed, so pr_number set
+    // means there is something to preview. The owner is always authorized
+    // on ensure-staging, which rebuilds the preview if the idle GC
+    // reclaimed it — same ensure-then-open path the shared card uses.
+    const previewBtn = s.pr_number
+      ? `<button type="button" class="gc-vote-btn gc-vote-btn-preview" title="Open this session's staging preview (rebuilds it if it went to sleep)" onclick="AppView.swapToStagingForSession(${s.id}, '')">Preview</button>`
+      : '';
     const chatBtn = shared
       ? `<button type="button" class="gc-vote-btn inline-flex items-center gap-1" data-session-discuss="${s.id}" title="Open the public discussion on this session">Open chat ${AppView._devChatBadge(sh ? sh.chat_count : 0)}</button>`
       : '';
     const visBtn = shared
       ? `<button type="button" class="gc-vote-btn" data-unshare-chip="${s.id}" title="Make this session private again (removes it from everyone's In progress area)">Hide</button>`
-      : `<button type="button" class="gc-vote-btn" data-share-chip="${s.id}" title="Show this session in everyone's In progress area — others can comment, but can't open your dev chat">Make visible</button>`;
+      : `<button type="button" class="gc-vote-btn" data-share-chip="${s.id}" title="Show this session in everyone's In progress area — others can comment and open its live preview, but can't open your dev chat">Make visible</button>`;
     return `<div data-session-chip="${s.id}" role="button" tabindex="0"
       class="${AppView.SESSION_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
       title="${s.busy ? 'AI is working — ' : ''}${label}">
@@ -3343,6 +3350,7 @@ const AppView = {
       </div>
       <div class="${AppView.SESSION_CARD_ACTIONS_CLS}">
         ${statusTag}
+        ${previewBtn}
         ${chatBtn}
         ${visBtn}
         <button type="button" class="dc-active-archive" data-archive-chip="${s.id}" data-name="${label}" title="Archive this session (closes the PR, frees the slot)">Archive</button>
@@ -3352,16 +3360,22 @@ const AppView = {
 
   // Another user's shared session. Opens the public discussion topic —
   // never the owner's dev chat (those endpoints stay owner-scoped
-  // server-side). Preview mirrors the proposal-card affordance when the
-  // session has a staging build. `opts.noNav` renders the static header
-  // variant for the topic sub-view.
+  // server-side). Preview mirrors the proposal-card affordance: shown
+  // whenever the preview is live (staging_url) OR the branch has pushed
+  // changes (can_preview, #689) — the click routes through
+  // ensure-staging, which rebuilds a GC'd preview on demand for shared
+  // sessions. Read-only viewers can't trigger a rebuild (the ensure POST
+  // is collab-gated), so for them the pill still requires a live URL.
+  // `opts.noNav` renders the static header variant for the topic
+  // sub-view.
   _renderSharedSessionCard(s, opts) {
     const noNav = !!(opts && opts.noNav);
     const label = AppView._sessionCardLabel(s);
     const owner = escapeHtml(s.username || 'someone');
     const statusTag = AppView._sessionStatusTagHtml(s);
-    const preview = s.staging_url
-      ? `<button type="button" class="gc-vote-btn gc-vote-btn-preview" title="Open this session's staging preview" onclick="AppView.swapToStagingForSession(${s.id}, '${s.staging_url}')">Preview</button>`
+    const canPreview = s.staging_url || (s.can_preview && !AppView.readOnly);
+    const preview = canPreview
+      ? `<button type="button" class="gc-vote-btn gc-vote-btn-preview" title="Open this session's staging preview${s.staging_url ? '' : ' (rebuilds it if it went to sleep)'}" onclick="AppView.swapToStagingForSession(${s.id}, '${s.staging_url || ''}')">Preview</button>`
       : '';
     const nav = noNav ? '' : ` data-shared-session-row="${s.id}" role="button" tabindex="0"`;
     const chevron = noNav ? '' : AppView.DEV_CARD_CHEVRON;
@@ -3392,7 +3406,7 @@ const AppView = {
   // the archived toggle, outside the private area, to signal that these
   // cards appear on everyone else's In progress board too.
   _visibleSessionsCaptionHtml() {
-    return '<div class="text-xs text-zinc-500 dark:text-zinc-400 px-0.5">Visible to everyone.</div>';
+    return '<div class="text-xs text-zinc-500 dark:text-zinc-400 px-0.5">Visible to everyone — including a live preview of your changes.</div>';
   },
 
   // Archived toggle — collapsed by default on every render (no
@@ -7189,9 +7203,9 @@ const AppView = {
     document.getElementById('staging-iframe').src = '';
     AppView._pendingStagingPreview = null;
     AppView._setStagingLoader(true, {
-      title: 'Spinning your preview back up…',
-      sub: 'Your preview was paused after a while of inactivity. Rebuilding it '
-        + 'from your latest changes — this usually takes 20–60 seconds.',
+      title: 'Spinning the preview back up…',
+      sub: 'The preview was paused after a while of inactivity. Rebuilding it '
+        + 'from the session’s latest changes — this usually takes 20–60 seconds.',
     });
     document.getElementById('staging-back').onclick = () => AppView.closeStagingOverlay();
 

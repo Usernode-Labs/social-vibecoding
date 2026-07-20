@@ -94,8 +94,9 @@ test('ensureStaging opens immediately when the server says {ready}', async () =>
 test('ensureStaging shows the "spinning back up" loader and waits on {rebuilding}', async () => {
   const { AppView, dom, swaps } = makeAppView(okJson({ status: 'rebuilding' }));
   await AppView.ensureStaging(7, 'https://stale.example', { md: 'do x', path: '/x' }, { jump: true });
-  // Loader is up with the rebuild copy; no swap yet.
-  assert.match(dom.els['staging-loader-title'].textContent, /spinning your preview back up/i);
+  // Loader is up with the rebuild copy (viewer-neutral since #689 — shared
+  // sessions route non-owners through this path too); no swap yet.
+  assert.match(dom.els['staging-loader-title'].textContent, /spinning the preview back up/i);
   assert.equal(swaps.length, 0, 'does not open until the rebuild resolves');
   assert.ok(AppView._pendingStagingPreview, 'a pending marker is parked');
   assert.equal(AppView._pendingStagingPreview.sessionId, 7);

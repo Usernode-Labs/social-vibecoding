@@ -18,20 +18,40 @@ const path = require('node:path');
 const WORKER_DIR = path.join(__dirname, '..', 'worker');
 const read = (f) => fs.readFileSync(path.join(WORKER_DIR, f), 'utf8');
 
-// ── Dockerfile: pinned Playwright + Chromium + MCP server ────────────────
+// ── Dockerfile: pinned MCP server + its revision-matched Chromium ────────
 
-test('Dockerfile installs a PINNED Playwright, Chromium, and the MCP server', () => {
+test('Dockerfile installs a PINNED MCP server and Chromium via its bundled Playwright', () => {
   const df = read('Dockerfile');
-  assert.match(df, /ARG PLAYWRIGHT_VERSION=/);
   assert.match(df, /ARG PLAYWRIGHT_MCP_VERSION=/);
   // pinned, not a floating tag
-  assert.match(df, /playwright@\$\{PLAYWRIGHT_VERSION\}/);
   assert.match(df, /@playwright\/mcp@\$\{PLAYWRIGHT_MCP_VERSION\}/);
-  assert.doesNotMatch(df, /playwright@latest|@playwright\/mcp@latest/);
-  // the matching Chromium build + its runtime deps
-  assert.match(df, /playwright@\$\{PLAYWRIGHT_VERSION\} install --with-deps chromium/);
+  assert.doesNotMatch(df, /@playwright\/mcp@latest/);
+  // NO standalone playwright pin: browsers must be installed by the MCP's
+  // own bundled playwright, or the downloaded Chromium revision drifts
+  // from the one the server launches (#688: chromium-1148 installed,
+  // chromium-1194 expected → every launch failed).
+  assert.doesNotMatch(df, /ARG PLAYWRIGHT_VERSION=/);
+  // the browser install runs FROM the MCP package directory so npx
+  // resolves its package-local playwright CLI (revision match by
+  // construction), and still pulls Chromium's apt runtime deps
+  assert.match(df, /cd \/usr\/local\/lib\/node_modules\/@playwright\/mcp[\s\S]{0,120}playwright install --with-deps chromium/);
   // browsers cached under /home/node so the existing chown picks them up
   assert.match(df, /PLAYWRIGHT_BROWSERS_PATH=\/home\/node\//);
+});
+
+test('Dockerfile smoke-tests a headless Chromium launch at image build time, as node', () => {
+  const df = read('Dockerfile');
+  // launches the bundled-chromium channel with the SwiftShader flags the
+  // seeded config uses, so a future pin bump that reintroduces a
+  // channel/revision mismatch fails the image build instead of silently
+  // degrading every build turn
+  const smokeIdx = df.search(/RUN cd \/usr\/local\/lib\/node_modules\/@playwright\/mcp[\s\S]{0,80}chromium\.launch/);
+  assert.ok(smokeIdx !== -1, 'smoke-test RUN present');
+  assert.match(df, /chromium\.launch\(\{channel:'chromium',headless:true/);
+  assert.match(df, /--enable-unsafe-swiftshader/);
+  // runs after the final USER node switch (browsers are node-owned by then)
+  const userNodeIdx = df.lastIndexOf('USER node');
+  assert.ok(userNodeIdx !== -1 && smokeIdx > userNodeIdx, 'smoke test runs as node');
 });
 
 // ── worker-run.sh: seed the MCP config at bootstrap ──────────────────────
@@ -42,6 +62,9 @@ test('worker-run.sh seeds the Playwright MCP config alongside the .claude.json r
   assert.match(wr, /"mcpServers"/);
   assert.match(wr, /"playwright"/);
   assert.match(wr, /@playwright\/mcp/);
+  // bundled-Chromium channel — without it the MCP defaults to branded
+  // Google Chrome, which the image doesn't ship (#688)
+  assert.match(wr, /"--browser", "chromium"/);
   assert.match(wr, /--headless/);
   assert.match(wr, /--isolated/);
 });

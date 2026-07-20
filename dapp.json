@@ -82,6 +82,12 @@
       "expectText": "usernode-native v1"
     },
     {
+      "name": "Native-feel kit widget sections render (grouped list, sheets, nav bar)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios",
+      "expectSelector": "#grouped-swipe .un-swipe-tray",
+      "expectText": "Sheets & dialogs"
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"
@@ -174,12 +180,17 @@
     {
       "name": "Visible own session renders under the Visible-to-everyone caption",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectText": "Visible to everyone."
+      "expectText": "Visible to everyone — including a live preview"
     },
     {
       "name": "Visible own session offers the Open chat action",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Open chat"
+    },
+    {
+      "name": "Sleeping shared preview still renders its card with a Preview pill (#689)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "[Mock] Shared session, preview asleep"
     },
     {
       "name": "Demo archived row surfaces the Show archived toggle",

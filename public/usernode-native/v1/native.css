@@ -36,12 +36,21 @@
   --un-action-neutral: #6e6e8a;
   --un-action-text: #ffffff;
 
-  /* Kit-drawn chrome (PTR spinner puck, action-tray backing) */
+  /* Kit-drawn chrome (PTR spinner puck) */
   --un-surface: #f4f4f5;
+
+  /* Hairlines, muted text, grouped-list / sheet / nav-bar surfaces */
+  --un-hairline: rgba(60, 60, 67, 0.29);
+  --un-muted: rgba(60, 60, 67, 0.6);
+  --un-group-bg: #ffffff;
+  --un-sheet-bg: #f4f4f7;
+  --un-navbar-bg: rgba(249, 249, 251, 0.82);
+  --un-backdrop: rgba(0, 0, 0, 0.4);
 
   /* Radii */
   --un-radius: 0.5rem;
   --un-radius-full: 9999px;
+  --un-radius-card: 12px;
 
   /* Motion — linear() spring curves pre-computed from the SAME integrator
      parameters native.js uses (mass/tension/friction: default 1/170/26,
@@ -72,6 +81,12 @@
   --un-action-neutral: #4e4e6a;
   --un-action-text: #ffffff;
   --un-surface: #1a1a30;
+  --un-hairline: rgba(120, 120, 150, 0.4);
+  --un-muted: rgba(235, 235, 245, 0.6);
+  --un-group-bg: #222240;
+  --un-sheet-bg: #1e1e38;
+  --un-navbar-bg: rgba(18, 18, 32, 0.78);
+  --un-backdrop: rgba(0, 0, 0, 0.55);
 }
 
 /* ── Touch polish ──────────────────────────────────────────────────────
@@ -159,7 +174,7 @@ textarea:active,
   height: 27px;
   border-radius: var(--un-radius-full);
   background: var(--un-switch-thumb);
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.25), 0 1px 1px rgba(0, 0, 0, 0.16);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12), 0 1px 1px rgba(0, 0, 0, 0.08);
   transition: transform 260ms var(--un-ease-spring-stiff), width 260ms var(--un-ease-spring-stiff), height 260ms var(--un-ease-spring-stiff), background-color 200ms ease;
 }
 .un-switch:checked {
@@ -167,6 +182,14 @@ textarea:active,
 }
 .un-switch:checked::before {
   transform: translateX(20px);
+}
+/* UISwitch press behavior: the thumb stretches while held (the leading
+   edge holds still) and settles back on release via the spring above. */
+.un-switch:active::before {
+  width: 34px;
+}
+.un-switch:checked:active::before {
+  transform: translateX(13px);
 }
 .un-switch:disabled {
   opacity: 0.45;
@@ -207,12 +230,20 @@ html.un-android .un-switch:checked::before {
   margin-top: -12px;
   background: var(--un-accent-contrast);
 }
+/* The iOS press-stretch doesn't apply to the Material skin. */
+html.un-android .un-switch:active::before {
+  width: 16px;
+}
+html.un-android .un-switch:checked:active::before {
+  width: 24px;
+  transform: translateX(18px);
+}
 
 /* ── Swipe-to-act rows ─────────────────────────────────────────────────
    Structure built by unNative.attachSwipeActions(): the original row is
-   wrapped in .un-swipe with the action tray rendered behind it. The row
-   translates via inline transform (JS-owned, 1:1 with the finger); this
-   file only styles the chrome. */
+   wrapped in .un-swipe with a ride-along action tray anchored off its
+   right edge. Row AND tray translate via inline transform (JS-owned, 1:1
+   with the finger); this file only styles the chrome. */
 
 .un-swipe {
   position: relative;
@@ -232,12 +263,19 @@ html.un-android .un-switch:checked::before {
 .un-swipe.un-dragging .un-swipe-row {
   cursor: grabbing;
 }
+/* Ride-along tray: anchored just past the row's right edge and translated
+   in lockstep with it by JS, so nothing is ever painted BEHIND the row —
+   rounded corners, margins and translucent rows stay clean. At rest it
+   sits entirely outside the wrap's overflow:hidden. JS stretches its
+   width past the natural size during a full-swipe overdrag. */
 .un-swipe-tray {
   position: absolute;
-  inset: 0 0 0 auto;
+  top: 0;
+  bottom: 0;
+  left: 100%;
   display: flex;
   align-items: stretch;
-  background: var(--un-action-neutral);
+  will-change: transform;
 }
 .un-swipe-action {
   min-width: 80px;
@@ -250,7 +288,7 @@ html.un-android .un-switch:checked::before {
   background: var(--un-action-neutral);
   cursor: pointer;
   transition: flex-grow 220ms var(--un-ease-spring-stiff);
-  flex-grow: 0;
+  flex-grow: 1;
 }
 .un-swipe-action.un-destructive {
   background: var(--un-action-danger);
@@ -297,8 +335,300 @@ html.un-android .un-switch:checked::before {
 .un-ptr-puck.un-refreshing svg {
   animation: un-ptr-spin 800ms linear infinite;
 }
+/* Window-scroller mode: no positioned parent to anchor to. */
+.un-ptr-puck.un-ptr-puck-fixed {
+  position: fixed;
+  z-index: 9980;
+}
 @keyframes un-ptr-spin {
   to { transform: rotate(360deg); }
+}
+
+/* ── Inset-grouped lists ───────────────────────────────────────────────
+   Pure CSS: rounded grouped cards, uppercase section headers, and inset
+   hairline separators painted on the STATIC row container (never on the
+   translating swipe row), so they hold still during swipes. Compatible
+   with attachSwipeActions: the kit's .un-swipe wrap is the container. */
+
+.un-group {
+  background: var(--un-group-bg);
+  border-radius: var(--un-radius-card);
+  overflow: hidden;
+}
+.un-group-header {
+  padding: 0 16px 7px;
+  font-size: 0.8125rem;
+  font-weight: 400;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--un-muted);
+}
+.un-group-row {
+  position: relative;
+}
+.un-group-row + .un-group-row::after,
+.un-group > .un-swipe + .un-swipe::after,
+.un-group > .un-swipe + .un-group-row::after,
+.un-group > .un-group-row + .un-swipe::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 0;
+  height: 1px;
+  background: var(--un-hairline);
+  z-index: 2;
+  pointer-events: none;
+}
+
+/* ── Overlay backdrop (sheets, action sheets, alerts) ──────────────────
+   Opacity is JS-driven for gesture-coupled surfaces (rides the sheet's
+   position 1:1); the alert uses the fade modifier instead. */
+
+.un-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  background: var(--un-backdrop);
+  opacity: 0;
+  will-change: opacity;
+}
+.un-backdrop.un-backdrop-fade {
+  transition: opacity 180ms ease;
+}
+
+/* ── Bottom sheet ──────────────────────────────────────────────────────
+   Presented by unNative.presentSheet(); translateY is JS-owned (spring
+   in, 1:1 drag, momentum dismiss) — no CSS transition on purpose. */
+
+.un-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9991;
+  background: var(--un-sheet-bg);
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  transform: translateY(100%);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  will-change: transform;
+}
+.un-sheet-grabber {
+  width: 36px;
+  height: 5px;
+  margin: 8px auto;
+  border-radius: var(--un-radius-full);
+  background: var(--un-hairline);
+}
+.un-sheet-body {
+  padding: 4px 16px 20px;
+}
+
+/* ── Action sheet ──────────────────────────────────────────────────────
+   unNative.actionSheet(): main card of hairline-separated actions plus a
+   separate Cancel card. translateY is JS-owned (spring up/down). */
+
+.un-action-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 9991;
+  padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
+  transform: translateY(100%);
+  will-change: transform;
+}
+.un-action-card {
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--un-sheet-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+.un-action-card + .un-action-card {
+  margin-top: 8px;
+}
+.un-action-title {
+  padding: 12px 16px;
+  text-align: center;
+  font-size: 0.8125rem;
+  color: var(--un-muted);
+}
+.un-action-btn {
+  display: block;
+  width: 100%;
+  padding: 16px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 1.0625rem;
+  text-align: center;
+  color: var(--un-accent);
+  cursor: pointer;
+}
+.un-action-title + .un-action-btn,
+.un-action-btn + .un-action-btn {
+  border-top: 1px solid var(--un-hairline);
+}
+.un-action-btn.un-destructive {
+  color: var(--un-action-danger);
+}
+.un-action-btn.un-action-cancel {
+  font-weight: 600;
+}
+
+/* ── Alert dialog ──────────────────────────────────────────────────────
+   unNative.alert(): 270px centered card, centered title, optional inset
+   field, hairline Cancel|OK row. Fade + scale-down entrance (alerts
+   don't spring from an edge — this transition is intentional). */
+
+.un-alert {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 9992;
+  width: 270px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--un-sheet-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  text-align: center;
+  transform: translate(-50%, -50%) scale(1.12);
+  opacity: 0;
+  transition: transform 260ms var(--un-ease-spring), opacity 180ms ease;
+  will-change: transform, opacity;
+}
+.un-alert.un-in {
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+}
+.un-alert-title {
+  padding: 18px 16px 4px;
+  font-size: 1.0625rem;
+  font-weight: 600;
+}
+.un-alert-message {
+  padding: 2px 16px 4px;
+  font-size: 0.8125rem;
+  color: var(--un-muted);
+}
+.un-alert-field {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 10px 16px 2px;
+  padding: 6px 8px;
+  font: inherit;
+  font-size: 0.8125rem;
+  border: 1px solid var(--un-hairline);
+  border-radius: 6px;
+  background: rgba(127, 127, 138, 0.08);
+  color: inherit;
+}
+.un-alert-buttons {
+  display: flex;
+  margin-top: 14px;
+  border-top: 1px solid var(--un-hairline);
+}
+.un-alert-buttons.un-stacked {
+  flex-direction: column;
+}
+.un-alert-btn {
+  flex: 1;
+  padding: 12px 8px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 1.0625rem;
+  color: var(--un-accent);
+  cursor: pointer;
+}
+.un-alert-btn + .un-alert-btn {
+  border-left: 1px solid var(--un-hairline);
+}
+.un-alert-buttons.un-stacked .un-alert-btn + .un-alert-btn {
+  border-left: none;
+  border-top: 1px solid var(--un-hairline);
+}
+.un-alert-btn.un-cancel {
+  font-weight: 600;
+}
+.un-alert-btn.un-destructive {
+  color: var(--un-action-danger);
+}
+
+/* ── Nav bars ──────────────────────────────────────────────────────────
+   .un-navbar: fixed blurred compact bar; unNative.attachNavBar() toggles
+   .un-scrolled (hairline appears) and, with a large title, .un-collapsed
+   (compact title fades in as the large title fades out). */
+
+.un-navbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: env(safe-area-inset-top, 0px) 12px 0;
+  background: var(--un-navbar-bg);
+  backdrop-filter: blur(20px) saturate(1.8);
+  -webkit-backdrop-filter: blur(20px) saturate(1.8);
+  border-bottom: 1px solid transparent;
+  transition: border-color 200ms ease;
+}
+.un-navbar.un-scrolled {
+  border-bottom-color: var(--un-hairline);
+}
+.un-navbar-title {
+  flex: 1;
+  text-align: center;
+  font-size: 1.0625rem;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.un-navbar.un-has-large .un-navbar-title {
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.un-navbar.un-has-large.un-collapsed .un-navbar-title {
+  opacity: 1;
+}
+.un-navbar-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 1.0625rem;
+  color: var(--un-accent);
+  cursor: pointer;
+}
+.un-navbar-back::before {
+  content: "‹";
+  font-size: 1.75rem;
+  line-height: 1;
+  margin-top: -3px;
+}
+/* Large title block: lives in the page flow under the bar; JS fades and
+   scales it with scroll (transform-origin keeps the left edge pinned). */
+.un-navbar-large {
+  padding: 6px 16px 8px;
+  font-size: 2.125rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  transform-origin: left center;
+  will-change: transform, opacity;
 }
 
 /* ── Page transitions ──────────────────────────────────────────────────
