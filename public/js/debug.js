@@ -41,6 +41,7 @@ const BADGES = {
   awaiting_github:    { label: 'Awaiting GitHub',      cls: 'bg-zinc-500/20 text-zinc-300' },
   noop:               { label: 'No-op',                cls: 'bg-zinc-500/20 text-zinc-400' },
   error:              { label: 'Error',                cls: 'bg-red-500/20 text-red-300' },
+  pr_closed:          { label: 'PR closed',            cls: 'bg-red-500/20 text-red-300' },
 };
 function badge(status) {
   const b = BADGES[status] || { label: status || '—', cls: 'bg-zinc-500/20 text-zinc-300' };
