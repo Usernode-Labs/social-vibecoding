@@ -57,6 +57,7 @@ function sharedRow(overrides = {}) {
     branch_name: 'dev/them-1',
     status: 'active',
     staging_url: null,
+    can_preview: false,
     user_id: 99,
     username: 'them',
     shared_at: '2026-06-12T00:00:00Z',
@@ -126,9 +127,14 @@ test('shared-sessions WHERE clause is the privacy contract', async () => {
     // Card data: owner name + discussion stats ride along…
     assert.match(q.sql, /u\.username/);
     assert.match(q.sql, /chat_count/);
-    // …but nothing that opens the owner's dev chat.
+    // #689: can_preview is DERIVED from pr_number (a PR exists once the
+    // first commit is pushed) so the card can offer an on-demand rebuild…
+    assert.match(q.sql, /\(cs\.pr_number IS NOT NULL\) AS can_preview/);
+    // …but nothing that opens the owner's dev chat — pr_number itself is
+    // never selected bare, only inside the boolean above.
     assert.doesNotMatch(q.sql, /pr_url/);
     assert.doesNotMatch(q.sql, /cc_session_id/);
+    assert.doesNotMatch(q.sql, /cs\.pr_number,/);
   } finally {
     server.close();
   }
@@ -139,7 +145,7 @@ test('shared-sessions rows pass through with a busy annotation', async () => {
   poolQueryHandler = makeDispatcher({
     sharedRows: [
       sharedRow({ id: 11 }),                       // busy via activeWorkers
-      sharedRow({ id: 12, status: 'paused' }),     // idle
+      sharedRow({ id: 12, status: 'paused', can_preview: true }), // idle
       sharedRow({ id: 13 }),                       // busy via isInFlight
     ],
   });
@@ -156,6 +162,9 @@ test('shared-sessions rows pass through with a busy annotation', async () => {
     assert.strictEqual(byId[12].busy, false);
     assert.strictEqual(byId[13].busy, true);
     assert.strictEqual(byId[11].username, 'them');
+    // #689: the derived can_preview boolean passes through untouched.
+    assert.strictEqual(byId[11].can_preview, false);
+    assert.strictEqual(byId[12].can_preview, true);
   } finally {
     worker.isInFlight = realIsInFlight;
     activeWorkers.clear();
