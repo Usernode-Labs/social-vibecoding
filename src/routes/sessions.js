@@ -375,9 +375,9 @@ function sessionRoutes(config) {
           },
           // Visible (shared) own session — renders below the archived
           // toggle under the "Visible to everyone." caption, with the
-          // Open chat + Hide buttons.
+          // Preview (#689: pr_number set) + Open chat + Hide buttons.
           {
-            id: 990103, branch_name: 'mock/my-session-visible', pr_number: null,
+            id: 990103, branch_name: 'mock/my-session-visible', pr_number: 990103,
             pr_url: null, pr_title: null,
             session_title: '[Mock] Your visible session',
             status: 'active', linked_issues: [],
@@ -451,7 +451,11 @@ function sessionRoutes(config) {
   //   access — the dev-chat endpoints stay owner-scoped, so "no way to
   //   open the owner's dev chat" is enforced by authorization, not just
   //   missing UI. staging_url IS included (same exposure /promoted
-  //   already grants proposals) so viewers get a Preview affordance.
+  //   already grants proposals) so viewers get a Preview affordance,
+  //   plus a derived can_preview boolean (#689: pr_number IS NOT NULL,
+  //   i.e. the branch has pushed changes) so the card can offer an
+  //   on-demand rebuild via ensure-staging even after the idle staging
+  //   GC has nulled staging_url. pr_number itself stays withheld.
   //   chat_count / last_message_at mirror the /promoted subqueries: the
   //   discussion thread is the same chat_messages ('session', id) key
   //   the proposal card will inherit on promotion.
@@ -466,7 +470,8 @@ function sessionRoutes(config) {
 
       const { rows } = await pool.query(
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
-                cs.staging_url, cs.user_id, u.username, cs.shared_at, cs.created_at,
+                cs.staging_url, (cs.pr_number IS NOT NULL) AS can_preview,
+                cs.user_id, u.username, cs.shared_at, cs.created_at,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 (SELECT COUNT(*)::int FROM chat_messages cm
                   WHERE cm.app_id = cs.app_id AND cm.thread_type = 'session' AND cm.thread_ref = cs.id
@@ -500,7 +505,7 @@ function sessionRoutes(config) {
           {
             id: 990001, session_title: '[Mock] Busy shared session — spinner state',
             pr_title: null, branch_name: 'mock/shared-busy', status: 'active',
-            staging_url: null, user_id: 0, username: 'staging-demo-user',
+            staging_url: null, can_preview: false, user_id: 0, username: 'staging-demo-user',
             shared_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date().toISOString(),
@@ -509,11 +514,24 @@ function sessionRoutes(config) {
           {
             id: 990002, session_title: '[Mock] Paused shared session with a preview',
             pr_title: null, branch_name: 'mock/shared-preview', status: 'paused',
-            staging_url: 'https://example.invalid', user_id: 0, username: 'staging-demo-user',
+            staging_url: 'https://example.invalid', can_preview: true, user_id: 0, username: 'staging-demo-user',
             shared_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
             created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
             chat_count: 3, last_message_at: new Date().toISOString(), busy: false,
+          },
+          // #689: preview asleep (staging GC'd the container) but the
+          // branch has pushed changes — the pill still renders and routes
+          // through ensure-staging. Clicking it in a demo 404s (fake id)
+          // into the "could not be rebuilt" loader, same as 990002.
+          {
+            id: 990003, session_title: '[Mock] Shared session, preview asleep (rebuild on click)',
+            pr_title: null, branch_name: 'mock/shared-preview-asleep', status: 'paused',
+            staging_url: null, can_preview: true, user_id: 0, username: 'staging-demo-user',
+            shared_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+            chat_count: 1, last_message_at: new Date().toISOString(), busy: false,
           }
         );
       }

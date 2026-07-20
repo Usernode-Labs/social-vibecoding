@@ -113,6 +113,44 @@ test('shared card: badge + Preview sit in the actions row; noNav drops nav and c
   assert.ok(noNav.includes(ACTIONS_ROW), 'noNav variant keeps the actions row');
 });
 
+// ── Preview pill gating (#689) ──────────────────────────────────────────────
+
+test('shared card: can_preview without a live staging_url still gets Preview (empty fallback)', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderSharedSessionCard(sharedSess({ can_preview: true, staging_url: null }));
+  assert.match(html, /Preview<\/button>/);
+  // Routed through ensure-staging with no last-known URL — the server
+  // decides live-vs-rebuild.
+  assert.match(html, /swapToStagingForSession\(71, ''\)/);
+});
+
+test('shared card: no pushed changes (can_preview false) → no Preview pill', () => {
+  const AppView = makeAppView();
+  const html = AppView._renderSharedSessionCard(sharedSess({ can_preview: false, staging_url: null }));
+  assert.doesNotMatch(html, /Preview<\/button>/);
+});
+
+test('shared card, read-only viewer: pill requires a live staging_url', () => {
+  const AppView = makeAppView();
+  // readOnly is a getter over appData.can_collaborate (#621).
+  AppView.appData = { can_collaborate: false };
+  const rebuildOnly = AppView._renderSharedSessionCard(sharedSess({ can_preview: true, staging_url: null }));
+  assert.doesNotMatch(rebuildOnly, /Preview<\/button>/, 'read-only viewers cannot trigger a rebuild');
+  const live = AppView._renderSharedSessionCard(sharedSess({ can_preview: true, staging_url: 'https://example.invalid' }));
+  assert.match(live, /Preview<\/button>/, 'a live URL still opens directly');
+  assert.match(live, /swapToStagingForSession\(71, 'https:\/\/example\.invalid'\)/);
+});
+
+test('own card: Preview pill gated on pr_number (a PR exists once changes are pushed)', () => {
+  const AppView = makeAppView();
+  AppView._sharedById = {};
+  const withPr = AppView._renderMySessionCard(mySess({ pr_number: 123 }));
+  assert.match(withPr, /Preview<\/button>/);
+  assert.match(withPr, /swapToStagingForSession\(51, ''\)/);
+  const noPr = AppView._renderMySessionCard(mySess({ pr_number: null }));
+  assert.doesNotMatch(noPr, /Preview<\/button>/);
+});
+
 // ── "Open chat" on visible own sessions ─────────────────────────────────────
 
 test('visible own card renders the labeled Open chat button (count from _sharedById)', () => {
@@ -168,7 +206,7 @@ test('kanban In progress: private → archived toggle → visible → issues →
     'Only you can see your active sessions.',
     'data-session-chip="1"',
     'Show archived (1)',
-    'Visible to everyone.',
+    'Visible to everyone —',
     'data-session-chip="2"',
     'Issue five',
     'data-shared-session-row="71"',
@@ -184,7 +222,7 @@ test('kanban In progress: no private sessions → no private caption; block stil
   ];
   const html = AppView._inProgressCardsHtml(entries, false);
   assert.doesNotMatch(html, /Only you can see your active sessions/);
-  assertOrder(html, ['Visible to everyone.', 'data-session-chip="2"']);
+  assertOrder(html, ['Visible to everyone —', 'data-session-chip="2"']);
 });
 
 test('kanban In progress: no visible sessions → nothing below the archived toggle', () => {
@@ -193,7 +231,7 @@ test('kanban In progress: no visible sessions → nothing below the archived tog
   AppView._archivedSessions = [mySess({ id: 90, status: 'archived' })];
   const entries = [{ kind: 'my-session', item: mySess({ id: 1 }) }];
   const html = AppView._inProgressCardsHtml(entries, false);
-  assert.doesNotMatch(html, /Visible to everyone\./);
+  assert.doesNotMatch(html, /Visible to everyone —/);
   assertOrder(html, ['Only you can see your active sessions.', 'data-session-chip="1"', 'Show archived (1)']);
 });
 
@@ -210,7 +248,7 @@ test('list view pinned block mirrors the split', () => {
     'Only you can see your active sessions.',
     'data-session-chip="1"',
     'Show archived (1)',
-    'Visible to everyone.',
+    'Visible to everyone —',
     'data-session-chip="2"',
   ]);
 });
@@ -223,7 +261,7 @@ test('list view pinned block: only a visible session still renders (no private c
   const html = AppView._mySessionsBlockHtml();
   assert.notEqual(html, '');
   assert.doesNotMatch(html, /Only you can see your active sessions/);
-  assertOrder(html, ['Visible to everyone.', 'data-session-chip="2"']);
+  assertOrder(html, ['Visible to everyone —', 'data-session-chip="2"']);
 });
 
 test('list view pinned block: nothing to show → empty string', () => {
