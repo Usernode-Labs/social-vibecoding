@@ -721,6 +721,15 @@ CREATE TABLE IF NOT EXISTS pr_votes (
 -- User-first scan for the "My history" view (GET /api/me/history).
 CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DESC);
 
+-- #687 Slice 3: revision-scoped approvals for IMPORTED PR proposals. A
+-- vote cast on an imported proposal is stamped with the PR head commit it
+-- was cast against (imported_pr_head_sha at the time), so a later push that
+-- moves the head can re-open approval and the merge gate counts only the
+-- approvals matching the CURRENT head. NULL for native proposals (whose
+-- branch the platform owns) — the gate applies no head filter there, so
+-- their counting is byte-for-byte unchanged. Append-only; safe on re-boot.
+ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS head_sha VARCHAR(40);
+
 -- Community-voted "priority" + "assigned person" on issues and PR
 -- proposals. ONE unified table because both fields share identical
 -- voting mechanics (one movable vote per user per field per card; the

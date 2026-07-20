@@ -1162,10 +1162,18 @@ function voteRoutes(config) {
       const previousVote = prevRows[0]?.vote || null;
       const unchanged = previousVote === vote;
 
+      // #687 Slice 3: stamp the PR head this vote was cast against for
+      // imported proposals, so a later push (which re-opens approval) can
+      // distinguish approvals of the reviewed revision from stale ones. The
+      // gate counts only votes matching the current imported_pr_head_sha.
+      // Native proposals leave head_sha NULL (the gate applies no filter).
+      const voteHeadSha = session.source === 'imported'
+        ? (session.imported_pr_head_sha || null)
+        : null;
       await pool.query(
-        `INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, $3)
-         ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, created_at = NOW()`,
-        [session.id, req.user.id, vote]
+        `INSERT INTO pr_votes (session_id, user_id, vote, head_sha) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha, created_at = NOW()`,
+        [session.id, req.user.id, vote, voteHeadSha]
       );
 
       // Any voting activity revives a going-stale PR: clear the warning
@@ -2076,6 +2084,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
   const governance = require('../services/governance');
   const gate = await governance.governedGate(pool, session.app_id, {
     kind: 'pr', id: session.id, openedAt,
+    // #687 Slice 3: an imported proposal's merge gate counts only approvals
+    // cast against its CURRENT head — so a head change that reset the tally
+    // (and any approval that raced the reset) can't carry an old revision's
+    // approval into the merge. Native rows pass no headSha (unchanged).
+    headSha: session.source === 'imported' ? (session.imported_pr_head_sha || null) : null,
   });
   const yesCount = gate.qualifiedYes;
   const noCount = gate.qualifiedNo;
