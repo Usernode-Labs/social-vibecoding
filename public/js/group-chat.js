@@ -511,6 +511,12 @@ const GroupChat = {
     GroupChat._renderQuotePreview();
     if (quote) payload.quote = GroupChat._wireQuote(quote);
 
+    // #694: consume this composer scope's uploaded attachments. Entries
+    // still uploading are never consumed (the submit handlers block the
+    // send while any upload is in flight).
+    const atts = GroupChat._takePendingAttachments(thread);
+    if (atts.length) payload.attachmentIds = atts.map((a) => a.id);
+
     if (GroupChat.ws && GroupChat.ws.readyState === 1) {
       GroupChat.ws.send(JSON.stringify(payload));
       return;
@@ -597,7 +603,11 @@ const GroupChat = {
       ? `<div class="px-3 py-2 text-xs text-zinc-500 border-t border-zinc-200 dark:border-zinc-800 shrink-0">${escapeHtml(opts.notice || 'This thread is read-only.')}</div>`
       : `<div class="shrink-0 border-t border-zinc-200 dark:border-zinc-800 p-2">
           <div id="gc-thread-reply-preview" class="hidden"></div>
+          <div id="gc-thread-attach-error" class="dc-attach-error hidden"></div>
+          <div id="gc-thread-attachments" class="dc-attach-strip"></div>
           <form id="gc-thread-form" class="flex gap-2 items-end">
+            <button type="button" id="gc-thread-attach-btn" title="Attach files" aria-label="Attach files" class="shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-500 hover:border-violet-500 transition-colors">&#128206;</button>
+            <input type="file" id="gc-thread-file-input" class="hidden" multiple>
             <textarea id="gc-thread-input" maxlength="${GC_MAX_MESSAGE_LEN}" rows="1" autocomplete="off"
               placeholder="${escapeHtml(opts.placeholder || 'Reply in thread…')}"
               class="gc-composer-input flex-1 min-w-0 resize-none overflow-y-auto rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 ${fill ? 'py-2' : 'py-1.5'} text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"></textarea>
@@ -640,8 +650,15 @@ const GroupChat = {
       GroupChat._autoGrowTextarea(input);
       const submitThread = () => {
         const content = input.value.trim();
-        if (!content) return;
-        GroupChat.send(content, { type, ref });
+        // #694: attachments-only sends are allowed; in-flight uploads
+        // block the send (input keeps its text).
+        const threadScope = { type, ref };
+        if (GroupChat.attachmentsUploading(threadScope)) {
+          GroupChat._setAttachError('Still uploading — one moment…', threadScope);
+          return;
+        }
+        if (!content && !GroupChat.hasPendingAttachments(threadScope)) return;
+        GroupChat.send(content, threadScope);
         input.value = '';
         GroupChat.setDraft(slug, '', threadKey);
         GroupChat._autoGrowTextarea(input);
@@ -665,6 +682,9 @@ const GroupChat = {
           submitThread();
         }
       });
+      // #694: paperclip / paste / drag-and-drop attachment wiring for
+      // this thread's composer.
+      GroupChat.setupAttachments({ type, ref });
       // #87/#130 parity with the general composer: @mention and #/PR#
       // reference autocomplete on the thread input.
       if (typeof MentionAutocomplete !== 'undefined') {
@@ -867,12 +887,20 @@ const GroupChat = {
       return { source: 'event', refMsgId: id, author: null, snippet: GroupChat._collapseSnippet(text) };
     }
     const body = row.querySelector('.gc-msg-content');
+    let snippet = GroupChat._collapseSnippet(body ? body.textContent : '');
+    // #694: an attachments-only message has an empty body — preview it as
+    // its first file name (the server re-derives the stored snippet the
+    // same way).
+    if (!snippet) {
+      const firstAtt = row.querySelector('.dc-msg-attachments .dc-attach-name, .dc-msg-attachments img');
+      if (firstAtt) snippet = `\u{1F4CE} ${firstAtt.textContent || firstAtt.getAttribute('alt') || 'file'}`;
+    }
     return {
       source: 'message', refMsgId: id,
       author: row.dataset.username || null,
       // Collapse newlines (multi-line messages render with pre-wrap) so the
       // quote chip stays single-line.
-      snippet: GroupChat._collapseSnippet(body ? body.textContent : ''),
+      snippet,
     };
   },
 
@@ -1471,6 +1499,388 @@ const GroupChat = {
     }
   },
 
+  // ── #694: file attachments ──────────────────────────────────────────
+  //
+  // Upload-before-send, ported from dev-chat (#450, public/js/dev-chat.js
+  // _setupAttachments and friends): each picked/pasted/dropped file is
+  // validated client-side (mirroring src/services/attachments.js
+  // validateChatUpload), POSTed as raw octet-stream to
+  // /api/apps/:slug/chat-attachments, and parked in `pendingAttachments`
+  // (rendered as a strip above the composer, reusing the dc-attach-*
+  // styles) until the message sends with the attachment ids on the WS
+  // 'chat' payload. Entries are keyed by composer scope (general vs a
+  // specific thread) so a tab switch never leaks uploads between
+  // composers. Orphans left by removed or abandoned uploads are GC'd
+  // server-side after 24h.
+  pendingAttachments: [],
+  _attachClickWired: false,
+
+  // Mirrors the server caps closely enough for instant feedback on
+  // obvious size problems; the server remains authoritative.
+  ATTACH_LIMITS: {
+    maxPerMessage: 4,
+    maxImageBytes: 4 * 1024 * 1024,
+    maxMarkdownBytes: 512 * 1024,
+    maxHtmlBytes: 2 * 1024 * 1024,
+    maxTextBytes: 200 * 1024,
+    maxBinaryBytes: 10 * 1024 * 1024,
+    imageExts: ['png', 'jpg', 'jpeg', 'gif', 'webp'],
+  },
+
+  _attachSlug() {
+    return (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)
+      || GroupChat.appSlug || null;
+  },
+
+  // Composer scope key: pending uploads belong to the composer they were
+  // added in (`<slug>|general` or `<slug>|<type>:<ref>`).
+  _attachScopeKey(thread) {
+    const slug = GroupChat._attachSlug() || '';
+    return thread && thread.type ? `${slug}|${thread.type}:${thread.ref}` : `${slug}|general`;
+  },
+
+  _pendingFor(thread) {
+    const key = GroupChat._attachScopeKey(thread);
+    return GroupChat.pendingAttachments.filter((a) => a.scope === key);
+  },
+
+  hasPendingAttachments(thread) {
+    return GroupChat._pendingFor(thread).some((a) => a.id);
+  },
+
+  attachmentsUploading(thread) {
+    return GroupChat._pendingFor(thread).some((a) => a.uploading);
+  },
+
+  // Remove and return this scope's uploaded entries — called by send().
+  _takePendingAttachments(thread) {
+    const key = GroupChat._attachScopeKey(thread);
+    const taken = GroupChat.pendingAttachments.filter((a) => a.scope === key && a.id);
+    if (!taken.length) return [];
+    GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => !taken.includes(a));
+    for (const a of taken) {
+      if (a.objectUrl) { try { URL.revokeObjectURL(a.objectUrl); } catch { /* already revoked */ } }
+    }
+    GroupChat._renderAttachStrip(thread);
+    return taken;
+  },
+
+  // Wire the paperclip button, hidden file input, clipboard paste, and
+  // drag-and-drop for one composer. `thread` null = the general composer
+  // (ids gc-*), else the thread composer (ids gc-thread-*). Idempotent
+  // per mount — both composers are fresh DOM on every (re)render.
+  setupAttachments(thread) {
+    const t = thread || null;
+    const btn = document.getElementById(t ? 'gc-thread-attach-btn' : 'gc-attach-btn');
+    const fileInput = document.getElementById(t ? 'gc-thread-file-input' : 'gc-file-input');
+    if (!btn || !fileInput) return;
+
+    // Pending uploads from other composer scopes are dropped (their
+    // server rows fall to the 24h orphan sweep — harmless).
+    const key = GroupChat._attachScopeKey(t);
+    GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a.scope === key);
+    GroupChat._renderAttachStrip(t);
+
+    btn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files?.length) GroupChat._addFiles(fileInput.files, t);
+      fileInput.value = '';
+    });
+
+    // Paste an image straight from the clipboard (screenshots).
+    const textarea = document.getElementById(t ? 'gc-thread-input' : 'gc-input');
+    if (textarea) {
+      textarea.addEventListener('paste', (e) => {
+        const items = e.clipboardData?.items || [];
+        const files = [];
+        for (const item of items) {
+          if (item.kind === 'file') {
+            const f = item.getAsFile();
+            if (f) {
+              // Clipboard images often arrive nameless — synthesize one.
+              if (!f.name || f.name === 'image.png' || !/\./.test(f.name)) {
+                const ext = (f.type.split('/')[1] || 'png').replace('jpeg', 'jpg');
+                const named = new File([f], `pasted-image-${Date.now() % 100000}.${ext}`, { type: f.type });
+                files.push(named);
+              } else {
+                files.push(f);
+              }
+            }
+          }
+        }
+        if (files.length) {
+          e.preventDefault();
+          GroupChat._addFiles(files, t);
+        }
+      });
+    }
+
+    // Drag-and-drop onto the message area or the composer.
+    const dropEls = [
+      document.getElementById(t ? 'gc-thread-form' : 'gc-form'),
+      document.getElementById(t ? 'gc-thread-messages' : 'gc-messages'),
+    ];
+    for (const el of dropEls) {
+      if (!el) continue;
+      el.addEventListener('dragover', (e) => { e.preventDefault(); });
+      el.addEventListener('drop', (e) => {
+        if (e.dataTransfer?.files?.length) {
+          e.preventDefault();
+          GroupChat._addFiles(e.dataTransfer.files, t);
+        }
+      });
+    }
+  },
+
+  // Mirror the server's classifier (src/services/attachments.js
+  // validateChatUpload) closely enough for instant feedback; UTF-8
+  // sniffing reads the bytes, cheap under the 10 MB cap.
+  async _classifyChatFile(file) {
+    const L = GroupChat.ATTACH_LIMITS;
+    const ext = (file.name.toLowerCase().match(/\.([a-z0-9]+)$/) || [])[1] || '';
+    if (L.imageExts.includes(ext)) {
+      if (file.size > L.maxImageBytes) {
+        return { error: `"${file.name}" is too big — images max ${Math.round(L.maxImageBytes / 1024 / 1024)} MB.` };
+      }
+      return { kind: 'image' };
+    }
+    if (ext === 'md' || ext === 'markdown') {
+      if (file.size > L.maxMarkdownBytes) {
+        return { error: `"${file.name}" is too big — markdown files max ${Math.round(L.maxMarkdownBytes / 1024)} KB.` };
+      }
+      return { kind: 'markdown' };
+    }
+    if (ext === 'html' || ext === 'htm') {
+      if (file.size > L.maxHtmlBytes) {
+        return { error: `"${file.name}" is too big — HTML files max ${Math.round(L.maxHtmlBytes / 1024 / 1024)} MB.` };
+      }
+      return { kind: 'html' };
+    }
+    if (file.size > L.maxBinaryBytes) {
+      return { error: `"${file.name}" is too big — files max ${Math.round(L.maxBinaryBytes / 1024 / 1024)} MB.` };
+    }
+    if (file.size <= L.maxTextBytes) {
+      try {
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        if (!bytes.includes(0)) {
+          new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+          return { kind: 'text' };
+        }
+      } catch { /* non-UTF-8 → binary */ }
+    }
+    return { kind: 'binary' };
+  },
+
+  async _addFiles(fileList, thread) {
+    if (GroupChat._readOnly()) return;
+    const slug = GroupChat._attachSlug();
+    if (!slug) return;
+    GroupChat._setAttachError(null, thread);
+    const key = GroupChat._attachScopeKey(thread);
+    const L = GroupChat.ATTACH_LIMITS;
+    for (const file of Array.from(fileList)) {
+      if (GroupChat.pendingAttachments.filter((a) => a.scope === key).length >= L.maxPerMessage) {
+        GroupChat._setAttachError(`Up to ${L.maxPerMessage} files per message.`, thread);
+        break;
+      }
+      const classified = await GroupChat._classifyChatFile(file);
+      if (classified.error) {
+        GroupChat._setAttachError(classified.error, thread);
+        continue;
+      }
+      const entry = {
+        scope: key,
+        uploading: true,
+        id: null,
+        kind: classified.kind,
+        filename: file.name,
+        sizeBytes: file.size,
+        meta: null,
+        objectUrl: classified.kind === 'image' ? URL.createObjectURL(file) : null,
+      };
+      GroupChat.pendingAttachments.push(entry);
+      GroupChat._renderAttachStrip(thread);
+      try {
+        const res = await fetch(`/api/apps/${slug}/chat-attachments?filename=${encodeURIComponent(file.name)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: file,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data?.error || `Upload failed (HTTP ${res.status})`);
+        entry.id = data.id;
+        entry.kind = data.kind;
+        entry.meta = data.meta || null;
+        entry.uploading = false;
+      } catch (err) {
+        GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a !== entry);
+        if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch { /* already revoked */ } }
+        GroupChat._setAttachError(err.message || 'Upload failed', thread);
+      }
+      GroupChat._renderAttachStrip(thread);
+    }
+  },
+
+  _removeAttachment(entry, thread) {
+    if (!entry || entry.uploading) return;
+    GroupChat.pendingAttachments = GroupChat.pendingAttachments.filter((a) => a !== entry);
+    if (entry.objectUrl) { try { URL.revokeObjectURL(entry.objectUrl); } catch { /* already revoked */ } }
+    // Server row stays until the 24h orphan sweep — harmless.
+    GroupChat._setAttachError(null, thread);
+    GroupChat._renderAttachStrip(thread);
+  },
+
+  _setAttachError(msg, thread) {
+    const el = document.getElementById(thread ? 'gc-thread-attach-error' : 'gc-attach-error');
+    if (!el) return;
+    if (msg) {
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    } else {
+      el.textContent = '';
+      el.classList.add('hidden');
+    }
+  },
+
+  _humanAttSize(bytes) {
+    const n = Number(bytes) || 0;
+    if (n >= 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    return `${n} B`;
+  },
+
+  // Attribute-safe escape for filenames. escapeHtml (the div trick)
+  // deliberately mirrors browser text-node escaping, which leaves `"`
+  // alone — fine for text content, NOT fine inside a double-quoted
+  // attribute, where a crafted filename could break out and inject
+  // attributes. Filenames are the one fully user-controlled string these
+  // rows put into attributes, so they go through this instead.
+  _escAttr(s) {
+    return escapeHtml(String(s)).replace(/"/g, '&quot;');
+  },
+
+  // Small kind badge for chips ("MD", "HTML", "BIN"). '' for image/text.
+  _attachKindBadgeHtml(a) {
+    if (a.kind === 'markdown') return '<span class="dc-attach-kind">MD</span>';
+    if (a.kind === 'html') return '<span class="dc-attach-kind">HTML</span>';
+    if (a.kind === 'binary') return '<span class="dc-attach-kind">BIN</span>';
+    return '';
+  },
+
+  _renderAttachStrip(thread) {
+    const strip = document.getElementById(thread ? 'gc-thread-attachments' : 'gc-attachments');
+    if (!strip) return;
+    const items = GroupChat._pendingFor(thread);
+    if (!items.length) {
+      strip.innerHTML = '';
+      strip.classList.remove('dc-attach-strip-active');
+      return;
+    }
+    strip.classList.add('dc-attach-strip-active');
+    strip.innerHTML = items.map((a, i) => {
+      const name = GroupChat._escAttr(a.filename);
+      const removeBtn = a.uploading
+        ? '<span class="dc-attach-uploading">…</span>'
+        : `<button type="button" class="dc-attach-remove" data-attach-idx="${i}" title="Remove" aria-label="Remove ${name}">&times;</button>`;
+      if (a.kind === 'image' && a.objectUrl) {
+        return `<div class="dc-attach-item"><img class="dc-attach-thumb" src="${a.objectUrl}" alt="${name}" title="${name}">${removeBtn}</div>`;
+      }
+      return `<div class="dc-attach-item dc-attach-chip" title="${name}">${GroupChat._attachKindBadgeHtml(a)}<span class="dc-attach-name">${name}</span><span class="dc-attach-size">${GroupChat._humanAttSize(a.sizeBytes)}</span>${removeBtn}</div>`;
+    }).join('');
+    strip.querySelectorAll('.dc-attach-remove').forEach((btn) => {
+      btn.addEventListener('click', () => GroupChat._removeAttachment(items[Number(btn.dataset.attachIdx)], thread));
+    });
+  },
+
+  // Attachments row inside a message bubble, from the server-derived
+  // metadata.attachments summary. Rendered OUTSIDE renderMessageBody —
+  // the DOMPurify allowlist strips <img> from untrusted markdown, and
+  // must keep doing so; these elements only ever point at the app-gated
+  // attachments routes. Per kind: image → inline thumbnail linking to
+  // full size; markdown → chip opening the side panel (+ download);
+  // html → chip with sandboxed Preview (+ download); text/binary →
+  // download chip.
+  _attachmentsRowHtml(msg) {
+    const meta = msg.metadata || msg.meta || {};
+    const atts = meta.attachments;
+    if (!Array.isArray(atts) || !atts.length) return '';
+    const slug = GroupChat._attachSlug();
+    if (!slug) return '';
+    GroupChat._ensureAttachClickHandler();
+    const items = atts.map((a) => {
+      if (typeof a.id !== 'string' || !/^[a-f0-9]{32}$/.test(a.id)) return '';
+      const name = GroupChat._escAttr(a.filename || 'file');
+      const url = `/api/apps/${encodeURIComponent(slug)}/chat-attachments/${a.id}`;
+      const size = `<span class="dc-attach-size">${GroupChat._humanAttSize(a.sizeBytes)}</span>`;
+      const badge = GroupChat._attachKindBadgeHtml(a);
+      if (a.kind === 'image') {
+        // onerror: staging clones copy chat_messages but not attachment
+        // bytes (staging:private), so a broken thumbnail degrades to a
+        // plain chip instead of a broken-image icon.
+        return `<a href="${url}" target="_blank" rel="noopener" title="${name} — open full size"><img class="dc-msg-att-img" src="${url}" alt="${name}" loading="lazy" onerror="GroupChat._attImgError(this)"></a>`;
+      }
+      if (a.kind === 'markdown') {
+        return `<span class="dc-msg-att-chip">${badge}` +
+          `<button type="button" class="dc-attach-name gc-att-open" data-att-md="${url}" data-att-name="${name}" title="View ${name}">${name}</button>${size}` +
+          `<a class="gc-att-action" href="${url}" download="${name}" title="Download ${name}">&#8595;</a></span>`;
+      }
+      if (a.kind === 'html') {
+        return `<span class="dc-msg-att-chip">${badge}<span class="dc-attach-name">${name}</span>${size}` +
+          `<a class="gc-att-action" href="${url}/view" target="_blank" rel="noopener" title="Open sandboxed preview of ${name}">Preview</a>` +
+          `<a class="gc-att-action" href="${url}" download="${name}" title="Download ${name}">&#8595;</a></span>`;
+      }
+      return `<a class="dc-msg-att-chip" href="${url}" download="${name}" title="Download ${name}">${badge}<span class="dc-attach-name">${name}</span>${size}</a>`;
+    }).filter(Boolean).join('');
+    return items ? `<div class="dc-msg-attachments">${items}</div>` : '';
+  },
+
+  // Broken image thumbnail (missing bytes in a staging clone, or a
+  // deleted row) → degrade the wrapping link to a plain chip.
+  _attImgError(img) {
+    const a = img.closest ? img.closest('a') : null;
+    if (!a) return;
+    a.className = 'dc-msg-att-chip';
+    a.textContent = `\u{1F5BC} ${img.alt || 'image'}`;
+  },
+
+  // One document-level delegated handler for markdown-chip clicks —
+  // message rows are re-rendered wholesale, so per-row listeners would
+  // be lost. Capture-phase + stopPropagation keeps the tap-to-quote
+  // handler from also firing on the same click.
+  _ensureAttachClickHandler() {
+    if (GroupChat._attachClickWired || typeof document === 'undefined') return;
+    GroupChat._attachClickWired = true;
+    document.addEventListener('click', (e) => {
+      const btn = e.target && e.target.closest ? e.target.closest('[data-att-md]') : null;
+      if (!btn) return;
+      e.preventDefault();
+      e.stopPropagation();
+      GroupChat._openMarkdownAttachment(
+        btn.getAttribute('data-att-md'),
+        btn.getAttribute('data-att-name') || 'file.md'
+      );
+    }, true);
+  },
+
+  // Fetch a markdown attachment (served text/plain) and render it in the
+  // spec side panel (same panel as "View full spec"). Falls back to a
+  // plain download when the panel slot isn't in the current tab's DOM.
+  async _openMarkdownAttachment(url, filename) {
+    if (!url) return;
+    if (!document.getElementById('gc-spec-side-panel')) {
+      window.open(url, '_blank', 'noopener');
+      return;
+    }
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`Couldn't load ${filename} (HTTP ${res.status})`);
+      const text = await res.text();
+      GroupChat._showSpecPanel({ title: filename, content: text });
+    } catch (err) {
+      GroupChat._showSpecPanel({ title: filename, content: err.message || 'Failed to load file', isError: true });
+    }
+  },
+
   renderMessageHtml(msg) {
     const time = new Date(msg.createdAt || msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const username = msg.username || 'System';
@@ -1536,6 +1946,7 @@ const GroupChat = {
         </div>
         ${quotedHtml}
         <div class="gc-msg-content">${renderMessageBody(msg.content)}</div>
+        ${GroupChat._attachmentsRowHtml(msg)}
         ${GroupChat._renderReactionsHtml(msg)}
       </div>`;
   },

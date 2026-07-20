@@ -1,9 +1,13 @@
+const express = require('express');
+const crypto = require('crypto');
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const models = require('../services/models');
 const { listActiveUserIds } = require('../services/active-users');
 const appAccess = require('../services/app-access');
+const attachmentsSvc = require('../services/attachments');
+const { attachmentUploadLimiter } = require('../middleware/rate-limits');
 
 function chatRoutes(config) {
   const router = Router();
@@ -109,6 +113,154 @@ function chatRoutes(config) {
     } catch (err) {
       log.error('chat', 'Failed to load messages', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Group-chat file attachments (#694) ───────────────────────────
+  //
+  // Upload happens BEFORE send, mirroring dev-chat (#450,
+  // src/routes/sessions.js): the client POSTs raw bytes here per file,
+  // gets back an attachment id, and passes the ids on the WS 'chat'
+  // message, whose handler links them to the message row. The body is
+  // always application/octet-stream (real type derived server-side from
+  // extension + magic-byte sniff), deliberately sidestepping the global
+  // express.json() parser.
+  router.post(
+    '/api/apps/:slug/chat-attachments',
+    attachmentUploadLimiter,
+    // Limit must exceed the largest single-file cap (10 MB binaries).
+    express.raw({ type: 'application/octet-stream', limit: '11mb' }),
+    async (req, res) => {
+      try {
+        // Uploading is posting: same collab gate as the WS write path
+        // (404 on deny so private apps aren't enumerable).
+        const app = await appAccess.getAppForUser(
+          pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS
+        );
+        if (!app) return res.status(404).json({ error: 'App not found' });
+
+        const filename = String(req.query.filename || '').trim();
+        const data = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+        const verdict = attachmentsSvc.validateChatUpload({ filename, data });
+        if (!verdict.ok) return res.status(400).json({ error: verdict.error });
+
+        // Per-app storage cap — the retention bound for linked rows
+        // (orphans are GC'd by the server.js sweeper after 24h).
+        const { rows: sumRows } = await pool.query(
+          `SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total
+             FROM chat_message_attachments WHERE app_id = $1`,
+          [app.id]
+        );
+        if (Number(sumRows[0].total) + data.length > attachmentsSvc.MAX_APP_CHAT_BYTES) {
+          return res.status(400).json({
+            error: `This app's chat attachment storage is full (${Math.round(attachmentsSvc.MAX_APP_CHAT_BYTES / 1024 / 1024)} MB max)`,
+          });
+        }
+
+        const id = crypto.randomBytes(16).toString('hex');
+        await pool.query(
+          `INSERT INTO chat_message_attachments
+             (id, app_id, user_id, kind, filename, content_type, size_bytes, meta, data)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [id, app.id, req.user.id, verdict.kind, filename, verdict.contentType, data.length,
+           verdict.meta ? JSON.stringify(verdict.meta) : null, data]
+        );
+        return res.json({
+          id, kind: verdict.kind, filename,
+          contentType: verdict.contentType, sizeBytes: data.length,
+          meta: verdict.meta || null,
+        });
+      } catch (err) {
+        // express.raw over-limit bodies raise PayloadTooLargeError before
+        // the handler runs; anything landing here is a genuine failure.
+        log.error('chat', 'Chat attachment upload failed', { slug: req.params.slug, err: err.message });
+        return res.status(500).json({ error: 'Upload failed' });
+      }
+    }
+  );
+
+  // Serve attachment bytes. View-gated like message history (#621 —
+  // read-only viewers can download what they can read). Unlinked rows
+  // (message_id NULL, upload not yet sent) are only readable by their
+  // uploader. Rows are immutable and ids unguessable, so a long private
+  // immutable cache is safe. Disposition/type rules: images render
+  // inline with their stored type; markdown/html/text serve as
+  // text/plain + attachment (stored text/html is NEVER sent inline from
+  // this route — HTML only executes on the sandboxed /view route below);
+  // binary serves as application/octet-stream + attachment.
+  router.get('/api/apps/:slug/chat-attachments/:attId', async (req, res) => {
+    const attId = String(req.params.attId || '');
+    if (!/^[a-f0-9]{32}$/.test(attId)) return res.status(404).end();
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).end();
+      const { rows } = await pool.query(
+        `SELECT kind, filename, content_type, data, message_id, user_id
+           FROM chat_message_attachments
+          WHERE id = $1 AND app_id = $2`,
+        [attId, app.id]
+      );
+      if (!rows.length) return res.status(404).end();
+      const att = rows[0];
+      if (att.message_id == null && att.user_id !== req.user?.id) {
+        return res.status(404).end();
+      }
+      const safeName = String(att.filename || 'file').replace(/["\\\r\n]/g, '_');
+      const inline = att.kind === 'image';
+      const contentType = att.kind === 'image'
+        ? (att.content_type || 'application/octet-stream')
+        : (att.kind === 'binary' ? 'application/octet-stream' : 'text/plain; charset=utf-8');
+      res.set('Content-Type', contentType);
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="${safeName}"`);
+      res.set('Cache-Control', 'private, max-age=31536000, immutable');
+      return res.send(att.data);
+    } catch (err) {
+      log.error('chat', 'Chat attachment serve failed', { attId, err: err.message });
+      return res.status(500).end();
+    }
+  });
+
+  // Sandboxed HTML preview (#694): serves an 'html' attachment as a real
+  // text/html document under `Content-Security-Policy: sandbox
+  // allow-scripts`. The document gets an OPAQUE origin — its scripts can
+  // run, but cannot read platform cookies/localStorage or make
+  // credentialed same-origin API calls (the SameSite=Lax session cookie
+  // rides the top-level navigation that authenticates this GET, never
+  // subresource/fetch requests from the opaque-origin document). Never
+  // add allow-same-origin here.
+  router.get('/api/apps/:slug/chat-attachments/:attId/view', async (req, res) => {
+    const attId = String(req.params.attId || '');
+    if (!/^[a-f0-9]{32}$/.test(attId)) return res.status(404).end();
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).end();
+      const { rows } = await pool.query(
+        `SELECT kind, filename, data, message_id, user_id
+           FROM chat_message_attachments
+          WHERE id = $1 AND app_id = $2`,
+        [attId, app.id]
+      );
+      if (!rows.length || rows[0].kind !== 'html') return res.status(404).end();
+      const att = rows[0];
+      if (att.message_id == null && att.user_id !== req.user?.id) {
+        return res.status(404).end();
+      }
+      const safeName = String(att.filename || 'file.html').replace(/["\\\r\n]/g, '_');
+      res.set('Content-Type', 'text/html; charset=utf-8');
+      res.set('Content-Security-Policy', 'sandbox allow-scripts');
+      res.set('Referrer-Policy', 'no-referrer');
+      res.set('X-Content-Type-Options', 'nosniff');
+      res.set('Content-Disposition', `inline; filename="${safeName}"`);
+      res.set('Cache-Control', 'private, max-age=31536000, immutable');
+      return res.send(att.data);
+    } catch (err) {
+      log.error('chat', 'Chat attachment view failed', { attId, err: err.message });
+      return res.status(500).end();
     }
   });
 
