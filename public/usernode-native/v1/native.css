@@ -47,6 +47,12 @@
   --un-navbar-bg: rgba(249, 249, 251, 0.82);
   --un-backdrop: rgba(0, 0, 0, 0.4);
 
+  /* Toast (surface is dark in BOTH modes — the iOS HUD idiom — so the
+     action color defaults to the light accent rather than --un-accent) */
+  --un-toast-bg: rgba(28, 28, 42, 0.92);
+  --un-toast-text: #ffffff;
+  --un-toast-action: #a78bfa;
+
   /* Radii */
   --un-radius: 0.5rem;
   --un-radius-full: 9999px;
@@ -87,6 +93,9 @@
   --un-sheet-bg: #1e1e38;
   --un-navbar-bg: rgba(18, 18, 32, 0.78);
   --un-backdrop: rgba(0, 0, 0, 0.55);
+  --un-toast-bg: rgba(58, 58, 82, 0.94);
+  --un-toast-text: #f4f4f8;
+  --un-toast-action: #c4b5fd;
 }
 
 /* ── Touch polish ──────────────────────────────────────────────────────
@@ -344,6 +353,59 @@ html.un-android .un-switch:checked:active::before {
   to { transform: rotate(360deg); }
 }
 
+/* ── Drag-to-reorder ───────────────────────────────────────────────────
+   Wired by unNative.attachReorder(): the lifted item's translateY is
+   JS-owned (1:1 with the finger, spring settle on drop); this file styles
+   the elevation, the handle, and the drop indicator. The indicator is a
+   body-level FIXED overlay bar — never a row box-shadow, which clips
+   against a group card's overflow:hidden at the first/last row. */
+
+.un-reorder-handle {
+  cursor: grab;
+  touch-action: none; /* a drag from the handle is never a scroll */
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  color: var(--un-muted);
+}
+.un-reordering,
+.un-reordering .un-reorder-handle {
+  cursor: grabbing;
+}
+.un-reorder-lifting {
+  position: relative;
+  z-index: 5; /* above sibling rows and the group hairlines (z-index 2) */
+  scale: 1.02;
+  border-radius: var(--un-radius); /* reads as a floating card once outside its group */
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.24);
+  transition: scale 200ms var(--un-ease-spring-stiff), box-shadow 200ms ease;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  will-change: transform;
+}
+.un-reorder-indicator {
+  position: fixed;
+  z-index: 9985;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 2px;
+  background: var(--un-accent);
+  pointer-events: none;
+}
+.un-reorder-indicator::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  margin-top: -4.5px;
+  border-radius: var(--un-radius-full);
+  border: 2.5px solid var(--un-accent);
+  box-sizing: border-box;
+}
+
 /* ── Inset-grouped lists ───────────────────────────────────────────────
    Pure CSS: rounded grouped cards, uppercase section headers, and inset
    hairline separators painted on the STATIC row container (never on the
@@ -559,6 +621,109 @@ html.un-android .un-switch:checked:active::before {
 }
 .un-alert-btn.un-destructive {
   color: var(--un-action-danger);
+}
+
+/* ── Centered modal ────────────────────────────────────────────────────
+   unNative.presentModal(): arbitrary content in a centered card over the
+   shared .un-backdrop.un-backdrop-fade. Fade + subtle scale-settle
+   entrance (the alert's motion family, gentler scale for the larger
+   surface); tall content scrolls inside the card. */
+
+.un-modal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  z-index: 9992;
+  width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding: 20px 16px;
+  border-radius: 14px;
+  background: var(--un-sheet-bg);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
+  transform: translate(-50%, -50%) scale(1.04);
+  opacity: 0;
+  transition: transform 260ms var(--un-ease-spring), opacity 180ms ease;
+  will-change: transform, opacity;
+  outline: none;
+}
+.un-modal.un-in {
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+}
+
+/* ── Toast ─────────────────────────────────────────────────────────────
+   unNative.toast(): bottom capsule HUD on iOS/desktop, Material snackbar
+   on Android. Safe-area aware; pointer-events stay off except on the
+   optional action button so it never steals taps from content below. */
+
+.un-toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+  z-index: 9995; /* above sheets/alerts: feedback fired from overlays shows */
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: min(85vw, 480px);
+  padding: 10px 18px;
+  border-radius: var(--un-radius-full);
+  background: var(--un-toast-bg);
+  color: var(--un-toast-text);
+  font-size: 0.875rem;
+  line-height: 1.4;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateX(-50%) translateY(12px);
+  transition: opacity 180ms ease, transform 260ms var(--un-ease-spring-stiff);
+  will-change: transform, opacity;
+}
+.un-toast.un-in {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.un-toast-msg {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.un-toast-action {
+  pointer-events: auto;
+  flex-shrink: 0;
+  margin: -6px -8px;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--un-toast-action);
+  cursor: pointer;
+}
+
+/* Material snackbar skin: near-full-width rectangle, left-aligned. */
+html.un-android .un-toast {
+  left: 16px;
+  right: 16px;
+  max-width: none;
+  justify-content: space-between;
+  border-radius: var(--un-radius);
+  transform: translateY(12px);
+}
+html.un-android .un-toast.un-in {
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .un-toast,
+  .un-modal {
+    transition: opacity 180ms ease;
+  }
 }
 
 /* ── Nav bars ──────────────────────────────────────────────────────────

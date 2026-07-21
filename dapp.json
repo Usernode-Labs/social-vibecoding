@@ -88,6 +88,12 @@
       "expectText": "Sheets & dialogs"
     },
     {
+      "name": "Native-feel kit reorder/toast/modal sections render",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios",
+      "expectSelector": "#reorder-group-a .reorder-row .un-reorder-handle",
+      "expectText": "Drag to reorder"
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"

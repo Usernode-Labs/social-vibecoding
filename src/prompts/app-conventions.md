@@ -891,10 +891,11 @@ Rules:
 
 An **opt-in** CSS + JS kit that makes an app's mobile UI feel native on
 iOS and Android: platform-adaptive switches, native pressed states,
-swipe-to-act list rows, pull-to-refresh (inner containers or the whole
-page), bottom sheets, action sheets, alert dialogs, blurred nav bars
-with collapsing large titles, inset-grouped list styling, and animated
-push/pop screen transitions — all in vanilla JS + CSS, no build step,
+swipe-to-act list rows, drag-to-reorder lists, pull-to-refresh (inner
+containers or the whole page), bottom sheets, centered modals, action
+sheets, alert dialogs, toasts, blurred nav bars with collapsing large
+titles, inset-grouped list styling, and animated push/pop screen
+transitions — all in vanilla JS + CSS, no build step,
 attaching to the app's existing DOM. It is **available and recommended for mobile-facing
 UI**; adopting it is each app's choice (typically driven from dev chat),
 not a requirement.
@@ -953,10 +954,38 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   `overscroll-behavior-y: contain` (the kit also sets it defensively).
   No-op on desktop. Never throws: invalid input logs a console warning
   and returns a no-op `{ detach() }`.
+- **Drag-to-reorder lists.**
+  `unNative.attachReorder(listEl, { handle?, itemSelector?,
+  longPressMs?, canDrop?, onReorder })`. Native-feel reordering: on
+  touch a long-press (default 400ms) lifts the row, which then tracks
+  the finger 1:1; on desktop, drag the `handle` (a CSS selector for a
+  grabber inside each row — handles lift immediately on both inputs)
+  or, with no handle, any vertical drag on the row. An accent-colored
+  overlay bar marks the drop slot, the viewport/scroll-container
+  auto-scrolls near its edges, and release springs the row into place —
+  the kit then moves the element in the DOM and calls
+  `onReorder(fromIndex, toIndex, itemEl)` (persist the order there).
+  `itemSelector` defaults to `listEl`'s children minus
+  `.un-group-header`; pass it explicitly for grouped/sectioned markup —
+  indices span the whole matched list, so cross-section moves just
+  work, and hovering a section header inserts at the top of that
+  section. Composes with `attachSwipeActions` on the same rows (attach
+  swipe actions first, then reorder on the container — the items are
+  the `.un-swipe` wrappers) and with pull-to-refresh via the gesture
+  arbiter. Returns `{ detach() }`; never throws on bad input.
 - **Bottom sheet.** `unNative.presentSheet({ content | contentEl,
   onDismiss })` — grabber, spring presentation, 1:1 drag-to-dismiss
   with momentum commit (a touch mid-spring inherits position and
   velocity), backdrop tap dismisses. Returns `{ dismiss(), el }`.
+- **Centered modal.** `unNative.presentModal({ content | contentEl,
+  onDismiss?, dismissible? })` — arbitrary content in a centered card
+  over the same dimmed backdrop as the sheet/alert, with the alert's
+  fade + scale-settle motion. Backdrop tap and Escape dismiss (unless
+  `dismissible: false`); taps on the card never dismiss; nothing is
+  clickable during the fade-out; tall content scrolls inside the card.
+  The natural surface for forms, share panels and editor dialogs —
+  especially on desktop/tablet where a bottom sheet reads as a phone
+  idiom. Returns `{ dismiss(), el }`.
 - **Action sheet.** `unNative.actionSheet({ title?, actions: [{ label,
   destructive?, handler? }], cancelLabel? })` — iOS-style stack with a
   red destructive action and a separate Cancel card; backdrop cancels.
@@ -967,6 +996,15 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   270px centered iOS alert with optional inset text field. Resolves
   `{ button, value }` (always write it `unNative.alert(...)` — it does
   not replace `window.alert`).
+- **Toast / transient status.** `unNative.toast(message, { duration?,
+  action?: { label, handler } })` — fire-and-forget feedback ("Copied",
+  "Saved", API errors): a bottom capsule HUD on iOS/desktop, a Material
+  snackbar on Android, safe-area aware, auto-hiding (2.2s, 4s with an
+  action). Singleton with last-writer-wins: a new call replaces a
+  still-visible toast and resets its timer — no stacking, no queue.
+  It never steals taps from content underneath (`pointer-events` stay
+  off except on the optional action button). Returns
+  `{ dismiss(), el }`. Use it instead of hand-rolling a `#toast` div.
 - **Nav bars.** Markup classes `un-navbar` (fixed, blurred, translucent),
   `un-navbar-title`, `un-navbar-back` (tinted back chevron), and
   `un-navbar-large` (large-title block in the page flow). Wire with
@@ -1030,8 +1068,10 @@ out-specificity-ing kit selectors or copying the stylesheet:
 - `--un-surface` — kit chrome (pull-to-refresh puck)
 - `--un-hairline`, `--un-muted` — separators and secondary text
 - `--un-group-bg`, `--un-sheet-bg`, `--un-navbar-bg`, `--un-backdrop`
-  — grouped-list cards, sheet/alert surfaces, nav-bar backing, overlay
-  dim
+  — grouped-list cards, sheet/modal/alert surfaces, nav-bar backing,
+  overlay dim
+- `--un-toast-bg`, `--un-toast-text`, `--un-toast-action` — the toast
+  surface (dark in BOTH modes, the iOS HUD idiom) and its action label
 - `--un-radius`, `--un-radius-full`, `--un-radius-card`
 
 Physics, thresholds and gesture geometry are deliberately **not**
@@ -1049,8 +1089,8 @@ apps.
    touch screens.
 4. Swap checkbox-style toggles to `class="un-switch"`.
 5. Wire `attachSwipeActions` on list rows with row-level actions
-   (delete / archive / mark read) and `attachPullToRefresh` on
-   refreshable lists.
+   (delete / archive / mark read), `attachPullToRefresh` on
+   refreshable lists, and `attachReorder` on user-orderable lists.
 6. Route real screen navigations through `unNative.transition`
    (`'push'`/`'pop'`); leave tabs/menus/panels instant.
 7. Optionally override `--un-*` variables to match the app's branding.
