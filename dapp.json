@@ -149,6 +149,16 @@
       "expectText": "of 1 approval"
     },
     {
+      "name": "Vote buttons split approver vs advisory counts on invited apps (#695)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
+      "expectText": "✓0 +1"
+    },
+    {
+      "name": "Invited-approvers governance card renders with the qualified tally (#695)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "ADVISORY_DEMO"
+    },
+    {
       "name": "Kanban filter bar renders above the board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-search"

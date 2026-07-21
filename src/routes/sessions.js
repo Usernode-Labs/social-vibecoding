@@ -981,6 +981,40 @@ function sessionRoutes(config) {
         rows[0].active_users = stats?.active || 1;
       } catch { rows[0].majority = rows[0].majority || 1; }
 
+      // #695: governance-aware tally for promoted/merging rows, mirroring
+      // /api/me/proposals. Under approver_policy='invited' only approver
+      // votes fill the header pill, so a proposal can't read as passed on
+      // non-approver (advisory) votes; under approvals_required=N the gate
+      // is the clock-free "at least N" check. MergeStatus.lifecycle resolves
+      // its threshold from `majority` before `votes_required`, so under
+      // 'invited' the majority is overwritten with the gate requirement.
+      // Best-effort — a governance hiccup degrades to the #405 payload.
+      if (rows[0].status === 'promoted' || rows[0].status === 'merging') {
+        try {
+          const governance = require('../services/governance');
+          const gov = await governance.getGovernance(pool, rows[0].app_id);
+          const electorate = await governance.getElectorate(pool, rows[0].app_id, gov);
+          const q = electorate.approverIds
+            ? await governance.qualifiedCounts(pool, 'pr', rows[0].id, electorate.approverIds)
+            : { yes: rows[0].yes_count, no: rows[0].no_count };
+          const gate = governance.computeGate(
+            gov, electorate.active, q.yes, q.no,
+            rows[0].promoted_at || rows[0].created_at
+          );
+          rows[0].approval_policy = gate.policy;
+          rows[0].approvals_required = gate.approvalsRequired;
+          rows[0].qualified_yes_count = gate.qualifiedYes;
+          rows[0].qualified_no_count = gate.qualifiedNo;
+          rows[0].votes_required = rows[0].votes_required ?? gate.required;
+          if (gov.approverPolicy === 'invited') {
+            rows[0].majority = gate.required;
+            rows[0].active_users = electorate.active;
+          }
+        } catch (err) {
+          log.warn('sessions', 'governance tally attach failed (non-fatal)', { err: err.message });
+        }
+      }
+
       // Viewing a session counts as activity so the auto-pause sweeper
       // doesn't pause a session the user is actively reading. Fire-and-
       // forget — the view shouldn't block on this write, and a missed

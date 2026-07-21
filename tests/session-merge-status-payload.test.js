@@ -19,6 +19,12 @@ const assert = require('node:assert');
 const poolMod = require('../src/db/pool');
 let capturedQueries = [];
 let sessionRow = {};
+// #695: governance stubs — the handler now resolves the app's approver
+// policy, roster, and qualifying tally for promoted rows. Defaults model
+// the 'anyone' policy (empty apps row → policy 'anyone').
+let govRows = [];
+let approverRows = [];
+let qualifiedRow = { yes: 0, no: 0 };
 poolMod.getPool = () => ({
   query: (sql, params) => {
     capturedQueries.push({ sql, params });
@@ -27,6 +33,19 @@ poolMod.getPool = () => ({
     }
     if (/FROM chat_session_messages/.test(sql)) {
       return Promise.resolve({ rows: [] });
+    }
+    if (/SELECT approver_policy, approvals_required FROM apps/.test(sql)) {
+      return Promise.resolve({ rows: govRows });
+    }
+    if (/FROM app_approvers/.test(sql)) {
+      return Promise.resolve({ rows: approverRows });
+    }
+    if (/FROM users WHERE is_admin/.test(sql)) {
+      // Admin fallback roster (only reached when app_approvers is empty).
+      return Promise.resolve({ rows: [{ id: 1 }] });
+    }
+    if (/FILTER \(WHERE vote = 'yes'\)/.test(sql)) {
+      return Promise.resolve({ rows: [qualifiedRow] });
     }
     // activity bump UPDATE + anything else.
     return Promise.resolve({ rows: [] });
@@ -99,6 +118,9 @@ test('payload includes the vote-tally subqueries and computed majority', async (
     assert.strictEqual(body.session.yes_count, 3);
     assert.strictEqual(body.session.no_count, 0);
     assert.strictEqual(body.session.majority, 3, 'majority from getActiveUserStats');
+    // #695: default policy — every vote qualifies, majority untouched.
+    assert.strictEqual(body.session.approval_policy, 'anyone');
+    assert.strictEqual(body.session.qualified_yes_count, 3);
 
     // The contract is in the SQL: the single-session SELECT computes the
     // yes/no tallies from pr_votes.
@@ -144,4 +166,56 @@ test('payload + MergeStatus together resolve the In-vote vs. ready states', asyn
     const { body } = await getSession(server, 42);
     assert.strictEqual(MergeStatus.lifecycle(body.session).key, 'in_vote');
   } finally { server.close(); }
+});
+
+// #695: invited-approver app — only approver votes qualify, so a proposal
+// with two non-approver (advisory) yes votes must NOT read as passed. The
+// payload carries the governance fields and its majority is the gate
+// requirement, not the active-user threshold.
+test('invited policy: advisory votes never satisfy the header pill', async () => {
+  const MergeStatus = require('../public/js/merge-status.js');
+  // Fresh app_id — getGovernance caches per app for 10s, so reusing app_id 9
+  // from the earlier ('anyone') tests would hit the cache.
+  sessionRow = baseRow({ app_id: 11, yes_count: 2, no_count: 0 });
+  govRows = [{ approver_policy: 'invited', approvals_required: 1 }];
+  approverRows = [{ user_id: 100 }];
+  qualifiedRow = { yes: 0, no: 0 }; // neither voter is the approver
+  const server = await startServer();
+  try {
+    const { res, body } = await getSession(server, 42);
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(body.session.approval_policy, 'invited');
+    assert.strictEqual(body.session.approvals_required, 1);
+    assert.strictEqual(body.session.qualified_yes_count, 0);
+    assert.strictEqual(body.session.qualified_no_count, 0);
+    assert.strictEqual(body.session.yes_count, 2, 'raw tally still serialized');
+    assert.strictEqual(body.session.majority, 1, 'majority = gate requirement, not active-user stats');
+    // Raw yes (2) ≥ majority (1), but the qualified tally (0) keeps it in vote.
+    assert.strictEqual(MergeStatus.lifecycle(body.session).key, 'in_vote');
+  } finally {
+    govRows = [];
+    approverRows = [];
+    qualifiedRow = { yes: 0, no: 0 };
+    server.close();
+  }
+});
+
+// #695: a qualifying approver vote satisfies the same gate.
+test('invited policy: an approver vote reaches the target', async () => {
+  const MergeStatus = require('../public/js/merge-status.js');
+  sessionRow = baseRow({ app_id: 12, yes_count: 3, no_count: 0 });
+  govRows = [{ approver_policy: 'invited', approvals_required: 1 }];
+  approverRows = [{ user_id: 100 }];
+  qualifiedRow = { yes: 1, no: 0 };
+  const server = await startServer();
+  try {
+    const { body } = await getSession(server, 42);
+    assert.strictEqual(body.session.qualified_yes_count, 1);
+    assert.strictEqual(MergeStatus.lifecycle(body.session).key, 'ready');
+  } finally {
+    govRows = [];
+    approverRows = [];
+    qualifiedRow = { yes: 0, no: 0 };
+    server.close();
+  }
 });
