@@ -19,10 +19,16 @@
  *   unNative.attachPullToRefresh(scrollEl, onRefresh, opts?) — pull-to-refresh
  *                                        (element container OR the window
  *                                        scroller; never throws on bad input)
+ *   unNative.attachReorder(listEl, opts) — drag-to-reorder lists (long-press
+ *                                        lift on touch, handle/pointer drag on
+ *                                        desktop, overlay drop indicator,
+ *                                        edge auto-scroll, spring settle)
  *   unNative.transition(fn, {type})   — View Transitions wrapper
  *   unNative.presentSheet(opts)       — bottom sheet (drag-to-dismiss)
+ *   unNative.presentModal(opts)       — centered modal card, arbitrary content
  *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
  *   unNative.alert(opts)              — iOS alert dialog, Promise-based
+ *   unNative.toast(message, opts?)    — transient status toast / snackbar
  *   unNative.attachNavBar(bar, opts)  — blurred nav bar + large-title collapse
  *   unNative.gestures                 — the shared gesture arbiter
  *                                        { claim, owner, release }
@@ -184,6 +190,51 @@
     return projectDisplacement(input.y, input.v, input.horizonMs) >= 0.5 * input.sheetHeight;
   }
 
+  // Reorder hit-testing: map a pointer y to a gap index (0..n) over an
+  // ordered list of item rects ({ top, bottom }, same coordinate space as
+  // pointerY). Inside an item, above the midpoint inserts before it and
+  // below inserts after. Outside every item — a section header, deadspace
+  // between groups, or past either end — snap to the NEAREST gap, so a
+  // header hover means "insert at the top of that section" and deadspace
+  // never falls through to "append at the end".
+  function reorderDropIndex(pointerY, itemRects) {
+    if (!itemRects || !itemRects.length) return 0;
+    for (var i = 0; i < itemRects.length; i++) {
+      var r = itemRects[i];
+      if (pointerY >= r.top && pointerY <= r.bottom) {
+        return pointerY < (r.top + r.bottom) / 2 ? i : i + 1;
+      }
+    }
+    var bestIdx = 0;
+    var bestDist = Infinity;
+    for (var g = 0; g <= itemRects.length; g++) {
+      var gy = g === 0
+        ? itemRects[0].top
+        : g === itemRects.length
+          ? itemRects[itemRects.length - 1].bottom
+          : (itemRects[g - 1].bottom + itemRects[g].top) / 2;
+      var dist = Math.abs(pointerY - gy);
+      if (dist < bestDist) { bestDist = dist; bestIdx = g; }
+    }
+    return bestIdx;
+  }
+
+  // Edge auto-scroll ramp for drag-to-reorder: px-per-frame scroll velocity
+  // for a pointer near the top/bottom of the visible area. Zero outside the
+  // edge band; ramps linearly to ±maxSpeed at (or past) the edge itself.
+  function autoScrollVelocity(pointerY, viewTop, viewBottom, edgeSize, maxSpeed) {
+    var edge = edgeSize == null ? 48 : edgeSize;
+    var max = maxSpeed == null ? 14 : maxSpeed;
+    if (edge <= 0) return 0;
+    if (pointerY < viewTop + edge) {
+      return -Math.min(1, (viewTop + edge - pointerY) / edge) * max;
+    }
+    if (pointerY > viewBottom - edge) {
+      return Math.min(1, (pointerY - (viewBottom - edge)) / edge) * max;
+    }
+    return 0;
+  }
+
   // Gesture arbiter core: one owner per gesture sequence, decided once —
   // the first recognizer to claim a sequence wins it, everyone else backs
   // off. Pure (no DOM); the kit wires one instance to real pointer/touch
@@ -228,6 +279,8 @@
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
     decideSheetRelease: decideSheetRelease,
+    reorderDropIndex: reorderDropIndex,
+    autoScrollVelocity: autoScrollVelocity,
     createArbiter: createArbiter,
   };
 
@@ -818,6 +871,405 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
+   * Drag-to-reorder — long-press lift on touch (handles lift immediately),
+   * pointer drag on desktop. 1:1 finger tracking, overlay drop indicator
+   * (a fixed body-level bar — never a row box-shadow, which clips against
+   * a group card's overflow:hidden at the first/last row), edge
+   * auto-scroll with per-frame re-hit-testing, spring settle on drop.
+   * No HTML5 drag-and-drop on any platform.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  var REORDER_LONG_PRESS_MS = 400;
+  var REORDER_SLOP = 8; // px of pre-lift movement that cancels the long press
+  var REORDER_EDGE = 48; // auto-scroll edge band
+  var REORDER_MAX_SCROLL = 14; // px per frame at the edge
+
+  // attachReorder(listEl, { handle?, itemSelector?, longPressMs?, canDrop?,
+  // onReorder }) — items default to listEl's element children minus
+  // .un-group-header / kit chrome; pass itemSelector for grouped markup
+  // (it may match across nested section containers — cross-section moves
+  // work because indices span the whole matched list). onReorder(from, to,
+  // itemEl) runs AFTER the kit has moved the element in the DOM (persist
+  // the order there). Returns { detach() }; never throws on bad input.
+  function attachReorder(listEl, options) {
+    var noop = { detach: function () {} };
+    if (!listEl || listEl.nodeType !== 1) {
+      console.warn('[unNative] attachReorder: listEl must be an Element — reorder disabled.');
+      return noop;
+    }
+    var opts = options || {};
+    var handleSel = typeof opts.handle === 'string' ? opts.handle : null;
+    var itemSel = typeof opts.itemSelector === 'string' ? opts.itemSelector : null;
+    var longPressMs = opts.longPressMs != null ? opts.longPressMs : REORDER_LONG_PRESS_MS;
+    var token = { reorder: listEl };
+
+    var drag = null; // see states below
+    var activeSpring = null;
+    var indicator = null;
+    var raf = null;
+    var suppressClick = false;
+
+    function matchedItems() {
+      var els = itemSel
+        ? Array.prototype.slice.call(listEl.querySelectorAll(itemSel))
+        : Array.prototype.slice.call(listEl.children);
+      return els.filter(function (el) {
+        return el.nodeType === 1 && !el.classList.contains('un-group-header') &&
+          !el.classList.contains('un-reorder-indicator');
+      });
+    }
+
+    if (handleSel) {
+      // touch-action: none on handles so the browser never contests a drag
+      // that starts on one (matching iOS reorder grabbers). Late-rendered
+      // handles that carry the class themselves get it from the stylesheet.
+      matchedItems().forEach(function (item) {
+        var h = item.querySelector(handleSel);
+        if (h) h.classList.add('un-reorder-handle');
+      });
+    }
+
+    function findScroller() {
+      var node = listEl.parentNode;
+      while (node && node.nodeType === 1 && node !== document.body) {
+        var s = getComputedStyle(node);
+        if (/(auto|scroll)/.test(s.overflowY) && node.scrollHeight > node.clientHeight) return node;
+        node = node.parentNode;
+      }
+      return null; // window scroller
+    }
+
+    function scrollPos(scroller) {
+      return scroller ? scroller.scrollTop : (window.scrollY || 0);
+    }
+
+    // Cached lift-time rects adjusted for scroll since lift: siblings never
+    // move during the drag (indicator model), so cache + scroll delta stays
+    // exact and avoids re-measuring the transformed item (gBCR includes
+    // transforms, which would poison the hit-test).
+    function currentRects() {
+      var d = scrollPos(drag.scroller) - drag.scrollBase;
+      return drag.rects.map(function (r) {
+        return { top: r.top - d, bottom: r.bottom - d, left: r.left, width: r.width };
+      });
+    }
+
+    function setLiftTransform(ty) {
+      drag.ty = ty;
+      drag.item.style.transform = 'translateY(' + ty + 'px)';
+    }
+
+    function ensureIndicator() {
+      if (indicator) return indicator;
+      indicator = document.createElement('div');
+      indicator.className = 'un-reorder-indicator';
+      // Body-mounted (so overflow:hidden group cards can't clip it), which
+      // means it would resolve --un-accent from :root — copy the LIST's
+      // resolved accent so wrapper-level re-theming still applies.
+      try {
+        var accent = getComputedStyle(listEl).getPropertyValue('--un-accent');
+        if (accent) indicator.style.setProperty('--un-accent', accent.trim());
+      } catch (e) { /* ignore */ }
+      document.body.appendChild(indicator);
+      return indicator;
+    }
+
+    function updateIndicator(rects, gap) {
+      if (gap == null || gap === drag.fromIndex || gap === drag.fromIndex + 1) {
+        if (indicator) indicator.style.display = 'none';
+        return;
+      }
+      var el = ensureIndicator();
+      var n = rects.length;
+      var y = gap < n ? rects[gap].top : rects[n - 1].bottom;
+      var anchor = rects[Math.min(gap, n - 1)];
+      el.style.display = '';
+      el.style.top = y + 'px';
+      el.style.left = (anchor.left + 8) + 'px';
+      el.style.width = Math.max(0, anchor.width - 16) + 'px';
+    }
+
+    function update() {
+      if (!drag || !drag.lifted) return;
+      // The item tracks the finger in VIEWPORT space: compensate for any
+      // content scrolled under a stationary pointer.
+      var scrollDelta = scrollPos(drag.scroller) - drag.scrollBase;
+      setLiftTransform(drag.lastY - drag.liftY + scrollDelta);
+      var rects = currentRects();
+      var gap = reorderDropIndex(drag.lastY, rects);
+      var to = gap > drag.fromIndex ? gap - 1 : gap;
+      if (to !== drag.fromIndex && opts.canDrop && opts.canDrop(drag.item, to) === false) {
+        gap = null; // vetoed slot: no indicator, release springs home
+      }
+      if (gap !== drag.gap) {
+        if (drag.gap != null && gap != null) haptic(5); // slot-change tick
+        drag.gap = gap;
+      }
+      updateIndicator(rects, gap);
+    }
+
+    function autoScrollFrame() {
+      if (!drag || !drag.lifted) { raf = null; return; }
+      var viewTop = 0;
+      var viewBottom = window.innerHeight;
+      if (drag.scroller) {
+        var sr = drag.scroller.getBoundingClientRect();
+        viewTop = Math.max(0, sr.top);
+        viewBottom = Math.min(window.innerHeight, sr.bottom);
+      }
+      var v = autoScrollVelocity(drag.lastY, viewTop, viewBottom, REORDER_EDGE, REORDER_MAX_SCROLL);
+      if (v) {
+        if (drag.scroller) drag.scroller.scrollTop += v;
+        else window.scrollBy(0, v);
+        update(); // content slid under the pointer: re-hit-test
+      }
+      raf = requestAnimationFrame(autoScrollFrame);
+    }
+
+    function lift(e) {
+      var items = matchedItems();
+      var fromIndex = items.indexOf(drag.item);
+      if (fromIndex < 0) { drag = null; return; }
+      var scroller = findScroller();
+      drag.lifted = true;
+      drag.fromIndex = fromIndex;
+      drag.items = items;
+      drag.scroller = scroller;
+      drag.scrollBase = scrollPos(scroller);
+      drag.rects = items.map(function (el) {
+        var r = el.getBoundingClientRect();
+        return { top: r.top, bottom: r.bottom, left: r.left, width: r.width };
+      });
+      drag.liftY = drag.lastY;
+      drag.gap = null;
+      drag.ty = 0;
+      haptic();
+      // Un-clip overflow:hidden ancestors (group cards, swipe wraps) for
+      // the duration of the drag, or the lifted row vanishes the moment it
+      // translates outside its own card. Scroll containers (auto/scroll)
+      // are left alone. Restored when the settle finishes.
+      drag.unclipped = [];
+      var node = drag.item.parentNode;
+      while (node && node.nodeType === 1) {
+        var ov = getComputedStyle(node).overflowY;
+        if (ov === 'hidden' || ov === 'clip') {
+          drag.unclipped.push({ node: node, prev: node.style.overflow });
+          node.style.overflow = 'visible';
+        }
+        if (node === listEl) break;
+        node = node.parentNode;
+      }
+      // Grouped rows are usually transparent (the card paints the surface):
+      // give the lifted row a surface of its own so it stays legible while
+      // floating over other content.
+      var bg = getComputedStyle(drag.item).backgroundColor;
+      if (!bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)') {
+        drag.item.style.background = 'var(--un-group-bg)';
+        drag.bgSet = true;
+      }
+      drag.item.classList.add('un-reorder-lifting');
+      listEl.classList.add('un-reordering');
+      if (e && typeof e.pointerId === 'number') {
+        try { drag.item.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      }
+      update();
+      raf = requestAnimationFrame(autoScrollFrame);
+    }
+
+    // Drop the indicator / auto-scroll loop / list cursor state. The
+    // lifted item's own class stays until the settle finishes so it keeps
+    // its elevation while springing into place.
+    function clearLiftVisuals() {
+      listEl.classList.remove('un-reordering');
+      if (indicator && indicator.parentNode) indicator.parentNode.removeChild(indicator);
+      indicator = null;
+      if (raf) { cancelAnimationFrame(raf); raf = null; }
+    }
+
+    // Settle the lifted item to targetTy with a spring, run done, clean up.
+    // Reduced motion settles instantly.
+    function settle(targetTy, done) {
+      var item = drag.item;
+      var fromTy = drag.ty;
+      var unclipped = drag.unclipped || [];
+      var bgSet = drag.bgSet;
+      function finish() {
+        item.style.transform = '';
+        item.classList.remove('un-reorder-lifting');
+        if (bgSet) item.style.background = '';
+        unclipped.forEach(function (u) { u.node.style.overflow = u.prev; });
+        if (done) done();
+      }
+      clearLiftVisuals();
+      drag = null;
+      if (prefersReducedMotion || Math.abs(fromTy - targetTy) < 1) { finish(); return; }
+      if (activeSpring) activeSpring.stop();
+      activeSpring = spring(function (v) {
+        item.style.transform = 'translateY(' + v + 'px)';
+      }, {
+        from: fromTy, to: targetTy, velocity: 0, preset: 'stiff',
+        onRest: function () { activeSpring = null; finish(); },
+      });
+    }
+
+    function release(cancelled) {
+      if (!drag) return;
+      if (drag.pressTimer) { clearTimeout(drag.pressTimer); drag.pressTimer = null; }
+      if (!drag.lifted) { drag = null; return; }
+      suppressClick = true;
+      setTimeout(function () { suppressClick = false; }, 0);
+      var gap = cancelled ? null : drag.gap;
+      var from = drag.fromIndex;
+      var item = drag.item;
+      var items = drag.items;
+      var rects = currentRects();
+      var n = rects.length;
+      var to = gap == null ? from : (gap > from ? gap - 1 : gap);
+      if (gap == null || to === from || gap === from + 1) {
+        settle(0, null); // home: no move, no callback
+        return;
+      }
+      haptic();
+      // Where the item's top lands after the DOM move (siblings between the
+      // origin and the gap shift by the item's height; the gap-side
+      // neighbour holds still).
+      var itemH = rects[from].bottom - rects[from].top;
+      var gapTop = gap < n ? rects[gap].top : rects[n - 1].bottom;
+      var targetTy = gapTop - (to > from ? itemH : 0) - rects[from].top;
+      settle(targetTy, function () {
+        var ref = gap < n ? items[gap] : null;
+        if (ref) ref.parentNode.insertBefore(item, ref);
+        else items[n - 1].parentNode.appendChild(item);
+        if (opts.onReorder) opts.onReorder(from, to, item);
+      });
+    }
+
+    function onPointerDown(e) {
+      if (drag || e.button > 0) return;
+      var items = matchedItems();
+      var item = null;
+      for (var i = 0; i < items.length; i++) {
+        if (items[i].contains(e.target)) { item = items[i]; break; }
+      }
+      if (!item) return;
+      var onHandle = !!(handleSel && e.target.nodeType === 1 &&
+        e.target.closest && e.target.closest(handleSel) && item.contains(e.target.closest(handleSel)));
+      var isTouch = e.pointerType === 'touch';
+      // Desktop with a declared handle: only the handle arms a drag.
+      if (!isTouch && handleSel && !onHandle) return;
+      drag = {
+        pointerId: e.pointerId,
+        seq: gestureSeq(e),
+        item: item,
+        startX: e.clientX,
+        startY: e.clientY,
+        lastY: e.clientY,
+        lifted: false,
+        armed: false,
+        pressTimer: null,
+      };
+      if (onHandle) {
+        // A handle is a dedicated grabber: claim and lift immediately.
+        if (!gestures.claim(drag.seq, token)) { drag = null; return; }
+        lift(e);
+      } else if (isTouch) {
+        // Long-press lift; any pre-lift movement past the slop cancels so
+        // scroll / swipe / PTR keep working on the same rows.
+        drag.pressTimer = setTimeout(function () {
+          if (!drag || drag.lifted) return;
+          drag.pressTimer = null;
+          if (!gestures.claim(drag.seq, token)) { drag = null; return; }
+          lift(e);
+        }, longPressMs);
+      } else {
+        drag.armed = true; // desktop, no handle: lift once the y-axis locks
+      }
+    }
+
+    function onPointerMove(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      drag.lastY = e.clientY;
+      if (!drag.lifted) {
+        var dx = e.clientX - drag.startX;
+        var dy = e.clientY - drag.startY;
+        if (drag.pressTimer) {
+          if (Math.abs(dx) > REORDER_SLOP || Math.abs(dy) > REORDER_SLOP) {
+            clearTimeout(drag.pressTimer);
+            drag = null;
+          }
+          return;
+        }
+        if (drag.armed) {
+          var axis = lockIntent(dx, dy);
+          if (axis === 'x') { drag = null; return; }
+          if (axis === 'y') {
+            if (!gestures.claim(drag.seq, token)) { drag = null; return; }
+            lift(e);
+          }
+        }
+        return;
+      }
+      update();
+    }
+
+    function onPointerUp(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      release(false);
+    }
+
+    function onPointerCancel(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      release(true);
+    }
+
+    // We own the finger after a lift: stop the browser from scrolling.
+    // Registered non-passive for exactly this call; while the long press is
+    // still pending the page scrolls normally.
+    function onTouchMove(e) {
+      if (drag && drag.lifted) e.preventDefault();
+    }
+
+    // A completed drag must not also activate the row's own tap behavior.
+    function onClickCapture(e) {
+      if (suppressClick || (drag && drag.lifted)) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }
+
+    listEl.addEventListener('pointerdown', onPointerDown);
+    listEl.addEventListener('pointermove', onPointerMove);
+    listEl.addEventListener('pointerup', onPointerUp);
+    listEl.addEventListener('pointercancel', onPointerCancel);
+    listEl.addEventListener('touchmove', onTouchMove, { passive: false });
+    listEl.addEventListener('click', onClickCapture, true);
+
+    return {
+      detach: function () {
+        listEl.removeEventListener('pointerdown', onPointerDown);
+        listEl.removeEventListener('pointermove', onPointerMove);
+        listEl.removeEventListener('pointerup', onPointerUp);
+        listEl.removeEventListener('pointercancel', onPointerCancel);
+        listEl.removeEventListener('touchmove', onTouchMove);
+        listEl.removeEventListener('click', onClickCapture, true);
+        if (drag) {
+          if (drag.pressTimer) clearTimeout(drag.pressTimer);
+          if (drag.item) {
+            drag.item.style.transform = '';
+            drag.item.classList.remove('un-reorder-lifting');
+            if (drag.bgSet) drag.item.style.background = '';
+          }
+          (drag.unclipped || []).forEach(function (u) { u.node.style.overflow = u.prev; });
+          drag = null;
+        }
+        if (activeSpring) { activeSpring.stop(); activeSpring = null; }
+        clearLiftVisuals();
+        listEl.classList.remove('un-reordering');
+      },
+    };
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
    * Page transitions — View Transitions wrapper. type 'none' (the default,
    * and the REQUIRED choice for high-frequency UI like tab switches, menus
    * and panels) runs the mutation with no animation. Re-entrant: a
@@ -984,6 +1436,87 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
+   * Centered modal — arbitrary content in a centered card over the shared
+   * backdrop. Fade + subtle scale-settle (the alert's motion family);
+   * teardown is deferred until the fade completes with pointer-events
+   * disabled for the whole fade-out window (the two details hand-rolled
+   * versions get subtly wrong).
+   * ──────────────────────────────────────────────────────────────────── */
+
+  var modalStack = []; // Escape dismisses the TOPMOST dismissible modal only
+
+  window.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape' || !modalStack.length) return;
+    var top = modalStack[modalStack.length - 1];
+    if (top.dismissible) {
+      e.preventDefault();
+      top.dismiss();
+    }
+  }, true);
+
+  // presentModal({ content | contentEl, onDismiss?, dismissible? }) —
+  // content is an HTML string, contentEl an Element to adopt. dismissible
+  // (default true) gates backdrop-tap and Escape. Returns { dismiss(), el }.
+  function presentModal(options) {
+    var opts = options || {};
+    var dismissible = opts.dismissible !== false;
+    var backdrop = document.createElement('div');
+    backdrop.className = 'un-backdrop un-backdrop-fade';
+    var card = document.createElement('div');
+    card.className = 'un-modal';
+    card.setAttribute('role', 'dialog');
+    card.setAttribute('aria-modal', 'true');
+    card.tabIndex = -1;
+    if (opts.contentEl) card.appendChild(opts.contentEl);
+    else if (opts.content != null) card.innerHTML = opts.content;
+    document.body.appendChild(backdrop);
+    document.body.appendChild(card);
+
+    var prevFocus = document.activeElement;
+    var closed = false;
+    var entry = { dismissible: dismissible, dismiss: dismiss };
+    modalStack.push(entry);
+
+    function dismiss() {
+      if (closed) return;
+      closed = true;
+      var i = modalStack.indexOf(entry);
+      if (i >= 0) modalStack.splice(i, 1);
+      card.classList.remove('un-in');
+      backdrop.style.opacity = '0';
+      // Nothing is clickable while fading out — not the card, not the
+      // dimmed area underneath it.
+      card.style.pointerEvents = 'none';
+      backdrop.style.pointerEvents = 'none';
+      var fired = false;
+      function finish() {
+        if (fired) return;
+        fired = true;
+        if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+        if (card.parentNode) card.parentNode.removeChild(card);
+        if (prevFocus && typeof prevFocus.focus === 'function') {
+          try { prevFocus.focus(); } catch (e) { /* ignore */ }
+        }
+        if (opts.onDismiss) opts.onDismiss();
+      }
+      card.addEventListener('transitionend', finish, { once: true });
+      setTimeout(finish, 300); // safety if transitionend never fires
+    }
+
+    if (dismissible) backdrop.addEventListener('click', function () { dismiss(); });
+
+    // Next frame: engage the CSS entrance (scale 1.04 → 1, fade in).
+    requestAnimationFrame(function () {
+      backdrop.style.opacity = '1';
+      card.classList.add('un-in');
+      var auto = card.querySelector('[autofocus]');
+      try { (auto || card).focus(); } catch (e) { /* ignore */ }
+    });
+
+    return { el: card, dismiss: dismiss };
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
    * Action sheet — iOS stack of actions + separate Cancel card. Resolves
    * with the chosen action object, or null on cancel/backdrop.
    * ──────────────────────────────────────────────────────────────────── */
@@ -1147,6 +1680,98 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
+   * Toast — transient status notice. iOS/desktop: bottom capsule HUD;
+   * Android: Material snackbar. Singleton, last-writer-wins: a call while
+   * a toast is visible swaps its content in place and resets the timer
+   * (no re-entrance animation, no queue). pointer-events: none unless an
+   * action is present, so it never steals taps from content underneath.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  var toastEl = null;
+  var toastHideTimer = null;
+  var toastRemoveTimer = null;
+  var toastGen = 0;
+
+  function removeToast() {
+    if (toastRemoveTimer) { clearTimeout(toastRemoveTimer); toastRemoveTimer = null; }
+    if (toastEl && toastEl.parentNode) toastEl.parentNode.removeChild(toastEl);
+    toastEl = null;
+  }
+
+  function hideToast() {
+    if (toastHideTimer) { clearTimeout(toastHideTimer); toastHideTimer = null; }
+    if (!toastEl || !toastEl.classList.contains('un-in')) return;
+    toastEl.classList.remove('un-in');
+    var el = toastEl;
+    el.addEventListener('transitionend', function () {
+      // Only tear down if this is still the fading-out element (a new
+      // toast may have re-entered it in the meantime).
+      if (toastEl === el && !el.classList.contains('un-in')) removeToast();
+    }, { once: true });
+    toastRemoveTimer = setTimeout(function () {
+      if (toastEl === el && !el.classList.contains('un-in')) removeToast();
+    }, 300);
+  }
+
+  // toast(message, { duration?, action?: { label, handler } }) — returns
+  // { dismiss(), el }. dismiss() is a no-op once a later toast has
+  // replaced this one (last-writer-wins).
+  function toast(message, options) {
+    var opts = options || {};
+    var action = opts.action && opts.action.label != null ? opts.action : null;
+    var duration = opts.duration != null ? opts.duration : (action ? 4000 : 2200);
+    var mine = ++toastGen;
+
+    if (toastHideTimer) { clearTimeout(toastHideTimer); toastHideTimer = null; }
+    if (toastRemoveTimer) { clearTimeout(toastRemoveTimer); toastRemoveTimer = null; }
+
+    var fresh = !toastEl;
+    if (fresh) {
+      toastEl = document.createElement('div');
+      toastEl.className = 'un-toast';
+      toastEl.setAttribute('role', 'status');
+      toastEl.setAttribute('aria-live', 'polite');
+      document.body.appendChild(toastEl);
+    }
+    toastEl.classList.toggle('un-has-action', !!action);
+    while (toastEl.firstChild) toastEl.removeChild(toastEl.firstChild);
+    var msg = document.createElement('div');
+    msg.className = 'un-toast-msg';
+    msg.textContent = message == null ? '' : String(message);
+    toastEl.appendChild(msg);
+    if (action) {
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'un-toast-action';
+      btn.textContent = action.label;
+      btn.addEventListener('click', function () {
+        if (toastGen !== mine) return;
+        hideToast();
+        if (action.handler) action.handler();
+      });
+      toastEl.appendChild(btn);
+    }
+
+    if (fresh && !prefersReducedMotion) {
+      // Next frame: engage the CSS entrance. A replacement while visible
+      // (or mid-fade-out) re-asserts un-in immediately — content swaps in
+      // place with no re-entrance.
+      requestAnimationFrame(function () {
+        if (toastEl && toastGen === mine) toastEl.classList.add('un-in');
+      });
+    } else {
+      toastEl.classList.add('un-in');
+    }
+
+    toastHideTimer = setTimeout(hideToast, duration);
+
+    return {
+      el: toastEl,
+      dismiss: function () { if (toastGen === mine) hideToast(); },
+    };
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
    * Nav bars — blurred compact bar with hairline-on-scroll, optional
    * collapsing large title.
    * ──────────────────────────────────────────────────────────────────── */
@@ -1268,10 +1893,13 @@
     spring: spring,
     attachSwipeActions: attachSwipeActions,
     attachPullToRefresh: attachPullToRefresh,
+    attachReorder: attachReorder,
     transition: transition,
     presentSheet: presentSheet,
+    presentModal: presentModal,
     actionSheet: actionSheet,
     alert: alertDialog,
+    toast: toast,
     attachNavBar: attachNavBar,
     gestures: gestures,
   };
