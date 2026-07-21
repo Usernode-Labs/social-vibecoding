@@ -230,6 +230,12 @@
       "expectSelector": "[data-issue-title='900008']"
     },
     {
+      "name": "Issue topic renders the attached-screenshot embed inline (#683)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900010",
+      "expectSelector": ".dc-inline-img",
+      "expectText": "[Mock] issue with an attached screenshot"
+    },
+    {
       "name": "Checks-starting mock proposal shows the in-progress badge",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Checks starting"
