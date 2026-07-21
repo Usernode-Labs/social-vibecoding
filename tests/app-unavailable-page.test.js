@@ -165,13 +165,25 @@ test('Caddyfile: wildcard site routes upstream 502/503/504 to /__app_unavailable
     'other error codes keep the terse respond fallback');
 });
 
-test('Caddyfile: apex site keeps its plain handle_errors (no error-page proxy)', () => {
+test('Caddyfile: apex site never proxies its error page (platform is the dead upstream there)', () => {
   const caddy = readCaddyfile();
   const apexIdx = caddy.indexOf('{$USERNODE_DOMAIN} {');
   const wildcardIdx = caddy.indexOf('*.{$USERNODE_DOMAIN}');
   assert.ok(apexIdx > -1 && wildcardIdx > apexIdx, 'apex block precedes wildcard block');
   const apex = caddy.slice(apexIdx, wildcardIdx);
-  assert.match(apex, /handle_errors \{\s*respond "\{err\.status_code\} \{err\.status_text\}"\s*\}/,
-    'apex handle_errors unchanged — when the platform is down nothing can render a nicer page');
+  // #711 changed the apex handle_errors from the plain terse respond to a
+  // caddy-served static "updating" page for document navigations — but the
+  // original invariant this test pinned still holds: when the platform is
+  // the dead upstream, the apex must not try to render its error page THROUGH
+  // the platform (no /__app_unavailable proxy), and non-document requests
+  // must keep the terse status respond. tests/caddy-deploy-grace.test.js
+  // pins the updating-page half.
   assert.ok(!apex.includes('__app_unavailable'), 'apex does not reference the error route');
+  const apexErrIdx = apex.indexOf('handle_errors');
+  assert.ok(apexErrIdx > -1, 'apex site has a handle_errors block');
+  const apexErr = apex.slice(apexErrIdx);
+  assert.ok(!apexErr.includes('reverse_proxy'),
+    'apex handle_errors must not proxy anywhere — its upstream is the thing that just died');
+  assert.match(apexErr, /respond "\{err\.status_code\} \{err\.status_text\}"/,
+    'non-document errors keep the terse respond fallback');
 });

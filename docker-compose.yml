@@ -117,6 +117,13 @@ services:
         GIT_SHA: ${GIT_SHA:-dev}
     container_name: usernode
     restart: unless-stopped
+    # Explicit SIGTERM→SIGKILL budget for deploys (#711). server.js's
+    # cleanup() drains in-flight handlers for up to DRAIN_TIMEOUT_MS (5s)
+    # before exiting; this must stay comfortably above that so the drain
+    # can finish instead of being SIGKILLed mid-flush, and low so the
+    # deploy cutover (old exit → new listen) stays short. tests/
+    # caddy-deploy-grace.test.js pins DRAIN_TIMEOUT_MS <= this value.
+    stop_grace_period: 10s
     networks:
       - usernode-net
     expose:

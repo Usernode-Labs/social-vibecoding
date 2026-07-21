@@ -2419,7 +2419,15 @@ function startStalePrSweeper(config) {
 //     them as warm-idle, so the next dispatch is fast even across
 //     production redeploys. The idle sweeper reclaims their memory in
 //     steady state.
-const DRAIN_TIMEOUT_MS = 60000;
+// Right-sized for deploys (#711): Docker SIGKILLs at stop_grace_period
+// (docker-compose.yml, 10s), so the old 60s wait was unreachable dead
+// time — and workers are deliberately restart-safe anyway (adopted by
+// recoverActiveWorkers on the next boot), so waiting out a whole CC turn
+// buys nothing. 5s is enough for in-flight HTTP handlers to flush DB
+// writes while keeping the deploy cutover short. Must stay BELOW the
+// compose stop_grace_period (tests/caddy-deploy-grace.test.js pins the
+// relationship).
+const DRAIN_TIMEOUT_MS = 5000;
 let cleanupStarted = false;
 
 async function cleanup() {
