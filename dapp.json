@@ -149,6 +149,12 @@
       "expectText": "of 1 approval"
     },
     {
+      "name": "Invited-approver proposal splits advisory votes out of the tally (#695)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000025",
+      "expectSelector": ".gc-vote-advisory",
+      "expectText": "+2 advisory"
+    },
+    {
       "name": "Kanban filter bar renders above the board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-search"
