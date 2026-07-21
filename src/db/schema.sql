@@ -1060,6 +1060,28 @@ CREATE INDEX IF NOT EXISTS idx_issue_bounties_giver_week
   ON issue_bounties (giver_user_id, week_start);
 COMMENT ON TABLE issue_bounties IS 'staging:private';
 
+-- Manual "In progress" claims on GitHub issues (the hand-set half of the
+-- issue in-progress status; the automatic half derives from
+-- chat_sessions.linked_issues at read time — see GET /github-issues in
+-- src/routes/issues.js). One row per (app, issue, user): several people
+-- can claim the same issue concurrently, each owning exactly one claim.
+-- Claims carry no status column and are never swept — expiry is a
+-- read-time filter: a claim is live while GREATEST(claimed_at, the
+-- issue's discussion-thread last activity) is within ISSUE_CLAIM_TTL_DAYS
+-- (7). Renewal (re-POST by the owner) just refreshes claimed_at; clearing
+-- deletes the row (claimer or write-admin only). Keyed by GitHub issue
+-- number for the same reason as issue_bounties. NOT staging:private —
+-- claims are group-visible coordination data (the chip names claimers to
+-- everyone), so cloned rows are as public in staging as in prod.
+CREATE TABLE IF NOT EXISTS issue_claims (
+  id                   SERIAL PRIMARY KEY,
+  app_id               INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  github_issue_number  INTEGER NOT NULL,
+  user_id              INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  claimed_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE (app_id, github_issue_number, user_id)
+);
+
 -- Per-user app favorites. Personal shortcut — starred apps appear in a
 -- dedicated section above the main grid on the home screen. No effect
 -- on visibility or permissions for other users. Not staging:private

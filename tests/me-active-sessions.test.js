@@ -175,3 +175,51 @@ test('database failure surfaces as a 500, not a hang or leak', async () => {
     server.close();
   }
 });
+
+// ── shared-sessions: linked_issues rides along for the "#N" chips ────────
+//
+// The Dev board's shared-session cards render one "#N" chip per linked
+// issue (reverse of the issue list's "In progress" chip), so the
+// metadata-only /shared-sessions payload must include linked_issues.
+// Issue numbers are group-visible data — the issue list itself is
+// view-level — so this widens nothing sensitive.
+test('shared-sessions returns linked_issues per row', async () => {
+  const appAccess = require('../src/services/app-access');
+  const prevGet = appAccess.getAppForUser;
+  appAccess.getAppForUser = async () => ({ id: 1, slug: 'demo' });
+  capturedQueries = [];
+  poolQueryHandler = async (sql) => {
+    if (/shared_at IS NOT NULL/.test(String(sql))) {
+      return {
+        rows: [{
+          id: 9, session_title: 'Shared work', pr_title: null,
+          branch_name: 'dev/maya-1', status: 'active',
+          staging_url: null, can_preview: false,
+          linked_issues: [12, 34],
+          user_id: 3, username: 'maya',
+          shared_at: '2026-06-12T00:00:00Z', created_at: '2026-06-11T00:00:00Z',
+          last_activity_at: '2026-06-12T00:00:00Z',
+          chat_count: 0, last_message_at: null,
+        }],
+      };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/apps/demo/shared-sessions`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    assert.strictEqual(body.sessions.length, 1);
+    assert.deepStrictEqual(body.sessions[0].linked_issues, [12, 34]);
+
+    const q = capturedQueries.find((c) => /shared_at IS NOT NULL/.test(c.sql));
+    assert.ok(q, 'shared-sessions query was issued');
+    assert.match(q.sql, /cs\.linked_issues/);
+  } finally {
+    appAccess.getAppForUser = prevGet;
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});

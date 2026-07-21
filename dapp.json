@@ -76,6 +76,16 @@
   ],
   "tests": [
     {
+      "name": "Issue cards render the Mark-in-progress claim button",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Mark in progress"
+    },
+    {
+      "name": "Session/proposal cards render reverse #N issue chips",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "[data-issue-chip]"
+    },
+    {
       "name": "Native-feel UI kit demo renders",
       "path": "/usernode-native/v1/demo.html",
       "expectSelector": ".un-switch",

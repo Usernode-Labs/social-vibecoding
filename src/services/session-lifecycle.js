@@ -275,8 +275,19 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
     await pool.query(`UPDATE chat_sessions SET cc_purged = TRUE WHERE id = $1`, [sessionId]);
   }
 
-  const { pushSessionUpdate } = require('./ws');
+  const { pushSessionUpdate, pushIssueUpdate } = require('./ws');
   pushSessionUpdate({ action: 'archived', sessionId, appSlug });
+  // Issues this session's dispatches declared lose their contribution to
+  // the derived "In progress" chip the moment the row leaves the live
+  // statuses — tell open Dev panels to refetch. This one hook covers every
+  // abandonment path (manual withdraw, vote-down auto-takedown, stale-PR
+  // sweeper): they all funnel through archiveSession.
+  if (Array.isArray(session?.linked_issues) && session.linked_issues.length) {
+    pushIssueUpdate({
+      action: 'updated', source: 'session_archived',
+      appSlug, appId: session.app_id,
+    });
+  }
   log.info('session-lifecycle', 'Session archived', { sessionId, reason, purgeCc });
   return { archived: true, appSlug };
 }
@@ -348,8 +359,16 @@ async function unarchiveSession({ pool, sessionId, userId = null }) {
     }
   }
 
-  const { pushSessionUpdate } = require('./ws');
+  const { pushSessionUpdate, pushIssueUpdate } = require('./ws');
   pushSessionUpdate({ action: 'unarchived', sessionId, appSlug: session?.app_slug });
+  // Mirror of the archive-time broadcast: a restored session's linked
+  // issues regain their "In progress" chip on the next panel refetch.
+  if (Array.isArray(session?.linked_issues) && session.linked_issues.length) {
+    pushIssueUpdate({
+      action: 'updated', source: 'session_unarchived',
+      appSlug: session?.app_slug, appId: session?.app_id,
+    });
+  }
   log.info('session-lifecycle', 'Session unarchived', { sessionId, prReopened, ccPurged: !!session?.cc_purged });
   return { unarchived: true, ccPurged: !!session?.cc_purged, prReopened };
 }

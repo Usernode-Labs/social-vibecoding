@@ -194,8 +194,8 @@ test('staging ?demo=1 attaches synthetic headless to mocks 900003/900005 only', 
     const body = await res.json();
     const byNumber = new Map(body.issues.map((i) => [i.number, i]));
 
-    // 5 live issues + 8 appended mocks (900008 joined in #556).
-    assert.strictEqual(body.issues.length, 13);
+    // 5 live issues + 9 appended mocks (900008 joined in #556, 900009 in #617).
+    assert.strictEqual(body.issues.length, 14);
 
     const generating = byNumber.get(900003).headless;
     assert.ok(generating, '900003 carries synthetic headless state');
@@ -496,6 +496,322 @@ test('production comments endpoint never substitutes mocks (empty stays empty)',
     assert.strictEqual(body.truncated, false);
   } finally {
     global.fetch = baselineFetch;
+    server.close();
+  }
+});
+
+// ── "In progress" status: dispatch-derived sessions + manual claims ──────
+//
+// GET /github-issues composes per-issue `in_progress` from (a) LIVE
+// non-headless sessions whose linked_issues contain the number and (b)
+// live issue_claims rows (7-day activity-based expiry, computed against
+// the thread's last_at). The chip's link `target` is chosen server-side
+// per viewer: proposal > own session > shared session > null.
+
+const {
+  pickInProgressTarget, composeInProgress, ISSUE_CLAIM_TTL_DAYS,
+} = require('../src/routes/issues');
+
+test('in_progress session query filters to live rows only (status + paused window + non-headless)', async () => {
+  let ipSql = null;
+  let ipParams = null;
+  poolQueryHandler = async (sql, params) => {
+    const s = String(sql);
+    if (/UNNEST\(cs\.linked_issues\)/.test(s)) {
+      ipSql = s;
+      ipParams = params;
+      return { rows: [] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    assert.ok(ipSql, 'in-progress session query was issued');
+    assert.match(ipSql, /is_headless = FALSE/);
+    assert.match(ipSql, /status IN \('active','promoted','merging'\)/);
+    assert.match(ipSql, /status = 'paused'/);
+    assert.match(ipSql, /make_interval\(days => \$2\)/);
+    assert.deepStrictEqual(ipParams, [1, 7]); // [app.id, IN_PROGRESS_PAUSED_WINDOW_DAYS]
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('in_progress serializes count/users/mine and targets the viewer\'s own session', async () => {
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/UNNEST\(cs\.linked_issues\)/.test(s)) {
+      return {
+        rows: [{
+          n: 2, id: 50, user_id: 7, status: 'active', shared_at: null,
+          last_activity_at: '2026-06-12T00:00:00Z', created_at: '2026-06-11T00:00:00Z',
+          username: 'tester',
+        }],
+      };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`);
+    assert.strictEqual(res.status, 200);
+    const body = await res.json();
+    const byNumber = new Map(body.issues.map((i) => [i.number, i]));
+
+    const ip = byNumber.get(2).in_progress;
+    assert.ok(ip, 'issue #2 is in progress');
+    assert.strictEqual(ip.count, 1);
+    assert.deepStrictEqual(ip.users, ['tester']);
+    assert.strictEqual(ip.mine, true);
+    assert.deepStrictEqual(ip.claims, []);
+    assert.deepStrictEqual(ip.target, { kind: 'session-own', sessionId: 50 });
+
+    for (const n of [1, 3, 4, 5]) {
+      assert.strictEqual(byNumber.get(n).in_progress, null, `#${n} not in progress`);
+    }
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('another user\'s PRIVATE session marks in-progress but yields no target', async () => {
+  poolQueryHandler = async (sql) => {
+    if (/UNNEST\(cs\.linked_issues\)/.test(String(sql))) {
+      return {
+        rows: [{
+          n: 1, id: 60, user_id: 99, status: 'active', shared_at: null,
+          last_activity_at: '2026-06-12T00:00:00Z', created_at: '2026-06-11T00:00:00Z',
+          username: 'maya',
+        }],
+      };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const body = await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`)).json();
+    const ip = body.issues.find((i) => i.number === 1).in_progress;
+    assert.ok(ip);
+    assert.strictEqual(ip.mine, false);
+    assert.deepStrictEqual(ip.users, ['maya']);
+    assert.strictEqual(ip.target, null, 'private work stays unlinked');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('pickInProgressTarget: proposal > own session > shared session, recency tie-break', () => {
+  const mk = (over) => ({
+    id: 1, user_id: 99, status: 'active', shared_at: null,
+    last_activity_at: '2026-06-10T00:00:00Z', created_at: '2026-06-09T00:00:00Z',
+    ...over,
+  });
+  const viewer = 7;
+
+  // A promoted session wins over the viewer's own and a shared one.
+  assert.deepStrictEqual(
+    pickInProgressTarget([
+      mk({ id: 10, status: 'promoted' }),
+      mk({ id: 11, user_id: viewer }),
+      mk({ id: 12, shared_at: '2026-06-10T00:00:00Z' }),
+    ], viewer),
+    { kind: 'proposal', sessionId: 10 }
+  );
+  // 'merging' counts as the proposal class too.
+  assert.deepStrictEqual(
+    pickInProgressTarget([mk({ id: 13, status: 'merging' })], viewer),
+    { kind: 'proposal', sessionId: 13 }
+  );
+  // Own beats shared.
+  assert.deepStrictEqual(
+    pickInProgressTarget([
+      mk({ id: 11, user_id: viewer }),
+      mk({ id: 12, shared_at: '2026-06-10T00:00:00Z' }),
+    ], viewer),
+    { kind: 'session-own', sessionId: 11 }
+  );
+  // Shared when nothing closer to the viewer exists.
+  assert.deepStrictEqual(
+    pickInProgressTarget([mk({ id: 12, shared_at: '2026-06-10T00:00:00Z' })], viewer),
+    { kind: 'session-shared', sessionId: 12 }
+  );
+  // Others' private sessions → no target at all.
+  assert.strictEqual(pickInProgressTarget([mk({ id: 14 })], viewer), null);
+  // Two candidates in one class → most recently active wins.
+  assert.deepStrictEqual(
+    pickInProgressTarget([
+      mk({ id: 20, status: 'promoted', last_activity_at: '2026-06-10T00:00:00Z' }),
+      mk({ id: 21, status: 'promoted', last_activity_at: '2026-06-12T00:00:00Z' }),
+    ], viewer),
+    { kind: 'proposal', sessionId: 21 }
+  );
+  // Claims-only (no sessions) → null; composeInProgress mirrors that.
+  assert.strictEqual(pickInProgressTarget([], viewer), null);
+});
+
+test('claims serialize oldest-first with expiresAt; expired ones are filtered per claim', async () => {
+  const now = Date.now();
+  const daysAgo = (d) => new Date(now - d * 24 * 3600 * 1000).toISOString();
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/FROM issue_claims/.test(s)) {
+      return {
+        rows: [
+          { n: 1, user_id: 8, claimed_at: daysAgo(8), username: 'stale-user' }, // expired
+          { n: 1, user_id: 7, claimed_at: daysAgo(1), username: 'tester' },     // live
+        ],
+      };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const body = await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`)).json();
+    const ip = body.issues.find((i) => i.number === 1).in_progress;
+    assert.ok(ip, 'live claim keeps the issue in progress');
+    assert.strictEqual(ip.count, 0);
+    assert.strictEqual(ip.claims.length, 1, 'the >7d-idle claim is filtered out');
+    assert.strictEqual(ip.claims[0].username, 'tester');
+    assert.strictEqual(ip.claims[0].mine, true);
+    assert.strictEqual(ip.claims[0].userId, 7);
+    assert.ok(ip.claims[0].expiresAt, 'expiresAt is precomputed server-side');
+    assert.strictEqual(ip.mine, true);
+    assert.strictEqual(ip.target, null, 'claims-only status is not a link');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('recent thread activity keeps an old claim alive (GREATEST rule)', async () => {
+  const now = Date.now();
+  const daysAgo = (d) => new Date(now - d * 24 * 3600 * 1000).toISOString();
+  poolQueryHandler = async (sql) => {
+    const s = String(sql);
+    if (/FROM issue_claims/.test(s)) {
+      return { rows: [{ n: 2, user_id: 8, claimed_at: daysAgo(10), username: 'maya' }] };
+    }
+    if (/FROM chat_messages/.test(s) && /GROUP BY thread_ref/.test(s)) {
+      return { rows: [{ n: 2, cnt: 3, last_at: daysAgo(1) }] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const body = await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues`)).json();
+    const ip = body.issues.find((i) => i.number === 2).in_progress;
+    assert.ok(ip, 'a 10-day-old claim with fresh discussion is still live');
+    assert.strictEqual(ip.claims.length, 1);
+    assert.strictEqual(ip.claims[0].username, 'maya');
+    // expiresAt keys off the thread's last activity, not the stale claimed_at.
+    const expires = Date.parse(ip.claims[0].expiresAt);
+    const expected = Date.parse(daysAgo(1)) + ISSUE_CLAIM_TTL_DAYS * 24 * 3600 * 1000;
+    assert.ok(Math.abs(expires - expected) < 5000, 'expiry extends from thread last_at');
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('composeInProgress dedupes nothing it should not and caps serialized claims at 10', () => {
+  const claims = Array.from({ length: 12 }, (_, i) => ({
+    user_id: 100 + i, username: `u${i}`, claimed_at: '2026-06-12T00:00:00Z',
+    expires_at: '2026-06-19T00:00:00Z',
+  }));
+  const ip = composeInProgress([], claims, 7);
+  assert.strictEqual(ip.claims.length, 10);
+  assert.strictEqual(ip.count, 0);
+  // Null when neither sessions nor claims exist.
+  assert.strictEqual(composeInProgress([], [], 7), null);
+});
+
+test('staging ?demo=1 seeds in_progress mock states on 900004/900006/900007/900008 only', async () => {
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const body = await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`)).json();
+    const byNumber = new Map(body.issues.map((i) => [i.number, i]));
+
+    // 900007: single-worker session chip, clickable (synthetic proposal target).
+    const p7 = byNumber.get(900007).in_progress;
+    assert.strictEqual(p7.count, 1);
+    assert.deepStrictEqual(p7.users, ['staging-tester']);
+    assert.deepStrictEqual(p7.target, { kind: 'proposal', sessionId: 900007 });
+
+    // 900006: plural (2 workers), non-clickable.
+    const p6 = byNumber.get(900006).in_progress;
+    assert.strictEqual(p6.count, 2);
+    assert.deepStrictEqual(p6.users, ['maya-builder', 'staging-tester']);
+    assert.strictEqual(p6.target, null);
+
+    // 900004: two claims incl. the VIEWER's own (mine → Clear button state).
+    const p4 = byNumber.get(900004).in_progress;
+    assert.strictEqual(p4.mine, true);
+    assert.strictEqual(p4.claims.length, 2);
+    assert.strictEqual(p4.claims[0].username, 'tester'); // the viewing user
+    assert.strictEqual(p4.claims[0].mine, true);
+    assert.strictEqual(p4.claims[1].username, 'maya-builder');
+
+    // 900008: someone else's single claim.
+    const p8 = byNumber.get(900008).in_progress;
+    assert.strictEqual(p8.mine, false);
+    assert.strictEqual(p8.claims.length, 1);
+    assert.strictEqual(p8.claims[0].username, 'maya-builder');
+
+    // The kanban-demo anchors and live issues stay untouched.
+    for (const n of [900001, 900002, 900009, 1, 2, 3, 4, 5]) {
+      assert.strictEqual(byNumber.get(n).in_progress, null, `#${n} has no in_progress`);
+    }
+  } finally {
+    server.close();
+  }
+});
+
+test('staging does not clobber real in_progress data on a mock number', async () => {
+  poolQueryHandler = async (sql) => {
+    if (/UNNEST\(cs\.linked_issues\)/.test(String(sql))) {
+      return {
+        rows: [{
+          n: 900007, id: 888, user_id: 7, status: 'active', shared_at: null,
+          last_activity_at: '2026-06-12T00:00:00Z', created_at: '2026-06-11T00:00:00Z',
+          username: 'tester',
+        }],
+      };
+    }
+    return { rows: [] };
+  };
+  const server = await startStagingServer();
+  try {
+    const port = server.address().port;
+    const body = await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`)).json();
+    const ip = body.issues.find((i) => i.number === 900007).in_progress;
+    assert.strictEqual(ip.count, 1);
+    assert.deepStrictEqual(ip.target, { kind: 'session-own', sessionId: 888 });
+  } finally {
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
+  }
+});
+
+test('production never synthesizes in_progress state', async () => {
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const body = await (await realFetch(`http://127.0.0.1:${port}/api/apps/demo/github-issues?demo=1`)).json();
+    for (const issue of body.issues) {
+      assert.strictEqual(issue.in_progress, null);
+    }
+  } finally {
     server.close();
   }
 });
