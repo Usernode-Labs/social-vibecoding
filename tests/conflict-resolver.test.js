@@ -49,7 +49,9 @@ function stub(id, exports) {
 
 // ── pollMergeable ─────────────────────────────────────────────────────────
 // Loads conflict-resolver with a stubbed github whose octokit.request
-// returns a scripted sequence of `mergeable` values.
+// returns a scripted sequence of `mergeable` values. A sequence item may
+// also be a full PR-shaped object ({ mergeable, state, merged }) for the
+// closed/merged-state scenarios.
 function loadResolverWithGithub(mergeableSequence) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
@@ -70,11 +72,12 @@ function loadResolverWithGithub(mergeableSequence) {
   const fakeOctokit = async () => ({
     request: async (route, params) => {
       requestCalls.push({ route, params });
-      const mergeable = i < mergeableSequence.length
+      const item = i < mergeableSequence.length
         ? mergeableSequence[i]
         : mergeableSequence[mergeableSequence.length - 1];
       i += 1;
-      return { data: { mergeable } };
+      const data = item && typeof item === 'object' ? item : { mergeable: item };
+      return { data };
     },
   });
   stub(ids.github, {
@@ -104,7 +107,7 @@ test('pollMergeable: waits out null, then returns false once GitHub settles', as
   const { subject, requestCalls, restore } = loadResolverWithGithub([null, null, false]);
   try {
     const result = await subject.pollMergeable('acme', 'widget', 12);
-    assert.equal(result, false);
+    assert.equal(result.mergeable, false);
     assert.equal(requestCalls.length, 3, 'should poll until mergeable is non-null');
   } finally {
     restore();
@@ -115,20 +118,49 @@ test('pollMergeable: returns true immediately when GitHub already computed', asy
   const { subject, requestCalls, restore } = loadResolverWithGithub([true]);
   try {
     const result = await subject.pollMergeable('acme', 'widget', 7);
-    assert.equal(result, true);
+    assert.equal(result.mergeable, true);
     assert.equal(requestCalls.length, 1, 'no extra polling once a boolean is seen');
   } finally {
     restore();
   }
 });
 
-test('pollMergeable: returns null when GitHub never settles within the budget', async () => {
+test('pollMergeable: returns null mergeable when GitHub never settles within the budget', async () => {
   // Sequence stays null forever → exhausts MERGEABLE_POLL_TRIES (6).
   const { subject, requestCalls, restore } = loadResolverWithGithub([null]);
   try {
     const result = await subject.pollMergeable('acme', 'widget', 99);
-    assert.equal(result, null);
+    assert.equal(result.mergeable, null);
     assert.equal(requestCalls.length, 6, 'gives up after the configured number of tries');
+  } finally {
+    restore();
+  }
+});
+
+test('pollMergeable: a closed PR short-circuits the poll immediately', async () => {
+  // GitHub never recomputes mergeability for a closed PR — waiting out the
+  // budget is pure waste, so state='closed' returns on the first read.
+  const { subject, requestCalls, restore } = loadResolverWithGithub([
+    { mergeable: null, state: 'closed', merged: false },
+  ]);
+  try {
+    const result = await subject.pollMergeable('acme', 'widget', 3);
+    assert.equal(result.state, 'closed');
+    assert.equal(result.merged, false);
+    assert.equal(requestCalls.length, 1, 'no polling budget burned on a closed PR');
+  } finally {
+    restore();
+  }
+});
+
+test('pollMergeable: a merged PR surfaces merged=true and its merge commit', async () => {
+  const { subject, restore } = loadResolverWithGithub([
+    { mergeable: null, state: 'closed', merged: true, merge_commit_sha: 'cafe1234' },
+  ]);
+  try {
+    const result = await subject.pollMergeable('acme', 'widget', 3);
+    assert.equal(result.merged, true);
+    assert.equal(result.mergeCommitSha, 'cafe1234');
   } finally {
     restore();
   }
@@ -228,7 +260,12 @@ test('runSyncMain: conflict outcome reports not-ok and still avoids vote deletio
 // concurrent resolves of one session onto a single in-flight promise.
 function loadResolverForCoalesce({
   runSyncMainImpl,
+  // Items may be scalars (a `mergeable` value) or full PR-shaped objects
+  // ({ mergeable, state, merged }) for the closed/merged-state scenarios.
   mergeableSeq = [false, true, true, true],
+  // PR-state gate: reopenPR behavior for the closed-PR scenarios. Default
+  // succeeds; pass an impl that throws to exercise the pr_closed exit.
+  reopenImpl = null,
   // #361: the sync draws from the system-token budget. Default to "system
   // budget has headroom"; the exhausted case overrides this with an error.
   limitsImpl = { checkSystemBudget: async () => ({ ok: true, remaining: 2500 }) },
@@ -265,29 +302,36 @@ function loadResolverForCoalesce({
   stub(ids.logger, { info() {}, warn() {}, error() {}, debug() {} });
   const fakeOctokit = async () => ({
     request: async () => {
-      const mergeable = mi < mergeableSeq.length
+      const item = mi < mergeableSeq.length
         ? mergeableSeq[mi]
         : mergeableSeq[mergeableSeq.length - 1];
       mi += 1;
-      return { data: { mergeable } };
+      const data = item && typeof item === 'object' ? item : { mergeable: item };
+      return { data };
     },
   });
+  const reopenCalls = [];
   stub(ids.github, {
     isEnabled: () => true,
     getOctokit: fakeOctokit,
     getInstallationOctokit: fakeOctokit,
+    reopenPR: async (owner, repo, pr) => {
+      reopenCalls.push({ owner, repo, pr });
+      if (reopenImpl) return reopenImpl(owner, repo, pr);
+      return {};
+    },
   });
   stub(ids.limits, limitsImpl);
   stub(ids.syncMain, { runSyncMain: runSyncMainImpl, persistConflictState: persistConflictStateImpl });
-  stub(ids.pool, {
-    getPool: () => makePool([[/SELECT cs\.\*, a\.slug/, [sessionRow]]]),
-  });
+  const pool = makePool([[/SELECT cs\.\*, a\.slug/, [sessionRow]]]);
+  stub(ids.pool, { getPool: () => pool });
   stub(ids.votes, { checkAndMerge: checkAndMergeImpl });
   // #239: record the resolver's lifecycle vote_update broadcasts so
   // tests can assert the start/terminal pair.
   const voteUpdates = [];
   stub(ids.ws, {
     pushVoteUpdate(data) { voteUpdates.push(data); },
+    pushSessionUpdate() {},
     sendSystemMessage: async (_pool, _appId, content) => {
       if (onSystemMessage) onSystemMessage(content);
     },
@@ -300,7 +344,7 @@ function loadResolverForCoalesce({
       if (orig[k]) require.cache[id] = orig[k]; else delete require.cache[id];
     }
   };
-  return { subject, voteUpdates, restore };
+  return { subject, voteUpdates, reopenCalls, pool, restore };
 }
 
 test('resolveAndMaybeRetry: concurrent resolves of one session share a single worker run', async () => {
@@ -460,6 +504,119 @@ test('#384: a mergeable0===false check never persists a speculative conflict sna
       states.includes('resolving'),
       'the in-flight resolve still snapshots a resolving state before the sync'
     );
+  } finally {
+    restore();
+  }
+});
+
+// ── PR-state gate: closed / merged PRs never enter the conflict loop ────
+// GitHub reports a CLOSED PR as unmergeable ('dirty') forever, so a
+// resolver that only reads `mergeable` mistakes "closed" for
+// "conflicting", pays for a worker sync that can't help, and loops
+// still_conflicting on every drain pass (session 2398 / PR #26). The
+// gate runs BEFORE any sync/merge work: closed-unmerged → reopen and
+// continue; reopen refused → terminal pr_closed (session paused, honest
+// group-chat message); merged out-of-band → mark merged, no resolution.
+
+test('PR-state gate: a closed-unmerged PR is reopened, then the resolve continues', async () => {
+  let syncCalls = 0;
+  const { subject, reopenCalls, restore } = loadResolverForCoalesce({
+    mergeableSeq: [
+      { mergeable: false, state: 'closed', merged: false }, // initial poll → closed
+      { mergeable: false, state: 'open', merged: false },   // re-poll after reopen → real drift
+      { mergeable: true, state: 'open', merged: false },    // post-sync waitForMergeableTrue
+      { mergeable: true, state: 'open', merged: false },
+    ],
+    runSyncMainImpl: async () => {
+      syncCalls += 1;
+      return { ok: true, syncResult: 'resolved', behind: 0 };
+    },
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.deepEqual(reopenCalls, [{ owner: 'acme', repo: 'widget', pr: 12 }],
+      'the closed PR is reopened exactly once');
+    assert.equal(syncCalls, 1, 'the resolve continues normally after the reopen');
+    assert.equal(r.reason, 'synced_and_merged');
+  } finally {
+    restore();
+  }
+});
+
+test('PR-state gate: reopen failure exits pr_closed — paused, no sync, honest message', async () => {
+  let syncCalls = 0;
+  const messages = [];
+  const { subject, voteUpdates, pool, restore } = loadResolverForCoalesce({
+    mergeableSeq: [{ mergeable: false, state: 'closed', merged: false }],
+    reopenImpl: async () => { throw new Error('head branch was deleted'); },
+    runSyncMainImpl: async () => {
+      syncCalls += 1;
+      return { ok: true, syncResult: 'resolved', behind: 0 };
+    },
+    onSystemMessage: (content) => messages.push(content),
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, 'pr_closed');
+    assert.equal(syncCalls, 0, 'no worker sync may run for a PR that can never merge');
+    assert.ok(pool.issued(/SET status = 'paused'/),
+      'the session leaves promoted so the drain stops re-picking it');
+    assert.ok(messages.some((m) => /closed on GitHub/.test(m) && /re-propose/i.test(m)),
+      'the group chat explains the PR is closed and how to recover');
+    assert.equal(startEvents(voteUpdates).length, 0, 'no sync ran, so no resolving banner');
+    const terminals = terminalEvents(voteUpdates);
+    assert.equal(terminals.length, 1);
+    assert.equal(terminals[0].resolutionOutcome, 'failed');
+  } finally {
+    restore();
+  }
+});
+
+test('PR-state gate: a repeat trigger on a paused pr_closed session is a status no-op', async () => {
+  // Once pr_closed pauses the session, the fresh loadSession on the next
+  // trigger sees status='paused' and bails before touching GitHub at all.
+  const { subject, reopenCalls, restore } = loadResolverForCoalesce({
+    mergeableSeq: [{ mergeable: false, state: 'closed', merged: false }],
+  });
+  try {
+    // Simulate the post-pause state by driving a session that is no longer
+    // promoted: resolveWithSessionInner exits with status_<state>.
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, {
+      session: {
+        id: 7, status: 'paused', repo_url: 'https://github.com/acme/widget',
+        pr_number: 12, behind_main: 0, user_id: 3, app_id: 5,
+        app_slug: 'widget', app_name: 'Widget', app_self_hosted: false,
+      },
+    });
+    assert.equal(r.reason, 'status_paused');
+    assert.equal(reopenCalls.length, 0, 'a non-promoted session never reaches the PR-state gate');
+  } finally {
+    restore();
+  }
+});
+
+test('PR-state gate: an already-merged PR is marked merged — no sync, no reopen', async () => {
+  let syncCalls = 0;
+  const messages = [];
+  const { subject, reopenCalls, pool, restore } = loadResolverForCoalesce({
+    mergeableSeq: [{ mergeable: null, state: 'closed', merged: true, merge_commit_sha: 'cafe1234' }],
+    runSyncMainImpl: async () => {
+      syncCalls += 1;
+      return { ok: true, syncResult: 'resolved', behind: 0 };
+    },
+    onSystemMessage: (content) => messages.push(content),
+  });
+  try {
+    const r = await subject.resolveAndMaybeRetry({ jwtSecret: 's' }, { sessionId: 7 });
+    assert.equal(r.ok, true);
+    assert.equal(r.reason, 'pr_already_merged');
+    assert.equal(syncCalls, 0, 'nothing to resolve for a merged PR');
+    assert.equal(reopenCalls.length, 0, 'a merged PR is never reopened');
+    assert.ok(pool.issued(/SET status = 'merged'/),
+      'the session is marked merged so the proposal leaves the vote panel');
+    assert.ok(messages.some((m) => /already merged on GitHub/.test(m)),
+      'the group chat records the out-of-band merge');
   } finally {
     restore();
   }

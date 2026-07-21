@@ -15,6 +15,9 @@ const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const STATUS_VALUES = new Set([
   'running', 'merged', 'blocked', 'conflict_resolving',
   'conflict_failed', 'awaiting_github', 'noop', 'error',
+  // The proposal's PR is closed on GitHub and couldn't be reopened —
+  // terminal, distinct from a conflict (conflict-resolver / checkAndMerge).
+  'pr_closed',
 ]);
 const KIND_VALUES = new Set(['merge', 'conflict_resolution']);
 
@@ -114,6 +117,26 @@ function stagingMockMergeRuns() {
         { phase: 'gate:behind_main', message: 'Branch is up to date with main (0 behind).', detail: { behind: 0 } },
         { phase: 'gate:checks', message: 'Merge blocked: checks not passing (state = failing, 2 tests failing).', level: 'warn', detail: { checkState: 'failing', failingCount: 2 } },
         { phase: 'outcome', message: 'Blocked — votes reached but checks must pass first.', level: 'warn', detail: { checksBlocked: true } },
+      ]),
+    // 5. PR closed on GitHub, reopen refused — the terminal pr_closed
+    // outcome (a withdrawn-then-re-promoted proposal whose head branch
+    // was since deleted).
+    mk(9500005, 900205, 'Restyle the vote panel with inset-grouped lists',
+      'conflict_resolution', 'conflict_resolver', 'pr_closed', 3, 1, [
+        { phase: 'pollMergeable', message: 'GitHub mergeability settled: mergeable = false (state = closed).', detail: { mergeable: false, state: 'closed', merged: false } },
+        { phase: 'pr_closed', message: "PR #900205 is closed on GitHub and couldn't be reopened: head branch was deleted.", level: 'error', detail: {} },
+        { phase: 'group_chat', message: 'Posted to group chat: PR is closed on GitHub — taken off the vote panel, re-propose from dev-chat.', detail: { reason: 'pr_closed' } },
+      ]),
+    // 6. PR closed on GitHub, auto-reopened, then resolved + merged — the
+    // happy path of the same detection.
+    mk(9500006, 900206, 'Add per-row swipe actions to the todo list',
+      'conflict_resolution', 'conflict_resolver', 'merged', 4, 2, [
+        { phase: 'pollMergeable', message: 'GitHub mergeability settled: mergeable = false (state = closed).', detail: { mergeable: false, state: 'closed', merged: false } },
+        { phase: 'reopened_closed_pr', message: 'PR #900206 was closed on GitHub — reopened it to restore the proposal.' },
+        { phase: 'pollMergeable', message: 'GitHub mergeability settled: mergeable = true.', detail: { mergeable: true, state: 'open' } },
+        { phase: 'waitForMergeableTrue', message: 'Waiting for GitHub to confirm mergeability… mergeable = true.', detail: { mergeable: true } },
+        { phase: 'retry_merge', message: 'Re-attempting merge… merged as commit 5566778.', detail: { sha: '5566778ee' } },
+        { phase: 'merged', message: 'Marked session merged (merged).' },
       ]),
   ];
 }

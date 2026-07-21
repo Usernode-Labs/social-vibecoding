@@ -677,14 +677,53 @@ function voteRoutes(config) {
         }
       }
 
-      // Mark PR as ready for review on GitHub. We deliberately DO NOT
-      // touch the title here — previously this overwrote the LLM-
-      // generated title back to "<user>'s changes" every time a PR
-      // was promoted, wiping the more descriptive title.
+      // Reconcile the PR's GitHub state before putting it up for vote.
+      // A session that was withdrawn (archived) carries a CLOSED PR —
+      // GitHub reports closed PRs as permanently unmergeable, so
+      // promoting one without a reopen creates a proposal that can
+      // never merge (session 2398 / PR #26: every merge 405'd and the
+      // auto-resolver looped still_conflicting forever). Reopen it here;
+      // if GitHub refuses (head branch deleted, a newer PR on the same
+      // head), refuse the promote with an actionable error instead of
+      // minting a doomed proposal. A transient GET failure falls through
+      // — the merge-time guards catch what slips past.
       if (github.isEnabled() && session.repo_url && session.pr_number) {
-        try {
-          const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-          if (owner && repo) {
+        const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (owner && repo) {
+          let pr = null;
+          try {
+            pr = await github.getPR(owner, repo, session.pr_number);
+          } catch (err) {
+            log.warn('votes', 'Promote PR state check failed (continuing)', {
+              sessionId: session.id, pr: session.pr_number, err: err.message,
+            });
+          }
+          if (pr && pr.merged) {
+            return res.status(409).json({
+              error: `PR #${session.pr_number} was already merged on GitHub — this change has landed, so there is nothing to vote on.`,
+            });
+          }
+          if (pr && pr.state === 'closed') {
+            try {
+              await github.reopenPR(owner, repo, session.pr_number);
+              log.info('votes', 'Reopened closed PR at promote time', {
+                sessionId: session.id, pr: session.pr_number,
+              });
+            } catch (err) {
+              log.warn('votes', 'Could not reopen closed PR at promote time', {
+                sessionId: session.id, pr: session.pr_number, err: err.message,
+              });
+              return res.status(409).json({
+                error: `This proposal's pull request (#${session.pr_number}) was closed on GitHub and couldn't be reopened — re-propose it as a fresh proposal.`,
+              });
+            }
+          }
+
+          // Mark PR as ready for review on GitHub. We deliberately DO NOT
+          // touch the title here — previously this overwrote the LLM-
+          // generated title back to "<user>'s changes" every time a PR
+          // was promoted, wiping the more descriptive title.
+          try {
             // octokit.request rather than .rest.pulls.update —
             // @octokit/app's installation Octokit is a bare core
             // instance without the rest-endpoint-methods plugin, so
@@ -694,9 +733,9 @@ function voteRoutes(config) {
               'PATCH /repos/{owner}/{repo}/pulls/{pull_number}',
               { owner, repo, pull_number: session.pr_number, draft: false }
             );
+          } catch (err) {
+            log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });
           }
-        } catch (err) {
-          log.warn('votes', 'Failed to update PR on GitHub', { err: err.message });
         }
       }
 
@@ -2877,6 +2916,73 @@ async function checkAndMerge(config, pool, session, options = {}) {
       msg.includes('merge conflict') ||
       msg.includes('not mergeable') ||
       msg.includes('pull request is not mergeable');
+
+    // A 405 on a CLOSED PR is not a merge conflict — GitHub reports
+    // closed PRs as permanently unmergeable ('dirty'), so handing this
+    // to the auto-resolver spins forever (session 2398 / PR #26:
+    // withdraw closed the PR, re-promote never reopened it, every merge
+    // 405'd and every resolve ended still_conflicting). Distinguish the
+    // two with one PR GET: closed-unmerged → reopen and fall through to
+    // the normal conflict handling; reopen refused → terminal pr_closed
+    // (off the vote panel, honest group-chat message, no resolver). A
+    // transient GET failure falls through to the conflict path unchanged.
+    if (isConflict && github.isEnabled() && session.repo_url && session.pr_number) {
+      const [, prOwner, prRepo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      let prState = null;
+      if (prOwner && prRepo) {
+        try {
+          prState = await github.getPR(prOwner, prRepo, session.pr_number);
+        } catch (e) {
+          log.warn('votes', 'PR state check after merge 405 failed', {
+            sessionId: session.id, pr: session.pr_number, err: e.message,
+          });
+        }
+      }
+      if (prState && prState.state === 'closed' && !prState.merged) {
+        try {
+          await github.reopenPR(prOwner, prRepo, session.pr_number);
+          dstep({ phase: 'reopened_closed_pr', message: `PR #${session.pr_number} was closed on GitHub — reopened it; continuing with the normal conflict handling.` });
+        } catch (reopenErr) {
+          const closedLabel = session.pr_title
+            ? `PR #${session.pr_number} — ${session.pr_title}`
+            : `PR #${session.pr_number}`;
+          // Drop out of 'promoted' so no vote/sweep re-picks a proposal
+          // whose PR can never merge. 'paused' keeps the branch + CC
+          // memory restorable; the owner can re-propose from dev-chat.
+          await pool.query(
+            `UPDATE chat_sessions SET status = 'paused'
+             WHERE id = $1 AND status = 'promoted'`,
+            [session.id]
+          ).catch(() => {});
+          await sendSystemMessage(pool, session.app_id,
+            `${closedLabel} is closed on GitHub and couldn't be reopened — it has been taken off the vote panel. Re-propose it from the session's dev-chat.`,
+            'system'
+          ).catch(() => {});
+          try {
+            const { pushVoteUpdate, pushSessionUpdate } = require('../services/ws');
+            // Un-latch clients (the merging:true broadcast above armed
+            // banners) and refresh session lists off the pause.
+            pushVoteUpdate({
+              sessionId: session.id,
+              appSlug: session.app_slug,
+              merged: false,
+              merging: false,
+              mergeFailed: true,
+              resolving: false,
+              selfHosted: !!session.app_self_hosted,
+            });
+            pushSessionUpdate({ action: 'paused', sessionId: session.id, appSlug: session.app_slug });
+          } catch (_) { /* ws failures non-fatal */ }
+          dstep({
+            phase: 'pr_closed', level: 'error',
+            message: `PR #${session.pr_number} is closed on GitHub and couldn't be reopened: ${reopenErr.message}`,
+            detail: {},
+          });
+          dend('pr_closed', `PR #${session.pr_number} is closed on GitHub (reopen failed).`);
+          return { merged: false, error: err.message, conflict: false, prClosed: true };
+        }
+      }
+    }
 
     // Un-latch clients. The `merging:true` broadcast above armed the
     // Phase 3 "Platform updating…" banner on every tab for self-hosted

@@ -55,6 +55,9 @@ function loadWithStubs() {
     closePR: [],
     reopenPR: [],
     reopenShouldThrow: false,
+    getPR: [],
+    getPRResult: null,
+    getPRShouldThrow: false,
     pushSessionUpdate: [],
     sendSystemMessage: [],
     sendSystemMessageShouldThrow: false,
@@ -82,6 +85,11 @@ function loadWithStubs() {
     reopenPR: async (owner, repo, pr) => {
       spies.reopenPR.push({ owner, repo, pr });
       if (spies.reopenShouldThrow) throw new Error('branch deleted');
+    },
+    getPR: async (owner, repo, pr) => {
+      spies.getPR.push({ owner, repo, pr });
+      if (spies.getPRShouldThrow) throw new Error('api hiccup');
+      return spies.getPRResult;
     },
   });
   stub(ids.ws, {
@@ -342,6 +350,70 @@ test('unarchiveSession: surfaces ccPurged and survives a failed PR reopen', asyn
     assert.equal(res.ccPurged, true, 'caller is told memory was already purged');
     assert.equal(res.prReopened, false, 'reopen failure is non-fatal');
     assert.equal(spies.pushSessionUpdate[0].action, 'unarchived');
+  } finally {
+    restore();
+  }
+});
+
+// ── unarchive self-heal: a definitively-closed PR reference is cleared ──
+// Carrying a closed pr_number through unarchive → promote is what made a
+// re-promoted proposal permanently unmergeable (session 2398 / PR #26).
+// When the reopen fails AND GitHub definitively reports closed-unmerged,
+// the dead reference is dropped so the next promote mints a fresh PR on
+// the same branch. Transient GET failures and merged PRs leave the row
+// untouched.
+
+test('unarchiveSession: failed reopen + definitively closed-unmerged PR clears pr_number/pr_url', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    spies.reopenShouldThrow = true;
+    spies.getPRResult = { state: 'closed', merged: false };
+    const pool = makePool([
+      [/SET status = 'paused', archived_at = NULL/, [{ id: 9 }]],
+      [/SELECT cs\.\*/, [{ id: 9, app_slug: 'widget', repo_url: REPO, pr_number: 26, cc_purged: false }]],
+    ]);
+    const res = await subject.unarchiveSession({ pool, sessionId: 9, userId: 3 });
+    assert.equal(res.unarchived, true);
+    assert.equal(res.prReopened, false);
+    assert.deepEqual(spies.getPR, [{ owner: 'acme', repo: 'widget', pr: 26 }]);
+    assert.ok(pool.issued(/SET pr_number = NULL, pr_url = NULL/),
+      'the dead PR reference is dropped so promote mints a fresh PR');
+  } finally {
+    restore();
+  }
+});
+
+test('unarchiveSession: failed reopen on a MERGED PR leaves the reference in place', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    spies.reopenShouldThrow = true;
+    spies.getPRResult = { state: 'closed', merged: true };
+    const pool = makePool([
+      [/SET status = 'paused', archived_at = NULL/, [{ id: 9 }]],
+      [/SELECT cs\.\*/, [{ id: 9, app_slug: 'widget', repo_url: REPO, pr_number: 26, cc_purged: false }]],
+    ]);
+    const res = await subject.unarchiveSession({ pool, sessionId: 9 });
+    assert.equal(res.unarchived, true);
+    assert.equal(pool.issued(/SET pr_number = NULL/), false,
+      'a merged PR reference is history, not a dead end — keep it');
+  } finally {
+    restore();
+  }
+});
+
+test('unarchiveSession: failed reopen + transient GET failure leaves the reference in place', async () => {
+  const { subject, spies, restore } = loadWithStubs();
+  try {
+    spies.reopenShouldThrow = true;
+    spies.getPRShouldThrow = true;
+    const pool = makePool([
+      [/SET status = 'paused', archived_at = NULL/, [{ id: 9 }]],
+      [/SELECT cs\.\*/, [{ id: 9, app_slug: 'widget', repo_url: REPO, pr_number: 26, cc_purged: false }]],
+    ]);
+    const res = await subject.unarchiveSession({ pool, sessionId: 9 });
+    assert.equal(res.unarchived, true, 'the GET failure is non-fatal');
+    assert.equal(pool.issued(/SET pr_number = NULL/), false,
+      'never clear on an unconfirmed state — the promote-time guard catches it');
   } finally {
     restore();
   }

@@ -158,3 +158,37 @@ test('demo outcome filter narrows mock runs', async () => {
   assert.ok(mocks.length >= 1);
   assert.ok(mocks.every((x) => x.status === 'conflict_failed'));
 });
+
+// ── pr_closed: the closed-PR terminal status round-trips ────────────────
+// A proposal whose PR is closed on GitHub and couldn't be reopened ends
+// its run with status 'pr_closed' (conflict-resolver / checkAndMerge).
+// The /debug surface must accept it as an outcome filter and ship a
+// staging mock so the badge is visible in previews.
+
+test('staging demo includes the pr_closed mock run', async () => {
+  const r = await fetch(`${base}/api/debug/merge-runs?demo=1`);
+  const body = await r.json();
+  const mock = body.runs.find((x) => x.id === 9500005);
+  assert.ok(mock, 'pr_closed mock present');
+  assert.equal(mock.status, 'pr_closed');
+  assert.equal(mock.kind, 'conflict_resolution');
+});
+
+test('outcome=pr_closed is an accepted filter and narrows to pr_closed runs', async () => {
+  const r = await fetch(`${base}/api/debug/merge-runs?demo=1&outcome=pr_closed`);
+  const body = await r.json();
+  const listCall = calls.find((c) => /FROM merge_debug_runs r/.test(c.sql) && /LIMIT/.test(c.sql));
+  assert.ok(listCall.params.includes('pr_closed'), 'pr_closed bound into the SQL (not ignored)');
+  const mocks = body.runs.filter((x) => x.id >= 9500000);
+  assert.ok(mocks.length >= 1);
+  assert.ok(mocks.every((x) => x.status === 'pr_closed'));
+});
+
+test('the reopened_closed_pr happy-path mock carries its reopen step', async () => {
+  const r = await fetch(`${base}/api/debug/merge-runs/9500006?demo=1`);
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  assert.equal(body.run.status, 'merged');
+  assert.ok(body.steps.some((s) => s.phase === 'reopened_closed_pr'),
+    'the auto-reopen is narrated as its own step');
+});

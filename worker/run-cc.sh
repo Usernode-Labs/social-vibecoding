@@ -100,12 +100,15 @@ if [ "$MODE" = "sync" ]; then
     echo "__USERNODE_WARN__ fetch origin main failed"
 
   # Quick precheck — if we're already up to date, there's nothing to do
-  # and we want to skip CC entirely.
+  # and we want to skip CC entirely. push_ok=0 because NOTHING was pushed
+  # here — a hard-coded 1 masked "did an earlier push actually reach
+  # GitHub?" during incident debugging (the local branch containing
+  # origin/main says nothing about the remote's state).
   BEHIND_NOW=$(git rev-list --count "HEAD..origin/main" 2>/dev/null || echo 0)
   if [ "$BEHIND_NOW" = "0" ]; then
     AHEAD=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
     SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-    echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=0 sha=$SHA push_ok=1 mode=sync sync_result=already_synced"
+    echo "__USERNODE_RESULT__ cc_exit=0 ahead=$AHEAD behind=0 sha=$SHA push_ok=0 mode=sync sync_result=already_synced"
     exit 0
   fi
 

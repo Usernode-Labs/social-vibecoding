@@ -134,6 +134,11 @@
       "expectText": "Merge debug"
     },
     {
+      "name": "Merge debug pr_closed badge renders on the demo run",
+      "path": "/debug?demo=1",
+      "expectText": "PR closed"
+    },
+    {
       "name": "Submitted features page renders",
       "path": "/admin-features?demo=1",
       "expectText": "Submitted features"
