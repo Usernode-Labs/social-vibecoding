@@ -46,6 +46,19 @@ function creatorFromSourceLine(body) {
 // issues already open at rollout can still resolve.
 const VALID_KINDS = ['general', 'secret_change', 'close_issue'];
 const MAX_SECRET_VALUE_LENGTH = 4096;
+// "In progress" status windows. Two separate 7-day constants on purpose —
+// they protect different things and may be tuned independently:
+//  - IN_PROGRESS_PAUSED_WINDOW_DAYS: how long a PAUSED (never-promoted,
+//    never-archived) session keeps counting toward an issue's derived
+//    in-progress status. Active/promoted/merging sessions always count;
+//    archived/merged never do; paused ones age out on last_activity_at
+//    because nothing ever archives them automatically.
+//  - ISSUE_CLAIM_TTL_DAYS: how long a manual issue_claims row stays live
+//    without activity. Activity = the claim's own claimed_at (renewed by
+//    re-POSTing) OR any message in the issue's discussion thread, so an
+//    issue under active discussion keeps its claims alive with no writes.
+const IN_PROGRESS_PAUSED_WINDOW_DAYS = 7;
+const ISSUE_CLAIM_TTL_DAYS = 7;
 const MAX_CLOSE_REASON_LENGTH = 2000;
 // #556: cap for author-edited issue titles (rename route below). Matches
 // the feedback form's optional title input; far below GitHub's own limit.
@@ -250,6 +263,68 @@ function stagingMockIssueComments(number) {
     ],
   };
   return threads[n] || [];
+}
+
+// Pick the "In progress" chip's link destination from an issue's live
+// linked sessions, per viewer. Priority: a promoted/merging session (the
+// proposal — group-visible to everyone) > the viewer's own session (their
+// dev chat) > a shared session (its public discussion). Other users'
+// PRIVATE sessions yield no target — by current semantics they appear on
+// no group surface, so the chip stays informational for those viewers.
+// Ties within a class break to the most recently active session.
+function pickInProgressTarget(sessions, viewerId) {
+  const ts = (s) => {
+    const t = Date.parse(s.last_activity_at || s.created_at || '');
+    return Number.isFinite(t) ? t : 0;
+  };
+  const newest = (pred) => {
+    let best = null;
+    for (const s of sessions) {
+      if (!pred(s)) continue;
+      if (!best || ts(s) > ts(best)) best = s;
+    }
+    return best;
+  };
+  const proposal = newest((s) => s.status === 'promoted' || s.status === 'merging');
+  if (proposal) return { kind: 'proposal', sessionId: proposal.id };
+  const own = newest((s) => viewerId != null && s.user_id === viewerId);
+  if (own) return { kind: 'session-own', sessionId: own.id };
+  const shared = newest((s) => !!s.shared_at);
+  if (shared) return { kind: 'session-shared', sessionId: shared.id };
+  return null;
+}
+
+// Compose one issue's `in_progress` field from its live linked sessions
+// and live claims (already expiry-filtered). Returns null when neither
+// exists — the FE treats null as "no chip" (headless runs contribute via
+// the separate issue.headless enrichment, ORed client-side).
+function composeInProgress(sessions, claims, viewerId) {
+  const sess = sessions || [];
+  const live = claims || [];
+  if (!sess.length && !live.length) return null;
+  const users = [];
+  for (const s of sess) {
+    if (s.username && !users.includes(s.username)) users.push(s.username);
+    if (users.length >= 3) break;
+  }
+  return {
+    count: sess.length,
+    users,
+    mine: sess.some((s) => s.user_id === viewerId) || live.some((c) => c.user_id === viewerId),
+    // Oldest-first, capped at 10 — beyond that only the names matter less
+    // than the count, which the FE derives from the list it gets.
+    claims: live.slice(0, 10).map((c) => ({
+      username: c.username,
+      // userId rides along solely for the admin per-claim clear control
+      // (DELETE /claim with a userId body) — not sensitive, ids are used
+      // in URLs/payloads platform-wide.
+      userId: c.user_id,
+      mine: c.user_id === viewerId,
+      claimedAt: c.claimed_at,
+      expiresAt: c.expires_at,
+    })),
+    target: pickInProgressTarget(sess, viewerId),
+  };
 }
 
 function issueRoutes(config) {
@@ -823,6 +898,59 @@ function issueRoutes(config) {
       );
       const myPrSessionByNumber = new Map(prSessionRows.map((r) => [r.n, r.id]));
 
+      // "In progress" derivation — the dispatch-driven half. Every LIVE
+      // non-headless session that declared linked_issues (via the Mayor's
+      // addresses_issues at dispatch time) marks its issues in progress.
+      // Live = active/promoted/merging always; paused only within the
+      // IN_PROGRESS_PAUSED_WINDOW_DAYS activity window (rejection,
+      // withdrawal, and stale-PR takedown all land in 'archived' and merge
+      // in 'merged', so those exclude themselves). Headless runs are
+      // deliberately NOT part of this field — they already ship as
+      // issue.headless above, and the FE ORs the two (keeps the 8s
+      // headless poller's field-scoped merge correct).
+      const { rows: inProgressRows } = await pool.query(
+        `SELECT UNNEST(cs.linked_issues) AS n,
+                cs.id, cs.user_id, cs.status, cs.shared_at,
+                cs.last_activity_at, cs.created_at, u.username
+           FROM chat_sessions cs LEFT JOIN users u ON u.id = cs.user_id
+          WHERE cs.app_id = $1 AND cs.is_headless = FALSE
+            AND cardinality(cs.linked_issues) > 0
+            AND (cs.status IN ('active','promoted','merging')
+                 OR (cs.status = 'paused'
+                     AND cs.last_activity_at > NOW() - make_interval(days => $2)))`,
+        [app.id, IN_PROGRESS_PAUSED_WINDOW_DAYS]
+      );
+      const inProgressByNumber = new Map();
+      for (const r of inProgressRows) {
+        const list = inProgressByNumber.get(r.n) || [];
+        list.push(r);
+        inProgressByNumber.set(r.n, list);
+      }
+
+      // Manual claims — the hand-set half. Expiry is a read-time filter:
+      // a claim is live while GREATEST(claimed_at, the issue thread's
+      // last activity) is within ISSUE_CLAIM_TTL_DAYS. Thread activity is
+      // already in chatByNumber (last_at over ALL rows), so liveness and
+      // expiresAt are computed here at zero extra query cost.
+      const { rows: claimRows } = await pool.query(
+        `SELECT ic.github_issue_number AS n, ic.user_id, ic.claimed_at, u.username
+           FROM issue_claims ic JOIN users u ON u.id = ic.user_id
+          WHERE ic.app_id = $1
+          ORDER BY ic.claimed_at ASC`,
+        [app.id]
+      );
+      const claimTtlMs = ISSUE_CLAIM_TTL_DAYS * 24 * 3600 * 1000;
+      const claimsByNumber = new Map();
+      for (const c of claimRows) {
+        const lastAt = Date.parse(chatByNumber.get(c.n)?.last_at || '') || 0;
+        const claimedAt = Date.parse(c.claimed_at) || 0;
+        const freshest = Math.max(claimedAt, lastAt);
+        if (freshest <= Date.now() - claimTtlMs) continue; // expired — inert row
+        const list = claimsByNumber.get(c.n) || [];
+        list.push({ ...c, expires_at: new Date(freshest + claimTtlMs).toISOString() });
+        claimsByNumber.set(c.n, list);
+      }
+
       const issues = (result.issues || []).map((issue) => {
         const b = byNumber.get(issue.number);
         const ghLogin = issue.user && !issue.user.endsWith('[bot]') && issue.user !== 'usernode-bot'
@@ -836,6 +964,14 @@ function issueRoutes(config) {
             || creatorFromSourceLine(issue.body)
             || ghLogin,
           headless: headlessByNumber.get(issue.number) || null,
+          // Dispatch/claim-derived "In progress" status (sessions + manual
+          // claims; headless rides separately on `headless` above). The
+          // `target` inside is per-viewer — see pickInProgressTarget.
+          in_progress: composeInProgress(
+            inProgressByNumber.get(issue.number),
+            claimsByNumber.get(issue.number),
+            req.user.id
+          ),
           // #287: per-viewer proposal session id, or null. Drives the
           // "Create proposal" → "Create new proposal" swap on the issue row.
           myPrSessionId: myPrSessionByNumber.get(issue.number) || null,
@@ -901,6 +1037,54 @@ function issueRoutes(config) {
           if (issue.number === 900008 && !issue.created_by_username) {
             issue.created_by_username = req.user.username;
           }
+        }
+        // "In progress" chip states on dedicated [Mock] rows, so every
+        // variant is reviewable in a preview — only where no real data
+        // claimed the number. 900001/900002/900009 are deliberately left
+        // untouched: they anchor the kanban drag-order (#613) and
+        // newest-on-top (#617) demos, and an in-progress mark would move
+        // them out of the Issues column. Request-time, read-only, no-op
+        // in production.
+        const hoursAgoIso = (hrs) => new Date(Date.now() - hrs * 3600 * 1000).toISOString();
+        const hoursAheadIso = (hrs) => new Date(Date.now() + hrs * 3600 * 1000).toISOString();
+        const mkMockClaim = (username, mine, hrs) => ({
+          username, userId: mine ? req.user.id : 0, mine,
+          claimedAt: hoursAgoIso(hrs), expiresAt: hoursAheadIso(7 * 24 - hrs),
+        });
+        const mockInProgress = new Map([
+          // Single-worker session chip, CLICKABLE styling (synthetic
+          // proposal target — clicking lands on the topic view's
+          // not-found fallback, same visual-review-only caveat as the
+          // synthetic myPrSessionId above).
+          [900007, {
+            count: 1, users: ['staging-tester'], mine: false, claims: [],
+            target: { kind: 'proposal', sessionId: 900007 },
+          }],
+          // Plural "In progress · 2" with a multi-name tooltip, in the
+          // NON-clickable (private-work) styling.
+          [900006, {
+            count: 2, users: ['maya-builder', 'staging-tester'], mine: false,
+            claims: [], target: null,
+          }],
+          // Two claims incl. the VIEWER's own — reviews the multi-claimer
+          // chip plus the "Clear in progress" button state.
+          [900004, {
+            count: 0, users: [], mine: true,
+            claims: [mkMockClaim(req.user.username, true, 2), mkMockClaim('maya-builder', false, 5)],
+            target: null,
+          }],
+          // One claim by someone else — the viewer's button stays "Mark
+          // in progress" and the admin per-claim clear is reviewable in
+          // the topic view.
+          [900008, {
+            count: 0, users: [], mine: false,
+            claims: [mkMockClaim('maya-builder', false, 8)],
+            target: null,
+          }],
+        ]);
+        for (const issue of issues) {
+          const m = mockInProgress.get(issue.number);
+          if (m && !issue.in_progress) issue.in_progress = m;
         }
       }
 
@@ -1280,6 +1464,150 @@ function issueRoutes(config) {
       res.json({ ok: true, bountyId: inserted.id, bountyCount, remaining, limit: WEEKLY_KUDOS_LIMIT });
     } catch (err) {
       log.error('issues', 'Bounty create failed', { issueNumber, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // POST /api/apps/:slug/github-issues/:number/claim
+  //
+  // Manually mark a GitHub issue "In progress" for the calling user. An
+  // issue can hold many concurrent claims — at most one per user — so
+  // this is a plain upsert of the CALLER's own claim: first click
+  // creates it, any later click renews it (fresh TTL clock), other
+  // users' claims are untouched and irrelevant (no 409, ever). The
+  // target must be a currently-open GitHub issue — same positive-
+  // confirmation policy as the bounty route above. Claims are platform-
+  // local: no GitHub write. Expiry is a read-time filter in the
+  // /github-issues enrichment (ISSUE_CLAIM_TTL_DAYS).
+  // ----------------------------------------------------------------
+  router.post('/api/apps/:slug/github-issues/:number/claim', async (req, res) => {
+    const issueNumber = parseInt(req.params.number, 10);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid issue number' });
+    }
+
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab', `${appAccess.ACCESS_COLUMNS}, repo_url`
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      // Verify :number is a CURRENTLY OPEN GitHub issue on this repo —
+      // fetchPublicIssues never throws; a degraded fetch (note) means no
+      // positive confirmation, so refuse and change nothing.
+      const parsed = parseOwnerRepo(app.repo_url);
+      if (!github.isEnabled() || !parsed) {
+        return res.status(422).json({
+          error: 'Cannot verify the issue right now — GitHub is unavailable for this app.',
+        });
+      }
+      const ghResult = await github.fetchPublicIssues(parsed.owner, parsed.repo);
+      if (ghResult.note) {
+        return res.status(422).json({
+          error: "Couldn't confirm this issue is open right now. Try again in a moment.",
+        });
+      }
+      const isOpen = (ghResult.issues || []).some((i) => i.number === issueNumber);
+      if (!isOpen) {
+        return res.status(404).json({
+          error: `Issue #${issueNumber} isn't an open issue on this repo.`,
+        });
+      }
+
+      // Upsert the caller's own claim. `xmax = 0` distinguishes a fresh
+      // INSERT (announce in the thread) from a renewal (silent — the
+      // claimer just restarted their clock).
+      const { rows } = await pool.query(
+        `INSERT INTO issue_claims (app_id, github_issue_number, user_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (app_id, github_issue_number, user_id)
+           DO UPDATE SET claimed_at = NOW()
+         RETURNING claimed_at, (xmax = 0) AS created`,
+        [app.id, issueNumber, req.user.id]
+      );
+      const created = !!rows[0]?.created;
+
+      if (created) {
+        // On-the-record note in the issue's own discussion thread (which
+        // also freshens the thread clock every claim keys off).
+        await sendSystemMessage(pool, app.id,
+          `${req.user.username} marked this issue in progress`,
+          'system', null, { type: 'issue', ref: issueNumber }
+        ).catch((err) => log.warn('issues', 'Claim chat message failed', { err: err.message }));
+      }
+
+      pushIssueUpdate({
+        action: 'claimed', appSlug: app.slug, appId: app.id, issueNumber,
+      });
+
+      log.info('issues', created ? 'Issue claimed' : 'Issue claim renewed', {
+        appId: app.id, issueNumber, by: req.user.username,
+      });
+      res.json({ ok: true, created, claimedAt: rows[0]?.claimed_at || null });
+    } catch (err) {
+      log.error('issues', 'Issue claim failed', { issueNumber, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ----------------------------------------------------------------
+  // DELETE /api/apps/:slug/github-issues/:number/claim
+  //
+  // Clear an in-progress claim. With no body: the CALLER's own claim. A
+  // write-capable admin may pass { userId } to clear another user's
+  // stuck claim; anyone else passing a foreign userId gets 403 — each
+  // claim belongs to its claimer, so the status can't be kicked back
+  // and forth between users. Idempotent: clearing a nonexistent (or
+  // already-expired-and-replaced) claim is a soft 200.
+  // ----------------------------------------------------------------
+  router.delete('/api/apps/:slug/github-issues/:number/claim', async (req, res) => {
+    const issueNumber = parseInt(req.params.number, 10);
+    if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
+      return res.status(400).json({ error: 'Invalid issue number' });
+    }
+
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab'
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const rawTarget = req.body && req.body.userId;
+      const targetUserId = rawTarget != null ? parseInt(rawTarget, 10) : req.user.id;
+      if (!Number.isInteger(targetUserId) || targetUserId <= 0) {
+        return res.status(400).json({ error: 'Invalid userId' });
+      }
+      if (targetUserId !== req.user.id && !req.user.canAdminWrite) {
+        return res.status(403).json({ error: 'Only the claimer or an admin can clear this' });
+      }
+
+      const { rows } = await pool.query(
+        `DELETE FROM issue_claims
+          WHERE app_id = $1 AND github_issue_number = $2 AND user_id = $3
+          RETURNING user_id`,
+        [app.id, issueNumber, targetUserId]
+      );
+      const cleared = rows.length > 0;
+
+      if (cleared) {
+        const content = targetUserId === req.user.id
+          ? `${req.user.username} cleared their in-progress mark`
+          : `${req.user.username} cleared an in-progress mark on this issue`;
+        await sendSystemMessage(pool, app.id, content,
+          'system', null, { type: 'issue', ref: issueNumber }
+        ).catch((err) => log.warn('issues', 'Claim-clear chat message failed', { err: err.message }));
+        pushIssueUpdate({
+          action: 'unclaimed', appSlug: app.slug, appId: app.id, issueNumber,
+        });
+        log.info('issues', 'Issue claim cleared', {
+          appId: app.id, issueNumber, by: req.user.username, targetUserId,
+        });
+      }
+
+      res.json({ ok: true, cleared });
+    } catch (err) {
+      log.error('issues', 'Issue claim clear failed', { issueNumber, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2055,4 +2383,9 @@ module.exports = {
   // Exported for the merge path and the issue-close watcher (auto-resolve
   // of close proposals whose target was closed by other means).
   resolveSupersededCloseProposals,
+  // "In progress" derivation pieces, exported for unit tests.
+  pickInProgressTarget,
+  composeInProgress,
+  IN_PROGRESS_PAUSED_WINDOW_DAYS,
+  ISSUE_CLAIM_TTL_DAYS,
 };

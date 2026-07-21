@@ -357,7 +357,9 @@ function sessionRoutes(config) {
             id: 990101, branch_name: 'mock/my-session', pr_number: null,
             pr_url: null, pr_title: null,
             session_title: '[Mock] Your in-progress session',
-            status: 'active', linked_issues: [], shared_at: null,
+            // Reverse "#N" issue chip demo on the own-session card: links
+            // to mock issue 900002, which stagingMockIssues serves.
+            status: 'active', linked_issues: [900002], shared_at: null,
             created_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
@@ -458,7 +460,10 @@ function sessionRoutes(config) {
   //   GC has nulled staging_url. pr_number itself stays withheld.
   //   chat_count / last_message_at mirror the /promoted subqueries: the
   //   discussion thread is the same chat_messages ('session', id) key
-  //   the proposal card will inherit on promotion.
+  //   the proposal card will inherit on promotion. linked_issues IS
+  //   included — issue numbers are group-visible data (the issue list
+  //   itself is view-level), and the card renders them as "#N" chips
+  //   linking to each issue's in-app discussion.
   router.get('/api/apps/:slug/shared-sessions', async (req, res) => {
     try {
       // View-level (#621): explicitly-shared rows are metadata-only by
@@ -471,6 +476,7 @@ function sessionRoutes(config) {
       const { rows } = await pool.query(
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
                 cs.staging_url, (cs.pr_number IS NOT NULL) AS can_preview,
+                cs.linked_issues,
                 cs.user_id, u.username, cs.shared_at, cs.created_at,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 (SELECT COUNT(*)::int FROM chat_messages cm
@@ -505,6 +511,9 @@ function sessionRoutes(config) {
           {
             id: 990001, session_title: '[Mock] Busy shared session — spinner state',
             pr_title: null, branch_name: 'mock/shared-busy', status: 'active',
+            // Reverse "#N" issue chip demo: links to mock issue 900001,
+            // which stagingMockIssues serves, so the round trip works.
+            linked_issues: [900001],
             staging_url: null, can_preview: false, user_id: 0, username: 'staging-demo-user',
             shared_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
@@ -514,6 +523,7 @@ function sessionRoutes(config) {
           {
             id: 990002, session_title: '[Mock] Paused shared session with a preview',
             pr_title: null, branch_name: 'mock/shared-preview', status: 'paused',
+            linked_issues: [],
             staging_url: 'https://example.invalid', can_preview: true, user_id: 0, username: 'staging-demo-user',
             shared_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
             created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
@@ -527,6 +537,7 @@ function sessionRoutes(config) {
           {
             id: 990003, session_title: '[Mock] Shared session, preview asleep (rebuild on click)',
             pr_title: null, branch_name: 'mock/shared-preview-asleep', status: 'paused',
+            linked_issues: [],
             staging_url: null, can_preview: true, user_id: 0, username: 'staging-demo-user',
             shared_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
             created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
@@ -2491,6 +2502,18 @@ function sessionRoutes(config) {
                   [merged, session.id]
                 );
                 session.linked_issues = merged;
+                // The issue list derives its "In progress" chip from
+                // linked_issues, so tell every open Dev panel to refetch —
+                // the chip appears while this dispatch is still running.
+                try {
+                  const { pushIssueUpdate } = require('../services/ws');
+                  pushIssueUpdate({
+                    action: 'updated', source: 'linked_issues',
+                    appSlug: session.app_slug, appId: session.app_id,
+                  });
+                } catch (err) {
+                  log.warn('sessions', 'linked_issues issue_update broadcast failed', { err: err.message, sessionId: session.id });
+                }
               }
             } catch (err) {
               log.warn('sessions', 'Failed to persist linked issues', { err: err.message, sessionId: session.id });
