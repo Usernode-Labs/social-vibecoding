@@ -222,6 +222,18 @@ function stagingMockGovernance() {
         reason: 'Obsolete since the theme rework.',
       }, 4, 1, 0,
       { required: 2, windowEndsAt: hoursAhead(40) }),
+    // #695: invited-approvers regime — two advisory (non-approver) up votes
+    // and zero qualifying ones, so the card must read "0 of 1 approvals"
+    // with a "Yes (✓0 +2)" button, never a blended "2 / 1".
+    {
+      ...mk(9100004, 'secret_change', '[Mock] Set ADVISORY_DEMO to "on"',
+        { key: 'ADVISORY_DEMO', action: 'set', hasValue: true }, 5, 2, 0,
+        { required: 1, windowEndsAt: null }),
+      approval_policy: 'invited',
+      approvals_required: 1,
+      qualified_yes_count: 0,
+      qualified_no_count: 0,
+    },
   ];
 }
 

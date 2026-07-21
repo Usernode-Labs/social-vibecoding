@@ -228,6 +228,29 @@ test('state 11 — draft (active, not yet proposed)', () => {
   assert.equal(life.tone, 'neutral');
 });
 
+// #695: invited-approver session payloads — raw yes at/above the majority
+// must NOT read as passed when the qualifying (approver) tally is below it.
+test('invited policy: qualified tally below majority stays in_vote despite raw yes ≥ majority', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing',
+    approval_policy: 'invited', approvals_required: 1,
+    yes_count: 2, no_count: 0,
+    qualified_yes_count: 0, qualified_no_count: 0,
+    majority: 1, votes_required: 1,
+  });
+  assert.equal(life.key, 'in_vote');
+  assert.deepEqual(life.votes, { yes: 0, majority: 1, reached: false });
+  // And a qualifying approver vote flips it to ready.
+  const ready = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing',
+    approval_policy: 'invited', approvals_required: 1,
+    yes_count: 2, no_count: 0,
+    qualified_yes_count: 1, qualified_no_count: 0,
+    majority: 1, votes_required: 1,
+  });
+  assert.equal(ready.key, 'ready');
+});
+
 test('missing vote data → in_vote stays tally-free (never falsely "ready")', () => {
   // No yes_count: a promoted+passing row with unknown votes must not be
   // treated as past-threshold. It reads as plain "In vote".
