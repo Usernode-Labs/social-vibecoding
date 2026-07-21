@@ -26,6 +26,7 @@ const { internalRoutes } = require('./src/routes/internal');
 const { appErrorRoutes } = require('./src/routes/app-error');
 const { visualsRoutes } = require('./src/routes/visuals');
 const { appIconRoutes } = require('./src/routes/app-icons');
+const { issueImageRoutes } = require('./src/routes/issue-images');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
@@ -304,6 +305,11 @@ app.use(visualsRoutes(config));
 // home tiles load them with plain <img> tags; access control is the
 // unguessable 32-hex icon id.
 app.use(appIconRoutes(config));
+
+// Issue-screenshot images (#683). Public for the same reason as visuals:
+// GitHub's camo proxy fetches the issue-body embeds anonymously; access
+// control is the unguessable 32-hex screenshot id.
+app.use(issueImageRoutes(config));
 
 // Friendly "app is restarting" page for dead app containers (#426).
 // Caddy's wildcard-site handle_errors rewrites upstream 502/503/504s to
@@ -2128,6 +2134,21 @@ function startSessionAutoPauseSweeper(config) {
       if (rowCount) log.info('server', 'GC\'d orphaned chat attachments', { count: rowCount });
     } catch (err) {
       log.warn('server', 'Orphaned-attachment sweep failed', { err: err.message });
+    }
+
+    // Pass 6: orphaned issue screenshots GC (#683). An upload whose
+    // feedback modal was cancelled (issue_number still NULL — never
+    // linked to a filed issue) has nothing referencing it, so reclaim
+    // its bytea after 24h. Linked rows live forever with their issue.
+    try {
+      const { rowCount } = await pool.query(
+        `DELETE FROM issue_screenshots
+          WHERE issue_number IS NULL
+            AND created_at < NOW() - INTERVAL '24 hours'`
+      );
+      if (rowCount) log.info('server', 'GC\'d orphaned issue screenshots', { count: rowCount });
+    } catch (err) {
+      log.warn('server', 'Orphaned-screenshot sweep failed', { err: err.message });
     }
   }, config.sessionSweepIntervalMs).unref();
 }

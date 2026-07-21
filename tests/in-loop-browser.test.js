@@ -84,7 +84,8 @@ test('guidance carries the usage hooks that make it likely to be used', () => {
   assert.match(g, /cycles?/i);
   // graceful degradation: commit anyway, never fail the turn
   assert.match(g, /commit your work anyway/i);
-  assert.match(g, /never block or fail the turn/i);
+  // \s+ tolerates the guidance text re-wrapping across source lines.
+  assert.match(g, /never\s+block or fail the turn/i);
 });
 
 // ── wiring: build prompt includes the guidance; scout prompt does not ────

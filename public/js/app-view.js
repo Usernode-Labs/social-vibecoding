@@ -3619,8 +3619,10 @@ const AppView = {
   // The issue's body (GitHub markdown), rendered in the topic
   // sub-view between the header card and the thread.
   _issueBodyHtml(issue) {
+    // #683: images opt-in so attached screenshots (the **Screenshot:**
+    // embed appended by routes/feedback.js) render inline.
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
+      ? (s) => DevChat.renderMarkdown(s, { images: true })
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return issue && issue.body && issue.body.trim()
       ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(issue.body)}</div>`

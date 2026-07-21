@@ -1591,3 +1591,29 @@ CREATE TABLE IF NOT EXISTS title_heal_queue (
   UNIQUE (owner, repo, issue_number)
 );
 CREATE INDEX IF NOT EXISTS idx_title_heal_queue_due ON title_heal_queue(next_attempt_at);
+
+-- #683: drag-selected screenshots attached to filed GitHub issues from
+-- the feedback modal. Bytea-in-Postgres like session_visuals (the
+-- platform container has no persistent file volume); rows are served on
+-- the public pre-auth GET /issue-images/:id route, so the unguessable
+-- 32-hex id is the only privacy layer — same stance as visuals, and the
+-- user explicitly published the image into a GitHub issue body.
+-- issue_owner/repo/number are stamped when the issue is filed; rows
+-- never linked (upload abandoned / modal cancelled) are GC'd by the
+-- server.js orphan sweeper after 24h.
+CREATE TABLE IF NOT EXISTS issue_screenshots (
+  id            VARCHAR(32) PRIMARY KEY,
+  user_id       INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  content_type  VARCHAR(32) NOT NULL,
+  size_bytes    INTEGER NOT NULL,
+  data          BYTEA NOT NULL,
+  issue_owner   TEXT,
+  issue_repo    TEXT,
+  issue_number  INTEGER,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_issue_screenshots_orphan
+  ON issue_screenshots(created_at) WHERE issue_number IS NULL;
+-- Private: the bytea can contain anything visible on the reporter's
+-- screen; staging gets the schema only.
+COMMENT ON TABLE issue_screenshots IS 'staging:private';

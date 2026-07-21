@@ -3248,6 +3248,17 @@ const DevChat = {
           },
           image({ href, title, text }) {
             const safeText = esc(text || '');
+            // #683: opt-in inline images (renderMarkdown's images option,
+            // consulted via the per-parse flag below — the registered
+            // renderers are global). Used for issue bodies so attached
+            // screenshots render in the topic view. Only https URLs and
+            // same-origin absolute paths qualify; everything else keeps
+            // the legacy link/text degradation.
+            const inlineOk = DevChat._renderImagesInline
+              && (/^https:\/\//i.test(href) || (/^\/[^/]/.test(href)));
+            if (inlineOk) {
+              return `<img class="dc-inline-img" src="${esc(href)}" alt="${safeText}" loading="lazy">`;
+            }
             if (!/^https?:\/\//i.test(href)) return safeText;
             return `<a href="${href}" target="_blank" rel="noopener noreferrer">${safeText || esc(href)}</a>`;
           },
@@ -3270,14 +3281,25 @@ const DevChat = {
 
     // breaks is overridden per-call (the global default set above is true);
     // the registered renderers persist regardless of the per-parse options.
-    const html = marked.parse(text, { breaks });
+    // #683: `images: true` (issue bodies) lets markdown images render
+    // inline — the flag is read by the global image renderer above during
+    // this synchronous parse, and 'img' joins the sanitizer allowlist.
+    const allowImages = !!opts.images;
+    DevChat._renderImagesInline = allowImages;
+    let html;
+    try {
+      html = marked.parse(text, { breaks });
+    } finally {
+      DevChat._renderImagesInline = false;
+    }
 
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5',
         'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
-        'tr', 'th', 'td', 'hr', 'del'],
+        'tr', 'th', 'td', 'hr', 'del', ...(allowImages ? ['img'] : [])],
       // 'start' keeps non-1 ordered lists numbering correctly (F2).
-      ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'start'],
+      ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'start',
+        ...(allowImages ? ['src', 'alt', 'loading'] : [])],
       ALLOW_DATA_ATTR: false,
     });
   },

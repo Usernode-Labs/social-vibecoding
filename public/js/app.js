@@ -1776,6 +1776,101 @@ const App = {
       titleDirty = feedbackTitle.value.trim().length > 0;
     });
 
+    // ── #683: drag-to-select screenshot attachment ─────────────────
+    // The button only renders where the Screen Capture API exists
+    // (ScreenshotSelect.isSupported()); capture is real screen pixels
+    // via public/js/screenshot-select.js. One screenshot per issue: the
+    // button is swapped for the thumbnail row while one is attached.
+    const screenshotBtn = document.getElementById('feedback-screenshot-btn');
+    const screenshotPreview = document.getElementById('feedback-screenshot-preview');
+    const screenshotImg = document.getElementById('feedback-screenshot-img');
+    const screenshotState = document.getElementById('feedback-screenshot-state');
+    const screenshotRemove = document.getElementById('feedback-screenshot-remove');
+    const screenshotSupported = typeof ScreenshotSelect !== 'undefined' && ScreenshotSelect.isSupported();
+    let screenshotId = null;          // server row id, set once uploaded
+    let screenshotUploading = false;  // blocks submit while in flight
+    let screenshotObjectUrl = null;
+
+    const showFeedbackNotice = (text, isError) => {
+      feedbackStatus.textContent = text;
+      feedbackStatus.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-400'}`;
+      feedbackStatus.classList.remove('hidden');
+    };
+
+    const resetScreenshotState = () => {
+      screenshotId = null;
+      screenshotUploading = false;
+      if (screenshotObjectUrl) { URL.revokeObjectURL(screenshotObjectUrl); screenshotObjectUrl = null; }
+      screenshotPreview.classList.add('hidden');
+      screenshotPreview.classList.remove('flex');
+      screenshotImg.removeAttribute('src');
+      screenshotState.textContent = '';
+      screenshotBtn.classList.toggle('hidden', !screenshotSupported);
+      screenshotBtn.disabled = false;
+    };
+
+    screenshotBtn.addEventListener('click', async () => {
+      if (screenshotBtn.disabled) return;
+      screenshotBtn.disabled = true;
+      const modal = document.getElementById('feedback-modal');
+      let modalHidden = false;
+      try {
+        // getDisplayMedia is called synchronously inside start() so the
+        // click's transient activation is preserved; the modal hides only
+        // once the browser grants the stream (a denied prompt costs the
+        // user nothing).
+        const { blob } = await ScreenshotSelect.start({
+          onCaptureStart: () => { modal.classList.add('hidden'); modalHidden = true; },
+        });
+        if (modalHidden) modal.classList.remove('hidden');
+        // Thumbnail immediately; upload in the background with Submit
+        // blocked (screenshotUploading) until the id lands.
+        screenshotObjectUrl = URL.createObjectURL(blob);
+        screenshotImg.src = screenshotObjectUrl;
+        screenshotBtn.classList.add('hidden');
+        screenshotPreview.classList.remove('hidden');
+        screenshotPreview.classList.add('flex');
+        screenshotState.textContent = 'Uploading…';
+        screenshotUploading = true;
+        try {
+          const res = await fetch('/api/feedback/screenshot', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/octet-stream' },
+            body: blob,
+          });
+          const data = res.ok ? await res.json() : await res.json().catch(() => ({}));
+          if (res.ok && data.id) {
+            screenshotId = data.id;
+            screenshotState.textContent = '';
+          } else {
+            resetScreenshotState();
+            showFeedbackNotice(data.error || 'Screenshot upload failed', true);
+          }
+        } catch {
+          resetScreenshotState();
+          showFeedbackNotice('Screenshot upload failed — network error', true);
+        } finally {
+          screenshotUploading = false;
+        }
+      } catch (err) {
+        if (modalHidden) modal.classList.remove('hidden');
+        screenshotBtn.disabled = false;
+        if (err && err.code === 'denied') {
+          showFeedbackNotice('Screen capture was declined — nothing was attached.', false);
+        } else if (err && err.code === 'register_failed') {
+          showFeedbackNotice("Couldn't locate this page in the shared window — keep it fully visible and try again.", true);
+        } else if (err && err.code !== 'cancelled') {
+          showFeedbackNotice('Screenshot capture failed — please try again.', true);
+        }
+      }
+    });
+
+    screenshotRemove.addEventListener('click', () => {
+      // Client-side forget only — the orphaned server row (if the upload
+      // already finished) is GC'd by the 24h sweeper.
+      resetScreenshotState();
+    });
+
     const submitFeedback = async () => {
       const text = feedbackText.value.trim();
       if (!text) return;
@@ -1784,6 +1879,12 @@ const App = {
       // then, but a stale cmd+enter on a focused button could still
       // land here).
       if (feedbackBtn.disabled) return;
+      // #683: a screenshot upload is still in flight — the id isn't known
+      // yet, so filing now would silently drop the attachment.
+      if (screenshotUploading) {
+        showFeedbackNotice('Screenshot is still uploading — one moment…', false);
+        return;
+      }
       feedbackBtn.disabled = true; feedbackBtn.textContent = 'Submitting...';
       try {
         // Capture the target + slug at submit time so navigating away
@@ -1795,6 +1896,9 @@ const App = {
         const customTitle = feedbackTitle.value.trim();
         if (customTitle) body.title = customTitle;
         if (target === 'app') body.appSlug = App.currentApp;
+        // #683: attach the uploaded screenshot — the server appends the
+        // embed line and links the row to the filed issue.
+        if (screenshotId) body.screenshotId = screenshotId;
         const res = await fetch('/api/feedback', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -1812,6 +1916,8 @@ const App = {
           // Discard any in-flight title preview so it can't repopulate
           // the cleared field during the "Thanks!" grace window.
           resetTitleGenState();
+          // #683: the screenshot now belongs to the filed issue.
+          resetScreenshotState();
           // Lock the textarea and keep the submit button disabled for
           // the 1500ms "Thanks!" grace window so a user can't keep
           // typing (or re-fire cmd+enter) after their feedback has
@@ -1858,6 +1964,9 @@ const App = {
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
       resetTitleGenState();
+      // #683: each open starts screenshot-less; the attach button shows
+      // only where the Screen Capture API exists.
+      resetScreenshotState();
 
       // "This app" is only selectable when an app with a real repo is
       // open. Otherwise the button stays visible but grayed-out/disabled
@@ -1910,6 +2019,9 @@ const App = {
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
       resetTitleGenState();
+      // #683: cancelling discards the attachment client-side; an already
+      // uploaded (now orphaned) row is GC'd server-side after 24h.
+      resetScreenshotState();
     });
     document.getElementById('feedback-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) document.getElementById('feedback-cancel').click();
