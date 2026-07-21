@@ -196,6 +196,18 @@ const attachmentUploadLimiter = makeLimiter({
   message: 'Too many file uploads — slow down for a minute.',
 });
 
+// #683: feedback-modal screenshot uploads. Each is a ≤4 MB bytea INSERT;
+// honest use is one per filed issue, so 10 / 10 min never bites, while a
+// scripted loop trying to balloon the DB bounces off quickly (orphans are
+// additionally GC'd after 24h). Per-user keyed for shared-NAT fairness.
+const issueScreenshotLimiter = makeLimiter({
+  windowMs: 10 * 60 * 1000,
+  max: 10,
+  name: 'issue-screenshot-upload',
+  keyByUser: true,
+  message: 'Too many screenshot uploads — slow down for a few minutes.',
+});
+
 // Priority / assignee attribute votes: 60 / minute / user. Loose enough
 // that switching your pick a few times never bumps it, tight enough to
 // stop a scripted vote-spam loop. Per-user keyed for shared-NAT fairness.
@@ -219,4 +231,4 @@ const boardOrderLimiter = makeLimiter({
   message: 'Too many reorder updates — slow down for a minute.',
 });
 
-module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter, feedbackTitleLimiter, boardOrderLimiter };
+module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter };

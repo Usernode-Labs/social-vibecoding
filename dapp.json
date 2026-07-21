@@ -98,6 +98,12 @@
       "expectText": "Sheets & dialogs"
     },
     {
+      "name": "Native-feel kit reorder/toast/modal sections render",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios",
+      "expectSelector": "#reorder-group-a .reorder-row .un-reorder-handle",
+      "expectText": "Drag to reorder"
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"
@@ -232,6 +238,12 @@
       "name": "Issue topic head shows the author-only edit-title pencil",
       "path": "/?demo=1#app/usernode-2d5619/dev/issues/900008",
       "expectSelector": "[data-issue-title='900008']"
+    },
+    {
+      "name": "Issue topic renders the attached-screenshot embed inline (#683)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/issues/900010",
+      "expectSelector": ".dc-inline-img",
+      "expectText": "[Mock] issue with an attached screenshot"
     },
     {
       "name": "Checks-starting mock proposal shows the in-progress badge",

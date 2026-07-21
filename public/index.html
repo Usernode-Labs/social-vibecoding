@@ -762,6 +762,34 @@
         class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 mb-2">
       <textarea id="feedback-text" rows="4" maxlength="2000" placeholder="Describe the issue or suggestion..."
         class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 resize-none"></textarea>
+      <!-- #683: drag-to-select screenshot attachment. The button only
+           renders where the Screen Capture API exists (app.js gates it
+           via ScreenshotSelect.isSupported()); while a screenshot is
+           attached the button is swapped for the thumbnail row. -->
+      <div class="mt-2">
+        <button id="feedback-screenshot-btn" type="button"
+          class="hidden inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z"/><path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0z"/></svg>
+          Attach screenshot
+        </button>
+        <div id="feedback-screenshot-preview" class="hidden items-center gap-2">
+          <img id="feedback-screenshot-img" alt="Screenshot preview"
+            class="h-14 max-w-[8rem] rounded-md border border-zinc-300 dark:border-zinc-700 object-cover">
+          <span id="feedback-screenshot-state" class="text-xs text-zinc-500 dark:text-zinc-400"></span>
+          <button id="feedback-screenshot-remove" type="button" aria-label="Remove screenshot"
+            class="rounded-full w-6 h-6 flex items-center justify-center text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors">✕</button>
+        </div>
+      </div>
+      <!-- #685: opt-in app state snapshot. Hidden unless the open app has
+           registered a state provider via usernode.issueState.register()
+           AND the feedback target is "This app" (wired in app.js). -->
+      <div id="feedback-state-row" class="hidden mt-2">
+        <label class="flex items-start gap-2 cursor-pointer select-none">
+          <input id="feedback-state-checkbox" type="checkbox" checked
+            class="accent-violet-500 w-4 h-4 mt-0.5">
+          <span class="text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Include app state</span> &mdash; this app can attach a snapshot of its current state to help debugging</span>
+        </label>
+      </div>
       <div id="feedback-status" class="text-sm mt-2 hidden"></div>
       <div class="flex gap-3 mt-4">
         <button id="feedback-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
@@ -1158,6 +1186,10 @@
   <script src="/js/build-log.js"></script>
   <script src="/js/app-view.js"></script>
   <script src="/js/app-secrets.js"></script>
+  <!-- Drag-to-select screenshot capture for the feedback modal (#683).
+       Loaded before app.js so the modal wiring can gate the attach
+       button on ScreenshotSelect.isSupported(). -->
+  <script src="/js/screenshot-select.js"></script>
   <script src="/js/home.js"></script>
   <script src="/js/app.js"></script>
 </body>

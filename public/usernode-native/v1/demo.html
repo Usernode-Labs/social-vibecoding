@@ -86,6 +86,21 @@
         </div>
       </section>
 
+      <!-- Drag to reorder -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Drag to reorder</h2>
+        <div id="reorder-list">
+          <div class="un-group-header">Today — drag between sections</div>
+          <div id="reorder-group-a" class="un-group shadow-sm"></div>
+          <div class="un-group-header mt-6">Later</div>
+          <div id="reorder-group-b" class="un-group shadow-sm"></div>
+        </div>
+        <p id="reorder-result" class="text-xs text-zinc-500 mt-2">Grab a ≡ handle (long-press the row on touch) — the row lifts and follows 1:1, an accent bar marks the drop slot, edges auto-scroll, release springs it into place. Hovering a section header inserts at the top of that section.</p>
+        <div class="un-group-header mt-6">Swipe AND reorder (long-press to lift)</div>
+        <div id="reorder-swipe" class="un-group shadow-sm"></div>
+        <p class="text-xs text-zinc-500 mt-2">Same rows, two gestures: a horizontal drag swipes, a long-press (or vertical drag on desktop) reorders — the gesture arbiter keeps them from fighting.</p>
+      </section>
+
       <!-- Sheets & dialogs -->
       <section>
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Sheets &amp; dialogs</h2>
@@ -93,8 +108,19 @@
           <button id="sheet-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Bottom sheet</button>
           <button id="action-sheet-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Action sheet</button>
           <button id="alert-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Alert</button>
+          <button id="modal-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Modal</button>
         </div>
-        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. Action sheet &amp; alert resolve a Promise with your choice.</p>
+        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses.</p>
+      </section>
+
+      <!-- Toasts -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Toasts</h2>
+        <div class="flex flex-wrap items-center gap-3">
+          <button id="toast-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Toast</button>
+          <button id="toast-action-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Toast with action</button>
+        </div>
+        <p id="toast-result" class="text-xs text-zinc-500 mt-2">iOS/desktop: bottom capsule. Android: snackbar. Tap repeatedly — a new toast replaces the old one (last-writer-wins), and taps pass through it unless it carries an action.</p>
       </section>
 
       <!-- Pull to refresh -->
@@ -122,6 +148,8 @@
             <input type="checkbox" class="un-switch" checked>
           </label>
           <div id="rethemed-swipe" class="rounded border border-zinc-200 dark:border-zinc-800 overflow-hidden"></div>
+          <div id="rethemed-reorder" class="un-group shadow-sm"></div>
+          <p class="text-xs text-zinc-500">Reorder these two — the drop indicator picks up the emerald accent.</p>
           <button class="px-4 py-2 text-sm font-medium text-white" style="background:var(--un-accent); border-radius:var(--un-radius)">Themed button</button>
         </div>
       </section>
@@ -182,6 +210,14 @@
       // Re-themed swipe row
       addSwipeRow(document.getElementById('rethemed-swipe'), 'Amber delete button', 'Same physics, different theme');
 
+      // Re-themed reorder list: the body-mounted drop indicator copies the
+      // list's resolved --un-accent, so it comes out emerald here.
+      var rethemedReorder = document.getElementById('rethemed-reorder');
+      ['First', 'Second'].forEach(function (t, i) {
+        rethemedReorder.appendChild(makeReorderRow(t, 'Emerald indicator · row ' + (i + 1)));
+      });
+      unNative.attachReorder(rethemedReorder, { handle: '.un-reorder-handle' });
+
       // ── Inset-grouped list with ride-along swipe trays ─────────────
       // Rows are TRANSPARENT here — the ride-along tray means nothing is
       // painted behind them, so the rounded group card stays clean.
@@ -196,6 +232,53 @@
             { label: 'Delete', destructive: true, handler: function () { /* row already removed by the kit */ } },
           ],
         });
+      });
+
+      // ── Drag to reorder ────────────────────────────────────────────
+      var reorderResult = document.getElementById('reorder-result');
+      function makeReorderRow(title, subtitle) {
+        var row = document.createElement('div');
+        row.className = 'reorder-row px-4 py-3 flex items-center gap-3';
+        row.innerHTML =
+          '<div class="flex-1 min-w-0"><div class="text-sm font-medium">' + title + '</div>' +
+          '<div class="text-xs text-zinc-500">' + subtitle + '</div></div>' +
+          '<span class="un-reorder-handle un-touch-target text-lg leading-none px-1" aria-hidden="true">≡</span>';
+        return row;
+      }
+      var groupA = document.getElementById('reorder-group-a');
+      var groupB = document.getElementById('reorder-group-b');
+      ['Buy groceries', 'Reply to Sam', 'Fix the bike'].forEach(function (t, i) {
+        groupA.appendChild(makeReorderRow(t, 'Today · row ' + (i + 1)));
+      });
+      ['Plan the trip', 'Read that article'].forEach(function (t, i) {
+        groupB.appendChild(makeReorderRow(t, 'Later · row ' + (i + 1)));
+      });
+      unNative.attachReorder(document.getElementById('reorder-list'), {
+        itemSelector: '.reorder-row',
+        handle: '.un-reorder-handle',
+        onReorder: function (from, to) {
+          reorderResult.textContent = 'Reordered: index ' + from + ' → ' + to + '.';
+        },
+      });
+
+      // Swipe + reorder on the SAME rows: swipe actions first, then
+      // reorder on the container (items are the .un-swipe wrappers).
+      var reorderSwipe = document.getElementById('reorder-swipe');
+      ['Inbox zero', 'Water the plants', 'Ship the demo'].forEach(function (t, i) {
+        var row = makeRow(t, 'Swipe me left, or long-press to reorder');
+        row.className = 'px-4 py-3';
+        reorderSwipe.appendChild(row);
+        unNative.attachSwipeActions(row, {
+          actions: [
+            { label: 'Pin', handler: function () { row.style.opacity = '0.45'; } },
+            { label: 'Delete', destructive: true, handler: function () {} },
+          ],
+        });
+      });
+      unNative.attachReorder(reorderSwipe, {
+        onReorder: function (from, to) {
+          reorderResult.textContent = 'Combined list reordered: ' + from + ' → ' + to + '.';
+        },
       });
 
       // ── Sheets & dialogs ───────────────────────────────────────────
@@ -232,6 +315,53 @@
           ],
         }).then(function (r) {
           resultEl.textContent = 'Alert: ' + r.button.label + (r.value != null ? ' — “' + r.value + '”' : '');
+        });
+      });
+
+      // ── Centered modal ─────────────────────────────────────────────
+      document.getElementById('modal-btn').addEventListener('click', function () {
+        var form = document.createElement('div');
+        form.innerHTML =
+          '<div class="text-base font-semibold mb-2">Edit item</div>' +
+          '<input autofocus type="text" value="Demo row" class="w-full mb-2 px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent">' +
+          '<textarea rows="4" placeholder="Notes…" class="w-full mb-3 px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent"></textarea>' +
+          '<div class="flex justify-end gap-2">' +
+          '<button type="button" data-act="locked" class="px-4 py-2 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Non-dismissible…</button>' +
+          '<button type="button" data-act="save" class="px-4 py-2 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Save</button>' +
+          '</div>';
+        var modal = unNative.presentModal({
+          contentEl: form,
+          onDismiss: function () { resultEl.textContent = 'Modal dismissed.'; },
+        });
+        form.querySelector('[data-act="save"]').addEventListener('click', function () {
+          modal.dismiss();
+          unNative.toast('Saved');
+        });
+        form.querySelector('[data-act="locked"]').addEventListener('click', function () {
+          var inner = document.createElement('div');
+          inner.innerHTML =
+            '<div class="text-base font-semibold mb-2">Must decide</div>' +
+            '<p class="text-sm text-zinc-500 mb-3">This one has <code>dismissible: false</code> — backdrop taps and Escape do nothing; only the button closes it.</p>' +
+            '<button type="button" class="w-full px-4 py-2 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Close</button>';
+          var locked = unNative.presentModal({ contentEl: inner, dismissible: false });
+          inner.querySelector('button').addEventListener('click', function () { locked.dismiss(); });
+        });
+      });
+
+      // ── Toasts ─────────────────────────────────────────────────────
+      var toastCount = 0;
+      document.getElementById('toast-btn').addEventListener('click', function () {
+        toastCount += 1;
+        unNative.toast('Copied to clipboard (' + toastCount + ')');
+      });
+      document.getElementById('toast-action-btn').addEventListener('click', function () {
+        unNative.toast('Item deleted', {
+          action: {
+            label: 'Undo',
+            handler: function () {
+              document.getElementById('toast-result').textContent = 'Undo tapped.';
+            },
+          },
         });
       });
 

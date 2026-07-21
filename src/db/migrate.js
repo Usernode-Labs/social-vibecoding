@@ -37,6 +37,7 @@ async function migrate(config) {
   await seedStagingSharedSession(pool, config);
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
+  await seedStagingPlatformIssueDrafts(pool, config);
   await seedStagingDemoAppCard(pool);
   await seedStagingFailedApp(pool);
   await seedStagingForkLineage(pool);
@@ -1728,6 +1729,168 @@ async function seedStagingCcEstimateRun(pool, config) {
   }
 
   log.info('db', 'Staging CC-estimate fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId,
+  });
+}
+
+// #699: platform-issue draft-card fixture. The "Suggested platform report"
+// card only appears when a build agent escalates via
+// usernode-report-platform-issue, which a tester can't trigger on demand —
+// so seed one dev-chat session whose timeline carries all three card
+// shapes: a long (>300-char) PENDING draft that must show the
+// "Show full report" expand toggle, a short pending draft that must NOT,
+// and a FILED draft (fake issueUrl/issueNumber) proving resolved cards
+// stay expandable. chat_sessions is staging:private, so this is invisible
+// without seeding. Idempotent on the fixture branch name; strict no-op in
+// production. Testers should use Dismiss (not confirm) on the pending
+// cards — confirm would attempt a real GitHub call.
+async function seedStagingPlatformIssueDrafts(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging platform-issue-draft fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging platform-issue-draft fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const fixtureBranch = 'staging-fixture/platform-issue-drafts';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (existing.length) return;
+
+  const { rows: sessionRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, pr_title, status, created_at)
+     VALUES
+       ($1, $2, $3, '[staging fixture] Platform report cards demo', 'active',
+        NOW() - INTERVAL '50 minutes')
+     RETURNING id`,
+    [appId, owner.id, fixtureBranch]
+  );
+  const sessionId = sessionRows[0].id;
+
+  // ~1,500 chars — well past the 300-char preview clip, with a distinctive
+  // closing line so a tester can confirm they reached the end of the text.
+  const longBody = [
+    '[staging fixture] What is broken: the shared bridge intermittently fails',
+    'to resolve usernode.getNodeAddress() inside the native mobile WebView',
+    'when the app is reopened from the background. The promise neither',
+    'resolves nor rejects, so every flow that waits on a wallet address',
+    'hangs on a spinner until the user force-closes the app.',
+    '',
+    'How to reproduce: open any wallet-connected app inside the Usernode',
+    'mobile app, background it for at least ten minutes, then reopen it and',
+    'tap a flow that reads the node address. On iOS the WebView appears to',
+    'suspend the bridge message channel; queued postMessage calls made',
+    'before resume are silently dropped, and the bridge never re-issues',
+    'them. Desktop browsers are unaffected, which is why this reads as a',
+    'platform-level WebView lifecycle problem rather than an app bug.',
+    '',
+    'What the app needs: either the bridge should detect a resumed WebView',
+    'and replay (or reject) in-flight calls so apps can retry, or it should',
+    'expose a lifecycle event apps can listen to. Any app-side workaround',
+    'would just be a timeout guessing at the platform state, which the',
+    'conventions say to escalate instead of faking.',
+    '',
+    'Which app/flow hit it: the demo wallet flow in this fixture session.',
+    'END OF STAGING DEMO REPORT — if you can read this line, the full',
+    'report text is visible.',
+  ].join('\n');
+
+  const shortBody =
+    '[staging fixture] The staging preview banner overlaps the app\'s own '
+    + 'fixed header on narrow phones. Short report — no expand toggle.';
+
+  const filedBody = [
+    '[staging fixture] The checks gate reports "still running" forever when',
+    'a declared test navigates to a route that redirects off-origin. The',
+    'headless runner follows the redirect, the origin check rejects it, and',
+    'the run is never marked finished, so the proposal stays blocked with no',
+    'error surfaced to the user. Reproduce by declaring a dapp.json test',
+    'whose path 302s to an external URL and pushing any proposal. Expected:',
+    'the run fails fast with a clear "off-origin redirect" message instead',
+    'of hanging the merge gate. This body is intentionally longer than the',
+    'preview clip so the resolved (already-filed) card also demonstrates the',
+    'expandable full-report view for text a user may want to re-read after',
+    'the fact. END OF STAGING DEMO REPORT — full text visible.',
+  ].join(' ');
+
+  const drafts = [
+    {
+      minutesAgo: 45,
+      draft: {
+        title: 'Staging demo: bridge calls hang after WebView resume',
+        body: longBody,
+        status: 'pending',
+        appSlug: 'staging-demo-app',
+        appName: 'Staging demo app',
+      },
+    },
+    {
+      minutesAgo: 40,
+      draft: {
+        title: 'Staging demo: preview banner overlaps fixed headers',
+        body: shortBody,
+        status: 'pending',
+        appSlug: 'staging-demo-app',
+        appName: 'Staging demo app',
+      },
+    },
+    {
+      minutesAgo: 35,
+      draft: {
+        title: 'Staging demo: checks gate hangs on off-origin redirects',
+        body: filedBody,
+        status: 'filed',
+        appSlug: 'staging-demo-app',
+        appName: 'Staging demo app',
+        issueUrl: 'https://github.com/example/staging-demo/issues/9001',
+        issueNumber: 9001,
+      },
+    },
+  ];
+
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'user', $2, '{}', NOW() - INTERVAL '48 minutes')`,
+    [sessionId, '[staging fixture] Please wire the wallet flow into the demo screen.']
+  );
+  for (const d of drafts) {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+       VALUES ($1, 'system', $2, $3, NOW() - ($4::int * INTERVAL '1 minute'))`,
+      [
+        sessionId,
+        'The AI suggests reporting this to the platform',
+        JSON.stringify({ platformIssueDraft: d.draft }),
+        d.minutesAgo,
+      ]
+    );
+  }
+
+  log.info('db', 'Staging platform-issue-draft fixture seeded', {
     appId,
     owner: owner.username,
     sessionId,

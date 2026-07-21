@@ -2588,8 +2588,27 @@ const DevChat = {
           const d = msg.platformIssueDraft;
           const pTs = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const pId = msg.id || msg._slug || '';
-          const bodyPreview = String(d.body || '').length > 300
-            ? `${String(d.body).slice(0, 300)}…` : String(d.body || '');
+          // #699: bodies longer than the 300-char preview render as a
+          // <details>: the summary holds the preview plus a "Show full
+          // report" cue (hidden while open), the content holds the
+          // remainder, so the open state reads as one continuous text.
+          // data-persist-id keeps the open state across the full-innerHTML
+          // re-renders renderMessages does mid-turn (and across reloads).
+          const fullBody = String(d.body || '');
+          let bodyHtml = '';
+          if (fullBody.length > 300) {
+            // Back the clip up to the last whitespace before 300 (when one
+            // exists past 200) so the collapsed cut — and the seam between
+            // summary and remainder when open — falls between words.
+            let clip = 300;
+            const ws = Math.max(
+              fullBody.lastIndexOf(' ', 300), fullBody.lastIndexOf('\n', 300));
+            if (ws > 200) clip = ws;
+            const pid = DevChat._detailsId(msg, 'pireport');
+            bodyHtml = `<details class="dc-pi-report" data-persist-id="${pid}"><summary class="dc-pi-report-summary">${escapeHtml(fullBody.slice(0, clip))}<span class="dc-pi-report-cue">… Show full report</span></summary><div class="dc-pi-report-rest">${escapeHtml(fullBody.slice(clip))}</div></details>`;
+          } else if (fullBody) {
+            bodyHtml = `<div style="font-size:13px;color:var(--text-muted);white-space:pre-wrap;margin-bottom:6px">${escapeHtml(fullBody)}</div>`;
+          }
           let actionsHtml = '';
           if (d.status === 'filed' && d.issueUrl) {
             actionsHtml = `<a href="${escapeHtml(d.issueUrl)}" target="_blank" class="dc-pr-btn dc-pr-btn-preview" style="text-decoration:none">Reported — issue #${d.issueNumber}</a>`;
@@ -2609,7 +2628,7 @@ const DevChat = {
                 <span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em">Suggested platform report</span>
               </div>
               <div style="font-weight:600;margin:4px 0 2px">${escapeHtml(d.title || '')}</div>
-              ${bodyPreview ? `<div style="font-size:13px;color:var(--text-muted);white-space:pre-wrap;margin-bottom:6px">${escapeHtml(bodyPreview)}</div>` : ''}
+              ${bodyHtml}
               <div class="dc-pr-card-actions">${actionsHtml}</div>
             </div>`;
         }
@@ -3248,6 +3267,17 @@ const DevChat = {
           },
           image({ href, title, text }) {
             const safeText = esc(text || '');
+            // #683: opt-in inline images (renderMarkdown's images option,
+            // consulted via the per-parse flag below — the registered
+            // renderers are global). Used for issue bodies so attached
+            // screenshots render in the topic view. Only https URLs and
+            // same-origin absolute paths qualify; everything else keeps
+            // the legacy link/text degradation.
+            const inlineOk = DevChat._renderImagesInline
+              && (/^https:\/\//i.test(href) || (/^\/[^/]/.test(href)));
+            if (inlineOk) {
+              return `<img class="dc-inline-img" src="${esc(href)}" alt="${safeText}" loading="lazy">`;
+            }
             if (!/^https?:\/\//i.test(href)) return safeText;
             return `<a href="${href}" target="_blank" rel="noopener noreferrer">${safeText || esc(href)}</a>`;
           },
@@ -3270,14 +3300,25 @@ const DevChat = {
 
     // breaks is overridden per-call (the global default set above is true);
     // the registered renderers persist regardless of the per-parse options.
-    const html = marked.parse(text, { breaks });
+    // #683: `images: true` (issue bodies) lets markdown images render
+    // inline — the flag is read by the global image renderer above during
+    // this synchronous parse, and 'img' joins the sanitizer allowlist.
+    const allowImages = !!opts.images;
+    DevChat._renderImagesInline = allowImages;
+    let html;
+    try {
+      html = marked.parse(text, { breaks });
+    } finally {
+      DevChat._renderImagesInline = false;
+    }
 
     return DOMPurify.sanitize(html, {
       ALLOWED_TAGS: ['a', 'b', 'strong', 'i', 'em', 'code', 'pre', 'h3', 'h4', 'h5',
         'p', 'br', 'ol', 'ul', 'li', 'div', 'span', 'table', 'thead', 'tbody',
-        'tr', 'th', 'td', 'hr', 'del'],
+        'tr', 'th', 'td', 'hr', 'del', ...(allowImages ? ['img'] : [])],
       // 'start' keeps non-1 ordered lists numbering correctly (F2).
-      ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'start'],
+      ALLOWED_ATTR: ['class', 'href', 'target', 'rel', 'start',
+        ...(allowImages ? ['src', 'alt', 'loading'] : [])],
       ALLOW_DATA_ATTR: false,
     });
   },

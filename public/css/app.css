@@ -317,6 +317,8 @@ html, body {
 
 /* Tables (F1): styled by class, not by .dc-msg-content ancestry, so they
    render identically in chat, the spec preview snippet, and the viewer. */
+/* #683: inline markdown images (issue-body screenshot embeds). */
+.dc-inline-img { max-width: 100%; max-height: 320px; border-radius: 8px; margin: 6px 0; display: block; }
 .dc-table { border-collapse: collapse; margin: 8px 0; width: 100%; font-size: 13px; display: block; overflow-x: auto; }
 .dc-table th, .dc-table td { border: 1px solid var(--border-light); padding: 4px 8px; text-align: left; }
 .dc-table th { font-weight: 600; color: var(--text-primary); background: var(--bg-code-header); }
@@ -431,6 +433,34 @@ html, body {
 .dc-pr-title { font-size: 13px; color: var(--text); font-weight: 500; }
 
 .dc-pr-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* #699: expandable report body on the platform-issue draft card. The
+   <summary> holds the 300-char preview plus a "Show full report" cue;
+   opening reveals the remainder so the text reads continuously (the cue
+   hides while open). Open state persists via data-persist-id — see
+   _applyDetailsPersistence in dev-chat.js. */
+.dc-pi-report { margin: 0 0 6px; }
+.dc-pi-report-summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+.dc-pi-report-summary::-webkit-details-marker { display: none; }
+.dc-pi-report-cue {
+  color: var(--accent);
+  font-size: 12px;
+  user-select: none;
+  white-space: nowrap;
+}
+.dc-pi-report-cue:hover { color: var(--accent-light); }
+.dc-pi-report[open] .dc-pi-report-cue { display: none; }
+.dc-pi-report-rest {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
 
 .dc-pr-btn {
   padding: 6px 12px;

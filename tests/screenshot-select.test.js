@@ -1,0 +1,274 @@
+// Tests for the pure geometry / detection / solve functions behind the
+// feedback modal's drag-to-select screenshot capture (#683) —
+// public/js/screenshot-select.js exports them via its module.exports
+// branch (same convention as public/sw.js's classifyRequest).
+//
+// Covered:
+//   - directMapping / applyMapping: identity, 2x DPR, non-integer scale
+//     (browser zoom), edge clamping, degenerate rects.
+//   - detectMarkers: four synthetic finder patterns found within
+//     tolerance at 1x and 2x scale, with noise, on light and dark
+//     backgrounds; 3 markers / occluded corner / all-black (minimized
+//     window) frames yield failure, never a partial solve.
+//   - solveRegistration: recovers scale+offset from four
+//     correspondences; skewed axis scales and outlier points fail
+//     validation.
+//
+// Run with: node --test tests/screenshot-select.test.js
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+
+const {
+  MARKER,
+  markerCssCenters,
+  directMapping,
+  applyMapping,
+  detectMarkers,
+  classifyCorners,
+  solveRegistration,
+} = require('../public/js/screenshot-select.js');
+
+// ── Mapping ──────────────────────────────────────────────────────────
+
+test('directMapping + applyMapping: identity at 1:1', () => {
+  const m = directMapping(800, 600, 800, 600);
+  const crop = applyMapping({ x: 10, y: 20, w: 100, h: 50 }, m, 800, 600);
+  assert.deepEqual(crop, { sx: 10, sy: 20, sw: 100, sh: 50 });
+});
+
+test('directMapping + applyMapping: 2x DPR scaling', () => {
+  const m = directMapping(800, 600, 1600, 1200);
+  const crop = applyMapping({ x: 10, y: 20, w: 100, h: 50 }, m, 1600, 1200);
+  assert.deepEqual(crop, { sx: 20, sy: 40, sw: 200, sh: 100 });
+});
+
+test('applyMapping: non-integer scale (browser zoom) rounds sanely', () => {
+  // 1.25x zoom on a 2x display → frame/viewport ratio of 1.6.
+  const m = directMapping(1000, 500, 1600, 800);
+  const crop = applyMapping({ x: 33, y: 41, w: 101, h: 57 }, m, 1600, 800);
+  assert.equal(crop.sx, Math.round(33 * 1.6));
+  assert.equal(crop.sy, Math.round(41 * 1.6));
+  // Width derives from the rounded edges, so it's within 1px of w*scale.
+  assert.ok(Math.abs(crop.sw - 101 * 1.6) <= 1);
+  assert.ok(Math.abs(crop.sh - 57 * 1.6) <= 1);
+});
+
+test('applyMapping: rect touching the viewport edge clamps to the frame', () => {
+  const m = directMapping(800, 600, 800, 600);
+  const crop = applyMapping({ x: 750, y: 580, w: 100, h: 100 }, m, 800, 600);
+  assert.deepEqual(crop, { sx: 750, sy: 580, sw: 50, sh: 20 });
+});
+
+test('applyMapping: fully out-of-frame or degenerate rect is null', () => {
+  const m = { scaleX: 1, scaleY: 1, offsetX: -500, offsetY: -500 };
+  assert.equal(applyMapping({ x: 0, y: 0, w: 100, h: 100 }, m, 800, 600), null);
+  const id = directMapping(800, 600, 800, 600);
+  assert.equal(applyMapping({ x: 10, y: 10, w: 0.2, h: 0.2 }, id, 800, 600), null);
+});
+
+// ── Synthetic frames for detection ──────────────────────────────────
+
+// Deterministic LCG so noise is reproducible.
+function makeRng(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 0xffffffff;
+  };
+}
+
+function makeFrame(width, height, gray) {
+  const data = new Uint8ClampedArray(width * height * 4);
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = gray; data[i + 1] = gray; data[i + 2] = gray; data[i + 3] = 255;
+  }
+  return { data, width, height };
+}
+
+function fillRect(frame, x, y, w, h, gray) {
+  const x1 = Math.max(0, Math.round(x));
+  const y1 = Math.max(0, Math.round(y));
+  const x2 = Math.min(frame.width, Math.round(x + w));
+  const y2 = Math.min(frame.height, Math.round(y + h));
+  for (let yy = y1; yy < y2; yy++) {
+    for (let xx = x1; xx < x2; xx++) {
+      const i = (yy * frame.width + xx) * 4;
+      frame.data[i] = gray; frame.data[i + 1] = gray; frame.data[i + 2] = gray;
+    }
+  }
+}
+
+// Draw a finder pattern (with its 2-module white quiet zone) centered at
+// (cx, cy) with the given module size in frame pixels.
+function drawFinder(frame, cx, cy, m) {
+  fillRect(frame, cx - 5.5 * m, cy - 5.5 * m, 11 * m, 11 * m, 245); // quiet zone
+  fillRect(frame, cx - 3.5 * m, cy - 3.5 * m, 7 * m, 7 * m, 10);    // dark border
+  fillRect(frame, cx - 2.5 * m, cy - 2.5 * m, 5 * m, 5 * m, 245);   // light ring
+  fillRect(frame, cx - 1.5 * m, cy - 1.5 * m, 3 * m, 3 * m, 10);    // dark center
+}
+
+function addNoise(frame, amplitude, seed) {
+  const rng = makeRng(seed);
+  for (let i = 0; i < frame.data.length; i += 4) {
+    const n = Math.round((rng() - 0.5) * 2 * amplitude);
+    for (let c = 0; c < 3; c++) {
+      frame.data[i + c] = Math.max(0, Math.min(255, frame.data[i + c] + n));
+    }
+  }
+}
+
+// Build a simulated window/monitor capture of a viewport: markers drawn
+// at cssCenters mapped through (scale, offset).
+function buildRegistrationFrame({ viewportW, viewportH, scale, offsetX, offsetY, frameW, frameH, bg, noise, seed, skipCorner }) {
+  const frame = makeFrame(frameW, frameH, bg);
+  const centers = markerCssCenters(viewportW, viewportH);
+  for (const key of ['tl', 'tr', 'bl', 'br']) {
+    if (key === skipCorner) continue;
+    const c = centers[key];
+    drawFinder(frame, c.x * scale + offsetX, c.y * scale + offsetY, MARKER.MODULE * scale);
+  }
+  if (noise) addNoise(frame, noise, seed || 42);
+  return { frame, centers };
+}
+
+function assertMarkersMatch(detected, centers, scale, offsetX, offsetY, tolPx) {
+  assert.equal(detected.length, 4, `expected 4 markers, got ${detected.length}`);
+  const corners = classifyCorners(detected);
+  assert.ok(corners, 'corner classification failed');
+  for (const key of ['tl', 'tr', 'bl', 'br']) {
+    const expX = centers[key].x * scale + offsetX;
+    const expY = centers[key].y * scale + offsetY;
+    const err = Math.hypot(corners[key].x - expX, corners[key].y - expY);
+    assert.ok(err <= tolPx, `${key} off by ${err.toFixed(1)}px (tol ${tolPx})`);
+  }
+}
+
+// ── Detection ────────────────────────────────────────────────────────
+
+test('detectMarkers: four markers at 1x on a light background', () => {
+  const { frame, centers } = buildRegistrationFrame({
+    viewportW: 400, viewportH: 300, scale: 1, offsetX: 30, offsetY: 25,
+    frameW: 480, frameH: 380, bg: 220, noise: 8, seed: 7,
+  });
+  const detected = detectMarkers(frame);
+  assertMarkersMatch(detected, centers, 1, 30, 25, 4);
+});
+
+test('detectMarkers: four markers at 2x on a dark background with noise', () => {
+  const { frame, centers } = buildRegistrationFrame({
+    viewportW: 400, viewportH: 300, scale: 2, offsetX: 90, offsetY: 60,
+    frameW: 1000, frameH: 760, bg: 35, noise: 10, seed: 13,
+  });
+  const detected = detectMarkers(frame);
+  assertMarkersMatch(detected, centers, 2, 90, 60, 6);
+});
+
+test('detectMarkers + solveRegistration: end-to-end recovers the mapping', () => {
+  const scale = 1.5;
+  const offsetX = 64;
+  const offsetY = 48;
+  const { frame, centers } = buildRegistrationFrame({
+    viewportW: 500, viewportH: 360, scale, offsetX, offsetY,
+    frameW: 900, frameH: 640, bg: 200, noise: 6, seed: 3,
+  });
+  const detected = detectMarkers(frame);
+  const solved = solveRegistration(detected, centers, frame.width, frame.height);
+  assert.ok(solved.ok, `solve failed: ${solved.reason}`);
+  assert.ok(Math.abs(solved.mapping.scaleX - scale) < 0.05);
+  assert.ok(Math.abs(solved.mapping.scaleY - scale) < 0.05);
+  assert.ok(Math.abs(solved.mapping.offsetX - offsetX) < 6);
+  assert.ok(Math.abs(solved.mapping.offsetY - offsetY) < 6);
+  // And a crop through the solved mapping lands where it should.
+  const crop = applyMapping({ x: 100, y: 80, w: 200, h: 120 }, solved.mapping, frame.width, frame.height);
+  assert.ok(Math.abs(crop.sx - (100 * scale + offsetX)) <= 6);
+  assert.ok(Math.abs(crop.sy - (80 * scale + offsetY)) <= 6);
+});
+
+test('detectMarkers: only 3 markers → solve fails, never a partial solve', () => {
+  const { frame, centers } = buildRegistrationFrame({
+    viewportW: 400, viewportH: 300, scale: 1, offsetX: 40, offsetY: 40,
+    frameW: 500, frameH: 400, bg: 220, skipCorner: 'br',
+  });
+  const detected = detectMarkers(frame);
+  assert.equal(detected.length, 3);
+  const solved = solveRegistration(detected, centers, frame.width, frame.height);
+  assert.equal(solved.ok, false);
+});
+
+test('detectMarkers: an occluded corner (marker covered) fails closed', () => {
+  const { frame, centers } = buildRegistrationFrame({
+    viewportW: 400, viewportH: 300, scale: 1, offsetX: 40, offsetY: 40,
+    frameW: 500, frameH: 400, bg: 220,
+  });
+  // Another window covers the bottom-right marker entirely.
+  const br = centers.br;
+  fillRect(frame, br.x + 40 - 60, br.y + 40 - 60, 140, 120, 128);
+  const detected = detectMarkers(frame);
+  assert.ok(detected.length < 4, `expected <4 markers, got ${detected.length}`);
+  const solved = solveRegistration(detected, centers, frame.width, frame.height);
+  assert.equal(solved.ok, false);
+});
+
+test('detectMarkers: all-black frame (minimized window) finds nothing', () => {
+  const frame = makeFrame(640, 480, 0);
+  assert.deepEqual(detectMarkers(frame), []);
+  const solved = solveRegistration([], markerCssCenters(400, 300), 640, 480);
+  assert.equal(solved.ok, false);
+});
+
+test('detectMarkers: five plausible patterns fail closed (>4 candidates)', () => {
+  const { frame, centers } = buildRegistrationFrame({
+    viewportW: 400, viewportH: 300, scale: 1, offsetX: 40, offsetY: 40,
+    frameW: 520, frameH: 420, bg: 220,
+  });
+  // Page content that happens to render its own finder pattern.
+  drawFinder(frame, 260, 210, MARKER.MODULE);
+  const detected = detectMarkers(frame);
+  assert.equal(detected.length, 5);
+  const solved = solveRegistration(detected, centers, frame.width, frame.height);
+  assert.equal(solved.ok, false);
+});
+
+// ── Solve validation ─────────────────────────────────────────────────
+
+function idealDetections(centers, scale, offsetX, offsetY) {
+  return ['tl', 'tr', 'bl', 'br'].map((k) => ({
+    x: centers[k].x * scale + offsetX,
+    y: centers[k].y * scale + offsetY,
+  }));
+}
+
+test('solveRegistration: exact recovery from clean correspondences', () => {
+  const centers = markerCssCenters(800, 600);
+  const solved = solveRegistration(idealDetections(centers, 2, 120, 80), centers, 2000, 1400);
+  assert.ok(solved.ok);
+  assert.ok(Math.abs(solved.mapping.scaleX - 2) < 1e-9);
+  assert.ok(Math.abs(solved.mapping.scaleY - 2) < 1e-9);
+  assert.ok(Math.abs(solved.mapping.offsetX - 120) < 1e-9);
+  assert.ok(Math.abs(solved.mapping.offsetY - 80) < 1e-9);
+});
+
+test('solveRegistration: unequal axis scales fail validation', () => {
+  const centers = markerCssCenters(800, 600);
+  const detected = ['tl', 'tr', 'bl', 'br'].map((k) => ({
+    x: centers[k].x * 2, // scaleX 2
+    y: centers[k].y * 1, // scaleY 1 → skew way past 10%
+  }));
+  const solved = solveRegistration(detected, centers, 2000, 1400);
+  assert.equal(solved.ok, false);
+});
+
+test('solveRegistration: one outlier point fails the residual check', () => {
+  const centers = markerCssCenters(800, 600);
+  const detected = idealDetections(centers, 2, 120, 80);
+  detected[3] = { x: detected[3].x + 80, y: detected[3].y }; // dragged marker
+  const solved = solveRegistration(detected, centers, 2000, 1400);
+  assert.equal(solved.ok, false);
+});
+
+test('solveRegistration: wrong marker count is rejected', () => {
+  const centers = markerCssCenters(800, 600);
+  assert.equal(solveRegistration(idealDetections(centers, 1, 0, 0).slice(0, 3), centers, 800, 600).ok, false);
+  assert.equal(solveRegistration([], centers, 800, 600).ok, false);
+});

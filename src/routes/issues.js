@@ -172,6 +172,17 @@ function stagingMockIssues(repoUrl) {
       + 'the most recent and is NOT part of the saved drag order, so it '
       + 'must appear at the top of the Issues column, above the manually '
       + 'ordered cards.', 1),
+    // #683: dedicated row for reviewing the inline screenshot embed in
+    // the topic view. Real filed issues embed the public
+    // /issue-images/:id URL; the mock points at an existing same-origin
+    // static asset so the image renders in a staging preview without an
+    // issue_screenshots row (staging:private → always empty).
+    mk(900010, '[Mock] issue with an attached screenshot',
+      'Staging-only mock issue for previewing the #683 screenshot embed: '
+      + 'the image below should render inline in the topic view, the '
+      + 'same way a reporter-captured screenshot attached from the '
+      + 'feedback modal does.\n\n'
+      + '**Screenshot:**\n![Screenshot](/icons/icon-192.png)', 4),
   ];
 }
 

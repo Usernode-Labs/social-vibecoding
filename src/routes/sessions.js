@@ -3634,8 +3634,17 @@ HEADLESS AUTO-SESSION MODE: you are running unattended on GitHub issue #${issueN
    ONLY if EVERY blocking question is human-only: reply in plain text containing ONLY the numbered clarifying questions with your suggested defaults, AND ALSO call suggest_answers for those questions. The suggest_answers call is metadata-only — it does NOT change the verbatim text posted to GitHub issue #${issueNumber}; it exists so the human who later starts a session from this proposal can tap the suggested answers. The visible text must still be ONLY the numbered questions with defaults. Your text reply will be posted verbatim as a comment on GitHub issue #${issueNumber} for the reporter to answer — write it for them (no greetings, no meta-talk about sessions or tools). Otherwise dispatch_scout per step 2.
 2. dispatch_scout when the issue passes the gate and needs investigation or design — OR when the gate failed for repo-answerable reasons (scouting is also the way to resolve ambiguity): produce a grounded spec a human will review later. Prefer this for anything non-trivial. After the scout returns you will get ONE follow-up decision turn where you may implement the spec immediately if it turned out straightforward — so scouting first never costs you the chance to ship; any questions surviving the scout's investigation will be posted to the issue from that decision turn, so failing the gate is not a reason to avoid scouting.
 3. dispatch_claude_code ONLY for small, unambiguous fixes the issue text fully specifies. The agent may commit and push its branch, and a staging preview is built from the pushed commit — but NO pull request is created in this mode; a human will start a session from this auto session later and propose the change (which opens the PR on their branch).
-Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.`;
+Never promise future work and never ask for confirmation — state what you did and what the human reviewer should do next.
+${SCREENSHOT_FETCH_NOTE}`;
 }
+
+// #683: issue bodies can embed a reporter-captured screenshot as a
+// markdown image on the platform's public /issue-images/:id route.
+// Mirrors the usernode-attachments image instruction (services/
+// attachments.js buildDispatchBlock): the worker has curl + outbound
+// network, and Claude Code's Read tool views local image files. Appended
+// to the headless addendum and both worker prompts (scout + build).
+const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `https://…/issue-images/<id>` (a **Screenshot:** image line), it is a screenshot the reporter captured as context — the agent working the issue should download it with `curl -sS -o /tmp/issue-screenshot.png <url>` (run via Bash) and use its Read tool on /tmp/issue-screenshot.png to view it before working.';
 
 // #170: the addendum for the headless DECISION turn — the one extra Mayor
 // call offered after a successful scout, where the run may proceed straight
@@ -5622,7 +5631,7 @@ USER REQUEST: "${userMessage}"${attachmentsBlock}
 
 You are running in PLAN MODE: you can read files (Read, Glob, Grep) but you cannot edit, commit, or push anything. Do not attempt to.${personalFilesNote}${revisionBlock}
 
-A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way.
+A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Use it if the open issues are relevant context for this spec; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
 ${prodDebug ? `
 ${debugAccess.promptBlock()}
 ` : ''}
@@ -6078,7 +6087,7 @@ in dev-chat you already have those rules injected above, so ignore
 that instruction here. It's for humans or Claude Code invocations
 that run against this repo outside the harness.${personalFilesNote}
 
-A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way.
+A read-only helper \`usernode-issues\` is available (run it via Bash) — it prints the repo's open GitHub issues as JSON (\`{ issues: [{ number, title, body, labels, updatedAt, htmlUrl }], truncatedList }\`); long bodies are clipped with a "[truncated …]" marker, and \`usernode-issues <number>\` fetches that one issue with its FULL body (\`{ issue, note? }\`). Consult it if an open issue is relevant to what you're building; do not try to reach GitHub any other way. ${SCREENSHOT_FETCH_NOTE}
 
 A build-turn helper \`usernode-report-platform-issue\` is also available (run it via Bash): \`usernode-report-platform-issue "<short title>"\` with the issue detail on stdin. Use it for anything that needs a change OUTSIDE this app's repo — both platform-level breakage (the shared bridge, wallet / native mobile WebView, the staging/preview pipeline, the checks gate) AND missing platform capabilities the app needs (feature requests: a bridge API that doesn't exist, data the platform doesn't expose, a limit blocking a legitimate feature) — see "Platform-level problems & missing capabilities: escalate, don't file workarounds" in the conventions above. It does NOT file anything directly: it posts a draft report card into the dev chat that the user must tap to confirm (or dismiss) before an issue is filed on the platform repo. It de-dupes against open reports and earlier drafts. The one hard rule: never use it for something you can fix in this app itself.
 ${prodDebug ? `

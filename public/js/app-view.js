@@ -15,6 +15,12 @@ const AppView = {
   activeSeconds: 0,
   iframeFocused: false,
 
+  // #685: the WindowProxy that announced a usernode.issueState provider
+  // (`available` via postMessage). Kept as the source object — not a
+  // boolean — so the feedback modal can verify at open time that the
+  // announcing frame is still the mounted production iframe.
+  _issueStateSource: null,
+
   // Open-issues state. `_ghIssues` caches the last-fetched GitHub issue
   // list (with bounty_count/my_bounty) so feed paging and the
   // give-bounty optimistic update can re-render without a refetch.
@@ -294,6 +300,7 @@ const AppView = {
   close() {
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
+    AppView._issueStateSource = null;
     GroupChat.disconnect();
     // Drop any in-memory dev-chat session state belonging to the app
     // we're leaving. Without this, opening a different app and clicking
@@ -347,6 +354,12 @@ const AppView = {
   renderAppTab() {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
+
+    // #685: every render replaces the iframe (or removes it), so any
+    // prior issue-state announcement is stale. A WindowProxy keeps its
+    // identity across same-iframe navigations, so clearing here (not
+    // just on close) is what invalidates it on re-render.
+    AppView._issueStateSource = null;
 
     if (!appData || appData.status !== 'running' || !appData.url) {
       let inner;
@@ -3639,8 +3652,10 @@ const AppView = {
   // The issue's body (GitHub markdown), rendered in the topic
   // sub-view between the header card and the thread.
   _issueBodyHtml(issue) {
+    // #683: images opt-in so attached screenshots (the **Screenshot:**
+    // embed appended by routes/feedback.js) render inline.
     const renderMd = (typeof DevChat !== 'undefined' && DevChat.renderMarkdown)
-      ? (s) => DevChat.renderMarkdown(s)
+      ? (s) => DevChat.renderMarkdown(s, { images: true })
       : (s) => `<pre class="whitespace-pre-wrap font-sans">${escapeHtml(s)}</pre>`;
     return issue && issue.body && issue.body.trim()
       ? `<div class="dev-issue-body text-xs text-zinc-600 dark:text-zinc-300 border border-zinc-200 dark:border-zinc-800 rounded-xl p-3 mt-2">${renderMd(issue.body)}</div>`
@@ -8731,6 +8746,78 @@ const AppView = {
     }
   },
 
+  // ── Issue-state snapshots (issue #685) ─────────────────────────────
+  //
+  // The bridge's usernode.issueState.register() posts an `available`
+  // announcement from the app iframe; the feedback modal shows its
+  // "Include app state" checkbox only while the announcing frame is
+  // still the mounted production iframe, and asks for the snapshot at
+  // submit time via a `collect` request. Wired through the same
+  // top-level message listener as the LLM consent relay below.
+  //
+  // Production iframe only — the staging preview is deliberately
+  // excluded: a snapshot from a PR preview labeled as app state would
+  // be misleading on a production-repo issue.
+
+  handleIssueStateMessage(e) {
+    const data = e.data;
+    if (!data) return;
+    const type = data.__usernode_issue_state;
+    if (type !== 'available' && type !== 'unavailable') return;
+    const appIframe = document.getElementById('app-iframe');
+    if (!appIframe || e.source !== appIframe.contentWindow) return;
+    AppView._issueStateSource = type === 'available' ? e.source : null;
+  },
+
+  // True iff a provider announced itself from the currently mounted
+  // production iframe. The App tab tears its iframe down on every tab
+  // switch (renderAppTab rewrites content.innerHTML), so this is
+  // naturally false on the Dev screen, where there's no live app to
+  // snapshot.
+  issueStateAvailable() {
+    if (!AppView._issueStateSource) return false;
+    const appIframe = document.getElementById('app-iframe');
+    return !!appIframe && appIframe.contentWindow === AppView._issueStateSource;
+  },
+
+  // Ask the app for its state snapshot. Resolves { json, truncated } or
+  // null — never rejects, and never waits past 5 s: filing an issue
+  // must not block on a frozen app. No ack leg (unlike the LLM flow) —
+  // there's no human decision in the middle, just the provider call.
+  collectIssueState() {
+    return new Promise((resolve) => {
+      if (!AppView.issueStateAvailable()) return resolve(null);
+      const target = AppView._issueStateSource;
+      const id = `issue-state-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      let settled = false;
+      let timer = null;
+      const onMessage = (e) => {
+        if (e.source !== target) return;
+        const data = e.data;
+        if (!data || data.__usernode_issue_state !== 'response' || data.id !== id) return;
+        if (data.error || !data.value || typeof data.value.json !== 'string') {
+          finish(null);
+          return;
+        }
+        finish({ json: data.value.json, truncated: !!data.value.truncated });
+      };
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener('message', onMessage);
+        if (timer) clearTimeout(timer);
+        resolve(value);
+      };
+      timer = setTimeout(() => finish(null), 5000);
+      window.addEventListener('message', onMessage);
+      try {
+        target.postMessage({ __usernode_issue_state: 'collect', id }, '*');
+      } catch {
+        finish(null);
+      }
+    });
+  },
+
   // Singleton consent dialog, same scrim/card pattern as
   // confirm-modal.js. Resolves { dailyCapCents, allowByok } on Allow,
   // null on "Not now" / backdrop / Esc.
@@ -8833,6 +8920,8 @@ const AppView = {
 if (typeof window !== 'undefined') {
   window.addEventListener('message', (e) => {
     try { AppView.handleLlmBridgeMessage(e); } catch {}
+    // #685: issue-state availability announcements from the app iframe.
+    try { AppView.handleIssueStateMessage(e); } catch {}
   });
 }
 

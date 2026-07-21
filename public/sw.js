@@ -65,6 +65,7 @@ const SHELL_ASSETS = [
   '/js/notifications.js',
   '/js/offline.js',
   '/js/proposal-discuss.js',
+  '/js/screenshot-select.js',
   '/js/settings.js',
   '/js/spec-sections.js',
   '/js/streaming-markdown.js',
