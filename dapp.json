@@ -118,6 +118,11 @@
       "expectText": "Merge debug"
     },
     {
+      "name": "Merge debug pr_closed badge renders on the demo run",
+      "path": "/debug?demo=1",
+      "expectText": "PR closed"
+    },
+    {
       "name": "Submitted features page renders",
       "path": "/admin-features?demo=1",
       "expectText": "Submitted features"
@@ -228,6 +233,12 @@
       "name": "Checks-starting mock proposal shows the in-progress badge",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Checks starting"
+    },
+    {
+      "name": "Group-chat attachments render: image thumbnail + file chips (#694)",
+      "path": "/app/usernode-2d5619/dev/chat",
+      "expectSelector": ".dc-msg-attachments",
+      "expectText": "staging-demo-notes.md"
     },
     {
       "name": "Chromeless share-link view renders the Open-in-Usernode pill",

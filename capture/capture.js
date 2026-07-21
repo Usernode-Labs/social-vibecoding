@@ -469,6 +469,9 @@ function resolveTests(env) {
 // loads (the #381 baseline, now per-test), then evaluates the optional
 // presence assertions. Emits exactly one __USERNODE_TEST__ frame. Never
 // throws — an unexpected error is itself reported as a failed test.
+// `browser` may be a Browser or a BrowserContext (both expose newPage) —
+// main() passes the tests-only context so screenshot cookies can't bleed
+// into test navigations (see the isolation comment at the call site).
 async function runTest(browser, test) {
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
@@ -610,8 +613,20 @@ async function main() {
     // #47: run the declared test suite (assertions + per-test console
     // check). Sequential, one page each; per-test failures stay independent
     // and a thrown test is reported as a failed frame, never aborts the run.
+    //
+    // Tests get their OWN browser context, isolated from the screenshot
+    // pages above. The screenshot pass navigates with the NON-admin capture
+    // token, and the self-app's staging auth exchanges that query token for
+    // a session COOKIE in the shared default context; the platform's auth
+    // is cookie-first, so a test navigation carrying the view-only-admin
+    // ?token= was silently downgraded to the non-admin identity — the
+    // admin-gated check pages rendered their "Admins only" gate instead of
+    // the content under test (the /debug "PR closed" badge check failed
+    // exactly this way). A fresh context starts with an empty cookie jar,
+    // so the first test navigation exchanges the admin token as intended.
+    const testContext = tests.length ? await browser.createBrowserContext() : null;
     for (const test of tests) {
-      await runTest(browser, test);
+      await runTest(testContext || browser, test);
     }
   } finally {
     await browser.close().catch(() => {});
