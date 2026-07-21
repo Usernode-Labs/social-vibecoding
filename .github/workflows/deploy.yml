@@ -67,6 +67,12 @@ jobs:
               - '.github/workflows/deploy.yml'
               - 'scripts/fetch-archive-snapshot.sh'
               - 'scripts/package-archive-snapshot.sh'
+            # caddy is only rebuilt when its image inputs change (#711).
+            # Caddyfile is deliberately NOT listed: it's a read-only
+            # mount, applied by the `caddy reload` step with no rebuild
+            # or container recreate needed.
+            caddy:
+              - 'caddy.Dockerfile'
 
       - name: Sync repo to VPS
         uses: easingthemes/ssh-deploy@v5.1.0
@@ -90,6 +96,8 @@ jobs:
           # string on workflow_dispatch when paths-filter doesn't run a
           # diff; treated as "false" by the script below.
           NODE_FILES_CHANGED: ${{ steps.changes.outputs.node }}
+          # Same deal for files that require rebuilding the caddy image.
+          CADDY_FILES_CHANGED: ${{ steps.changes.outputs.caddy }}
           # workflow_dispatch escape hatch. Unset on push events, in
           # which case `inputs.force_archive_refresh` evaluates to ''.
           FORCE_ARCHIVE_REFRESH: ${{ inputs.force_archive_refresh || 'false' }}
@@ -100,7 +108,7 @@ jobs:
           # Forward the gating flags into the remote shell — appleboy
           # /ssh-action only exports vars listed here, not the whole
           # job env.
-          envs: NODE_FILES_CHANGED,FORCE_ARCHIVE_REFRESH
+          envs: NODE_FILES_CHANGED,CADDY_FILES_CHANGED,FORCE_ARCHIVE_REFRESH
           # Archive fetch can take several minutes on a fresh seed; bump
           # the action's default 10m ceiling so it doesn't kill the deploy
           # mid-tar.
@@ -460,14 +468,43 @@ jobs:
               fi
             fi
 
-            # Bring everything up. Build is required on every deploy —
-            # the platform usernode image bakes in `COPY . .` so a
-            # rebuild is how new code gets in. If the conditional
-            # archive-refresh branch above already force-recreated
-            # usernode-node, this `up -d` is a no-op for that service.
-            # If the migration block above stopped usernode, this
-            # restarts it pointed at the new DB.
-            docker compose up -d --build --remove-orphans
+            # ----------------------------------------------------------
+            # Bring the stack up WITHOUT rebuilding caddy on routine
+            # deploys (#711). The old unscoped `up -d --build` rebuilt
+            # every buildable image, including usernode-caddy:acmedns —
+            # and xcaddy builds are not reproducible, so any build-cache
+            # eviction on the VPS minted a new image ID and compose
+            # recreated caddy: a full edge outage (TLS drop, every
+            # SSE/WS stream cut) on a deploy that didn't touch caddy at
+            # all.
+            #
+            # 1. Scoped `up usernode`: rebuild is required on every
+            #    deploy — the platform image bakes in `COPY . .`, so a
+            #    rebuild is how new code gets in. Recreates only the
+            #    platform container (and starts its depends_on services
+            #    if they're stopped). If the migration block above
+            #    stopped usernode, this restarts it pointed at the new
+            #    DB; if the archive-refresh branch already recreated
+            #    usernode-node, this is a no-op for that service.
+            # 2. Unscoped `up` WITHOUT --build: ensures caddy/acme-dns/
+            #    db/node are running and prunes orphans. Images are only
+            #    built here if they don't exist at all (green-field
+            #    first deploy), so an existing caddy container is never
+            #    recreated by this step.
+            # 3. caddy is rebuilt only when caddy.Dockerfile changed
+            #    (CADDY_FILES_CHANGED via the paths-filter step; empty
+            #    on workflow_dispatch → treated as false). Caddyfile
+            #    changes need no rebuild — the `caddy reload` below
+            #    applies them to the running container.
+            # ----------------------------------------------------------
+            docker compose up -d --build usernode
+            docker compose up -d --remove-orphans
+
+            if [ "${CADDY_FILES_CHANGED:-false}" = "true" ]; then
+              echo "==> caddy.Dockerfile changed; rebuilding + recreating caddy"
+              docker compose build caddy
+              docker compose up -d caddy
+            fi
 
             # Caddyfile is a read-only mount, so a rebuild of usernode
             # alone won't restart caddy. Force a config reload so any
