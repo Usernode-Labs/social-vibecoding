@@ -2345,33 +2345,77 @@ const DevChat = {
       btn.removeAttribute('aria-busy');
       if (originalLabel != null) btn.innerHTML = originalLabel;
     };
+    // #707: the request keeps running through navigation (no abort
+    // signal — the server does the work regardless, so let it finish),
+    // but the completion must be scoped to the session it was made
+    // for. Leaving the app nulls currentSession via reset(), and
+    // switching sessions replaces it; dereferencing it blindly after
+    // the await used to throw into the catch below and surface a
+    // spurious "Network error" alert on whatever page the user had
+    // moved to.
+    const sessionId = DevChat.currentSession.id;
+    const stillCurrent = () => Number(DevChat.currentSession?.id) === Number(sessionId);
     try {
-      const res = await fetch(`/api/sessions/${DevChat.currentSession.id}/promote`, { method: 'POST' });
+      const res = await fetch(`/api/sessions/${sessionId}/promote`, { method: 'POST' });
       if (res.ok) {
         // #183: promote may have lazily created the PR (sessions cloned
         // from a headless auto run arrive PR-less). Fold the returned PR
         // info into the session so the staging card header flips from
         // "Changes ready" to the PR link without a refetch.
         const data = await res.json().catch(() => ({}));
-        DevChat.currentSession.status = 'promoted';
-        if (data.prNumber) {
-          DevChat.currentSession.pr_number = data.prNumber;
-          if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
-          if (data.prTitle) {
-            DevChat.currentSession.pr_title = data.prTitle;
-            // #249: server mirrors pr_title into session_title.
-            DevChat.currentSession.session_title = data.prTitle;
+        if (stillCurrent()) {
+          DevChat.currentSession.status = 'promoted';
+          if (data.prNumber) {
+            DevChat.currentSession.pr_number = data.prNumber;
+            if (data.prUrl) DevChat.currentSession.pr_url = data.prUrl;
+            if (data.prTitle) {
+              DevChat.currentSession.pr_title = data.prTitle;
+              // #249: server mirrors pr_title into session_title.
+              DevChat.currentSession.session_title = data.prTitle;
+            }
+          }
+          DevChat.renderMessages();
+        } else {
+          // Stale success (user switched sessions mid-flight): never
+          // touch the now-current session. Best-effort fold into the
+          // session list row so its "in vote" pill is right without a
+          // refetch; after a full reset() the list is empty and the
+          // server state lands via loadSessions on re-entry.
+          const row = (DevChat.sessions || []).find((s) => Number(s.id) === Number(sessionId));
+          if (row) {
+            row.status = 'promoted';
+            if (data.prNumber) {
+              row.pr_number = data.prNumber;
+              if (data.prUrl) row.pr_url = data.prUrl;
+              if (data.prTitle) {
+                row.pr_title = data.prTitle;
+                row.session_title = data.prTitle;
+              }
+            }
           }
         }
-        DevChat.renderMessages();
       } else {
-        const data = await res.json();
-        alert(data.error || 'Failed to promote');
-        restoreBtn();
+        // Tolerate non-JSON error bodies (a proxy 502 HTML page) —
+        // res.json() throwing here used to masquerade as "Network error".
+        const data = await res.json().catch(() => ({}));
+        if (stillCurrent()) {
+          alert(data.error || 'Failed to promote');
+          restoreBtn();
+        } else {
+          // No context-free popup chasing the user to another page —
+          // the session stays 'active' server-side, so the un-proposed
+          // state is visible and retryable when they return.
+          console.warn('Propose failed after leaving the session:', data.error || `HTTP ${res.status}`);
+        }
       }
-    } catch {
-      alert('Network error');
-      restoreBtn();
+    } catch (err) {
+      if (stillCurrent()) {
+        alert('Network error');
+        restoreBtn();
+      } else {
+        // Stale rejection: swallow (the button node is detached DOM).
+        console.warn('Propose request failed after leaving the session:', err?.message || err);
+      }
     }
   },
 
