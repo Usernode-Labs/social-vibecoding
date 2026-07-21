@@ -180,6 +180,16 @@ function load() {
     // nothing observable until an operator flips this on (safe to test
     // in a staging preview first, then leave off in prod until sign-off).
     prImportEnabled: process.env.PR_IMPORT_ENABLED === 'true',
+    // #687 Slice 6: opt-in mock-GitHub adapter. When ON, the PR-import
+    // candidates/preview/import routes, the sync poller, and the imported
+    // merge path read from an explicit in-memory fake GitHub source (backed
+    // by the staging fixtures) instead of the real github.js client — so the
+    // full create → head-change → merge-409 flow is clickable in a preview
+    // with no real GitHub credentials. Separate opt-in from PR_IMPORT_ENABLED;
+    // default OFF everywhere, so production always uses the real client. Never
+    // gated on USERNODE_ENV in code — only the manifest value differs
+    // (dapp.json ships staging_default:"true", default:"false").
+    prImportMockGithub: process.env.PR_IMPORT_MOCK_GITHUB === 'true',
   };
 
   console.log('[config] Loaded:');
@@ -209,6 +219,7 @@ function load() {
   console.log(`  SELF_APP_CONTAINER=${config.selfAppContainer}`);
   console.log(`  SELF_APP_PUBLIC_VOTING=${config.selfAppPublicVoting} (Phase 4: ${config.selfAppPublicVoting ? 'enabled — all users can see + vote on self-app PRs' : 'disabled — self-app is admin-only'})`);
   console.log(`  PR_IMPORT_ENABLED=${config.prImportEnabled} (#687: ${config.prImportEnabled ? 'enabled — GitHub PRs can be imported as proposals' : 'disabled (default) — PR-import feature is dark'})`);
+  console.log(`  PR_IMPORT_MOCK_GITHUB=${config.prImportMockGithub} (#687 Slice 6: ${config.prImportMockGithub ? 'ON — imported-PR flow uses the in-memory mock GitHub source (preview testing)' : 'off (default) — real github.js client'})`);
 
   return config;
 }
@@ -222,4 +233,13 @@ function isPrImportEnabled() {
   return process.env.PR_IMPORT_ENABLED === 'true';
 }
 
-module.exports = { load, isPrImportEnabled };
+// #687 Slice 6: single accessor for the opt-in mock-GitHub adapter flag.
+// Read directly from env (like isPrImportEnabled) so it's stable regardless
+// of whether a caller holds the loaded config object. Only meaningful when
+// PR_IMPORT_ENABLED is also on (the imported flow it affects is itself
+// flag-gated). Default OFF → production always uses the real github client.
+function isPrImportMockGithubEnabled() {
+  return process.env.PR_IMPORT_MOCK_GITHUB === 'true';
+}
+
+module.exports = { load, isPrImportEnabled, isPrImportMockGithubEnabled };

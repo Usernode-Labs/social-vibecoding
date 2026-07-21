@@ -72,6 +72,22 @@
       "required": false,
       "private": true,
       "description": "Private counterpart to USERNODE_APP_PUBKEY. Pre-staged in deploy.yml so any future platform-originated wallet-send flow can use it without a redeploy — currently no runtime consumer reads it. Always set together with USERNODE_APP_PUBKEY. `private` blocks staging propagation: this key signs real on-chain transactions with real funds."
+    },
+    {
+      "key": "PR_IMPORT_ENABLED",
+      "required": false,
+      "private": true,
+      "default": "false",
+      "staging_default": "true",
+      "description": "#687 Slice 5 — master switch for importing an existing GitHub PR as a proposal. `private` + `staging_default:\"true\"` makes it ON in staging previews (so a reviewer can see the import entry-point and exercise the flag-gated flow) while `default:\"false\"` keeps it OFF in production until an operator explicitly stores \"true\". `private` also stops the prod store value from propagating into staging, so the staging-ON/prod-OFF asymmetry holds. NOT gated on USERNODE_ENV in code — isPrImportEnabled() just reads process.env.PR_IMPORT_ENABLED; only this manifest value differs per environment."
+    },
+    {
+      "key": "PR_IMPORT_MOCK_GITHUB",
+      "required": false,
+      "private": true,
+      "default": "false",
+      "staging_default": "true",
+      "description": "#687 Slice 6 — opt-in mock-GitHub adapter for the imported-PR flow. When \"true\", the candidates/preview/import routes, the sync poller, and the imported merge path read from an in-memory fake GitHub source (services/github-mock.js) backed by the staging fixtures, so the full create → head-change (tally reset + re-review) → merge-409 flow is clickable in a preview without real GitHub credentials. `staging_default:\"true\"` enables it in previews; `default:\"false\"` keeps production always on the real github.js client. Separate opt-in from PR_IMPORT_ENABLED and never gated on USERNODE_ENV in code."
     }
   ],
   "tests": [
@@ -325,6 +341,10 @@
       "name": "Offline banner element ships in the shell (#487)",
       "path": "/",
       "expectSelector": "#offline-banner"
+    },
+    {
+      "name": "PR-import: self-app dev proposals view loads with the flag on (#687)",
+      "path": "/app/usernode-2d5619/dev/proposals"
     }
   ],
   "governance": {

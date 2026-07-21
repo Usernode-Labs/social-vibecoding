@@ -25,11 +25,19 @@
 
 const log = require('./logger');
 const github = require('./github');
-const { isPrImportEnabled } = require('../config');
+const githubMock = require('./github-mock');
+const { isPrImportEnabled, isPrImportMockGithubEnabled } = require('../config');
 
 function parseRepo(url) {
   const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   return owner && repo ? { owner, repo } : null;
+}
+
+// #687 Slice 6: talk to the in-memory mock GitHub source only when its opt-in
+// flag is on (default off → the real client). Selection by manifest value
+// alone; never gated on USERNODE_ENV.
+function activeGithub() {
+  return isPrImportMockGithubEnabled() ? githubMock : github;
 }
 
 // Fetch the imported PR's current head SHA and, when it has moved since the
@@ -53,11 +61,12 @@ async function syncImportedProposal({ config, pool, session }) {
     if (!isPrImportEnabled()) return 'skipped';
     if (!session || session.source !== 'imported' || !session.pr_number) return 'skipped';
     const repo = parseRepo(session.repo_url);
-    if (!repo || !github.isEnabled()) return 'skipped';
+    const gh = activeGithub();
+    if (!repo || !gh.isEnabled()) return 'skipped';
 
     let pr;
     try {
-      pr = await github.getPR(repo.owner, repo.repo, session.pr_number);
+      pr = await gh.getPR(repo.owner, repo.repo, session.pr_number);
     } catch (err) {
       log.warn('pr-import-sync', 'getPR failed — will retry next sweep', {
         sessionId: session.id, prNumber: session.pr_number, err: err.message,
@@ -153,7 +162,7 @@ async function refreshDriftState({ pool, session, pr, repo }) {
 
   let behindBy = null;
   try {
-    const octokit = await github.getOctokit(repo.owner);
+    const octokit = await activeGithub().getOctokit(repo.owner);
     const { data } = await octokit.rest.repos.compareCommits({
       owner: repo.owner, repo: repo.repo, base, head,
     });
@@ -198,6 +207,18 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
       sessionId: session.id, err: err.message,
     }));
   visuals.notifyChecksPending(session.id, newHead);
+
+  // #687 Slice 6: in mock-GitHub mode there is no real repo to clone against
+  // the new head — record a gate-passing 'skipped' verdict instead of building
+  // staging, so the head-change flow stays clickable in a preview.
+  if (isPrImportMockGithubEnabled()) {
+    await visuals.storeChecksSkipped(pool, session.id, newHead,
+      'mock GitHub preview — automated checks not run')
+      .catch((err) => log.warn('pr-import-sync', 'mock storeChecksSkipped failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      }));
+    return;
+  }
 
   let result;
   try {

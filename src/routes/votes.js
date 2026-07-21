@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const github = require('../services/github');
+const githubMock = require('../services/github-mock');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
 const { checkAndResolveConflicts, isResolving } = require('../services/conflict-resolver');
@@ -12,7 +13,15 @@ const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const topicAttrs = require('../services/topic-attributes');
-const { isPrImportEnabled } = require('../config');
+const { isPrImportEnabled, isPrImportMockGithubEnabled } = require('../config');
+
+// #687 Slice 6: pick the GitHub client the imported-PR flow talks to. The
+// mock is consulted ONLY when its opt-in flag is on (default off everywhere,
+// so production always uses the real client). Selection is by manifest value
+// alone — never gated on USERNODE_ENV.
+function importGithubClient() {
+  return isPrImportMockGithubEnabled() ? githubMock : github;
+}
 
 // Staging-only mock PR proposals for GET /api/apps/:slug/promoted,
 // appended only when the request carries ?demo=1 (forwarded from the
@@ -906,6 +915,16 @@ function voteRoutes(config) {
       await visualsService.setChecksPending(pool, session.id, headSha || null)
         .catch((err) => log.warn('votes', 'import setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       visualsService.notifyChecksPending(session.id, headSha || null);
+      // #687 Slice 6: in mock-GitHub mode there is no real repo to clone, so
+      // skip the staging build entirely and record a gate-passing 'skipped'
+      // verdict — the imported proposal shows a neutral (mergeable) check so
+      // the whole preview flow (import → vote → merge) is exercisable.
+      if (isPrImportMockGithubEnabled()) {
+        await visualsService.storeChecksSkipped(pool, session.id, headSha || null,
+          'mock GitHub preview — automated checks not run')
+          .catch((err) => log.warn('votes', 'import mock storeChecksSkipped failed (non-fatal)', { sessionId: session.id, err: err.message }));
+        return;
+      }
       let result;
       try {
         result = await staging.buildAndDeployStaging(config, session, app, headSha || 'latest');
@@ -947,12 +966,13 @@ function voteRoutes(config) {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
       if (!app) return res.status(404).json({ error: 'App not found' });
       const repo = parseRepo(app.repo_url);
-      if (!github.isEnabled() || !repo) return res.json({ candidates: [] });
+      const gh = importGithubClient();
+      if (!gh.isEnabled() || !repo) return res.json({ candidates: [] });
 
       const imported = await importedPrNumbers(app.id);
       let pulls = [];
       try {
-        pulls = await github.listOpenPulls(repo.owner, repo.repo);
+        pulls = await gh.listOpenPulls(repo.owner, repo.repo);
       } catch (err) {
         log.warn('votes', 'listOpenPulls failed', { slug: req.params.slug, err: err.message });
         return res.json({ candidates: [] });
@@ -986,13 +1006,14 @@ function voteRoutes(config) {
       if (!Number.isFinite(prNumber) || prNumber <= 0) {
         return res.status(400).json({ error: 'A valid PR number is required' });
       }
-      if (!github.isEnabled() || !repo) {
+      const gh = importGithubClient();
+      if (!gh.isEnabled() || !repo) {
         return res.status(409).json({ error: 'GitHub is not configured for this app' });
       }
 
       let pr;
       try {
-        pr = await github.getPR(repo.owner, repo.repo, prNumber);
+        pr = await gh.getPR(repo.owner, repo.repo, prNumber);
       } catch (err) {
         return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
       }
@@ -1000,7 +1021,7 @@ function voteRoutes(config) {
       const baseRef = pr.base?.ref || 'main';
       let changedFiles = [];
       try {
-        changedFiles = await github.listChangedFiles(
+        changedFiles = await gh.listChangedFiles(
           repo.owner, repo.repo, `${baseRef}...${headSha || pr.head?.ref}`
         );
       } catch (err) {
@@ -1043,7 +1064,8 @@ function voteRoutes(config) {
       if (!Number.isFinite(prNumber) || prNumber <= 0) {
         return res.status(400).json({ error: 'A valid PR number is required' });
       }
-      if (!github.isEnabled() || !repo) {
+      const gh = importGithubClient();
+      if (!gh.isEnabled() || !repo) {
         return res.status(409).json({ error: 'GitHub is not configured for this app' });
       }
 
@@ -1055,7 +1077,7 @@ function voteRoutes(config) {
 
       let pr;
       try {
-        pr = await github.getPR(repo.owner, repo.repo, prNumber);
+        pr = await gh.getPR(repo.owner, repo.repo, prNumber);
       } catch (err) {
         return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
       }
@@ -1121,6 +1143,56 @@ function voteRoutes(config) {
       kickImportedChecks(session, appForBuild, headSha);
     } catch (err) {
       log.error('votes', 'PR-import failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #687 Slice 6: mock-control endpoint — simulate the external author
+  // pushing a new commit to an imported PR, so a preview reviewer can drive
+  // the head-change and merge-409 outcomes live (the sweeper would eventually
+  // do the same, but this makes it a click). Mounted always but 404 unless
+  // BOTH the master flag and the opt-in mock flag are on, so it can never do
+  // anything in production (mock flag default off there). Collab access.
+  //   body: { sessionId, mode }
+  //     mode 'push-and-sync' (default) — bump the mock head AND run the sync
+  //       poller path immediately: tally reset + "please re-review" note +
+  //       checks re-run, and imported_pr_head_sha advances to the new head.
+  //     mode 'push-only' — bump the mock head but DO NOT sync, leaving
+  //       imported_pr_head_sha stale so the next merge attempt hits the
+  //       exact-sha 409 (head-moved) path.
+  router.post('/api/apps/:slug/pr-import/_mock/advance', async (req, res) => {
+    try {
+      if (!isPrImportEnabled() || !isPrImportMockGithubEnabled()) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const sessionId = parseInt(req.body?.sessionId, 10);
+      const mode = req.body?.mode === 'push-only' ? 'push-only' : 'push-and-sync';
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ error: 'A valid sessionId is required' });
+      }
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+          WHERE cs.id = $1 AND cs.app_id = $2 AND cs.source = 'imported'`,
+        [sessionId, app.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Imported proposal not found' });
+      const session = rows[0];
+      if (!session.pr_number) return res.status(409).json({ error: 'Session has no PR number' });
+
+      const newHead = githubMock.bumpHead(session.pr_number);
+      let synced = false;
+      if (mode !== 'push-only') {
+        const prImportSync = require('../services/pr-import-sync');
+        const result = await prImportSync.syncImportedProposal({ config, pool, session });
+        synced = result === 'updated';
+      }
+      log.info('votes', 'Mock PR head advanced', { sessionId, prNumber: session.pr_number, mode, newHead, synced });
+      res.json({ ok: true, mode, newHead, synced });
+    } catch (err) {
+      log.error('votes', 'PR-import mock advance failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -2653,22 +2725,23 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
   try {
     // Merge PR on GitHub
-    if (github.isEnabled() && session.repo_url && session.pr_number) {
+    // #687 Slice 4/6: for an IMPORTED proposal, pin the merge to the exact
+    // reviewed commit (imported_pr_head_sha) so GitHub refuses (409) if the
+    // head moved. Slice 6: when the opt-in mock-GitHub flag is on, an imported
+    // merge talks to the in-memory mock client instead of the real one, so the
+    // 409/head-moved path is exercisable in a preview with no credentials.
+    // Native proposals ALWAYS use the real client with no sha (unchanged).
+    const isImported = isPrImportEnabled() && session.source === 'imported';
+    const useMockMerge = isImported && isPrImportMockGithubEnabled();
+    const mergeClient = useMockMerge ? githubMock : github;
+    if ((mergeClient.isEnabled() || useMockMerge) && session.repo_url && session.pr_number) {
       const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (owner && repo) {
-        // #687 Slice 4: for an IMPORTED proposal, pin the merge to the exact
-        // reviewed commit (imported_pr_head_sha). GitHub refuses (409) if the
-        // head moved since the vote, guaranteeing we never merge code newer
-        // than what won the vote. Native proposals pass no sha and keep the
-        // prior unconditional-squash behaviour byte-for-byte. Gated on the
-        // flag so a stray 'imported' row can't change native merge behaviour
-        // while the feature is dark.
-        const isImported = isPrImportEnabled() && session.source === 'imported';
         const pinnedSha = isImported ? (session.imported_pr_head_sha || null) : null;
-        dstep({ phase: 'github_merge', message: `Calling GitHub merge for PR #${session.pr_number}…`, detail: { owner, repo, pinnedSha } });
+        dstep({ phase: 'github_merge', message: `Calling GitHub merge for PR #${session.pr_number}…`, detail: { owner, repo, pinnedSha, mock: useMockMerge } });
         let mergeData;
         try {
-          mergeData = await github.mergePR(owner, repo, session.pr_number, pinnedSha);
+          mergeData = await mergeClient.mergePR(owner, repo, session.pr_number, pinnedSha);
         } catch (err) {
           // Head moved between the vote and the merge (only possible when a
           // sha was pinned, i.e. imported). Do NOT error the proposal: release
