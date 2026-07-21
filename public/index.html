@@ -780,6 +780,16 @@
             class="rounded-full w-6 h-6 flex items-center justify-center text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors">✕</button>
         </div>
       </div>
+      <!-- #685: opt-in app state snapshot. Hidden unless the open app has
+           registered a state provider via usernode.issueState.register()
+           AND the feedback target is "This app" (wired in app.js). -->
+      <div id="feedback-state-row" class="hidden mt-2">
+        <label class="flex items-start gap-2 cursor-pointer select-none">
+          <input id="feedback-state-checkbox" type="checkbox" checked
+            class="accent-violet-500 w-4 h-4 mt-0.5">
+          <span class="text-xs text-zinc-600 dark:text-zinc-400"><span class="font-medium text-zinc-700 dark:text-zinc-300">Include app state</span> &mdash; this app can attach a snapshot of its current state to help debugging</span>
+        </label>
+      </div>
       <div id="feedback-status" class="text-sm mt-2 hidden"></div>
       <div class="flex gap-3 mt-4">
         <button id="feedback-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>

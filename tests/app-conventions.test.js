@@ -42,6 +42,15 @@ test('conventions doc carries the escalation section, covering feature requests'
   assert.match(doc, /Feature requests are as valid as bug reports/);
 });
 
+test('conventions doc carries the issue-state snapshots section (#685)', () => {
+  const doc = getAppConventions();
+  assert.match(doc, /^## Issue-state snapshots — opt-in app state in filed issues$/m);
+  // The sanitization framing is load-bearing: registering the provider
+  // is the app's declaration that its snapshot is safe to publish.
+  assert.match(doc, /usernode\.issueState\.register/);
+  assert.match(doc, /PUBLIC GitHub issue bodies/);
+});
+
 test('build prompt cross-references the escalation heading by name', () => {
   const sessions = fs.readFileSync(
     path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8'
