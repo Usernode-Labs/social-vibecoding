@@ -368,11 +368,30 @@ const Home = {
     const govs = Array.isArray(data.governance) ? data.governance : [];
     if (!prs.length && !govs.length) return '';
 
-    const pill = (yes, majority, state) => {
+    const pill = (yes, majority, state, advisory) => {
       const cls = state === 'merging'
         ? 'bg-amber-500/10 text-amber-500'
         : (yes >= majority ? 'bg-emerald-500/10 text-emerald-500' : 'bg-violet-500/10 text-violet-400');
-      return `<span class="inline-flex items-center text-[0.7rem] font-mono font-medium px-1.5 py-0.5 rounded ${cls}">${yes} / ${majority}</span>`;
+      // #695: advisory (non-approver) surplus on invited-approver apps —
+      // a muted chip beside the pill, never inside the headline tally.
+      const adv = advisory > 0
+        ? ` <span class="inline-flex items-center text-[0.65rem] font-medium px-1 py-0.5 rounded bg-zinc-500/10 text-zinc-500 shrink-0" title="${advisory} advisory Yes vote${advisory === 1 ? '' : 's'} from non-approvers — they don't count toward merging">+${advisory} advisory</span>`
+        : '';
+      return `<span class="inline-flex items-center text-[0.7rem] font-mono font-medium px-1.5 py-0.5 rounded ${cls}">${yes} / ${majority}</span>${adv}`;
+    };
+
+    // #695: headline tally = the QUALIFYING (approver-only) count when the
+    // row carries one, against the per-row governed requirement
+    // (votes_required) rather than the raw active-user majority — matching
+    // voteCountPill's precedence. Advisory = the non-approver surplus.
+    const tally = (row, rawYes) => {
+      const yes = row.qualified_yes_count != null
+        ? (parseInt(row.qualified_yes_count) || 0) : (parseInt(rawYes) || 0);
+      const snap = parseInt(row.votes_required);
+      const target = (Number.isFinite(snap) && snap > 0) ? snap : (row.majority || 1);
+      const advisory = (row.approval_policy === 'invited' && row.qualified_yes_count != null)
+        ? Math.max(0, (parseInt(rawYes) || 0) - yes) : 0;
+      return { yes, target, advisory };
     };
 
     // #405: the merge-status chip is now driven by the shared MergeStatus
@@ -390,6 +409,7 @@ const Home = {
 
     let rows = '';
     for (const p of prs) {
+      const t = tally(p, p.yes_count);
       const title = p.pr_title || `PR #${p.pr_number || p.id}`;
       // Placeholder-title marker: AI naming was down when this PR was
       // titled; the title-heal sweeper regenerates it automatically.
@@ -403,16 +423,17 @@ const Home = {
           <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
           ${fallbackChip}
           ${lifeChip(p)}
-          ${pill(parseInt(p.yes_count) || 0, p.majority || 1, p.status)}
+          ${pill(t.yes, t.target, p.status, t.advisory)}
         </a>`;
     }
     for (const g of govs) {
+      const gt = tally(g, g.up_count);
       rows += `
         <a href="#app/${esc(g.app_slug)}/dev/proposals"
            class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
           <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(g.app_name)}</span>
           <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(g.title)}</span>
-          ${pill(parseInt(g.up_count) || 0, g.majority || 1, 'open')}
+          ${pill(gt.yes, gt.target, 'open', gt.advisory)}
           <span class="text-[0.65rem] font-medium text-violet-400 uppercase">In vote</span>
         </a>`;
     }

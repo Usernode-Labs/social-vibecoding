@@ -992,6 +992,33 @@ function sessionRoutes(config) {
         rows[0].active_users = stats?.active || 1;
       } catch { rows[0].majority = rows[0].majority || 1; }
 
+      // #695: governance-aware gate fields, mirroring /promoted, so the
+      // session header pill resolves In-vote / "Passed — merging shortly"
+      // from the QUALIFYING tally (approver votes only under
+      // approver_policy='invited') instead of the raw all-voters counts.
+      // Raw yes_count/no_count stay in the payload — the FE derives the
+      // advisory (non-approver) surplus as raw − qualified. Best-effort,
+      // same as the stats block above.
+      if (['promoted', 'merging', 'merged'].includes(rows[0].status)) {
+        try {
+          const governanceSvc = require('../services/governance');
+          const gov = await governanceSvc.getGovernance(pool, rows[0].app_id);
+          const electorate = await governanceSvc.getElectorate(pool, rows[0].app_id, gov);
+          const q = electorate.approverIds
+            ? await governanceSvc.qualifiedCounts(pool, 'pr', rows[0].id, electorate.approverIds)
+            : { yes: rows[0].yes_count, no: rows[0].no_count };
+          const gate = governanceSvc.computeGate(
+            gov, electorate.active, q.yes, q.no, rows[0].promoted_at || rows[0].created_at
+          );
+          rows[0].votes_required = gate.required;
+          rows[0].merge_window_ends_at = gate.windowEndsAt;
+          rows[0].approval_policy = gate.policy;
+          rows[0].approvals_required = gate.approvalsRequired;
+          rows[0].qualified_yes_count = gate.qualifiedYes;
+          rows[0].qualified_no_count = gate.qualifiedNo;
+        } catch { /* pill falls back to the raw tallies */ }
+      }
+
       // Viewing a session counts as activity so the auto-pause sweeper
       // doesn't pause a session the user is actively reading. Fire-and-
       // forget — the view shouldn't block on this write, and a missed

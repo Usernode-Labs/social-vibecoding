@@ -4085,6 +4085,20 @@ const AppView = {
       sentence = `It needs ${required} of ${active} active testers to vote Yes. ${tally}`;
     }
     if (blocker && !foldedBlocker) sentence += ` Note: ${blocker}.`;
+    // #695: invited-approver apps on the default clock — say who counts,
+    // and how many recorded votes are merely advisory.
+    if (pr.approval_policy === 'invited') {
+      sentence += ' Everyone can still vote, but only approvers’ votes count toward the target.';
+      const advisory = pr.qualified_yes_count != null
+        ? Math.max(0, (parseInt(pr.yes_count) || 0) - yes)
+          + Math.max(0, (parseInt(pr.no_count) || 0) - no)
+        : 0;
+      if (advisory > 0) {
+        sentence += advisory === 1
+          ? ' 1 advisory vote from a non-approver is recorded but doesn’t count.'
+          : ` ${advisory} advisory votes from non-approvers are recorded but don’t count.`;
+      }
+    }
     return sentence;
   },
 
@@ -4458,13 +4472,21 @@ const AppView = {
       votes_required: issue.votes_required,
       merge_window_ends_at: issue.merge_window_ends_at,
       contested: issue.contested,
+      // #695: qualifying (approver-only) tallies + policy so invited apps
+      // get the approver-only headline and the "+N advisory" chip.
+      qualified_yes_count: issue.qualified_yes_count,
+      qualified_no_count: issue.qualified_no_count,
+      approval_policy: issue.approval_policy,
+      approvals_required: issue.approvals_required,
       status: 'open',
     }, majority);
     // #621: read-only viewers see the tally pill only — no vote /
     // admin / withdraw controls.
     const ro = AppView.readOnly;
-    const yesBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upCount})</button>`;
-    const noBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}" onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downCount})</button>`;
+    const upT = AppView._voteBtnTally(issue.qualified_yes_count, upCount, issue.approval_policy, 'Yes');
+    const downT = AppView._voteBtnTally(issue.qualified_no_count, downCount, issue.approval_policy, 'No');
+    const yesBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}"${upT.title} onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upT.label})</button>`;
+    const noBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}"${downT.title} onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downT.label})</button>`;
     const adminBtn = (!ro && (issue.kind === 'secret_change' || isCloseIssue) && App.user?.canAdminWrite)
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
       : '';
@@ -4514,6 +4536,16 @@ const AppView = {
       const fmt = (arr) => (arr && arr.length
         ? arr.map((u) => '@' + u + (approverSet.has(u) ? '&nbsp;✓' : '')).join(', ')
         : '—');
+      // #695: on invited apps the headline count splits into approver
+      // votes (✓, the ones that count) + the advisory surplus; under the
+      // default policy it stays the plain total.
+      const rosterCount = (arr) => {
+        const names = arr || [];
+        if (!data.approvers) return `(${names.length})`;
+        const q = names.filter((u) => approverSet.has(u)).length;
+        const a = names.length - q;
+        return a > 0 ? `(${q}✓ + ${a} advisory)` : `(${q}✓)`;
+      };
       const pr = (AppView._proposals || []).find((p) => p.id === sessionId) || {};
       const needs = pr.approvals_required != null
         ? ` · needs at least ${pr.approvals_required} approval${pr.approvals_required === 1 ? '' : 's'}${data.approvers ? ' from invited approvers (✓)' : ''}`
@@ -4521,8 +4553,8 @@ const AppView = {
           ? ` · only invited approvers' (✓) votes count`
           : ` · needs ${ctx.majority || 1} of ${ctx.activeUsers || 1} active users`);
       el.innerHTML =
-        `<span class="text-emerald-500 font-medium">Yes (${(data.yes || []).length}):</span> ${fmt((data.yes || []).map((u) => escapeHtml(u)))}`
-        + ` &nbsp;<span class="text-red-400 font-medium">No (${(data.no || []).length}):</span> ${fmt((data.no || []).map((u) => escapeHtml(u)))}`
+        `<span class="text-emerald-500 font-medium">Yes ${rosterCount(data.yes)}:</span> ${fmt((data.yes || []).map((u) => escapeHtml(u)))}`
+        + ` &nbsp;<span class="text-red-400 font-medium">No ${rosterCount(data.no)}:</span> ${fmt((data.no || []).map((u) => escapeHtml(u)))}`
         + `<span class="text-zinc-500">${escapeHtml(needs)}</span>`;
     } catch {
       el.textContent = '';
@@ -6256,6 +6288,18 @@ const AppView = {
       ? (parseInt(pr.qualified_no_count) || 0) : (parseInt(pr.no_count) || 0);
     const state = yes >= maj ? 'yes' : no >= maj ? 'no' : 'pending';
 
+    // #695: on invited-approver apps, non-approver Yes votes are advisory —
+    // rendered as a muted chip beside the pill, never inside the headline
+    // tally. Suppressed on settled (merged/merging) rows: the vote is
+    // history there and the snapshot pill stands alone.
+    const advisoryYes = (pr.approval_policy === 'invited'
+        && pr.qualified_yes_count != null
+        && pr.status !== 'merged' && pr.status !== 'merging')
+      ? Math.max(0, (parseInt(pr.yes_count) || 0) - yes) : 0;
+    const advisoryChip = advisoryYes > 0
+      ? `<span class="gc-vote-advisory" title="${advisoryYes} advisory Yes vote${advisoryYes === 1 ? '' : 's'} from non-approvers — they don't count toward merging">+${advisoryYes} advisory</span>`
+      : '';
+
     // #646: "at least N" mode — a clock-free approvals-progress pill
     // ("x of N approvals"). The server never arms a merge/rejection
     // window in this mode, so the countdown branches below can't fire.
@@ -6272,7 +6316,7 @@ const AppView = {
       return `<span class="gc-vote-count gc-vote-count-${reached ? 'yes' : 'pending'}" title="${title}">`
         + fills
         + `<span class="gc-vote-count-label">${yes} of ${n} approval${n === 1 ? '' : 's'}</span>`
-        + `</span>`;
+        + `</span>` + advisoryChip;
     }
 
     // Countdown state: a merge clock is running. Two ways one arms (both
@@ -6305,7 +6349,7 @@ const AppView = {
         + ` title="${title}">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
         + `<span class="gc-vote-count-label">Merging in ${label}${suffix}</span>`
-        + `</span>`;
+        + `</span>` + advisoryChip;
     }
 
     // Rejection (auto-takedown) countdown: the group is voting this down
@@ -6321,7 +6365,7 @@ const AppView = {
         + ` title="More No than Yes and not enough support (${yes} / ${maj}) — closes when this elapses unless support arrives">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
         + `<span class="gc-vote-count-label">Rejecting in ${label}</span>`
-        + `</span>`;
+        + `</span>` + advisoryChip;
     }
     // #58: when both at-merge figures are present, surface the historical
     // context as a hover tooltip on the pill. Only merged rows carry these.
@@ -6345,7 +6389,7 @@ const AppView = {
     return `<span class="gc-vote-count gc-vote-count-${state}"${titleAttr}>`
       + fills
       + `<span class="gc-vote-count-label">${yes} / ${maj}</span>`
-      + `</span>`;
+      + `</span>` + advisoryChip;
   },
 
   // "Merging…" badge shown alongside (not instead of) the vote controls
@@ -6864,9 +6908,28 @@ const AppView = {
     const adminMerge = App.user?.canAdminWrite
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: merge this PR right now, bypassing the vote majority" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${pr.yes_count})</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}" onclick="AppView.castVote(${pr.id}, 'no')">No (${pr.no_count})</button>`;
+    const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
+    const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
+    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${yesT.label})</button>`;
+    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no')">No (${noT.label})</button>`;
     return preview + yesBtn + noBtn + adminMerge;
+  },
+
+  // #695: the Yes/No button tally. On invited-approver apps (row carries
+  // approval_policy='invited' + a qualifying count) the label splits into
+  // approver votes (✓, the ones that count) plus the advisory surplus —
+  // "1✓ +2" — with an explanatory tooltip. Everywhere else it's the raw
+  // total, unchanged. Returns { label, title } (title includes the
+  // leading space, or '' when not applicable).
+  _voteBtnTally(qualified, raw, policy, side) {
+    if (policy !== 'invited' || qualified == null) {
+      return { label: `${raw}`, title: '' };
+    }
+    const q = parseInt(qualified) || 0;
+    const a = Math.max(0, (parseInt(raw) || 0) - q);
+    const label = a > 0 ? `${q}✓ +${a}` : `${q}✓`;
+    const title = ` title="${q} approver ${side} vote${q === 1 ? '' : 's'} · ${a} advisory ${side} vote${a === 1 ? '' : 's'} (advisory votes don't count toward merging)"`;
+    return { label, title };
   },
 
   // Admin force-merge: bypass the active-user vote majority entirely

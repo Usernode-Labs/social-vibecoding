@@ -3795,7 +3795,11 @@ const DevChat = {
       // Lifecycle-relevant scalars decide whether anything visible changed;
       // copy them onto the live row either way.
       const watch = ['status', 'check_state', 'merge_conflict_state', 'behind_main',
-                     'yes_count', 'no_count', 'majority', 'merged_at'];
+                     'yes_count', 'no_count', 'majority', 'merged_at',
+                     // #695: governance-aware gate fields (approver-only
+                     // tallies + per-row requirement) the header pill reads.
+                     'votes_required', 'approval_policy', 'approvals_required',
+                     'qualified_yes_count', 'qualified_no_count', 'merge_window_ends_at'];
       let changed = false;
       for (const k of watch) {
         if (session[k] !== undefined && DevChat.currentSession[k] !== session[k]) changed = true;

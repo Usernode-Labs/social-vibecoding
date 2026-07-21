@@ -179,6 +179,21 @@ function stagingMockProposals(viewer) {
     mk(9000004, 900104,
       '[Mock] Make this app invite-only build, public to view',
       2, 1, 0, 1, { required: 2, windowEndsAt: hoursAhead(60) }),
+    // #695: the issue's exact report — an invited-approver row where MORE
+    // THAN ONE non-approver has voted and no approver has. The approver-only
+    // headline pill ("0 of 1 approvals"), the "+2 advisory" chip, and the
+    // "Yes (0✓ +2)" button labels are reviewable via ?demo=1 without
+    // hand-seeding an approver roster. (Sibling of 9000023, which shows the
+    // single-advisory-vote variant.)
+    {
+      ...mk(9000025, 900125,
+        '[Mock] Approver-mode test: two supporters, but no invited approver has voted yet',
+        2, 2, 0, 1, { required: 1 }),
+      approval_policy: 'invited',
+      approvals_required: 1,
+      qualified_yes_count: 0,
+      qualified_no_count: 0,
+    },
     // Auto-takedown — slim No majority (No just edges ahead of Yes, under the
     // 1/3 keep-alive line): long rejection window → "Rejecting in ~6d".
     mk(9000016, 900116,
@@ -1249,6 +1264,10 @@ function voteRoutes(config) {
           contested: gate.contested,
           approval_policy: gate.policy,
           approvals_required: gate.approvalsRequired,
+          // #695: qualifying tallies, matching the PR rows above, so the
+          // home strip pill counts approver votes only on invited apps.
+          qualified_yes_count: gate.qualifiedYes,
+          qualified_no_count: gate.qualifiedNo,
         });
       }
 

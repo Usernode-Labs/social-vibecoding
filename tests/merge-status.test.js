@@ -267,6 +267,67 @@ test('pillHtml: in-vote pill appends the tally; badgeHtml does not', () => {
   assert.doesNotMatch(MergeStatus.badgeHtml(life), /2\/5/);
 });
 
+// #695: the per-row votes_required (the governed gate's electorate-based
+// requirement, and the merge-time snapshot on merged rows) beats any
+// app-level majority — matching voteCountPill's precedence. On
+// invited-approver apps the app-level majority counts the wrong electorate.
+test('#695 — votes_required outranks opts.majority / p.majority', () => {
+  const life = MergeStatus.lifecycle(
+    { status: 'promoted', check_state: 'passing', yes_count: 1, votes_required: 1, majority: 3 },
+    { majority: 3 }
+  );
+  assert.equal(life.key, 'ready');
+  assert.equal(life.votes.majority, 1);
+  // Absent votes_required → app-level majority resolves as before.
+  assert.equal(
+    key({ status: 'promoted', check_state: 'passing', yes_count: 1, majority: 3 }),
+    'in_vote'
+  );
+});
+
+test('#695 — invited policy: qualified tally is the headline, surplus is advisory', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing',
+    yes_count: 2, qualified_yes_count: 0, votes_required: 1,
+    approval_policy: 'invited',
+  });
+  // Two non-approver Yes votes must NOT read as passed.
+  assert.equal(life.key, 'in_vote');
+  assert.equal(life.votes.yes, 0);
+  assert.equal(life.votes.advisory, 2);
+});
+
+test('#695 — advisory is only computed under the invited policy', () => {
+  const anyone = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing',
+    yes_count: 2, qualified_yes_count: 2, votes_required: 3,
+    approval_policy: 'anyone',
+  });
+  assert.equal(anyone.key, 'in_vote');
+  assert.equal(anyone.votes.advisory, undefined);
+  // No qualified count serialized → no advisory either, even when invited.
+  const stale = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing',
+    yes_count: 2, votes_required: 3, approval_policy: 'invited',
+  });
+  assert.equal(stale.votes.advisory, undefined);
+});
+
+test('#695 — pillHtml appends the muted +N advisory suffix to the in-vote tally', () => {
+  const life = MergeStatus.lifecycle({
+    status: 'promoted', check_state: 'passing',
+    yes_count: 3, qualified_yes_count: 1, votes_required: 2,
+    approval_policy: 'invited',
+  });
+  assert.equal(life.key, 'in_vote');
+  const pill = MergeStatus.pillHtml(life);
+  assert.match(pill, /In vote · 1\/2/);
+  assert.match(pill, /ms-advisory/);
+  assert.match(pill, /\+2</);
+  // The compact text badge (separate vote pill beside it) stays tally-free.
+  assert.doesNotMatch(MergeStatus.badgeHtml(life), /ms-advisory/);
+});
+
 test('STATE_BADGE_KEYS covers the merge-pipeline / conflict / ready states only', () => {
   assert.deepEqual(
     MergeStatus.STATE_BADGE_KEYS.slice().sort(),
