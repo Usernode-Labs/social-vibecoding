@@ -58,18 +58,30 @@
     var behind = num(p.behind_main);
     var check = p.check_state;
 
-    // #646: an "at least N" app's target beats any app-level majority,
-    // and on invited-approver apps only the qualifying tally fills it.
-    var majority = num(
-      p.approvals_required != null ? p.approvals_required
-        : opts.majority != null ? opts.majority
-          : (p.majority != null ? p.majority : p.votes_required)
-    ) || 1;
+    // #695: the per-row votes_required — the governed gate's
+    // electorate-based requirement on live rows, the merge-time snapshot
+    // (#58) on merged rows — beats any app-level majority, matching
+    // voteCountPill's precedence. On invited-approver apps the app-level
+    // majority counts the wrong electorate entirely, so it's the last
+    // resort. An "at least N" target comes next (#646); equal to
+    // votes_required whenever both are serialized.
+    var snap = parseInt(p.votes_required, 10);
+    var majority = (Number.isFinite(snap) && snap > 0) ? snap
+      : num(
+        p.approvals_required != null ? p.approvals_required
+          : opts.majority != null ? opts.majority
+            : p.majority
+      ) || 1;
     var hasVotes = p.yes_count !== null && p.yes_count !== undefined;
     var yes = num(p.qualified_yes_count != null ? p.qualified_yes_count : p.yes_count);
     var reached = hasVotes && yes >= majority;
     var locked = opts.locked != null ? opts.locked : p.locked;
     var votes = hasVotes ? { yes: yes, majority: majority, reached: reached } : null;
+    // #695: on invited-approver apps the non-approver surplus is advisory —
+    // shown beside the tally, never inside it.
+    if (votes && p.approval_policy === 'invited' && p.qualified_yes_count != null) {
+      votes.advisory = Math.max(0, num(p.yes_count) - num(p.qualified_yes_count));
+    }
 
     // 1 — terminal: merged.
     if (status === 'merged') {
@@ -209,12 +221,21 @@
 
   function inner(life, includeVotes) {
     var label = life.label;
+    var advisory = '';
     if (includeVotes && life.key === 'in_vote' && life.votes) {
       label += ' · ' + life.votes.yes + '/' + life.votes.majority;
+      // #695: muted "+N" for advisory (non-approver) votes on
+      // invited-approver apps — recorded, but not in the headline tally.
+      if (life.votes.advisory > 0) {
+        advisory = ' <span class="ms-advisory" title="'
+          + life.votes.advisory + ' advisory vote' + (life.votes.advisory === 1 ? '' : 's')
+          + ' from non-approvers — they don’t count toward merging">+'
+          + life.votes.advisory + '</span>';
+      }
     }
     return (life.spinner ? spinnerHtml() : '')
       + (life.glyph ? esc(life.glyph) + ' ' : '')
-      + esc(label);
+      + esc(label) + advisory;
   }
 
   // Text-style badge (colour only) — for the proposal feed card's state slot

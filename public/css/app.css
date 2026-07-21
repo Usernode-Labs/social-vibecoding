@@ -1080,6 +1080,21 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 .gc-vote-fill-full-yes { background: rgba(34, 197, 94, 0.40); }
 .gc-vote-fill-full-no { background: rgba(239, 68, 68, 0.40); }
 .gc-vote-count-label { position: relative; z-index: 1; color: #1f2937; }
+/* #695: advisory (non-approver) vote chip on invited-approver apps — a
+   muted companion rendered AFTER the tally pill, so the headline count
+   stays approver-only and the surplus is visibly second-class. */
+.gc-vote-advisory {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #6b7280;
+  background: rgba(107, 114, 128, 0.12);
+  white-space: nowrap;
+  vertical-align: middle;
+}
 /* Dev-card headline cell (title + meta, left of the tally / 💬 pills).
    flex-basis:auto makes the cell's preferred width the title's natural
    single-line width, so on narrow screens the pills after it wrap to
@@ -1153,6 +1168,9 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   border: 1px solid transparent;
 }
 .ms-pill-neutral { color: #9ca3af; background: rgba(156, 163, 175, 0.12); }
+/* #695: muted "+N" advisory suffix inside the in-vote pill (dev session
+   header) — non-approver votes recorded beside the approver-only tally. */
+.ms-advisory { opacity: 0.65; font-weight: 500; }
 .ms-pill-violet  { color: #8b5cf6; background: rgba(139, 92, 246, 0.12); }
 .ms-pill-amber   { color: #f59e0b; background: rgba(245, 158, 11, 0.12); }
 .ms-pill-green   { color: #22c55e; background: rgba(34, 197, 94, 0.12); }

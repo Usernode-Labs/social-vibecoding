@@ -222,6 +222,19 @@ function stagingMockGovernance() {
         reason: 'Obsolete since the theme rework.',
       }, 4, 1, 0,
       { required: 2, windowEndsAt: hoursAhead(40) }),
+    // #695: an invited-approver governance row with a non-approver
+    // surplus — the approver-only pill + "+2 advisory" chip and the
+    // "Yes (0✓ +2)" button labels are reviewable via ?demo=1.
+    {
+      ...mk(9100004, 'secret_change',
+        '[Mock] Approver-mode test: set DEMO_FLAG (non-approver votes are advisory)',
+        { key: 'DEMO_FLAG', action: 'set', hasValue: true }, 3, 2, 0,
+        { required: 1 }),
+      approval_policy: 'invited',
+      approvals_required: 1,
+      qualified_yes_count: 0,
+      qualified_no_count: 0,
+    },
   ];
 }
 

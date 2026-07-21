@@ -19,6 +19,13 @@ const assert = require('node:assert');
 const poolMod = require('../src/db/pool');
 let capturedQueries = [];
 let sessionRow = {};
+// #695: the handler now attaches the governed gate fields, which reads the
+// apps governance columns + (under 'invited') the approver roster and the
+// electorate-restricted vote counts. Defaults keep the pre-#695 shape
+// (empty gov row → 'anyone' policy → raw tallies reused, no extra SQL).
+let govRow = null;        // { approver_policy, approvals_required }
+let approverRows = [];    // [{ user_id }] — the invited roster
+let qualifiedRow = { yes: '0', no: '0' }; // FILTER-query tallies
 poolMod.getPool = () => ({
   query: (sql, params) => {
     capturedQueries.push({ sql, params });
@@ -27,6 +34,18 @@ poolMod.getPool = () => ({
     }
     if (/FROM chat_session_messages/.test(sql)) {
       return Promise.resolve({ rows: [] });
+    }
+    if (/SELECT approver_policy, approvals_required FROM apps/.test(sql)) {
+      return Promise.resolve({ rows: govRow ? [govRow] : [] });
+    }
+    if (/FROM app_approvers WHERE app_id/.test(sql)) {
+      return Promise.resolve({ rows: approverRows });
+    }
+    if (/SELECT id FROM users WHERE is_admin = TRUE/.test(sql)) {
+      return Promise.resolve({ rows: [{ id: 999 }] });
+    }
+    if (/FILTER \(WHERE vote = /.test(sql)) {
+      return Promise.resolve({ rows: [qualifiedRow] });
     }
     // activity bump UPDATE + anything else.
     return Promise.resolve({ rows: [] });
@@ -144,4 +163,35 @@ test('payload + MergeStatus together resolve the In-vote vs. ready states', asyn
     const { body } = await getSession(server, 42);
     assert.strictEqual(MergeStatus.lifecycle(body.session).key, 'in_vote');
   } finally { server.close(); }
+});
+
+// #695: on an invited-approver app the payload carries the governed gate
+// fields (qualified_* / votes_required / approval_policy), and the header
+// pill resolves from the QUALIFYING tally — two non-approver Yes votes must
+// never read as "Passed". Distinct app_id: getGovernance TTL-caches per app,
+// and earlier tests cached app 9 as 'anyone'.
+test('invited app: gate fields attached; advisory votes never read as passed', async () => {
+  const MergeStatus = require('../public/js/merge-status.js');
+  govRow = { approver_policy: 'invited', approvals_required: null };
+  approverRows = [{ user_id: 55 }];
+  qualifiedRow = { yes: '0', no: '0' };
+  sessionRow = baseRow({ id: 43, app_id: 91, yes_count: 2, no_count: 0 });
+  const server = await startServer();
+  try {
+    const { body } = await getSession(server, 43);
+    const s = body.session;
+    assert.strictEqual(s.approval_policy, 'invited');
+    assert.strictEqual(s.qualified_yes_count, 0);
+    assert.strictEqual(s.qualified_no_count, 0);
+    assert.strictEqual(s.votes_required, 1, 'electorate of one approver → 1 required');
+    assert.strictEqual(s.yes_count, 2, 'raw tally stays for advisory derivation');
+    const life = MergeStatus.lifecycle(s);
+    assert.strictEqual(life.key, 'in_vote', 'non-approver votes alone never read as passed');
+    assert.strictEqual(life.votes.yes, 0);
+    assert.strictEqual(life.votes.advisory, 2);
+  } finally {
+    govRow = null;
+    approverRows = [];
+    server.close();
+  }
 });
