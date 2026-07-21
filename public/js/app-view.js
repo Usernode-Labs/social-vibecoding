@@ -15,6 +15,12 @@ const AppView = {
   activeSeconds: 0,
   iframeFocused: false,
 
+  // #685: the WindowProxy that announced a usernode.issueState provider
+  // (`available` via postMessage). Kept as the source object — not a
+  // boolean — so the feedback modal can verify at open time that the
+  // announcing frame is still the mounted production iframe.
+  _issueStateSource: null,
+
   // Open-issues state. `_ghIssues` caches the last-fetched GitHub issue
   // list (with bounty_count/my_bounty) so feed paging and the
   // give-bounty optimistic update can re-render without a refetch.
@@ -294,6 +300,7 @@ const AppView = {
   close() {
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
+    AppView._issueStateSource = null;
     GroupChat.disconnect();
     // Drop any in-memory dev-chat session state belonging to the app
     // we're leaving. Without this, opening a different app and clicking
@@ -347,6 +354,12 @@ const AppView = {
   renderAppTab() {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
+
+    // #685: every render replaces the iframe (or removes it), so any
+    // prior issue-state announcement is stale. A WindowProxy keeps its
+    // identity across same-iframe navigations, so clearing here (not
+    // just on close) is what invalidates it on re-render.
+    AppView._issueStateSource = null;
 
     if (!appData || appData.status !== 'running' || !appData.url) {
       let inner;
@@ -2283,8 +2296,10 @@ const AppView = {
     const col2 = [];
     for (const i of issues) {
       if (linked.has(i.number)) continue;
-      const s = i.headless && i.headless.status;
-      if (s === 'generating' || s === 'ready') col2.push(i);
+      // Any live work routes the issue to the In-progress column: a
+      // headless run (the historical rule), a live linked dev session,
+      // or a manual claim — the shared _issueInProgress predicate.
+      if (AppView._issueInProgress(i)) col2.push(i);
       else col1.push(i);
     }
     col1.sort((a, b) => issueT(b) - issueT(a));
@@ -3366,6 +3381,7 @@ const AppView = {
       </div>
       <div class="${AppView.SESSION_CARD_ACTIONS_CLS}">
         ${statusTag}
+        ${AppView.issueChipsHtml(s.linked_issues)}
         ${previewBtn}
         ${chatBtn}
         ${visBtn}
@@ -3408,6 +3424,7 @@ const AppView = {
       </div>
       <div class="${AppView.SESSION_CARD_ACTIONS_CLS}">
         ${statusTag}
+        ${AppView.issueChipsHtml(s.linked_issues)}
         ${AppView._devChatBadge(s.chat_count)}
         ${preview}
       </div>
@@ -3797,7 +3814,15 @@ const AppView = {
       escapeHtml(pr.username || ''),
     ];
     if (pr.created_at) metaParts.push(escapeHtml(relTime(pr.created_at)));
-    const closesPills = AppView.closesPillHtml(pr);
+    // Live proposals link their "Closes #N" pills to the issue's IN-APP
+    // discussion (votes/bounty/thread live there; the GitHub link stays
+    // one click away in the issue topic head). Merged cards keep the
+    // external GitHub links — those issues are closed, so the in-app
+    // topic (resolved from the open-issues cache) would dead-end and
+    // GitHub is their permanent record.
+    const closesPills = isMerged
+      ? AppView.closesPillHtml(pr)
+      : AppView.issueChipsHtml(pr.linked_issues, { label: 'Closes' });
     // Placeholder-title marker (see _autoTitleChip). Skipped on revert
     // cards, whose displayed title is the deterministic "Revert of …"
     // label rather than the fallback template.
@@ -5489,6 +5514,26 @@ const AppView = {
     const closeBtn = hasCloseProposal
       ? `<button class="gc-vote-btn" disabled title="A close proposal for this issue is up for vote">Close proposed</button>`
       : `<button class="gc-vote-btn" title="Propose closing this issue — the group votes; if it passes, the issue is closed here and on GitHub" onclick="AppView.promptCloseIssue(${n})">Propose to close</button>`;
+    // Manual "In progress" claim toggle, keyed strictly off the VIEWER's
+    // own claim: they can always add theirs alongside other users' claims
+    // (claims are per-user, never exclusive) and can only clear their own
+    // from here (admins clear others via the topic-view list below).
+    const ipClaims = (issue.in_progress && Array.isArray(issue.in_progress.claims))
+      ? issue.in_progress.claims : [];
+    const myClaim = ipClaims.some((c) => c.mine);
+    const claimBtn = myClaim
+      ? `<button class="gc-vote-btn" title="Remove your in-progress mark from this issue" onclick="AppView.clearIssueClaim(${n})">Clear in progress</button>`
+      : `<button class="gc-vote-btn" title="Mark this issue as in progress — you're working on it. Expires on its own after ~7 days without activity; discussion in the issue's thread keeps it alive." onclick="AppView.markIssueInProgress(${n})">Mark in progress</button>`;
+    // Topic-view-only admin escape hatch: the live claimer list with a
+    // per-claim clear control, so a stuck claim can be removed without
+    // SQL. The DELETE route is the authoritative gate (claimer or
+    // write-admin); this affordance just doesn't render for others.
+    const adminClaimList = (noNav && ipClaims.length
+      && typeof App !== 'undefined' && App.user && App.user.canAdminWrite)
+      ? `<div class="mt-1 flex flex-wrap items-center gap-1 px-0.5 text-[0.65rem] text-zinc-500 dark:text-zinc-400">In-progress claims:${ipClaims.map((c) =>
+          ` <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500">${escapeHtml(c.username || '?')}<button type="button" class="hover:text-sky-700 dark:hover:text-sky-300" title="Clear ${escapeAttr(c.username || 'this user')}'s in-progress claim (admin)" onclick="AppView.clearIssueClaim(${n}, ${parseInt(c.userId, 10) || 0})">&times;</button></span>`
+        ).join('')}</div>`
+      : '';
     // #133: the creating user renders in the meta line below the title.
     // created_by_username comes from the /github-issues route (local
     // issues table → body Source line → GitHub login); omitted when the
@@ -5519,10 +5564,12 @@ const AppView = {
             </div>
             ${fallbackChip}
             ${bountyPill}
+            ${AppView._inProgressChipHtml(issue)}
             ${AppView._attrChipsHtml('issue', n, issue)}
             ${AppView._devChatBadge(issue.chatCount)}
           </div>
-          ${AppView._cardActionsHtml(AppView.readOnly ? [] : [kudosBtn, createBtn, autoBtn, closeBtn])}
+          ${AppView._cardActionsHtml(AppView.readOnly ? [] : [kudosBtn, createBtn, autoBtn, claimBtn, closeBtn])}
+          ${adminClaimList}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -5841,6 +5888,84 @@ const AppView = {
       alert(`Couldn't place bounty: ${err.message}`);
     } finally {
       AppView._bountyInFlight.delete(key);
+    }
+  },
+
+  // "Mark in progress" — add (or renew) the viewer's own claim on an
+  // issue. Optimistic: the cached row gains the claim and repaints right
+  // away; the server's issue_update broadcast reconciles everyone
+  // (including this client) with authoritative data moments later.
+  async markIssueInProgress(issueNumber) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    try {
+      const resp = await fetch(`/api/apps/${slug}/github-issues/${issueNumber}/claim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(data.error || `Couldn't mark in progress (HTTP ${resp.status}).`);
+        return;
+      }
+      const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+      if (issue) {
+        const me = (typeof App !== 'undefined' && App.user) ? App.user : { id: 0, username: 'you' };
+        const ip = issue.in_progress || { count: 0, users: [], mine: false, claims: [], target: null };
+        if (!Array.isArray(ip.claims)) ip.claims = [];
+        if (!ip.claims.some((c) => c.mine)) {
+          ip.claims.push({
+            username: me.username, userId: me.id, mine: true,
+            claimedAt: new Date().toISOString(), expiresAt: null,
+          });
+        }
+        ip.mine = true;
+        issue.in_progress = ip;
+        AppView._repaintCards();
+        if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
+      }
+    } catch (err) {
+      alert(`Couldn't mark in progress: ${err.message}`);
+    }
+  },
+
+  // "Clear in progress" — remove a claim. With no userId: the viewer's
+  // own. With one (admin per-claim clear control in the topic view):
+  // that user's — the server 403s anyone but the claimer or a
+  // write-admin. Optimistic like markIssueInProgress; the `mine` flag is
+  // left alone when live sessions remain (it covers those too) and the
+  // WS-driven refetch reconciles shortly.
+  async clearIssueClaim(issueNumber, userId) {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    try {
+      const hasTarget = userId != null;
+      const resp = await fetch(`/api/apps/${slug}/github-issues/${issueNumber}/claim`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        ...(hasTarget ? { body: JSON.stringify({ userId }) } : {}),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        alert(data.error || `Couldn't clear the in-progress mark (HTTP ${resp.status}).`);
+        return;
+      }
+      const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
+      if (issue && issue.in_progress) {
+        const me = (typeof App !== 'undefined' && App.user) ? App.user : null;
+        const clearedId = hasTarget ? userId : (me && me.id);
+        const ip = issue.in_progress;
+        ip.claims = (Array.isArray(ip.claims) ? ip.claims : []).filter((c) => c.userId !== clearedId);
+        if (!ip.count && !ip.claims.length) {
+          issue.in_progress = null;
+        } else if (!ip.count) {
+          ip.mine = ip.claims.some((c) => c.mine);
+        }
+        AppView._repaintCards();
+        if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
+      }
+    } catch (err) {
+      alert(`Couldn't clear the in-progress mark: ${err.message}`);
     }
   },
 
@@ -6626,6 +6751,101 @@ const AppView = {
   // 'paused') reads as still-open. One independently-clickable pill per
   // issue, each opening the issue on GitHub in a new tab (#61). Renders
   // nothing when there are no linked issues or no usable PR url.
+  // ── "In progress" status on issue cards ──────────────────────────────
+  //
+  // An issue is in progress while ANY live signal exists: a live linked
+  // session or manual claim (issue.in_progress, from /github-issues) or a
+  // live headless auto-solve run (issue.headless generating/ready — kept
+  // as a separate field so the 8s headless poller's field-scoped merge
+  // stays correct; this predicate ORs the two). Shared by the chip
+  // renderer below and the kanban's In-progress-column routing.
+  _issueInProgress(issue) {
+    if (!issue) return false;
+    const h = issue.headless;
+    return !!(issue.in_progress || (h && (h.status === 'generating' || h.status === 'ready')));
+  },
+
+  // The "In progress" chip on an issue card. Label derives from the
+  // distinct PEOPLE involved (session owners + claimers, deduped): one
+  // person → their name ("· you" when it's the viewer), several → a
+  // count. The tooltip names everyone with their role. When the server
+  // chose a link target (in_progress.target — proposal > own session >
+  // shared session, per-viewer) the chip is a button that opens the
+  // linked work; otherwise a plain informational span (private work,
+  // claims-only, or headless-only — those rows' own buttons navigate).
+  _inProgressChipHtml(issue) {
+    const ip = issue.in_progress || null;
+    const h = issue.headless;
+    const headlessLive = !!(h && (h.status === 'generating' || h.status === 'ready'));
+    if (!ip && !headlessLive) return '';
+    const sessUsers = (ip && Array.isArray(ip.users)) ? ip.users.filter(Boolean) : [];
+    const claims = (ip && Array.isArray(ip.claims)) ? ip.claims : [];
+    const claimUsers = claims.map((c) => c && c.username).filter(Boolean);
+    const people = [];
+    for (const u of [...sessUsers, ...claimUsers]) {
+      if (!people.includes(u)) people.push(u);
+    }
+    const mine = !!(ip && ip.mine);
+    let label;
+    if (people.length > 1) label = `In progress · ${people.length}`;
+    else if (mine) label = 'In progress · you';
+    else if (people.length === 1) label = `In progress · ${people[0]}`;
+    else label = 'In progress';
+    const tip = [];
+    if (claimUsers.length) tip.push(`Claimed by ${claimUsers.join(', ')}`);
+    const workers = sessUsers.filter((u) => !claimUsers.includes(u));
+    if (workers.length) tip.push(`Working in a dev session: ${workers.join(', ')}`);
+    if (headlessLive) tip.push('An auto-solve run is on this issue');
+    const title = tip.join(' · ') || 'This issue is being worked on';
+    const baseCls = 'inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 shrink-0';
+    const target = ip && ip.target;
+    const targetId = target ? parseInt(target.sessionId, 10) : 0;
+    if (target && targetId) {
+      return `<button type="button" class="${baseCls} hover:bg-sky-500/20" title="${escapeAttr(`${title} — open the linked work`)}" onclick="AppView.openInProgressTarget('${escapeAttr(String(target.kind))}', ${targetId})">${escapeHtml(label)}</button>`;
+    }
+    return `<span class="${baseCls}" title="${escapeAttr(title)}">${escapeHtml(label)}</span>`;
+  },
+
+  // Navigate to the work behind an issue's "In progress" chip, reusing
+  // the Dev board's existing handlers verbatim: a proposal opens its
+  // discussion topic, the viewer's own session opens their dev chat,
+  // and a shared session opens its public discussion (never the owner's
+  // dev chat — those endpoints stay owner-scoped server-side).
+  openInProgressTarget(kind, sessionId) {
+    const id = parseInt(sessionId, 10);
+    if (!id) return;
+    if (kind === 'proposal') {
+      AppView.openTopic('proposal', id);
+    } else if (kind === 'session-own') {
+      if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev', id, 'sessions');
+    } else if (kind === 'session-shared') {
+      AppView.openTopic('session', id);
+    }
+  },
+
+  // Reverse "#N" issue chips for session/proposal cards: one compact pill
+  // per linked issue, opening the issue's IN-APP discussion topic (the
+  // same navigation as tapping the issue row). Unlike closesPillHtml
+  // below this never needs pr_url (session cards have none pre-PR) and
+  // never leaves the app. opts.label prefixes each chip (the live
+  // proposal card passes 'Closes' to keep its established wording).
+  issueChipsHtml(linkedIssues, opts) {
+    const prefix = opts && opts.label ? `${opts.label} ` : '';
+    const raw = Array.isArray(linkedIssues) ? linkedIssues : [];
+    const seen = new Set();
+    const nums = [];
+    for (const v of raw) {
+      const n = typeof v === 'number' ? v : Number(v);
+      if (Number.isInteger(n) && n > 0 && !seen.has(n)) { seen.add(n); nums.push(n); }
+    }
+    if (!nums.length) return '';
+    nums.sort((a, b) => a - b);
+    const cls = 'inline-flex items-center text-[0.65rem] font-medium font-mono px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-400 hover:bg-violet-500/20 shrink-0';
+    return nums.map((n) =>
+      `<button type="button" class="${cls}" title="Open issue #${n}'s discussion" data-issue-chip="${n}" onclick="AppView.openTopic('issue', ${n})">${prefix}#${n}</button>`
+    ).join(' ');
+  },
+
   closesPillHtml(pr) {
     if (!pr || !pr.pr_url) return '';
     // Sanitize defensively (mirror prMetadata.sanitizeIssueNumbers): drop
@@ -8589,6 +8809,78 @@ const AppView = {
     }
   },
 
+  // ── Issue-state snapshots (issue #685) ─────────────────────────────
+  //
+  // The bridge's usernode.issueState.register() posts an `available`
+  // announcement from the app iframe; the feedback modal shows its
+  // "Include app state" checkbox only while the announcing frame is
+  // still the mounted production iframe, and asks for the snapshot at
+  // submit time via a `collect` request. Wired through the same
+  // top-level message listener as the LLM consent relay below.
+  //
+  // Production iframe only — the staging preview is deliberately
+  // excluded: a snapshot from a PR preview labeled as app state would
+  // be misleading on a production-repo issue.
+
+  handleIssueStateMessage(e) {
+    const data = e.data;
+    if (!data) return;
+    const type = data.__usernode_issue_state;
+    if (type !== 'available' && type !== 'unavailable') return;
+    const appIframe = document.getElementById('app-iframe');
+    if (!appIframe || e.source !== appIframe.contentWindow) return;
+    AppView._issueStateSource = type === 'available' ? e.source : null;
+  },
+
+  // True iff a provider announced itself from the currently mounted
+  // production iframe. The App tab tears its iframe down on every tab
+  // switch (renderAppTab rewrites content.innerHTML), so this is
+  // naturally false on the Dev screen, where there's no live app to
+  // snapshot.
+  issueStateAvailable() {
+    if (!AppView._issueStateSource) return false;
+    const appIframe = document.getElementById('app-iframe');
+    return !!appIframe && appIframe.contentWindow === AppView._issueStateSource;
+  },
+
+  // Ask the app for its state snapshot. Resolves { json, truncated } or
+  // null — never rejects, and never waits past 5 s: filing an issue
+  // must not block on a frozen app. No ack leg (unlike the LLM flow) —
+  // there's no human decision in the middle, just the provider call.
+  collectIssueState() {
+    return new Promise((resolve) => {
+      if (!AppView.issueStateAvailable()) return resolve(null);
+      const target = AppView._issueStateSource;
+      const id = `issue-state-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      let settled = false;
+      let timer = null;
+      const onMessage = (e) => {
+        if (e.source !== target) return;
+        const data = e.data;
+        if (!data || data.__usernode_issue_state !== 'response' || data.id !== id) return;
+        if (data.error || !data.value || typeof data.value.json !== 'string') {
+          finish(null);
+          return;
+        }
+        finish({ json: data.value.json, truncated: !!data.value.truncated });
+      };
+      const finish = (value) => {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener('message', onMessage);
+        if (timer) clearTimeout(timer);
+        resolve(value);
+      };
+      timer = setTimeout(() => finish(null), 5000);
+      window.addEventListener('message', onMessage);
+      try {
+        target.postMessage({ __usernode_issue_state: 'collect', id }, '*');
+      } catch {
+        finish(null);
+      }
+    });
+  },
+
   // Singleton consent dialog, same scrim/card pattern as
   // confirm-modal.js. Resolves { dailyCapCents, allowByok } on Allow,
   // null on "Not now" / backdrop / Esc.
@@ -8691,6 +8983,8 @@ const AppView = {
 if (typeof window !== 'undefined') {
   window.addEventListener('message', (e) => {
     try { AppView.handleLlmBridgeMessage(e); } catch {}
+    // #685: issue-state availability announcements from the app iframe.
+    try { AppView.handleIssueStateMessage(e); } catch {}
   });
 }
 

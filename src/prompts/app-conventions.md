@@ -1273,6 +1273,53 @@ Behaviour:
   the vendored forwarder, so there's nothing to re-vendor). Add the
   bridge tag if your shell doesn't already load it.
 
+## Issue-state snapshots — opt-in app state in filed issues
+
+The bridge (see "Bridge") exposes an **opt-in** API for sharing a
+debug snapshot of the app's internal state with the platform's
+issue-submission flow. When an app registers a provider, the
+platform's Send Feedback modal shows an "Include app state" checkbox
+(checked by default) for issues targeting that app; at filing time the
+platform asks the app for the snapshot and appends it to the GitHub
+issue body in a collapsed `<details>` block, giving whoever works the
+issue the app's actual runtime state. Fully **no-op by default**: an
+app that registers nothing behaves exactly as before.
+
+Register a provider once the bridge is loaded:
+
+```js
+usernode.issueState.register(function () {
+  // Return a JSON-serializable object (or a Promise of one) with
+  // whatever would help someone debug an issue in this app.
+  return {
+    view: currentView,
+    settings: settings,
+    itemsLoaded: items.length,
+  };
+});
+```
+
+`usernode.issueState.unregister()` clears the provider. Repeat
+`register` calls replace it (last write wins).
+
+Behaviour:
+
+- The provider is called at issue-submit time and raced against a
+  3-second timeout; a provider that throws, hangs, or returns
+  non-serializable data simply means the issue is filed **without**
+  state — it never blocks or fails the submission.
+- The serialized snapshot is capped at **32 KB** (32,768 chars);
+  oversized dumps are cut off and labeled truncated. Keep snapshots
+  well under the cap — a compact, curated summary beats a raw dump.
+- **Sanitization is the app's responsibility — snapshots land in
+  PUBLIC GitHub issue bodies.** Never include credentials, tokens,
+  secrets, or other users' data, and skip free-text user content
+  unless it's clearly non-sensitive. Registering the provider IS the
+  app's declaration that its snapshot is safe to publish.
+- Requires the hosted bridge `<script>` and only works inside the
+  platform shell (the app iframe); standalone pages register
+  harmlessly.
+
 ## In-loop browser (build turns) — optional, encouraged
 
 On a **build** turn (not scout/sync) Claude Code has a headless browser

@@ -4009,6 +4009,133 @@
   })();
   /* __USERNODE_INVARIANTS_END__ */
 
+  // Issue-state snapshots (issue #685) — additive within v1.
+  //
+  // Opt-in API for sharing a debug snapshot of the app's internal state
+  // with the platform's issue-submission flow. Like the `__usernode_llm`
+  // family above, this targets the Usernode Social Vibecoding shell (the
+  // parent page owning the app iframe), NOT the native relay: on
+  // register the bridge announces availability to the parent, and the
+  // shell asks for the snapshot at issue-filing time with a `collect`
+  // request. Registering is the app's explicit opt-in — the app is
+  // responsible for excluding sensitive data (snapshots land in PUBLIC
+  // GitHub issue bodies).
+  //
+  //   usernode.issueState.register(fn)  — fn: zero-arg function
+  //       returning a JSON-serializable object (or a Promise of one).
+  //       Repeat calls replace the provider (last write wins).
+  //   usernode.issueState.unregister() — clears the provider.
+  //
+  // Fully no-op by default: an app that registers nothing behaves
+  // exactly as before, and standalone/top-frame pages register
+  // harmlessly (there is no shell to ever ask).
+  /* __USERNODE_ISSUE_STATE_BEGIN__ */
+  (function () {
+    // The shell waits 5 s overall; 3 s bounds the provider itself so a
+    // hung provider still yields a distinguishable error, not silence.
+    var _PROVIDER_TIMEOUT_MS = 3000;
+    // Serialized-snapshot cap. Oversized dumps are sliced (which may
+    // leave invalid JSON — acceptable: this is debugging context, not
+    // machine-consumed data) and flagged `truncated`.
+    var _MAX_STATE_CHARS = 32768;
+    var _provider = null;
+
+    function announce(kind) {
+      try {
+        if (!(window.parent && window.parent !== window)) return;
+        window.parent.postMessage({ __usernode_issue_state: kind }, "*");
+      } catch (_) { /* parent unreachable — nothing to announce to */ }
+    }
+
+    function respond(id, value, error) {
+      try {
+        if (!(window.parent && window.parent !== window)) return;
+        window.parent.postMessage(
+          {
+            __usernode_issue_state: "response",
+            id: id,
+            value: value || null,
+            error: error || null,
+          },
+          "*"
+        );
+      } catch (_) { /* parent gone, ignore */ }
+    }
+
+    function handleCollect(id) {
+      if (typeof _provider !== "function") {
+        respond(id, null, "no provider registered");
+        return;
+      }
+      var settled = false;
+      var timer = setTimeout(function () {
+        if (settled) return;
+        settled = true;
+        respond(id, null, "provider timed out");
+      }, _PROVIDER_TIMEOUT_MS);
+      function finish(value, error) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        respond(id, value, error);
+      }
+      var result;
+      try {
+        result = _provider();
+      } catch (err) {
+        finish(null, (err && err.message) || String(err));
+        return;
+      }
+      Promise.resolve(result).then(
+        function (state) {
+          var json;
+          try {
+            json = JSON.stringify(state);
+          } catch (_) {
+            // Circular refs, BigInt, throwing toJSON — all land here.
+            finish(null, "state not serializable");
+            return;
+          }
+          if (typeof json !== "string") {
+            // JSON.stringify(undefined) → undefined.
+            finish(null, "state not serializable");
+            return;
+          }
+          var truncated = json.length > _MAX_STATE_CHARS;
+          if (truncated) json = json.slice(0, _MAX_STATE_CHARS);
+          finish({ json: json, truncated: truncated }, null);
+        },
+        function (err) {
+          finish(null, (err && err.message) || String(err));
+        }
+      );
+    }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || data.__usernode_issue_state !== "collect" || !data.id) return;
+      handleCollect(data.id);
+    });
+
+    if (!window.usernode.issueState) {
+      window.usernode.issueState = {
+        register: function register(fn) {
+          if (typeof fn !== "function") {
+            throw new Error("usernode.issueState.register(fn): fn must be a function");
+          }
+          _provider = fn;
+          announce("available");
+        },
+        unregister: function unregister() {
+          _provider = null;
+          announce("unavailable");
+        },
+      };
+    }
+  })();
+  /* __USERNODE_ISSUE_STATE_END__ */
+
   /* __USERNODE_PLATFORM_LINK_START__ */
   // ── Floating "Open in Usernode" pill (chromeless share views) ─────────
   //

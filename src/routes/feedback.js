@@ -45,6 +45,21 @@ function buildScreenshotEmbed(id, domain) {
   return `\n\n**Screenshot:**\n![Screenshot](https://${domain}/issue-images/${id})`;
 }
 
+// #685: app-provided state snapshots ("Include app state" checkbox).
+// The bridge caps the serialized snapshot at 32,768 chars client-side;
+// 40,000 is a defensive server ceiling that keeps the JSON request body
+// under the global 100 KB express.json() limit and the final issue body
+// (description ≤ 2,000 chars + this) under GitHub's 65,536-char maximum.
+const MAX_PAGE_STATE_CHARS = 40000;
+
+// Pure (exported for tests): the collapsed <details> suffix appended to
+// the issue body for an app-provided state snapshot. Four-backtick fence
+// so snapshot content containing ``` can't break out of the block.
+function buildPageStateEmbed(pageState, truncated) {
+  const summary = `App state snapshot (provided by the app${truncated ? ', truncated' : ''})`;
+  return `\n\n<details>\n<summary>${summary}</summary>\n\n\`\`\`\`json\n${pageState}\n\`\`\`\`\n</details>`;
+}
+
 // Derive `owner/repo` from a github.com URL. We do this at module
 // load (well, at route-factory load) so a malformed
 // USERNODE_PLATFORM_REPO fails the platform fast at startup rather
@@ -187,6 +202,25 @@ function feedbackRoutes(config) {
       screenshotId = sid;
     }
 
+    // #685: optional app-provided state snapshot. Validated whenever
+    // present (a bad payload fails fast, before any GitHub call), but
+    // only honored for app-targeted feedback below — the shell itself
+    // has no provider, so it's silently ignored for platform feedback.
+    let pageState = null;
+    let pageStateTruncated = false;
+    if (req.body.pageState !== undefined && req.body.pageState !== null && req.body.pageState !== '') {
+      if (typeof req.body.pageState !== 'string') {
+        return res.status(400).json({ error: 'pageState must be a string' });
+      }
+      if (req.body.pageState.length > MAX_PAGE_STATE_CHARS) {
+        return res.status(400).json({ error: 'pageState too large' });
+      }
+      pageState = req.body.pageState;
+      // Client-asserted, cosmetic only (drives the "truncated" label in
+      // the <summary> line).
+      pageStateTruncated = req.body.pageStateTruncated === true;
+    }
+
     // Normalise the feedback target. Anything other than the explicit
     // 'app' opt-in falls back to platform feedback (today's behaviour).
     const target = req.body.target === 'app' ? 'app' : 'platform';
@@ -314,7 +348,12 @@ function feedbackRoutes(config) {
       // routes/issues.js) rather than the platform PAT — the PAT isn't
       // guaranteed to have access to every app repo.
       if (target === 'app') {
-        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n\n${description.trim()}${screenshotSuffix}`;
+        // #685: the collapsed state-snapshot block goes last, after the
+        // screenshot embed, so it never buries the description.
+        const pageStateSuffix = pageState
+          ? buildPageStateEmbed(pageState, pageStateTruncated)
+          : '';
+        const body = `**Source:** ${source}\n**App:** ${appContext.name} (${appContext.slug})\n\n${description.trim()}${screenshotSuffix}${pageStateSuffix}`;
         let issue;
         try {
           issue = await github.createIssue(issueOwner, issueRepo, { title, body });
@@ -391,4 +430,7 @@ module.exports = {
   validateScreenshotUpload,
   buildScreenshotEmbed,
   MAX_SCREENSHOT_BYTES,
+  // #685: pure helpers exported for tests/feedback-page-state.test.js.
+  buildPageStateEmbed,
+  MAX_PAGE_STATE_CHARS,
 };
