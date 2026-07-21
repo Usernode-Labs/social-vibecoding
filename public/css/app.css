@@ -434,6 +434,34 @@ html, body {
 
 .dc-pr-card-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
+/* #699: expandable report body on the platform-issue draft card. The
+   <summary> holds the 300-char preview plus a "Show full report" cue;
+   opening reveals the remainder so the text reads continuously (the cue
+   hides while open). Open state persists via data-persist-id — see
+   _applyDetailsPersistence in dev-chat.js. */
+.dc-pi-report { margin: 0 0 6px; }
+.dc-pi-report-summary {
+  cursor: pointer;
+  list-style: none;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+.dc-pi-report-summary::-webkit-details-marker { display: none; }
+.dc-pi-report-cue {
+  color: var(--accent);
+  font-size: 12px;
+  user-select: none;
+  white-space: nowrap;
+}
+.dc-pi-report-cue:hover { color: var(--accent-light); }
+.dc-pi-report[open] .dc-pi-report-cue { display: none; }
+.dc-pi-report-rest {
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+}
+
 .dc-pr-btn {
   padding: 6px 12px;
   border-radius: 6px;
