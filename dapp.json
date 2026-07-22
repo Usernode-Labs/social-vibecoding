@@ -104,6 +104,12 @@
       "expectText": "Drag to reorder"
     },
     {
+      "name": "Kit demo Toasts section ships the priority undo-flow button (#718)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios",
+      "expectSelector": "#toast-undo-btn",
+      "expectText": "Undo flow (priority)"
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"

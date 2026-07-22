@@ -29,6 +29,10 @@
  *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
  *   unNative.alert(opts)              — iOS alert dialog, Promise-based
  *   unNative.toast(message, opts?)    — transient status toast / snackbar
+ *                                        ({ duration?, action?, priority?,
+ *                                        onClose?(reason) }; a priority
+ *                                        toast holds the slot for undo
+ *                                        flows)
  *   unNative.attachNavBar(bar, opts)  — blurred nav bar + large-title collapse
  *   unNative.gestures                 — the shared gesture arbiter
  *                                        { claim, owner, release }
@@ -260,6 +264,50 @@
     };
   }
 
+  // Toast slot state machine: one visible slot plus a one-deep pending
+  // slot. A visible PRIORITY toast is not displaced by ordinary toasts —
+  // those queue behind it (latest wins, depth stays 1); a priority toast
+  // always takes the visible slot (last-writer-wins among equals; an
+  // already-pending ordinary toast survives the takeover). Records are
+  // opaque beyond their `priority` flag; the DOM layer owns presentation
+  // and onClose delivery. Pure (no DOM); unit-tested in
+  // tests/native-kit.test.js.
+  function createToastSlot() {
+    var current = null; // the record occupying the visible slot
+    var pending = null; // an ordinary record waiting behind a priority one
+    return {
+      current: function () { return current; },
+      pending: function () { return pending; },
+      // A new record arrives. Returns { display: 'replace' | 'queue',
+      // closed: [records displaced by this arrival] }.
+      show: function (record) {
+        if (current && current.priority && !record.priority) {
+          var dropped = pending;
+          pending = record;
+          return { display: 'queue', closed: dropped ? [dropped] : [] };
+        }
+        var displaced = current;
+        current = record;
+        return { display: 'replace', closed: displaced ? [displaced] : [] };
+      },
+      // The visible record's lifetime ended (timeout / action / dismiss).
+      // Promotes the pending record into the visible slot and returns it
+      // (null when nothing was waiting, or when record wasn't current).
+      resolve: function (record) {
+        if (record == null || record !== current) return null;
+        current = pending;
+        pending = null;
+        return current;
+      },
+      // Cancel a record still waiting in the pending slot. True if removed.
+      cancelPending: function (record) {
+        if (record == null || record !== pending) return false;
+        pending = null;
+        return true;
+      },
+    };
+  }
+
   var physics = {
     PRESETS: PRESETS,
     DECEL_RATE: DECEL_RATE,
@@ -282,6 +330,7 @@
     reorderDropIndex: reorderDropIndex,
     autoScrollVelocity: autoScrollVelocity,
     createArbiter: createArbiter,
+    createToastSlot: createToastSlot,
   };
 
   // Node (unit tests): export the math and stop — no DOM below this line.
@@ -1681,16 +1730,32 @@
 
   /* ────────────────────────────────────────────────────────────────────
    * Toast — transient status notice. iOS/desktop: bottom capsule HUD;
-   * Android: Material snackbar. Singleton, last-writer-wins: a call while
-   * a toast is visible swaps its content in place and resets the timer
-   * (no re-entrance animation, no queue). pointer-events: none unless an
-   * action is present, so it never steals taps from content underneath.
+   * Android: Material snackbar. Singleton, last-writer-wins among
+   * ordinary toasts: a call while a toast is visible swaps its content
+   * in place and resets the timer (no re-entrance animation, no
+   * stacking). An opt-in PRIORITY toast (undo flows) is NOT displaced by
+   * ordinary toasts — those wait in a one-deep pending slot (latest
+   * wins) and present after the priority toast resolves. Every toast may
+   * pass onClose(reason), fired exactly once per call — 'timeout' |
+   * 'action' | 'dismiss' | 'replaced' — so a pending undo can never
+   * vanish silently. pointer-events: none unless an action is present,
+   * so it never steals taps from content underneath.
    * ──────────────────────────────────────────────────────────────────── */
 
   var toastEl = null;
   var toastHideTimer = null;
   var toastRemoveTimer = null;
-  var toastGen = 0;
+  var toastSlot = createToastSlot();
+
+  // Exactly-once onClose delivery; an app callback that throws must not
+  // break the kit.
+  function closeToastRecord(record, reason) {
+    if (!record || record.closed) return;
+    record.closed = true;
+    if (record.onClose) {
+      try { record.onClose(reason); } catch (e) { /* ignore */ }
+    }
+  }
 
   function removeToast() {
     if (toastRemoveTimer) { clearTimeout(toastRemoveTimer); toastRemoveTimer = null; }
@@ -1698,30 +1763,31 @@
     toastEl = null;
   }
 
-  function hideToast() {
+  // Fade out and tear down the element; onGone runs once it's removed
+  // (immediately when there's nothing to fade). A replacement re-entering
+  // the element mid-fade aborts both the teardown and the onGone.
+  function hideToast(onGone) {
     if (toastHideTimer) { clearTimeout(toastHideTimer); toastHideTimer = null; }
-    if (!toastEl || !toastEl.classList.contains('un-in')) return;
+    if (!toastEl || !toastEl.classList.contains('un-in')) {
+      if (onGone) onGone();
+      return;
+    }
     toastEl.classList.remove('un-in');
     var el = toastEl;
-    el.addEventListener('transitionend', function () {
+    function teardown() {
       // Only tear down if this is still the fading-out element (a new
       // toast may have re-entered it in the meantime).
-      if (toastEl === el && !el.classList.contains('un-in')) removeToast();
-    }, { once: true });
-    toastRemoveTimer = setTimeout(function () {
-      if (toastEl === el && !el.classList.contains('un-in')) removeToast();
-    }, 300);
+      if (toastEl !== el || el.classList.contains('un-in')) return;
+      removeToast();
+      if (onGone) onGone();
+    }
+    el.addEventListener('transitionend', teardown, { once: true });
+    toastRemoveTimer = setTimeout(teardown, 300);
   }
 
-  // toast(message, { duration?, action?: { label, handler } }) — returns
-  // { dismiss(), el }. dismiss() is a no-op once a later toast has
-  // replaced this one (last-writer-wins).
-  function toast(message, options) {
-    var opts = options || {};
-    var action = opts.action && opts.action.label != null ? opts.action : null;
-    var duration = opts.duration != null ? opts.duration : (action ? 4000 : 2200);
-    var mine = ++toastGen;
-
+  // Write a record into the singleton element and start its hide timer.
+  function presentToast(record) {
+    if (record.closed || toastSlot.current() !== record) return;
     if (toastHideTimer) { clearTimeout(toastHideTimer); toastHideTimer = null; }
     if (toastRemoveTimer) { clearTimeout(toastRemoveTimer); toastRemoveTimer = null; }
 
@@ -1733,21 +1799,21 @@
       toastEl.setAttribute('aria-live', 'polite');
       document.body.appendChild(toastEl);
     }
-    toastEl.classList.toggle('un-has-action', !!action);
+    toastEl.classList.toggle('un-has-action', !!record.action);
     while (toastEl.firstChild) toastEl.removeChild(toastEl.firstChild);
     var msg = document.createElement('div');
     msg.className = 'un-toast-msg';
-    msg.textContent = message == null ? '' : String(message);
+    msg.textContent = record.message == null ? '' : String(record.message);
     toastEl.appendChild(msg);
-    if (action) {
+    if (record.action) {
       var btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'un-toast-action';
-      btn.textContent = action.label;
+      btn.textContent = record.action.label;
       btn.addEventListener('click', function () {
-        if (toastGen !== mine) return;
-        hideToast();
-        if (action.handler) action.handler();
+        if (record.closed || toastSlot.current() !== record) return;
+        if (record.action.handler) record.action.handler();
+        resolveToast(record, 'action');
       });
       toastEl.appendChild(btn);
     }
@@ -1757,17 +1823,68 @@
       // (or mid-fade-out) re-asserts un-in immediately — content swaps in
       // place with no re-entrance.
       requestAnimationFrame(function () {
-        if (toastEl && toastGen === mine) toastEl.classList.add('un-in');
+        if (toastEl && !record.closed && toastSlot.current() === record) {
+          toastEl.classList.add('un-in');
+        }
       });
     } else {
       toastEl.classList.add('un-in');
     }
 
-    toastHideTimer = setTimeout(hideToast, duration);
+    toastHideTimer = setTimeout(function () {
+      resolveToast(record, 'timeout');
+    }, record.duration);
+  }
+
+  // End the VISIBLE record's lifetime: fire its onClose, fade out, then
+  // present whatever was waiting in the pending slot (fresh entrance,
+  // full duration starting now).
+  function resolveToast(record, reason) {
+    if (record.closed || toastSlot.current() !== record) return;
+    closeToastRecord(record, reason);
+    var next = toastSlot.resolve(record);
+    hideToast(function () {
+      if (next && !next.closed && toastSlot.current() === next) presentToast(next);
+    });
+  }
+
+  // toast(message, { duration?, action?: { label, handler }, priority?,
+  // onClose?(reason) }) — returns { dismiss(), el }. A priority toast is
+  // not displaced by ordinary toasts (those queue, one deep, latest
+  // wins); onClose fires exactly once with 'timeout' | 'action' |
+  // 'dismiss' | 'replaced'. `el` is the live toast element while this
+  // call is the one displayed (null while pending or after close);
+  // dismiss() also cancels a still-pending toast and is a no-op once a
+  // later toast has closed this one.
+  function toast(message, options) {
+    var opts = options || {};
+    var action = opts.action && opts.action.label != null ? opts.action : null;
+    var record = {
+      message: message,
+      action: action,
+      duration: opts.duration != null ? opts.duration : (action ? 4000 : 2200),
+      priority: !!opts.priority,
+      onClose: typeof opts.onClose === 'function' ? opts.onClose : null,
+      closed: false,
+    };
+
+    // Close whatever this arrival displaces BEFORE presenting, so an app
+    // re-toasting from onClose sees consistent state.
+    var placement = toastSlot.show(record);
+    for (var i = 0; i < placement.closed.length; i++) {
+      closeToastRecord(placement.closed[i], 'replaced');
+    }
+    if (placement.display === 'replace') presentToast(record);
 
     return {
-      el: toastEl,
-      dismiss: function () { if (toastGen === mine) hideToast(); },
+      get el() {
+        return !record.closed && toastSlot.current() === record ? toastEl : null;
+      },
+      dismiss: function () {
+        if (record.closed) return;
+        if (toastSlot.current() === record) resolveToast(record, 'dismiss');
+        else if (toastSlot.cancelPending(record)) closeToastRecord(record, 'dismiss');
+      },
     };
   }
 

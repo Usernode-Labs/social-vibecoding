@@ -119,8 +119,9 @@
         <div class="flex flex-wrap items-center gap-3">
           <button id="toast-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Toast</button>
           <button id="toast-action-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Toast with action</button>
+          <button id="toast-undo-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Undo flow (priority)</button>
         </div>
-        <p id="toast-result" class="text-xs text-zinc-500 mt-2">iOS/desktop: bottom capsule. Android: snackbar. Tap repeatedly — a new toast replaces the old one (last-writer-wins), and taps pass through it unless it carries an action.</p>
+        <p id="toast-result" class="text-xs text-zinc-500 mt-2">iOS/desktop: bottom capsule. Android: snackbar. Tap "Toast" repeatedly — a new toast replaces the old one (last-writer-wins). A <em>priority</em> toast holds the slot: fire "Undo flow", then tap "Toast" while the Undo is up — it waits its turn and appears after the undo window resolves instead of eating the Undo button.</p>
       </section>
 
       <!-- Pull to refresh -->
@@ -361,6 +362,26 @@
             handler: function () {
               document.getElementById('toast-result').textContent = 'Undo tapped.';
             },
+          },
+        });
+      });
+      // Priority undo flow: the toast holds the slot for its 5s window —
+      // ordinary toasts fired meanwhile wait their turn — and onClose
+      // reports exactly how the window ended.
+      document.getElementById('toast-undo-btn').addEventListener('click', function () {
+        var out = document.getElementById('toast-result');
+        unNative.toast('Item deleted', {
+          priority: true,
+          duration: 5000,
+          action: {
+            label: 'Undo',
+            handler: function () { /* restore the item here */ },
+          },
+          onClose: function (reason) {
+            if (reason === 'action') out.textContent = 'Undo tapped.';
+            else if (reason === 'timeout') out.textContent = 'Committed — undo window expired.';
+            else if (reason === 'replaced') out.textContent = 'Replaced by a newer undo.';
+            else out.textContent = 'Undo toast dismissed.';
           },
         });
       });
