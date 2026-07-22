@@ -141,13 +141,20 @@
     <button id="header-menu-btn" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open menu" aria-expanded="false">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
+    <!-- Header cog: the "your work" drawer (public/js/work-drawer.js) —
+         the viewer's sessions & proposals plus their session-related
+         notifications, rerouted out of the bell. The icon spins (CSS
+         class work-cog-spinning) while an AI turn or a merge-pipeline
+         step is in flight for the viewer. Carries the green badge that
+         used to sit on the bell (same #notifications-badge-ai id — it's
+         still painted by Notifications._renderBadge). -->
+    <button id="work-drawer-btn" class="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Your sessions and proposals" title="Your sessions and proposals">
+      <svg id="work-drawer-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      <span id="notifications-badge-ai" class="hidden absolute -bottom-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
+    </button>
     <button id="notifications-btn" class="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Notifications">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
       <span id="notifications-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
-      <!-- #138: distinct green badge for pending AI-agent dev-chat
-           completions (session_done / auto_solve_done). Positioned at the
-           bottom-right so it never overlaps the red app-wide badge above. -->
-      <span id="notifications-badge-ai" class="hidden absolute -bottom-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
     </button>
     <!-- The "Create new app" entry point used to live here in the header
          as a "+" pill; it's been moved into the home-screen feed itself,
@@ -324,6 +331,23 @@
     <div id="notifications-invites" class="shrink-0 overflow-y-auto max-h-48"></div>
     <div id="notifications-list" class="flex-1 overflow-y-auto"></div>
     <div id="notifications-empty" class="hidden px-4 py-6 text-sm text-zinc-500 text-center">You'll get pinged here when someone proposes a change to an app you use.</div>
+  </div>
+
+  <!-- Header-cog "your work" drawer (public/js/work-drawer.js): the
+       viewer's session-related notifications (pinned "Needs attention"
+       section), dev sessions and open proposals. Same chrome/position
+       as the notifications panel above. -->
+  <div id="work-drawer-panel" class="hidden fixed top-14 right-3 z-50 w-80 max-w-[95vw] max-h-[70vh] flex flex-col bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-2xl overflow-hidden">
+    <div class="flex items-center gap-2 px-3 py-2 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+      <span class="text-sm font-medium text-zinc-800 dark:text-zinc-200">Your work</span>
+      <span class="flex-1"></span>
+      <button id="work-drawer-mark-all" class="hidden text-xs text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200">Mark all read</button>
+      <button id="work-drawer-close" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200" aria-label="Close">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div id="work-drawer-list" class="flex-1 overflow-y-auto"></div>
+    <div id="work-drawer-empty" class="hidden px-4 py-6 text-sm text-zinc-500 text-center">Nothing in flight — start a dev session from any app's Dev tab.</div>
   </div>
 
   <!-- Developer console (slide-up panel, anchored to bottom) -->
@@ -1174,6 +1198,11 @@
        before dev-chat.js / app-view.js / home.js so all three derive and
        label proposal merge states from one place. -->
   <script src="/js/merge-status.js"></script>
+  <!-- Header-cog "your work" drawer. Loaded after notifications.js
+       (whose shared renderRow / items store it reuses) and after
+       merge-status.js (whose lifecycle helper drives the spin state and
+       the proposal chips). -->
+  <script src="/js/work-drawer.js"></script>
   <script src="/js/dev-chat.js"></script>
   <!-- Kudos widget (button + budget badge) and leaderboard screen.
        Loaded BEFORE app-view.js so the panel renderer can use

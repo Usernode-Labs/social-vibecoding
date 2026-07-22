@@ -3,6 +3,65 @@ const { getPool } = require('../db/pool');
 const notifications = require('../services/notifications');
 const log = require('../services/logger');
 
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+// ── Staging mock data ──────────────────────────────────────────────────
+// Request-time (?demo=1) injection of the four session-related
+// notification kinds — session_done, auto_solve_done (failed), stale_pr,
+// check_failed — so the header cog's pinned "Needs attention" section,
+// its green badge, and the bell's EXCLUSION of these kinds are all
+// reviewable in a staging preview without waiting for a real session to
+// finish. Same conventions as the other mock feeds (stagingMockProposals
+// in votes.js): fixed 99xxxx ids, "[Mock]" titles, never persisted,
+// strictly a no-op outside staging. Mark-read calls on these ids match
+// no DB row and no-op harmlessly.
+function stagingMockNotifications() {
+  const now = Date.now();
+  const base = {
+    readAt: null,
+    appId: 0,
+    appSlug: 'staging-demo',
+    appName: 'Staging demo app',
+    chatMessageId: null,
+    messageContent: null,
+    threadType: null,
+    threadRef: null,
+    sourceUsername: null,
+    branchName: null,
+    detail: null,
+  };
+  return [
+    {
+      ...base,
+      id: 990201, kind: 'session_done',
+      createdAt: new Date(now - 4 * 60 * 1000).toISOString(),
+      sessionId: 990101, prTitle: '[Mock] Finished dev session',
+      prNumber: null, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990202, kind: 'auto_solve_done', detail: 'failed',
+      createdAt: new Date(now - 12 * 60 * 1000).toISOString(),
+      sessionId: null, prTitle: null, prNumber: null,
+      headlessIssueNumber: 900002,
+    },
+    {
+      ...base,
+      id: 990203, kind: 'stale_pr',
+      createdAt: new Date(now - 40 * 60 * 1000).toISOString(),
+      sessionId: 990103, prTitle: '[Mock] Stale proposal going quiet',
+      prNumber: 9901, headlessIssueNumber: null,
+    },
+    {
+      ...base,
+      id: 990204, kind: 'check_failed',
+      createdAt: new Date(now - 55 * 60 * 1000).toISOString(),
+      sessionId: 990104, prTitle: "[Mock] Proposal whose preview won't boot",
+      prNumber: 9902, headlessIssueNumber: null,
+    },
+  ];
+}
+
 // Routes for the top-right notifications dropdown. All routes assume
 // authMiddleware has already attached `req.user`.
 function notificationsRoutes(config) {
@@ -60,6 +119,15 @@ function notificationsRoutes(config) {
         // rows. First page only — like `unread`, it's an account-wide
         // aggregate the client already has on cursor follow-ups.
         payload.pendingInvites = await notifications.listPendingInvites(pool, req.user.id);
+        // Staging-only demo rows (?demo=1) — see stagingMockNotifications.
+        // First page only (they'd duplicate on cursor follow-ups), unread
+        // count bumped to match so the client's red-badge subtraction
+        // (account unread minus loaded session-kind unread) stays honest.
+        if (IS_STAGING && req.query.demo === '1') {
+          const mocks = stagingMockNotifications();
+          payload.notifications = [...mocks, ...payload.notifications];
+          payload.unread += mocks.length;
+        }
       }
       res.json(payload);
     } catch (err) {
@@ -70,7 +138,14 @@ function notificationsRoutes(config) {
 
   router.post('/api/notifications/read', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
-    const { id, all, chat_message_id: chatMessageId, app_id: appId } = req.body || {};
+    const {
+      id, all, chat_message_id: chatMessageId, app_id: appId,
+      kinds, exclude_kinds: excludeKinds,
+    } = req.body || {};
+    // Kind scoping for the split drawers (cog vs bell). Sanitize to
+    // string arrays; anything else is treated as absent.
+    const kindList = Array.isArray(kinds) ? kinds.filter((k) => typeof k === 'string') : null;
+    const excludeList = Array.isArray(excludeKinds) ? excludeKinds.filter((k) => typeof k === 'string') : null;
     try {
       // `{ app_id }` is the per-group "Mark read" path (#84 grouping):
       // clear every unread notification this user has for one app, in a
@@ -121,7 +196,9 @@ function notificationsRoutes(config) {
       // open tabs/devices kept showing unread state until a full reload —
       // making "Mark all read" look like it did nothing. Fan out exactly
       // like the branches above whenever something actually changed.
-      const cleared = await notifications.markRead(pool, req.user.id, { id, all: !!all });
+      const cleared = await notifications.markRead(pool, req.user.id, {
+        id, all: !!all, kinds: kindList, excludeKinds: excludeList,
+      });
       const unread = await notifications.countUnread(pool, req.user.id);
       if (cleared > 0) {
         try {
@@ -141,4 +218,4 @@ function notificationsRoutes(config) {
   return router;
 }
 
-module.exports = { notificationsRoutes };
+module.exports = { notificationsRoutes, stagingMockNotifications };
