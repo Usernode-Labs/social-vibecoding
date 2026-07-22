@@ -27,6 +27,8 @@ const {
   decidePtrRelease,
   decideSheetRelease,
   keyboardInset,
+  isTextEntryField,
+  revealScrollDelta,
   reorderDropIndex,
   autoScrollVelocity,
   createArbiter,
@@ -260,6 +262,114 @@ test('keyboardInset: explicit minInset override is honored, degenerate input is 
   );
   assert.equal(keyboardInset(null), 0);
   assert.equal(keyboardInset(undefined), 0);
+});
+
+// ── Keyboard-avoidance reveal math ─────────────────────────────────────
+// bottomLimit = innerHeight - inset - margin; topLimit is passed final
+// (the caller adds its own margin, e.g. navbar bottom + margin).
+
+test('revealScrollDelta: field under the keyboard scrolls down by the overlap', () => {
+  // iPhone-ish: 844 viewport, 336 keyboard, 8 margin → bottomLimit 500.
+  assert.equal(
+    revealScrollDelta({
+      fieldTop: 600, fieldBottom: 640, innerHeight: 844, inset: 336, margin: 8, topLimit: 52,
+    }),
+    140
+  );
+});
+
+test('revealScrollDelta: field above the top limit scrolls up (negative delta)', () => {
+  assert.equal(
+    revealScrollDelta({
+      fieldTop: 20, fieldBottom: 60, innerHeight: 844, inset: 336, margin: 8, topLimit: 52,
+    }),
+    -32
+  );
+});
+
+test('revealScrollDelta: an already-visible field does not move (minimal motion)', () => {
+  // scrollIntoView would count a field under the padding as visible; this
+  // is the corrected math — inside [topLimit, bottomLimit] means delta 0.
+  assert.equal(
+    revealScrollDelta({
+      fieldTop: 100, fieldBottom: 140, innerHeight: 844, inset: 336, margin: 8, topLimit: 52,
+    }),
+    0
+  );
+  // Exactly at the limits is visible too.
+  assert.equal(
+    revealScrollDelta({
+      fieldTop: 52, fieldBottom: 500, innerHeight: 844, inset: 336, margin: 8, topLimit: 52,
+    }),
+    0
+  );
+});
+
+test('revealScrollDelta: a field taller than the visible strip keeps its top visible', () => {
+  // Strip is [52, 500]; a 600px-tall field can't fit — the clamp caps the
+  // downward scroll so fieldTop lands at topLimit, never past it.
+  assert.equal(
+    revealScrollDelta({
+      fieldTop: 300, fieldBottom: 900, innerHeight: 844, inset: 336, margin: 8, topLimit: 52,
+    }),
+    248 // fieldTop 300 - topLimit 52, NOT fieldBottom 900 - bottomLimit 500
+  );
+  // Tall field whose top is already at the limit: no motion at all.
+  assert.equal(
+    revealScrollDelta({
+      fieldTop: 52, fieldBottom: 900, innerHeight: 844, inset: 336, margin: 8, topLimit: 52,
+    }),
+    0
+  );
+});
+
+test('revealScrollDelta: inset 0 degenerates to plain viewport math', () => {
+  // Resize-mode Android / hardware keyboard: innerHeight already shrank,
+  // so bottomLimit = innerHeight - margin is correct as-is.
+  assert.equal(
+    revealScrollDelta({
+      fieldTop: 460, fieldBottom: 520, innerHeight: 508, inset: 0, margin: 8, topLimit: 8,
+    }),
+    20
+  );
+  assert.equal(revealScrollDelta(null), 0);
+  assert.equal(revealScrollDelta(undefined), 0);
+});
+
+// ── Keyboard-avoidance text-entry allowlist ────────────────────────────
+
+test('isTextEntryField: text-keyboard input types are intercepted', () => {
+  for (const type of ['text', 'search', 'email', 'url', 'tel', 'password', 'number']) {
+    assert.equal(isTextEntryField({ tag: 'input', type }), true, type);
+  }
+  assert.equal(isTextEntryField({ tag: 'textarea' }), true);
+  assert.equal(isTextEntryField({ tag: 'div', contentEditable: true }), true);
+  // Missing/unknown types default to text (the HTML default).
+  assert.equal(isTextEntryField({ tag: 'input' }), true);
+  assert.equal(isTextEntryField({ tag: 'input', type: 'made-up-type' }), true);
+  // Case-insensitive, like the DOM.
+  assert.equal(isTextEntryField({ tag: 'INPUT', type: 'Text' }), true);
+});
+
+test('isTextEntryField: non-text controls keep native taps', () => {
+  for (const type of [
+    'checkbox', 'radio', 'range', 'color', 'file', 'button', 'submit',
+    'reset', 'image', 'hidden', 'date', 'time', 'month', 'week', 'datetime-local',
+  ]) {
+    assert.equal(isTextEntryField({ tag: 'input', type }), false, type);
+  }
+  assert.equal(isTextEntryField({ tag: 'select' }), false);
+  assert.equal(isTextEntryField({ tag: 'button' }), false);
+  assert.equal(isTextEntryField({ tag: 'div' }), false);
+});
+
+test('isTextEntryField: disabled / readonly fields are never intercepted', () => {
+  assert.equal(isTextEntryField({ tag: 'input', type: 'text', disabled: true }), false);
+  assert.equal(isTextEntryField({ tag: 'input', type: 'text', readOnly: true }), false);
+  assert.equal(isTextEntryField({ tag: 'textarea', readOnly: true }), false);
+  assert.equal(isTextEntryField({ tag: 'div', contentEditable: true, disabled: true }), false);
+  assert.equal(isTextEntryField(null), false);
+  assert.equal(isTextEntryField(undefined), false);
 });
 
 // ── Gesture arbiter ────────────────────────────────────────────────────
