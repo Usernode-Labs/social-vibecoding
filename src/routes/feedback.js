@@ -381,9 +381,12 @@ function feedbackRoutes(config) {
           Authorization: `token ${pat}`,
           'User-Agent': 'usernode-social-vibecoding',
         },
+        // This hand-rolled fetch bypasses github.js's write helpers, so
+        // apply safeMention here — the user-typed description/title are
+        // free-form text that could carry live @mentions (#723).
         body: JSON.stringify({
-          title,
-          body: `**Source:** ${source}\n\n${description.trim()}${screenshotSuffix}`,
+          title: github.safeMention(title),
+          body: github.safeMention(`**Source:** ${source}\n\n${description.trim()}${screenshotSuffix}`),
           labels: ['usernode'],
         }),
       });

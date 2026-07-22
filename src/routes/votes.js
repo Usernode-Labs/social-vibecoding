@@ -3398,7 +3398,7 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
     const prTitle = `Revert: ${session.pr_title || `PR #${session.pr_number || session.id}`}`.slice(0, 200);
     const prBody =
       `Automated revert of ${origLabel}.\n\n` +
-      `Undo vote reached majority on the original PR; deciding vote cast by @${deciderUsername}. ` +
+      `Undo vote reached majority on the original PR; deciding vote cast by \`${deciderUsername}\`. ` +
       `This PR still needs a regular merge vote to land — vote in the app's group chat panel.\n\n` +
       `Reverts commit ${mergeSha}.`;
 
@@ -3424,4 +3424,6 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
 // PR after it syncs cleanly with main. Consumers should lazy-require
 // this module from inside a function to avoid the votes <-> conflict-
 // resolver circular-require load-order trap.
-module.exports = { voteRoutes, checkAndMerge, resolveIssueBounty, finalizeMerge };
+// createRevertPR is exported for tests (tests/github-mention-safety.test.js
+// asserts its PR body never carries a live @mention).
+module.exports = { voteRoutes, checkAndMerge, resolveIssueBounty, createRevertPR, finalizeMerge };
