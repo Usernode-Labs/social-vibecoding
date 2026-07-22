@@ -997,14 +997,23 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   `{ button, value }` (always write it `unNative.alert(...)` — it does
   not replace `window.alert`).
 - **Toast / transient status.** `unNative.toast(message, { duration?,
-  action?: { label, handler } })` — fire-and-forget feedback ("Copied",
-  "Saved", API errors): a bottom capsule HUD on iOS/desktop, a Material
-  snackbar on Android, safe-area aware, auto-hiding (2.2s, 4s with an
-  action). Singleton with last-writer-wins: a new call replaces a
-  still-visible toast and resets its timer — no stacking, no queue.
-  It never steals taps from content underneath (`pointer-events` stay
-  off except on the optional action button). Returns
-  `{ dismiss(), el }`. Use it instead of hand-rolling a `#toast` div.
+  action?: { label, handler }, priority?, onClose? })` — fire-and-forget
+  feedback ("Copied", "Saved", API errors): a bottom capsule HUD on
+  iOS/desktop, a Material snackbar on Android, safe-area aware,
+  auto-hiding (2.2s, 4s with an action). Singleton with
+  last-writer-wins among ordinary toasts: a new call replaces a
+  still-visible toast and resets its timer — no stacking. A
+  `priority: true` toast is NOT displaced by ordinary toasts; those
+  wait — at most one, latest wins — and show after it resolves (a newer
+  priority toast still takes over). `onClose(reason)` fires exactly
+  once per call — `'timeout'` | `'action'` (after the action handler) |
+  `'dismiss'` | `'replaced'` — including for toasts replaced while
+  still waiting. For undo flows, use a priority action toast with
+  `onClose` and commit the pending operation on any reason except
+  `'action'` — don't hand-roll an undo pill. It never steals taps from
+  content underneath (`pointer-events` stay off except on the optional
+  action button). Returns `{ dismiss(), el }`. Use it instead of
+  hand-rolling a `#toast` div.
 - **Nav bars.** Markup classes `un-navbar` (fixed, blurred, translucent),
   `un-navbar-title`, `un-navbar-back` (tinted back chevron), and
   `un-navbar-large` (large-title block in the page flow). Wire with

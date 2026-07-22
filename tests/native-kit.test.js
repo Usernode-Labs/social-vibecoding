@@ -29,6 +29,7 @@ const {
   reorderDropIndex,
   autoScrollVelocity,
   createArbiter,
+  createToastSlot,
 } = physics;
 
 // ── Spring integrator ──────────────────────────────────────────────────
@@ -371,4 +372,121 @@ test('gesture arbiter: a reorder claim loses to an earlier swipe claim and vice 
   // Reorder lifts first: a later swipe x-lock on the same finger loses.
   assert.equal(a.claim('touch', reorder), true);
   assert.equal(a.claim('touch', swipe), false, 'swipe must back off mid-reorder');
+});
+
+// ── Toast slot state machine (priority / pending displacement) ─────────
+
+test('toast slot: ordinary replaces visible ordinary (last-writer-wins)', () => {
+  const slot = createToastSlot();
+  const a = { priority: false };
+  const b = { priority: false };
+  assert.deepEqual(slot.show(a), { display: 'replace', closed: [] });
+  const r = slot.show(b);
+  assert.equal(r.display, 'replace');
+  assert.deepEqual(r.closed, [a]);
+  assert.equal(slot.current(), b);
+  assert.equal(slot.pending(), null);
+});
+
+test('toast slot: ordinary queues behind a visible priority toast', () => {
+  const slot = createToastSlot();
+  const undo = { priority: true };
+  const saved = { priority: false };
+  slot.show(undo);
+  const r = slot.show(saved);
+  assert.equal(r.display, 'queue');
+  assert.deepEqual(r.closed, []);
+  assert.equal(slot.current(), undo, 'the priority toast keeps the visible slot');
+  assert.equal(slot.pending(), saved);
+});
+
+test('toast slot: a second queued ordinary replaces the first pending (depth stays 1)', () => {
+  const slot = createToastSlot();
+  const undo = { priority: true };
+  const first = { priority: false };
+  const second = { priority: false };
+  slot.show(undo);
+  slot.show(first);
+  const r = slot.show(second);
+  assert.equal(r.display, 'queue');
+  assert.deepEqual(r.closed, [first], 'the dropped pending toast is reported closed');
+  assert.equal(slot.pending(), second);
+});
+
+test('toast slot: priority replaces priority; the pending ordinary survives', () => {
+  const slot = createToastSlot();
+  const undo1 = { priority: true };
+  const saved = { priority: false };
+  const undo2 = { priority: true };
+  slot.show(undo1);
+  slot.show(saved);
+  const r = slot.show(undo2);
+  assert.equal(r.display, 'replace');
+  assert.deepEqual(r.closed, [undo1]);
+  assert.equal(slot.current(), undo2);
+  assert.equal(slot.pending(), saved);
+});
+
+test('toast slot: priority replaces a visible ordinary toast', () => {
+  const slot = createToastSlot();
+  const saved = { priority: false };
+  const undo = { priority: true };
+  slot.show(saved);
+  const r = slot.show(undo);
+  assert.equal(r.display, 'replace');
+  assert.deepEqual(r.closed, [saved]);
+  assert.equal(slot.current(), undo);
+});
+
+test('toast slot: resolution promotes the pending toast exactly once', () => {
+  const slot = createToastSlot();
+  const undo = { priority: true };
+  const saved = { priority: false };
+  slot.show(undo);
+  slot.show(saved);
+  assert.equal(slot.resolve(undo), saved);
+  assert.equal(slot.current(), saved);
+  assert.equal(slot.pending(), null);
+  assert.equal(slot.resolve(undo), null, 'a stale resolve is a no-op');
+  assert.equal(slot.current(), saved, 'a stale resolve must not clear the slot');
+  assert.equal(slot.resolve(saved), null, 'nothing left to promote');
+  assert.equal(slot.current(), null);
+});
+
+test('toast slot: cancelPending removes only the queued record', () => {
+  const slot = createToastSlot();
+  const undo = { priority: true };
+  const saved = { priority: false };
+  slot.show(undo);
+  slot.show(saved);
+  assert.equal(slot.cancelPending(undo), false, 'the visible record is not pending');
+  assert.equal(slot.cancelPending(saved), true);
+  assert.equal(slot.pending(), null);
+  assert.equal(slot.resolve(undo), null, 'a cancelled pending toast never promotes');
+});
+
+test('toast slot: every record ends exactly once across a mixed sequence', () => {
+  // Drive the machine with a mixed priority/ordinary sequence and count
+  // lifecycle ends per record: displaced (via show().closed) or resolved
+  // (the visible slot ending). Exactly-once here is what guarantees the
+  // DOM layer's exactly-once onClose.
+  const slot = createToastSlot();
+  const records = [];
+  const ended = new Map();
+  function mk(priority) {
+    const r = { priority, id: records.length };
+    records.push(r);
+    ended.set(r, 0);
+    return r;
+  }
+  function end(r) { ended.set(r, ended.get(r) + 1); }
+  for (const p of [false, true, false, false, true, true, false]) {
+    for (const c of slot.show(mk(p)).closed) end(c);
+  }
+  // Drain: resolve whatever is visible until the slot empties.
+  let cur = slot.current();
+  while (cur) { end(cur); cur = slot.resolve(cur); }
+  for (const r of records) {
+    assert.equal(ended.get(r), 1, `record ${r.id} ended ${ended.get(r)} times`);
+  }
 });
