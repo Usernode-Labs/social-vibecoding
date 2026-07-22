@@ -110,7 +110,7 @@
           <button id="alert-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Alert</button>
           <button id="modal-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Modal</button>
         </div>
-        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses.</p>
+        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. On a phone, tap the sheet's text field: the sheet (and the modal/alert) rides above the on-screen keyboard. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses.</p>
       </section>
 
       <!-- Toasts -->
@@ -285,12 +285,18 @@
       // ── Sheets & dialogs ───────────────────────────────────────────
       var resultEl = document.getElementById('dialog-result');
       document.getElementById('sheet-btn').addEventListener('click', function () {
-        unNative.presentSheet({
+        var sheet = unNative.presentSheet({
           content:
             '<div class="text-base font-semibold mb-2">Bottom sheet</div>' +
             '<p class="text-sm text-zinc-500 mb-3">Slow drags track 1:1; a flick dismisses by momentum; drifting back cancels. Grab it mid-spring — it follows from where it is.</p>' +
-            '<div class="h-24 rounded-xl" style="background:var(--un-accent); opacity:0.15"></div>',
+            '<label class="block text-xs font-medium text-zinc-500 mb-1" for="sheet-demo-field">Name</label>' +
+            '<input id="sheet-demo-field" type="text" placeholder="Tap to type — the sheet rides above the keyboard" class="w-full mb-3 px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent">' +
+            '<button type="button" id="sheet-demo-save" class="w-full px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Save</button>',
           onDismiss: function () { resultEl.textContent = 'Sheet dismissed.'; },
+        });
+        sheet.el.querySelector('#sheet-demo-save').addEventListener('click', function () {
+          sheet.dismiss();
+          unNative.toast('Saved');
         });
       });
       document.getElementById('action-sheet-btn').addEventListener('click', function () {

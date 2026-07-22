@@ -461,23 +461,32 @@ html.un-android .un-switch:checked:active::before {
 
 /* ── Bottom sheet ──────────────────────────────────────────────────────
    Presented by unNative.presentSheet(); translateY is JS-owned (spring
-   in, 1:1 drag, momentum dismiss) — no CSS transition on purpose. */
+   in, 1:1 drag, momentum dismiss) — no CSS transition on transform, on
+   purpose. `bottom` carries the keyboard inset (see the tracker in
+   native.js): the box position rides above the keyboard while the
+   transform keeps its spring/drag semantics untouched. */
 
 .un-sheet {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--un-kb-inset, 0px);
   z-index: 9991;
   background: var(--un-sheet-bg);
   border-radius: 14px 14px 0 0;
   box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.22);
   padding-bottom: env(safe-area-inset-bottom, 0px);
   transform: translateY(100%);
+  transition: bottom 250ms ease-out;
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
   will-change: transform;
+}
+/* Keyboard up: the home-indicator safe area sits behind the keyboard —
+   don't stack its padding on top of the inset. */
+html.un-kb .un-sheet {
+  padding-bottom: 0;
 }
 .un-sheet-grabber {
   width: 36px;
@@ -498,11 +507,15 @@ html.un-android .un-switch:checked:active::before {
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--un-kb-inset, 0px);
   z-index: 9991;
   padding: 8px 8px calc(8px + env(safe-area-inset-bottom, 0px));
   transform: translateY(100%);
+  transition: bottom 250ms ease-out;
   will-change: transform;
+}
+html.un-kb .un-action-sheet {
+  padding-bottom: 8px;
 }
 .un-action-card {
   border-radius: 14px;
@@ -551,7 +564,9 @@ html.un-android .un-switch:checked:active::before {
 .un-alert {
   position: fixed;
   left: 50%;
-  top: 50%;
+  /* Centered in the strip above the on-screen keyboard (the field
+     autofocuses, so the keyboard is usually up). */
+  top: calc(50% - var(--un-kb-inset, 0px) / 2);
   z-index: 9992;
   width: 270px;
   border-radius: 14px;
@@ -562,7 +577,7 @@ html.un-android .un-switch:checked:active::before {
   text-align: center;
   transform: translate(-50%, -50%) scale(1.12);
   opacity: 0;
-  transition: transform 260ms var(--un-ease-spring), opacity 180ms ease;
+  transition: transform 260ms var(--un-ease-spring), opacity 180ms ease, top 250ms ease-out;
   will-change: transform, opacity;
 }
 .un-alert.un-in {
@@ -632,11 +647,14 @@ html.un-android .un-switch:checked:active::before {
 .un-modal {
   position: fixed;
   left: 50%;
-  top: 50%;
+  /* Centered in the strip above the on-screen keyboard; on iOS 100dvh
+     ignores the (overlaying) keyboard, so the inset is subtracted from
+     the max-height too. Both are 0 on resize-mode Android / desktop. */
+  top: calc(50% - var(--un-kb-inset, 0px) / 2);
   z-index: 9992;
   width: min(480px, calc(100vw - 32px));
   max-height: calc(100vh - 32px);
-  max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  max-height: calc(100dvh - 32px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - var(--un-kb-inset, 0px));
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-y: contain;
@@ -646,7 +664,7 @@ html.un-android .un-switch:checked:active::before {
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
   transform: translate(-50%, -50%) scale(1.04);
   opacity: 0;
-  transition: transform 260ms var(--un-ease-spring), opacity 180ms ease;
+  transition: transform 260ms var(--un-ease-spring), opacity 180ms ease, top 250ms ease-out;
   will-change: transform, opacity;
   outline: none;
 }
@@ -721,8 +739,14 @@ html.un-android .un-toast.un-in {
 
 @media (prefers-reduced-motion: reduce) {
   .un-toast,
-  .un-modal {
+  .un-modal,
+  .un-alert {
     transition: opacity 180ms ease;
+  }
+  /* Keyboard-inset moves still apply, just without animation. */
+  .un-sheet,
+  .un-action-sheet {
+    transition: none;
   }
 }
 

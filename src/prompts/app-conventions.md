@@ -976,7 +976,9 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
 - **Bottom sheet.** `unNative.presentSheet({ content | contentEl,
   onDismiss })` — grabber, spring presentation, 1:1 drag-to-dismiss
   with momentum commit (a touch mid-spring inherits position and
-  velocity), backdrop tap dismisses. Returns `{ dismiss(), el }`.
+  velocity), backdrop tap dismisses. Keyboard avoidance is built in
+  (see below) — sheets with text fields ride above the on-screen
+  keyboard automatically. Returns `{ dismiss(), el }`.
 - **Centered modal.** `unNative.presentModal({ content | contentEl,
   onDismiss?, dismissible? })` — arbitrary content in a centered card
   over the same dimmed backdrop as the sheet/alert, with the alert's
@@ -985,7 +987,9 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   clickable during the fade-out; tall content scrolls inside the card.
   The natural surface for forms, share panels and editor dialogs —
   especially on desktop/tablet where a bottom sheet reads as a phone
-  idiom. Returns `{ dismiss(), el }`.
+  idiom. Keyboard avoidance is built in (see below): with the
+  on-screen keyboard up, the card re-centers in the visible strip
+  above it and shrinks to fit. Returns `{ dismiss(), el }`.
 - **Action sheet.** `unNative.actionSheet({ title?, actions: [{ label,
   destructive?, handler? }], cancelLabel? })` — iOS-style stack with a
   red destructive action and a separate Cancel card; backdrop cancels.
@@ -995,7 +999,20 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   'cancel'|'default'|'destructive', handler? }] })` — the compact
   270px centered iOS alert with optional inset text field. Resolves
   `{ button, value }` (always write it `unNative.alert(...)` — it does
-  not replace `window.alert`).
+  not replace `window.alert`). The field autofocuses, and keyboard
+  avoidance is built in (see below): the alert re-centers above the
+  on-screen keyboard.
+- **Keyboard avoidance (automatic).** On mobile the kit tracks the
+  on-screen keyboard via `visualViewport` and maintains
+  `--un-kb-inset` (the keyboard's occlusion of the layout viewport,
+  in px) plus class `un-kb` on `<html>` while it is non-zero. Sheets,
+  action sheets, modals and alerts consume it automatically and ride
+  above the keyboard — smoothly, without disturbing drag-to-dismiss.
+  **Do not hand-roll `.un-sheet { bottom: … }` overrides or per-app
+  visualViewport plumbing anymore** — delete them when adopting this;
+  the kit owns the inset now. Apps may consume `var(--un-kb-inset,
+  0px)` for their own fixed bottom bars. No-op on desktop or where
+  `visualViewport` is absent.
 - **Toast / transient status.** `unNative.toast(message, { duration?,
   action?: { label, handler }, priority?, onClose? })` — fire-and-forget
   feedback ("Copied", "Saved", API errors): a bottom capsule HUD on
