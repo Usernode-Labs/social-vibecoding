@@ -644,8 +644,28 @@ async function markReadForApp(pool, userId, appId) {
 // Single-id and mark-all clears. Returns rows actually cleared (like the
 // scoped helpers above) so the route can decide whether to fan out a
 // cross-tab `notifications_changed` refresh.
-async function markRead(pool, userId, { id, all = false } = {}) {
+async function markRead(pool, userId, { id, all = false, kinds = null, excludeKinds = null } = {}) {
   if (all) {
+    // Optional kind scoping for the split drawers: the header cog's
+    // "Mark all read" sends kinds=[the session-related set] so it only
+    // clears its own rows; the bell's sends excludeKinds=[same set] so
+    // it never clears the cog's. No scope = the historical clear-all.
+    if (Array.isArray(kinds) && kinds.length) {
+      const { rowCount } = await pool.query(
+        `UPDATE notifications SET read_at = NOW()
+          WHERE user_id = $1 AND read_at IS NULL AND kind = ANY($2)`,
+        [userId, kinds]
+      );
+      return rowCount || 0;
+    }
+    if (Array.isArray(excludeKinds) && excludeKinds.length) {
+      const { rowCount } = await pool.query(
+        `UPDATE notifications SET read_at = NOW()
+          WHERE user_id = $1 AND read_at IS NULL AND NOT (kind = ANY($2))`,
+        [userId, excludeKinds]
+      );
+      return rowCount || 0;
+    }
     const { rowCount } = await pool.query(
       `UPDATE notifications SET read_at = NOW() WHERE user_id = $1 AND read_at IS NULL`,
       [userId]

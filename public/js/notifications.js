@@ -109,7 +109,12 @@ const Notifications = {
 
   async refresh() {
     try {
-      const res = await fetch('/api/notifications?limit=100');
+      // ?demo=1 forwarding (preserved on the page URL): staging injects
+      // mock session-related rows on the first page so the cog drawer's
+      // pinned section is reviewable (routes/notifications.js
+      // stagingMockNotifications). No-op in production.
+      const demo = new URLSearchParams(location.search).get('demo') === '1' ? '&demo=1' : '';
+      const res = await fetch(`/api/notifications?limit=100${demo}`);
       if (!res.ok) return;
       const data = await res.json();
       Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
@@ -213,6 +218,8 @@ const Notifications = {
   show() {
     const panel = document.getElementById('notifications-panel');
     if (!panel) return;
+    // One drawer at a time: opening the bell closes the cog drawer.
+    if (window.WorkDrawer && WorkDrawer.open) WorkDrawer.hide();
     panel.classList.remove('hidden');
     Notifications.open = true;
     Notifications._renderInvites();
@@ -229,21 +236,23 @@ const Notifications = {
   // --- mark read -------------------------------------------------------
 
   async markAllRead() {
-    if (Notifications.unread === 0) return;
+    // Only the bell's own (non-session) kinds count here — the cog
+    // drawer's session-related notifications have their own mark-all
+    // and must not be cleared by the bell's button.
+    if (Notifications._bellUnread() === 0) return;
     try {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true }),
+        body: JSON.stringify({ all: true, exclude_kinds: [...SESSION_NOTIF_KINDS] }),
       });
       if (!res.ok) return;
       const data = await res.json();
       Notifications.unread = data.unread || 0;
       const now = new Date().toISOString();
-      Notifications.items = Notifications.items.map((n) => ({
-        ...n,
-        readAt: n.readAt || now,
-      }));
+      Notifications.items = Notifications.items.map((n) => (
+        isSessionNotif(n) ? n : { ...n, readAt: n.readAt || now }
+      ));
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       Notifications._renderList();
@@ -447,22 +456,29 @@ const Notifications = {
     return Notifications.unread + Notifications.invites.length;
   },
 
-  // #138: count of unread AI-completion items (session_done /
-  // auto_solve_done) currently loaded — the green "AI is waiting on you"
-  // badge. Counted from the loaded items page; the unread-dedup keeps these
-  // to one-per-session and they're recent, so they sit within the first
-  // page in practice (see spec Considerations for the server-count fallback).
-  _aiUnread() {
-    return Notifications.items.filter(isPriorityNotif).length;
+  // Count of unread session-related items (session_done / auto_solve_done /
+  // stale_pr / check_failed) currently loaded — the green badge on the
+  // header cog (work-drawer.js). Counted from the loaded items page; the
+  // unread-dedup keeps completions to one-per-session and they're recent,
+  // so they sit within the first page in practice.
+  _sessionUnread() {
+    return Notifications.items.filter((n) => isSessionNotif(n) && !n.readAt).length;
+  },
+
+  // The bell's own unread count: everything except the session-related
+  // kinds that live in the cog drawer now.
+  _bellUnread() {
+    return Math.max(0, Notifications.unread - Notifications._sessionUnread());
   },
 
   _renderBadge() {
-    // #138: two badges. Green = pending AI-agent dev-chat completions; red =
-    // everything else (mentions/replies/reactions/kudos/votes) + pending
-    // invites. The green count is split OUT of the red one so the two never
-    // double-count, and each hides at zero.
-    const aiUnread = Notifications._aiUnread();
-    const redCount = Math.max(0, Notifications.unread - aiUnread) + Notifications.invites.length;
+    // Two badges. Green (on the header cog) = the viewer's unread
+    // session-related notifications; red (on the bell) = everything else
+    // (mentions/replies/reactions/kudos/votes) + pending invites. The green
+    // count is split OUT of the red one so the two never double-count, and
+    // each hides at zero.
+    const aiUnread = Notifications._sessionUnread();
+    const redCount = Notifications._bellUnread() + Notifications.invites.length;
 
     const badge = document.getElementById('notifications-badge');
     if (badge) {
@@ -485,8 +501,14 @@ const Notifications = {
     }
 
     const markAll = document.getElementById('notifications-mark-all');
-    if (markAll) markAll.disabled = Notifications.unread === 0;
+    if (markAll) markAll.disabled = Notifications._bellUnread() === 0;
     Notifications._updateTitle();
+    // The cog drawer renders its pinned section from this same items
+    // store — nudge it whenever the store (and therefore the badges)
+    // changed, so an open drawer stays in sync.
+    if (window.WorkDrawer && WorkDrawer.onNotificationsChanged) {
+      WorkDrawer.onNotificationsChanged();
+    }
   },
 
   _updateTitle() {
@@ -616,9 +638,18 @@ const Notifications = {
   // become the collapsed header's preview). Both re-sorts are stable
   // partitions, so ordering inside each tier is unchanged; once a
   // completion is read it drops back to its chronological spot.
+  // Items the bell itself renders: everything EXCEPT the session-related
+  // kinds, which live in the header cog's drawer (work-drawer.js). The
+  // full items array stays the single source of truth — pagination,
+  // mark-read and the completion-title reconcile all keep operating on
+  // it; only the bell's rendering and badge math are filtered.
+  _bellItems() {
+    return Notifications.items.filter((n) => !isSessionNotif(n));
+  },
+
   _groupByApp() {
     const byKey = new Map();
-    for (const n of Notifications.items) {
+    for (const n of Notifications._bellItems()) {
       const key = groupKeyFor(n);
       let g = byKey.get(key);
       if (!g) {
@@ -653,7 +684,7 @@ const Notifications = {
     const empty = document.getElementById('notifications-empty');
     if (!list || !empty) return;
 
-    if (Notifications.items.length === 0) {
+    if (Notifications._bellItems().length === 0) {
       list.innerHTML = '';
       // The pinned invites section may still have content — only show
       // the empty hint when there's truly nothing in the drawer.
@@ -767,6 +798,21 @@ const PRIORITY_KINDS = new Set(['session_done', 'auto_solve_done']);
 function isPriorityNotif(n) {
   return !!n && PRIORITY_KINDS.has(n.kind) && !n.readAt;
 }
+
+// The session-related kinds that render in the header cog's drawer
+// (work-drawer.js) instead of the bell: the four system-generated
+// (source-user-less) notifications about the viewer's OWN sessions and
+// proposals. Everything social — mentions, replies, reactions, kudos,
+// vote nudges, invites, spec shares — stays in the bell. The canonical
+// set lives here (the bell filters on it); work-drawer.js carries a
+// matching literal fallback for standalone loading.
+const SESSION_NOTIF_KINDS = new Set([
+  'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
+]);
+function isSessionNotif(n) {
+  return !!n && SESSION_NOTIF_KINDS.has(n.kind);
+}
+window.SESSION_NOTIF_KINDS = SESSION_NOTIF_KINDS;
 
 // Unread indicator dot. When unread it's a solid violet dot carrying an
 // accessible "Unread" label; when read it's an equal-width invisible

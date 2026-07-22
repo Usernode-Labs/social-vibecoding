@@ -1,7 +1,7 @@
 // Route test for GET /api/me/active-sessions (src/routes/sessions.js) —
 // the cross-app "viewer's own sessions" endpoint. Long the data source
 // for the dev tab's "Active Sessions (x/y)" panel, it now also backs the
-// home screen's "Your active sessions" section, so its owner scoping,
+// header cog's "Your sessions" drawer section, so its owner scoping,
 // status filtering, busy detection, and totals arithmetic are
 // load-bearing on a prominent surface.
 //

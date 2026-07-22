@@ -17,40 +17,16 @@ const Home = {
     const listEl = document.getElementById('app-list');
 
     try {
-      // #194: the viewer's own open proposals ride along with the app
-      // grid, and the viewer's own active dev sessions ride along the
-      // same way. Both non-fatal — a failure just hides the section.
-      // #405: forward ?demo=1 (preserved on the page URL) so the "Your
-      // proposals" strip's canonical merge-lifecycle chips populate from the
-      // staging demo fixtures. No-op outside a ?demo=1 staging preview.
+      // The viewer's own proposals / active sessions used to ride along
+      // here as two strips at the top of the grid; both moved into the
+      // header cog's drawer (public/js/work-drawer.js), which owns those
+      // fetches now.
+      // ?demo=1 rides on /api/apps: staging injects the icon-demo
+      // tiles there (routes/apps.js demoIconApps). No-op in production.
       const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
-      const [res, proposalsRes, sessionsRes] = await Promise.all([
-        // ?demo=1 also rides on /api/apps: staging injects the icon-demo
-        // tiles there (routes/apps.js demoIconApps). No-op in production.
-        fetch(`/api/apps${demoQS}`),
-        fetch(`/api/me/proposals${demoQS}`).catch(() => null),
-        fetch('/api/me/active-sessions').catch(() => null),
-      ]);
+      const res = await fetch(`/api/apps${demoQS}`);
       if (!res.ok) throw new Error('Failed to load apps');
       const { apps } = await res.json();
-      let myProposals = { proposals: [], governance: [] };
-      try {
-        if (proposalsRes && proposalsRes.ok) myProposals = await proposalsRes.json();
-      } catch { /* section stays hidden */ }
-      Home._myProposals = myProposals;
-      let mySessions = [];
-      try {
-        if (sessionsRes && sessionsRes.ok) {
-          const data = await sessionsRes.json();
-          if (Array.isArray(data.sessions)) mySessions = data.sessions;
-        }
-      } catch { /* section stays hidden */ }
-      Home._activeSessions = mySessions;
-      // Busy spinners flip on turn start/finish, which doesn't broadcast
-      // a session_update — keep them fresh with a slow poll while the
-      // section has rows to show (see _syncSessionPolling).
-      if (mySessions.some((s) => s.status === 'active')) Home._syncSessionPolling();
-
       Home._apps = apps;
       Home.render();
       // The shortcut probe's heal pass may have run before _apps was
@@ -170,12 +146,10 @@ const Home = {
       // Reordering is meaningless with a single card — skip the grab
       // affordance and the drag wiring when there's only one.
       canDragYours = yours.length >= 2;
-      html = Home.renderMyProposalsSection();
-      html += Home.renderActiveSessionsSection();
       // iOS-in-app only: mirror of the homescreen widget's pinned grid,
       // manageable in place (drag in / reorder / ✕). Empty string
       // everywhere else — see _widgetUiActive.
-      html += Home.renderWidgetSection();
+      html = Home.renderWidgetSection();
       if (yours.length) {
         html += '<div class="home-section-header col-span-full">Your apps</div>';
         // Tag the cards at render time: data-yours drives both the
@@ -350,170 +324,10 @@ const Home = {
     }
   },
 
-  // #194: "Your proposals" — one compact row per proposal the viewer
-  // currently has open for voting, across all apps. Hidden when empty.
-  // Rendered above the Your apps / All Apps sections inside the #app-list
-  // grid (col-span-full rows, same section-header pattern). Each row
-  // deep-links to the proposal's detail in that app's Proposals tab;
-  // refreshed live via the vote_update / session_update WS events
-  // (App.refreshHomeProposals → Home.load).
-  _myProposals: { proposals: [], governance: [] },
-
-  renderMyProposalsSection() {
-    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-    }[c]));
-    const data = Home._myProposals || {};
-    const prs = Array.isArray(data.proposals) ? data.proposals : [];
-    const govs = Array.isArray(data.governance) ? data.governance : [];
-    if (!prs.length && !govs.length) return '';
-
-    const pill = (yes, majority, state, advisory) => {
-      const cls = state === 'merging'
-        ? 'bg-amber-500/10 text-amber-500'
-        : (yes >= majority ? 'bg-emerald-500/10 text-emerald-500' : 'bg-violet-500/10 text-violet-400');
-      // #695: advisory (non-approver) surplus on invited-approver apps —
-      // a muted chip beside the pill, never inside the headline tally.
-      const adv = advisory > 0
-        ? ` <span class="inline-flex items-center text-[0.65rem] font-medium px-1 py-0.5 rounded bg-zinc-500/10 text-zinc-500 shrink-0" title="${advisory} advisory Yes vote${advisory === 1 ? '' : 's'} from non-approvers — they don't count toward merging">+${advisory} advisory</span>`
-        : '';
-      return `<span class="inline-flex items-center text-[0.7rem] font-mono font-medium px-1.5 py-0.5 rounded ${cls}">${yes} / ${majority}</span>${adv}`;
-    };
-
-    // #695: headline tally = the QUALIFYING (approver-only) count when the
-    // row carries one, against the per-row governed requirement
-    // (votes_required) rather than the raw active-user majority — matching
-    // voteCountPill's precedence. Advisory = the non-approver surplus.
-    const tally = (row, rawYes) => {
-      const yes = row.qualified_yes_count != null
-        ? (parseInt(row.qualified_yes_count) || 0) : (parseInt(rawYes) || 0);
-      const snap = parseInt(row.votes_required);
-      const target = (Number.isFinite(snap) && snap > 0) ? snap : (row.majority || 1);
-      const advisory = (row.approval_policy === 'invited' && row.qualified_yes_count != null)
-        ? Math.max(0, (parseInt(rawYes) || 0) - yes) : 0;
-      return { yes, target, advisory };
-    };
-
-    // #405: the merge-status chip is now driven by the shared MergeStatus
-    // lifecycle helper so the home strip surfaces the SAME canonical states
-    // as the proposal feed card and the dev session header — including the
-    // resolving / "Passed — merging shortly" / merging states the bespoke
-    // chips here used to drop. The vote pill still carries the tally, so the
-    // in-vote/draft states render no extra chip (the pill already says it).
-    const lifeChip = (p) => {
-      if (!(window.MergeStatus && MergeStatus.lifecycle)) return '';
-      const life = MergeStatus.lifecycle(p);
-      if (!life || ['in_vote', 'draft', 'none'].indexOf(life.key) !== -1) return '';
-      return `<span class="shrink-0">${MergeStatus.badgeHtml(life)}</span>`;
-    };
-
-    let rows = '';
-    for (const p of prs) {
-      const t = tally(p, p.yes_count);
-      const title = p.pr_title || `PR #${p.pr_number || p.id}`;
-      // Placeholder-title marker: AI naming was down when this PR was
-      // titled; the title-heal sweeper regenerates it automatically.
-      const fallbackChip = p.pr_title_fallback
-        ? '<span class="inline-flex items-center text-[0.65rem] font-medium px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-500 shrink-0" title="AI naming was unavailable when this proposal was created, so it shows a placeholder title. A descriptive title will be generated automatically.">Auto-title pending</span>'
-        : '';
-      rows += `
-        <a href="#app/${esc(p.app_slug)}/dev/proposals/${p.id}"
-           class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
-          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(p.app_name)}</span>
-          <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
-          ${fallbackChip}
-          ${lifeChip(p)}
-          ${pill(t.yes, t.target, p.status, t.advisory)}
-        </a>`;
-    }
-    for (const g of govs) {
-      const gt = tally(g, g.up_count);
-      rows += `
-        <a href="#app/${esc(g.app_slug)}/dev/proposals"
-           class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
-          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(g.app_name)}</span>
-          <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(g.title)}</span>
-          ${pill(gt.yes, gt.target, 'open', gt.advisory)}
-          <span class="text-[0.65rem] font-medium text-violet-400 uppercase">In vote</span>
-        </a>`;
-    }
-
-    return '<div class="home-section-header col-span-full">Your proposals</div>' + rows;
-  },
-
-  // "Your active sessions" — one compact row per dev session the viewer
-  // currently has in 'active' status, across all apps. Promoted rows are
-  // deliberately absent (they render in "Your proposals" just above) and
-  // paused rows are idle by definition, so this stays a "what's in
-  // progress right now" list. Hidden when empty. Same col-span-full row
-  // pattern as the proposals strip; each row deep-links straight into
-  // its session via the #app/{slug}/dev/sessions/{id} hash route.
-  _activeSessions: [],
-
-  renderActiveSessionsSection() {
-    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
-    }[c]));
-    const all = Array.isArray(Home._activeSessions) ? Home._activeSessions : [];
-    const active = all.filter((s) => s.status === 'active');
-    if (!active.length) return '';
-
-    // Busy-first on top of the server's last_activity_at DESC order
-    // (Array.prototype.sort is stable, so within each busy bucket the
-    // activity order is preserved). Cap at 10 — the per-user slot caps
-    // keep the real-world count small, this is just a safety bound.
-    const shown = [...active]
-      .sort((a, b) => (b.busy ? 1 : 0) - (a.busy ? 1 : 0))
-      .slice(0, 10);
-
-    let rows = '';
-    for (const s of shown) {
-      const title = s.session_title || s.pr_title || s.branch_name || `Session #${s.id}`;
-      const rel = formatRelativeTime(s.last_activity_at || s.created_at);
-      const busyTag = s.busy
-        ? '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>'
-        : '';
-      const timeTag = rel
-        ? `<span class="text-[0.7rem] text-zinc-400 dark:text-zinc-500 shrink-0">${esc(rel)}</span>`
-        : '';
-      rows += `
-        <a href="#app/${esc(s.app_slug)}/dev/sessions/${s.id}"
-           class="col-span-full flex items-center gap-2 px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 hover:border-violet-500/50 transition-colors">
-          <span class="text-xs font-medium text-zinc-500 dark:text-zinc-400 shrink-0 max-w-[30%] truncate">${esc(s.app_name)}</span>
-          <span class="text-sm text-zinc-800 dark:text-zinc-200 flex-1 min-w-0 truncate">${esc(title)}</span>
-          ${timeTag}
-          ${busyTag}
-        </a>`;
-    }
-
-    return '<div class="home-section-header col-span-full">Your active sessions</div>' + rows;
-  },
-
-  // Slow refresh tick for the active-sessions busy spinners while the
-  // home screen is visible (same 15s cadence as AppView's dev-sessions
-  // strip poll). Turn start/finish doesn't broadcast a session_update,
-  // so without this a spinner would only flip on the next WS-driven
-  // reload. Self-clears when the home screen is hidden; Home.load()'s
-  // _dragActive guard keeps the tick from re-rendering mid-drag.
-  _sessionPollTimer: null,
-
-  _syncSessionPolling() {
-    if (Home._sessionPollTimer) return;
-    Home._sessionPollTimer = setInterval(() => {
-      const homeScreen = document.getElementById('home-screen');
-      const hasActive = (Home._activeSessions || []).some((s) => s.status === 'active');
-      // Stop ticking when home is hidden or the section emptied out —
-      // with no active rows there's no spinner to refresh, and any new
-      // or resumed session re-arms the poll via the session_update
-      // WS event → Home.load() path.
-      if (!homeScreen || homeScreen.classList.contains('hidden') || !hasActive) {
-        clearInterval(Home._sessionPollTimer);
-        Home._sessionPollTimer = null;
-        return;
-      }
-      Home.load();
-    }, 15000);
-  },
+  // The "Your proposals" / "Your active sessions" strips that used to
+  // render here (#194) moved into the header cog's drawer — see
+  // public/js/work-drawer.js, which owns their fetches, rendering and
+  // busy-state polling now.
 
   // Pill builder for an app's status/activity flags, rendered ONLY in
   // the hamburger menu's build-info header now — the card face

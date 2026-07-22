@@ -874,6 +874,7 @@ const App = {
       Home.load();
     }
     if (window.Notifications) Notifications.refresh?.();
+    if (window.WorkDrawer) WorkDrawer.refresh?.();
     App.loadVersion();
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       AppView.refreshVersionPill();
@@ -967,7 +968,7 @@ const App = {
         && App.currentSubTab !== 'sessions') {
       AppView.refreshDevData('session');
     }
-    // Home screen's "Your proposals" strip tracks session status changes.
+    // The header cog's drawer tracks session status changes.
     App.refreshHomeProposals();
   },
 
@@ -1341,10 +1342,14 @@ const App = {
     }
   },
 
-  // Re-render the home screen's "Your proposals" strip (and the rest of
-  // the grid — Home.load is cheap and already the live-update pattern)
-  // when a vote/session event lands while the home screen is visible.
+  // A vote/session event landed that affects the viewer's own work:
+  // refresh the header cog's drawer (which took over the home screen's
+  // old "Your proposals" / "Your active sessions" strips) and, while the
+  // home screen is visible, re-pull the app grid too (Home.load is cheap
+  // and already the live-update pattern — its cards carry activity
+  // counts that these same events move).
   refreshHomeProposals() {
+    if (window.WorkDrawer && WorkDrawer.refresh) WorkDrawer.refresh();
     const homeScreen = document.getElementById('home-screen');
     if (typeof Home !== 'undefined' && homeScreen && !homeScreen.classList.contains('hidden')) {
       Home.load();
@@ -1409,7 +1414,7 @@ const App = {
     if (typeof DevChat !== 'undefined' && DevChat.refreshCurrentSessionStatus) {
       DevChat.refreshCurrentSessionStatus(data.sessionId);
     }
-    // Home screen's "Your proposals" strip tracks tallies live.
+    // The header cog's drawer tracks tallies live.
     App.refreshHomeProposals();
     // If merged, refresh the app view
     if (data.merged && App.currentApp === data.appSlug) {

@@ -1876,6 +1876,21 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
 
 @keyframes dc-spin { to { transform: rotate(360deg); } }
 
+/* ── Header cog ("your work" drawer button) ─────────────── */
+/* Spins while the viewer has work in flight (an AI turn running, or a
+   proposal merging / resolving / running checks — see work-drawer.js
+   isWorking). A gear glyph is rotationally symmetric enough that a fast
+   spin reads as flicker, so it turns SLOWLY and shifts to the accent
+   color — the color carries the state even where the rotation is
+   ambiguous (and alone under reduced motion). */
+.work-cog-spinning {
+  animation: dc-spin 3s linear infinite;
+  color: var(--accent);
+}
+@media (prefers-reduced-motion: reduce) {
+  .work-cog-spinning { animation: none; }
+}
+
 /* ── Textarea auto-resize ──────────────────────────────── */
 
 .dc-textarea { max-height: 120px; overflow-y: auto; line-height: 1.5; }

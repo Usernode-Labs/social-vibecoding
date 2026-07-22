@@ -24,13 +24,13 @@ const APP_VIEW_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app-view.js'),
   'utf8'
 );
-const HOME_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'home.js'),
+const WORK_DRAWER_SRC = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'work-drawer.js'),
   'utf8'
 );
-// #405: the proposal card / home strip now derive their merge-state badge
-// from window.MergeStatus, so load it into the sandbox first (mirrors the
-// real page load order in index.html).
+// #405: the proposal card / cog-drawer section now derive their merge-state
+// badge from window.MergeStatus, so load it into the sandbox first (mirrors
+// the real page load order in index.html).
 const MERGE_STATUS_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'merge-status.js'),
   'utf8'
@@ -162,42 +162,46 @@ test("detail: a 'failed' snapshot renders the red 'resolution failed' detail box
   assert.match(html, /Sync with main/, 'keeps the manual-resolve guidance');
 });
 
-// ── Home-strip compact badge (Home.renderMyProposalsSection) ───────────
+// ── Cog-drawer compact badge (WorkDrawer.renderProposalsSection) ────────
+// (The section lived on the home screen as "Your proposals" until it
+// moved into the header cog's drawer — public/js/work-drawer.js.)
 
-function makeHome() {
+function makeWorkDrawer() {
   const sandbox = {
     console,
     App: { user: { id: ME } },
-    document: { getElementById: () => null },
+    document: { getElementById: () => null, addEventListener: () => {} },
     setTimeout, clearTimeout, setInterval, clearInterval,
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(`${MERGE_STATUS_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
-  return sandbox.__Home;
+  vm.runInContext(`${MERGE_STATUS_SRC}\n${WORK_DRAWER_SRC}\n;globalThis.__WorkDrawer = WorkDrawer;`, sandbox);
+  return sandbox.__WorkDrawer;
 }
 
-const homeProposal = (over) => ({
+const drawerProposal = (over) => ({
   id: 7, app_slug: 'demo', app_name: 'Demo', pr_number: 700,
   pr_title: 'Tidy the header', yes_count: 1, majority: 2, status: 'promoted',
   check_state: 'passing', test_results: [],
   ...over,
 });
 
-test("home strip: a 'conflict' proposal shows the red 'Merge failed' chip", () => {
-  const Home = makeHome();
-  Home._myProposals = { proposals: [homeProposal({ merge_conflict_state: 'conflict', behind_main: 2 })], governance: [] };
-  const html = Home.renderMyProposalsSection();
+test("cog drawer: a 'conflict' proposal shows the red 'Merge failed' chip", () => {
+  const WorkDrawer = makeWorkDrawer();
+  WorkDrawer.proposals = [drawerProposal({ merge_conflict_state: 'conflict', behind_main: 2 })];
+  WorkDrawer.governance = [];
+  const html = WorkDrawer.renderProposalsSection();
   assert.match(html, /Merge failed — conflict/, 'red merge-failed chip after a real attempt');
   assert.doesNotMatch(html, /Behind main/, 'merge-failed outranks the neutral behind chip');
   assert.doesNotMatch(html, /Conflict resolution failed/, "the 'failed' affordance stays distinct");
 });
 
-test("home strip: a 'failed' proposal shows the red Failed chip", () => {
-  const Home = makeHome();
-  Home._myProposals = { proposals: [homeProposal({ merge_conflict_state: 'failed', behind_main: 1 })], governance: [] };
-  const html = Home.renderMyProposalsSection();
+test("cog drawer: a 'failed' proposal shows the red Failed chip", () => {
+  const WorkDrawer = makeWorkDrawer();
+  WorkDrawer.proposals = [drawerProposal({ merge_conflict_state: 'failed', behind_main: 1 })];
+  WorkDrawer.governance = [];
+  const html = WorkDrawer.renderProposalsSection();
   // #405: canonical red "Conflict resolution failed" label (was "⚠ Failed").
   assert.match(html, /Conflict resolution failed/, 'red failed chip present after a failed attempt');
 });

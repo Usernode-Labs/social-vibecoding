@@ -19,7 +19,7 @@ const vm = require('node:vm');
 const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', 'js', f), 'utf8');
 const MERGE_STATUS_SRC = read('merge-status.js');
 const APP_VIEW_SRC = read('app-view.js');
-const HOME_SRC = read('home.js');
+const WORK_DRAWER_SRC = read('work-drawer.js');
 
 // `opts.el` backs document.getElementById (the roster paints into it);
 // `opts.fetchData` backs fetch().json() (the roster endpoint's payload).
@@ -57,10 +57,10 @@ function makeAppView(opts) {
   return AppView;
 }
 
-function makeHome(opts) {
+function makeWorkDrawer(opts) {
   const sandbox = makeSandbox(opts);
-  vm.runInContext(`${MERGE_STATUS_SRC}\n${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
-  return sandbox.__Home;
+  vm.runInContext(`${MERGE_STATUS_SRC}\n${WORK_DRAWER_SRC}\n;globalThis.__WorkDrawer = WorkDrawer;`, sandbox);
+  return sandbox.__WorkDrawer;
 }
 
 // ── voteCountPill ────────────────────────────────────────────────────
@@ -194,26 +194,24 @@ test('_votingHelpText: invited default-clock branch names the rule + advisory ta
   assert.match(txt, /2 advisory votes from non-approvers are recorded but don’t count/);
 });
 
-// ── home "Your proposals" strip ──────────────────────────────────────
+// ── header-cog drawer "Your proposals" section (ex-home strip) ────────
 
-test('home strip: pill uses the qualified tally vs votes_required, with the advisory chip', () => {
-  const Home = makeHome();
-  Home._myProposals = {
-    proposals: [{
-      id: 42, app_slug: 'demo', app_name: 'Demo App', pr_title: 'Add a thing',
-      status: 'promoted', yes_count: 2, no_count: 0,
-      qualified_yes_count: 0, qualified_no_count: 0,
-      approval_policy: 'invited', votes_required: 1, majority: 3,
-      check_state: 'passing',
-    }],
-    governance: [{
-      id: 300, app_slug: 'demo', app_name: 'Demo App', title: 'Set FOO_KEY',
-      up_count: 2, down_count: 0,
-      qualified_yes_count: 0, qualified_no_count: 0,
-      approval_policy: 'invited', votes_required: 1, majority: 3,
-    }],
-  };
-  const html = Home.renderMyProposalsSection();
+test('cog drawer: pill uses the qualified tally vs votes_required, with the advisory chip', () => {
+  const WorkDrawer = makeWorkDrawer();
+  WorkDrawer.proposals = [{
+    id: 42, app_slug: 'demo', app_name: 'Demo App', pr_title: 'Add a thing',
+    status: 'promoted', yes_count: 2, no_count: 0,
+    qualified_yes_count: 0, qualified_no_count: 0,
+    approval_policy: 'invited', votes_required: 1, majority: 3,
+    check_state: 'passing',
+  }];
+  WorkDrawer.governance = [{
+    id: 300, app_slug: 'demo', app_name: 'Demo App', title: 'Set FOO_KEY',
+    up_count: 2, down_count: 0,
+    qualified_yes_count: 0, qualified_no_count: 0,
+    approval_policy: 'invited', votes_required: 1, majority: 3,
+  }];
+  const html = WorkDrawer.renderProposalsSection();
   // PR row: 0 (approver yes) / 1 (governed requirement), +2 advisory —
   // NOT the raw-tally "2 / 3" (nor a false-green "2 / 1").
   assert.match(html, /0 \/ 1/);
@@ -223,17 +221,15 @@ test('home strip: pill uses the qualified tally vs votes_required, with the advi
   assert.equal((html.match(/\+2 advisory/g) || []).length, 2);
 });
 
-test('home strip: default-policy rows keep the raw tally, no advisory chip', () => {
-  const Home = makeHome();
-  Home._myProposals = {
-    proposals: [{
-      id: 42, app_slug: 'demo', app_name: 'Demo App', pr_title: 'Add a thing',
-      status: 'promoted', yes_count: 2, no_count: 0, majority: 3,
-      check_state: 'passing',
-    }],
-    governance: [],
-  };
-  const html = Home.renderMyProposalsSection();
+test('cog drawer: default-policy rows keep the raw tally, no advisory chip', () => {
+  const WorkDrawer = makeWorkDrawer();
+  WorkDrawer.proposals = [{
+    id: 42, app_slug: 'demo', app_name: 'Demo App', pr_title: 'Add a thing',
+    status: 'promoted', yes_count: 2, no_count: 0, majority: 3,
+    check_state: 'passing',
+  }];
+  WorkDrawer.governance = [];
+  const html = WorkDrawer.renderProposalsSection();
   assert.match(html, /2 \/ 3/);
   assert.doesNotMatch(html, /advisory/);
 });

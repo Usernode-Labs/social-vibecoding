@@ -310,6 +310,21 @@
       "expectSelector": "#notifications-mark-all"
     },
     {
+      "name": "Header cog (your-work drawer) button renders with its icon",
+      "path": "/",
+      "expectSelector": "#work-drawer-btn #work-drawer-icon"
+    },
+    {
+      "name": "Your-work drawer panel ships in the shell with its list + mark-all",
+      "path": "/?demo=1",
+      "expectSelector": "#work-drawer-panel #work-drawer-list"
+    },
+    {
+      "name": "Cog badge span moved off the bell onto the cog button",
+      "path": "/",
+      "expectSelector": "#work-drawer-btn #notifications-badge-ai"
+    },
+    {
       "name": "Home 'Your apps' section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
