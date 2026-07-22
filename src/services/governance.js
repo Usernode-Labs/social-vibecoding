@@ -151,36 +151,49 @@ function computeGate(gov, active, yesCount, noCount, openedAt, now) {
 // table: 'pr' → pr_votes (yes/no keyed by session_id), 'issue' →
 // issue_votes (up/down keyed by issue_id). `approverIds` = null counts
 // every vote (policy 'anyone'); an array restricts to those users.
-async function qualifiedCounts(pool, kind, id, approverIds) {
+//
+// #687 Slice 3: `headSha` (optional, PR kind only) scopes the count to
+// votes cast against that exact PR head commit — imported proposals stamp
+// pr_votes.head_sha at vote time, so a head change re-opens approval and
+// the gate counts only approvals matching the current head. NULL/undefined
+// (native proposals + every issue vote) applies no head filter, so their
+// counting is byte-for-byte unchanged.
+async function qualifiedCounts(pool, kind, id, approverIds, headSha = null) {
   const table = kind === 'issue' ? 'issue_votes' : 'pr_votes';
   const keyCol = kind === 'issue' ? 'issue_id' : 'session_id';
   const yesVal = kind === 'issue' ? 'up' : 'yes';
   const noVal = kind === 'issue' ? 'down' : 'no';
+  // Head-scoping is PR-only (issue_votes has no head_sha column).
+  const scoped = kind !== 'issue' && headSha != null;
   if (approverIds == null) {
     // Unrestricted electorate: the exact two COUNT queries the merge
     // paths always issued (cheaper than a FILTER scan, and existing
     // callers/tests recognize the shape).
+    const shaClause = scoped ? " AND head_sha = $2" : '';
+    const shaArgs = scoped ? [headSha] : [];
     const { rows: yesRows } = await pool.query(
-      `SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${yesVal}'`,
-      [id]
+      `SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${yesVal}'${shaClause}`,
+      [id, ...shaArgs]
     );
     const { rows: noRows } = await pool.query(
-      `SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${noVal}'`,
-      [id]
+      `SELECT COUNT(*) as cnt FROM ${table} WHERE ${keyCol} = $1 AND vote = '${noVal}'${shaClause}`,
+      [id, ...shaArgs]
     );
     return {
       yes: parseInt(yesRows[0]?.cnt, 10) || 0,
       no: parseInt(noRows[0]?.cnt, 10) || 0,
     };
   }
+  const shaClause = scoped ? " AND head_sha = $3" : '';
+  const shaArgs = scoped ? [headSha] : [];
   const { rows } = await pool.query(
     `SELECT
        COUNT(*) FILTER (WHERE vote = '${yesVal}') AS yes,
        COUNT(*) FILTER (WHERE vote = '${noVal}') AS no
      FROM ${table}
      WHERE ${keyCol} = $1
-       AND user_id = ANY($2::int[])`,
-    [id, approverIds]
+       AND user_id = ANY($2::int[])${shaClause}`,
+    [id, approverIds, ...shaArgs]
   );
   return {
     yes: parseInt(rows[0]?.yes, 10) || 0,
@@ -233,10 +246,13 @@ async function getElectorate(pool, appId, gov) {
 // Returns the mergeGate-shaped object from computeGate above, extended
 // with { policy, mode, approvalsRequired, qualifiedYes, qualifiedNo,
 // activeCount }.
-async function governedGate(pool, appId, { kind = 'pr', id, openedAt, now } = {}) {
+async function governedGate(pool, appId, { kind = 'pr', id, openedAt, now, headSha = null } = {}) {
   const gov = await getGovernance(pool, appId);
   const electorate = await getElectorate(pool, appId, gov);
-  const { yes, no } = await qualifiedCounts(pool, kind, id, electorate.approverIds);
+  // #687 Slice 3: for an imported proposal the caller passes the current
+  // imported_pr_head_sha so only approvals cast against that revision count
+  // (a head change re-opens approval). Native/issue callers pass no headSha.
+  const { yes, no } = await qualifiedCounts(pool, kind, id, electorate.approverIds, headSha);
   const gate = computeGate(gov, electorate.active, yes, no, openedAt, now);
   if (electorate.adminFallback && gov.approverPolicy === 'invited') {
     log.debug('governance', 'Approver roster empty; full admins acting as approvers', { appId });

@@ -459,6 +459,32 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
   ON chat_sessions(app_id, created_from_issue_number, user_id, created_at DESC)
   WHERE created_from_issue_number IS NOT NULL;
 
+-- #687 (PR-import, Slice 1): provenance columns for proposals whose code
+-- was authored OUTSIDE the platform — an existing GitHub PR imported into
+-- the vote flow rather than opened by the group's AI dev-chat. Append-only:
+-- these columns are inert until PR_IMPORT_ENABLED is turned on (later
+-- slices add the routes/poller that populate them), and existing rows read
+-- as native (source NULL/'native').
+--   source               = 'native' (implicit for every existing row; a
+--                          NULL value is treated as native) vs 'imported'.
+--                          Drives the "Imported PR" source badge + GitHub
+--                          link and the read-only dev surface for imported
+--                          proposals.
+--   imported_pr_head_sha = the PR head commit the current checks/votes
+--                          describe. A later push moves the PR head; the
+--                          Slice 3 sync poller compares against this to
+--                          reset the tally, and Slice 4 pins the merge to
+--                          exactly this SHA. NULL for native rows.
+--   imported_pr_author   = display handle of the external PR author, shown
+--                          beside the badge. NULL for native rows.
+-- NOTE: a partial UNIQUE index on (app_id, pr_number) WHERE source='imported'
+-- is intentionally DEFERRED (see spec Considerations) — Slice 1 relies on
+-- the read-only boot audit in db/migrate.js instead of a hard constraint,
+-- to keep this migration strictly append-only.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS source               TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_head_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_author   VARCHAR(255);
+
 -- Restart-proof turns + resumable headless runs.
 --   active_turn   = durable record of an in-flight detached CC turn:
 --                   { mode, journal, model, startedAt }. Set by
@@ -694,6 +720,15 @@ CREATE TABLE IF NOT EXISTS pr_votes (
 );
 -- User-first scan for the "My history" view (GET /api/me/history).
 CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DESC);
+
+-- #687 Slice 3: revision-scoped approvals for IMPORTED PR proposals. A
+-- vote cast on an imported proposal is stamped with the PR head commit it
+-- was cast against (imported_pr_head_sha at the time), so a later push that
+-- moves the head can re-open approval and the merge gate counts only the
+-- approvals matching the CURRENT head. NULL for native proposals (whose
+-- branch the platform owns) — the gate applies no head filter there, so
+-- their counting is byte-for-byte unchanged. Append-only; safe on re-boot.
+ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS head_sha VARCHAR(40);
 
 -- Community-voted "priority" + "assigned person" on issues and PR
 -- proposals. ONE unified table because both fields share identical
