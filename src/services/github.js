@@ -368,7 +368,7 @@ async function pushFiles(owner, repo, files, { branch = 'main', message = 'Initi
 
   const { data: newCommit } = await octokit.rest.git.createCommit({
     owner, repo,
-    message,
+    message: safeMention(message),
     tree: newTree.sha,
     parents: [latestCommitSha],
   });

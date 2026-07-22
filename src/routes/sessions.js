@@ -1194,12 +1194,17 @@ function sessionRoutes(config) {
       // Bot PAT + hand-rolled fetch mirrors routes/feedback.js's platform-
       // feedback path (the platform repo isn't behind the per-app GitHub
       // App installation).
+      // #723: backtick-wrapped username (never `@name` — platform usernames
+      // are unrelated to GitHub handles, and a mention pings a stranger).
       const issueBody =
-        `**Source:** usernode agent (session ${sessionId}, confirmed by @${req.user.username})\n`
+        `**Source:** usernode agent (session ${sessionId}, confirmed by \`${req.user.username}\`)\n`
         + `**Reported while working on:** ${row.app_name} (${row.app_slug})\n\n`
         + (draft.body || '(no detail provided)');
       let issue;
       try {
+        // This hand-rolled fetch bypasses github.js's write helpers, so
+        // apply safeMention here — the model-drafted title/body are
+        // free-form text that could carry live @mentions (#723).
         const ghRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/issues`, {
           method: 'POST',
           headers: {
@@ -1208,8 +1213,8 @@ function sessionRoutes(config) {
             'User-Agent': 'usernode-social-vibecoding',
           },
           body: JSON.stringify({
-            title: draft.title,
-            body: issueBody,
+            title: github.safeMention(draft.title),
+            body: github.safeMention(issueBody),
             labels: ['usernode', 'agent-reported'],
           }),
         });
