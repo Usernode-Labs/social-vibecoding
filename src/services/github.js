@@ -338,7 +338,15 @@ async function createRepo(owner, name, { description = '' } = {}) {
   return data;
 }
 
+// Test seam (null in every real deploy): when set via
+// _setOctokitFactoryForTests, getOctokit returns this factory's client
+// instead of building a real one. Lets the mergePR sha-forwarding / 409
+// mapping be unit-tested without a live GitHub client or credentials.
+let _octokitFactoryForTests = null;
+function _setOctokitFactoryForTests(factory) { _octokitFactoryForTests = factory; }
+
 async function getOctokit(owner) {
+  if (_octokitFactoryForTests) return _octokitFactoryForTests(owner);
   // Prefer PAT for repos owned by the bot (avoids App installation sync issues)
   const pat = process.env.GITHUB_BOT_TOKEN;
   if (pat) {
@@ -468,6 +476,20 @@ async function findOpenPrByBranch(owner, repo, branch) {
   return (data && data[0]) || null;
 }
 
+// #687 (PR-import): list the repo's currently-open pull requests, newest
+// first. Used by the import picker to show candidates the user can pull in
+// as proposals. Returns the raw Octokit PR objects (number, title, user,
+// head, base, html_url, …); callers shape what they need. Same-repo scope —
+// fork heads are out of scope for the import flow (see spec Deferred work).
+async function listOpenPulls(owner, repo, { perPage = 50 } = {}) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.pulls.list({
+    owner, repo, state: 'open', sort: 'created', direction: 'desc',
+    per_page: perPage,
+  });
+  return data || [];
+}
+
 async function updatePR(owner, repo, prNumber, { title, body } = {}) {
   // Goes through getOctokit (PAT-preferred) so callers get a real
   // @octokit/rest instance with `.rest.pulls.update`, instead of the
@@ -504,15 +526,52 @@ async function reopenPR(owner, repo, prNumber) {
   return data;
 }
 
-async function mergePR(owner, repo, prNumber) {
+// #687 Slice 4: distinct "head moved" outcome. When a `sha` is passed to
+// mergePR (imported PRs pin the exact reviewed commit) GitHub returns 409
+// if the PR head has moved since — someone pushed between the vote and the
+// merge. checkAndMerge treats this NOT as a proposal error but as "wait for
+// the sync poller to pick up the new head (reset votes/checks) and retry on
+// the next qualifying vote". `err.headMoved === true` is the sentinel.
+class HeadMovedError extends Error {
+  constructor(message) {
+    super(message || 'PR head moved since the reviewed commit');
+    this.name = 'HeadMovedError';
+    this.headMoved = true;
+  }
+}
+
+// Merge a PR (squash). `sha`, when provided, is forwarded to GitHub's merge
+// API as the expected head commit: GitHub refuses (409) if the current head
+// differs, guaranteeing we merge EXACTLY the reviewed commit and never
+// something newer that pushed in after the vote. Native callers pass no
+// `sha` and keep the prior unconditional-squash behaviour byte-for-byte.
+// A 409 raised specifically by the sha mismatch is re-thrown as a
+// HeadMovedError so the caller can distinguish it from other merge failures.
+async function mergePR(owner, repo, prNumber, sha = null) {
   const octokit = await getOctokit(owner);
-  const { data } = await octokit.rest.pulls.merge({
+  const params = {
     owner, repo,
     pull_number: prNumber,
     merge_method: 'squash',
-  });
-  log.info('github', 'PR merged', { repo: `${owner}/${repo}`, pr: prNumber });
-  return data;
+  };
+  if (sha) params.sha = sha;
+  try {
+    const { data } = await octokit.rest.pulls.merge(params);
+    log.info('github', 'PR merged', { repo: `${owner}/${repo}`, pr: prNumber, pinnedSha: sha || null });
+    return data;
+  } catch (err) {
+    // GitHub returns 409 both for "head changed" (our sha no longer matches)
+    // and for "not mergeable" (base moved / conflicts). When we pinned a sha
+    // and hit a 409, surface it as the head-moved sentinel so imported merges
+    // defer to the sync poller instead of erroring the proposal.
+    if (sha && err && err.status === 409) {
+      log.info('github', 'PR merge refused — head moved since reviewed commit', {
+        repo: `${owner}/${repo}`, pr: prNumber, pinnedSha: sha,
+      });
+      throw new HeadMovedError(err.message);
+    }
+    throw err;
+  }
 }
 
 // Fetch a single PR (body, state, merged flag, …). Used by the
@@ -1315,10 +1374,13 @@ module.exports = {
   createBranch,
   createPR,
   findOpenPrByBranch,
+  listOpenPulls,
   updatePR,
   closePR,
   reopenPR,
   mergePR,
+  HeadMovedError,
+  _setOctokitFactoryForTests,
   getPR,
   listChangedFiles,
   getProposalDiff,

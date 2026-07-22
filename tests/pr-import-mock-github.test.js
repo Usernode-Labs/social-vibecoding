@@ -1,0 +1,212 @@
+// Unit tests for #687 Slice 6 — the opt-in mock-GitHub adapter and the sync
+// poller driving off it. Covers:
+//   - github-mock: candidates (listOpenPulls), getPR/listChangedFiles shape,
+//     bumpHead advancing the head, mergePR success + exact-sha 409 refusal.
+//   - pr-import-sync in mock mode: an unchanged head no-ops; after a simulated
+//     push (bumpHead) the head-change path fires — tally cleared, re-review
+//     note posted, checks recorded 'skipped' (no real build in mock mode).
+//
+// Run with: node --test tests/pr-import-mock-github.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+// Fake the modules pr-import-sync pulls lazily (the worker unit env lacks
+// their transitive deps: ws→'ws', visuals→'jsonwebtoken', etc.). github-mock
+// and github are left REAL — the mock is the system under test, and github
+// only supplies the HeadMovedError sentinel.
+function fakeModule(relPath, exports) {
+  const p = require.resolve(relPath);
+  require.cache[p] = { id: p, filename: p, loaded: true, exports };
+  return exports;
+}
+
+const fakeWs = fakeModule('../src/services/ws', {
+  sendSystemMessage: async () => {},
+  pushVoteUpdate: () => {},
+  pushSessionUpdate: () => {},
+  broadcastGlobal: () => {},
+});
+const fakeVisuals = fakeModule('../src/services/visuals', {
+  setChecksPending: async () => {},
+  notifyChecksPending: () => {},
+  storeChecksSkipped: async () => {},
+  captureForSession: async () => {},
+});
+fakeModule('../src/services/staging', {
+  buildAndDeployStaging: async () => ({ containerId: 'c', stagingUrl: 'u', hostname: 'h' }),
+  warmStagingCert: async () => {},
+});
+fakeModule('../src/services/sync-main', {
+  persistBehindMain: async () => {},
+  persistConflictState: async () => {},
+});
+fakeModule('../src/services/staging-recovery', { recordStagingBootFailure: async () => {} });
+
+const githubMock = require('../src/services/github-mock');
+const prImportSync = require('../src/services/pr-import-sync');
+
+function withFlags(fn) {
+  const prevE = process.env.PR_IMPORT_ENABLED;
+  const prevM = process.env.PR_IMPORT_MOCK_GITHUB;
+  process.env.PR_IMPORT_ENABLED = 'true';
+  process.env.PR_IMPORT_MOCK_GITHUB = 'true';
+  return (async () => {
+    try { return await fn(); }
+    finally {
+      if (prevE === undefined) delete process.env.PR_IMPORT_ENABLED; else process.env.PR_IMPORT_ENABLED = prevE;
+      if (prevM === undefined) delete process.env.PR_IMPORT_MOCK_GITHUB; else process.env.PR_IMPORT_MOCK_GITHUB = prevM;
+    }
+  })();
+}
+
+function recordingPool() {
+  const calls = [];
+  return { calls, query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; } };
+}
+
+// ── github-mock adapter ───────────────────────────────────────────────
+
+test('github-mock: isEnabled is always true (the mock is "connected")', () => {
+  assert.equal(githubMock.isEnabled(), true);
+});
+
+test('github-mock: listOpenPulls returns the importable candidate catalog', async () => {
+  githubMock._resetForTests();
+  const pulls = await githubMock.listOpenPulls('acme', 'demo');
+  assert.ok(pulls.length >= 2, 'at least two importable candidates');
+  const numbers = pulls.map((p) => p.number);
+  assert.ok(numbers.includes(9401) && numbers.includes(9402));
+  for (const p of pulls) {
+    assert.equal(p.state, 'open');
+    assert.ok(p.head && p.head.sha, 'each candidate carries a head sha');
+    assert.ok(p.user && p.user.login, 'each carries an author');
+  }
+});
+
+test('github-mock: getPR + listChangedFiles produce a preview-shaped payload', async () => {
+  githubMock._resetForTests();
+  const pr = await githubMock.getPR('acme', 'demo', 9401);
+  assert.equal(pr.number, 9401);
+  assert.equal(pr.state, 'open');
+  assert.equal(pr.base.ref, 'main');
+  assert.equal(pr.head.sha, githubMock.currentHead(9401));
+  assert.equal(pr.mergeable, true);
+  const files = await githubMock.listChangedFiles('acme', 'demo', 'main...mock/x');
+  assert.ok(Array.isArray(files) && files.length >= 1);
+});
+
+test('github-mock: bumpHead advances the head sha (simulated push)', () => {
+  githubMock._resetForTests();
+  const before = githubMock.currentHead(9401);
+  const after = githubMock.bumpHead(9401);
+  assert.notEqual(before, after, 'head sha changes after a push');
+  assert.equal(githubMock.currentHead(9401), after);
+});
+
+test('github-mock: mergePR merges when the pinned sha matches the current head', async () => {
+  githubMock._resetForTests();
+  const head = githubMock.currentHead(9401);
+  const res = await githubMock.mergePR('acme', 'demo', 9401, head);
+  assert.equal(res.merged, true);
+  assert.ok(res.sha && res.sha !== head, 'returns a distinct merge commit sha');
+});
+
+test('github-mock: mergePR refuses with HeadMovedError when the pinned sha is stale', async () => {
+  githubMock._resetForTests();
+  await assert.rejects(
+    () => githubMock.mergePR('acme', 'demo', 9401, 'stale'.padEnd(40, '0')),
+    (err) => {
+      assert.equal(err.headMoved, true);
+      assert.equal(err.name, 'HeadMovedError');
+      return true;
+    }
+  );
+});
+
+// ── pr-import-sync driven by the mock ─────────────────────────────────
+
+const PR = 9401;
+function importedSession() {
+  return {
+    id: 55, app_id: 9, app_slug: 'demo', app_name: 'Demo',
+    source: 'imported', pr_number: PR, pr_title: 'Mock imported PR',
+    branch_name: 'mock/importable-widget', repo_url: 'https://github.com/acme/demo',
+    imported_pr_head_sha: null, // set per test
+  };
+}
+
+test('pr-import-sync (mock): unchanged head no-ops', async () => {
+  githubMock._resetForTests();
+  await withFlags(async () => {
+    const session = importedSession();
+    session.imported_pr_head_sha = githubMock.currentHead(PR); // matches rev-0
+    const pool = recordingPool();
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
+    assert.equal(res, 'unchanged');
+    assert.equal(pool.calls.length, 0, 'no writes on an unchanged head');
+  });
+});
+
+test('pr-import-sync (mock): a simulated push resets the tally + records skipped checks', async () => {
+  githubMock._resetForTests();
+  await withFlags(async () => {
+    const session = importedSession();
+    session.imported_pr_head_sha = githubMock.currentHead(PR); // rev 0
+
+    // Simulate the external author pushing a new commit.
+    const newHead = githubMock.bumpHead(PR);
+
+    const sysMessages = [];
+    let skippedSha = null;
+    const origSend = fakeWs.sendSystemMessage;
+    const origSkip = fakeVisuals.storeChecksSkipped;
+    fakeWs.sendSystemMessage = async (_pool, _appId, content, _t, _m, thread) => {
+      sysMessages.push({ content, thread });
+    };
+    fakeVisuals.storeChecksSkipped = async (_pool, _sid, sha) => { skippedSha = sha; };
+    try {
+      const pool = recordingPool();
+      const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
+      assert.equal(res, 'updated');
+
+      const sqls = pool.calls.map((c) => String(c.sql));
+      const headUpdate = pool.calls.find((c) => /SET imported_pr_head_sha = \$1/.test(c.sql));
+      assert.ok(headUpdate, 'stored head advanced');
+      assert.equal(headUpdate.params[0], newHead);
+      assert.ok(sqls.some((s) => /DELETE FROM pr_votes WHERE session_id = \$1/.test(s)), 'tally cleared');
+
+      assert.equal(sysMessages.length, 1, 'one re-review note');
+      assert.match(sysMessages[0].content, /updated on GitHub/i);
+      assert.match(sysMessages[0].content, /re-review/i);
+      assert.deepEqual(sysMessages[0].thread, { type: 'session', ref: 55 });
+
+      // Mock mode records a gate-passing 'skipped' verdict — no real build.
+      assert.equal(skippedSha, newHead, 'checks re-recorded as skipped against the new head');
+    } finally {
+      fakeWs.sendSystemMessage = origSend;
+      fakeVisuals.storeChecksSkipped = origSkip;
+    }
+  });
+});
+
+test('pr-import-sync: mock is NOT used when the mock flag is off (real github, disabled → skipped)', async () => {
+  githubMock._resetForTests();
+  const prevE = process.env.PR_IMPORT_ENABLED;
+  const prevM = process.env.PR_IMPORT_MOCK_GITHUB;
+  process.env.PR_IMPORT_ENABLED = 'true';
+  delete process.env.PR_IMPORT_MOCK_GITHUB; // mock OFF → real github client
+  try {
+    const session = importedSession();
+    session.imported_pr_head_sha = 'whatever';
+    const pool = recordingPool();
+    // Real github.isEnabled() is false in this unit env (no App creds) → the
+    // poller short-circuits to 'skipped' without touching the mock.
+    const res = await prImportSync.syncImportedProposal({ config: {}, pool, session });
+    assert.equal(res, 'skipped');
+    assert.equal(pool.calls.length, 0);
+  } finally {
+    if (prevE === undefined) delete process.env.PR_IMPORT_ENABLED; else process.env.PR_IMPORT_ENABLED = prevE;
+    if (prevM === undefined) delete process.env.PR_IMPORT_MOCK_GITHUB; else process.env.PR_IMPORT_MOCK_GITHUB = prevM;
+  }
+});

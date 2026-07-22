@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const github = require('../services/github');
+const githubMock = require('../services/github-mock');
 const staging = require('../services/staging');
 const docker = require('../services/docker');
 const { checkAndResolveConflicts, isResolving } = require('../services/conflict-resolver');
@@ -12,6 +13,15 @@ const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const topicAttrs = require('../services/topic-attributes');
+const { isPrImportEnabled, isPrImportMockGithubEnabled } = require('../config');
+
+// #687 Slice 6: pick the GitHub client the imported-PR flow talks to. The
+// mock is consulted ONLY when its opt-in flag is on (default off everywhere,
+// so production always uses the real client). Selection is by manifest value
+// alone — never gated on USERNODE_ENV.
+function importGithubClient() {
+  return isPrImportMockGithubEnabled() ? githubMock : github;
+}
 
 // Staging-only mock PR proposals for GET /api/apps/:slug/promoted,
 // appended only when the request carries ?demo=1 (forwarded from the
@@ -526,6 +536,9 @@ function stagingMockMerged() {
 function mergedRowSelect() {
   return `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_summary_md, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
            cs.revert_of_session_id,
+           -- #687 (PR-import): provenance for the "Imported PR" badge +
+           -- GitHub-maintained note (kept visible on merged rows too).
+           cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            -- #381: console-error check snapshot so the warning + detail
            -- block stay visible on a merged proposal for post-hoc review.
            cs.console_check_state, cs.console_errors, cs.console_checked_at,
@@ -932,6 +945,312 @@ function voteRoutes(config) {
     }
   });
 
+  // ── #687: import an existing GitHub PR as a proposal ────────────────
+  //
+  // Everything here is dark unless PR_IMPORT_ENABLED is on. The three
+  // endpoints (candidate list, preview, import) let a collaborator pull an
+  // externally-authored PR into the vote flow instead of building it in the
+  // platform's AI dev-chat. Preview/candidates are read-only; import creates
+  // a `source='imported'` chat_sessions row promoted straight into voting.
+  //
+  // Parse owner/repo from an app's repo_url, or null.
+  const parseRepo = (url) => {
+    const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    return owner && repo ? { owner, repo } : null;
+  };
+
+  // Fire-and-forget: build the imported PR's staging preview pinned to its
+  // exact head SHA (Slice 1 clone fix) and run its checks, mirroring the
+  // post-promote path so an imported proposal gets a preview + checks verdict
+  // like any native one. Never throws into the request.
+  const kickImportedChecks = (session, app, headSha) => {
+    (async () => {
+      const visualsService = require('../services/visuals');
+      await visualsService.setChecksPending(pool, session.id, headSha || null)
+        .catch((err) => log.warn('votes', 'import setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
+      visualsService.notifyChecksPending(session.id, headSha || null);
+      // #687 Slice 6: in mock-GitHub mode there is no real repo to clone, so
+      // skip the staging build entirely and record a gate-passing 'skipped'
+      // verdict — the imported proposal shows a neutral (mergeable) check so
+      // the whole preview flow (import → vote → merge) is exercisable.
+      if (isPrImportMockGithubEnabled()) {
+        await visualsService.storeChecksSkipped(pool, session.id, headSha || null,
+          'mock GitHub preview — automated checks not run')
+          .catch((err) => log.warn('votes', 'import mock storeChecksSkipped failed (non-fatal)', { sessionId: session.id, err: err.message }));
+        return;
+      }
+      let result;
+      try {
+        result = await staging.buildAndDeployStaging(config, session, app, headSha || 'latest');
+      } catch (err) {
+        const stagingRecovery = require('../services/staging-recovery');
+        await stagingRecovery.recordStagingBootFailure({
+          config, pool, session, commitHash: headSha || null, err,
+        }).catch((e) => log.warn('votes', 'import recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
+        throw err;
+      }
+      await pool.query(
+        `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
+        [result.containerId, result.stagingUrl, session.id]
+      );
+      await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+      visualsService.captureForSession(config, session, app, headSha || null, result)
+        .catch((err) => log.warn('votes', 'import visuals capture failed', { sessionId: session.id, err: err.message }));
+    })().catch((err) => log.warn('votes', 'import staging build failed', { sessionId: session.id, err: err.message }));
+  };
+
+  // Which of this app's PR numbers are already imported and still live/merged
+  // (so the picker + import guard don't offer/allow a duplicate). Archived
+  // imports are excluded so a withdrawn import can be re-imported.
+  const importedPrNumbers = async (appId) => {
+    const { rows } = await pool.query(
+      `SELECT DISTINCT pr_number FROM chat_sessions
+        WHERE app_id = $1 AND source = 'imported' AND pr_number IS NOT NULL
+          AND status IN ('promoted', 'merging', 'merged')`,
+      [appId]
+    );
+    return new Set(rows.map((r) => r.pr_number));
+  };
+
+  // GET candidate PRs to import (open PRs on the app's repo not already
+  // imported). Collab access.
+  router.get('/api/apps/:slug/pr-import/candidates', async (req, res) => {
+    try {
+      if (!isPrImportEnabled()) return res.status(404).json({ error: 'Not found' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const repo = parseRepo(app.repo_url);
+      const gh = importGithubClient();
+      if (!gh.isEnabled() || !repo) return res.json({ candidates: [] });
+
+      const imported = await importedPrNumbers(app.id);
+      let pulls = [];
+      try {
+        pulls = await gh.listOpenPulls(repo.owner, repo.repo);
+      } catch (err) {
+        log.warn('votes', 'listOpenPulls failed', { slug: req.params.slug, err: err.message });
+        return res.json({ candidates: [] });
+      }
+      const candidates = pulls
+        .filter((p) => !imported.has(p.number))
+        .map((p) => ({
+          number: p.number,
+          title: p.title,
+          author: p.user?.login || null,
+          headBranch: p.head?.ref || null,
+          baseBranch: p.base?.ref || null,
+          headSha: p.head?.sha || null,
+          htmlUrl: p.html_url || null,
+        }));
+      res.json({ candidates });
+    } catch (err) {
+      log.error('votes', 'PR-import candidates failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET a read-only preview of a single PR before importing. Collab access.
+  router.get('/api/apps/:slug/pr-import/preview', async (req, res) => {
+    try {
+      if (!isPrImportEnabled()) return res.status(404).json({ error: 'Not found' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const repo = parseRepo(app.repo_url);
+      const prNumber = parseInt(req.query.pr, 10);
+      if (!Number.isFinite(prNumber) || prNumber <= 0) {
+        return res.status(400).json({ error: 'A valid PR number is required' });
+      }
+      const gh = importGithubClient();
+      if (!gh.isEnabled() || !repo) {
+        return res.status(409).json({ error: 'GitHub is not configured for this app' });
+      }
+
+      let pr;
+      try {
+        pr = await gh.getPR(repo.owner, repo.repo, prNumber);
+      } catch (err) {
+        return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+      }
+      const headSha = pr.head?.sha || null;
+      const baseRef = pr.base?.ref || 'main';
+      let changedFiles = [];
+      try {
+        changedFiles = await gh.listChangedFiles(
+          repo.owner, repo.repo, `${baseRef}...${headSha || pr.head?.ref}`
+        );
+      } catch (err) {
+        log.warn('votes', 'PR-import preview listChangedFiles failed', { prNumber, err: err.message });
+      }
+      const imported = await importedPrNumbers(app.id);
+      res.json({
+        preview: {
+          number: pr.number,
+          title: pr.title,
+          author: pr.user?.login || null,
+          state: pr.state,
+          headBranch: pr.head?.ref || null,
+          baseBranch: baseRef,
+          headSha,
+          // GitHub's mergeable is true/false/null (null = still computing).
+          mergeable: pr.mergeable,
+          mergeableState: pr.mergeable_state || null,
+          changedFiles,
+          changedFileCount: changedFiles.length,
+          htmlUrl: pr.html_url || null,
+          alreadyImported: imported.has(pr.number),
+        },
+      });
+    } catch (err) {
+      log.error('votes', 'PR-import preview failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST import a PR as a proposal. Collab access. Creates a promoted
+  // `source='imported'` session and kicks its SHA-pinned checks build.
+  router.post('/api/apps/:slug/pr-import', async (req, res) => {
+    try {
+      if (!isPrImportEnabled()) return res.status(404).json({ error: 'Not found' });
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const repo = parseRepo(app.repo_url);
+      const prNumber = parseInt(req.body?.pr, 10);
+      if (!Number.isFinite(prNumber) || prNumber <= 0) {
+        return res.status(400).json({ error: 'A valid PR number is required' });
+      }
+      const gh = importGithubClient();
+      if (!gh.isEnabled() || !repo) {
+        return res.status(409).json({ error: 'GitHub is not configured for this app' });
+      }
+
+      // 409 if this PR is already imported and still live/merged.
+      const imported = await importedPrNumbers(app.id);
+      if (imported.has(prNumber)) {
+        return res.status(409).json({ error: `PR #${prNumber} has already been imported.` });
+      }
+
+      let pr;
+      try {
+        pr = await gh.getPR(repo.owner, repo.repo, prNumber);
+      } catch (err) {
+        return res.status(404).json({ error: `PR #${prNumber} not found on GitHub` });
+      }
+      if (pr.state !== 'open') {
+        return res.status(409).json({ error: `PR #${prNumber} is not open.` });
+      }
+      const headSha = pr.head?.sha || null;
+      const headBranch = pr.head?.ref || null;
+      if (!headBranch) {
+        return res.status(409).json({ error: 'Could not determine the PR head branch.' });
+      }
+
+      // Create the imported proposal row, promoted straight into voting.
+      const { rows: inserted } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
+            source, imported_pr_head_sha, imported_pr_author, promoted_at, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'promoted',
+            'imported', $7, $8, NOW(), NOW())
+         RETURNING id`,
+        [
+          app.id, req.user.id, headBranch, prNumber, pr.html_url || null,
+          pr.title || `PR #${prNumber}`, headSha, pr.user?.login || null,
+        ]
+      );
+      const sessionId = inserted[0].id;
+      const session = {
+        id: sessionId, app_id: app.id, app_slug: app.slug, user_id: req.user.id,
+        branch_name: headBranch, pr_number: prNumber, pr_title: pr.title || null,
+        repo_url: app.repo_url, staging_url: null, source: 'imported',
+      };
+
+      // Announce it for voting (group chat + the proposal's own thread),
+      // mirroring the native promote path.
+      const label = pr.title ? `PR #${prNumber} — ${pr.title}` : `PR #${prNumber}`;
+      await sendSystemMessage(pool, app.id,
+        `${req.user.username} imported ${label} for voting`,
+        'vote',
+        { vote: { sessionId, prNumber } }
+      ).catch(() => {});
+      await sendSystemMessage(pool, app.id,
+        `${req.user.username} imported ${label} for voting`,
+        'vote',
+        { vote: { sessionId, prNumber } },
+        { type: 'session', ref: sessionId }
+      ).catch(() => {});
+
+      const { pushSessionUpdate } = require('../services/ws');
+      pushSessionUpdate({ action: 'promoted', sessionId, appSlug: app.slug });
+      try {
+        events.record(pool, {
+          type: events.EVENT_TYPES.PR_PROMOTED,
+          userId: req.user.id, appId: app.id, sessionId,
+          metadata: { prNumber, source: 'imported' },
+        });
+      } catch { /* events are best-effort */ }
+
+      log.info('votes', 'PR imported as proposal', { sessionId, prNumber, appId: app.id });
+      res.json({ ok: true, sessionId, prNumber });
+
+      // Kick the SHA-pinned staging build + checks after responding.
+      const appForBuild = { id: app.id, slug: app.slug, name: app.name, repo_url: app.repo_url };
+      kickImportedChecks(session, appForBuild, headSha);
+    } catch (err) {
+      log.error('votes', 'PR-import failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #687 Slice 6: mock-control endpoint — simulate the external author
+  // pushing a new commit to an imported PR, so a preview reviewer can drive
+  // the head-change and merge-409 outcomes live (the sweeper would eventually
+  // do the same, but this makes it a click). Mounted always but 404 unless
+  // BOTH the master flag and the opt-in mock flag are on, so it can never do
+  // anything in production (mock flag default off there). Collab access.
+  //   body: { sessionId, mode }
+  //     mode 'push-and-sync' (default) — bump the mock head AND run the sync
+  //       poller path immediately: tally reset + "please re-review" note +
+  //       checks re-run, and imported_pr_head_sha advances to the new head.
+  //     mode 'push-only' — bump the mock head but DO NOT sync, leaving
+  //       imported_pr_head_sha stale so the next merge attempt hits the
+  //       exact-sha 409 (head-moved) path.
+  router.post('/api/apps/:slug/pr-import/_mock/advance', async (req, res) => {
+    try {
+      if (!isPrImportEnabled() || !isPrImportMockGithubEnabled()) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+      const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const sessionId = parseInt(req.body?.sessionId, 10);
+      const mode = req.body?.mode === 'push-only' ? 'push-only' : 'push-and-sync';
+      if (!Number.isFinite(sessionId)) {
+        return res.status(400).json({ error: 'A valid sessionId is required' });
+      }
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
+          WHERE cs.id = $1 AND cs.app_id = $2 AND cs.source = 'imported'`,
+        [sessionId, app.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Imported proposal not found' });
+      const session = rows[0];
+      if (!session.pr_number) return res.status(409).json({ error: 'Session has no PR number' });
+
+      const newHead = githubMock.bumpHead(session.pr_number);
+      let synced = false;
+      if (mode !== 'push-only') {
+        const prImportSync = require('../services/pr-import-sync');
+        const result = await prImportSync.syncImportedProposal({ config, pool, session });
+        synced = result === 'updated';
+      }
+      log.info('votes', 'Mock PR head advanced', { sessionId, prNumber: session.pr_number, mode, newHead, synced });
+      res.json({ ok: true, mode, newHead, synced });
+    } catch (err) {
+      log.error('votes', 'PR-import mock advance failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Cast a vote on a promoted PR
   router.post('/api/sessions/:id/vote', async (req, res) => {
     const { vote } = req.body;
@@ -969,10 +1288,18 @@ function voteRoutes(config) {
       const previousVote = prevRows[0]?.vote || null;
       const unchanged = previousVote === vote;
 
+      // #687 Slice 3: stamp the PR head this vote was cast against for
+      // imported proposals, so a later push (which re-opens approval) can
+      // distinguish approvals of the reviewed revision from stale ones. The
+      // gate counts only votes matching the current imported_pr_head_sha.
+      // Native proposals leave head_sha NULL (the gate applies no filter).
+      const voteHeadSha = session.source === 'imported'
+        ? (session.imported_pr_head_sha || null)
+        : null;
       await pool.query(
-        `INSERT INTO pr_votes (session_id, user_id, vote) VALUES ($1, $2, $3)
-         ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, created_at = NOW()`,
-        [session.id, req.user.id, vote]
+        `INSERT INTO pr_votes (session_id, user_id, vote, head_sha) VALUES ($1, $2, $3, $4)
+         ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha, created_at = NOW()`,
+        [session.id, req.user.id, vote, voteHeadSha]
       );
 
       // Any voting activity revives a going-stale PR: clear the warning
@@ -1300,6 +1627,10 @@ function voteRoutes(config) {
       // list at the very end, making it look like the vote was lost.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.pr_summary_md, cs.staging_url, cs.testing_md, cs.testing_path, cs.user_id, cs.status, cs.linked_issues, u.username, cs.created_at,
+           -- #687 (PR-import): provenance so the client can render the
+           -- "Imported PR" badge + GitHub-maintained note and hide the
+           -- dev-side controls for externally-authored proposals.
+           cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
            -- #361: persisted merge-conflict snapshot for the card badge +
            -- detail block (state, conflicting file paths, last-checked).
            cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,
@@ -1861,6 +2192,288 @@ async function resolveIssueBounty(pool, { appId, sessionId, awardeeUserId, issue
   return { awarded, voided };
 }
 
+// #687 Slice 4: shared post-merge finalizer. Everything AFTER the
+// irreversible github.mergePR call — rebuild production (unless self-hosted),
+// stamp apps.main_sha/main_pr_number/last_deploy_at, broadcast
+// app_version_changed, teardown staging, pay out bounties, refresh issues,
+// transition the session to 'merged', and announce it — factored out so that
+// NATIVE and IMPORTED merges run byte-for-byte the same tail. Called from
+// inside checkAndMerge's try, so a throw here still lands in that catch, which
+// honours the `githubMerged` guard (never roll a GitHub-merged PR back to
+// 'promoted') and the merge-debug tracing. Only ever leaves the row in
+// 'merged' — a state recoverStuckMerges already understands.
+async function finalizeMerge({ config, pool, session, mergeCommitSha, required, activeCount, yesCount, majority, force, forceBy, dstep, dend }) {
+    // Rebuild production
+    const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
+    const app = appRows[0];
+
+    if (app) {
+      let sha = null;
+      // SELF-HOSTING.md sub-step 2g (Guard B): for the self-app,
+      // there's no platform-managed prod container to rebuild — the
+      // GitHub Actions deploy workflow rolls the harness when the merge
+      // lands on main. Skip rebuildProduction entirely, but keep the
+      // app_version_changed broadcast firing so Phase 3's banner has its
+      // hook. main_sha is refreshed by seedSelfApp() on the next boot,
+      // which clients pick up via /api/version.
+      if (!app.self_hosted) {
+        dstep({ phase: 'prod_rebuild', message: 'Production rebuild started.' });
+        const result = await staging.rebuildProduction(config, app);
+        sha = result.sha;
+        dstep({ phase: 'prod_rebuild', message: `Production rebuild finished${sha ? ` (deployed ${String(sha).slice(0, 9)})` : ''}.`, detail: { sha: sha || null } });
+        // Also record the SHA + originating PR so the main app view can
+        // show "live on <sha> · PR #<n>" (#21). pr_number comes from the
+        // session we just merged; sha is what `rebuildProduction` cloned.
+        await pool.query(
+          `UPDATE apps SET container_id = $1, main_sha = $2, main_pr_number = $3,
+                           last_deploy_at = NOW()
+           WHERE id = $4`,
+          [result.containerId, sha || null, session.pr_number || null, app.id]
+        );
+      } else {
+        log.info('votes', 'Self-app PR merged; GitHub Actions auto-deploy will roll', {
+          appId: app.id, prNumber: session.pr_number,
+        });
+      }
+      // Let every tab watching this app refresh its commit pill without
+      // polling. The existing vote_update event already fires on merge
+      // but is scoped to vote panel refreshes; a dedicated event keeps
+      // the concerns separated and avoids over-broadcasting. Fires for
+      // self-hosted too (sha=null) so the future banner can detect
+      // "platform updating" without a sha to anchor to.
+      try {
+        const { broadcastGlobalScoped } = require('../services/ws');
+        broadcastGlobalScoped({
+          type: 'app_version_changed',
+          appSlug: session.app_slug,
+          sha: sha || null,
+          prNumber: session.pr_number || null,
+        }, { appId: session.app_id, appSlug: session.app_slug });
+      } catch {}
+    }
+
+    // Teardown staging
+    await staging.teardownStaging(session, app);
+    dstep({ phase: 'staging_teardown', message: 'Staging container torn down.' });
+
+    // #58: snapshot the vote threshold + active-user count in effect at
+    // this merge, so the merged-PR pill shows the historical "yes / N"
+    // instead of drifting with the live threshold. `required` is the eased
+    // dynamic threshold (services/active-users.js → requiredVotes) actually
+    // applied to this merge; activeCount comes from getActiveUserStats() at
+    // the top of this function. The visibility window is intentionally NOT
+    // snapshotted (a merged row just shows its historical count). COALESCE
+    // keeps any earlier snapshot (defensive; the promoted→merging claim
+    // already guarantees a single merge transition).
+    await pool.query(
+      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(),
+                                merge_commit_sha = COALESCE($2, merge_commit_sha),
+                                votes_required = COALESCE(votes_required, $3),
+                                active_users_at_merge = COALESCE(active_users_at_merge, $4)
+       WHERE id = $1`,
+      [session.id, mergeCommitSha, required, activeCount]
+    );
+
+    // pr_merged is the terminal stage of the PR-promotion funnel and the
+    // signal behind the "merges over time" growth chart (now exact thanks
+    // to merged_at above). Attributed to the PR author (session.user_id),
+    // which may be NULL if the author was deleted.
+    events.record(pool, {
+      type: events.EVENT_TYPES.PR_MERGED,
+      userId: session.user_id || null,
+      appId: session.app_id,
+      sessionId: session.id,
+      metadata: {
+        prNumber: session.pr_number || null,
+        forced: !!force,
+        ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
+      },
+    });
+
+    // Resolve any open issue bounties for the issues this PR closes (declared
+    // through the session's linked_issues → `Closes #N` in the PR body).
+    // Bounties pledged by OTHER users flip 'open' → 'awarded' and credit this
+    // PR's author; a bounty the author pledged on their own resolved issue is
+    // 'voided' instead (self-kudos guard — see resolveIssueBounty). Idempotent
+    // (only status='open' rows transition, so a later PR closing the same
+    // issue finds none) and best-effort — a failure here must never roll back
+    // or fail the merge, same as the CC volume teardown below.
+    try {
+      const linked = Array.isArray(session.linked_issues) ? session.linked_issues : [];
+      const seen = new Set();
+      for (const raw of linked) {
+        const n = Number(raw);
+        if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
+        seen.add(n);
+        const { awarded, voided } = await resolveIssueBounty(pool, {
+          appId: session.app_id,
+          sessionId: session.id,
+          awardeeUserId: session.user_id || null,
+          issueNumber: n,
+        });
+        if (voided.length) {
+          log.info('votes', 'Self-bounty voided on merge', {
+            sessionId: session.id, issueNumber: n, count: voided.length,
+          });
+        }
+        // Only announce / record genuine awards; a purely self-voided issue
+        // produces no "awarded" chat noise or event.
+        if (!awarded.length) continue;
+        events.record(pool, {
+          type: events.EVENT_TYPES.BOUNTY_AWARDED,
+          userId: session.user_id || null,
+          appId: session.app_id,
+          sessionId: session.id,
+          metadata: { issueNumber: n, prNumber: session.pr_number || null, count: awarded.length },
+        });
+        const recipient = session.user_id ? `<@${session.user_id}>` : 'the author';
+        const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} — PR #${session.pr_number || session.id} merged`;
+        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system').catch(() => {});
+        // Dual-post into the proposal's thread (lifecycle in context).
+        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system',
+          null, { type: 'session', ref: session.id }).catch(() => {});
+      }
+    } catch (err) {
+      log.warn('votes', 'Bounty payout failed', { sessionId: session.id, err: err.message });
+    }
+
+    // Keep the "Open Issues" panel honest. A merged PR carrying `Closes #N`
+    // has just closed those issues on GitHub, but the panel reads
+    // github.fetchPublicIssues (cached, state=open) and nothing else learns
+    // the issue closed — so without this the closed issue lingers until the
+    // cache TTL expires AND something separately triggers a panel reload.
+    // Bust this repo's open-issues cache and broadcast a refresh so every
+    // client viewing the app's group chat refetches (App.handleIssueUpdate →
+    // AppView.loadVotePanel). Use the same repo_url regex as parseOwnerRepo
+    // (routes/issues.js) so the invalidated key matches the cached one.
+    // Best-effort and post-merge — a failure here must never fail the merge.
+    try {
+      const [, ghOwner, ghRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      if (ghOwner && ghRepo) {
+        // #144: record the linked issues as closed BEFORE busting the
+        // cache + broadcasting. GitHub's auto-close is async and its
+        // anonymous list endpoint lags even further, so the refetch this
+        // broadcast triggers can read the issues as still open and
+        // re-cache them — the suppression list makes fetchPublicIssues
+        // drop them no matter what the list says. Optimistic on purpose:
+        // GitHub closes `Closes #N` reliably (just late), and the
+        // suppression TTL self-heals the rare case where it doesn't.
+        const { sanitizeIssueNumbers } = require('../services/pr-metadata');
+        const closedNumbers = sanitizeIssueNumbers(session.linked_issues);
+        if (closedNumbers.length) github.noteIssuesClosed(ghOwner, ghRepo, closedNumbers);
+        // Auto-resolve any open close-issue proposals targeting the issues
+        // this merge closes — their vote is moot now. Same optimism as the
+        // suppression above (GitHub closes `Closes #N` reliably, just
+        // late); the watcher hook below catches hand-edited `Closes #N`
+        // beyond linked_issues. Lazy require to avoid an import cycle;
+        // fired-and-forgotten so a failure never fails the merge.
+        if (closedNumbers.length) {
+          try {
+            const { resolveSupersededCloseProposals } = require('./issues');
+            resolveSupersededCloseProposals(pool, {
+              appId: session.app_id,
+              appSlug: session.app_slug,
+              numbers: closedNumbers,
+              cause: { kind: 'pr-merge', prNumber: session.pr_number || session.id },
+            }).catch((err) => log.warn('votes', 'Superseded close-proposal resolve failed', {
+              sessionId: session.id, err: err.message,
+            }));
+          } catch (err) {
+            log.warn('votes', 'Superseded close-proposal resolve setup failed', {
+              sessionId: session.id, err: err.message,
+            });
+          }
+        }
+        github.invalidateIssuesCache(ghOwner, ghRepo);
+        const { pushIssueUpdate } = require('../services/ws');
+        pushIssueUpdate({
+          action: 'github_synced',
+          appSlug: session.app_slug,
+          appId: session.app_id,
+          source: 'pr_merged',
+        });
+      }
+    } catch (err) {
+      log.warn('votes', 'Open-issues refresh after merge failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
+    // #135: GitHub closes `Closes #N`-referenced issues itself, but a few
+    // seconds AFTER the merge — so the cache bust + refetch above can race
+    // it, re-caching the issue as open and leaving the group-chat panel
+    // stale for the cache TTL. Watch the referenced issues (PR-body closing
+    // keywords ∪ linked_issues) with retry/backoff until GitHub reports
+    // them closed, then bust the cache and broadcast the refresh again.
+    // Fired-and-forgotten — the polling must never slow down or fail the
+    // merge flow, and nothing is ever written to GitHub.
+    try {
+      if (github.isEnabled() && session.pr_number) {
+        const [, wOwner, wRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (wOwner && wRepo) {
+          const { watchIssuesClosedAfterMerge } = require('../services/issue-close-watcher');
+          watchIssuesClosedAfterMerge({
+            owner: wOwner,
+            repo: wRepo,
+            prNumber: session.pr_number,
+            linkedIssues: session.linked_issues,
+            appSlug: session.app_slug,
+            appId: session.app_id,
+            // Lets the watcher auto-resolve close-issue proposals for the
+            // numbers it observes closed (incl. hand-edited `Closes #N`).
+            pool,
+          }).catch((err) => {
+            log.warn('votes', 'Post-merge issue-close watch failed', {
+              sessionId: session.id, err: err.message,
+            });
+          });
+        }
+      }
+    } catch (err) {
+      log.warn('votes', 'Post-merge issue-close watch setup failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
+    // Chat session is done — no further turns will reference CC memory,
+    // so drop the persistent `.claude` volume.
+    try {
+      const worker = require('../services/worker');
+      await worker.destroyCcVolume(session.id);
+    } catch (err) {
+      log.warn('votes', 'Failed to destroy CC volume', { sessionId: session.id, err: err.message });
+    }
+
+    // Announce in group chat, and dual-post into the proposal's own
+    // thread so its discussion carries the outcome in context.
+    const mergedLabel = session.pr_title
+      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+      : `PR #${session.pr_number || session.id}`;
+    const mergedSuffix = force && forceBy
+      ? `force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
+      : `merged and deployed! (${yesCount}/${activeCount} votes)`;
+    await sendSystemMessage(pool, session.app_id,
+      `${mergedLabel} ${mergedSuffix}`,
+      'system'
+    );
+    await sendSystemMessage(pool, session.app_id,
+      `${mergedLabel} ${mergedSuffix}`,
+      'system', null, { type: 'session', ref: session.id }
+    ).catch(() => {});
+
+    // Cascade: drain the next eligible promoted PR for this app. The
+    // app-level drain serializes this with any vote-triggered resolves so
+    // only one PR per app resolves+merges at a time. Exclude the session we
+    // just merged so it's never re-picked.
+    checkAndResolveConflicts(config, { app_id: session.app_id, excludeSessionId: session.id }).catch((err) => {
+      log.error('votes', 'Conflict resolution check failed', { err: err.message });
+    });
+
+    dstep({ phase: 'merged', message: `Marked session merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}.`, detail: { sha: mergeCommitSha, yesCount, majority } });
+    dend('merged', `Merged${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}.`);
+    return { merged: true };
+}
+
 async function checkAndMerge(config, pool, session, options = {}) {
   // `options.autoResolve` (default true): when a merge is blocked by a
   // conflict / behind-main, kick off the worker-based auto-resolver
@@ -1883,6 +2496,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
   const governance = require('../services/governance');
   const gate = await governance.governedGate(pool, session.app_id, {
     kind: 'pr', id: session.id, openedAt,
+    // #687 Slice 3: an imported proposal's merge gate counts only approvals
+    // cast against its CURRENT head — so a head change that reset the tally
+    // (and any approval that raced the reset) can't carry an old revision's
+    // approval into the merge. Native rows pass no headSha (unchanged).
+    headSha: session.source === 'imported' ? (session.imported_pr_head_sha || null) : null,
   });
   const yesCount = gate.qualifiedYes;
   const noCount = gate.qualifiedNo;
@@ -2165,11 +2783,57 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
   try {
     // Merge PR on GitHub
-    if (github.isEnabled() && session.repo_url && session.pr_number) {
+    // #687 Slice 4/6: for an IMPORTED proposal, pin the merge to the exact
+    // reviewed commit (imported_pr_head_sha) so GitHub refuses (409) if the
+    // head moved. Slice 6: when the opt-in mock-GitHub flag is on, an imported
+    // merge talks to the in-memory mock client instead of the real one, so the
+    // 409/head-moved path is exercisable in a preview with no credentials.
+    // Native proposals ALWAYS use the real client with no sha (unchanged).
+    const isImported = isPrImportEnabled() && session.source === 'imported';
+    const useMockMerge = isImported && isPrImportMockGithubEnabled();
+    const mergeClient = useMockMerge ? githubMock : github;
+    if ((mergeClient.isEnabled() || useMockMerge) && session.repo_url && session.pr_number) {
       const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (owner && repo) {
-        dstep({ phase: 'github_merge', message: `Calling GitHub merge for PR #${session.pr_number}…`, detail: { owner, repo } });
-        const mergeData = await github.mergePR(owner, repo, session.pr_number);
+        const pinnedSha = isImported ? (session.imported_pr_head_sha || null) : null;
+        dstep({ phase: 'github_merge', message: `Calling GitHub merge for PR #${session.pr_number}…`, detail: { owner, repo, pinnedSha, mock: useMockMerge } });
+        let mergeData;
+        try {
+          mergeData = await mergeClient.mergePR(owner, repo, session.pr_number, pinnedSha);
+        } catch (err) {
+          // Head moved between the vote and the merge (only possible when a
+          // sha was pinned, i.e. imported). Do NOT error the proposal: release
+          // the 'merging' claim back to 'promoted' so the row stays recoverable
+          // (recoverStuckMerges understands both states). The Slice 3 sync
+          // poller will pick up the new head — resetting votes/checks — and the
+          // next qualifying vote retries the merge against the new reviewed
+          // commit. Return a distinct { headMoved } outcome; nothing merged.
+          if (err && err.headMoved) {
+            await pool.query(
+              `UPDATE chat_sessions SET status = 'promoted' WHERE id = $1 AND status = 'merging'`,
+              [session.id]
+            ).catch(() => {});
+            try {
+              const { pushVoteUpdate } = require('../services/ws');
+              pushVoteUpdate({
+                sessionId: session.id, appSlug: session.app_slug,
+                merged: false, merging: false, headMoved: true,
+                selfHosted: !!session.app_self_hosted,
+              });
+            } catch (_) { /* ws failures non-fatal */ }
+            const movedLabel = session.pr_title
+              ? `PR #${session.pr_number} — ${session.pr_title}`
+              : `PR #${session.pr_number}`;
+            await sendSystemMessage(pool, session.app_id,
+              `${movedLabel} wasn't merged — the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`,
+              'system', null, { type: 'session', ref: session.id }
+            ).catch(() => {});
+            dstep({ phase: 'github_merge', level: 'warn', message: 'GitHub refused the merge: the PR head moved since the reviewed commit. Released the merge claim; the sync poller will pick up the new head.', detail: { headMoved: true, pinnedSha } });
+            dend('deferred', 'Head moved since the reviewed commit — deferred to the sync poller.');
+            return { merged: false, headMoved: true, needed: required, yesCount };
+          }
+          throw err;
+        }
         // #11: capture the squash-merge commit SHA so future vote-to-undo
         // can `git revert <sha>` against main. The Octokit `pulls.merge`
         // response shape is { sha, merged: true, message }.
@@ -2181,275 +2845,16 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({ phase: 'github_merge', message: 'GitHub not enabled or PR-less — skipping the GitHub merge call.' });
     }
 
-    // Rebuild production
-    const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
-    const app = appRows[0];
-
-    if (app) {
-      let sha = null;
-      // SELF-HOSTING.md sub-step 2g (Guard B): for the self-app,
-      // there's no platform-managed prod container to rebuild — the
-      // GitHub Actions deploy workflow rolls the harness when the merge
-      // lands on main. Skip rebuildProduction entirely, but keep the
-      // app_version_changed broadcast firing so Phase 3's banner has its
-      // hook. main_sha is refreshed by seedSelfApp() on the next boot,
-      // which clients pick up via /api/version.
-      if (!app.self_hosted) {
-        dstep({ phase: 'prod_rebuild', message: 'Production rebuild started.' });
-        const result = await staging.rebuildProduction(config, app);
-        sha = result.sha;
-        dstep({ phase: 'prod_rebuild', message: `Production rebuild finished${sha ? ` (deployed ${String(sha).slice(0, 9)})` : ''}.`, detail: { sha: sha || null } });
-        // Also record the SHA + originating PR so the main app view can
-        // show "live on <sha> · PR #<n>" (#21). pr_number comes from the
-        // session we just merged; sha is what `rebuildProduction` cloned.
-        await pool.query(
-          `UPDATE apps SET container_id = $1, main_sha = $2, main_pr_number = $3,
-                           last_deploy_at = NOW()
-           WHERE id = $4`,
-          [result.containerId, sha || null, session.pr_number || null, app.id]
-        );
-      } else {
-        log.info('votes', 'Self-app PR merged; GitHub Actions auto-deploy will roll', {
-          appId: app.id, prNumber: session.pr_number,
-        });
-      }
-      // Let every tab watching this app refresh its commit pill without
-      // polling. The existing vote_update event already fires on merge
-      // but is scoped to vote panel refreshes; a dedicated event keeps
-      // the concerns separated and avoids over-broadcasting. Fires for
-      // self-hosted too (sha=null) so the future banner can detect
-      // "platform updating" without a sha to anchor to.
-      try {
-        const { broadcastGlobalScoped } = require('../services/ws');
-        broadcastGlobalScoped({
-          type: 'app_version_changed',
-          appSlug: session.app_slug,
-          sha: sha || null,
-          prNumber: session.pr_number || null,
-        }, { appId: session.app_id, appSlug: session.app_slug });
-      } catch {}
-    }
-
-    // Teardown staging
-    await staging.teardownStaging(session, app);
-    dstep({ phase: 'staging_teardown', message: 'Staging container torn down.' });
-
-    // #58: snapshot the vote threshold + active-user count in effect at
-    // this merge, so the merged-PR pill shows the historical "yes / N"
-    // instead of drifting with the live threshold. `required` is the eased
-    // dynamic threshold (services/active-users.js → requiredVotes) actually
-    // applied to this merge; activeCount comes from getActiveUserStats() at
-    // the top of this function. The visibility window is intentionally NOT
-    // snapshotted (a merged row just shows its historical count). COALESCE
-    // keeps any earlier snapshot (defensive; the promoted→merging claim
-    // already guarantees a single merge transition).
-    await pool.query(
-      `UPDATE chat_sessions SET status = 'merged', merged_at = NOW(),
-                                merge_commit_sha = COALESCE($2, merge_commit_sha),
-                                votes_required = COALESCE(votes_required, $3),
-                                active_users_at_merge = COALESCE(active_users_at_merge, $4)
-       WHERE id = $1`,
-      [session.id, mergeCommitSha, required, activeCount]
-    );
-
-    // pr_merged is the terminal stage of the PR-promotion funnel and the
-    // signal behind the "merges over time" growth chart (now exact thanks
-    // to merged_at above). Attributed to the PR author (session.user_id),
-    // which may be NULL if the author was deleted.
-    events.record(pool, {
-      type: events.EVENT_TYPES.PR_MERGED,
-      userId: session.user_id || null,
-      appId: session.app_id,
-      sessionId: session.id,
-      metadata: {
-        prNumber: session.pr_number || null,
-        forced: !!force,
-        ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
-      },
+    // #687 Slice 4: run the shared post-merge finalizer. Both native and
+    // imported merges converge here after the (only-difference) github.mergePR
+    // call above, so the deploy/teardown/announce tail is byte-for-byte
+    // identical for both. A throw inside still lands in this try's catch,
+    // which honours the githubMerged guard and the merge-debug tracing.
+    return await finalizeMerge({
+      config, pool, session,
+      mergeCommitSha, required, activeCount, yesCount, majority,
+      force, forceBy, dstep, dend,
     });
-
-    // Resolve any open issue bounties for the issues this PR closes (declared
-    // through the session's linked_issues → `Closes #N` in the PR body).
-    // Bounties pledged by OTHER users flip 'open' → 'awarded' and credit this
-    // PR's author; a bounty the author pledged on their own resolved issue is
-    // 'voided' instead (self-kudos guard — see resolveIssueBounty). Idempotent
-    // (only status='open' rows transition, so a later PR closing the same
-    // issue finds none) and best-effort — a failure here must never roll back
-    // or fail the merge, same as the CC volume teardown below.
-    try {
-      const linked = Array.isArray(session.linked_issues) ? session.linked_issues : [];
-      const seen = new Set();
-      for (const raw of linked) {
-        const n = Number(raw);
-        if (!Number.isInteger(n) || n <= 0 || seen.has(n)) continue;
-        seen.add(n);
-        const { awarded, voided } = await resolveIssueBounty(pool, {
-          appId: session.app_id,
-          sessionId: session.id,
-          awardeeUserId: session.user_id || null,
-          issueNumber: n,
-        });
-        if (voided.length) {
-          log.info('votes', 'Self-bounty voided on merge', {
-            sessionId: session.id, issueNumber: n, count: voided.length,
-          });
-        }
-        // Only announce / record genuine awards; a purely self-voided issue
-        // produces no "awarded" chat noise or event.
-        if (!awarded.length) continue;
-        events.record(pool, {
-          type: events.EVENT_TYPES.BOUNTY_AWARDED,
-          userId: session.user_id || null,
-          appId: session.app_id,
-          sessionId: session.id,
-          metadata: { issueNumber: n, prNumber: session.pr_number || null, count: awarded.length },
-        });
-        const recipient = session.user_id ? `<@${session.user_id}>` : 'the author';
-        const bountyMsg = `Bounty on issue #${n} (${awarded.length} kudos) awarded to ${recipient} — PR #${session.pr_number || session.id} merged`;
-        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system').catch(() => {});
-        // Dual-post into the proposal's thread (lifecycle in context).
-        await sendSystemMessage(pool, session.app_id, bountyMsg, 'system',
-          null, { type: 'session', ref: session.id }).catch(() => {});
-      }
-    } catch (err) {
-      log.warn('votes', 'Bounty payout failed', { sessionId: session.id, err: err.message });
-    }
-
-    // Keep the "Open Issues" panel honest. A merged PR carrying `Closes #N`
-    // has just closed those issues on GitHub, but the panel reads
-    // github.fetchPublicIssues (cached, state=open) and nothing else learns
-    // the issue closed — so without this the closed issue lingers until the
-    // cache TTL expires AND something separately triggers a panel reload.
-    // Bust this repo's open-issues cache and broadcast a refresh so every
-    // client viewing the app's group chat refetches (App.handleIssueUpdate →
-    // AppView.loadVotePanel). Use the same repo_url regex as parseOwnerRepo
-    // (routes/issues.js) so the invalidated key matches the cached one.
-    // Best-effort and post-merge — a failure here must never fail the merge.
-    try {
-      const [, ghOwner, ghRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-      if (ghOwner && ghRepo) {
-        // #144: record the linked issues as closed BEFORE busting the
-        // cache + broadcasting. GitHub's auto-close is async and its
-        // anonymous list endpoint lags even further, so the refetch this
-        // broadcast triggers can read the issues as still open and
-        // re-cache them — the suppression list makes fetchPublicIssues
-        // drop them no matter what the list says. Optimistic on purpose:
-        // GitHub closes `Closes #N` reliably (just late), and the
-        // suppression TTL self-heals the rare case where it doesn't.
-        const { sanitizeIssueNumbers } = require('../services/pr-metadata');
-        const closedNumbers = sanitizeIssueNumbers(session.linked_issues);
-        if (closedNumbers.length) github.noteIssuesClosed(ghOwner, ghRepo, closedNumbers);
-        // Auto-resolve any open close-issue proposals targeting the issues
-        // this merge closes — their vote is moot now. Same optimism as the
-        // suppression above (GitHub closes `Closes #N` reliably, just
-        // late); the watcher hook below catches hand-edited `Closes #N`
-        // beyond linked_issues. Lazy require to avoid an import cycle;
-        // fired-and-forgotten so a failure never fails the merge.
-        if (closedNumbers.length) {
-          try {
-            const { resolveSupersededCloseProposals } = require('./issues');
-            resolveSupersededCloseProposals(pool, {
-              appId: session.app_id,
-              appSlug: session.app_slug,
-              numbers: closedNumbers,
-              cause: { kind: 'pr-merge', prNumber: session.pr_number || session.id },
-            }).catch((err) => log.warn('votes', 'Superseded close-proposal resolve failed', {
-              sessionId: session.id, err: err.message,
-            }));
-          } catch (err) {
-            log.warn('votes', 'Superseded close-proposal resolve setup failed', {
-              sessionId: session.id, err: err.message,
-            });
-          }
-        }
-        github.invalidateIssuesCache(ghOwner, ghRepo);
-        const { pushIssueUpdate } = require('../services/ws');
-        pushIssueUpdate({
-          action: 'github_synced',
-          appSlug: session.app_slug,
-          appId: session.app_id,
-          source: 'pr_merged',
-        });
-      }
-    } catch (err) {
-      log.warn('votes', 'Open-issues refresh after merge failed', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-
-    // #135: GitHub closes `Closes #N`-referenced issues itself, but a few
-    // seconds AFTER the merge — so the cache bust + refetch above can race
-    // it, re-caching the issue as open and leaving the group-chat panel
-    // stale for the cache TTL. Watch the referenced issues (PR-body closing
-    // keywords ∪ linked_issues) with retry/backoff until GitHub reports
-    // them closed, then bust the cache and broadcast the refresh again.
-    // Fired-and-forgotten — the polling must never slow down or fail the
-    // merge flow, and nothing is ever written to GitHub.
-    try {
-      if (github.isEnabled() && session.pr_number) {
-        const [, wOwner, wRepo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-        if (wOwner && wRepo) {
-          const { watchIssuesClosedAfterMerge } = require('../services/issue-close-watcher');
-          watchIssuesClosedAfterMerge({
-            owner: wOwner,
-            repo: wRepo,
-            prNumber: session.pr_number,
-            linkedIssues: session.linked_issues,
-            appSlug: session.app_slug,
-            appId: session.app_id,
-            // Lets the watcher auto-resolve close-issue proposals for the
-            // numbers it observes closed (incl. hand-edited `Closes #N`).
-            pool,
-          }).catch((err) => {
-            log.warn('votes', 'Post-merge issue-close watch failed', {
-              sessionId: session.id, err: err.message,
-            });
-          });
-        }
-      }
-    } catch (err) {
-      log.warn('votes', 'Post-merge issue-close watch setup failed', {
-        sessionId: session.id, err: err.message,
-      });
-    }
-
-    // Chat session is done — no further turns will reference CC memory,
-    // so drop the persistent `.claude` volume.
-    try {
-      const worker = require('../services/worker');
-      await worker.destroyCcVolume(session.id);
-    } catch (err) {
-      log.warn('votes', 'Failed to destroy CC volume', { sessionId: session.id, err: err.message });
-    }
-
-    // Announce in group chat, and dual-post into the proposal's own
-    // thread so its discussion carries the outcome in context.
-    const mergedLabel = session.pr_title
-      ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
-      : `PR #${session.pr_number || session.id}`;
-    const mergedSuffix = force && forceBy
-      ? `force-merged by admin ${forceBy.username} (${yesCount}/${activeCount} vote${yesCount === 1 ? '' : 's'} at the time)`
-      : `merged and deployed! (${yesCount}/${activeCount} votes)`;
-    await sendSystemMessage(pool, session.app_id,
-      `${mergedLabel} ${mergedSuffix}`,
-      'system'
-    );
-    await sendSystemMessage(pool, session.app_id,
-      `${mergedLabel} ${mergedSuffix}`,
-      'system', null, { type: 'session', ref: session.id }
-    ).catch(() => {});
-
-    // Cascade: drain the next eligible promoted PR for this app. The
-    // app-level drain serializes this with any vote-triggered resolves so
-    // only one PR per app resolves+merges at a time. Exclude the session we
-    // just merged so it's never re-picked.
-    checkAndResolveConflicts(config, { app_id: session.app_id, excludeSessionId: session.id }).catch((err) => {
-      log.error('votes', 'Conflict resolution check failed', { err: err.message });
-    });
-
-    dstep({ phase: 'merged', message: `Marked session merged${mergeCommitSha ? ` (commit ${String(mergeCommitSha).slice(0, 9)})` : ''}.`, detail: { sha: mergeCommitSha, yesCount, majority } });
-    dend('merged', `Merged${force ? ` (force by ${forceBy?.username || 'admin'})` : ''}.`);
-    return { merged: true };
   } catch (err) {
     log.error('votes', 'Merge failed', { sessionId: session.id, err: err.message, githubMerged });
     dstep({ phase: 'merge_error', level: 'error', message: `Merge step threw: ${err.message}`, detail: { githubMerged, status: err.status || null } });
@@ -3019,4 +3424,4 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
 // PR after it syncs cleanly with main. Consumers should lazy-require
 // this module from inside a function to avoid the votes <-> conflict-
 // resolver circular-require load-order trap.
-module.exports = { voteRoutes, checkAndMerge, resolveIssueBounty };
+module.exports = { voteRoutes, checkAndMerge, resolveIssueBounty, finalizeMerge };

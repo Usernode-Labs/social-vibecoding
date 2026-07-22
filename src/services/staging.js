@@ -113,6 +113,17 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const cloneUrl = await github.getCloneUrl(owner, repo);
     const cloneDir = `/tmp/usernode-staging-${session.id}`;
 
+    // Whether the caller pinned a concrete commit. 'latest' (and any falsy
+    // value) keeps the historical "build the current branch tip" behaviour
+    // used by native sessions and the recovery/manual-deploy callers; a real
+    // SHA means we must build EXACTLY that commit even if the branch has
+    // advanced since it was captured. The image tag and clone-DB name below
+    // already key off commitHash, so before this the build could tag one SHA
+    // but actually compile the branch tip — harmless while the platform owns
+    // the branch, but wrong for an imported PR whose external author keeps
+    // pushing (#687). Pinning the checkout closes that gap.
+    const pinnedSha = commitHash && commitHash !== 'latest' ? commitHash : null;
+
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     // --recurse-submodules + --shallow-submodules so dapps that vendor
     // upstream sources via submodules (e.g. falling-sands → sandspiel)
@@ -123,6 +134,34 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       '--recurse-submodules', '--shallow-submodules',
       '--branch', session.branch_name, cloneUrl, cloneDir,
     ], { timeout: 120000 });
+
+    // Exact-SHA pin (#687): when a concrete commit was requested, check out
+    // exactly that commit. The shallow branch clone above only carries the
+    // branch tip, so if the branch has advanced past the pinned SHA the
+    // plain checkout fails and we fetch just that commit first (GitHub
+    // permits fetching a reachable SHA), then check it out. Detaches HEAD at
+    // the pinned commit; a no-op detach when the tip already IS that SHA.
+    // Submodules are re-synced to the checked-out commit afterwards (a no-op
+    // for dapps without any). Scoped strictly to this checkout step — the
+    // rest of the build (secrets gating, DB clone, container run, teardown)
+    // is unchanged.
+    if (pinnedSha) {
+      try {
+        await docker.execFileAsync('git', [
+          '-C', cloneDir, 'checkout', '--detach', pinnedSha,
+        ], { timeout: 30000 });
+      } catch {
+        await docker.execFileAsync('git', [
+          '-C', cloneDir, 'fetch', '--depth', '1', 'origin', pinnedSha,
+        ], { timeout: 120000 });
+        await docker.execFileAsync('git', [
+          '-C', cloneDir, 'checkout', '--detach', pinnedSha,
+        ], { timeout: 30000 });
+      }
+      await docker.execFileAsync('git', [
+        '-C', cloneDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1',
+      ], { timeout: 120000 }).catch(() => {});
+    }
 
     // 2. Read the dapp's manifest from the PR branch and check that all
     //    required secrets have stored values. Staging shares the prod
