@@ -34,6 +34,12 @@
  *                                        { claim, owner, release }
  *   unNative.physics                  — the pure math (also the node export)
  *
+ * On mobile the kit also maintains `--un-kb-inset` on <html> (the
+ * on-screen-keyboard occlusion, tracked via visualViewport) plus class
+ * `un-kb` while it is non-zero, so sheets / action sheets / modals /
+ * alerts ride above the keyboard out of the box. Apps may consume the
+ * var for their own fixed bottom bars. No-op on desktop.
+ *
  * Fidelity requirements this file implements (binding; see the kit section
  * of app-conventions.md): 1:1 finger tracking after intent lock, gestures
  * interruptible mid-spring at current position+velocity, commit-vs-cancel
@@ -219,6 +225,29 @@
     return bestIdx;
   }
 
+  // Minimum occlusion (px) treated as a real on-screen keyboard. Filters
+  // URL-bar collapse transients and rotation jitter — no real keyboard is
+  // shorter than this.
+  var KB_MIN_INSET = 50;
+
+  // On-screen keyboard occlusion: height of the layout-viewport strip
+  // hidden behind the keyboard, derived from visualViewport metrics.
+  // input: { innerHeight, vvHeight, vvOffsetTop?, vvScale?, minInset? }.
+  // Returns integer px (0 when no keyboard). iOS overlays the layout
+  // viewport, so the difference is positive while the keyboard is up;
+  // Android's default resize mode shrinks innerHeight in lockstep with
+  // vvHeight, so this degenerates to 0 (no double compensation). Forced
+  // to 0 while pinch-zoomed — a zoomed visual viewport is not a keyboard.
+  function keyboardInset(input) {
+    if (!input) return 0;
+    var scale = input.vvScale == null ? 1 : input.vvScale;
+    if (Math.abs(scale - 1) > 0.01) return 0;
+    var min = input.minInset == null ? KB_MIN_INSET : input.minInset;
+    var occluded = input.innerHeight - input.vvHeight - (input.vvOffsetTop || 0);
+    if (!(occluded > 0) || occluded < min) return 0;
+    return Math.round(occluded);
+  }
+
   // Edge auto-scroll ramp for drag-to-reorder: px-per-frame scroll velocity
   // for a pointer near the top/bottom of the visible area. Zero outside the
   // edge band; ramps linearly to ±maxSpeed at (or past) the edge itself.
@@ -279,6 +308,8 @@
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
     decideSheetRelease: decideSheetRelease,
+    KB_MIN_INSET: KB_MIN_INSET,
+    keyboardInset: keyboardInset,
     reorderDropIndex: reorderDropIndex,
     autoScrollVelocity: autoScrollVelocity,
     createArbiter: createArbiter,
@@ -325,6 +356,46 @@
       if (navigator.vibrate) navigator.vibrate(ms == null ? 10 : ms);
     } catch (e) { /* ignore */ }
   }
+
+  /* ────────────────────────────────────────────────────────────────────
+   * Keyboard avoidance — one global visualViewport tracker (issue #719).
+   * Maintains `--un-kb-inset` (the height of the layout-viewport strip
+   * hidden behind the on-screen keyboard) and class `un-kb` on <html>.
+   * Kit surfaces consume the var through their CSS box position
+   * (`bottom` / `top`) so sheets, action sheets, modals and alerts ride
+   * above the keyboard — the JS-owned translateY is never touched, so
+   * spring/drag semantics are unchanged. Apps may consume the var for
+   * their own fixed bottom bars. Structural no-op on desktop or where
+   * visualViewport is absent: no listeners, no var, CSS falls back to 0px.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  (function () {
+    var vv = window.visualViewport;
+    if (!vv || platform === 'desktop') return;
+    var applied = 0;
+    var rafPending = false;
+    function apply() {
+      rafPending = false;
+      var inset = keyboardInset({
+        innerHeight: window.innerHeight,
+        vvHeight: vv.height,
+        vvOffsetTop: vv.offsetTop,
+        vvScale: vv.scale,
+      });
+      if (inset === applied) return;
+      applied = inset;
+      document.documentElement.style.setProperty('--un-kb-inset', inset + 'px');
+      document.documentElement.classList.toggle('un-kb', inset > 0);
+    }
+    function schedule() {
+      if (rafPending) return;
+      rafPending = true;
+      requestAnimationFrame(apply);
+    }
+    vv.addEventListener('resize', schedule, { passive: true });
+    vv.addEventListener('scroll', schedule, { passive: true });
+    window.addEventListener('resize', schedule, { passive: true });
+  })();
 
   /* ────────────────────────────────────────────────────────────────────
    * Gesture arbiter — one intent lock across kit AND app gestures.

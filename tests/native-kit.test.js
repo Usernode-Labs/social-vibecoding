@@ -26,6 +26,7 @@ const {
   decideSwipeRelease,
   decidePtrRelease,
   decideSheetRelease,
+  keyboardInset,
   reorderDropIndex,
   autoScrollVelocity,
   createArbiter,
@@ -186,6 +187,78 @@ test('sheet release: flick dismisses, deep drag dismisses, shallow drag cancels'
   assert.equal(decideSheetRelease({ y: 80, v: 0, sheetHeight: 400 }), false);
   // Past the line but drifting back UP at release: cancels.
   assert.equal(decideSheetRelease({ y: 230, v: -1, sheetHeight: 400 }), false);
+});
+
+// ── Keyboard occlusion (issue #719) ────────────────────────────────────
+
+test('keyboardInset: iOS overlay keyboard returns the occluded height', () => {
+  // iPhone-ish: layout viewport 844px, keyboard shrinks the visual
+  // viewport to 508px while overlaying the layout viewport.
+  assert.equal(
+    keyboardInset({ innerHeight: 844, vvHeight: 508, vvOffsetTop: 0, vvScale: 1 }),
+    336
+  );
+  // A scrolled visual viewport (offsetTop) reduces the occluded strip.
+  assert.equal(
+    keyboardInset({ innerHeight: 844, vvHeight: 508, vvOffsetTop: 100, vvScale: 1 }),
+    236
+  );
+  // Fractional viewport metrics round to integer px.
+  assert.equal(
+    keyboardInset({ innerHeight: 844, vvHeight: 507.7, vvOffsetTop: 0, vvScale: 1 }),
+    336
+  );
+});
+
+test('keyboardInset: Android resize mode (innerHeight tracks the vv) returns 0', () => {
+  // The layout viewport shrank with the keyboard — fixed bottom:0
+  // already sits above it, so no extra inset (no double compensation).
+  assert.equal(
+    keyboardInset({ innerHeight: 508, vvHeight: 508, vvOffsetTop: 0, vvScale: 1 }),
+    0
+  );
+});
+
+test('keyboardInset: sub-threshold noise (URL-bar transients) returns 0', () => {
+  assert.equal(
+    keyboardInset({ innerHeight: 844, vvHeight: 804, vvOffsetTop: 0, vvScale: 1 }),
+    0
+  );
+  // Exactly at the threshold counts as a keyboard.
+  assert.equal(
+    keyboardInset({
+      innerHeight: 844,
+      vvHeight: 844 - physics.KB_MIN_INSET,
+      vvOffsetTop: 0,
+      vvScale: 1,
+    }),
+    physics.KB_MIN_INSET
+  );
+});
+
+test('keyboardInset: pinch zoom forces 0 (a zoomed viewport is not a keyboard)', () => {
+  assert.equal(
+    keyboardInset({ innerHeight: 844, vvHeight: 422, vvOffsetTop: 0, vvScale: 2 }),
+    0
+  );
+  // Missing scale is treated as unzoomed.
+  assert.equal(keyboardInset({ innerHeight: 844, vvHeight: 508, vvOffsetTop: 0 }), 336);
+});
+
+test('keyboardInset: negative occlusion clamps to 0', () => {
+  assert.equal(
+    keyboardInset({ innerHeight: 508, vvHeight: 844, vvOffsetTop: 0, vvScale: 1 }),
+    0
+  );
+});
+
+test('keyboardInset: explicit minInset override is honored, degenerate input is 0', () => {
+  assert.equal(
+    keyboardInset({ innerHeight: 844, vvHeight: 804, vvOffsetTop: 0, vvScale: 1, minInset: 20 }),
+    40
+  );
+  assert.equal(keyboardInset(null), 0);
+  assert.equal(keyboardInset(undefined), 0);
 });
 
 // ── Gesture arbiter ────────────────────────────────────────────────────
