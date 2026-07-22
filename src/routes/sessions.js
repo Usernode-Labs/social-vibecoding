@@ -1950,12 +1950,10 @@ function sessionRoutes(config) {
       // Token-optimization (#): the pre-PR per-turn title refresh used to
       // spend a Haiku call at the end of every untitled turn to re-derive
       // the name from the full history + spec. That recurring cost bought
-      // little — the deterministic first-message title (maybeTitleFirstMessage)
-      // already names the session, and once a PR exists applyPrMetadata owns
-      // the name. So the turn-end refresh is now a no-op; refreshFromHistory
-      // stays available for explicit/manual re-titling but never fires
-      // automatically. Kept as a named no-op so the call sites read clearly.
-      const refreshTitleAtTurnEnd = () => {};
+      // little — the deterministic first-message title
+      // (maybeTitleFirstMessage) already names the session, and once a PR
+      // exists applyPrMetadata owns the name — so the turn-end refresh was
+      // dropped entirely.
 
       try {
         // Parse repo info
@@ -2505,7 +2503,6 @@ function sessionRoutes(config) {
 
         if (!activeToolCall) {
           // Pure chat turn — no tool call needed.
-          refreshTitleAtTurnEnd();
           send('done', {});
           res.end();
           setTimeout(() => sessionBus.clearSession(session.id), 30000);
@@ -2763,10 +2760,6 @@ function sessionRoutes(config) {
         }
       }
 
-      // #249: covers every turn that reached the main exit without a PR
-      // — no-changes turns, scout/spec turns, errored dispatches. PR
-      // turns skip it (applyPrMetadata mirrored the title already).
-      refreshTitleAtTurnEnd();
       send('done', {});
       res.end();
       // Drop the session-bus ring buffer shortly after completion.

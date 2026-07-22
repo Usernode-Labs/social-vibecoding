@@ -53,38 +53,13 @@ test('parseSessionTitleText throws on empty/unusable input', () => {
 
 // ---- session-title service ----
 
-// Stub ./llm and ./limits in require.cache, then force-load the subject.
-function loadServiceWithStubs({ onGenerate, spends = [] }) {
-  const llmPath = require.resolve('../src/services/llm');
-  const limitsPath = require.resolve('../src/services/limits');
-  const subjectPath = require.resolve('../src/services/session-title');
-  const orig = {
-    llm: require.cache[llmPath],
-    limits: require.cache[limitsPath],
-    subject: require.cache[subjectPath],
-  };
-
-  require.cache[llmPath] = {
-    exports: {
-      generateSessionTitle: async (args) => onGenerate(args),
-      estimateCostCents: () => 0.01,
-    },
-    loaded: true, id: llmPath, filename: llmPath, paths: orig.llm ? orig.llm.paths : [],
-  };
-  require.cache[limitsPath] = {
-    exports: { recordSpend: async (...a) => { spends.push(a); } },
-    loaded: true, id: limitsPath, filename: limitsPath, paths: orig.limits ? orig.limits.paths : [],
-  };
-  delete require.cache[subjectPath];
-  const subject = require('../src/services/session-title');
-
-  const restore = () => {
-    if (orig.llm) require.cache[llmPath] = orig.llm; else delete require.cache[llmPath];
-    if (orig.limits) require.cache[limitsPath] = orig.limits; else delete require.cache[limitsPath];
-    delete require.cache[subjectPath];
-    if (orig.subject) require.cache[subjectPath] = orig.subject;
-  };
-  return { subject, restore };
+// session-title is now a pure, deterministic module (no llm/limits
+// dependency after the token-optimization work), so there's nothing to
+// stub — just load it. The optional args are accepted-and-ignored so the
+// call sites don't all have to change; `spends` stays empty (no debit
+// path exists anymore).
+function loadServiceWithStubs(_opts = {}) {
+  return { subject: require('../src/services/session-title'), restore: () => {} };
 }
 
 function mockPool({ updateRowCount = 1, userRows = [], specMd = '' } = {}) {
@@ -236,31 +211,6 @@ test('losing the race to a PR-mirrored title emits nothing', async () => {
     assert.equal(title, null);
     assert.equal(session.session_title, null);
     assert.equal(events.length, 0);
-  } finally {
-    restore();
-  }
-});
-
-test('refreshFromHistory feeds the full request history + live spec to the LLM', async () => {
-  const captured = [];
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async (args) => { captured.push(args); return { title: 'Fix session naming defaults', usage: undefined, model: 'claude-haiku-4-5' }; },
-  });
-  try {
-    const pool = mockPool({
-      userRows: [{ content: "something's off with naming" }, { content: 'yes, default the titles' }],
-      specMd: '# Spec: session naming',
-    });
-    const session = { id: 5, session_title: 'Old vague title', pr_number: null };
-    const events = [];
-    const title = await subject.refreshFromHistory({
-      pool, session, userId: 3, send: (type, data) => events.push({ type, data }),
-    });
-    assert.equal(title, 'Fix session naming defaults');
-    assert.deepEqual(captured[0].requests, ["something's off with naming", 'yes, default the titles']);
-    assert.deepEqual(captured[0].specs, ['# Spec: session naming']);
-    assert.equal(session.session_title, 'Fix session naming defaults');
-    assert.deepEqual(events, [{ type: 'session_titled', data: { sessionTitle: 'Fix session naming defaults' } }]);
   } finally {
     restore();
   }

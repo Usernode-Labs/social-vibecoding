@@ -552,58 +552,6 @@ function parseSessionTitleText(text) {
   return title;
 }
 
-// Generate a short human-readable session title from the user's
-// request(s) and, optionally, the session's spec excerpt or a GitHub
-// issue title (#249). This is the display-name layer for sessions that
-// don't have a PR yet — once a PR exists, applyPrMetadata mirrors the
-// PR title instead and this is never called again for the session.
-//
-// Same error contract as generatePrMetadata: throws on failure, and
-// callers MUST catch and leave the title unset (the UI falls back to
-// the branch name). Title generation must never block or fail a turn.
-//
-// Returns { title, usage, model } so callers can debit the cost to the
-// requesting user exactly like the PR-metadata call.
-async function generateSessionTitle({ requests, specs, issueTitle, apiKey }) {
-  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
-  if (!activeClient) throw new Error('LLM not initialized');
-
-  const MAX_TURNS = 10;
-  const reqList = (Array.isArray(requests) ? requests : [])
-    .map((s) => String(s || '').trim()).filter(Boolean).slice(-MAX_TURNS);
-  // Specs are large; only the most recent draft matters as a theme signal.
-  const spec = (Array.isArray(specs) ? specs : [])
-    .map((s) => String(s || '').trim()).filter(Boolean).pop() || '';
-  const issue = String(issueTitle || '').trim();
-  if (!reqList.length && !spec && !issue) throw new Error('Nothing to title the session from');
-
-  const system = `You name development chat sessions. Based on the user's request(s) — and, when present, a spec excerpt or issue title — produce a short descriptive session title: a noun phrase of 3-8 words, at most 60 characters, no trailing period, no quotes, no markdown.
-
-Respond with ONLY a JSON object: {“title”: “...”}. No prose before or after.`;
-
-  const parts = [];
-  if (reqList.length) {
-    parts.push(`USER REQUEST${reqList.length > 1 ? 'S (chronological)' : ''}:\n${
-      reqList.map((r, i) => (reqList.length > 1 ? `${i + 1}. ${r.slice(0, 1000)}` : r.slice(0, 2000))).join('\n')}`);
-  }
-  if (issue) parts.push(`ISSUE TITLE:\n${issue.slice(0, 300)}`);
-  if (spec) parts.push(`SPEC (intended scope):\n${spec.slice(0, 3000)}`);
-
-  const model = 'claude-haiku-4-5';
-  const resp = await activeClient.messages.create({
-    model,
-    max_tokens: 64,
-    system,
-    messages: [{ role: 'user', content: parts.join('\n\n') }],
-  });
-
-  const text = (resp.content || []).find((b) => b.type === 'text')?.text || '';
-  const title = parseSessionTitleText(text);
-  // Usage rides along so callers can debit the requesting user; may be
-  // undefined on some response shapes — callers must tolerate that.
-  return { title, usage: resp.usage, model };
-}
-
 // The template title routes/feedback.js files with when the Haiku title
 // call fails. Exported so feedback.js, the title-heal sweeper, and the UI
 // serializers all agree on the exact string they mark/detect.
@@ -677,7 +625,7 @@ function _setClientForTests(fakeClient) {
 
 module.exports = {
   init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
-  generatePrMetadata, parsePrMetadataText, generateSessionTitle,
+  generatePrMetadata, parsePrMetadataText,
   parseSessionTitleText, estimateRunProgress, sanitizeEstimate, summarizeRunResult,
   sanitizeRemainingSeconds, DEFAULT_MODEL,
   stripLoneSurrogates, generateIssueTitle, FEEDBACK_FALLBACK_TITLE,
