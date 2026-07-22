@@ -517,6 +517,56 @@ the GitHub Actions secrets page.
 `hasValue` reflecting the GitHub-Actions-configured reality;
 POST/PUT/DELETE return 403 with the explanatory message.
 
+Because the self-app secrets UI is read-only, the client
+suppresses **both** the admin direct-write buttons and the
+vote-based propose buttons for the self-app row and renders a
+short banner explaining that the platform's environment comes
+from its deploy workflow, not this screen. The 403 message is
+also class-specific: a **staging-preview-only flag** (see below)
+gets a tailored "this is a preview-only toggle, off in production
+by design, not settable here" message, while an ordinary platform
+key points the operator at the deploy workflow's `.env` block
+(Repository Actions secrets only take effect for keys the
+workflow actually writes).
+
+#### The two PR-import flags (`PR_IMPORT_ENABLED`, `PR_IMPORT_MOCK_GITHUB`)
+
+Both are declared in the repo-root [dapp.json](./dapp.json) as
+`required:false`, `private:true`, `default:"false"`,
+`staging_default:"true"` — i.e. **ON in staging previews, OFF in
+production**, resolved purely by the manifest merge
+(`services/app-secrets.mergeForDeploy(..., { forStaging })`), not
+by a `USERNODE_ENV` branch in code.
+
+- `PR_IMPORT_MOCK_GITHUB` swaps the real GitHub client for the
+  in-memory mock adapter (`src/services/github-mock.js`) so the
+  imported-PR flow is clickable in a preview without real GitHub
+  credentials. It is **preview-only and must never be enabled in
+  production** — turning it on in prod would replace the real
+  GitHub connection with fake in-memory data. It is deliberately
+  **not** listed in the `.env` heredoc in
+  `.github/workflows/deploy.yml`, so production always resolves it
+  to `false` and always uses the real client. There is nothing to
+  set here; don't add it as an Actions secret (it would have no
+  effect).
+- `PR_IMPORT_ENABLED` is the **real production switch** for the
+  PR-import feature. To turn PR-import on in production, append it
+  to the `.env` heredoc in `.github/workflows/deploy.yml`
+  (optionally sourced from a repo variable) and redeploy — the
+  same "append to `.env` / the deploy heredoc and redeploy, no
+  code change needed" pattern documented for
+  `SELF_APP_PUBLIC_VOTING`. Enabling it is an operations decision
+  and is intentionally left to the operator.
+
+Neither flag is settable from the self-app secrets screen. The UI
+badges any row whose manifest entry declares a `staging_default`
+**and** whose key is absent from the platform's live
+`process.env` as **"Staging preview only"** — a data-derived rule
+(no hardcoded key list) that self-corrects: if an operator ever
+wires `PR_IMPORT_ENABLED` into the deploy heredoc, it gains a live
+`process.env` value and stops being badged, reflecting its now-real
+production state.
+
 ### 2i. Mayor refuse-list paragraph (self-app-only)
 
 [src/services/prompts.js](./src/services/prompts.js) is where
