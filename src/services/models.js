@@ -19,6 +19,22 @@ const MODELS = {
 
 const DEFAULT_MODEL = 'claude-opus-4-8';
 
+// Token-optimization (#): the Mayor is a fixed-role router/PM — it never
+// writes code, so it does NOT need the user-selected (often top-tier)
+// model. Pinning it to Sonnet keeps routing cheap while the user's chosen
+// model still reaches the coding agent (scout/build) where reasoning depth
+// actually matters. Env-overridable for emergencies; always validated
+// through resolve() so a bad override degrades to DEFAULT_MODEL.
+const MAYOR_MODEL = resolveMayorModel();
+
+function resolveMayorModel() {
+  const override = process.env.MAYOR_MODEL;
+  if (typeof override === 'string' && Object.prototype.hasOwnProperty.call(MODELS, override)) {
+    return override;
+  }
+  return 'claude-sonnet-5';
+}
+
 function isAllowed(m) {
   return typeof m === 'string' && Object.prototype.hasOwnProperty.call(MODELS, m);
 }
@@ -31,4 +47,4 @@ function list() {
   return Object.entries(MODELS).map(([id, meta]) => ({ id, ...meta }));
 }
 
-module.exports = { MODELS, DEFAULT_MODEL, isAllowed, resolve, list };
+module.exports = { MODELS, DEFAULT_MODEL, MAYOR_MODEL, isAllowed, resolve, list };

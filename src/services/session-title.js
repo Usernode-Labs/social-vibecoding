@@ -34,6 +34,36 @@ function headlessTitle(issueNumber, issueTitle) {
   return `#${n} · ${t}`.slice(0, 256);
 }
 
+// Token-optimization (#): deterministic, LLM-free title from the user's
+// first message. Titling never needed a model call — a session name is a
+// short label, not a reasoning task. Take the first non-empty line, strip
+// markdown/URLs/code, collapse whitespace, cut to a word boundary near the
+// column cap, drop trailing punctuation, and upper-case the first letter.
+// Returns '' when nothing usable is left (caller falls back to no title).
+function deriveFromRequest(firstMessage, { maxChars = 60 } = {}) {
+  let s = String(firstMessage || '');
+  // First non-empty line — opening asks lead with the request.
+  const firstLine = s.split('\n').map((l) => l.trim()).find(Boolean) || '';
+  s = firstLine
+    .replace(/`+/g, '')                       // inline code fences
+    .replace(/https?:\/\/\S+/g, '')           // URLs
+    .replace(/[*_#>~]+/g, ' ')                // markdown emphasis/heading marks
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!s) return '';
+  // Prefer the first sentence when it's a reasonable length.
+  const sentenceEnd = s.search(/[.!?](\s|$)/);
+  if (sentenceEnd > 12 && sentenceEnd <= maxChars) s = s.slice(0, sentenceEnd);
+  if (s.length > maxChars) {
+    const cut = s.slice(0, maxChars);
+    const bound = cut.lastIndexOf(' ');
+    s = (bound > maxChars * 0.5 ? cut.slice(0, bound) : cut).trim();
+  }
+  s = s.replace(/[\s.,;:!?-]+$/, '').trim();
+  if (!s) return '';
+  return (s.charAt(0).toUpperCase() + s.slice(1)).slice(0, 256);
+}
+
 // Core generate → debit → persist → broadcast path. `send` is the
 // chat turn's event emitter (SSE + global WS + session bus), so open
 // session lists update live via the `session_titled` event.
@@ -72,9 +102,26 @@ function generateAndApply({ pool, session, requests, specs, issueTitle, userId, 
 // backfill story for pre-#249 rows.
 function maybeTitleFirstMessage({ pool, session, message, userId, apiKey, send }) {
   if (!session || session.session_title || session.pr_number) return Promise.resolve(null);
-  const requests = [String(message || '').trim()].filter(Boolean);
-  if (!requests.length) return Promise.resolve(null);
-  return generateAndApply({ pool, session, requests, specs: [], userId, apiKey, send });
+  // Token-optimization (#): derive the title deterministically instead of
+  // spending a Haiku call. No debit, no round-trip. pr_number guard still
+  // applies so a PR-mirrored title can't be clobbered.
+  const title = deriveFromRequest(message);
+  if (!title) return Promise.resolve(null);
+  return (async () => {
+    const { rowCount } = await pool.query(
+      `UPDATE chat_sessions SET session_title = $1 WHERE id = $2 AND pr_number IS NULL AND session_title IS NULL`,
+      [title, session.id]
+    );
+    if (!rowCount) return null;
+    session.session_title = title;
+    if (send) send('session_titled', { sessionTitle: title });
+    return title;
+  })().catch((err) => {
+    log.warn('session-title', 'Deterministic first-message title failed (non-fatal)', {
+      sessionId: session && session.id, err: err.message,
+    });
+    return null;
+  });
 }
 
 // Hook 2 — pre-PR turn-end refresh: re-title from everything known so
@@ -108,4 +155,4 @@ function refreshFromHistory({ pool, session, userId, apiKey, send }) {
   });
 }
 
-module.exports = { headlessTitle, generateAndApply, maybeTitleFirstMessage, refreshFromHistory };
+module.exports = { headlessTitle, deriveFromRequest, generateAndApply, maybeTitleFirstMessage, refreshFromHistory };

@@ -641,6 +641,31 @@ ${stripLoneSurrogates(description).trim()}`,
   return { title, usage: resp.usage, model };
 }
 
+// Token-optimization (#): bounded Haiku wrap-up. The Mayor's old phase-2
+// wrap-up re-invoked the router model with the ENTIRE conversation +
+// system prompt just to phrase "here's what happened". This replaces it
+// with a tiny Haiku call whose ONLY input is the coding agent's own
+// summary (already capped at a few KB) — orders of magnitude fewer input
+// tokens. Callers use the deterministic buildCompletionText first and fall
+// back to this only when they want a friendlier natural-language recap.
+// Throws on any failure so the caller keeps its deterministic text.
+async function summarizeRunResult({ ccSummary, apiKey }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  const summary = stripLoneSurrogates(String(ccSummary || '')).trim().slice(0, 4000);
+  if (!summary) throw new Error('Nothing to summarize');
+  const model = 'claude-haiku-4-5';
+  const resp = await activeClient.messages.create({
+    model,
+    max_tokens: 200,
+    system: 'You are a project manager relaying to a non-technical user what a coding agent just finished building. Rewrite the agent\'s notes as 1-2 friendly, plain-English sentences in the first person ("I added…"). No markdown, no code, no preamble — just the recap.',
+    messages: [{ role: 'user', content: `The coding agent reported:\n\n${summary}` }],
+  });
+  const text = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
+  if (!text) throw new Error('Empty summary response');
+  return { text, usage: resp.usage, model };
+}
+
 // Test hook: swap the shared client for a stub so streamChat's fallback
 // plumbing is unit-testable without the SDK or network. Returns the
 // previous client so tests can restore it.
@@ -653,7 +678,7 @@ function _setClientForTests(fakeClient) {
 module.exports = {
   init, isEnabled, getSystemPrompt, streamChat, estimateCostCents,
   generatePrMetadata, parsePrMetadataText, generateSessionTitle,
-  parseSessionTitleText, estimateRunProgress, sanitizeEstimate,
+  parseSessionTitleText, estimateRunProgress, sanitizeEstimate, summarizeRunResult,
   sanitizeRemainingSeconds, DEFAULT_MODEL,
   stripLoneSurrogates, generateIssueTitle, FEEDBACK_FALLBACK_TITLE,
   // Fable 5 classifier-fallback surface (+ tests)

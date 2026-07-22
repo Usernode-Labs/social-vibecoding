@@ -45,6 +45,15 @@ const INLINE_TOTAL_CHAR_CAP = 80000;
 const IMAGE_REPLAY_TURNS = 4;
 const IMAGE_REPLAY_MAX = 8;
 
+// Text-attachment replay policy (token-optimization #): inlined text files
+// are re-sent to the Mayor only for user rows within the last
+// TEXT_REPLAY_TURNS user turns, and within a TEXT_REPLAY_MAX_CHARS aggregate
+// budget across the request. Older / over-budget rows degrade to a one-line
+// placeholder — bounds recurring text-replay cost on long conversations the
+// same way the image policy bounds vision cost.
+const TEXT_REPLAY_TURNS = 4;
+const TEXT_REPLAY_MAX_CHARS = 60000;
+
 // The stored text a user row gets when the user sent attachments with no
 // typed message — downstream code never sees empty content.
 const ATTACHMENTS_ONLY_TEXT = '(attached files)';
@@ -370,6 +379,27 @@ function planImageInclusion(imageCounts, { turnWindow = IMAGE_REPLAY_TURNS, maxI
   return include;
 }
 
+// Text-attachment replay planning. `textCharCounts` is the per-user-turn
+// aggregate inlined-text length, CHRONOLOGICAL order. Returns a same-length
+// boolean array: whether that turn's text files are inlined verbatim. Walks
+// newest→oldest, including a turn only if it fits both the turn window and
+// the remaining char budget (all-or-nothing per turn so the placeholder
+// never contradicts what was inlined).
+function planTextInclusion(textCharCounts, { turnWindow = TEXT_REPLAY_TURNS, maxChars = TEXT_REPLAY_MAX_CHARS } = {}) {
+  const include = textCharCounts.map(() => false);
+  let budget = maxChars;
+  for (let back = 0; back < Math.min(turnWindow, textCharCounts.length); back++) {
+    const i = textCharCounts.length - 1 - back;
+    const count = textCharCounts[i];
+    if (!count) continue;
+    if (count <= budget) {
+      include[i] = true;
+      budget -= count;
+    }
+  }
+  return include;
+}
+
 // One-line Mayor-facing placeholder for a zip attachment, built from
 // the manifest captured at upload time. The Mayor never sees archive
 // bytes — this is how it learns enough to write a good dispatch brief.
@@ -396,7 +426,7 @@ function binaryPlaceholderLine(att) {
 // images excluded by the replay policy and for zip/binary attachments,
 // which are never inlined). Only user rows ever become arrays —
 // assistant rows stay strings (buildMayorMessages merges them).
-function buildUserMessageContent({ text, attachments, includeImages }) {
+function buildUserMessageContent({ text, attachments, includeImages, includeText = true }) {
   const atts = attachments || [];
   if (!atts.length) return text;
 
@@ -421,8 +451,10 @@ function buildUserMessageContent({ text, attachments, includeImages }) {
       textParts.push(zipPlaceholderLine(att));
     } else if (att.kind === 'binary') {
       textParts.push(binaryPlaceholderLine(att));
-    } else {
+    } else if (includeText) {
       textParts.push(attachedFileBlock(att.filename, att.data.toString('utf8')));
+    } else {
+      textParts.push(`[attached file: ${att.filename} — inlined in an earlier turn]`);
     }
   }
 
@@ -556,6 +588,8 @@ module.exports = {
   INLINE_TOTAL_CHAR_CAP,
   IMAGE_REPLAY_TURNS,
   IMAGE_REPLAY_MAX,
+  TEXT_REPLAY_TURNS,
+  TEXT_REPLAY_MAX_CHARS,
   ATTACHMENTS_ONLY_TEXT,
   fileExt,
   sniffImageType,
@@ -568,6 +602,7 @@ module.exports = {
   clipText,
   attachedFileBlock,
   planImageInclusion,
+  planTextInclusion,
   buildUserMessageContent,
   buildDispatchBlock,
   loadForHistory,

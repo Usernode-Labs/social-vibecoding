@@ -21,7 +21,7 @@ const sessionLifecycle = require('../services/session-lifecycle');
 const stagingRecovery = require('../services/staging-recovery');
 const sessionBus = require('../services/session-bus');
 const { drainGuard } = require('../services/lifecycle');
-const { getAppConventions, getSelfHostedRefuseList } = require('../services/prompts');
+const { getAppConventions, getMayorPolicy, getSelfHostedRefuseList } = require('../services/prompts');
 const { IN_LOOP_BROWSER_GUIDANCE } = require('../services/in-loop-browser');
 const models = require('../services/models');
 const limits = require('../services/limits');
@@ -1812,6 +1812,10 @@ function sessionRoutes(config) {
       // GET /api/models, so there's no drift between what the UI
       // offers and what the server accepts.
       const selectedModel = models.resolve(model);
+      // Token-optimization (#): the Mayor (router/PM) runs on a fixed cheap
+      // model regardless of the user's selection — only the coding agent
+      // (scout/build, dispatched with `selectedModel`) needs the top tier.
+      const mayorModel = models.MAYOR_MODEL;
 
       // SSE response
       res.writeHead(200, {
@@ -1943,18 +1947,15 @@ function sessionRoutes(config) {
           userId: req.user.id, apiKey: userApiKey, send,
         });
       }
-      // #249: pre-PR turn-end refresh — re-title from the full request
-      // history + latest spec draft so a vague opening ask sharpens once
-      // the direction is clear. Once a PR exists applyPrMetadata owns
-      // the name (it mirrors pr_title into session_title), so this
-      // never fires again; and the first-message hook already covers
-      // the turn it ran on. Fire-and-forget like the hook above.
-      const refreshTitleAtTurnEnd = () => {
-        if (titledThisTurn || session.pr_number) return;
-        sessionTitles.refreshFromHistory({
-          pool, session, userId: req.user.id, apiKey: userApiKey, send,
-        });
-      };
+      // Token-optimization (#): the pre-PR per-turn title refresh used to
+      // spend a Haiku call at the end of every untitled turn to re-derive
+      // the name from the full history + spec. That recurring cost bought
+      // little — the deterministic first-message title (maybeTitleFirstMessage)
+      // already names the session, and once a PR exists applyPrMetadata owns
+      // the name. So the turn-end refresh is now a no-op; refreshFromHistory
+      // stays available for explicit/manual re-titling but never fires
+      // automatically. Kept as a named no-op so the call sites read clearly.
+      const refreshTitleAtTurnEnd = () => {};
 
       try {
         // Parse repo info
@@ -1973,7 +1974,7 @@ function sessionRoutes(config) {
         let fallbackNoticed = false;
         const noteModelFallback = async (result) => {
           if (!result || !result.fallbackServed) return;
-          const requested = selectedModel;
+          const requested = mayorModel;
           const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
           const category = (result.stopDetails && result.stopDetails.category) || null;
           await modelFallback.record(pool, {
@@ -1996,14 +1997,24 @@ function sessionRoutes(config) {
         // those the Mayor has no visibility into what got built in
         // earlier turns, so questions like "what was the fix?" would
         // dispatch CC unnecessarily just to re-discover the answer.
-        const { rows: history } = await pool.query(
-          `SELECT id, role, content, metadata FROM chat_session_messages
-           WHERE session_id = $1
-             AND (role IN ('user', 'assistant')
-                  OR (role = 'system' AND metadata->>'ccOutput' IS NOT NULL))
+        // Token-optimization (#): only the most recent rows can matter to
+        // routing, so cap the DB read (coarse) and then bound the replay
+        // window deterministically in JS (fine — see boundMayorHistory:
+        // ≤ MAYOR_HISTORY_MAX_TURNS turns / ≤ MAYOR_HISTORY_MAX_CHARS chars).
+        // The full session transcript is never replayed into the Mayor.
+        const { rows: historyRaw } = await pool.query(
+          `SELECT id, role, content, metadata FROM (
+             SELECT id, role, content, metadata FROM chat_session_messages
+             WHERE session_id = $1
+               AND (role IN ('user', 'assistant')
+                    OR (role = 'system' AND metadata->>'ccOutput' IS NOT NULL))
+             ORDER BY id DESC
+             LIMIT 200
+           ) recent
            ORDER BY id ASC`,
           [session.id]
         );
+        const history = boundMayorHistory(historyRaw);
 
         // #450: bulk-load attachment bytes for user rows that carry
         // metadata.attachments so buildMayorMessages can emit vision
@@ -2087,7 +2098,11 @@ function sessionRoutes(config) {
             sessionId: session.id, err: err.message,
           });
         }
-        let mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock, agentFilesBlock, prodDebugEligible);
+        // Cache-aware system prompt (#): stable routing policy carries the
+        // cache_control breakpoint; the per-turn spec/PR/status suffix lands
+        // after it. Rebuilt (not just re-stringed) before phase-2 in case a
+        // scout mutated the spec this turn.
+        const mayorSystem = buildMayorSystemBlocks(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock, agentFilesBlock, prodDebugEligible);
         const messages = buildMayorMessages(history, historyAttachments);
 
         if (!llm.isEnabled()) {
@@ -2147,12 +2162,15 @@ function sessionRoutes(config) {
         // mayor1.rawContent carries no dangling data tool_use into phase-2.
         let mayorConvo = messages;
         let dataIters = 0;
+        // Per-turn data-tool budget (token-optimization #): shared across all
+        // data-tool round-trips this turn — see clipToolResult.
+        const dataBudget = { remaining: MAYOR_TOOL_RESULTS_TURN_MAX_CHARS };
         try {
           for (;;) {
             mayor1 = await llm.streamChat({
               messages: mayorConvo,
-              systemPrompt: mayorPrompt,
-              model: selectedModel,
+              systemPrompt: mayorSystem,
+              model: mayorModel,
               tools,
               signal: stopHandle.abort.signal,
               onToken: (text) => send('token', { text }),
@@ -2186,7 +2204,7 @@ function sessionRoutes(config) {
             // phase-1 accounting just below the loop.)
             // Price + attribute with the SERVED model — a fallback-served
             // call bills at (and displays) the fallback model's identity.
-            const servedModelIter = mayor1.servedModel || selectedModel;
+            const servedModelIter = mayor1.servedModel || mayorModel;
             let dataCost = 0;
             if (mayor1.usage) {
               dataCost = llm.estimateCostCents(mayor1.usage, servedModelIter);
@@ -2229,7 +2247,7 @@ function sessionRoutes(config) {
                 content: dataCalls.map((tc, i) => ({
                   type: 'tool_result',
                   tool_use_id: tc.id,
-                  content: dataResults[i],
+                  content: clipToolResult(dataResults[i], dataBudget),
                 })),
               },
             ];
@@ -2273,11 +2291,11 @@ function sessionRoutes(config) {
           await modelFallback.record(pool, {
             kind: events.EVENT_TYPES.MODEL_REFUSAL,
             userId: req.user.id, appId: session.app_id, sessionId: session.id,
-            requested: selectedModel, served: mayor1.servedModel || selectedModel,
+            requested: mayorModel, served: mayor1.servedModel || mayorModel,
             category: refusalCategory, source: 'mayor',
           });
-          await sendStatus(modelFallback.refusalText(selectedModel, refusalCategory), {
-            modelRefusal: { requested: selectedModel, category: refusalCategory },
+          await sendStatus(modelFallback.refusalText(mayorModel, refusalCategory), {
+            modelRefusal: { requested: mayorModel, category: refusalCategory },
           });
           mayor1.toolUses = [];
         }
@@ -2336,7 +2354,7 @@ function sessionRoutes(config) {
           // Bill the tool-only response now, like the intermediate
           // data-loop iterations — the phase-1 accounting below prices
           // mayor1.usage, which the retry's usage replaces on success.
-          const servedModelBase = mayor1.servedModel || selectedModel;
+          const servedModelBase = mayor1.servedModel || mayorModel;
           if (mayor1.usage) {
             const baseCost = llm.estimateCostCents(mayor1.usage, servedModelBase);
             await limits.recordSpend(pool, req.user.id, baseCost, { byok: !!userApiKey });
@@ -2349,8 +2367,8 @@ function sessionRoutes(config) {
           try {
             const retry = await llm.streamChat({
               messages: [...mayorConvo, ...buildDataSummaryReprompt(mayor1.rawContent, mayor1.toolUses)],
-              systemPrompt: mayorPrompt,
-              model: selectedModel,
+              systemPrompt: mayorSystem,
+              model: mayorModel,
               // Same tool defs (the convo carries tool_use blocks) but
               // hard-disabled: this call must produce text, not chips.
               tools,
@@ -2450,7 +2468,7 @@ function sessionRoutes(config) {
         // an empty assistant message would clutter the chat history.
         // Served-model attribution: a fallback-served turn is priced,
         // persisted, and displayed as the model that actually answered.
-        const servedModel1 = mayor1.servedModel || selectedModel;
+        const servedModel1 = mayor1.servedModel || mayorModel;
         const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
         if (mayorText1.trim()) {
           send('mayor_reasoning', { text: mayorText1 });
@@ -2648,145 +2666,76 @@ function sessionRoutes(config) {
           }
         }
 
-        // --- Phase 2: Mayor wrap-up turn ---
+        // --- Phase 2: deterministic wrap-up (#-token-opt) ---
         //
-        // Feed the tool_use → tool_result round-trip back into the model
-        // so it can summarize what actually happened. `tool_choice: none`
-        // prevents it from calling another tool (which would also hit
-        // the `activeWorkers` race check or accidentally re-dispatch).
-        //
-        // Base on mayorConvo (not the original `messages`) so any
-        // data-tool round-trips resolved above stay in context for
-        // the wrap-up. Answer EVERY tool_use in the final assistant turn —
-        // not just the terminal one we ran: if the Mayor combined a
-        // data call with a terminal tool (or hit the data-tool
-        // loop cap), a leftover tool_use would otherwise dangle and Anthropic
-        // would 400 the wrap-up. The terminal tool gets the real result; any
-        // stray data call gets a fresh fetch (re-fetching is acceptable);
-        // anything else gets a benign skip note.
-        const phase2ToolResults = [];
-        for (const tu of mayor1.toolUses) {
-          if (tu.id === activeToolCall.id) {
-            phase2ToolResults.push({
-              type: 'tool_result',
-              tool_use_id: tu.id,
-              content: toolResult.toolResultText,
-              ...(toolResult.isError ? { is_error: true } : {}),
-            });
-          } else if (DATA_TOOL_NAMES.has(tu.name)) {
-            phase2ToolResults.push({
-              type: 'tool_result',
-              tool_use_id: tu.id,
-              content: await resolveDataToolResult(tu, repoOwner, repoName, { pool, config, sessionId: session.id }),
-            });
-          } else {
-            phase2ToolResults.push({
-              type: 'tool_result',
-              tool_use_id: tu.id,
-              content: 'Skipped — only one action runs per turn.',
-              is_error: true,
-            });
-          }
-        }
-        const followUpMessages = [
-          ...mayorConvo,
-          // Anthropic requires the assistant turn to be the VERBATIM
-          // content blocks we got back, including the tool_use block —
-          // otherwise the tool_result's tool_use_id doesn't resolve.
-          { role: 'assistant', content: mayor1.rawContent },
-          { role: 'user', content: phase2ToolResults },
-        ];
-
-        // Phase-2 is intentionally NOT abortable — CC has already
-        // pushed a commit, opened the PR, and rebuilt staging. Stopping
-        // the summary now would just leave the user without context for
-        // real-world changes that already exist. The client hides the
-        // stop button and shows a plain spinner during this phase.
+        // The old wrap-up re-invoked the Mayor with the ENTIRE conversation
+        // + full system prompt just to phrase "here's what happened" — the
+        // single most expensive call in a build turn. We now compose the
+        // wrap-up deterministically (buildCompletionText) from structured
+        // signals, reaching for a bounded Haiku recap (llm.summarizeRunResult
+        // — input is ONLY the agent's own capped summary) only when a
+        // successful build left an agent summary worth phrasing more nicely.
+        // This phase is intentionally NOT abortable — CC already pushed the
+        // commit, opened the PR, and rebuilt staging.
         setPhase('mayor2');
-        // Re-read spec_md and rebuild the system prompt: a scout may
-        // have just mutated it, and the wrap-up turn should describe
-        // the doc as it is now (not as it was at the start of phase-1).
-        currentSpec = await loadSessionSpec(pool, session.id);
-        // Recompute PR context: a dispatch this turn may have just opened
-        // a PR (applyPrMetadata mutates session.pr_number in place).
-        const prContext2 = session.pr_number
-          ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
-          : null;
-        // Same open-proposals block as phase-1 so the wrap-up turn sees a
-        // consistent prompt (the instruction is scoped to "before
-        // dispatching", so it's inert after a tool has already run).
-        mayorPrompt = getMayorSystemPrompt(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext2, openProposalsBlock, agentFilesBlock, prodDebugEligible);
-        const mayor2 = await llm.streamChat({
-          messages: followUpMessages,
-          systemPrompt: mayorPrompt,
-          model: selectedModel,
-          // Expose ONLY the quick-reply pills tool (#285) so the wrap-up can
-          // suggest next steps but cannot dispatch again — the dispatch tools
-          // are simply absent from the list, preserving the original
-          // "wrap-up can't dispatch" invariant that toolChoice:none gave us.
-          tools: [SUGGEST_REPLIES_TOOL],
-          toolChoice: { type: 'auto' },
-          onToken: (text) => send('token', { text }),
-          apiKey: userApiKey,
-        });
-        await noteModelFallback(mayor2);
+        // Re-read PR context: a dispatch this turn may have opened a PR
+        // (applyPrMetadata mutates session.pr_number in place).
+        const prNumber2 = session.pr_number || null;
 
-        // Quick-reply pills (#285): the wrap-up reflects the final post-build
-        // state, so this is where dispatch turns get their pills. The
-        // tool_use is terminal (end of turn) — no tool_result round-trip.
-        const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
-
-        let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
-        log.info('sessions', 'Mayor phase-2 response', {
-          sessionId: session.id,
-          textLen: mayorText2.length,
-          stopReason: mayor2.stopReason,
-          preview: mayorText2.substring(0, 200),
+        let mayorText2 = buildCompletionText({
+          toolKind,
+          isError: toolResult.isError,
+          ccSummary: toolResult.ccSummary,
+          ccOutcome: toolResult.ccOutcome,
+          stagingUrl: toolResult.stagingUrl,
+          prNumber: prNumber2,
         });
-        if (mayor2.stopReason === 'refusal') {
-          // The wrap-up itself was refused end-to-end. The dispatched
-          // work already happened — record it and substitute an honest
-          // line rather than leaving the build unexplained.
-          const refusalCategory2 = (mayor2.stopDetails && mayor2.stopDetails.category) || null;
-          await modelFallback.record(pool, {
-            kind: events.EVENT_TYPES.MODEL_REFUSAL,
-            userId: req.user.id, appId: session.app_id, sessionId: session.id,
-            requested: selectedModel, served: mayor2.servedModel || selectedModel,
-            category: refusalCategory2, source: 'mayor',
-          });
-          if (!mayorText2.trim()) {
-            mayorText2 = '_The wrap-up was declined by the model\'s safety classifiers — the dispatched work above still completed; see the status messages for the outcome._';
-            send('token', { text: mayorText2 });
+
+        // Bounded Haiku polish: only for a successful build whose agent
+        // summary is substantial enough that a plain-English recap reads
+        // better than the raw notes. Best-effort — any failure keeps the
+        // deterministic text. Billed as a tiny Haiku call, not a full turn.
+        if (toolKind === 'build' && !toolResult.isError
+            && toolResult.ccOutcome === 'success'
+            && String(toolResult.ccSummary || '').trim().length > 400) {
+          try {
+            const recap = await llm.summarizeRunResult({ ccSummary: toolResult.ccSummary, apiKey: userApiKey });
+            if (recap.text && recap.text.trim()) {
+              const tail = [];
+              if (prNumber2) tail.push(`It's on PR #${prNumber2}`);
+              if (toolResult.stagingUrl) tail.push(`${prNumber2 ? 'preview' : "It's live to preview"} at ${toolResult.stagingUrl}`);
+              mayorText2 = tail.length ? `${recap.text.trim()}\n\n${tail.join(' — ')}.` : recap.text.trim();
+            }
+            if (recap.usage) {
+              const recapCost = llm.estimateCostCents(recap.usage, recap.model);
+              await limits.recordSpend(pool, req.user.id, recapCost, { byok: !!userApiKey });
+              send('usage', { costCents: recapCost, model: recap.model, byok: !!userApiKey });
+            }
+          } catch (err) {
+            log.warn('sessions', 'Bounded Haiku wrap-up failed — using deterministic text', {
+              sessionId: session.id, err: err.message,
+            });
           }
-        } else if (!mayorText2.trim()) {
-          // Cheap guard: we still want to show *something* after the
-          // tool runs, even if the Mayor produces no wrap-up text.
-          if (toolResult.isError) {
-            mayorText2 = toolKind === 'scout'
-              ? "_The scout didn't finish successfully — see the status above._"
-              : "_The coding agent didn't complete successfully — see the status messages above._";
-          } else if (toolKind === 'scout') {
-            // Spec/scout just planned something — make the build handoff
-            // explicit so a finished spec doesn't read as a finished change.
-            mayorText2 = "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._";
-          } else {
-            mayorText2 = '_Done._';
-          }
-          send('token', { text: mayorText2 });
         }
+
+        // Emit the wrap-up as a single token burst (no streaming Mayor call
+        // to stream from) + the authoritative reasoning event.
+        send('token', { text: mayorText2 });
         send('mayor_reasoning', { text: mayorText2 });
 
-        const servedModel2 = mayor2.servedModel || selectedModel;
-        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModel2);
+        // Deterministic next-step pills (replacing the phase-2 suggest_replies
+        // tool call).
+        const quickReplies2 = sanitizeQuickReplies({
+          replies: buildCompletionQuickReplies({ toolKind, isError: toolResult.isError }),
+        });
+
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
            VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-          [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
+          [session.id, mayorText2, mayorModel, null, 0,
            JSON.stringify(quickReplies2 ? { quickReplies: quickReplies2 } : {})]
         );
         if (quickReplies2) send('quick_replies', { replies: quickReplies2 });
-        await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
-        send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
       } catch (err) {
         activeWorkers.delete(session.id);
         workerProgress.clear(session.id);
@@ -3903,12 +3852,17 @@ async function runHeadlessSession({
     return cost;
   };
 
+  // Token-optimization: the Mayor is a fixed-role router here too — pin it
+  // to the cheap router model so only the coding agent (scout/build,
+  // dispatched with `selectedModel`) sees the user-selected top tier.
+  const mayorModel = models.MAYOR_MODEL;
+
   // Fable 5 classifier fallback: same once-per-run notice + per-call
   // admin record as the interactive chat handler.
   let fallbackNoticed = false;
   const noteModelFallback = async (result) => {
     if (!result || !result.fallbackServed) return;
-    const requested = selectedModel;
+    const requested = mayorModel;
     const served = result.servedModel || llm.FALLBACK_TARGET_MODEL;
     const category = (result.stopDetails && result.stopDetails.category) || null;
     await modelFallback.record(pool, {
@@ -3957,11 +3911,12 @@ async function runHeadlessSession({
     let mayor1;
     let mayorConvo = [{ role: 'user', content: seed }];
     let dataIters = 0;
+    const dataBudget = { remaining: MAYOR_TOOL_RESULTS_TURN_MAX_CHARS };
     for (;;) {
       mayor1 = await llm.streamChat({
         messages: mayorConvo,
         systemPrompt: mayorPrompt,
-        model: selectedModel,
+        model: mayorModel,
         tools,
         apiKey: userApiKey,
       });
@@ -3988,7 +3943,7 @@ async function runHeadlessSession({
           content: dataCalls.map((tc, i) => ({
             type: 'tool_result',
             tool_use_id: tc.id,
-            content: dataResults[i],
+            content: clipToolResult(dataResults[i], dataBudget),
           })),
         },
       ];
@@ -4003,11 +3958,11 @@ async function runHeadlessSession({
       await modelFallback.record(pool, {
         kind: events.EVENT_TYPES.MODEL_REFUSAL,
         userId: user.id, appId: session.app_id, sessionId: session.id,
-        requested: selectedModel, served: mayor1.servedModel || selectedModel,
+        requested: mayorModel, served: mayor1.servedModel || mayorModel,
         category: refusalCategory, source: 'headless',
       });
-      await sendStatus(modelFallback.refusalText(selectedModel, refusalCategory), {
-        modelRefusal: { requested: selectedModel, category: refusalCategory },
+      await sendStatus(modelFallback.refusalText(mayorModel, refusalCategory), {
+        modelRefusal: { requested: mayorModel, category: refusalCategory },
       });
       mayor1.toolUses = [];
     }
@@ -4032,7 +3987,7 @@ async function runHeadlessSession({
         });
       }
     }
-    const servedModel1 = mayor1.servedModel || selectedModel;
+    const servedModel1 = mayor1.servedModel || mayorModel;
     const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
     if (mayorText1.trim()) {
       send('mayor_reasoning', { text: mayorText1 });
@@ -4169,12 +4124,12 @@ async function runHeadlessSession({
         const mayor2 = await llm.streamChat({
           messages: phase2Messages,
           systemPrompt: wrapPrompt + buildHeadlessDecisionAddendum(issueNumber),
-          model: selectedModel,
+          model: mayorModel,
           tools: [DISPATCH_TOOL],
           apiKey: userApiKey,
         });
         await noteModelFallback(mayor2);
-        const servedModel2 = mayor2.servedModel || selectedModel;
+        const servedModel2 = mayor2.servedModel || mayorModel;
         const buildCall = mayor2.toolUses.find((t) => t.name === 'dispatch_claude_code');
         const strayCalls = mayor2.toolUses.filter((t) => t.name !== 'dispatch_claude_code');
         const mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
@@ -4305,7 +4260,7 @@ async function runHeadlessSession({
               { role: 'user', content: decisionToolResults },
             ],
             systemPrompt: wrapPrompt,
-            model: selectedModel,
+            model: mayorModel,
             // #32: on the rejected-build (question) path the wrap-up
             // re-asks the human-only questions — expose suggest_answers so
             // it can attach answer chips, mirroring the phase-1 question
@@ -4333,7 +4288,7 @@ async function runHeadlessSession({
                 : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
           }
           send('mayor_reasoning', { text: mayorText3 });
-          const servedModel3 = mayor3.servedModel || selectedModel;
+          const servedModel3 = mayor3.servedModel || mayorModel;
           const costCents3 = llm.estimateCostCents(mayor3.usage, servedModel3);
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
@@ -4349,7 +4304,7 @@ async function runHeadlessSession({
         const mayor2 = await llm.streamChat({
           messages: phase2Messages,
           systemPrompt: wrapPrompt,
-          model: selectedModel,
+          model: mayorModel,
           tools,
           toolChoice: { type: 'none' },
           apiKey: userApiKey,
@@ -4363,7 +4318,7 @@ async function runHeadlessSession({
             : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
         }
         send('mayor_reasoning', { text: mayorText2 });
-        const servedModelW = mayor2.servedModel || selectedModel;
+        const servedModelW = mayor2.servedModel || mayorModel;
         const costCents2 = llm.estimateCostCents(mayor2.usage, servedModelW);
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
@@ -4796,10 +4751,11 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   const wrapPrompt = getMayorSystemPrompt(session.app_name, false, currentSpec, !!session.app_self_hosted, null) + headlessAddendum;
   // No tools passed → plain text turn; the API can't call anything, so
   // tool_choice is unnecessary (and invalid without a tools array).
+  const mayorModel = models.MAYOR_MODEL;
   const mayor2 = await llm.streamChat({
     messages: convo,
     systemPrompt: wrapPrompt,
-    model: selectedModel,
+    model: mayorModel,
     apiKey: userApiKey,
   });
   // Fable 5 fallback: admin record only on this rare resume path (there's
@@ -4808,7 +4764,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     await modelFallback.record(pool, {
       kind: events.EVENT_TYPES.MODEL_FALLBACK,
       userId: user.id, appId: session.app_id, sessionId: session.id,
-      requested: selectedModel, served: mayor2.servedModel || llm.FALLBACK_TARGET_MODEL,
+      requested: mayorModel, served: mayor2.servedModel || llm.FALLBACK_TARGET_MODEL,
       category: (mayor2.stopDetails && mayor2.stopDetails.category) || null,
       source: 'headless-resume',
     });
@@ -4824,7 +4780,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           ? '_Change committed and pushed — start a session from this auto session to open the PR._'
           : "_The auto session's dispatch didn't finish successfully — see the status above._";
   }
-  const servedModelR = mayor2.servedModel || selectedModel;
+  const servedModelR = mayor2.servedModel || mayorModel;
   const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, servedModelR) : 0;
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
@@ -5335,7 +5291,36 @@ const DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue', 'web_
 // Cap on how many consecutive data-tool fetches we'll service
 // within a single Mayor turn before forcing the model to move on. Bounds
 // the worst case where the model loops on the data tools instead of acting.
-const MAYOR_DATA_TOOLS_MAX_ITERS = 3;
+// Token-optimization (#): lowered 3→2 — two fetch rounds is enough for the
+// router to gather context; a third round rarely changed the decision but
+// replayed the whole (growing) tool_result set through another Mayor call.
+const MAYOR_DATA_TOOLS_MAX_ITERS = 2;
+
+// Token-optimization (#): bound the size of data-tool results folded back
+// into the Mayor loop. A single tool_result is clipped to
+// MAYOR_TOOL_RESULT_MAX_CHARS; the per-turn aggregate across all data-tool
+// results is capped at MAYOR_TOOL_RESULTS_TURN_MAX_CHARS so a run of large
+// fetches can't balloon the replayed context.
+const MAYOR_TOOL_RESULT_MAX_CHARS = 24000;
+const MAYOR_TOOL_RESULTS_TURN_MAX_CHARS = 48000;
+
+function clipToolResult(text, budgetRef) {
+  const s = typeof text === 'string' ? text : String(text == null ? '' : text);
+  let out = s;
+  if (out.length > MAYOR_TOOL_RESULT_MAX_CHARS) {
+    out = `${out.slice(0, MAYOR_TOOL_RESULT_MAX_CHARS)}\n…[result truncated to ${MAYOR_TOOL_RESULT_MAX_CHARS} chars]`;
+  }
+  // Aggregate per-turn budget: once exhausted, later results collapse to a
+  // short notice rather than adding more tokens.
+  if (budgetRef.remaining <= 0) {
+    return '[result omitted — per-turn data budget exhausted; ask again to re-fetch]';
+  }
+  if (out.length > budgetRef.remaining) {
+    out = `${out.slice(0, budgetRef.remaining)}\n…[result truncated — per-turn data budget reached]`;
+  }
+  budgetRef.remaining -= out.length;
+  return out;
+}
 
 // Resolve a list_github_issues tool call to the JSON string we hand back as
 // tool_result content. Owner/repo come straight from apps.repo_url; when
@@ -5515,8 +5500,50 @@ function stripFakeCompletionMarker(text, { sessionId } = {}) {
   return text.replace(COMPLETION_MARKER_RE, '').trim();
 }
 
+// Token-optimization (#): the Mayor routes on RECENT conversation state, so
+// only the tail of a long transcript is replayed into its context. Keep the
+// most recent rows such that the number of user/assistant turns ≤
+// MAYOR_HISTORY_MAX_TURNS AND the aggregate content length ≤
+// MAYOR_HISTORY_MAX_CHARS, whichever bites first — walking newest→oldest and
+// preserving chronological order. ccOutput system rows ride along inside the
+// window (they don't count as turns; buildMayorMessages separately caps how
+// many are folded). Pure — safe to unit-test.
+const MAYOR_HISTORY_MAX_TURNS = 16;
+const MAYOR_HISTORY_MAX_CHARS = 60000;
+
+function boundMayorHistory(rows, { maxTurns = MAYOR_HISTORY_MAX_TURNS, maxChars = MAYOR_HISTORY_MAX_CHARS } = {}) {
+  const list = Array.isArray(rows) ? rows : [];
+  const kept = [];
+  let turns = 0;
+  let chars = 0;
+  for (let i = list.length - 1; i >= 0; i--) {
+    const row = list[i];
+    const isTurn = row.role === 'user' || row.role === 'assistant';
+    const len = (row.content || '').length;
+    // Always keep at least the newest row so an oversized latest message
+    // still routes (buildMayorMessages / clip bounds size downstream).
+    if (kept.length) {
+      if (isTurn && turns + 1 > maxTurns) break;
+      if (chars + len > maxChars) break;
+    }
+    kept.push(row);
+    if (isTurn) turns += 1;
+    chars += len;
+  }
+  return kept.reverse();
+}
+
 function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
   const CC_SUMMARY_MAX = 2000;
+  // Token-optimization (#): fold at most the most-recent MAX_CC_SUMMARIES
+  // coding-agent recaps into the Mayor's context. Older recaps are dropped
+  // (the Mayor routes on the recent state, not the full build history), and
+  // buildCompletionText already gives the user the per-build narration.
+  const MAX_CC_SUMMARIES = 3;
+  const ccRowIds = history
+    .filter((r) => r.role === 'system' && r.metadata?.ccOutput)
+    .map((r) => r.id);
+  const keepCcRowIds = new Set(ccRowIds.slice(-MAX_CC_SUMMARIES));
   const messages = [];
   const pushAssistant = (text) => {
     if (messages.length && messages[messages.length - 1].role === 'assistant') {
@@ -5529,8 +5556,6 @@ function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
   // #450: image replay plan. Only user turns within the replay window
   // re-send their images as vision blocks (all-or-nothing per turn, max
   // total per request); older turns degrade to a textual placeholder.
-  // Text-file attachments are inlined for ALL turns, consistent with the
-  // uncapped text history replay.
   const userRows = history.filter((r) => r.role === 'user');
   const imageCounts = userRows.map((r) => (
     (attachmentsByMessageId.get(r.id) || []).filter((a) => a.kind === 'image').length
@@ -5538,8 +5563,20 @@ function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
   const includeImagesPlan = attachmentsSvc.planImageInclusion(imageCounts);
   const includeByRowId = new Map(userRows.map((r, i) => [r.id, includeImagesPlan[i]]));
 
+  // Token-optimization (#): text-file attachments are inlined only within a
+  // bounded replay window (last N turns / aggregate char budget) instead of
+  // for every historical turn — older ones degrade to a placeholder line.
+  const textCounts = userRows.map((r) => (
+    (attachmentsByMessageId.get(r.id) || [])
+      .filter((a) => a.kind !== 'image' && a.kind !== 'zip' && a.kind !== 'binary')
+      .reduce((n, a) => n + (a.data ? a.data.length : 0), 0)
+  ));
+  const includeTextPlan = attachmentsSvc.planTextInclusion(textCounts);
+  const includeTextByRowId = new Map(userRows.map((r, i) => [r.id, includeTextPlan[i]]));
+
   for (const row of history) {
     if (row.role === 'system' && row.metadata?.ccOutput) {
+      if (!keepCcRowIds.has(row.id)) continue;
       const summary = String(row.metadata.ccOutput).slice(0, CC_SUMMARY_MAX);
       // Outcome-aware label (#358): only a run that actually changed code is
       // folded under the "COMPLETED" marker. No-op / error runs carry a
@@ -5566,11 +5603,57 @@ function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
           text: row.content,
           attachments: atts,
           includeImages: includeByRowId.get(row.id) === true,
+          includeText: includeTextByRowId.get(row.id) !== false,
         }),
       });
     }
   }
   return messages;
+}
+
+// #-token-opt: deterministic phase-2 wrap-up. The old wrap-up re-invoked
+// the Mayor with the ENTIRE conversation + full system prompt just to
+// phrase "here's what happened" — the single most expensive call in a
+// build turn. buildCompletionText composes that message from structured
+// signals alone (no LLM); llm.summarizeRunResult is the bounded Haiku
+// fallback the caller reaches for only when a successful build produced no
+// agent summary to surface. Sentence-bounded trim so a chatty agent
+// summary doesn't blow up the chat bubble.
+function trimForCompletion(text, max = 1200) {
+  const s = String(text || '').trim();
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  const bound = cut.lastIndexOf('. ');
+  return `${(bound > max * 0.6 ? cut.slice(0, bound + 1) : cut).trim()}…`;
+}
+
+// toolKind: 'scout' | 'build'. Pure — safe to unit-test.
+function buildCompletionText({ toolKind, isError, ccSummary, ccOutcome, stagingUrl, prNumber }) {
+  if (toolKind === 'scout') {
+    if (isError) return "The scout didn't finish successfully — see the status above.";
+    return "Spec updated — it's in the spec viewer. When it looks right, just tell me to build it and I'll dispatch the coding agent.";
+  }
+  // build
+  if (isError) return "The coding agent didn't complete successfully — see the status messages above.";
+  if (ccOutcome === 'no_changes') {
+    return "The coding agent looked into this but didn't need to change any code — see the notes above.";
+  }
+  const parts = [];
+  const summary = trimForCompletion(ccSummary);
+  if (summary) parts.push(summary);
+  const tail = [];
+  if (prNumber) tail.push(`It's on PR #${prNumber}`);
+  if (stagingUrl) tail.push(`${prNumber ? 'preview' : "It's live to preview"} at ${stagingUrl}`);
+  if (tail.length) parts.push(`${tail.join(' — ')}.`);
+  return parts.join('\n\n') || '_Done._';
+}
+
+// Deterministic next-step pills, replacing the phase-2 suggest_replies
+// tool call. Returned as a plain string array (sanitized by the caller).
+function buildCompletionQuickReplies({ toolKind, isError }) {
+  if (isError) return ['Try that again', 'What went wrong?'];
+  if (toolKind === 'scout') return ['Build it', 'Revise the spec', 'What will this change?'];
+  return ['Preview the change', 'Propose it to the group', 'Make another tweak'];
 }
 
 // Runs Claude Code in read-only PLAN MODE (the spec-stage scout). CC
@@ -6236,6 +6319,12 @@ path: /another/changed/view
   // branches that emit status events so the two stay in sync.
   const summaryParts = [];
   let isError = false;
+  // #-token-opt: captured for the deterministic phase-2 wrap-up
+  // (buildCompletionText) so we no longer replay the whole conversation
+  // through the Mayor just to phrase "what happened". ccSummaryForWrap is
+  // the agent's own final text; ccOutcomeForWrap is success|no_changes|error.
+  let ccSummaryForWrap = '';
+  let ccOutcomeForWrap = null;
 
   try {
     await sendStatus('Claude Code is running...');
@@ -6956,6 +7045,8 @@ path: /another/changed/view
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(`What the agent did:\n${ccText}`);
+      ccSummaryForWrap = ccText;
+      ccOutcomeForWrap = ccOutcome;
     }
   } finally {
     activeWorkers.delete(session.id);
@@ -6978,48 +7069,59 @@ path: /another/changed/view
   // commitSha is exposed (in addition to ccLog/stagingUrl) for the
   // caller's bookkeeping (PR card metadata, etc.). Null if CC made no
   // changes.
-  return { toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null };
+  return {
+    toolResultText, ccLog, stagingUrl, isError, commitSha: commitHash || null,
+    ccSummary: ccSummaryForWrap, ccOutcome: ccOutcomeForWrap,
+  };
 }
 
-// `prodDebug` (default false — headless call sites never set it): the
-// session passed debugAccess.isEligible this turn, so append the
-// prod-debug awareness block. Ineligible Mayors never see it, same
-// secrecy posture as the agent-side promptBlock injection.
-function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false) {
+// Token-optimization (#): the spec_md is injected into the Mayor's prompt
+// verbatim every turn so it can answer "what's in the spec?" and write
+// precise revision deltas — but an unbounded spec (they grow across
+// revisions) would dominate the prompt and defeat prompt caching. Cap it
+// with an explicit truncation marker so the Mayor knows the tail was cut
+// (it never needs the whole doc to route; the scout gets the full spec via
+// its own auto-injection). Keep the head — the overview/acceptance-criteria
+// live there.
+const MAYOR_SPEC_MAX_CHARS = 24000;
+
+function clipForPrompt(text, max) {
+  const s = typeof text === 'string' ? text : '';
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}\n\n…[spec truncated — ${s.length - max} more chars omitted; ask the scout to revise for full-doc changes]`;
+}
+
+// Returns the two halves of the Mayor system prompt:
+//   stable  — the compact routing policy (+ self-host guardrails), IDENTICAL
+//             across turns for a given app, so it serves as the cached
+//             prompt prefix (see buildMayorSystemBlocks / llm caching).
+//   dynamic — per-turn state (worker status, prod-debug, PR, proposals,
+//             agent files, live spec) that must NOT be cached.
+// getMayorSystemPrompt concatenates them (plain-string callers/tests);
+// buildMayorSystemBlocks wraps them for cache_control.
+function buildMayorSystemParts(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false) {
   const specIsEmpty = !((currentSpec || '').trim());
+
+  // STABLE PREFIX — never varies within a session/app. The full
+  // app-conventions.md is deliberately NOT here: the Mayor routes, it does
+  // not write code; only the coding agent (scout/build) receives
+  // conventions. Self-host guardrails are constant per app, so they stay in
+  // the cached prefix.
+  const stable = `${getMayorPolicy(appName)}${selfHosted ? getSelfHostedRefuseList() : ''}`;
 
   const toolNote = isWorkerBusy
     ? `\n\nSTATUS: A coding agent IS currently running for this session — the dispatch_claude_code and dispatch_scout tools are NOT available right now. Just chat with the user; tell them the agent is still working and they can follow up once it finishes.`
-    : `\n\nSTATUS: No coding agent is running. You MAY use dispatch_claude_code or dispatch_scout when appropriate (see the rules below). Otherwise just reply in text and do not call any tools.`;
+    : `\n\nSTATUS: No coding agent is running. You MAY use dispatch_claude_code or dispatch_scout when appropriate (see the rules above). Otherwise just reply in text and do not call any tools.`;
 
-  // Platform conventions are authoritative; app-specific guidance in a
-  // repo CLAUDE.md takes precedence for app-specific matters only. See
-  // src/prompts/app-conventions.md for the source of truth — edit
-  // there, restart, and both Mayor + Claude Code pick up the update.
-  const conventionsBlock = `
-
-==== PLATFORM CONVENTIONS (authoritative) ====
-
-${getAppConventions()}
-
-==== END PLATFORM CONVENTIONS ====
-
-When planning features that touch sensitive data (direct messages,
-user accounts with passwords, payments, API keys, personal info),
-briefly note in your plan that the relevant tables will be marked
-private and staging will seed fake rows — so the user knows what
-to expect on the staging preview.`;
-
-  // Live-spec block: the Mayor sees the current spec_md verbatim every
-  // turn so it can answer "what's in the spec?" accurately and write
-  // precise revision prompts for the scout. Re-injected fresh before
-  // each phase (see chat handler) so a scout dispatch earlier in the
-  // same turn is reflected in phase-2.
+  // Live-spec block: the Mayor sees the current spec_md (bounded) every
+  // turn so it can answer "what's in the spec?" and write precise revision
+  // prompts for the scout. Re-injected fresh before each phase so a scout
+  // dispatch earlier in the same turn is reflected downstream.
   const specBlock = `
 
 ==== CURRENT SPEC DOC (live draft) ====
 
-${specIsEmpty ? '(empty — no spec drafted yet)' : currentSpec}
+${specIsEmpty ? '(empty — no spec drafted yet)' : clipForPrompt(currentSpec, MAYOR_SPEC_MAX_CHARS)}
 
 ==== END CURRENT SPEC ====`;
 
@@ -7042,82 +7144,38 @@ If the user's next request is a DISTINCT, separate change — a new feature or f
 ==== END PULL REQUEST ====`
     : '';
 
-  return `You are the Mayor — a friendly project manager for the app "${appName}" on Usernode Social Vibecoding.
+  // DYNAMIC SUFFIX — per-turn state, never cached. Ordered least→most
+  // volatile isn't required (it's all post-breakpoint), but the spec goes
+  // last so the largest block is easy to locate.
+  const dynamic = `${toolNote}${prodDebug ? debugAccess.mayorPromptBlock() : ''}${prBlock}${openProposalsBlock || ''}${agentFilesBlock || ''}${specBlock}`;
 
-YOUR ROLE:
-You talk to the user in plain English and decide whether their latest message needs the coding agent (Claude Code) to actually edit the repo, OR needs spec-stage planning before any code is written. You are NOT a developer — never write code, file contents, diffs, or implementation details. Keep replies to 1-4 sentences.
+  return { stable, dynamic };
+}
 
-THE SPEC DOC:
-Every session has a markdown SPEC DOC that the user can read in the dev-chat spec viewer (a side-panel they open via the spec preview cards in the chat). It is your collaborative working surface for planning before code is written. The current spec is included verbatim below in the CURRENT SPEC DOC block — refer to it whenever you discuss or summarize the spec. The viewer is read-only: the user cannot hand-edit the spec, so all revisions go through you — and YOU never edit the spec in-process either. ALL spec writing and revising, however small, is done by dispatching the scout (dispatch_scout), which reads the repo and rewrites the doc; you only relay what the user wants changed. When they're happy with the spec they'll ask you to dispatch the coding agent in chat — you don't need to call dispatch_claude_code just because the spec is done; the user owns that decision.
+// Plain-string Mayor system prompt (headless paths + tests). Interactive
+// call sites use buildMayorSystemBlocks for prompt caching.
+function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false) {
+  const { stable, dynamic } = buildMayorSystemParts(
+    appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock, agentFilesBlock, prodDebug
+  );
+  return `${stable}${dynamic}`;
+}
 
-SPEC QUESTIONS — KEEP THEM RARE:
-Do not pad the spec with open questions. Only include a "Questions" section for things that genuinely BLOCK implementation — decisions the coding agent cannot reasonably make on its own and that would change what gets built. Wherever you can, make a sensible default choice and state it instead of asking. Non-blocking items belong under "Considerations" (trade-offs, assumptions, things to keep in mind) or "Deferred work" (out-of-scope or follow-up items) — never phrase those as questions. When there are no blockers, OMIT the "Questions" section entirely rather than writing "None" or an empty section. When you instruct the scout to write or revise the spec, tell it to prefer decisions over questions.
-
-CLARITY GATE — ask before acting on unclear requests:
-Before dispatching any tool on a request or issue, check whether it is clear enough to act on. A request/issue is UNCLEAR when any of these hold:
-- It has multiple plausible interpretations that would produce materially different builds (which screen, which users, what should happen in case X).
-- It's a bug report with no reproduction signal — no description of what was seen vs. expected, and no hint of where it happens.
-- It references features, screens, or behavior that don't exist in the app, or contradicts itself.
-- After reading it you cannot state the acceptance criteria ("done means…") in one sentence.
-If a request is UNCLEAR, ask clarifying questions INSTEAD of calling any tool. Counter-rules so you don't over-ask:
-- Never ask something the repo can answer — that's a dispatch_scout signal, not a question.
-- Never ask when a sensible default exists — state the assumption in one sentence and proceed.
-- Ask at most 3 numbered questions in a single message, each with your suggested default so a one-word reply ("defaults are fine") unblocks. Ask once — don't drip-feed questions across turns.
-- When you DO ask clarifying questions, ALSO call the suggest_answers tool in the same message — one entry per question, in the same order as your numbered questions, with your suggested default as the FIRST answer — so the user can tap an answer chip instead of typing. Each answer must be a short, self-contained reply the user could send verbatim. suggest_answers is the ONLY tool allowed alongside questions.
-- Never dispatch while also asking for clarification (asking and dispatching in the same turn is forbidden — suggest_answers accompanying a dispatch is dropped).
-- If the user replies "your call" / "just do it", proceed with stated assumptions instead of re-asking.
-
-TWO TOOLS, in priority order:
-
-1) dispatch_scout(prompt) — read-only repo investigation + ALL spec writing, slow (~30-60s)
-   Use for ALL spec work in a session: the first substantive draft AND every later revision, large or small. The scout is the coding agent in read-only mode: it reads files (Read/Glob/Grep), writes prose, and is structurally forbidden from editing or committing. Output replaces the session's spec doc.
-   ${specIsEmpty ? 'The spec is currently empty — your first dispatch_scout drafts it from scratch.' : 'A spec already exists (see CURRENT SPEC DOC below). When the user asks for a revision — even a one-line tweak — dispatch the scout with a prompt describing exactly what to change; the current spec is auto-injected into its context, so do NOT restate the spec, just describe the delta. The scout revises the doc and preserves the rest.'}
-   Heuristic: if your reply would be "I'd need to look at the code to answer that", that's a dispatch_scout signal — not an excuse to guess.
-   You have NO in-process spec-edit tool — never draft or paste spec content into chat yourself; route every spec change through dispatch_scout.
-
-2) dispatch_claude_code(prompt) — full coding agent, slow + writes code
-   Calls the coding agent to clone, edit files, commit, and push to the dev branch. Staging auto-rebuilds. Only call when:
-   * The user has made a clear, concrete change request, AND
-   * No spec stage is needed first (small/obvious change), OR the user has asked you to "just build it" or similar.
-   Before calling, say one sentence describing what you're going to have the agent build (e.g. "I'll add a leaderboard page sorted by score.") — then call the tool.
-
-GENERAL RULES (apply to all tools):
-- DO NOT call any tool when the user is:
-  * asking what happened in a past turn, how something works, or why you did something
-  * chatting, brainstorming, or just acknowledging
-  * giving feedback that isn't a concrete change request ("this looks bad" alone — ask what they want instead)
-  * asking for something that looks like a brand-new, standalone app unrelated to "${appName}" (e.g. they're chatting here but describe building a totally different product). In that case, DO NOT dispatch — instead, gently point them to the home page to create a new app, e.g. "That sounds like a separate app from ${appName}. You can head back to the home screen and spin up a new app for it." Only dispatch if they confirm they want it added to this app.
-- If the request fails the CLARITY GATE above, ask clarifying questions (per its rules) INSTEAD of calling any dispatch tool — the one tool that belongs WITH questions is suggest_answers. Never dispatch while also asking for clarification.
-- At most ONE tool call per user message (suggest_answers accompanying your clarifying questions does not count toward this limit).
-- Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
-
-SUGGESTED QUICK REPLIES (suggest_replies):
-On a normal reply and on the post-build/post-spec wrap-up, ALSO call the suggest_replies tool with 2-3 short, first-person messages the user is likely to want to send next — they render as tappable pills above the message box and PREFILL the box when tapped (the user can edit before sending), so each must read as a complete message the user could send verbatim. Tailor them to the current state:
-- After a build (dispatch_claude_code): e.g. "Preview the change", "Propose it to the group", "Make another tweak".
-- After a spec (dispatch_scout): e.g. "Build it", "Revise the spec", "What will this change?".
-- A build is still running: e.g. "How's it going?", "Stop this build".
-- A normal chat reply: the couple of likeliest next things to ask for.
-suggest_replies is for NEXT-STEP shortcuts only — it is NOT for clarifying questions (those use suggest_answers). Never emit suggest_answers and suggest_replies in the same turn. Like suggest_answers, it does NOT count against the one-tool-per-message limit and may accompany a normal reply or wrap-up.
-
-AFTER A TOOL RETURNS:
-You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted (or revised) and is available in the spec viewer. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
-- IMPORTANT — spec→build handoff: after dispatch_scout, the spec is only PLANNED, not built. End your reply with a one-line next step that makes this explicit, e.g. "When this looks right, just tell me to build it and I'll have the coding agent implement it." Nothing gets built until the user asks — don't let a finished spec read as a finished change. (After dispatch_claude_code the change IS built, so no handoff line is needed.)
-
-STAGING BUILD FAILURES (recoverable):
-A dispatch_claude_code tool_result may report that the commit/push/PR succeeded but the staging preview failed to build. The two common causes — both surfaced verbatim in the tool_result with explicit "Fix:" instructions:
-  * Missing \`staging_default\` for a private secret in dapp.json — the agent CAN fix this directly. Acknowledge the issue to the user, propose the concrete fix in one sentence (e.g. "I'll add \`staging_default: \"\"\` to SENDER_APP_SECRET_KEY since the app degrades gracefully without it"), and on the user's next confirmation call dispatch_claude_code with a prompt naming the keys and the value to use.
-  * Missing required secret in the platform secret store — the agent CANNOT fix this; the user (or admin) needs to set the value in Settings → Secrets. Tell them which key, point them at the Settings UI, and offer to retry once it's set.
-For other staging failures (Docker build, network, image cache), explain briefly and offer to retry. Do NOT pretend a failed staging build succeeded — the user can see the build status in the chat.
-
-USER FILE ATTACHMENTS:
-The user can attach files of any type to their messages. Images appear to you directly as vision input on recent turns (older ones are replaced by an "[image attachment: …]" placeholder to keep costs bounded); text files are inlined in the message inside "==== ATTACHED FILE: <name> ====" blocks (long files truncated with a marker). Zip archives and other binary files appear to you only as an "[attached file: …]" summary line (for zips it includes the file count and top-level contents) — you never see their bytes, but the coding agent does: on dispatch, zips are extracted into its container as browsable reference material and binaries are downloadable as workspace files. When you dispatch the scout or the coding agent, the CURRENT turn's attachments are forwarded to it automatically — reference the relevant filenames in your dispatch prompt (e.g. "match the attached mockup dashboard.png", "port the chart page from the attached reference.zip") so the agent knows to consult them.
-
-HISTORY CONTEXT:
-Some assistant turns in this conversation contain "${CODING_AGENT_COMPLETED_MARKER}:" — that is a summary from a PAST coding-agent run, written by the system, not by you. You may reference it when the user asks an INFORMATIONAL question about a past turn (e.g. "what did you do?", "why did you change X?", "what files were touched?") — quote or paraphrase to answer.
-
-You MUST NOT, under any circumstances:
-- Write the literal string "${CODING_AGENT_COMPLETED_MARKER}" in your reply. That marker is reserved for the harness; emitting it yourself fakes a coding-agent run that never happened.
-- Paraphrase a past summary as a substitute for dispatching a new run. If the user reports a bug, regression, or "still not quite right" — even if a previous run targeted the same area — that is a NEW change request and you MUST call dispatch_claude_code (assuming the tool is available per STATUS). Past summaries are read-only history; they cannot fix new bugs.${toolNote}${conventionsBlock}${selfHosted ? getSelfHostedRefuseList() : ''}${prodDebug ? debugAccess.mayorPromptBlock() : ''}${prBlock}${openProposalsBlock || ''}${agentFilesBlock || ''}${specBlock}`;
+// Cache-aware Mayor system prompt: a two-block `system` array where the
+// stable routing policy carries a cache_control breakpoint. Anthropic
+// caches the whole prefix up to (and including) that block — tools + the
+// stable policy — so consecutive turns in a session pay input tokens only
+// for the dynamic suffix + messages. The dynamic block (spec/PR/status)
+// is deliberately AFTER the breakpoint so per-turn changes never bust the
+// cache. Callers must pass tools in a STABLE order for the prefix to hit.
+function buildMayorSystemBlocks(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false) {
+  const { stable, dynamic } = buildMayorSystemParts(
+    appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock, agentFilesBlock, prodDebug
+  );
+  return [
+    { type: 'text', text: stable, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: dynamic },
+  ];
 }
 
 async function getFilesFromContainer(appSlug) {
@@ -7263,4 +7321,10 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine,
+  // Token-optimization: deterministic bounds/blocks exported for unit tests.
+  boundMayorHistory, MAYOR_HISTORY_MAX_TURNS, MAYOR_HISTORY_MAX_CHARS,
+  buildMayorSystemParts, buildMayorSystemBlocks, MAYOR_SPEC_MAX_CHARS,
+  buildCompletionText, buildCompletionQuickReplies,
+  clipToolResult, MAYOR_TOOL_RESULT_MAX_CHARS, MAYOR_TOOL_RESULTS_TURN_MAX_CHARS,
+  MAYOR_DATA_TOOLS_MAX_ITERS };

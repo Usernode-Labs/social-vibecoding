@@ -117,11 +117,47 @@ test('headlessTitle derives "#N · title" and truncates to 256', () => {
   }
 });
 
-test('maybeTitleFirstMessage titles a fresh session and emits session_titled', async () => {
-  const captured = [];
+// ---- deriveFromRequest (token-optimization: deterministic, LLM-free) ----
+
+test('deriveFromRequest takes the first non-empty line and upper-cases it', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    assert.equal(subject.deriveFromRequest('fix the session naming please'), 'Fix the session naming please');
+    assert.equal(subject.deriveFromRequest('\n\n  add a dark mode toggle\nmore detail'), 'Add a dark mode toggle');
+  } finally {
+    restore();
+  }
+});
+
+test('deriveFromRequest strips code/URLs/markdown and trims to the first sentence', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    assert.equal(subject.deriveFromRequest('## Add `useAuth()` hook. Then wire it up.'), 'Add useAuth() hook');
+    assert.equal(subject.deriveFromRequest('See https://example.com/x for the redirect bug'), 'See for the redirect bug');
+  } finally {
+    restore();
+  }
+});
+
+test('deriveFromRequest cuts to a word boundary near the cap and returns "" when empty', () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
+  try {
+    const long = subject.deriveFromRequest('word '.repeat(40), { maxChars: 20 });
+    assert.ok(long.length <= 20, `expected <=20, got ${long.length}: ${long}`);
+    assert.ok(!/\s$/.test(long), 'no trailing whitespace');
+    assert.equal(subject.deriveFromRequest(''), '');
+    assert.equal(subject.deriveFromRequest('   \n  '), '');
+    assert.equal(subject.deriveFromRequest('```\n```'), '');
+  } finally {
+    restore();
+  }
+});
+
+test('maybeTitleFirstMessage titles a fresh session deterministically — no LLM, no spend', async () => {
   const spends = [];
+  let calls = 0;
   const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async (args) => { captured.push(args); return { title: 'Session naming defaults', usage: { input_tokens: 10, output_tokens: 5 }, model: 'claude-haiku-4-5' }; },
+    onGenerate: async () => { calls++; return { title: 'should not be used' }; },
     spends,
   });
   try {
@@ -133,17 +169,18 @@ test('maybeTitleFirstMessage titles a fresh session and emits session_titled', a
       userId: 3, apiKey: null, send: (type, data) => events.push({ type, data }),
     });
 
-    assert.equal(title, 'Session naming defaults');
-    assert.deepEqual(captured[0].requests, ['fix the session naming please']);
-    assert.equal(session.session_title, 'Session naming defaults');
-    // The persist is guarded so a PR-mirrored title can't be clobbered.
+    assert.equal(title, 'Fix the session naming please');
+    assert.equal(calls, 0, 'no LLM call — titling is deterministic now');
+    assert.equal(session.session_title, 'Fix the session naming please');
+    // The persist is guarded so neither a PR-mirrored nor an existing
+    // title can be clobbered.
     const upd = pool.queries.find((q) => /UPDATE chat_sessions SET session_title/.test(q.sql));
     assert.match(upd.sql, /pr_number IS NULL/);
-    assert.deepEqual(upd.params, ['Session naming defaults', 5]);
-    assert.deepEqual(events, [{ type: 'session_titled', data: { sessionTitle: 'Session naming defaults' } }]);
-    // The Haiku call was debited to the requesting user.
-    assert.equal(spends.length, 1);
-    assert.equal(spends[0][1], 3);
+    assert.match(upd.sql, /session_title IS NULL/);
+    assert.deepEqual(upd.params, ['Fix the session naming please', 5]);
+    assert.deepEqual(events, [{ type: 'session_titled', data: { sessionTitle: 'Fix the session naming please' } }]);
+    // No debit — no model call happened.
+    assert.equal(spends.length, 0);
   } finally {
     restore();
   }
@@ -167,16 +204,15 @@ test('maybeTitleFirstMessage skips when the session already has a title or a PR'
   }
 });
 
-test('a failed generation resolves null and touches nothing (never throws)', async () => {
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async () => { throw new Error('LLM down'); },
-  });
+test('maybeTitleFirstMessage resolves null and touches nothing when nothing is derivable', async () => {
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
   try {
     const pool = mockPool();
     const session = { id: 9, session_title: null, pr_number: null };
     const events = [];
+    // A message that reduces to empty (only a code fence) yields no title.
     const title = await subject.maybeTitleFirstMessage({
-      pool, session, message: 'do the thing', userId: 1, send: (t, d) => events.push(t),
+      pool, session, message: '```\n```', userId: 1, send: (t) => events.push(t),
     });
     assert.equal(title, null);
     assert.equal(session.session_title, null, 'session left untouched');
@@ -188,9 +224,7 @@ test('a failed generation resolves null and touches nothing (never throws)', asy
 });
 
 test('losing the race to a PR-mirrored title emits nothing', async () => {
-  const { subject, restore } = loadServiceWithStubs({
-    onGenerate: async () => ({ title: 'Slow early title', usage: undefined, model: 'claude-haiku-4-5' }),
-  });
+  const { subject, restore } = loadServiceWithStubs({ onGenerate: async () => ({}) });
   try {
     // rowCount 0 = the guarded UPDATE matched nothing (PR landed meanwhile).
     const pool = mockPool({ updateRowCount: 0 });

@@ -119,5 +119,5 @@ test('build commit + push + RESULT are emitted unconditionally, not under any br
   // reports. Assert the phases exist at column 0 (top-level), unguarded.
   assert.match(cc, /\necho "__USERNODE_PHASE__ commit"/);
   assert.match(cc, /\necho "__USERNODE_PHASE__ push"/);
-  assert.match(cc, /\necho "__USERNODE_RESULT__ cc_exit=\$CC_EXIT[^\n]*mode=build"/);
+  assert.match(cc, /\necho "__USERNODE_RESULT__ cc_exit=\$CC_EXIT[^\n]*mode=build[^\n]*"/);
 });

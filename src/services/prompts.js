@@ -9,6 +9,7 @@ const path = require('path');
 const log = require('./logger');
 
 const CONVENTIONS_PATH = path.join(__dirname, '..', 'prompts', 'app-conventions.md');
+const MAYOR_POLICY_PATH = path.join(__dirname, '..', 'prompts', 'mayor-policy.md');
 
 let cached = null;
 
@@ -21,6 +22,46 @@ function getAppConventions() {
     cached = '';
   }
   return cached;
+}
+
+// Token-optimization (#): the Mayor is a router/PM, not a coder, so it no
+// longer receives the full app-conventions.md (~66 KB) — only the coding
+// agent needs conventions. `mayor-policy.md` is the compact, STABLE routing
+// policy: the same text every turn, which lets it serve as the cached
+// prompt-prefix (see llm.streamChat cache_control). It must stay under the
+// MAYOR_POLICY_MAX_CHARS cap so the stable prefix never balloons — the doc
+// carries only routing rules, never per-session state (spec, PR, proposals,
+// attachments live in the dynamic suffix appended by getMayorSystemPrompt).
+const MAYOR_POLICY_MAX_CHARS = 12000;
+const COMPLETION_MARKER = '[CODING AGENT COMPLETED]';
+let cachedMayorPolicy = null;
+
+function loadMayorPolicyTemplate() {
+  if (cachedMayorPolicy !== null) return cachedMayorPolicy;
+  try {
+    cachedMayorPolicy = fs.readFileSync(MAYOR_POLICY_PATH, 'utf-8');
+  } catch (err) {
+    log.error('prompts', 'Failed to read mayor-policy.md', { err: err.message });
+    cachedMayorPolicy = '';
+  }
+  return cachedMayorPolicy;
+}
+
+// Returns the compact, stable Mayor policy with the app name interpolated.
+// This is the cache-prefix half of the Mayor system prompt — keep it free
+// of per-turn state. Throws if the interpolated result exceeds the cap so a
+// future doc edit that reintroduces bloat fails loudly (a guard test also
+// enforces the same bound).
+function getMayorPolicy(appName) {
+  const tpl = loadMayorPolicyTemplate();
+  const out = tpl
+    .replace(/\{\{APP_NAME\}\}/g, String(appName || 'this app'))
+    .replace(/\{\{COMPLETION_MARKER\}\}/g, COMPLETION_MARKER)
+    .trimEnd();
+  if (out.length > MAYOR_POLICY_MAX_CHARS) {
+    throw new Error(`Mayor policy prompt is ${out.length} chars — exceeds the ${MAYOR_POLICY_MAX_CHARS}-char cap`);
+  }
+  return out;
 }
 
 // SELF-HOSTING.md sub-step 2i: appended to the Mayor system prompt
@@ -212,6 +253,8 @@ OTHER RULES:
 
 module.exports = {
   getAppConventions,
+  getMayorPolicy,
+  MAYOR_POLICY_MAX_CHARS,
   getSelfHostedRefuseList,
   buildProposalDiscussSystemPrompt,
 };
