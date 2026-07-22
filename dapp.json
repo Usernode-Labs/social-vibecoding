@@ -102,6 +102,11 @@
       "expectSelector": "[data-issue-chip]"
     },
     {
+      "name": "Import Feature from a PR entry present in the Dev + menu (#687)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Import Feature from a PR"
+    },
+    {
       "name": "Native-feel UI kit demo renders",
       "path": "/usernode-native/v1/demo.html",
       "expectSelector": ".un-switch",

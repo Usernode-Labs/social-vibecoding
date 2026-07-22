@@ -1640,6 +1640,17 @@ const App = {
       document.getElementById('fork-form').addEventListener('submit', AppView.submitFork);
     }
 
+    // Import-a-PR modal (#687) — mirrors the fork modal wiring.
+    const importPrModal = document.getElementById('import-pr-modal');
+    if (importPrModal) {
+      document.getElementById('import-pr-cancel').addEventListener('click', AppView.closeImportPrModal);
+      document.getElementById('import-pr-submit').addEventListener('click', AppView.submitImportPr);
+      importPrModal.addEventListener('click', (e) => {
+        if (AppView.modalDismissGuarded(importPrModal)) return;
+        if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeImportPrModal();
+      });
+    }
+
     // Feedback
     const feedbackTitle = document.getElementById('feedback-title');
     const feedbackText = document.getElementById('feedback-text');
