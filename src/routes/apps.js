@@ -171,13 +171,39 @@ function isPlatformRepo(parsed, config) {
 // an explanatory 403 so the only visible path matches reality. Same
 // rationale applies to /redeploy and /check-updates: the platform's
 // deploy is GHA-driven, not staging.rebuildProduction-driven.
-function refuseIfSelfHosted(app, res, action) {
+// A manifest secret is "staging-preview only" when it declares a
+// staging_default AND is absent from the platform's live process.env. The
+// platform's own env is written by the deploy workflow's `.env` heredoc, so
+// any key an operator can genuinely set in production shows up in process.env
+// and is NOT flagged; the PR-import flags (staging_default:"true", never in
+// the heredoc) are. Purely data-derived — no hardcoded key list, and it
+// self-corrects if a key is later wired into the deploy heredoc. `!= null`
+// covers both the parsed-manifest form (absent → null) and raw JSON
+// (absent → undefined).
+function isStagingOnlySecret(entry) {
+  return !!(entry && entry.staging_default != null && !process.env[entry.key]);
+}
+
+function refuseIfSelfHosted(app, res, action, opts = {}) {
   if (!app || !app.self_hosted) return false;
-  res.status(403).json({
-    error: action === 'secret'
-      ? 'The Usernode platform reads its env from .env written by GitHub Actions; storing values here would have no effect. Edit secrets via the repository\'s Actions secrets settings.'
-      : 'The Usernode platform deploys via GitHub Actions; this action does not apply to the self-app row.',
-  });
+  let error;
+  if (action === 'secret') {
+    if (opts.stagingOnly) {
+      // Staging-preview-only flag (e.g. PR_IMPORT_MOCK_GITHUB): it is on in
+      // staging previews and off in production by design, and is not a
+      // production knob — don't send the operator chasing an Actions secret
+      // that would have no effect (and, for the mock, would be harmful).
+      error = `${opts.key || 'This key'} is a staging-preview-only toggle: it is enabled in staging previews and off in production by design, so it is not settable from this screen.`;
+    } else {
+      // Ordinary platform key: the platform loads its env from `.env` written
+      // by the deploy workflow, not this store. Point at the real mechanism;
+      // Actions secrets only take effect for keys the workflow actually writes.
+      error = 'The Usernode platform loads its environment from the .env file written by its deploy workflow (.github/workflows/deploy.yml), not from this secrets store — saving here has no effect. To change a platform environment value, edit the deploy workflow\'s .env block and redeploy. Repository Actions secrets only take effect for keys that workflow actually writes.';
+    }
+  } else {
+    error = 'The Usernode platform deploys via GitHub Actions; this action does not apply to the self-app row.';
+  }
+  res.status(403).json({ error });
   return true;
 }
 
@@ -935,6 +961,10 @@ function appRoutes(config) {
           sensitive: entry.private,
           default: entry.default,
           hasValue: !!process.env[entry.key],
+          // Staging-preview-only flags (staging_default declared, absent from
+          // the platform's live env) are badged in the UI so an admin sees at
+          // a glance the key is not a production knob.
+          stagingOnly: isStagingOnlySecret(entry),
           valueLast4: null,
           updatedAt: null,
           orphan: false,
@@ -965,12 +995,15 @@ function appRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
-      if (refuseIfSelfHosted(app, res, 'secret')) return;
       const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
         ? app.manifest_snapshot
         : { secrets: [] };
 
       const declared = (manifest.secrets || []).find((s) => s.key === req.params.key);
+      if (refuseIfSelfHosted(app, res, 'secret', {
+        key: req.params.key,
+        stagingOnly: isStagingOnlySecret(declared),
+      })) return;
       // Allow setting non-declared keys too (orphan cleanup / pre-declaration
       // bootstrapping) but enforce the same key shape. The deploy paths
       // only ever inject declared keys, so an orphan stays unused unless
@@ -1002,10 +1035,18 @@ function appRoutes(config) {
   router.delete('/api/apps/:slug/secrets/:key', drainGuard, async (req, res) => {
     if (!req.user?.canAdminWrite) return res.status(403).json({ error: 'Full admin access required' });
     try {
-      const { rows } = await pool.query('SELECT id, self_hosted FROM apps WHERE slug = $1', [req.params.slug]);
+      const { rows } = await pool.query('SELECT id, manifest_snapshot, self_hosted FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
-      if (refuseIfSelfHosted(rows[0], res, 'secret')) return;
-      await appSecrets.deleteValue(pool, rows[0].id, req.params.key);
+      const app = rows[0];
+      const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
+        ? app.manifest_snapshot
+        : { secrets: [] };
+      const declared = (manifest.secrets || []).find((s) => s.key === req.params.key);
+      if (refuseIfSelfHosted(app, res, 'secret', {
+        key: req.params.key,
+        stagingOnly: isStagingOnlySecret(declared),
+      })) return;
+      await appSecrets.deleteValue(pool, app.id, req.params.key);
       log.info('apps', 'Secret deleted (admin direct)', {
         slug: req.params.slug, key: req.params.key, userId: req.user.id,
       });

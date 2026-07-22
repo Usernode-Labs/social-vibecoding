@@ -135,7 +135,22 @@ const Secrets = {
       return;
     }
 
-    list.innerHTML = data.secrets.map((s) => Secrets.renderRow(s, canWrite)).join('');
+    // Self-hosted (platform self-app) secrets are read-only: the platform
+    // loads its env from `.env` written by the deploy workflow, not from
+    // app_secrets, so any write here 403s (refuseIfSelfHosted). Show an
+    // explanatory banner and suppress the write affordances entirely rather
+    // than offering buttons that were always going to fail.
+    const readOnly = !!data.readOnly;
+    const banner = readOnly
+      ? `<div class="mb-3 rounded border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+           These values are read-only here. The Usernode platform loads its
+           environment from the <code class="text-[0.7rem]">.env</code> file written
+           by its deploy workflow, not from this screen — edit them in the deploy
+           workflow and redeploy. Rows tagged <span class="font-semibold">staging preview only</span>
+           are on in staging previews and off in production by design.
+         </div>`
+      : '';
+    list.innerHTML = banner + data.secrets.map((s) => Secrets.renderRow(s, canWrite, readOnly)).join('');
 
     list.querySelectorAll('[data-action="set"]').forEach((btn) => {
       btn.addEventListener('click', () => Secrets.handleSet(btn.dataset.key, btn.dataset.sensitive === '1'));
@@ -151,7 +166,7 @@ const Secrets = {
     });
   },
 
-  renderRow(s, canWrite) {
+  renderRow(s, canWrite, readOnly) {
     const requiredBadge = s.required
       ? `<span class="text-[0.65rem] uppercase font-bold text-red-500">required</span>`
       : '';
@@ -160,6 +175,12 @@ const Secrets = {
       : '';
     const orphanBadge = s.orphan
       ? `<span class="text-[0.65rem] uppercase font-bold text-zinc-500">orphan</span>`
+      : '';
+    // Staging-preview-only flags (declared with a staging_default but absent
+    // from the platform's live env) default on in previews and off in
+    // production — they are not a production knob. Flag computed server-side.
+    const stagingOnlyBadge = s.stagingOnly
+      ? `<span class="text-[0.65rem] uppercase font-bold text-sky-500" title="on in staging previews, off in production by design">staging preview only</span>`
       : '';
 
     let valueDisplay;
@@ -192,9 +213,14 @@ const Secrets = {
       ${s.hasValue ? `<button data-action="propose-clear" data-key="${escapeAttr(s.key)}"
         class="text-xs px-2 py-1 rounded border border-red-300 text-red-500 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950">propose clear</button>` : ''}
     `;
-    const actions = canWrite
-      ? `${directButtons}<span class="inline-block w-px h-4 bg-zinc-300 dark:bg-zinc-700 mx-1 self-center" aria-hidden="true"></span>${proposeButtons}`
-      : proposeButtons;
+    // Read-only (self-app) rows offer no write path at all — neither the
+    // admin direct buttons nor the vote-based propose buttons, since both
+    // 403 for a self-hosted app. The banner above explains why.
+    const actions = readOnly
+      ? ''
+      : canWrite
+        ? `${directButtons}<span class="inline-block w-px h-4 bg-zinc-300 dark:bg-zinc-700 mx-1 self-center" aria-hidden="true"></span>${proposeButtons}`
+        : proposeButtons;
 
     return `
       <div class="py-3 border-b border-zinc-200 dark:border-zinc-800 last:border-b-0">
@@ -203,6 +229,7 @@ const Secrets = {
           ${requiredBadge}
           ${sensitiveBadge}
           ${orphanBadge}
+          ${stagingOnlyBadge}
         </div>
         ${s.description ? `<p class="text-xs text-zinc-500 mb-2">${escapeHtml(s.description)}</p>` : ''}
         <div class="flex items-center gap-2 flex-wrap">
