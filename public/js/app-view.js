@@ -683,6 +683,11 @@ const AppView = {
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a change</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start an AI dev session — promoting its PR creates the proposal</span>
               </button>
+              ${(AppView.appData?.pr_import_enabled && AppView.appData?.can_collaborate) ? `
+              <button data-plus="import-pr" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
+                <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Import Feature from a PR</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Turn an existing GitHub pull request into a proposal people can vote on</span>
+              </button>` : ''}
               <button data-plus="issue" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">New issue</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Report a problem or idea without building it yourself</span>
@@ -1390,6 +1395,15 @@ const AppView = {
       proposalBtn.addEventListener('click', () => {
         close();
         AppView.createProposal();
+      });
+    }
+    // import-pr renders only when pr_import_enabled && can_collaborate, so
+    // (like members/fork) its handler needs an existence check.
+    const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
+    if (importPrBtn) {
+      importPrBtn.addEventListener('click', () => {
+        close();
+        AppView.openImportPrModal();
       });
     }
     const issueBtn = menu.querySelector('[data-plus="issue"]');
@@ -7155,6 +7169,116 @@ const AppView = {
       showErr('Network error — please try again.');
     } finally {
       if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Fork'; }
+    }
+  },
+
+  // #687 — PR-import picker. Lists open PRs (not already imported) from
+  // GET /pr-import/candidates; importing one POSTs /pr-import and lands the
+  // user on the resulting proposal thread — the same navigation
+  // createProposal() performs. Mirrors the promptFork / submitFork /
+  // closeForkModal shape. Every endpoint 404s when pr_import_enabled is off,
+  // so a stale-appData open degrades to the GitHub-off/empty message rather
+  // than crashing.
+  _importPrSelected: null,
+
+  async openImportPrModal() {
+    if (!AppView.appData || !AppView.appData.slug) return;
+    const modal = document.getElementById('import-pr-modal');
+    const list = document.getElementById('import-pr-list');
+    const err = document.getElementById('import-pr-error');
+    const submitBtn = document.getElementById('import-pr-submit');
+    if (!modal || !list) return;
+    AppView._importPrSelected = null;
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+    if (submitBtn) submitBtn.disabled = true;
+    list.innerHTML = '<div class="text-sm text-zinc-500 dark:text-zinc-400 py-6 text-center">Loading open pull requests…</div>';
+    AppView.revealModal(modal);
+    let data = {};
+    let ok = false;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(AppView.appData.slug)}/pr-import/candidates`);
+      ok = res.ok;
+      data = await res.json().catch(() => ({}));
+    } catch (_) {
+      list.innerHTML = '<div class="text-sm text-red-400 py-6 text-center">Couldn’t load pull requests — please try again.</div>';
+      return;
+    }
+    if (!ok) {
+      // 404 = flag off / GitHub not configured for this app. Treat as the
+      // GitHub-off state rather than an error the user can't act on.
+      list.innerHTML = '<div class="text-sm text-zinc-500 dark:text-zinc-400 py-6 text-center">GitHub isn’t configured for this app, so there’s nothing to import.</div>';
+      return;
+    }
+    const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+    if (candidates.length === 0) {
+      list.innerHTML = '<div class="text-sm text-zinc-500 dark:text-zinc-400 py-6 text-center">No open pull requests are available to import right now.</div>';
+      return;
+    }
+    list.innerHTML = candidates.map((c) => {
+      const num = Number(c.number);
+      const title = escapeHtml(String(c.title || ''));
+      const author = escapeHtml(String(c.author || 'unknown'));
+      const head = escapeHtml(String(c.headBranch || ''));
+      const base = escapeHtml(String(c.baseBranch || ''));
+      const url = escapeAttr(String(c.htmlUrl || ''));
+      return `
+        <label class="flex items-start gap-3 p-3 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer transition-colors">
+          <input type="radio" name="import-pr-choice" value="${num}" class="mt-1 accent-violet-600">
+          <span class="flex-1 min-w-0">
+            <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">#${num} · ${title}</span>
+            <span class="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">${author} — <span class="font-mono">${head} → ${base}</span></span>
+            ${url ? `<a href="${url}" target="_blank" rel="noopener" class="inline-block text-xs text-violet-500 hover:underline mt-1" onclick="event.stopPropagation()">View on GitHub ↗</a>` : ''}
+          </span>
+        </label>`;
+    }).join('');
+    list.querySelectorAll('input[name="import-pr-choice"]').forEach((el) => {
+      el.addEventListener('change', () => {
+        AppView._importPrSelected = parseInt(el.value, 10);
+        if (submitBtn) submitBtn.disabled = false;
+        if (err) { err.classList.add('hidden'); err.textContent = ''; }
+      });
+    });
+  },
+
+  closeImportPrModal() {
+    const modal = document.getElementById('import-pr-modal');
+    const err = document.getElementById('import-pr-error');
+    if (modal) modal.classList.add('hidden');
+    AppView._importPrSelected = null;
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+  },
+
+  async submitImportPr(e) {
+    if (e) e.preventDefault();
+    if (!AppView.appData || !AppView.appData.slug) return;
+    const pr = AppView._importPrSelected;
+    const err = document.getElementById('import-pr-error');
+    const submitBtn = document.getElementById('import-pr-submit');
+    const showErr = (msg) => {
+      if (err) { err.textContent = msg; err.classList.remove('hidden'); }
+    };
+    if (pr == null) return showErr('Pick a pull request to import.');
+    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Importing…'; }
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(AppView.appData.slug)}/pr-import`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pr }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        // Keep the list open so the user can pick another PR.
+        showErr(data.error || `Import failed (HTTP ${res.status}).`);
+        return;
+      }
+      AppView.closeImportPrModal();
+      if (typeof App !== 'undefined' && App.switchTab) {
+        await App.switchTab('dev', data.sessionId, 'sessions');
+      }
+    } catch (_) {
+      showErr('Network error — please try again.');
+    } finally {
+      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Import'; }
     }
   },
 

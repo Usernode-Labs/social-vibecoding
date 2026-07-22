@@ -609,6 +609,25 @@
     </div>
   </div>
 
+  <!-- Import-a-PR modal (AppView.openImportPrModal). Lists open PRs on the
+       app's repo not already imported; importing one creates a promoted
+       proposal via POST /api/apps/:slug/pr-import and navigates to it. Only
+       reachable via the "+" menu when pr_import_enabled (#687). -->
+  <div id="import-pr-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
+    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
+    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl">
+      <h2 class="text-lg font-bold mb-1">Import a PR as a proposal</h2>
+      <p class="text-xs text-zinc-500 mb-4">Pick an open pull request to turn into a proposal people can vote on. It goes straight into voting, just like a native proposal.</p>
+      <div id="import-pr-list" class="max-h-80 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-2"></div>
+      <div id="import-pr-error" class="text-red-400 text-sm hidden mt-3"></div>
+      <div class="flex gap-3 mt-5">
+        <button type="button" id="import-pr-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+        <button type="button" id="import-pr-submit" class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed" disabled>Import</button>
+      </div>
+    </div>
+    </div>
+  </div>
+
   <!-- Members & visibility modal (AppView.openMembersModal). Sections
        are shown/hidden per viewer: visibility controls for creator/admin,
        member list + invite typeahead for collab-private apps. -->
