@@ -1,0 +1,74 @@
+# Local Social -> Activity notification integration overlay.
+#
+# Usage from this repository (the Activity repository must remain at the
+# sibling path ../usernode-activity):
+#
+#   docker compose \
+#     -f docker-compose.dev.yml \
+#     -f docker-compose.activity.yml \
+#     up -d --build
+#
+# This file is deliberately separate from both the normal Social development
+# stack and production Compose. All credentials below are fixed local-only
+# values and must never be reused outside this environment.
+
+services:
+  app:
+    environment:
+      # Use ACTIVITY_LOCAL_READ_PATH=legacy to exercise the whole-path rollout
+      # fallback. The integration stack defaults to Activity authority.
+      ACTIVITY_NOTIFICATIONS_READ_PATH: ${ACTIVITY_LOCAL_READ_PATH:-activity}
+      ACTIVITY_BASE_URL: http://activity:3000
+      ACTIVITY_PRODUCER_TOKEN: local-activity-producer-token
+      ACTIVITY_LEDGER_ID: activity-local
+      # Unpadded base64url for 32 zero bytes. Safe only as a local fixture.
+      ACTIVITY_SOCIAL_ASSERTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    depends_on:
+      activity:
+        condition: service_started
+
+  activity:
+    build:
+      context: ../usernode-activity
+      dockerfile: Dockerfile
+    container_name: usernode-activity-dev
+    restart: unless-stopped
+    ports:
+      # Social uses activity:3000 inside Docker. The host port is only for
+      # health checks and direct debugging and avoids Social :3000 / node :3001.
+      - "3100:3000"
+    environment:
+      ACTIVITY_DATABASE_URL: postgres://activity:localactivity@activity-db:5432/activity
+      ACTIVITY_PRODUCER_TOKEN: local-activity-producer-token
+      ACTIVITY_LEDGER_ID: activity-local
+      ACTIVITY_SOCIAL_ASSERTION_KEY: AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+      ACTIVITY_BIND_ADDR: 0.0.0.0:3000
+    networks:
+      - usernode-net
+    depends_on:
+      activity-db:
+        condition: service_healthy
+
+  activity-db:
+    image: postgres:17-alpine
+    container_name: usernode-activity-db-dev
+    restart: unless-stopped
+    ports:
+      - "5441:5432"
+    volumes:
+      - activity-db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: activity
+      POSTGRES_USER: activity
+      POSTGRES_PASSWORD: localactivity
+    networks:
+      - usernode-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U activity -d activity"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  activity-db-data:
+    name: usernode-activity-db-dev-data

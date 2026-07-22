@@ -218,15 +218,13 @@ function extractSpecSnippet(content, title) {
 // the require at the top of this file). They're re-exported below so
 // any external importer keeps working.
 
-// #138: every interactive turn completion now creates + pushes a
+// #138: every interactive turn completion now creates a
 // session_done notification UNCONDITIONALLY (the persistent green bell
 // item the user can return to any time), not just when notify_on_done was
-// armed. createSessionDoneNotification's own unread-dedup (at most one
-// unread session_done per (user, session) via INSERT … WHERE NOT EXISTS)
-// collapses a back-and-forth conversation into a single pending item, so
-// this doesn't spam. We still clear notify_on_done for tidiness, but it no
-// longer gates creation. Called fire-and-forget from the chat handler's
-// done hook — never throws into the SSE path.
+// armed. The occurrence is frozen into the Activity outbox with the Social
+// row. We still clear notify_on_done for tidiness, but it no longer gates
+// creation. Called fire-and-forget from the chat handler's done hook —
+// never throws into the SSE path.
 async function notifySessionDone(pool, sessionId) {
   try {
     const { rows } = await pool.query(
@@ -236,10 +234,9 @@ async function notifySessionDone(pool, sessionId) {
       [sessionId]
     );
     if (!rows.length) return;
-    const created = await notifications.createSessionDoneNotification(pool, {
+    await notifications.createSessionDoneNotification(pool, {
       userId: rows[0].user_id, appId: rows[0].app_id, sessionId,
     });
-    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
   } catch (err) {
     log.warn('sessions', 'session_done notify failed', { sessionId, err: err.message });
   }
@@ -248,13 +245,12 @@ async function notifySessionDone(pool, sessionId) {
 // #161: headless auto-solve completion notification. Always fired at
 // the runner's terminal writes (ready/failed) — starting an auto-solve
 // opts the clicking user into the completion notification, no arming.
-// Best-effort: a failed insert/push must never fail the run itself.
+// Best-effort: a failed insert/outbox write must never fail the run itself.
 async function notifyAutoSolveDone(pool, { userId, appId, sessionId, detail }) {
   try {
-    const created = await notifications.createAutoSolveDoneNotification(pool, {
+    await notifications.createAutoSolveDoneNotification(pool, {
       userId, appId, sessionId, detail,
     });
-    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
   } catch (err) {
     log.warn('sessions', 'auto_solve_done notify failed', { sessionId, err: err.message });
   }
@@ -3707,15 +3703,13 @@ function sessionRoutes(config) {
         return res.json({ ok: true, alreadyShared: true, recipient: { username: recipient.username } });
       }
 
-      const rows = await notifications.createSpecSharedNotification(pool, {
+      await notifications.createSpecSharedNotification(pool, {
         recipientId: recipient.id,
         appId,
         sessionId,
         sharerId: req.user.id,
         version,
       });
-      for (const row of rows) await notifications.hydrateAndPush(pool, row);
-
       res.json({ ok: true, recipient: { username: recipient.username } });
     } catch (err) {
       log.error('sessions', 'Share spec to user failed', { message: err.message });

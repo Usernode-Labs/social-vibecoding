@@ -137,6 +137,35 @@ test('renderPendingSection renders the shared per-kind rows under a "Needs atten
   assert.match(html, /Fix the header/);
 });
 
+test('work-drawer mark-all sends a generic section selector with the Activity watermark', async () => {
+  const sb = loadAll();
+  const N = sb.window.Notifications;
+  N.items = [{ id: '9007199254740993', kind: 'session_done', readAt: null }];
+  N.unread = 1;
+  N.readThroughInboxSequence = '9007199254740993';
+  N._reconcileCompletionTitle = () => {};
+  N._renderBadge = () => {};
+  let request;
+  sb.fetch = async (url, options) => {
+    request = { url, options };
+    return { ok: true, json: async () => ({ unread: 0, cleared: 1 }) };
+  };
+
+  await sb.WorkDrawer.markAllRead();
+
+  assert.equal(request.url, '/api/notifications/read');
+  assert.deepEqual(JSON.parse(request.options.body), {
+    section: 'work',
+    through_inbox_sequence: '9007199254740993',
+  });
+  assert.ok(N.items[0].readAt, 'the work item is marked read locally');
+});
+
+test('work-drawer preserves Activity notification ids as opaque strings', () => {
+  assert.match(WORK_DRAWER_SRC, /const id = el\.getAttribute\('data-notif-id'\)/);
+  assert.doesNotMatch(WORK_DRAWER_SRC, /Number\(el\.getAttribute\('data-notif-id'\)\)/);
+});
+
 // ── 2. spin predicate ───────────────────────────────────────────────────
 
 function drawerWith(sb, { totals, sessions, proposals } = {}) {

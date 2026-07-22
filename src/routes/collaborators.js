@@ -18,31 +18,6 @@ const notifications = require('../services/notifications');
 const events = require('../services/events');
 const { drainGuard } = require('../services/lifecycle');
 
-// Hydrate one freshly-inserted notification row into the serialize()
-// wire shape (same column set listForUser produces) and push it live.
-async function hydrateAndPush(pool, notifRows) {
-  if (!notifRows.length) return;
-  const { rows: hydrated } = await pool.query(
-    `SELECT n.id, n.kind, n.read_at, n.created_at,
-            n.app_id, a.slug AS app_slug, a.name AS app_name,
-            n.chat_message_id, NULL AS message_content,
-            n.session_id, NULL AS pr_title, NULL AS pr_number,
-            su.username AS source_username, n.user_id, n.detail
-       FROM notifications n
-       LEFT JOIN apps a ON a.id = n.app_id
-       LEFT JOIN users su ON su.id = n.source_user_id
-      WHERE n.id = ANY($1::int[])`,
-    [notifRows.map((r) => r.id)]
-  );
-  const { pushNotificationToUser } = require('../services/ws');
-  for (const row of hydrated) {
-    pushNotificationToUser(row.user_id, {
-      type: 'notification_new',
-      notification: notifications.serialize(row),
-    });
-  }
-}
-
 function collaboratorRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -168,12 +143,11 @@ function collaboratorRoutes(config) {
 
       // Badge bump + drawer history row, pushed live.
       try {
-        const notifRows = await notifications.createCollabInviteNotification(pool, {
+        await notifications.createCollabInviteNotification(pool, {
           appId: app.id,
           recipientId: target.id,
           inviterId: req.user.id,
         });
-        await hydrateAndPush(pool, notifRows);
       } catch (err) {
         log.warn('collab', 'invite notify failed', { err: err.message });
       }
@@ -233,12 +207,11 @@ function collaboratorRoutes(config) {
       const inviterId = updated[0].invited_by;
       if (inviterId && inviterId !== req.user.id) {
         try {
-          const notifRows = await notifications.createCollabInviteAcceptedNotification(pool, {
+          await notifications.createCollabInviteAcceptedNotification(pool, {
             appId,
             recipientId: inviterId,
             accepterId: req.user.id,
           });
-          await hydrateAndPush(pool, notifRows);
         } catch (err) {
           log.warn('collab', 'accept notify failed', { err: err.message });
         }

@@ -29,9 +29,9 @@
   // common case) and any legacy value both read as enabled.
   const PREF_KEY = 'devchat_alerts_enabled';
 
-  // Suppress a second tone within this window so the _finishStreaming()
-  // chime and an incoming notification_new chime for the SAME turn can't
-  // double up (see Notifications.handleIncoming + DevChat._finishStreaming).
+  // Suppress back-to-back tones when one authoritative refresh discovers
+  // several completions. OS/native notifications still receive one call per
+  // completion; this guard only keeps the foreground chime pleasant.
   const TONE_DEDUP_MS = 1000;
 
   const DevAlerts = {

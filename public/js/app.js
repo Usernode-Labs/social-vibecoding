@@ -851,25 +851,13 @@ const App = {
             }
             break;
           case 'notification_new':
-            if (window.Notifications) Notifications.handleIncoming(data.notification);
-            // A mention/reply/reaction may have arrived for a message in
-            // the currently-open chat — reconcile its unread dot.
-            window.GroupChat?.reconcileDotsFromNotifications?.();
+            // Temporary compatibility with pre-migration servers: treat the
+            // family-shaped payload only as an invalidation.
+            if (window.Notifications) Notifications.handleIncoming();
             break;
           case 'notifications_changed':
-            // Server cleared/changed this user's notifications elsewhere
-            // (e.g. another tab cast a vote and the PR nudge was dismissed,
-            // or this user sent a chat message and reply-clears-all fired).
-            // Re-pull so this tab's badge + list stay in sync, then
-            // reconcile the in-chat unread dots from the fresh list.
-            if (window.Notifications) {
-              const r = Notifications.refresh?.();
-              if (r && typeof r.then === 'function') {
-                r.then(() => window.GroupChat?.reconcileDotsFromNotifications?.());
-              } else {
-                window.GroupChat?.reconcileDotsFromNotifications?.();
-              }
-            }
+            // Generic invalidation: the HTTP facade remains authoritative.
+            if (window.Notifications) Notifications.handleIncoming?.();
             break;
           case 'app_version_changed':
             // #21: a PR just merged and prod was rebuilt. If the user

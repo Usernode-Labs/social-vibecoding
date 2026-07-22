@@ -4,10 +4,9 @@
 //   1. Route test for POST /api/sessions/:id/notify-on-done — the
 //      client's arm/disarm endpoint (owner-only, idempotent, 204).
 //   2. Unit tests for the sessions.js helpers behind the turn-completion
-//      hooks: notifySessionDone (#138 always clear + insert +
-//      WS push; not armed → nothing) and notifyAutoSolveDone (always
-//      insert + push; dedup'd insert → no push).
-//   3. Service tests for the notification creators' unread dedup and the
+//      hooks: notifySessionDone (#138 always clear + insert) and
+//      notifyAutoSolveDone (always insert).
+//   3. Service tests for generic occurrence creation and the
 //      session_opened / headless_cloned auto-dismiss registry entries.
 //
 // Like kudos.test.js, the pool is an in-memory mock that pattern-matches
@@ -105,15 +104,9 @@ function makeMockPool(initial = {}) {
       if (row) row.notify_on_done = false;
       return { rows: [], rowCount: row ? 1 : 0 };
     }
-    // createSessionDoneNotification / createAutoSolveDoneNotification:
-    // INSERT ... SELECT ... WHERE NOT EXISTS (unread dedup).
-    if (/INSERT INTO notifications[\s\S]*'session_done'[\s\S]*WHERE NOT EXISTS/i.test(s)) {
+    // createSessionDoneNotification / createAutoSolveDoneNotification.
+    if (/INSERT INTO notifications[\s\S]*'session_done'/i.test(s)) {
       const [userId, appId, sessionId] = params;
-      const dup = state.notifications.find(
-        (n) => n.user_id === userId && n.session_id === sessionId
-          && n.kind === 'session_done' && !n.read_at
-      );
-      if (dup) return { rows: [] };
       const row = {
         id: state.nextId++, user_id: userId, app_id: appId, session_id: sessionId,
         source_user_id: null, kind: 'session_done', detail: null, read_at: null,
@@ -122,13 +115,8 @@ function makeMockPool(initial = {}) {
       state.notifications.push(row);
       return { rows: [row] };
     }
-    if (/INSERT INTO notifications[\s\S]*'auto_solve_done'[\s\S]*WHERE NOT EXISTS/i.test(s)) {
+    if (/INSERT INTO notifications[\s\S]*'auto_solve_done'/i.test(s)) {
       const [userId, appId, sessionId, detail] = params;
-      const dup = state.notifications.find(
-        (n) => n.user_id === userId && n.session_id === sessionId
-          && n.kind === 'auto_solve_done' && !n.read_at
-      );
-      if (dup) return { rows: [] };
       const row = {
         id: state.nextId++, user_id: userId, app_id: appId, session_id: sessionId,
         source_user_id: null, kind: 'auto_solve_done', detail, read_at: null,
@@ -137,17 +125,24 @@ function makeMockPool(initial = {}) {
       state.notifications.push(row);
       return { rows: [row] };
     }
-    // hydrateAndPush's single-row hydrate.
-    if (/SELECT n\.id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = \$1/i.test(s)) {
-      const n = state.notifications.find((x) => x.id === params[0]);
-      if (!n) return { rows: [] };
+    // Generic occurrence hydration + frozen outbox update.
+    if (/SELECT n\.id, n\.user_id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = ANY/i.test(s)) {
+      const ids = params[0];
       return {
-        rows: [{
+        rows: state.notifications.filter((x) => ids.includes(x.id)).map((n) => ({
           ...n, app_slug: 'my-app', app_name: 'My App', message_content: null,
+          thread_type: null, thread_ref: null,
           pr_title: 'Add a feature', pr_number: 7, headless_issue_number: 42,
           branch_name: 'dev/alice-123', source_username: null,
-        }],
+        })),
       };
+    }
+    if (/UPDATE notifications AS n[\s\S]*activity_event = payload\.event/i.test(s)) {
+      for (const item of JSON.parse(params[0])) {
+        const row = state.notifications.find((n) => n.id === item.id);
+        if (row) row.activity_event = item.event;
+      }
+      return { rows: [], rowCount: JSON.parse(params[0]).length };
     }
     // markReadForAction.
     if (/UPDATE notifications[\s\S]*SET read_at = NOW\(\)[\s\S]*kind = ANY\(\$3\)/i.test(s)) {
@@ -253,7 +248,7 @@ test('POST /notify-on-done 404s for a session the caller does not own', async ()
 
 // ── 2. Turn-completion helpers ──────────────────────────────────────────
 
-test('notifySessionDone: armed → clears flag, inserts session_done, pushes WS', async () => {
+test('notifySessionDone: armed → clears flag and enqueues one generic occurrence', async () => {
   const pool = makeMockPool({
     sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: true }]],
   });
@@ -270,11 +265,11 @@ test('notifySessionDone: armed → clears flag, inserts session_done, pushes WS'
 
     assert.equal(loaded.pushes.length, 1);
     assert.equal(loaded.pushes[0].userId, 1);
-    assert.equal(loaded.pushes[0].payload.type, 'notification_new');
-    assert.equal(loaded.pushes[0].payload.notification.kind, 'session_done');
-    // The hydrate carries the session label fields the drawer renders.
-    assert.equal(loaded.pushes[0].payload.notification.prTitle, 'Add a feature');
-    assert.equal(loaded.pushes[0].payload.notification.branchName, 'dev/alice-123');
+    assert.equal(loaded.pushes[0].payload.type, 'notifications_changed');
+    assert.equal(rows[0].activity_event.kind, 'social.notification.occurred');
+    assert.equal(rows[0].activity_event.facts.kind, 'session_done');
+    assert.equal(rows[0].activity_event.facts.prTitle, 'Add a feature');
+    assert.equal(rows[0].activity_event.facts.branchName, 'dev/alice-123');
   } finally {
     loaded.restore();
   }
@@ -283,7 +278,7 @@ test('notifySessionDone: armed → clears flag, inserts session_done, pushes WS'
 // #138: completions now ALWAYS create the persistent green bell item — the
 // done hook no longer gates on notify_on_done. An unarmed session still
 // produces exactly one session_done insert + WS push.
-test('notifySessionDone: unarmed → still creates session_done and pushes once', async () => {
+test('notifySessionDone: unarmed → still creates and invalidates once', async () => {
   const pool = makeMockPool({
     sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: false }]],
   });
@@ -295,15 +290,15 @@ test('notifySessionDone: unarmed → still creates session_done and pushes once'
     assert.equal(rows[0].user_id, 1);
     assert.equal(rows[0].session_id, 10);
     assert.equal(loaded.pushes.length, 1);
-    assert.equal(loaded.pushes[0].payload.notification.kind, 'session_done');
+    assert.equal(loaded.pushes[0].payload.type, 'notifications_changed');
   } finally {
     loaded.restore();
   }
 });
 
-// Unread-dedup still collapses repeats: a second done for the same session
-// (while the first is unread) inserts nothing new and pushes nothing.
-test('notifySessionDone: repeat while unread → dedup, no second insert/push', async () => {
+// Read state is not business identity. Repeated terminal hooks are tolerated
+// as distinct occurrences rather than tracked with a workflow ledger.
+test('notifySessionDone: repeat creates a second occurrence independent of read state', async () => {
   const pool = makeMockPool({
     sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: false }]],
   });
@@ -312,14 +307,14 @@ test('notifySessionDone: repeat while unread → dedup, no second insert/push', 
     await loaded.subject.notifySessionDone(pool, 10);
     await loaded.subject.notifySessionDone(pool, 10);
     const rows = pool.state.notifications.filter((n) => n.kind === 'session_done');
-    assert.equal(rows.length, 1, 'unread-dedup keeps it to one row');
-    assert.equal(loaded.pushes.length, 1, 'only the first push fires');
+    assert.equal(rows.length, 2);
+    assert.equal(loaded.pushes.length, 2);
   } finally {
     loaded.restore();
   }
 });
 
-test('notifyAutoSolveDone: always inserts with detail and pushes; dedup suppresses the push', async () => {
+test('notifyAutoSolveDone: each terminal hook freezes an occurrence with detail', async () => {
   const pool = makeMockPool({ sessions: [] });
   const loaded = loadSessions(pool);
   try {
@@ -331,16 +326,16 @@ test('notifyAutoSolveDone: always inserts with detail and pushes; dedup suppress
     assert.equal(rows[0].detail, 'spec');
     assert.equal(loaded.pushes.length, 1);
     assert.equal(loaded.pushes[0].userId, 2);
-    assert.equal(loaded.pushes[0].payload.notification.kind, 'auto_solve_done');
-    assert.equal(loaded.pushes[0].payload.notification.headlessIssueNumber, 42);
+    assert.equal(loaded.pushes[0].payload.type, 'notifications_changed');
+    assert.equal(rows[0].activity_event.facts.kind, 'auto_solve_done');
+    assert.equal(rows[0].activity_event.facts.headlessIssueNumber, 42);
 
-    // A second terminal fire (e.g. a resume re-driving the same run)
-    // hits the unread dedup: no second row, no second push.
+    // A second terminal fire is a tolerated second occurrence.
     await loaded.subject.notifyAutoSolveDone(pool, {
       userId: 2, appId: 5, sessionId: 30, detail: 'spec',
     });
-    assert.equal(pool.state.notifications.filter((n) => n.kind === 'auto_solve_done').length, 1);
-    assert.equal(loaded.pushes.length, 1);
+    assert.equal(pool.state.notifications.filter((n) => n.kind === 'auto_solve_done').length, 2);
+    assert.equal(loaded.pushes.length, 2);
   } finally {
     loaded.restore();
   }
@@ -348,7 +343,7 @@ test('notifyAutoSolveDone: always inserts with detail and pushes; dedup suppress
 
 // ── 3. Service: creators' dedup + auto-dismiss registry ────────────────
 
-test('createSessionDoneNotification: at most one UNREAD row per (user, session)', async () => {
+test('createSessionDoneNotification does not use legacy read state as dedup identity', async () => {
   const pool = makeMockPool();
   const loaded = loadSessions(pool);
   try {
@@ -360,7 +355,7 @@ test('createSessionDoneNotification: at most one UNREAD row per (user, session)'
     const dup = await loaded.notifications.createSessionDoneNotification(pool, {
       userId: 1, appId: 5, sessionId: 10,
     });
-    assert.equal(dup.length, 0);
+    assert.equal(dup.length, 1);
 
     // Once read, a new completion may notify again.
     pool.state.notifications[0].read_at = new Date().toISOString();
@@ -368,6 +363,7 @@ test('createSessionDoneNotification: at most one UNREAD row per (user, session)'
       userId: 1, appId: 5, sessionId: 10,
     });
     assert.equal(again.length, 1);
+    assert.equal(pool.state.notifications.length, 3);
   } finally {
     loaded.restore();
   }

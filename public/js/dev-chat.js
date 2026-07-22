@@ -34,11 +34,11 @@ const DevChat = {
   // While the user is on the dev-chat tab, the document title carries a
   // status marker for the current session's turn: "thinking" while the
   // Mayor / Claude Code is working. The old streaming-driven "✅ Done"
-  // marker is gone (#161): every "finished while away" case now arms
-  // notify_on_done server-side, so a session_done / auto_solve_done
-  // notification always exists, and its ARRIVAL drives the completion
-  // marker instead (see Notifications.handleIncoming →
-  // setCompletionTitle). The completion marker lives in a separate slot
+  // marker is gone (#161): every interactive completion creates a
+  // session_done / auto_solve_done notification server-side. Discovery by
+  // the authoritative feed after a websocket invalidation drives the marker
+  // (see Notifications.handleIncoming → setCompletionTitle). The completion
+  // marker lives in a separate slot
   // (_titleCompletion) that outranks the streaming status, is exempt
   // from the dev-chat-tab scoping, and STAYS until the user actually
   // comes back (visibilitychange / window focus — listeners at the
@@ -1566,9 +1566,9 @@ const DevChat = {
     DevChat.refreshBudget();
     // #138: the chime/notification is no longer fired from here. Every
     // interactive turn completion now creates a session_done notification
-    // server-side (see notifySessionDone), so the WS `notification_new`
-    // arrival in Notifications.handleIncoming → DevAlerts.onCompletion is
-    // the single source of the chime (foreground) / OS notification
+    // server-side (see notifySessionDone), so the generic WS invalidation
+    // followed by Notifications.refresh → DevAlerts.onCompletion is the
+    // single source of the chime (foreground) / OS notification
     // (backgrounded), even when the user is watching this same dev chat.
   },
 

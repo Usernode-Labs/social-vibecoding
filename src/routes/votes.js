@@ -1066,21 +1066,8 @@ function voteRoutes(config) {
           sessionId: session.id,
           proposerId: req.user.id,
         });
-        for (const row of notifRows) {
-          pushNotificationToUser(row.user_id, {
-            type: 'notification_new',
-            notification: notifications.serialize({
-              ...row,
-              app_slug: session.app_slug,
-              app_name: session.app_name,
-              pr_title: session.pr_title,
-              pr_number: session.pr_number,
-              source_username: req.user.username,
-            }),
-          });
-        }
         if (notifRows.length) {
-          log.info('votes', 'PR-proposed notifications sent', {
+          log.info('votes', 'PR-proposed notifications enqueued', {
             sessionId: session.id, count: notifRows.length,
           });
         }

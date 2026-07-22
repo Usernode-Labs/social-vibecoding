@@ -72,12 +72,11 @@ async function inviteApprover(pool, app, username, inviter) {
 
   // Badge bump + drawer history row, pushed live.
   try {
-    const notifRows = await notifications.createApproverInviteNotification(pool, {
+    await notifications.createApproverInviteNotification(pool, {
       appId: app.id,
       recipientId: target.id,
       inviterId: inviter.id,
     });
-    await notifications.hydrateAndPush(pool, notifRows[0]);
   } catch (err) {
     log.warn('approvers', 'invite notify failed', { err: err.message });
   }

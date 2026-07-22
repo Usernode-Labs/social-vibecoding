@@ -67,9 +67,16 @@ const statusService = require('./src/services/status');
 const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const { getPool } = require('./src/db/pool');
+const notificationsService = require('./src/services/notifications');
+const { createActivityService } = require('./src/services/activity');
 
 const config = loadConfig();
 log.setLevel(config.logLevel);
+const activityService = createActivityService(config, { pool: getPool(config) });
+notificationsService.configureActivity(
+  activityService,
+  config.activityNotificationsReadPath
+);
 
 const app = express();
 
@@ -463,7 +470,7 @@ app.use(issueRoutes(config));
 app.use(adminRoutes(config));
 app.use(dashboardRoutes(config));
 app.use(feedbackRoutes(config));
-app.use(notificationsRoutes(config));
+app.use(notificationsRoutes(config, activityService));
 app.use(collaboratorRoutes(config));
 app.use(approverRoutes(config));
 app.use(llmGrantsRoutes(config));
@@ -659,6 +666,7 @@ async function start() {
   shutdownPool = getPool(config);
 
   ws.attach(server, config);
+  activityService.startPublisher();
   chainPoller.start(config);
   genesisAccounts.start();
   nodeStatus.start({ nodeRpcUrl: process.env.NODE_RPC_URL });
@@ -2172,10 +2180,9 @@ async function resumeDetachedTurnInner({
         `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
         [sessionId]
       ).catch(() => {});
-      const created = await notifications.createSessionDoneNotification(pool, {
+      await notifications.createSessionDoneNotification(pool, {
         userId: session.user_id, appId: session.app_id, sessionId,
       });
-      if (created.length) await notifications.hydrateAndPush(pool, created[0]);
     } catch (err) {
       log.warn('server', 'recovered-turn session_done notify failed', {
         sessionId, err: err.message,
@@ -2425,10 +2432,9 @@ function startSessionAutoPauseSweeper(config) {
               `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
               [row.id]
             ).catch(() => {});
-            const created = await notifications.createSessionDoneNotification(pool, {
+            await notifications.createSessionDoneNotification(pool, {
               userId: row.user_id, appId: row.app_id, sessionId: row.id,
             });
-            if (created.length) await notifications.hydrateAndPush(pool, created[0]);
           } catch (err) {
             log.warn('server', 'stale-turn reap notify failed', { sessionId: row.id, err: err.message });
           }
@@ -2814,22 +2820,10 @@ function startStalePrSweeper(config) {
         );
         for (const row of rows) {
           try {
-            const inserted = await notifications.createStalePrNotification(pool, {
+            await notifications.createStalePrNotification(pool, {
               userId: row.user_id, appId: row.app_id, sessionId: row.session_id,
             });
             await pool.query(`UPDATE chat_sessions SET stale_notified_at = NOW() WHERE id = $1`, [row.session_id]);
-            if (inserted[0]) {
-              ws.pushNotificationToUser(row.user_id, {
-                type: 'notification_new',
-                notification: notifications.serialize({
-                  id: inserted[0].id, kind: 'stale_pr', read_at: null, created_at: inserted[0].created_at,
-                  app_id: row.app_id, app_slug: row.app_slug, app_name: row.app_name,
-                  chat_message_id: null, message_content: null,
-                  session_id: row.session_id, pr_title: row.pr_title, pr_number: row.pr_number,
-                  source_username: null, detail: null,
-                }),
-              });
-            }
           } catch (err) {
             log.warn('server', 'Stale-PR notify failed', { sessionId: row.session_id, err: err.message });
           }
@@ -2924,6 +2918,7 @@ async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   lifecycle.setShuttingDown();
+  activityService.stopPublisher();
 
   // Stop accepting BEFORE draining. Caddy's apex proxy and the wildcard
   // forward_auth gate both hold-and-retry a refused dial for 30s

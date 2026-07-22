@@ -240,7 +240,10 @@ const WorkDrawer = {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true, kinds: [...WorkDrawer._kinds()] }),
+        body: JSON.stringify({
+          section: 'work',
+          through_inbox_sequence: Notifications.readThroughInboxSequence,
+        }),
       });
       if (!res.ok) return;
       const data = await res.json();
@@ -288,7 +291,9 @@ const WorkDrawer = {
     // the row before the document-level outside-click handler sees a
     // target still inside the panel (same reasoning as the bell).
     list.querySelectorAll('[data-notif-id]').forEach((el) => {
-      const id = Number(el.getAttribute('data-notif-id'));
+      // Activity inbox sequences are decimal strings and may exceed JS's
+      // safe-integer range; preserve the opaque read handle verbatim.
+      const id = el.getAttribute('data-notif-id');
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         if (window.Notifications) Notifications._onItemClick(id);

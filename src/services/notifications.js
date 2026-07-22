@@ -1,4 +1,4 @@
-// Notifications service: @mention parsing + persistence + WS push.
+// Notifications service: generic Social persistence + Activity occurrences.
 //
 // The DB shape (`kind` column) is generic so different notification types
 // share one table + pipeline. Kinds today: 'mention' (group-chat @mention),
@@ -21,6 +21,211 @@ const { listActiveUserIds } = require('./active-users');
 // Match @token that is NOT preceded by a word character (so emails don't
 // trigger mentions) and capture up to 32 chars.
 const MENTION_RE = /(^|[^\w])@([A-Za-z0-9_]{1,32})/g;
+const ACTIVITY_NOTIFICATION_KINDS = new Set([
+  'mention',
+  'reply',
+  'reaction',
+  'kudos',
+  'stale_pr',
+  'check_failed',
+  'pr_proposed',
+  'session_done',
+  'auto_solve_done',
+  'spec_shared',
+  'collab_invite',
+  'collab_invite_accepted',
+  'approver_invite',
+  'approver_invite_accepted',
+]);
+const WORK_NOTIFICATION_KINDS = Object.freeze([
+  'session_done', 'auto_solve_done', 'stale_pr', 'check_failed',
+]);
+const WORK_NOTIFICATION_KIND_SET = new Set(WORK_NOTIFICATION_KINDS);
+const NOTIFICATION_SECTION_SCOPES = Object.freeze({
+  work: 'social.notification-surface:1',
+  bell: 'social.notification-surface:2',
+});
+
+let notificationReadPath = 'legacy';
+let activityService = null;
+
+function configureActivity(service, readPath = 'legacy') {
+  if (!['legacy', 'activity'].includes(readPath)) {
+    throw new Error('notification read path must be legacy or activity');
+  }
+  activityService = service || null;
+  notificationReadPath = readPath;
+}
+
+function socialId(value) {
+  if (value == null) return null;
+  const out = String(value);
+  return /^[1-9][0-9]{0,18}$/.test(out) ? out : null;
+}
+
+function boundedNullable(value, max) {
+  if (value == null) return null;
+  const out = String(value).slice(0, max);
+  return out.length ? out : null;
+}
+
+function positiveSafeInteger(value) {
+  if (value == null) return null;
+  const out = Number(value);
+  return Number.isSafeInteger(out) && out > 0 ? out : null;
+}
+
+function notificationSectionForKind(kind) {
+  return WORK_NOTIFICATION_KIND_SET.has(kind) ? 'work' : 'bell';
+}
+
+function readScopeForNotificationSection(section) {
+  return NOTIFICATION_SECTION_SCOPES[section] || null;
+}
+
+function readScopesFor(row) {
+  const scopes = [readScopeForNotificationSection(notificationSectionForKind(row.kind))];
+  const appId = socialId(row.app_id);
+  const messageId = socialId(row.chat_message_id);
+  const sessionId = socialId(row.session_id);
+  if (appId) scopes.push(`social.app:${appId}`);
+  if (['mention', 'reply', 'reaction'].includes(row.kind)) {
+    if (messageId) scopes.push(`social.chat-message:${messageId}`);
+    if (appId) scopes.push(`social.chat-engagement:${appId}`);
+  }
+  if (['pr_proposed', 'stale_pr'].includes(row.kind) && sessionId) {
+    scopes.push(`social.vote-request:${sessionId}`);
+  }
+  if (row.kind === 'session_done' && sessionId) {
+    scopes.push(`social.session-completion:${sessionId}`);
+  }
+  if (row.kind === 'auto_solve_done' && sessionId) {
+    scopes.push(`social.auto-solve-completion:${sessionId}`);
+  }
+  if (row.kind === 'collab_invite' && appId) {
+    scopes.push(`social.collab-invite:${appId}`);
+  }
+  if (row.kind === 'approver_invite' && appId) {
+    scopes.push(`social.approver-invite:${appId}`);
+  }
+  return [...new Set(scopes)].sort();
+}
+
+function buildActivityEvent(row) {
+  const notificationId = socialId(row.id);
+  const recipientId = socialId(row.user_id);
+  if (!notificationId || !recipientId) {
+    throw new Error('notification and recipient ids must be positive decimals');
+  }
+  if (!ACTIVITY_NOTIFICATION_KINDS.has(row.kind)) {
+    throw new Error(`notification kind is not registered with Activity: ${row.kind}`);
+  }
+  const identity = `social.notification:${notificationId}`;
+  const occurredAt = new Date(row.created_at).toISOString();
+  return {
+    envelopeVersion: 1,
+    sourceEventId: identity,
+    kind: 'social.notification.occurred',
+    schemaVersion: 1,
+    recipient: {
+      relation: 'social.user',
+      subject: recipientId,
+      scope: 'account',
+    },
+    resource: { type: 'notification', id: notificationId, version: 1 },
+    occurredAt,
+    status: 'occurred',
+    canonicality: 'source_confirmed',
+    facts: {
+      kind: row.kind,
+      appId: socialId(row.app_id),
+      appSlug: boundedNullable(row.app_slug, 128),
+      appName: boundedNullable(row.app_name, 512),
+      chatMessageId: socialId(row.chat_message_id),
+      messageContent: boundedNullable(row.message_content, 1024),
+      threadType: boundedNullable(row.thread_type, 32),
+      threadRef: socialId(row.thread_ref),
+      sessionId: socialId(row.session_id),
+      prTitle: boundedNullable(row.pr_title, 512),
+      prNumber: positiveSafeInteger(row.pr_number),
+      headlessIssueNumber: positiveSafeInteger(row.headless_issue_number),
+      branchName: boundedNullable(row.branch_name, 512),
+      sourceUserId: socialId(row.source_user_id),
+      sourceUsername: boundedNullable(row.source_username, 32),
+      detail: boundedNullable(row.detail, 32),
+      readScopes: readScopesFor(row),
+    },
+    aggregateKey: identity,
+  };
+}
+
+async function invalidateUsersBestEffort(userIds) {
+  if (notificationReadPath !== 'legacy') return;
+  try {
+    const { pushNotificationToUser } = require('./ws');
+    for (const userId of new Set(userIds)) {
+      pushNotificationToUser(userId, { type: 'notifications_changed' });
+    }
+  } catch (err) {
+    log.warn('notifications', 'legacy invalidation failed', { err: err.message });
+  }
+}
+
+// Insert Social business rows and freeze their generic Activity source events
+// atomically. A pg Pool gets a private transaction; callers already holding a
+// transaction may pass its client directly.
+async function insertNotificationRows(pool, sql, params) {
+  const ownsClient = typeof pool.connect === 'function';
+  const client = ownsClient ? await pool.connect() : pool;
+  let inserted = [];
+  try {
+    if (ownsClient) await client.query('BEGIN');
+    ({ rows: inserted } = await client.query(sql, params));
+    if (inserted.length) {
+      const ids = inserted.map((row) => row.id);
+      const { rows: hydrated } = await client.query(
+        `SELECT n.id, n.user_id, n.kind, n.created_at,
+                n.app_id, a.slug AS app_slug, a.name AS app_name,
+                n.chat_message_id, cm.content AS message_content,
+                cm.thread_type, cm.thread_ref,
+                n.session_id, cs.pr_title, cs.pr_number,
+                cs.headless_issue_number, cs.branch_name,
+                n.source_user_id, su.username AS source_username,
+                n.detail
+           FROM notifications n
+           LEFT JOIN apps a ON a.id = n.app_id
+           LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
+           LEFT JOIN chat_sessions cs ON cs.id = n.session_id
+           LEFT JOIN users su ON su.id = n.source_user_id
+          WHERE n.id = ANY($1::int[])`,
+        [ids]
+      );
+      if (hydrated.length !== inserted.length) {
+        throw new Error('could not hydrate every inserted notification');
+      }
+      const frozen = hydrated.map((row) => ({ id: row.id, event: buildActivityEvent(row) }));
+      await client.query(
+        `UPDATE notifications AS n
+            SET activity_event = payload.event,
+                activity_enqueued_at = NOW(),
+                activity_next_attempt_at = NOW()
+           FROM jsonb_to_recordset($1::jsonb) AS payload(id integer, event jsonb)
+          WHERE n.id = payload.id`,
+        [JSON.stringify(frozen)]
+      );
+    }
+    if (ownsClient) await client.query('COMMIT');
+  } catch (err) {
+    if (ownsClient) {
+      try { await client.query('ROLLBACK'); } catch { /* connection lost */ }
+    }
+    throw err;
+  } finally {
+    if (ownsClient) client.release();
+  }
+  if (inserted.length) await invalidateUsersBestEffort(inserted.map((row) => row.user_id));
+  return inserted;
+}
 
 function parseMentions(text) {
   if (!text || typeof text !== 'string') return [];
@@ -64,8 +269,7 @@ async function filterToCollaborators(pool, appId, userIds) {
 }
 
 // Creates notification rows for every mention in `content` that resolves to
-// a real user (excluding the sender). Returns the inserted notification rows
-// joined with recipient + app info so callers can push them over WS.
+// a real user and freezes one generic occurrence for each inserted row.
 async function createMentionNotifications(pool, { appId, chatMessageId, senderId, content }) {
   const names = parseMentions(content);
   if (!names.length) return [];
@@ -89,7 +293,7 @@ async function createMentionNotifications(pool, { appId, chatMessageId, senderId
     params.push(u.id, appId, chatMessageId, senderId, 'mention');
   });
 
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
      VALUES ${values.join(', ')}
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
@@ -104,7 +308,7 @@ async function createMentionNotifications(pool, { appId, chatMessageId, senderId
 // reply lives. No-op for self-replies or authorless (system) targets.
 async function createReplyNotification(pool, { appId, replyMessageId, senderId, recipientId }) {
   if (!recipientId || recipientId === senderId) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind)
      VALUES ($1, $2, $3, $4, 'reply')
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
@@ -119,13 +323,23 @@ async function createReplyNotification(pool, { appId, replyMessageId, senderId, 
 // No-op for self-reactions or authorless (system) targets.
 async function createReactionNotification(pool, { appId, messageId, senderId, recipientId, emoji }) {
   if (!recipientId || recipientId === senderId) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, chat_message_id, source_user_id, kind, detail)
      VALUES ($1, $2, $3, $4, 'reaction', $5)
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
     [recipientId, appId, messageId, senderId, (emoji || '').slice(0, 32)]
   );
   return rows;
+}
+
+async function createKudosNotification(pool, { userId, appId, sessionId, sourceUserId }) {
+  if (!userId || !sessionId || userId === sourceUserId) return [];
+  return insertNotificationRows(pool,
+    `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
+     VALUES ($1, $2, $3, $4, 'kudos')
+     RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at, read_at`,
+    [userId, appId, sessionId, sourceUserId]
+  );
 }
 
 // Stale-PR warning. Fired by the stale-promoted-PR sweeper when a PR
@@ -136,7 +350,7 @@ async function createReactionNotification(pool, { appId, messageId, senderId, re
 // the session so the dropdown can render the PR title + a deep link.
 async function createStalePrNotification(pool, { userId, appId, sessionId }) {
   if (!userId) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
      VALUES ($1, $2, $3, NULL, 'stale_pr')
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
@@ -147,21 +361,14 @@ async function createStalePrNotification(pool, { userId, appId, sessionId }) {
 
 // #237: staging preview failed to boot, so proposal checks can't run and the
 // PR is merge-blocked. Addressed to the proposal owner (system-generated, so
-// source_user_id is NULL). Same unread-dedup as session_done — at most one
-// unread 'check_failed' per (user, session) — so the per-streak nudge can't
-// pile up if the owner hasn't looked yet. The streak gate in
-// staging-recovery.recordStagingBootFailure already limits this to once per
-// failure streak; the dedup is belt-and-suspenders against re-fires.
+// source_user_id is NULL). The staging-recovery streak gate determines when
+// this business occurrence exists. Creation deliberately does not consult
+// Social read state because Activity owns it after cutover.
 async function createCheckFailedNotification(pool, { userId, appId, sessionId }) {
   if (!userId || !sessionId) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
-     SELECT $1, $2, $3, NULL, 'check_failed'
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3
-          AND n.kind = 'check_failed' AND n.read_at IS NULL
-      )
+     VALUES ($1, $2, $3, NULL, 'check_failed')
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [userId, appId, sessionId]
   );
@@ -173,20 +380,13 @@ async function createCheckFailedNotification(pool, { userId, appId, sessionId })
 // notify_on_done (they left mid-turn), and unconditionally by
 // server.js's resumeDetachedTurn (the pre-restart SSE is guaranteed
 // dead, so nobody was watching). System-generated, so source_user_id
-// is null. Unread dedup: at most one unread session_done per
-// (user, session) — multiple completions while away collapse into the
-// row the user hasn't seen yet (atomic via INSERT … WHERE NOT EXISTS,
-// same pattern as createPrProposedNotifications).
+// is null. Each terminal business occurrence becomes one notification;
+// creation does not depend on Social's legacy read_at column.
 async function createSessionDoneNotification(pool, { userId, appId, sessionId }) {
   if (!userId || !sessionId) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
-     SELECT $1, $2, $3, NULL, 'session_done'
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3
-          AND n.kind = 'session_done' AND n.read_at IS NULL
-      )
+     VALUES ($1, $2, $3, NULL, 'session_done')
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
     [userId, appId, sessionId]
   );
@@ -198,17 +398,13 @@ async function createSessionDoneNotification(pool, { userId, appId, sessionId })
 // starting an auto-solve opts you into its completion notification).
 // `detail` carries the outcome: 'spec' | 'code' | 'spec_code' (#170) |
 // 'question' | 'failed'.
-// Same unread dedup as session_done so a resume re-fire can't double up.
+// Resume re-fires are tolerated as distinct Social occurrences; preventing
+// them would require workflow identity outside this migration.
 async function createAutoSolveDoneNotification(pool, { userId, appId, sessionId, detail }) {
   if (!userId || !sessionId) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
-     SELECT $1, $2, $3, NULL, 'auto_solve_done', $4
-      WHERE NOT EXISTS (
-        SELECT 1 FROM notifications n
-        WHERE n.user_id = $1 AND n.session_id = $3
-          AND n.kind = 'auto_solve_done' AND n.read_at IS NULL
-      )
+     VALUES ($1, $2, $3, NULL, 'auto_solve_done', $4)
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     [userId, appId, sessionId, (detail || '').slice(0, 32) || null]
   );
@@ -219,56 +415,20 @@ async function createAutoSolveDoneNotification(pool, { userId, appId, sessionId,
 // share-user endpoint after a NEW chat_session_spec_user_shares row is
 // inserted (the endpoint skips this entirely on a duplicate share, so
 // a recipient is pinged at most once per spec version). `session_id`
-// points at the dev session — listForUser/hydrateAndPush already join
-// chat_sessions, so prTitle/branchName ride along for the row label.
+// points at the dev session; occurrence hydration joins chat_sessions so
+// prTitle/branchName are frozen for the row label.
 // `detail` carries the spec version as a string (same generic-detail
 // pattern as 'reaction') so the click handler can open the exact
 // version in the read-only spec panel.
 async function createSpecSharedNotification(pool, { recipientId, appId, sessionId, sharerId, version }) {
   if (!recipientId || !sessionId || version == null) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind, detail)
      VALUES ($1, $2, $3, $4, 'spec_shared', $5)
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, detail, created_at`,
     [recipientId, appId, sessionId, sharerId || null, String(version).slice(0, 32)]
   );
   return rows;
-}
-
-// Hydrate one freshly-inserted notification row with the same joins
-// listForUser performs and push it to its recipient over WS as a
-// notification_new. Best-effort: completion notifications ride inside
-// SSE/turn pipelines that must never fail because of a push.
-async function hydrateAndPush(pool, row) {
-  if (!row || !row.id) return;
-  try {
-    const { rows } = await pool.query(
-      `SELECT n.id, n.kind, n.read_at, n.created_at,
-              n.app_id, a.slug AS app_slug, a.name AS app_name,
-              n.chat_message_id,
-              cm.content AS message_content,
-              cm.thread_type, cm.thread_ref,
-              n.session_id,
-              cs.pr_title, cs.pr_number, cs.headless_issue_number, cs.branch_name,
-              su.username AS source_username,
-              n.detail
-       FROM notifications n
-       LEFT JOIN apps a ON a.id = n.app_id
-       LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
-       LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-       LEFT JOIN users su ON su.id = n.source_user_id
-       WHERE n.id = $1`,
-      [row.id]
-    );
-    if (!rows.length) return;
-    const { pushNotificationToUser } = require('./ws');
-    pushNotificationToUser(row.user_id, {
-      type: 'notification_new',
-      notification: serialize(rows[0]),
-    });
-  } catch (err) {
-    log.warn('notifications', 'hydrateAndPush failed', { id: row.id, err: err.message });
-  }
 }
 
 // PR-proposed (vote-request) notification. Fired when a session is
@@ -327,7 +487,7 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
   // INSERT ... SELECT with a NOT EXISTS guard so the per-recipient
   // de-dupe is atomic (no read-then-write race on concurrent promotes).
   const ids = [...recipientIds];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
      SELECT u, $2, $3, $4, 'pr_proposed'
        FROM UNNEST($1::int[]) AS u
@@ -348,7 +508,7 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
 // bump + the history entry that remains after the invite resolves.
 async function createCollabInviteNotification(pool, { appId, recipientId, inviterId }) {
   if (!recipientId || !appId) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
      VALUES ($1, $2, $3, 'collab_invite')
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
@@ -362,7 +522,7 @@ async function createCollabInviteNotification(pool, { appId, recipientId, invite
 // the standard click-through, no buttons.
 async function createCollabInviteAcceptedNotification(pool, { appId, recipientId, accepterId }) {
   if (!recipientId || !appId) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
      VALUES ($1, $2, $3, 'collab_invite_accepted')
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
@@ -377,7 +537,7 @@ async function createCollabInviteAcceptedNotification(pool, { appId, recipientId
 // Invites section (listPendingInvites below).
 async function createApproverInviteNotification(pool, { appId, recipientId, inviterId }) {
   if (!recipientId || !appId) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
      VALUES ($1, $2, $3, 'approver_invite')
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
@@ -390,7 +550,7 @@ async function createApproverInviteNotification(pool, { appId, recipientId, invi
 // approver invite". Informational only, like collab_invite_accepted.
 async function createApproverInviteAcceptedNotification(pool, { appId, recipientId, accepterId }) {
   if (!recipientId || !appId) return [];
-  const { rows } = await pool.query(
+  const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, source_user_id, kind)
      VALUES ($1, $2, $3, 'approver_invite_accepted')
      RETURNING id, user_id, app_id, chat_message_id, source_user_id, kind, created_at`,
@@ -440,6 +600,11 @@ async function listPendingInvites(pool, userId) {
 // auto-resolved by the app going collab-public. Idempotent.
 async function markInviteNotificationsRead(pool, userId, appId) {
   if (!userId || !appId) return 0;
+  if (notificationReadPath === 'activity') {
+    if (!activityService) throw new Error('Activity service is not configured');
+    const result = await activityService.readScope(userId, `social.collab-invite:${appId}`);
+    return result.changed || 0;
+  }
   const { rowCount } = await pool.query(
     `UPDATE notifications SET read_at = NOW()
       WHERE user_id = $1 AND app_id = $2 AND kind = 'collab_invite' AND read_at IS NULL`,
@@ -453,6 +618,11 @@ async function markInviteNotificationsRead(pool, userId, appId) {
 // 'anyone'. Idempotent.
 async function markApproverInviteNotificationsRead(pool, userId, appId) {
   if (!userId || !appId) return 0;
+  if (notificationReadPath === 'activity') {
+    if (!activityService) throw new Error('Activity service is not configured');
+    const result = await activityService.readScope(userId, `social.approver-invite:${appId}`);
+    return result.changed || 0;
+  }
   const { rowCount } = await pool.query(
     `UPDATE notifications SET read_at = NOW()
       WHERE user_id = $1 AND app_id = $2 AND kind = 'approver_invite' AND read_at IS NULL`,
@@ -557,20 +727,28 @@ const ACTION_COMPLETIONS = {
 // allowlist so a typo in ACTION_COMPLETIONS can never widen the set of
 // interpolatable column names beyond these two.
 const SCOPE_COLUMNS = new Set(['session_id', 'app_id']);
+const ACTIVITY_ACTION_SCOPES = {
+  vote_cast: 'social.vote-request',
+  message_sent: 'social.chat-engagement',
+  session_opened: 'social.session-completion',
+  headless_cloned: 'social.auto-solve-completion',
+};
 
-// Generic auto-dismiss primitive. Marks read (read_at = NOW(), never
-// deletes — matching the rest of the system) every unread notification
-// for `userId` whose registry-scoped column equals `scopeId` and whose
-// kind is one the `action` resolves. The WHERE read_at IS NULL guard
-// keeps it idempotent, so re-fires (re-votes, reconnect storms,
-// already-read rows) are cheap no-ops. Returns the number of rows
-// actually cleared so callers can decide whether to fan out a cross-tab
-// refresh.
+// Generic auto-dismiss primitive. Activity mode translates the business
+// action to an opaque read scope; the temporary legacy branch updates
+// Social read_at. Returns the number of entries actually changed.
 async function markReadForAction(pool, userId, action, scopeId) {
   const def = ACTION_COMPLETIONS[action];
   if (!def) throw new Error(`unknown notification action: ${action}`);
   if (!SCOPE_COLUMNS.has(def.scope)) throw new Error(`bad scope column: ${def.scope}`);
   if (!userId || !scopeId) return 0;
+  if (notificationReadPath === 'activity') {
+    if (!activityService) throw new Error('Activity service is not configured');
+    const scopePrefix = ACTIVITY_ACTION_SCOPES[action];
+    if (!scopePrefix) throw new Error(`missing Activity scope for action: ${action}`);
+    const result = await activityService.readScope(userId, `${scopePrefix}:${scopeId}`);
+    return result.changed || 0;
+  }
   const { rowCount } = await pool.query(
     `UPDATE notifications
         SET read_at = NOW()
@@ -593,6 +771,13 @@ async function markReadForSession(pool, userId, sessionId) {
 // read_at IS NULL; returns rows cleared.
 async function markReadForMessage(pool, userId, chatMessageId) {
   if (!userId || !chatMessageId) return 0;
+  if (notificationReadPath === 'activity') {
+    if (!activityService) throw new Error('Activity service is not configured');
+    const result = await activityService.readScope(
+      userId, `social.chat-message:${chatMessageId}`
+    );
+    return result.changed || 0;
+  }
   const { rowCount } = await pool.query(
     `UPDATE notifications
         SET read_at = NOW()
@@ -632,6 +817,11 @@ async function unreadMessageIdsForUser(pool, userId, messageIds) {
 // route can decide whether to fan out a cross-tab refresh.
 async function markReadForApp(pool, userId, appId) {
   if (!userId || !appId) return 0;
+  if (notificationReadPath === 'activity') {
+    if (!activityService) throw new Error('Activity service is not configured');
+    const result = await activityService.readScope(userId, `social.app:${appId}`);
+    return result.changed || 0;
+  }
   const { rowCount } = await pool.query(
     `UPDATE notifications
         SET read_at = NOW()
@@ -680,9 +870,7 @@ async function markRead(pool, userId, { id, all = false, kinds = null, excludeKi
   return rowCount || 0;
 }
 
-// Decorate a raw notification row with the fields the client dropdown wants.
-// Keeps the wire format identical whether the notif is fresh (over WS) or
-// loaded from history (`GET /api/notifications`).
+// Decorate a legacy Social row with the fields the client dropdown wants.
 //
 // Kudos extension: sessionId / prTitle / prNumber ride along whenever the
 // row carries a session reference. The FE renderer keys off `kind` to
@@ -691,6 +879,9 @@ async function markRead(pool, userId, { id, all = false, kinds = null, excludeKi
 function serialize(row) {
   return {
     id: row.id,
+    // Stable source identity used only to detect newly materialized browser
+    // alerts. The legacy id and Activity inboxSequence remain read handles.
+    occurrenceId: `social.notification:${row.id}`,
     kind: row.kind,
     readAt: row.read_at,
     createdAt: row.created_at,
@@ -719,15 +910,21 @@ function serialize(row) {
 module.exports = {
   parseMentions,
   resolveUsers,
+  configureActivity,
+  insertNotificationRows,
+  buildActivityEvent,
+  WORK_NOTIFICATION_KINDS,
+  notificationSectionForKind,
+  readScopeForNotificationSection,
   createMentionNotifications,
   createReplyNotification,
   createReactionNotification,
+  createKudosNotification,
   createStalePrNotification,
   createCheckFailedNotification,
   createSessionDoneNotification,
   createAutoSolveDoneNotification,
   createSpecSharedNotification,
-  hydrateAndPush,
   createPrProposedNotifications,
   createCollabInviteNotification,
   createCollabInviteAcceptedNotification,

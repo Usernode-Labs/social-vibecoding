@@ -4,20 +4,15 @@ const notifications = require('../services/notifications');
 const log = require('../services/logger');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+const NOTIFICATION_SECTIONS = new Set(['bell', 'work']);
 
-// ── Staging mock data ──────────────────────────────────────────────────
-// Request-time (?demo=1) injection of the four session-related
-// notification kinds — session_done, auto_solve_done (failed), stale_pr,
-// check_failed — so the header cog's pinned "Needs attention" section,
-// its green badge, and the bell's EXCLUSION of these kinds are all
-// reviewable in a staging preview without waiting for a real session to
-// finish. Same conventions as the other mock feeds (stagingMockProposals
-// in votes.js): fixed 99xxxx ids, "[Mock]" titles, never persisted,
-// strictly a no-op outside staging. Mark-read calls on these ids match
-// no DB row and no-op harmlessly.
+// Request-time staging fixtures for the work drawer. They are presentation
+// data only: demo=true tells the browser never to send their synthetic ids to
+// Activity's item-read API.
 function stagingMockNotifications() {
   const now = Date.now();
   const base = {
+    demo: true,
     readAt: null,
     appId: 0,
     appSlug: 'staging-demo',
@@ -33,100 +28,161 @@ function stagingMockNotifications() {
   return [
     {
       ...base,
-      id: 990201, kind: 'session_done',
+      id: 990201,
+      occurrenceId: 'social.demo-notification:990201',
+      kind: 'session_done',
       createdAt: new Date(now - 4 * 60 * 1000).toISOString(),
-      sessionId: 990101, prTitle: '[Mock] Finished dev session',
-      prNumber: null, headlessIssueNumber: null,
+      sessionId: 990101,
+      prTitle: '[Mock] Finished dev session',
+      prNumber: null,
+      headlessIssueNumber: null,
     },
     {
       ...base,
-      id: 990202, kind: 'auto_solve_done', detail: 'failed',
+      id: 990202,
+      occurrenceId: 'social.demo-notification:990202',
+      kind: 'auto_solve_done',
+      detail: 'failed',
       createdAt: new Date(now - 12 * 60 * 1000).toISOString(),
-      sessionId: null, prTitle: null, prNumber: null,
+      sessionId: null,
+      prTitle: null,
+      prNumber: null,
       headlessIssueNumber: 900002,
     },
     {
       ...base,
-      id: 990203, kind: 'stale_pr',
+      id: 990203,
+      occurrenceId: 'social.demo-notification:990203',
+      kind: 'stale_pr',
       createdAt: new Date(now - 40 * 60 * 1000).toISOString(),
-      sessionId: 990103, prTitle: '[Mock] Stale proposal going quiet',
-      prNumber: 9901, headlessIssueNumber: null,
+      sessionId: 990103,
+      prTitle: '[Mock] Stale proposal going quiet',
+      prNumber: 9901,
+      headlessIssueNumber: null,
     },
     {
       ...base,
-      id: 990204, kind: 'check_failed',
+      id: 990204,
+      occurrenceId: 'social.demo-notification:990204',
+      kind: 'check_failed',
       createdAt: new Date(now - 55 * 60 * 1000).toISOString(),
-      sessionId: 990104, prTitle: "[Mock] Proposal whose preview won't boot",
-      prNumber: 9902, headlessIssueNumber: null,
+      sessionId: 990104,
+      prTitle: "[Mock] Proposal whose preview won't boot",
+      prNumber: 9902,
+      headlessIssueNumber: null,
     },
   ];
 }
 
-// Routes for the top-right notifications dropdown. All routes assume
-// authMiddleware has already attached `req.user`.
-function notificationsRoutes(config) {
+function positiveDecimal(value) {
+  const out = String(value ?? '');
+  return /^[1-9][0-9]{0,18}$/.test(out) ? out : null;
+}
+
+function watermark(value) {
+  const out = String(value ?? '');
+  return /^(0|[1-9][0-9]{0,18})$/.test(out) ? out : null;
+}
+
+function encodeLegacyCursor(row) {
+  return Buffer.from(JSON.stringify({ createdAt: row.created_at, id: row.id }))
+    .toString('base64url');
+}
+
+function decodeLegacyCursor(value) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(String(value), 'base64url').toString('utf8'));
+    if (!parsed || typeof parsed.createdAt !== 'string' || !positiveDecimal(parsed.id)) {
+      return null;
+    }
+    return { createdAt: parsed.createdAt, id: Number(parsed.id) };
+  } catch {
+    return null;
+  }
+}
+
+function pushChanged(userId) {
+  try {
+    const { pushNotificationToUser } = require('../services/ws');
+    pushNotificationToUser(userId, { type: 'notifications_changed' });
+  } catch (err) {
+    log.warn('notifications', 'cross-tab invalidation failed', { message: err.message });
+  }
+}
+
+function isExactWorkKindList(value) {
+  if (!Array.isArray(value) || value.length !== notifications.WORK_NOTIFICATION_KINDS.length) {
+    return false;
+  }
+  const received = new Set(value);
+  return received.size === notifications.WORK_NOTIFICATION_KINDS.length
+    && notifications.WORK_NOTIFICATION_KINDS.every((kind) => received.has(kind));
+}
+
+// Short rollout compatibility for clients from the new main branch. New
+// clients send a stable UI section; the server only recognizes the exact old
+// four-kind forms and never turns arbitrary kind arrays into a wider clear.
+function requestedSection(body) {
+  if (body.section != null) {
+    if (body.all === true || body.kinds != null || body.exclude_kinds != null) return 'invalid';
+    return NOTIFICATION_SECTIONS.has(body.section) ? body.section : 'invalid';
+  }
+  if (body.kinds == null && body.exclude_kinds == null) return null;
+  if (body.all !== true || (body.kinds != null && body.exclude_kinds != null)) return 'invalid';
+  if (isExactWorkKindList(body.kinds)) return 'work';
+  if (isExactWorkKindList(body.exclude_kinds)) return 'bell';
+  return 'invalid';
+}
+
+// One rollout flag selects the entire notification authority. Activity-mode
+// requests never fall back to Social after an upstream failure.
+function notificationsRoutes(config, activityService) {
   const router = Router();
   const pool = getPool(config);
+  const activityMode = config.activityNotificationsReadPath === 'activity';
 
-  // Full dropdown payload: recent notifications (read and unread) + an
-  // unread count so the badge and list stay in sync on initial page load.
-  //
-  // Pagination (#84 scroll-to-load-more): the client passes
-  // `?before=<createdAt>&before_id=<id>&limit=<n>` to fetch the page
-  // strictly older than that keyset cursor. We over-fetch nothing — a
-  // returned page exactly `limit` long means there may be more, so we
-  // hand back `nextBefore` (the cursor for the next page) and `hasMore`.
-  // The unread count is omitted on paginated follow-up requests (it's a
-  // whole-account aggregate the client already has from the first page).
   router.get('/api/notifications', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
-    try {
-      const rawLimit = Number(req.query.limit);
-      const limit = Number.isFinite(rawLimit)
-        ? Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
-        : 100;
+    const rawLimit = Number(req.query.limit);
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(Math.max(Math.trunc(rawLimit), 1), 100)
+      : 100;
+    const cursor = typeof req.query.cursor === 'string' && req.query.cursor
+      ? req.query.cursor
+      : null;
 
-      let before = null;
-      if (req.query.before) {
-        const beforeId = Number(req.query.before_id);
-        before = {
-          createdAt: req.query.before,
-          id: Number.isFinite(beforeId) ? beforeId : 0,
+    try {
+      let payload;
+      if (activityMode) {
+        if (!activityService) throw new Error('Activity service is not configured');
+        payload = await activityService.feed(req.user.id, { limit, before: cursor });
+        if (!cursor) {
+          const snapshot = await activityService.unread(req.user.id);
+          payload.unread = snapshot.unreadCount;
+        }
+      } else {
+        const before = cursor ? decodeLegacyCursor(cursor) : null;
+        if (cursor && !before) {
+          return res.status(400).json({ error: 'Invalid notification cursor' });
+        }
+        const rows = await notifications.listForUser(pool, req.user.id, { limit, before });
+        const hasMore = rows.length === limit;
+        payload = {
+          notifications: rows.map(notifications.serialize),
+          hasMore,
+          nextCursor: hasMore && rows.length ? encodeLegacyCursor(rows[rows.length - 1]) : null,
+          readThroughInboxSequence: null,
         };
+        if (!cursor) payload.unread = await notifications.countUnread(pool, req.user.id);
       }
 
-      const rows = await notifications.listForUser(pool, req.user.id, { limit, before });
-      const serialized = rows.map(notifications.serialize);
-
-      const hasMore = rows.length === limit;
-      const last = rows[rows.length - 1];
-      const nextBefore = hasMore && last
-        ? { createdAt: last.created_at, id: last.id }
-        : null;
-
-      // Only compute the account-wide unread aggregate on the first page;
-      // follow-up (cursor) fetches just append older rows.
-      const payload = {
-        notifications: serialized,
-        hasMore,
-        nextBefore,
-      };
-      if (!before) {
-        payload.unread = await notifications.countUnread(pool, req.user.id);
-        // Pending collaborator invites for the drawer's pinned Invites
-        // section. Sourced from app_collaborators (authoritative about
-        // what's still actionable), not from collab_invite notification
-        // rows. First page only — like `unread`, it's an account-wide
-        // aggregate the client already has on cursor follow-ups.
+      if (!cursor) {
         payload.pendingInvites = await notifications.listPendingInvites(pool, req.user.id);
-        // Staging-only demo rows (?demo=1) — see stagingMockNotifications.
-        // First page only (they'd duplicate on cursor follow-ups), unread
-        // count bumped to match so the client's red-badge subtraction
-        // (account unread minus loaded session-kind unread) stays honest.
         if (IS_STAGING && req.query.demo === '1') {
           const mocks = stagingMockNotifications();
           payload.notifications = [...mocks, ...payload.notifications];
-          payload.unread += mocks.length;
+          payload.unread = Number(payload.unread || 0) + mocks.length;
           // Pinned-invite demo row: drives the drawer's Invites section
           // and its swipe Accept/Decline path in a staging preview.
           // Obviously fake (staging-demo-*); acting on it hits a
@@ -144,89 +200,118 @@ function notificationsRoutes(config) {
           ];
         }
       }
-      res.json(payload);
+      return res.json(payload);
     } catch (err) {
-      log.error('notifications', 'list failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
+      log.error('notifications', 'list failed', {
+        authority: activityMode ? 'activity' : 'legacy',
+        message: err.message,
+      });
+      return res.status(activityMode ? 502 : 500).json({
+        error: activityMode ? 'Activity service unavailable' : 'Internal server error',
+      });
     }
   });
 
   router.post('/api/notifications/read', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Unauthorized' });
-    const {
-      id, all, chat_message_id: chatMessageId, app_id: appId,
-      kinds, exclude_kinds: excludeKinds,
-    } = req.body || {};
-    // Kind scoping for the split drawers (cog vs bell). Sanitize to
-    // string arrays; anything else is treated as absent.
-    const kindList = Array.isArray(kinds) ? kinds.filter((k) => typeof k === 'string') : null;
-    const excludeList = Array.isArray(excludeKinds) ? excludeKinds.filter((k) => typeof k === 'string') : null;
+    const body = req.body || {};
+    const section = requestedSection(body);
+    if (section === 'invalid') {
+      return res.status(400).json({ error: 'Invalid notification section selector' });
+    }
+    const choices = [
+      body.all === true && section == null,
+      body.id != null,
+      body.app_id != null,
+      body.chat_message_id != null,
+      section != null,
+    ].filter(Boolean).length;
+    if (choices !== 1) {
+      return res.status(400).json({ error: 'Choose exactly one notification read selector' });
+    }
+
     try {
-      // `{ app_id }` is the per-group "Mark read" path (#84 grouping):
-      // clear every unread notification this user has for one app, in a
-      // single round-trip. Mirrors the chat_message_id branch below —
-      // returns the fresh unread count and fans out a cross-tab refresh
-      // when something actually changed.
-      if (appId != null) {
-        const cleared = await notifications.markReadForApp(
-          pool, req.user.id, Number(appId)
-        );
-        const unread = await notifications.countUnread(pool, req.user.id);
-        if (cleared > 0) {
-          try {
-            const { pushNotificationToUser } = require('../services/ws');
-            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
-          } catch (err) {
-            log.warn('notifications', 'cross-tab push failed', { message: err.message });
+      let cleared;
+      let unread;
+      if (activityMode) {
+        if (!activityService) throw new Error('Activity service is not configured');
+        let selector;
+        if (body.id != null) {
+          const id = positiveDecimal(body.id);
+          if (!id) return res.status(400).json({ error: 'Invalid notification id' });
+          selector = { type: 'items', inboxSequences: [id] };
+        } else {
+          const through = watermark(body.through_inbox_sequence);
+          if (through == null) {
+            return res.status(400).json({ error: 'Missing or invalid read watermark' });
+          }
+          if (section != null) {
+            selector = {
+              type: 'scope',
+              readScope: notifications.readScopeForNotificationSection(section),
+              throughInboxSequence: through,
+            };
+          } else if (body.all === true) {
+            selector = { type: 'all', throughInboxSequence: through };
+          } else if (body.app_id != null) {
+            const appId = positiveDecimal(body.app_id);
+            if (!appId) return res.status(400).json({ error: 'Invalid app id' });
+            selector = {
+              type: 'scope',
+              readScope: `social.app:${appId}`,
+              throughInboxSequence: through,
+            };
+          } else {
+            const messageId = positiveDecimal(body.chat_message_id);
+            if (!messageId) return res.status(400).json({ error: 'Invalid chat message id' });
+            selector = {
+              type: 'scope',
+              readScope: `social.chat-message:${messageId}`,
+              throughInboxSequence: through,
+            };
           }
         }
-        return res.json({ unread, cleared });
-      }
-
-      // `{ chat_message_id }` is the in-chat "click a dotted message" path:
-      // clear the user's unread mention/reply/reaction notification(s) for
-      // that one message. Falls through to the existing single-id / all
-      // behavior otherwise.
-      if (chatMessageId != null) {
-        const cleared = await notifications.markReadForMessage(
-          pool, req.user.id, Number(chatMessageId)
+        const result = await activityService.setRead(req.user.id, selector);
+        cleared = result.changed;
+        unread = result.unreadCount;
+      } else if (body.app_id != null) {
+        cleared = await notifications.markReadForApp(pool, req.user.id, Number(body.app_id));
+        unread = await notifications.countUnread(pool, req.user.id);
+      } else if (body.chat_message_id != null) {
+        cleared = await notifications.markReadForMessage(
+          pool, req.user.id, Number(body.chat_message_id)
         );
-        const unread = await notifications.countUnread(pool, req.user.id);
-        // Sync this user's other tabs (bell badge + the same message's dot
-        // in another open chat tab) only when something actually changed.
-        if (cleared > 0) {
-          try {
-            const { pushNotificationToUser } = require('../services/ws');
-            pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
-          } catch (err) {
-            log.warn('notifications', 'cross-tab push failed', { message: err.message });
-          }
-        }
-        return res.json({ unread, cleared });
+        unread = await notifications.countUnread(pool, req.user.id);
+      } else if (section === 'work') {
+        cleared = await notifications.markRead(pool, req.user.id, {
+          all: true,
+          kinds: notifications.WORK_NOTIFICATION_KINDS,
+        });
+        unread = await notifications.countUnread(pool, req.user.id);
+      } else if (section === 'bell') {
+        cleared = await notifications.markRead(pool, req.user.id, {
+          all: true,
+          excludeKinds: notifications.WORK_NOTIFICATION_KINDS,
+        });
+        unread = await notifications.countUnread(pool, req.user.id);
+      } else {
+        cleared = await notifications.markRead(pool, req.user.id, {
+          id: body.id,
+          all: body.all === true,
+        });
+        unread = await notifications.countUnread(pool, req.user.id);
       }
 
-      // Single-id / mark-all path. Mark-all (#449) previously skipped the
-      // `notifications_changed` fan-out every other clearing branch does,
-      // so the clicking tab's in-chat unread dots and the user's other
-      // open tabs/devices kept showing unread state until a full reload —
-      // making "Mark all read" look like it did nothing. Fan out exactly
-      // like the branches above whenever something actually changed.
-      const cleared = await notifications.markRead(pool, req.user.id, {
-        id, all: !!all, kinds: kindList, excludeKinds: excludeList,
-      });
-      const unread = await notifications.countUnread(pool, req.user.id);
-      if (cleared > 0) {
-        try {
-          const { pushNotificationToUser } = require('../services/ws');
-          pushNotificationToUser(req.user.id, { type: 'notifications_changed' });
-        } catch (err) {
-          log.warn('notifications', 'cross-tab push failed', { message: err.message });
-        }
-      }
-      res.json({ unread, cleared });
+      if (cleared > 0) pushChanged(req.user.id);
+      return res.json({ unread, cleared });
     } catch (err) {
-      log.error('notifications', 'markRead failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
+      log.error('notifications', 'mark read failed', {
+        authority: activityMode ? 'activity' : 'legacy',
+        message: err.message,
+      });
+      return res.status(activityMode ? 502 : 500).json({
+        error: activityMode ? 'Activity service unavailable' : 'Internal server error',
+      });
     }
   });
 

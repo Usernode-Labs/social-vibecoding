@@ -11,7 +11,7 @@
 //
 // Like session-done-notifications.test.js, the pool is an in-memory mock
 // that pattern-matches SQL, and the ws module is stubbed via require.cache
-// so pushes are recorded instead of broadcast. No real Postgres / sockets.
+// so generic invalidations are recorded. No real Postgres / sockets.
 //
 // Run with: node --test tests/spec-user-share.test.js
 
@@ -140,19 +140,25 @@ function makeMockPool(initial = {}) {
       state.notifications.push(row);
       return { rows: [row] };
     }
-    // hydrateAndPush's single-row hydrate.
-    if (/SELECT n\.id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = \$1/i.test(s)) {
-      const n = state.notifications.find((x) => x.id === params[0]);
-      if (!n) return { rows: [] };
-      const su = state.users.find((u) => u.id === n.source_user_id);
+    // Generic occurrence hydration + outbox update.
+    if (/SELECT n\.id, n\.user_id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = ANY/i.test(s)) {
+      const ids = params[0];
       return {
-        rows: [{
+        rows: state.notifications.filter((x) => ids.includes(x.id)).map((n) => ({
           ...n, app_slug: 'my-app', app_name: 'My App', message_content: null,
           thread_type: null, thread_ref: null,
           pr_title: 'Add a feature', pr_number: 7, headless_issue_number: null,
-          branch_name: 'dev/alice-123', source_username: su ? su.username : null,
-        }],
+          branch_name: 'dev/alice-123',
+          source_username: state.users.find((u) => u.id === n.source_user_id)?.username || null,
+        })),
       };
+    }
+    if (/UPDATE notifications AS n[\s\S]*activity_event = payload\.event/i.test(s)) {
+      for (const item of JSON.parse(params[0])) {
+        const row = state.notifications.find((n) => n.id === item.id);
+        if (row) row.activity_event = item.event;
+      }
+      return { rows: [], rowCount: JSON.parse(params[0]).length };
     }
     // Widened spec read gate (GET /specs/:version).
     if (/FROM chat_session_specs s[\s\S]*JOIN chat_sessions cs[\s\S]*chat_session_spec_user_shares us/i.test(s)) {
@@ -213,7 +219,7 @@ function baseState() {
 
 // ── POST /share-user ────────────────────────────────────────────────────
 
-test('owner shares to a valid user → share row + one spec_shared notification + WS push', async () => {
+test('owner shares to a valid user → one share row and one generic occurrence', async () => {
   const pool = makeMockPool(baseState());
   const loaded = loadSessions(pool);
   const srv = await startTestServer(loaded);
@@ -244,9 +250,9 @@ test('owner shares to a valid user → share row + one spec_shared notification 
 
     assert.equal(loaded.pushes.length, 1);
     assert.equal(loaded.pushes[0].userId, 2);
-    assert.equal(loaded.pushes[0].payload.type, 'notification_new');
-    assert.equal(loaded.pushes[0].payload.notification.kind, 'spec_shared');
-    assert.equal(loaded.pushes[0].payload.notification.detail, '3');
+    assert.equal(loaded.pushes[0].payload.type, 'notifications_changed');
+    assert.equal(rows[0].activity_event.facts.kind, 'spec_shared');
+    assert.equal(rows[0].activity_event.facts.detail, '3');
   } finally {
     await srv.close();
     loaded.restore();

@@ -1,5 +1,5 @@
 // Route tests for the staging (?demo=1) session-notification mocks and
-// the kind-scoped mark-all on POST /api/notifications/read.
+// the section-scoped mark-all on POST /api/notifications/read.
 //
 // GET /api/notifications?demo=1 in staging injects four unread mock rows
 // — one per session-related kind (session_done / auto_solve_done /
@@ -107,6 +107,7 @@ test('staging + ?demo=1: four unread mock session-kind rows prepend and bump unr
       'one mock per session-related kind'
     );
     assert.ok(mocks.every((n) => !n.readAt), 'mock rows are unread (they feed the cog badge)');
+    assert.ok(mocks.every((n) => n.demo === true), 'browser treats mock ids as local-only');
     assert.ok(mocks.every((n) => n.appSlug === 'staging-demo'), 'obviously-fake app attribution');
     assert.equal(
       mocks.find((n) => n.kind === 'auto_solve_done').detail, 'failed',
@@ -132,8 +133,11 @@ test('staging WITHOUT ?demo=1 and follow-up pages stay mock-free', async () => {
 
     // Cursor follow-up WITH demo=1: mocks are first-page-only (they would
     // duplicate on every older page otherwise).
+    const cursor = Buffer.from(JSON.stringify({
+      createdAt: '2026-07-01T00:00:00Z', id: 1,
+    })).toString('base64url');
     const paged = await (await fetch(
-      `http://127.0.0.1:${port}/api/notifications?limit=100&demo=1&before=2026-07-01T00:00:00Z&before_id=1`
+      `http://127.0.0.1:${port}/api/notifications?limit=100&demo=1&cursor=${cursor}`
     )).json();
     assert.ok(paged.notifications.every((n) => n.id < 990000), 'no mocks on cursor pages');
     assert.equal(paged.unread, undefined, 'unread aggregate stays first-page-only');
@@ -163,6 +167,7 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   for (const r of rows) {
     assert.ok(r.id >= 990000 && r.id < 1000000, 'ids sit in the 99xxxx mock range');
     assert.equal(r.readAt, null);
+    assert.equal(r.demo, true);
     assert.ok(r.createdAt, 'timestamp present for relativeTime');
     assert.equal(r.appName, 'Staging demo app');
   }
@@ -172,9 +177,9 @@ test('stagingMockNotifications rows carry the fields the shared row renderers re
   assert.ok(autoSolve.headlessIssueNumber, 'auto-solve row points at an issue number');
 });
 
-// ── POST /api/notifications/read kind scoping ───────────────────────────
+// ── POST /api/notifications/read section scoping ────────────────────────
 
-test('POST /read {all, kinds} and {all, exclude_kinds} reach the service scoped', async () => {
+test('POST /read work and bell sections reach the legacy service scoped', async () => {
   const pool = makeMockPool();
   const mod = loadRoutes('production', pool);
   const { server, port } = await startServer(mod);
@@ -182,7 +187,7 @@ test('POST /read {all, kinds} and {all, exclude_kinds} reach the service scoped'
     await fetch(`http://127.0.0.1:${port}/api/notifications/read`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ all: true, kinds: SESSION_KINDS }),
+      body: JSON.stringify({ section: 'work', through_inbox_sequence: '42' }),
     });
     let update = pool.calls.find((c) => /UPDATE notifications SET read_at/.test(c.sql));
     assert.ok(update, 'update issued');
@@ -193,22 +198,21 @@ test('POST /read {all, kinds} and {all, exclude_kinds} reach the service scoped'
     await fetch(`http://127.0.0.1:${port}/api/notifications/read`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ all: true, exclude_kinds: SESSION_KINDS }),
+      body: JSON.stringify({ section: 'bell', through_inbox_sequence: '42' }),
     });
     update = pool.calls.find((c) => /UPDATE notifications SET read_at/.test(c.sql));
     assert.match(update.sql, /NOT \(kind = ANY\(\$2\)\)/);
     assert.deepEqual(update.params, [7, SESSION_KINDS]);
 
-    // Non-array / junk kind values are ignored → unscoped clear-all.
+    // Arbitrary kind arrays are rejected rather than widened to clear-all.
     pool.calls.length = 0;
-    await fetch(`http://127.0.0.1:${port}/api/notifications/read`, {
+    const invalid = await fetch(`http://127.0.0.1:${port}/api/notifications/read`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ all: true, kinds: 'session_done' }),
     });
-    update = pool.calls.find((c) => /UPDATE notifications SET read_at/.test(c.sql));
-    assert.doesNotMatch(update.sql, /ANY/);
-    assert.deepEqual(update.params, [7]);
+    assert.equal(invalid.status, 400);
+    assert.equal(pool.calls.some((c) => /UPDATE notifications SET read_at/.test(c.sql)), false);
   } finally {
     server.close();
   }

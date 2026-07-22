@@ -111,18 +111,11 @@ test('markRead({all}) with empty kind arrays falls back to the unscoped clear', 
 
 // ── 2. route fans out notifications_changed on the mark-all branch ──────
 
-test('route fall-through branch pushes notifications_changed when rows cleared', () => {
-  // Isolate the code between the markRead call and the response — the
-  // single-id / mark-all fall-through branch of POST /api/notifications/read.
-  const m = ROUTE_SRC.match(
-    /const cleared = await notifications\.markRead\([\s\S]*?res\.json\(\{ unread, cleared \}\)/
-  );
-  assert.ok(m, 'fall-through branch captures cleared and returns it');
-  assert.match(m[0], /if \(cleared > 0\)/, 'fan-out is gated on rows actually clearing');
+test('route emits a generic invalidation when any selected authority changes rows', () => {
+  assert.match(ROUTE_SRC, /if \(cleared > 0\) pushChanged\(req\.user\.id\)/);
   assert.match(
-    m[0],
-    /pushNotificationToUser\(req\.user\.id, \{ type: 'notifications_changed' \}\)/,
-    'mark-all fans out notifications_changed like every other clearing branch'
+    ROUTE_SRC,
+    /pushNotificationToUser\(userId, \{ type: 'notifications_changed' \}\)/
   );
 });
 
@@ -138,8 +131,8 @@ function methodBody(name) {
 }
 
 // The session-related kinds live in the header cog's drawer now, so the
-// bell's mark-all must (a) send the exclusion server-side and (b) leave
-// those items unread locally.
+// bell's mark-all must (a) send the stable bell section plus the Activity
+// watermark and (b) leave work-drawer items unread locally.
 const SESSION_KINDS = new Set(['session_done', 'auto_solve_done', 'stale_pr', 'check_failed']);
 const isSessionNotifStub = (n) => !!n && SESSION_KINDS.has(n.kind);
 
@@ -157,6 +150,7 @@ test('markAllRead marks bell items read, re-renders, and reconciles chat dots', 
   const rendered = { badge: 0, list: 0 };
   const N = {
     unread: 4,
+    readThroughInboxSequence: '42',
     items: [
       { id: 1, kind: 'mention', readAt: null },
       { id: 2, kind: 'reply', readAt: null },
@@ -190,8 +184,8 @@ test('markAllRead marks bell items read, re-renders, and reconciles chat dots', 
   assert.equal(fetchCalls.length, 1);
   assert.equal(fetchCalls[0].url, '/api/notifications/read');
   assert.deepEqual(JSON.parse(fetchCalls[0].opts.body), {
-    all: true,
-    exclude_kinds: [...SESSION_KINDS],
+    section: 'bell',
+    through_inbox_sequence: '42',
   });
 
   assert.equal(N.unread, 1, 'server-reported unread (the surviving session notif) adopted');

@@ -198,6 +198,7 @@ const GroupChat = {
     const liveWs = GroupChat.ws && GroupChat.ws.readyState <= 1; // CONNECTING(0) or OPEN(1)
     if (GroupChat.appSlug === appSlug && liveWs) {
       GroupChat.render();
+      GroupChat.reconcileDotsFromNotifications();
       GroupChat.attachScrollHandlers();
       GroupChat.restoreScroll();
       return;
@@ -376,6 +377,7 @@ const GroupChat = {
       }
 
       GroupChat.render();
+      GroupChat.reconcileDotsFromNotifications();
 
       if (isFirstLoad && !GroupChat._didInitialScroll) {
         GroupChat.scrollToBottom();
@@ -1457,30 +1459,26 @@ const GroupChat = {
   },
 
   // Clear the dot for one message (the "click a dotted message" path):
-  // optimistically drop it locally, then confirm read on the server by
-  // chat_message_id. Other tabs reconcile via the notifications_changed
-  // broadcast the server fans out. No-op if the message has no dot.
-  _clearMessageDot(messageId) {
+  // confirm the scoped read before changing local state. Other tabs
+  // reconcile via the notifications_changed invalidation.
+  async _clearMessageDot(messageId) {
     const msg = GroupChat.messages.find((m) => String(m.id) === String(messageId));
     if (!msg || !msg.has_unread_notification) return;
-    msg.has_unread_notification = false;
-    const dot = document.querySelector(`[data-unread-dot="${messageId}"]`);
-    if (dot) dot.remove();
-    fetch('/api/notifications/read', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_message_id: Number(messageId) }),
-    }).then((res) => {
-      // Only sync the bell badge once the backend confirms — never
-      // optimistically. The dot is already gone locally above.
-      if (res.ok) window.Notifications?.refresh?.();
-    }).catch(() => {});
+    try {
+      const res = await fetch('/api/notifications/read', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_message_id: String(messageId),
+          through_inbox_sequence: window.Notifications?.readThroughInboxSequence ?? null,
+        }),
+      });
+      if (res.ok) await window.Notifications?.refresh?.();
+    } catch { /* a failed read leaves the authoritative dot unchanged */ }
   },
 
   // Reconcile dots from the current notifications list (window.Notifications
-  // .items). Called on notification_new (a mention arrived while viewing)
-  // and notifications_changed (something was cleared — e.g. this user sent
-  // a message and the reply-clears-all fired, or another tab cleared one).
+  // .items). Called after notification refreshes and chat history loads.
   // Operates only over messages the list actually references, so older
   // dotted messages outside the capped list aren't wrongly touched: a
   // referenced message's dot becomes (readAt == null).
@@ -1493,11 +1491,13 @@ const GroupChat = {
       if (!n || !KINDS.has(n.kind) || n.chatMessageId == null) continue;
       // A later (newer) item wins; items are newest-first, so only set if
       // not already seen.
-      if (!state.has(n.chatMessageId)) state.set(n.chatMessageId, !n.readAt);
+      const messageId = String(n.chatMessageId);
+      if (!state.has(messageId)) state.set(messageId, !n.readAt);
     }
     for (const msg of GroupChat.messages) {
-      if (!state.has(msg.id)) continue;
-      const unread = state.get(msg.id);
+      const messageId = String(msg.id);
+      if (!state.has(messageId)) continue;
+      const unread = state.get(messageId);
       if (!!msg.has_unread_notification === unread) continue;
       msg.has_unread_notification = unread;
       const existing = document.querySelector(`[data-unread-dot="${msg.id}"]`);

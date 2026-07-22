@@ -107,7 +107,7 @@ function chatRoutes(config) {
       // so the dot is driven by this loaded-history flag plus client-side
       // reconciliation on notifications_changed. Non-fatal: a failure here
       // must never break loading the chat.
-      if (req.user) {
+      if (req.user && config.activityNotificationsReadPath !== 'activity') {
         try {
           const notifications = require('../services/notifications');
           const unreadIds = await notifications.unreadMessageIdsForUser(

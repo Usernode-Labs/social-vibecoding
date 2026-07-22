@@ -156,12 +156,11 @@ function approverRoutes(config) {
       const inviterId = updated[0].invited_by;
       if (inviterId && inviterId !== req.user.id) {
         try {
-          const notifRows = await notifications.createApproverInviteAcceptedNotification(pool, {
+          await notifications.createApproverInviteAcceptedNotification(pool, {
             appId,
             recipientId: inviterId,
             accepterId: req.user.id,
           });
-          await notifications.hydrateAndPush(pool, notifRows[0]);
         } catch (err) {
           log.warn('approvers', 'accept notify failed', { err: err.message });
         }

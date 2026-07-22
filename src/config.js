@@ -99,6 +99,11 @@ function load() {
     process.exit(1);
   }
 
+  const activityNotificationsReadPath = process.env.ACTIVITY_NOTIFICATIONS_READ_PATH || 'legacy';
+  if (!['legacy', 'activity'].includes(activityNotificationsReadPath)) {
+    throw new Error('ACTIVITY_NOTIFICATIONS_READ_PATH must be legacy or activity');
+  }
+
   const config = {
     // Deployment environment tag (plan Global Constraints #6, topochain
     // mailer): drives ONE behavior today — src/services/topochain/
@@ -305,6 +310,16 @@ function load() {
     // error table row for this exact condition) until an operator sets
     // TOPOCHAIN_ZK_BRIDGE_URL. See src/services/topochain/zk-bridge.js.
     topochainZkBridgeUrl: process.env.TOPOCHAIN_ZK_BRIDGE_URL || '',
+    // Notification occurrences may be published while the legacy Social
+    // read path remains active. This one flag switches the entire feed,
+    // unread, and read surface together; requests never fall back between
+    // authorities. The publisher is enabled when base URL + producer token
+    // are present, independently from the read-path rollout.
+    activityNotificationsReadPath,
+    activityBaseUrl: (process.env.ACTIVITY_BASE_URL || '').replace(/\/+$/, ''),
+    activityProducerToken: process.env.ACTIVITY_PRODUCER_TOKEN || '',
+    activityLedgerId: process.env.ACTIVITY_LEDGER_ID || '',
+    activitySocialAssertionKey: process.env.ACTIVITY_SOCIAL_ASSERTION_KEY || '',
   };
 
   console.log('[config] Loaded:');
@@ -371,6 +386,11 @@ function load() {
   console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
   console.log(`  TOPOCHAIN_INGEST_API_KEY=${config.topochainIngestApiKey ? mask(config.topochainIngestApiKey) : '(not set — ingest writes return 500)'}`);
   console.log(`  TOPOCHAIN_ZK_BRIDGE_URL=${config.topochainZkBridgeUrl || '(not set — zkpassport/complete returns 500)'}`);
+  console.log(`  ACTIVITY_NOTIFICATIONS_READ_PATH=${config.activityNotificationsReadPath}`);
+  console.log(`  ACTIVITY_BASE_URL=${config.activityBaseUrl || '(not set — publication disabled)'}`);
+  console.log(`  ACTIVITY_PRODUCER_TOKEN=${mask(config.activityProducerToken)}`);
+  console.log(`  ACTIVITY_LEDGER_ID=${config.activityLedgerId || '(not set)'}`);
+  console.log(`  ACTIVITY_SOCIAL_ASSERTION_KEY=${mask(config.activitySocialAssertionKey)}`);
 
   return config;
 }

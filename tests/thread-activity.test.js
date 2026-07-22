@@ -60,6 +60,7 @@ test('serialize exposes threadType/threadRef (null when unscoped)', () => {
   const threaded = notifications.serialize({
     ...base, thread_type: 'session', thread_ref: 10,
   });
+  assert.equal(threaded.occurrenceId, 'social.notification:1');
   assert.equal(threaded.threadType, 'session');
   assert.equal(threaded.threadRef, 10);
 

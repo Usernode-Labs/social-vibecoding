@@ -311,10 +311,9 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   // Notify the owner + refresh any open card's checks badge.
   try {
     const notifications = require('./notifications');
-    const created = await notifications.createCheckFailedNotification(pool, {
+    await notifications.createCheckFailedNotification(pool, {
       userId: row.user_id, appId: row.app_id, sessionId: session.id,
     });
-    if (created.length) await notifications.hydrateAndPush(pool, created[0]);
     const { broadcastGlobal } = require('./ws');
     broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'checks_ready', state: 'error' });
   } catch (e) {

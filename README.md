@@ -252,6 +252,11 @@ make down         # stop
 
 Then visit `http://localhost:3000`.
 
+To run the real Activity service alongside Social and test notification publication,
+feed/unread authority, independent reads, websocket invalidation, retry, and rollout
+fallback behavior, use the local Compose overlay documented in
+[`docs/activity-notifications-local-testing.md`](docs/activity-notifications-local-testing.md).
+
 A few things won't work locally:
 
 - **GitHub App actions** (creating branches/PRs for user edits) need a

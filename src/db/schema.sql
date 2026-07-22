@@ -1110,6 +1110,22 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
 -- kept generic + nullable so future kinds can reuse it.
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
 
+-- Activity delivery outbox. Runtime-created notification rows freeze the exact
+-- generic source event in the same transaction as the Social notification.
+-- Existing rows and staging fixtures intentionally remain unenqueued: the
+-- first Activity cutover does not backfill notification history.
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS activity_event JSONB;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS activity_enqueued_at TIMESTAMPTZ;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS activity_published_at TIMESTAMPTZ;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS activity_attempt_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS activity_next_attempt_at TIMESTAMPTZ;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS activity_last_error TEXT;
+CREATE INDEX IF NOT EXISTS idx_notifications_activity_delivery_due
+  ON notifications (activity_next_attempt_at, id)
+  WHERE activity_event IS NOT NULL
+    AND activity_published_at IS NULL
+    AND activity_next_attempt_at IS NOT NULL;
+
 -- Per-app environment secrets. Values are AES-256-GCM encrypted via
 -- src/services/secrets.js (keyed off DATA_ENCRYPTION_KEY), serialized as
 -- "v1:<iv>:<tag>:<ct>" — same scheme used for users.anthropic_key_enc.

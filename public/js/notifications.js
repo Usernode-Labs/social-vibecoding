@@ -4,9 +4,8 @@
 //  - init() wires the bell button + dropdown controls, does the initial
 //    /api/notifications fetch (so the badge is correct on page load even
 //    if all pending notifs were queued while the user was offline).
-//  - handleIncoming() is called by app.js when a `notification_new`
-//    WS event arrives — updates the in-memory list, badge, and dropdown
-//    if open.
+//  - websocket events are invalidations only; refresh() always reloads the
+//    authoritative list and unread state from the selected server read path.
 //  - clicking a leaf item navigates to the app's group-chat tab and
 //    marks that one read.
 //
@@ -16,7 +15,7 @@
 // preview, expandable to reveal the per-kind leaf rows. Single-item
 // apps render as a plain leaf row (no group chrome). Expansion state is
 // persisted to localStorage and survives refreshes. Scrolling near the
-// bottom loads older pages via the keyset cursor (nextBefore/hasMore).
+// bottom loads older pages via the server's opaque cursor.
 
 const EXPANDED_STORAGE_KEY = 'notif_expanded_groups_v1';
 // Per-expanded-group leaf cap — initial number of leaves shown for an
@@ -34,9 +33,16 @@ const Notifications = {
   unread: 0,
   open: false,
   // Pagination cursor for the per-group "Show more →" pager.
-  nextBefore: null,  // { createdAt, id } | null
+  nextCursor: null,
+  readThroughInboxSequence: null,
   hasMore: false,
   loading: false,
+  initialized: false,
+  // Full-feed refreshes are serialized. A websocket burst while one request
+  // is running sets _refreshQueued and produces one follow-up fetch, so an
+  // older response can never overwrite newer feed/unread state.
+  _refreshPromise: null,
+  _refreshQueued: false,
   // Set<string> of expanded group keys (appId as string, or 'general').
   expanded: new Set(),
   // Map<string, number> of group key -> how many leaves to reveal for
@@ -107,57 +113,90 @@ const Notifications = {
 
   // --- fetching --------------------------------------------------------
 
-  async refresh() {
+  refresh() {
+    Notifications._refreshQueued = true;
+    if (!Notifications._refreshPromise) {
+      Notifications._refreshPromise = Notifications._drainRefreshQueue();
+    }
+    return Notifications._refreshPromise;
+  },
+
+  async _drainRefreshQueue() {
     try {
-      // ?demo=1 forwarding (preserved on the page URL): staging injects
-      // mock session-related rows on the first page so the cog drawer's
-      // pinned section is reviewable (routes/notifications.js
-      // stagingMockNotifications). No-op in production.
-      const demo = new URLSearchParams(location.search).get('demo') === '1' ? '&demo=1' : '';
+      while (Notifications._refreshQueued) {
+        Notifications._refreshQueued = false;
+        await Notifications._refreshOnce();
+      }
+    } finally {
+      Notifications._refreshPromise = null;
+    }
+  },
+
+  async _refreshOnce() {
+    try {
+      const previouslyLoaded = Notifications.initialized;
+      const previousOccurrences = new Set(Notifications.items.map(notificationOccurrenceKey));
+      // ?demo=1 forwarding: staging injects review-only work-drawer rows.
+      // Guard location for direct VM/unit-test loading.
+      const demo = typeof location !== 'undefined'
+        && new URLSearchParams(location.search).get('demo') === '1' ? '&demo=1' : '';
       const res = await fetch(`/api/notifications?limit=100${demo}`);
       if (!res.ok) return;
       const data = await res.json();
-      Notifications.items = Array.isArray(data.notifications) ? data.notifications : [];
+      Notifications.items = Array.isArray(data.notifications)
+        ? data.notifications.map(normalizeNotification)
+        : [];
+      // Actionable invites remain Social business data. Every invalidation
+      // reloads this authoritative sidecar because an occurrence alone is
+      // insufficient to render Accept / Decline state.
       Notifications.invites = Array.isArray(data.pendingInvites) ? data.pendingInvites : [];
       Notifications.unread = data.unread || 0;
       Notifications.hasMore = !!data.hasMore;
-      Notifications.nextBefore = data.nextBefore || null;
+      Notifications.nextCursor = data.nextCursor || null;
+      Notifications.readThroughInboxSequence = data.readThroughInboxSequence ?? null;
+      // The first successful page load establishes a baseline without
+      // replaying alerts for completions that arrived while the tab was
+      // closed. Later refreshes alert only newly materialized occurrences.
+      if (previouslyLoaded) Notifications._alertNewCompletions(previousOccurrences);
+      Notifications.initialized = true;
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       if (Notifications.open) {
         Notifications._renderInvites();
         Notifications._renderList();
       }
+      window.GroupChat?.reconcileDotsFromNotifications?.();
     } catch (err) {
       console.warn('[notifications] refresh failed', err);
     }
   },
 
   async loadMore() {
-    if (Notifications.loading || !Notifications.hasMore || !Notifications.nextBefore) return;
+    if (Notifications.loading || !Notifications.hasMore || !Notifications.nextCursor) return;
     Notifications.loading = true;
     try {
-      const { createdAt, id } = Notifications.nextBefore;
       const params = new URLSearchParams({
         limit: '100',
-        before: String(createdAt),
-        before_id: String(id),
+        cursor: Notifications.nextCursor,
       });
       const res = await fetch(`/api/notifications?${params.toString()}`);
       if (!res.ok) return;
       const data = await res.json();
-      const incoming = Array.isArray(data.notifications) ? data.notifications : [];
+      const incoming = Array.isArray(data.notifications)
+        ? data.notifications.map(normalizeNotification)
+        : [];
       // Append, deduping on id (a concurrent prepend could overlap).
-      const seen = new Set(Notifications.items.map((n) => n.id));
+      const seen = new Set(Notifications.items.map((n) => String(n.id)));
       for (const n of incoming) {
-        if (!seen.has(n.id)) {
+        if (!seen.has(String(n.id))) {
           Notifications.items.push(n);
-          seen.add(n.id);
+          seen.add(String(n.id));
         }
       }
       Notifications.hasMore = !!data.hasMore;
-      Notifications.nextBefore = data.nextBefore || null;
+      Notifications.nextCursor = data.nextCursor || null;
       if (Notifications.open) Notifications._renderList();
+      window.GroupChat?.reconcileDotsFromNotifications?.();
     } catch (err) {
       console.warn('[notifications] loadMore failed', err);
     } finally {
@@ -165,49 +204,33 @@ const Notifications = {
     }
   },
 
-  handleIncoming(notif) {
-    if (!notif) return;
-    // Dedup on id — a reconnect might replay the same notification that
-    // /api/notifications already returned.
-    const existing = Notifications.items.findIndex((n) => n.id === notif.id);
-    if (existing >= 0) {
-      Notifications.items[existing] = notif;
-    } else {
-      Notifications.items.unshift(notif);
+  handleIncoming() {
+    // Both the generic event and the temporary notification_new event are
+    // cache invalidations. Never merge their payload into the browser list:
+    // Activity owns inbox ids, unread state, and read state.
+    return Notifications.refresh();
+  },
+
+  _alertNewCompletions(previousOccurrences) {
+    const fresh = Notifications.items.filter((n) =>
+      !previousOccurrences.has(notificationOccurrenceKey(n)) && isPriorityNotif(n)
+    );
+    for (const notif of fresh) {
+      // #161: a newly materialized completion sets the persistent title
+      // marker only while the user is away. Badge + drawer are sufficient
+      // while they are actively looking at the page.
+      if (window.DevChat && DevChat.setCompletionTitle
+          && DevChat._userIsAway && DevChat._userIsAway()) {
+        DevChat.setCompletionTitle(notif.kind === 'session_done'
+          ? 'sessionDone'
+          : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
+      }
+      // #138: DevAlerts owns the visible/hidden split: foreground tabs get
+      // the chime; background tabs get the OS/native notification.
+      if (window.DevAlerts && typeof DevAlerts.onCompletion === 'function') {
+        DevAlerts.onCompletion(completionAlertInfo(notif));
+      }
     }
-    if (!notif.readAt) Notifications.unread += 1;
-    // #161: a completion arriving while the user is away from the
-    // browser tab sets the dedicated tab-title marker (the replacement
-    // for the old streaming-driven "✅ Done"). If they're actively
-    // looking at the page, the badge + drawer suffice.
-    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
-        && !notif.readAt
-        && window.DevChat && DevChat.setCompletionTitle
-        && DevChat._userIsAway && DevChat._userIsAway()) {
-      DevChat.setCompletionTitle(notif.kind === 'session_done'
-        ? 'sessionDone'
-        : (notif.detail === 'failed' ? 'autoSolveFailed' : 'autoSolveDone'));
-    }
-    // #138: route an arriving completion through the alert channels — a
-    // chime when the app is visible, an OS notification when it's hidden.
-    // The visible/hidden split lives in DevAlerts.onCompletion. This is the
-    // "user is elsewhere in the app, or backgrounded" path (notify_on_done
-    // was armed, so a notification_new arrives); the "watching the same dev
-    // chat" path is handled by DevChat._finishStreaming's direct tone.
-    if ((notif.kind === 'session_done' || notif.kind === 'auto_solve_done')
-        && !notif.readAt
-        && window.DevAlerts && typeof DevAlerts.onCompletion === 'function') {
-      DevAlerts.onCompletion(completionAlertInfo(notif));
-    }
-    // A live collab invite needs the authoritative pendingInvites list
-    // (the notification row alone can't drive the actionable section) —
-    // refresh re-pulls it along with the first page.
-    if (notif.kind === 'collab_invite' || notif.kind === 'approver_invite') {
-      Notifications.refresh();
-      return;
-    }
-    Notifications._renderBadge();
-    if (Notifications.open) Notifications._renderList();
   },
 
   toggle() {
@@ -282,7 +305,10 @@ const Notifications = {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ all: true, exclude_kinds: [...SESSION_NOTIF_KINDS] }),
+        body: JSON.stringify({
+          section: 'bell',
+          through_inbox_sequence: Notifications.readThroughInboxSequence,
+        }),
       });
       if (!res.ok) return;
       const data = await res.json();
@@ -316,10 +342,10 @@ const Notifications = {
   // Per-group "Mark read": clears every unread notification for one app
   // in a single round-trip via the /read { app_id } branch.
   async _markGroupRead(groupKey, appId) {
-    const numericAppId = (appId != null && appId !== '') ? Number(appId) : null;
+    const scopedAppId = (appId != null && appId !== '') ? String(appId) : null;
     // No backend scope for the synthetic "general" (null-app) bucket —
     // fall back to clearing its leaves by id.
-    if (numericAppId == null || Number.isNaN(numericAppId)) {
+    if (scopedAppId == null) {
       const ids = Notifications.items
         .filter((n) => groupKeyFor(n) === groupKey && !n.readAt)
         .map((n) => n.id);
@@ -331,7 +357,10 @@ const Notifications = {
       const res = await fetch('/api/notifications/read', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_id: numericAppId }),
+        body: JSON.stringify({
+          app_id: scopedAppId,
+          through_inbox_sequence: Notifications.readThroughInboxSequence,
+        }),
       });
       if (!res.ok) return;
       const data = await res.json();
@@ -343,23 +372,27 @@ const Notifications = {
       Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
       Notifications._renderList();
+      window.GroupChat?.reconcileDotsFromNotifications?.();
     } catch (err) {
       console.warn('[notifications] markGroupRead failed', err);
     }
   },
 
   async _markOneRead(id) {
-    // Optimistically mark read in-memory and re-render the open drawer
-    // right away: the unread dot disappears and unread-first sorting
-    // updates live, instead of waiting for the network round-trip (which
-    // is why a clicked item used to stay unread until close/reopen).
-    const item = Notifications.items.find((n) => n.id === id);
-    if (item && !item.readAt) {
-      item.readAt = new Date().toISOString();
-      if (Notifications.unread > 0) Notifications.unread -= 1;
-      Notifications._reconcileCompletionTitle();
-      Notifications._renderBadge();
-      if (Notifications.open) Notifications._renderList();
+    const item = Notifications.items.find((n) => String(n.id) === String(id));
+    // Staging demo rows are request-time presentation fixtures, not Activity
+    // entries. Keep their read interaction local so a synthetic numeric id
+    // can never address a real Activity inbox sequence.
+    if (item?.demo) {
+      if (!item.readAt) {
+        item.readAt = new Date().toISOString();
+        Notifications.unread = Math.max(0, Notifications.unread - 1);
+        Notifications._reconcileCompletionTitle();
+        Notifications._renderBadge();
+        if (Notifications.open) Notifications._renderList();
+        window.GroupChat?.reconcileDotsFromNotifications?.();
+      }
+      return;
     }
     try {
       const res = await fetch('/api/notifications/read', {
@@ -369,16 +402,19 @@ const Notifications = {
       });
       if (!res.ok) return;
       const data = await res.json();
-      // Reconcile with the server's authoritative unread count.
       Notifications.unread = data.unread || 0;
+      if (item && !item.readAt) item.readAt = new Date().toISOString();
+      Notifications._reconcileCompletionTitle();
       Notifications._renderBadge();
+      if (Notifications.open) Notifications._renderList();
+      window.GroupChat?.reconcileDotsFromNotifications?.();
     } catch (err) {
       console.warn('[notifications] markOneRead failed', err);
     }
   },
 
   _onItemClick(id) {
-    const item = Notifications.items.find((n) => n.id === id);
+    const item = Notifications.items.find((n) => String(n.id) === String(id));
     if (!item) return;
     // Deliberately do NOT hide the drawer here: it stays open over the
     // navigated-to view so the user can keep clicking through other
@@ -778,7 +814,7 @@ const Notifications = {
     // click's target is no longer inside the panel and the drawer would
     // otherwise be wrongly dismissed.
     list.querySelectorAll('[data-notif-id]').forEach((el) => {
-      const id = Number(el.getAttribute('data-notif-id'));
+      const id = el.getAttribute('data-notif-id');
       el.addEventListener('click', (e) => {
         e.stopPropagation();
         Notifications._onItemClick(id);
@@ -854,6 +890,26 @@ const Notifications = {
   },
 
 };
+
+function normalizeNotification(notification) {
+  const n = notification || {};
+  return {
+    ...n,
+    id: String(n.id),
+    // occurrenceId is stable across the legacy and Activity read paths;
+    // id is deliberately not, because Activity uses inboxSequence for reads.
+    occurrenceId: n.occurrenceId == null ? String(n.id) : String(n.occurrenceId),
+    appId: n.appId == null ? null : String(n.appId),
+    chatMessageId: n.chatMessageId == null ? null : String(n.chatMessageId),
+    sessionId: n.sessionId == null ? null : String(n.sessionId),
+    threadRef: n.threadRef == null ? null : String(n.threadRef),
+  };
+}
+
+function notificationOccurrenceKey(notification) {
+  if (!notification) return '';
+  return String(notification.occurrenceId ?? notification.id ?? '');
+}
 
 // Stable group key for a notification: the app id when present, else a
 // synthetic 'general' bucket so app-less notifications are never dropped.

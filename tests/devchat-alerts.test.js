@@ -1,13 +1,15 @@
 // Tests for the #138 dev-chat completion alerts (chime + OS notification).
 //
-// Two layers:
+// Three layers:
 //   1. Behavioral — load public/js/dev-alerts.js in a vm sandbox with faked
 //      browser globals (window/document/localStorage/AudioContext/
 //      Notification/Usernode) and exercise the real DevAlerts API: the
 //      visible→tone / hidden→notify decision, the native vs browser
 //      systemNotify branches, the localStorage mute gate, and the tone
 //      dedup guard.
-//   2. Static wiring — assert the call sites in notifications.js / dev-chat.js
+//   2. Behavioral — exercise the notification refresh queue, occurrence
+//      identity, and completion discovery against controlled HTTP responses.
+//   3. Static wiring — assert the call sites in notifications.js / dev-chat.js
 //      / settings.js / index.html exist so the feature can't silently
 //      unwire.
 //
@@ -43,10 +45,10 @@ class FakeEl {
 
 // Load notifications.js in a sandbox and return its Notifications object plus
 // the fake bell elements, so _renderBadge's two-badge split can be asserted.
-function makeNotifEnv() {
+function makeNotifEnv({ fetchImpl } = {}) {
   const elements = {};
   const getEl = (id) => (elements[id] || (elements[id] = new FakeEl()));
-  const sandbox = { console, Date, JSON, Math, Set, Map };
+  const sandbox = { console, Date, JSON, Math, Set, Map, Promise, URLSearchParams };
   sandbox.window = sandbox;
   sandbox.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
   sandbox.document = {
@@ -55,8 +57,36 @@ function makeNotifEnv() {
     addEventListener: () => {},
     createElement: () => ({ set textContent(v) { this._t = v; }, get innerHTML() { return this._t || ''; } }),
   };
+  if (fetchImpl) sandbox.fetch = fetchImpl;
   vm.runInNewContext(NOTIF_SRC, sandbox);
-  return { Notifications: sandbox.window.Notifications, elements };
+  return { Notifications: sandbox.window.Notifications, elements, window: sandbox.window };
+}
+
+function jsonResponse(body) {
+  return { ok: true, json: async () => body };
+}
+
+function notificationPage(notifications) {
+  return {
+    notifications,
+    pendingInvites: [],
+    unread: notifications.filter((n) => !n.readAt).length,
+    hasMore: false,
+    nextCursor: null,
+    readThroughInboxSequence: notifications[0]?.id ?? '0',
+  };
+}
+
+function completion(overrides = {}) {
+  return {
+    id: '81',
+    occurrenceId: 'social.notification:1201',
+    kind: 'session_done',
+    readAt: null,
+    createdAt: '2026-07-22T15:04:05Z',
+    appName: 'Example App',
+    ...overrides,
+  };
 }
 
 // Build a fresh sandbox + DevAlerts instance with configurable environment.
@@ -226,9 +256,89 @@ test('playDoneTone stays silent while the audio context is still suspended', () 
   assert.equal(calls.oscillators, 0);
 });
 
+// ── notification invalidation refreshes ─────────────────────────────────
+
+test('initial notification load establishes a baseline without replaying alerts', async () => {
+  const { Notifications, window } = makeNotifEnv({
+    fetchImpl: async () => jsonResponse(notificationPage([completion()])),
+  });
+  let alerts = 0;
+  window.DevAlerts = { onCompletion() { alerts += 1; } };
+
+  await Notifications.refresh();
+
+  assert.equal(Notifications.initialized, true);
+  assert.equal(alerts, 0);
+});
+
+test('overlapping invalidations serialize, coalesce, and alert once', async () => {
+  let calls = 0;
+  let active = 0;
+  let maxActive = 0;
+  let releaseSecond;
+  let markSecondStarted;
+  const secondStarted = new Promise((resolve) => { markSecondStarted = resolve; });
+  const holdSecond = new Promise((resolve) => { releaseSecond = resolve; });
+  const page = notificationPage([completion()]);
+  const { Notifications, window } = makeNotifEnv({
+    fetchImpl: async () => {
+      calls += 1;
+      const thisCall = calls;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      try {
+        if (thisCall === 1) return jsonResponse(notificationPage([]));
+        if (thisCall === 2) {
+          markSecondStarted();
+          await holdSecond;
+        }
+        return jsonResponse(page);
+      } finally {
+        active -= 1;
+      }
+    },
+  });
+  let alerts = 0;
+  window.DevAlerts = { onCompletion() { alerts += 1; } };
+
+  await Notifications.refresh();
+  const first = Notifications.handleIncoming();
+  await secondStarted;
+  const second = Notifications.handleIncoming();
+  const third = Notifications.handleIncoming();
+  releaseSecond();
+  await Promise.all([first, second, third]);
+
+  assert.equal(maxActive, 1, 'only one authoritative refresh may run at a time');
+  assert.equal(calls, 3, 'the invalidation burst becomes one queued follow-up fetch');
+  assert.equal(alerts, 1, 'the same completion is announced once');
+  assert.equal(Notifications.items[0].occurrenceId, 'social.notification:1201');
+});
+
+test('completion detection uses occurrence identity rather than the read id', async () => {
+  const pages = [
+    notificationPage([{
+      id: '42', occurrenceId: 'social.notification:42', kind: 'mention', readAt: null,
+    }]),
+    notificationPage([completion({
+      id: '42', occurrenceId: 'social.notification:99',
+    })]),
+  ];
+  const { Notifications, window } = makeNotifEnv({
+    fetchImpl: async () => jsonResponse(pages.shift()),
+  });
+  let alerts = 0;
+  window.DevAlerts = { onCompletion() { alerts += 1; } };
+
+  await Notifications.refresh();
+  await Notifications.handleIncoming();
+
+  assert.equal(alerts, 1, 'a new occurrence alerts even when its inbox id collides');
+});
+
 // ── static wiring assertions ─────────────────────────────────────────────
 
-test('notifications.js routes completions through DevAlerts.onCompletion', () => {
+test('notifications.js routes newly materialized completions through DevAlerts.onCompletion', () => {
   const src = read('js', 'notifications.js');
   assert.match(src, /DevAlerts\.onCompletion\(completionAlertInfo\(notif\)\)/);
   assert.match(src, /function completionAlertInfo\(n\)/);
@@ -237,11 +347,11 @@ test('notifications.js routes completions through DevAlerts.onCompletion', () =>
   assert.match(src, /auto_solve_done/);
 });
 
-test('dev-chat.js no longer plays the tone directly (chime is arrival-driven)', () => {
+test('dev-chat.js no longer plays the tone directly (chime is feed-driven)', () => {
   const src = read('js', 'dev-chat.js');
   // #138: the redundant foreground-tone hook is removed — the chime is now
-  // fired solely from Notifications.handleIncoming → DevAlerts.onCompletion
-  // on the WS notification's arrival. dev-chat.js must not call playDoneTone.
+  // fired solely after Notifications.handleIncoming refreshes the
+  // authoritative feed. dev-chat.js must not call playDoneTone.
   assert.doesNotMatch(src, /playDoneTone/, 'dev-chat.js must not ring the chime directly');
   // sendMessage still unlocks audio + requests permission (user gesture).
   assert.match(src, /DevAlerts\._unlockAudio\(\)/);

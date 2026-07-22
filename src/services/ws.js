@@ -520,35 +520,12 @@ async function handleMessage(pool, client, msg) {
       // #15: reply notification — ping the author of the quoted message
       // or PR (no-op for self-quotes and authorless system rows).
       try {
-        const replyRows = await notifications.createReplyNotification(pool, {
+        await notifications.createReplyNotification(pool, {
           appId: client.appId,
           replyMessageId: rows[0].id,
           senderId: client.user.id,
           recipientId: replyRecipientId,
         });
-        if (replyRows.length) {
-          const { rows: hydrated } = await pool.query(
-            `SELECT n.id, n.kind, n.read_at, n.created_at,
-                    n.app_id, a.slug AS app_slug, a.name AS app_name,
-                    n.chat_message_id, cm.content AS message_content,
-                    cm.thread_type, cm.thread_ref,
-                    n.session_id, cs.pr_title, cs.pr_number,
-                    su.username AS source_username, n.user_id
-             FROM notifications n
-             LEFT JOIN apps a ON a.id = n.app_id
-             LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
-             LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-             LEFT JOIN users su ON su.id = n.source_user_id
-             WHERE n.id = ANY($1::int[])`,
-            [replyRows.map((r) => r.id)]
-          );
-          for (const row of hydrated) {
-            pushNotificationToUser(row.user_id, {
-              type: 'notification_new',
-              notification: notifications.serialize(row),
-            });
-          }
-        }
       } catch (err) {
         log.warn('ws', 'reply notify failed', { err: err.message });
       }
@@ -557,41 +534,12 @@ async function handleMessage(pool, client, msg) {
       // stays predictable (everyone sees the message first, target user
       // then sees the bell-badge update).
       try {
-        const notifRows = await notifications.createMentionNotifications(pool, {
+        await notifications.createMentionNotifications(pool, {
           appId: client.appId,
           chatMessageId: rows[0].id,
           senderId: client.user.id,
           content,
         });
-        if (notifRows.length) {
-          // Hydrate with app/sender info so the client can render the
-          // dropdown item immediately without another fetch. Mirror the
-          // column set of notifications.listForUser so the same
-          // serialize() works for both fresh and history rows — kudos
-          // added session_id / pr_title / pr_number on top of the
-          // original mention shape.
-          const { rows: hydrated } = await pool.query(
-            `SELECT n.id, n.kind, n.read_at, n.created_at,
-                    n.app_id, a.slug AS app_slug, a.name AS app_name,
-                    n.chat_message_id, cm.content AS message_content,
-                    cm.thread_type, cm.thread_ref,
-                    n.session_id, cs.pr_title, cs.pr_number,
-                    su.username AS source_username, n.user_id
-             FROM notifications n
-             LEFT JOIN apps a ON a.id = n.app_id
-             LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
-             LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-             LEFT JOIN users su ON su.id = n.source_user_id
-             WHERE n.id = ANY($1::int[])`,
-            [notifRows.map((r) => r.id)]
-          );
-          for (const row of hydrated) {
-            pushNotificationToUser(row.user_id, {
-              type: 'notification_new',
-              notification: notifications.serialize(row),
-            });
-          }
-        }
       } catch (err) {
         log.warn('ws', 'mention notify failed', { err: err.message });
       }
@@ -722,36 +670,13 @@ async function handleMessage(pool, client, msg) {
       // and never for self-reactions or authorless system rows.
       if (added && authorId) {
         try {
-          const notifRows = await notifications.createReactionNotification(pool, {
+          await notifications.createReactionNotification(pool, {
             appId: client.appId,
             messageId,
             senderId: client.user.id,
             recipientId: authorId,
             emoji,
           });
-          if (notifRows.length) {
-            const { rows: hydrated } = await pool.query(
-              `SELECT n.id, n.kind, n.read_at, n.created_at,
-                      n.app_id, a.slug AS app_slug, a.name AS app_name,
-                      n.chat_message_id, cm.content AS message_content,
-                      cm.thread_type, cm.thread_ref,
-                      n.session_id, cs.pr_title, cs.pr_number,
-                      su.username AS source_username, n.user_id, n.detail
-               FROM notifications n
-               LEFT JOIN apps a ON a.id = n.app_id
-               LEFT JOIN chat_messages cm ON cm.id = n.chat_message_id
-               LEFT JOIN chat_sessions cs ON cs.id = n.session_id
-               LEFT JOIN users su ON su.id = n.source_user_id
-               WHERE n.id = ANY($1::int[])`,
-              [notifRows.map((r) => r.id)]
-            );
-            for (const row of hydrated) {
-              pushNotificationToUser(row.user_id, {
-                type: 'notification_new',
-                notification: notifications.serialize(row),
-              });
-            }
-          }
         } catch (err) {
           log.warn('ws', 'reaction notify failed', { err: err.message });
         }

@@ -90,8 +90,7 @@ function withMockPool(mockPool, fn) {
     filename: wsPath,
     paths: origWs ? origWs.paths : [],
   };
-  // notifications.js's serialize() is called during the hydrate path;
-  // we don't need to stub it — it's a pure function on the row shape.
+  // The real notifications service freezes the generic outbox event.
   try {
     return fn();
   } finally {
@@ -207,12 +206,25 @@ function makeMockPool(initial = {}) {
       state.notifications.push(row);
       return { rows: [row] };
     }
-    // ------------ SELECT notification hydrate ------------
-    if (/SELECT n\.id, n\.kind[\s\S]*FROM notifications n/i.test(s)) {
-      const id = params[0];
-      const n = state.notifications.find((x) => x.id === id);
-      if (!n) return { rows: [] };
-      return { rows: [{ ...n, app_slug: 'app', app_name: 'App', message_content: null, pr_title: null, pr_number: null, source_username: null }] };
+    // ------------ Generic occurrence hydrate + outbox update ------------
+    if (/SELECT n\.id, n\.user_id, n\.kind[\s\S]*FROM notifications n/i.test(s)) {
+      const ids = params[0];
+      return {
+        rows: state.notifications.filter((x) => ids.includes(x.id)).map((n) => ({
+          ...n,
+          app_slug: 'app', app_name: 'App', message_content: null,
+          thread_type: null, thread_ref: null,
+          pr_title: null, pr_number: null, headless_issue_number: null,
+          branch_name: null, source_username: null, detail: null,
+        })),
+      };
+    }
+    if (/UPDATE notifications AS n[\s\S]*activity_event = payload\.event/i.test(s)) {
+      for (const item of JSON.parse(params[0])) {
+        const row = state.notifications.find((n) => n.id === item.id);
+        if (row) row.activity_event = item.event;
+      }
+      return { rows: [], rowCount: JSON.parse(params[0]).length };
     }
     // ------------ COUNT per session ------------
     if (/SELECT COUNT\(\*\)::int AS c FROM pr_kudos WHERE session_id = \$1/i.test(s)) {
