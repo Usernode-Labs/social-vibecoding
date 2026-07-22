@@ -673,6 +673,25 @@ html.un-kb .un-action-sheet {
   opacity: 1;
 }
 
+/* ── Keyboard avoidance for content scrollers ──────────────────────────
+   unNative.attachKeyboardAvoidance() adds un-kb-avoid to the app's
+   fixed-shell content scroller. Keyboard clearance is CONTENT PADDING on
+   the scroller (never a resized layout): it must appear INSTANTLY on
+   open — else reveals clamp against half-grown padding and re-adjust
+   (stutter) — but ease ~150ms on close, so the browser's automatic
+   scrollTop clamp rides the ease instead of snapping. While the keyboard
+   is up the padding REPLACES the scroller's own bottom padding (the
+   sheet precedent above: safe-area padding sits behind the keyboard and
+   must not stack on the inset). */
+
+.un-kb-avoid {
+  transition: padding-bottom 150ms ease-out;
+}
+html.un-kb .un-kb-avoid {
+  padding-bottom: var(--un-kb-inset, 0px);
+  transition: none;
+}
+
 /* ── Toast ─────────────────────────────────────────────────────────────
    unNative.toast(): bottom capsule HUD on iOS/desktop, Material snackbar
    on Android. Safe-area aware; pointer-events stay off except on the

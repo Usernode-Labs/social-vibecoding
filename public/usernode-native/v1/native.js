@@ -34,6 +34,12 @@
  *                                        toast holds the slot for undo
  *                                        flows)
  *   unNative.attachNavBar(bar, opts)  — blurred nav bar + large-title collapse
+ *   unNative.attachKeyboardAvoidance(scrollEl, opts) — keyboard avoidance
+ *                                        for a fixed-shell app's content
+ *                                        scroller ({ topEl?, margin?,
+ *                                        fields? }): instant clearance
+ *                                        padding, single-motion focus
+ *                                        reveal, settled pin
  *   unNative.gestures                 — the shared gesture arbiter
  *                                        { claim, owner, release }
  *   unNative.physics                  — the pure math (also the node export)
@@ -252,6 +258,60 @@
     return Math.round(occluded);
   }
 
+  // Text-entry classifier for keyboard-avoidance tap interception. Only
+  // fields that summon a text keyboard are intercepted; everything else
+  // (switches, buttons, selects, native pickers, file inputs) keeps fully
+  // native taps. input: { tag, type?, readOnly?, disabled?,
+  // contentEditable? }. Unknown/missing input types behave as text (the
+  // HTML default); types that open native pickers (date/time family) are
+  // excluded on purpose — intercepting their taps risks breaking picker
+  // presentation.
+  var KB_TEXT_INPUT_TYPES = {
+    text: 1, search: 1, email: 1, url: 1, tel: 1, password: 1, number: 1,
+  };
+  var KB_NON_TEXT_INPUT_TYPES = {
+    checkbox: 1, radio: 1, range: 1, color: 1, file: 1, button: 1,
+    submit: 1, reset: 1, image: 1, hidden: 1,
+    date: 1, time: 1, month: 1, week: 1, 'datetime-local': 1,
+  };
+  function isTextEntryField(input) {
+    if (!input) return false;
+    if (input.disabled || input.readOnly) return false;
+    if (input.contentEditable) return true;
+    var tag = String(input.tag || '').toLowerCase();
+    if (tag === 'textarea') return true;
+    if (tag !== 'input') return false;
+    var type = input.type ? String(input.type).toLowerCase() : 'text';
+    if (KB_TEXT_INPUT_TYPES[type]) return true;
+    return !KB_NON_TEXT_INPUT_TYPES[type]; // unknown types default to text
+  }
+
+  // Keyboard-aware reveal math for a focused field inside a content
+  // scroller. scrollIntoView({block:'nearest'}) is blind here: keyboard
+  // clearance is CONTENT PADDING on the scroller, not a smaller
+  // scrollport, so a field hidden under the keyboard still counts as
+  // "visible" to it. Computes the minimal scrollTop delta instead.
+  // input (all viewport-space px): { fieldTop, fieldBottom, innerHeight,
+  // inset, margin, topLimit } — topLimit is the final limit (caller adds
+  // its own margin, e.g. navbar bottom + margin). Positive delta scrolls
+  // down, negative up, 0 leaves an already-visible field alone.
+  function revealScrollDelta(input) {
+    if (!input) return 0;
+    var margin = input.margin == null ? 8 : input.margin;
+    var inset = input.inset || 0;
+    var topLimit = input.topLimit == null ? margin : input.topLimit;
+    var bottomLimit = input.innerHeight - inset - margin;
+    if (input.fieldBottom > bottomLimit) {
+      var delta = input.fieldBottom - bottomLimit;
+      // A field taller than the visible strip: keeping its top visible
+      // wins — never scroll its top past the top limit.
+      var maxDelta = input.fieldTop - topLimit;
+      return delta > maxDelta ? Math.max(0, maxDelta) : delta;
+    }
+    if (input.fieldTop < topLimit) return input.fieldTop - topLimit;
+    return 0;
+  }
+
   // Edge auto-scroll ramp for drag-to-reorder: px-per-frame scroll velocity
   // for a pointer near the top/bottom of the visible area. Zero outside the
   // edge band; ramps linearly to ±maxSpeed at (or past) the edge itself.
@@ -358,6 +418,8 @@
     decideSheetRelease: decideSheetRelease,
     KB_MIN_INSET: KB_MIN_INSET,
     keyboardInset: keyboardInset,
+    isTextEntryField: isTextEntryField,
+    revealScrollDelta: revealScrollDelta,
     reorderDropIndex: reorderDropIndex,
     autoScrollVelocity: autoScrollVelocity,
     createArbiter: createArbiter,
@@ -418,10 +480,13 @@
    * visualViewport is absent: no listeners, no var, CSS falls back to 0px.
    * ──────────────────────────────────────────────────────────────────── */
 
+  // Current keyboard inset (px), shared with attachKeyboardAvoidance so
+  // instances read it directly instead of parsing the CSS custom property.
+  var kbInset = 0;
+
   (function () {
     var vv = window.visualViewport;
     if (!vv || platform === 'desktop') return;
-    var applied = 0;
     var rafPending = false;
     function apply() {
       rafPending = false;
@@ -431,8 +496,8 @@
         vvOffsetTop: vv.offsetTop,
         vvScale: vv.scale,
       });
-      if (inset === applied) return;
-      applied = inset;
+      if (inset === kbInset) return;
+      kbInset = inset;
       document.documentElement.style.setProperty('--un-kb-inset', inset + 'px');
       document.documentElement.classList.toggle('un-kb', inset > 0);
     }
@@ -2011,6 +2076,265 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
+   * Keyboard avoidance for fixed-shell content scrollers (issue #730).
+   * The global tracker above covers the kit's own overlays; this attacher
+   * gives the APP's main content scroller the same physics. Fixed-shell
+   * recipe: `html, body { height:100%; overflow:hidden }` plus one
+   * `position:fixed; inset:0; overflow-y:auto` scroller — the keyboard
+   * can never scroll/reflow the page frame, only content slides.
+   *
+   * What it owns (each was a hand-tuned Gym Tracker workaround):
+   *  - Keyboard clearance as CONTENT PADDING on the scroller (class
+   *    un-kb-avoid; CSS makes it instant on open, ~150ms eased on close
+   *    so the browser's scrollTop clamp rides the ease instead of
+   *    snapping).
+   *  - The browser's native reveal-on-focus can't be coordinated with —
+   *    only eliminated: intercept touchend on text-entry fields
+   *    (passive:false), preventDefault (kills click + native focus +
+   *    native reveal), focus with preventScroll:true, then ONE
+   *    keyboard-aware scroll. Tightly scoped: text-entry allowlist only,
+   *    the already-focused field is skipped (native caret/selection), an
+   *    ~8px touchmove slop keeps scroll-drags ending on a field from
+   *    being hijacked, and a finger claimed through the gesture arbiter
+   *    is never touched.
+   *  - Field-to-field hops fire NO visualViewport events — a focusin
+   *    path gated on html.un-kb reveals synchronously.
+   *  - Keyboard open/close fires a BURST of viewport events — reveals
+   *    coalesce to one settled pin ~120ms after the last event (with a
+   *    ~250ms fallback for resize-mode Android / hardware keyboards,
+   *    where no events arrive at all).
+   *  - Reveal math is computed manually (scrollIntoView counts fields
+   *    under the padding as visible): bottomLimit = innerHeight - inset
+   *    - margin, topLimit = topEl bottom + margin, minimal scrollTop
+   *    delta.
+   *  - iOS can pan the visual viewport before the inset publishes — the
+   *    settled pin resets window.scrollTo(0,0), but only when the page
+   *    frame is actually a fixed shell.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  var KB_TAP_SLOP = 8; // px of touchmove that turns a tap into a drag
+  var KB_SETTLE_MS = 120; // quiet period after the last visualViewport event
+  var KB_FOCUS_FALLBACK_MS = 250; // reveal anyway if no vv event follows a focus
+
+  // attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8, fields? }) —
+  // scrollEl is the app's content scroller (the fixed-shell inner pane);
+  // topEl an optional fixed bar overlaying its top (typically the
+  // un-navbar also wired via attachNavBar); margin the breathing room
+  // above the keyboard / below topEl; fields an optional CSS selector
+  // that REPLACES the default text-entry allowlist. Composes with
+  // attachNavBar and element-mode attachPullToRefresh. Sheet/modal/alert
+  // fields are body-mounted, outside scrollEl, and keep the kit's
+  // existing avoidance. Structural no-op on desktop or without
+  // visualViewport. Returns { detach() }; never throws on bad input.
+  function attachKeyboardAvoidance(scrollEl, options) {
+    var noop = { detach: function () {} };
+    if (!scrollEl || scrollEl.nodeType !== 1) {
+      console.warn('[unNative] attachKeyboardAvoidance: scrollEl must be an Element — keyboard avoidance disabled.');
+      return noop;
+    }
+    var vv = window.visualViewport;
+    if (platform === 'desktop' || !vv) return noop;
+    if (scrollEl.classList.contains('un-kb-avoid')) {
+      console.warn('[unNative] attachKeyboardAvoidance: already attached to this element — ignoring.');
+      return noop;
+    }
+
+    var opts = options || {};
+    var topEl = opts.topEl && opts.topEl.nodeType === 1 ? opts.topEl : null;
+    var margin = opts.margin != null ? opts.margin : 8;
+    var fieldsSel = typeof opts.fields === 'string' ? opts.fields : null;
+
+    scrollEl.classList.add('un-kb-avoid');
+
+    var touch = null; // { x, y, moved } — the current tap candidate
+    var pendingReveal = null; // field awaiting the settled pin / fallback
+    var fallbackTimer = null;
+    var settleTimer = null;
+    var suppressFocusin = null; // field being focused by the interception path
+
+    function kbUp() {
+      return document.documentElement.classList.contains('un-kb');
+    }
+
+    // Resolve a tap/focus target to an interceptable field, or null.
+    function matchField(target) {
+      if (!target || target.nodeType !== 1 || !target.closest) return null;
+      if (!scrollEl.contains(target)) return null;
+      if (fieldsSel) {
+        var custom = target.closest(fieldsSel);
+        return custom && scrollEl.contains(custom) ? custom : null;
+      }
+      var field = target.closest('input, textarea, [contenteditable]');
+      if (!field || !scrollEl.contains(field)) return null;
+      var tag = field.tagName.toLowerCase();
+      return isTextEntryField({
+        tag: tag,
+        type: field.type,
+        readOnly: !!field.readOnly,
+        disabled: !!field.disabled,
+        contentEditable: !!field.isContentEditable,
+      }) ? field : null;
+    }
+
+    // The ONE keyboard-aware scroll: minimal scrollTop delta placing the
+    // field above the keyboard and below topEl. Content padding (the
+    // un-kb-avoid rule) has already made the room exist.
+    function reveal(field) {
+      if (!field || !scrollEl.contains(field)) return;
+      var rect = field.getBoundingClientRect();
+      var topLimit;
+      if (topEl) {
+        topLimit = topEl.getBoundingClientRect().bottom + margin;
+      } else {
+        topLimit = Math.max(scrollEl.getBoundingClientRect().top, 0) + margin;
+      }
+      var delta = revealScrollDelta({
+        fieldTop: rect.top,
+        fieldBottom: rect.bottom,
+        innerHeight: window.innerHeight,
+        inset: kbInset,
+        margin: margin,
+        topLimit: topLimit,
+      });
+      if (!delta) return;
+      var max = Math.max(0, scrollEl.scrollHeight - scrollEl.clientHeight);
+      var top = Math.max(0, Math.min(max, scrollEl.scrollTop + delta));
+      if (top === scrollEl.scrollTop) return;
+      try {
+        scrollEl.scrollTo({ top: top, behavior: prefersReducedMotion ? 'auto' : 'smooth' });
+      } catch (e) {
+        scrollEl.scrollTop = top;
+      }
+    }
+
+    function clearPending() {
+      pendingReveal = null;
+      if (fallbackTimer) { clearTimeout(fallbackTimer); fallbackTimer = null; }
+    }
+
+    // Schedule the single reveal for a just-focused field: synchronous
+    // when the keyboard is already up (field-to-field hop), otherwise
+    // deferred to the settled pin, with a fallback timer for platforms
+    // that fire no visualViewport events (resize-mode Android hops,
+    // hardware keyboards).
+    function scheduleReveal(field) {
+      clearPending();
+      if (kbUp()) { reveal(field); return; }
+      pendingReveal = field;
+      fallbackTimer = setTimeout(function () {
+        fallbackTimer = null;
+        var f = pendingReveal;
+        pendingReveal = null;
+        if (f && document.activeElement === f) reveal(f);
+      }, KB_FOCUS_FALLBACK_MS);
+    }
+
+    // Coalesced settled pin: runs once, ~120ms after the last viewport
+    // event of the open/close burst — never per event.
+    function settledPin() {
+      settleTimer = null;
+      // iOS can pan the visual viewport before the inset publishes —
+      // reset the page frame, but only in an actual fixed shell (never
+      // yank a normally-scrolling page that attached an inner pane).
+      if ((window.scrollY || window.pageYOffset || 0) > 0) {
+        var fixedShell = false;
+        try {
+          fixedShell =
+            getComputedStyle(document.documentElement).overflowY === 'hidden' ||
+            getComputedStyle(document.body).overflowY === 'hidden';
+        } catch (e) { /* ignore */ }
+        if (fixedShell) window.scrollTo(0, 0);
+      }
+      var f = pendingReveal;
+      clearPending();
+      if (f && document.activeElement === f) { reveal(f); return; }
+      // Re-pin the focused field on any settle: late inset growth (e.g.
+      // the iOS QuickType bar appearing) re-adjusts without a new focus.
+      var active = matchField(document.activeElement);
+      if (active && document.activeElement === active) reveal(active);
+    }
+
+    function onVvEvent() {
+      if (settleTimer) clearTimeout(settleTimer);
+      settleTimer = setTimeout(settledPin, KB_SETTLE_MS);
+    }
+
+    function onTouchStart(e) {
+      touch = e.touches.length === 1
+        ? { x: e.touches[0].clientX, y: e.touches[0].clientY, moved: false }
+        : null;
+    }
+
+    function onTouchMove(e) {
+      if (!touch || touch.moved) return;
+      if (e.touches.length !== 1) { touch.moved = true; return; }
+      var dx = e.touches[0].clientX - touch.x;
+      var dy = e.touches[0].clientY - touch.y;
+      if (Math.abs(dx) > KB_TAP_SLOP || Math.abs(dy) > KB_TAP_SLOP) touch.moved = true;
+    }
+
+    function onTouchCancel() {
+      touch = null;
+    }
+
+    // The clean single-motion fix: the browser's reveal-on-focus can't be
+    // coordinated with, only eliminated. Registered non-passive for
+    // exactly this preventDefault.
+    function onTouchEnd(e) {
+      var t = touch;
+      touch = null;
+      if (!t || t.moved || !e.cancelable) return;
+      if (e.touches && e.touches.length) return; // fingers still down
+      if (gestures.owner('touch') != null) return; // a recognizer owns this finger
+      var field = matchField(e.target);
+      if (!field) return; // non-field taps stay fully native
+      if (document.activeElement === field) return; // native caret/selection
+      e.preventDefault(); // kills click + native focus + native reveal
+      suppressFocusin = field;
+      try { field.focus({ preventScroll: true }); } catch (err) {
+        try { field.focus(); } catch (err2) { /* ignore */ }
+      }
+      suppressFocusin = null;
+      scheduleReveal(field);
+    }
+
+    // Non-tap focuses (programmatic .focus(), Tab / next-button hops):
+    // field-to-field hops fire NO visualViewport events, so with the
+    // keyboard already up this is the only reveal signal. Apps should
+    // focus with { preventScroll: true } so this stays the single motion.
+    function onFocusIn(e) {
+      if (e.target === suppressFocusin) return; // interception path owns it
+      if (!kbUp()) return; // cold focuses wait for the settled pin
+      var field = matchField(e.target);
+      if (field) reveal(field);
+    }
+
+    scrollEl.addEventListener('touchstart', onTouchStart, { passive: true });
+    scrollEl.addEventListener('touchmove', onTouchMove, { passive: true });
+    scrollEl.addEventListener('touchend', onTouchEnd, { passive: false });
+    scrollEl.addEventListener('touchcancel', onTouchCancel, { passive: true });
+    scrollEl.addEventListener('focusin', onFocusIn);
+    vv.addEventListener('resize', onVvEvent, { passive: true });
+    vv.addEventListener('scroll', onVvEvent, { passive: true });
+
+    return {
+      detach: function () {
+        scrollEl.removeEventListener('touchstart', onTouchStart);
+        scrollEl.removeEventListener('touchmove', onTouchMove);
+        scrollEl.removeEventListener('touchend', onTouchEnd);
+        scrollEl.removeEventListener('touchcancel', onTouchCancel);
+        scrollEl.removeEventListener('focusin', onFocusIn);
+        vv.removeEventListener('resize', onVvEvent);
+        vv.removeEventListener('scroll', onVvEvent);
+        if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
+        clearPending();
+        touch = null;
+        scrollEl.classList.remove('un-kb-avoid');
+      },
+    };
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
    * Spring tuner (?un-tune=1) — device-tuning aid for the demo page.
    * Mutates unNative.presets live; springs read presets at start time.
    * ──────────────────────────────────────────────────────────────────── */
@@ -2089,6 +2413,7 @@
     alert: alertDialog,
     toast: toast,
     attachNavBar: attachNavBar,
+    attachKeyboardAvoidance: attachKeyboardAvoidance,
     gestures: gestures,
   };
 })(typeof window !== 'undefined' ? window : globalThis);
