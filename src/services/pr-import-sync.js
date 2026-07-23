@@ -19,32 +19,30 @@
 //   - re-run the proposal checks against the new head via the SHA-pinned
 //     staging build from Slice 1.
 //
-// Everything here is gated on isPrImportEnabled(): with the flag off the
-// entry point is a no-op and the sweeper pass that drives it is skipped.
 // Purely additive to the native proposal/vote/merge path.
 
 const log = require('./logger');
 const github = require('./github');
 const githubMock = require('./github-mock');
-const { isPrImportEnabled, isPrImportMockGithubEnabled } = require('../config');
+const { usesMockGithubForImports } = require('../config');
 
 function parseRepo(url) {
   const [, owner, repo] = (url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   return owner && repo ? { owner, repo } : null;
 }
 
-// #687 Slice 6: talk to the in-memory mock GitHub source only when its opt-in
-// flag is on (default off → the real client). Selection by manifest value
-// alone; never gated on USERNODE_ENV.
+// #687: talk to the in-memory mock GitHub source in staging previews (no
+// GitHub credentials there — see usesMockGithubForImports in config.js);
+// the real client everywhere else.
 function activeGithub() {
-  return isPrImportMockGithubEnabled() ? githubMock : github;
+  return usesMockGithubForImports() ? githubMock : github;
 }
 
 // Fetch the imported PR's current head SHA and, when it has moved since the
 // stored imported_pr_head_sha, reset the proposal against the new head.
 //
 // Returns one of:
-//   'skipped'   — flag off, not an imported row, GitHub not configured, or
+//   'skipped'   — not an imported row, GitHub not configured, or
 //                 the getPR fetch failed (transient — retried next sweep).
 //   'unchanged' — the head SHA matches the stored one (the common case);
 //                 exactly one getPR call and nothing else.
@@ -58,7 +56,6 @@ function activeGithub() {
 // can't wedge the sweep.
 async function syncImportedProposal({ config, pool, session }) {
   try {
-    if (!isPrImportEnabled()) return 'skipped';
     if (!session || session.source !== 'imported' || !session.pr_number) return 'skipped';
     const repo = parseRepo(session.repo_url);
     const gh = activeGithub();
@@ -208,10 +205,10 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
     }));
   visuals.notifyChecksPending(session.id, newHead);
 
-  // #687 Slice 6: in mock-GitHub mode there is no real repo to clone against
-  // the new head — record a gate-passing 'skipped' verdict instead of building
-  // staging, so the head-change flow stays clickable in a preview.
-  if (isPrImportMockGithubEnabled()) {
+  // #687: in mock-GitHub mode (staging previews) there is no real repo to
+  // clone against the new head — record a gate-passing 'skipped' verdict
+  // instead of building staging, so the head-change flow stays clickable.
+  if (usesMockGithubForImports()) {
     await visuals.storeChecksSkipped(pool, session.id, newHead,
       'mock GitHub preview — automated checks not run')
       .catch((err) => log.warn('pr-import-sync', 'mock storeChecksSkipped failed (non-fatal)', {

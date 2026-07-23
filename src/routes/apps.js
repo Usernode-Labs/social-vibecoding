@@ -17,7 +17,6 @@ const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-lim
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const approverInvites = require('../services/approver-invites');
-const { isPrImportEnabled } = require('../config');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -92,11 +91,6 @@ function accessFlags(app, user, isCollaborator) {
     is_collaborator: !!isCollaborator,
     can_collaborate: isAdmin || app.collab_visibility !== 'private' || !!isCollaborator,
     can_manage: canAdminWrite || (user?.id != null && app.created_by === user.id),
-    // #687 — whether the "Import Feature from a PR" entry-point should
-    // render for this viewer. A plain feature-availability boolean (not a
-    // secret): mirrors the same env flag the pr-import routes gate on, so
-    // the menu item never leads to a 404 dead-end.
-    pr_import_enabled: isPrImportEnabled(),
   };
 }
 

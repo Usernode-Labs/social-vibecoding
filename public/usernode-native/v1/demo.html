@@ -140,6 +140,13 @@
         <p class="text-xs text-zinc-500 mt-2">iOS: slide + parallax. Android: shared-axis fade. Old browsers: instant cut. Screen B shows the blurred nav bar with a collapsing large title.</p>
       </section>
 
+      <!-- Keyboard avoidance (fixed shell) -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Keyboard avoidance (fixed shell)</h2>
+        <button id="push-kb-btn" class="px-5 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Push a fixed-shell form screen →</button>
+        <p class="text-xs text-zinc-500 mt-2">The native-app shell: the page frame never scrolls — one <code>position:fixed; inset:0</code> pane holds the content, and <code>attachKeyboardAvoidance</code> owns the keyboard. On a phone: tap the bottom field — the content slides ONCE, no double motion; hop between fields — each is revealed immediately; dismiss the keyboard — the clearance eases away instead of snapping. Pull down to refresh on the same pane (composition with element-mode PTR).</p>
+      </section>
+
       <!-- Re-themed section: proves the CSS-variable theming contract -->
       <section id="rethemed" style="--un-accent:#059669; --un-accent-contrast:#ffffff; --un-action-danger:#b45309; --un-radius:0.25rem; --un-radius-full:0.5rem;">
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Re-themed (via --un-* overrides only)</h2>
@@ -173,6 +180,45 @@
       <div class="h-40 rounded-xl" style="background:var(--un-accent); opacity:0.04"></div>
       <div class="h-16"></div>
     </main>
+  </div>
+
+  <!-- Screen C (fixed-shell keyboard-avoidance demo). The documented
+       recipe made concrete: while presented, html/body get
+       overflow:hidden (set in JS, restored on pop) and this one
+       absolutely-inset scroller holds all the content — the keyboard can
+       never scroll/reflow the page frame, only content slides. -->
+  <div id="screen-c" class="hidden" style="position:fixed; inset:0; z-index:50">
+    <div id="scroll-c" class="bg-white dark:bg-zinc-950" style="position:absolute; inset:0; overflow-y:auto; -webkit-overflow-scrolling:touch; overscroll-behavior-y:contain">
+      <main class="max-w-md mx-auto px-4 space-y-4" style="padding-top: calc(56px + env(safe-area-inset-top, 0px)); padding-bottom: 32px">
+        <p class="text-xs text-zinc-500">Fixed shell: <code>html, body { overflow:hidden }</code> + this <code>inset:0</code> scroller. <code>attachKeyboardAvoidance(scroller, { topEl: navbar })</code> handles every field below.</p>
+        <label class="block text-xs font-medium text-zinc-500" for="kb-field-top">Top field</label>
+        <input id="kb-field-top" type="text" placeholder="Near the top — reveal respects the nav bar" class="w-full px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent">
+        <div class="un-group-header">Filler — scroll past me</div>
+        <div class="un-group shadow-sm">
+          <div class="un-group-row px-4 py-3 text-sm">Row one</div>
+          <div class="un-group-row px-4 py-3 text-sm">Row two</div>
+          <div class="un-group-row px-4 py-3 text-sm">Row three</div>
+        </div>
+        <div class="h-32 rounded-xl" style="background:var(--un-accent); opacity:0.12"></div>
+        <label class="block text-xs font-medium text-zinc-500" for="kb-field-mid">Middle field</label>
+        <input id="kb-field-mid" type="email" placeholder="Hop here from another field — instant reveal" class="w-full px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent">
+        <div class="h-32 rounded-xl" style="background:var(--un-accent); opacity:0.08"></div>
+        <div class="h-32 rounded-xl" style="background:var(--un-accent); opacity:0.05"></div>
+        <label class="block text-xs font-medium text-zinc-500" for="kb-field-notes">Notes</label>
+        <textarea id="kb-field-notes" rows="3" placeholder="A textarea works too" class="w-full px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent"></textarea>
+        <label class="block text-xs font-medium text-zinc-500" for="kb-field-bottom">Bottom field</label>
+        <input id="kb-field-bottom" type="text" placeholder="Tap me — ONE motion, straight above the keyboard" class="w-full px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent">
+        <label class="flex items-center justify-between gap-4 pb-4">
+          <span class="text-sm">A switch keeps its native tap</span>
+          <input type="checkbox" class="un-switch" checked>
+        </label>
+      </main>
+    </div>
+    <div id="navbar-c" class="un-navbar">
+      <button id="pop-kb-btn" class="un-navbar-back un-touch-target">Back</button>
+      <div class="un-navbar-title">Fixed-shell form</div>
+      <span class="w-12"></span>
+    </div>
   </div>
 
   <script>
@@ -431,6 +477,48 @@
       document.getElementById('pop-btn').addEventListener('click', function () {
         unNative.transition(function () {
           b.classList.add('hidden');
+          a.classList.remove('hidden');
+          window.scrollTo(0, 0);
+        }, { type: 'pop' });
+      });
+
+      // ── Keyboard avoidance (fixed shell) — Screen C ────────────────
+      // The recipe made concrete: while C is up, the page frame is a
+      // fixed shell (html/body overflow:hidden — also arms the attacher's
+      // visual-viewport offset guard) and the inset:0 scroller owns all
+      // scrolling. attachKeyboardAvoidance composes with attachNavBar
+      // (same bar passed as topEl) and element-mode attachPullToRefresh.
+      var c = document.getElementById('screen-c');
+      var scrollC = document.getElementById('scroll-c');
+      var navbarC = document.getElementById('navbar-c');
+      var kbAvoid = null;
+      var prevOverflow = null;
+      unNative.attachNavBar(navbarC, { scrollEl: scrollC });
+      unNative.attachPullToRefresh(scrollC, function () {
+        return new Promise(function (resolve) {
+          setTimeout(function () { unNative.toast('Form refreshed'); resolve(); }, 1000);
+        });
+      });
+      document.getElementById('push-kb-btn').addEventListener('click', function () {
+        unNative.transition(function () {
+          a.classList.add('hidden');
+          c.classList.remove('hidden');
+          window.scrollTo(0, 0);
+          prevOverflow = [document.documentElement.style.overflow, document.body.style.overflow];
+          document.documentElement.style.overflow = 'hidden';
+          document.body.style.overflow = 'hidden';
+          kbAvoid = unNative.attachKeyboardAvoidance(scrollC, { topEl: navbarC });
+        }, { type: 'push' });
+      });
+      document.getElementById('pop-kb-btn').addEventListener('click', function () {
+        unNative.transition(function () {
+          if (kbAvoid) { kbAvoid.detach(); kbAvoid = null; }
+          if (prevOverflow) {
+            document.documentElement.style.overflow = prevOverflow[0];
+            document.body.style.overflow = prevOverflow[1];
+            prevOverflow = null;
+          }
+          c.classList.add('hidden');
           a.classList.remove('hidden');
           window.scrollTo(0, 0);
         }, { type: 'pop' });

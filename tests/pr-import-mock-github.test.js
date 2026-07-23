@@ -1,5 +1,6 @@
-// Unit tests for #687 Slice 6 — the opt-in mock-GitHub adapter and the sync
-// poller driving off it. Covers:
+// Unit tests for #687 — the staging mock-GitHub adapter and the sync
+// poller driving off it (the mock is selected whenever
+// USERNODE_ENV === 'staging'; production always uses the real client). Covers:
 //   - github-mock: candidates (listOpenPulls), getPR/listChangedFiles shape,
 //     bumpHead advancing the head, mergePR success + exact-sha 409 refusal.
 //   - pr-import-sync in mock mode: an unchanged head no-ops; after a simulated
@@ -46,16 +47,15 @@ fakeModule('../src/services/staging-recovery', { recordStagingBootFailure: async
 const githubMock = require('../src/services/github-mock');
 const prImportSync = require('../src/services/pr-import-sync');
 
-function withFlags(fn) {
-  const prevE = process.env.PR_IMPORT_ENABLED;
-  const prevM = process.env.PR_IMPORT_MOCK_GITHUB;
-  process.env.PR_IMPORT_ENABLED = 'true';
-  process.env.PR_IMPORT_MOCK_GITHUB = 'true';
+// The mock client is selected whenever USERNODE_ENV === 'staging' (see
+// usesMockGithubForImports in config.js) — run the body in staging.
+function withStagingEnv(fn) {
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
   return (async () => {
     try { return await fn(); }
     finally {
-      if (prevE === undefined) delete process.env.PR_IMPORT_ENABLED; else process.env.PR_IMPORT_ENABLED = prevE;
-      if (prevM === undefined) delete process.env.PR_IMPORT_MOCK_GITHUB; else process.env.PR_IMPORT_MOCK_GITHUB = prevM;
+      if (prev === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prev;
     }
   })();
 }
@@ -138,7 +138,7 @@ function importedSession() {
 
 test('pr-import-sync (mock): unchanged head no-ops', async () => {
   githubMock._resetForTests();
-  await withFlags(async () => {
+  await withStagingEnv(async () => {
     const session = importedSession();
     session.imported_pr_head_sha = githubMock.currentHead(PR); // matches rev-0
     const pool = recordingPool();
@@ -150,7 +150,7 @@ test('pr-import-sync (mock): unchanged head no-ops', async () => {
 
 test('pr-import-sync (mock): a simulated push resets the tally + records skipped checks', async () => {
   githubMock._resetForTests();
-  await withFlags(async () => {
+  await withStagingEnv(async () => {
     const session = importedSession();
     session.imported_pr_head_sha = githubMock.currentHead(PR); // rev 0
 
@@ -190,12 +190,10 @@ test('pr-import-sync (mock): a simulated push resets the tally + records skipped
   });
 });
 
-test('pr-import-sync: mock is NOT used when the mock flag is off (real github, disabled → skipped)', async () => {
+test('pr-import-sync: mock is NOT used outside staging (real github, disabled → skipped)', async () => {
   githubMock._resetForTests();
-  const prevE = process.env.PR_IMPORT_ENABLED;
-  const prevM = process.env.PR_IMPORT_MOCK_GITHUB;
-  process.env.PR_IMPORT_ENABLED = 'true';
-  delete process.env.PR_IMPORT_MOCK_GITHUB; // mock OFF → real github client
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'production'; // real client selected
   try {
     const session = importedSession();
     session.imported_pr_head_sha = 'whatever';
@@ -206,7 +204,6 @@ test('pr-import-sync: mock is NOT used when the mock flag is off (real github, d
     assert.equal(res, 'skipped');
     assert.equal(pool.calls.length, 0);
   } finally {
-    if (prevE === undefined) delete process.env.PR_IMPORT_ENABLED; else process.env.PR_IMPORT_ENABLED = prevE;
-    if (prevM === undefined) delete process.env.PR_IMPORT_MOCK_GITHUB; else process.env.PR_IMPORT_MOCK_GITHUB = prevM;
+    if (prev === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prev;
   }
 });

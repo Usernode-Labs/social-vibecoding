@@ -1013,6 +1013,35 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   the kit owns the inset now. Apps may consume `var(--un-kb-inset,
   0px)` for their own fixed bottom bars. No-op on desktop or where
   `visualViewport` is absent.
+- **Keyboard avoidance for fixed-shell content scrollers.**
+  `unNative.attachKeyboardAvoidance(scrollEl, { topEl?, margin? = 8,
+  fields? })` — the same keyboard physics for the APP's main content
+  scroller. Built for the native-app **fixed-shell recipe**: `html,
+  body { height: 100%; overflow: hidden }` plus one
+  `position: fixed; inset: 0; overflow-y: auto` scroller, so the
+  keyboard can never scroll or reflow the page frame — only content
+  slides. The kit then owns everything subtle: keyboard clearance as
+  content padding on the scroller (instant on open, eased on close —
+  note it *replaces* the scroller's own bottom padding while the
+  keyboard is up, the safe-area sits behind the keyboard anyway),
+  single-motion focus reveals (taps on text-entry fields are
+  intercepted so the browser's uncoordinatable native reveal never
+  fires; the content slides ONCE, above the keyboard and below
+  `topEl` — pass the same bar you give `attachNavBar`), instant
+  reveals on field-to-field hops, a coalesced settled pin after the
+  keyboard's viewport-event burst, and an iOS visual-viewport offset
+  guard. Buttons, switches, selects, native pickers and the
+  already-focused field keep fully native taps; fields inside kit
+  sheets/modals/alerts keep the kit's built-in avoidance. `fields`
+  optionally replaces the default text-entry allowlist with a CSS
+  selector. Programmatic focuses in the app should use
+  `el.focus({ preventScroll: true })` so the kit's reveal stays the
+  single motion. Composes with `attachNavBar(scrollEl)` and
+  element-mode `attachPullToRefresh`. **Fixed-shell apps must use
+  this instead of hand-rolled visualViewport plumbing** — delete any
+  app-side keyboard plumbing when adopting it. No-op on desktop or
+  where `visualViewport` is absent; returns `{ detach() }`; never
+  throws on bad input.
 - **Toast / transient status.** `unNative.toast(message, { duration?,
   action?: { label, handler }, priority?, onClose? })` — fire-and-forget
   feedback ("Copied", "Saved", API errors): a bottom capsule HUD on
@@ -1117,6 +1146,9 @@ apps.
 5. Wire `attachSwipeActions` on list rows with row-level actions
    (delete / archive / mark read), `attachPullToRefresh` on
    refreshable lists, and `attachReorder` on user-orderable lists.
+   If the app uses (or adopts) the fixed-shell layout with in-page
+   text fields, wire `attachKeyboardAvoidance` on the content
+   scroller and delete any hand-rolled visualViewport plumbing.
 6. Route real screen navigations through `unNative.transition`
    (`'push'`/`'pop'`); leave tabs/menus/panels instant.
 7. Optionally override `--un-*` variables to match the app's branding.
