@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const models = require('../services/models');
 
 const PUBLIC_PATHS = [
   '/login.html',
@@ -78,7 +79,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.mayor_model
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
@@ -140,6 +141,10 @@ function authMiddleware(config) {
             // Experimental per-user opt-in (default FALSE) — read by
             // runClaudeCodeTool to gate the Haiku progress estimator.
             aiProgressEstimate: !!rows[0].ai_progress_estimate,
+            // Per-user Mayor-model preference (users.mayor_model, default
+            // NULL) resolved against the allowlist here so every route can
+            // just read req.user.mayorModel instead of re-resolving it.
+            mayorModel: models.resolveMayorModel(rows[0].mayor_model),
           };
           log.debug('auth', 'Session validated', { userId: req.user.id });
           return next();
@@ -202,7 +207,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, mayor_model FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -255,6 +260,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     canAdminWrite: !!userRow.is_admin && !userRow.admin_readonly,
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
+    mayorModel: models.resolveMayorModel(userRow.mayor_model),
   };
 }
 

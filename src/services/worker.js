@@ -17,34 +17,6 @@ const WORKER_MEMORY = process.env.WORKER_MEMORY || '2g';
 const WORKER_CPUS = process.env.WORKER_CPUS || '2';
 const WARM_READY_TIMEOUT_MS = 5 * 60 * 1000;
 
-// Token-optimization step 6: per-dispatch Claude Code run ceilings,
-// threaded into run-cc.sh via `docker exec -e`. Builds get generous
-// room; scouts (read-only spec drafts) are capped tighter. A limit hit
-// still commits/pushes partial work and reports limit_hit= on the result
-// line. 0 disables a given ceiling. Mirrors src/config.js so the values
-// live in one conceptual place; read from process.env here to match the
-// WORKER_MEMORY/WORKER_CPUS pattern (worker.js takes no config object).
-const CC_RUN_LIMITS = {
-  build: {
-    maxTurns: parseInt(process.env.CC_BUILD_MAX_TURNS || '100', 10),
-    timeoutS: parseInt(process.env.CC_BUILD_TIMEOUT_S || '1800', 10),
-    costCents: parseInt(process.env.CC_BUILD_COST_CENTS || '1200', 10),
-  },
-  scout: {
-    maxTurns: parseInt(process.env.CC_SCOUT_MAX_TURNS || '50', 10),
-    timeoutS: parseInt(process.env.CC_SCOUT_TIMEOUT_S || '900', 10),
-    costCents: parseInt(process.env.CC_SCOUT_COST_CENTS || '500', 10),
-  },
-};
-
-// Resolve the run ceilings for a dispatch mode. sync (bookkeeping merge)
-// gets no limits — it's a bounded, deterministic operation, and a
-// half-finished conflict resolution is worse than a slow one. Returns
-// zeros for unknown modes so callers degrade to "no limit".
-function ccRunLimitsForMode(mode) {
-  return CC_RUN_LIMITS[mode] || { maxTurns: 0, timeoutS: 0, costCents: 0 };
-}
-
 // URL the worker container uses to reach the platform's internal API
 // (push proxy, PR creation, etc.). Both containers run on the same
 // docker network (compose service name `usernode`). Override via env
@@ -277,11 +249,6 @@ function parseLine(line, onProgress, state) {
       // string → no conflicts. Threaded out as result.conflictFiles so
       // sync-main.js can persist the merge-conflict snapshot.
       else if (k === 'conflict_files') state.conflictFiles = v ? v.split(',').filter(Boolean) : [];
-      // Token-optimization step 6: per-dispatch run limit was hit
-      // ('timeout' | 'max_turns'). run-cc.sh still commits/pushes the
-      // partial work and reports cc_exit=0, so this is the only signal
-      // that the run stopped early rather than finishing naturally.
-      else if (k === 'limit_hit') state.limitHit = v || null;
     }
     state.resultSeen = true;
     return;
@@ -341,10 +308,6 @@ function newWatchState() {
     // #361: conflicted file paths from a MODE=sync turn's
     // __USERNODE_RESULT__ line. Defaults empty.
     conflictFiles: [],
-    // Token-optimization step 6: 'timeout' | 'max_turns' when the
-    // per-dispatch run limit truncated the run (partial work still
-    // committed/pushed). Null on a natural finish.
-    limitHit: null,
     phase: null,
     fatalError: null,
     resultSeen: false,
@@ -929,12 +892,6 @@ async function execInWorker(sessionId, {
     ...(useProxy
       ? { ANTHROPIC_BASE_URL: `${PLATFORM_INTERNAL_URL}/api/internal/anthropic` }
       : {}),
-    // Token-optimization step 6: per-dispatch run ceilings. run-cc.sh
-    // composes `--max-turns` and a `timeout` wrapper from these; a hit
-    // still commits/pushes partial work and reports limit_hit=. sync gets
-    // zeros (no ceiling). MODE=sync ignores them entirely.
-    MAX_TURNS: String(ccRunLimitsForMode(mode).maxTurns),
-    RUN_TIMEOUT_S: String(ccRunLimitsForMode(mode).timeoutS),
     // Optional in-loop browser: build-only INLOOP_* env (port,
     // USERNODE_ENV=staging, throwaway DB pointer) the agent uses to boot
     // the edited app locally for a headless visual check. Empty for
@@ -1006,17 +963,6 @@ async function execInWorker(sessionId, {
     const state = newWatchState();
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     await _consumeJournal(containerName, journal, progress, state, { sessionId });
-
-    // Token-optimization step 6: soft cost ceiling. The CLI can't abort
-    // mid-run on cost, and max-turns/timeout are the hard stops; this is
-    // a post-hoc flag so a run that blew past its budget is visible on
-    // the result (and to the settlement/log) rather than silent. Only set
-    // when the run didn't already stop on a hard limit.
-    const costCeilingCents = ccRunLimitsForMode(mode).costCents;
-    if (costCeilingCents > 0 && (state.costUsd * 100) > costCeilingCents && !state.limitHit) {
-      state.limitHit = 'cost';
-      progress(`⚠ run cost $${state.costUsd.toFixed(2)} exceeded the $${(costCeilingCents / 100).toFixed(2)} ${mode} ceiling`);
-    }
 
     // Successful, complete turns don't need their journal anymore; failed
     // or markerless ones keep it on disk for debugging (the next turn's
@@ -1736,8 +1682,6 @@ module.exports = {
   // exposed for unit tests (watchdog strike policy + line parsing)
   newWatchState,
   parseLine,
-  // token-optimization step 6: per-dispatch run ceilings (exported for tests)
-  ccRunLimitsForMode,
   newWatchdogCounters,
   recordWatchdogProbe,
   // exposed for the routes' container-name lookups

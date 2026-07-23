@@ -19,20 +19,22 @@ const MODELS = {
 
 const DEFAULT_MODEL = 'claude-opus-4-8';
 
-// Token-optimization (#): the Mayor is a fixed-role router/PM — it never
-// writes code, so it does NOT need the user-selected (often top-tier)
-// model. Pinning it to Sonnet keeps routing cheap while the user's chosen
-// model still reaches the coding agent (scout/build) where reasoning depth
-// actually matters. Env-overridable for emergencies; always validated
-// through resolve() so a bad override degrades to DEFAULT_MODEL.
-const MAYOR_MODEL = resolveMayorModel();
+// The Mayor is a fixed-role router/PM — it never writes code, so it
+// doesn't need the user-selected (often top-tier) model the coding agent
+// gets. Historically this was a single env-overridable constant; it's now
+// a per-user preference (users.mayor_model, mirroring ai_progress_estimate)
+// so each user can pick their own routing model instead of the platform
+// pinning everyone to the same one. `pref` is whatever's stored on the
+// user row (often null); anything not in the allowlist — including an
+// unset preference — falls back to the same claude-sonnet-5 default this
+// used to be hardcoded to.
+const MAYOR_MODEL_DEFAULT = 'claude-sonnet-5';
 
-function resolveMayorModel() {
-  const override = process.env.MAYOR_MODEL;
-  if (typeof override === 'string' && Object.prototype.hasOwnProperty.call(MODELS, override)) {
-    return override;
+function resolveMayorModel(pref) {
+  if (typeof pref === 'string' && Object.prototype.hasOwnProperty.call(MODELS, pref)) {
+    return pref;
   }
-  return 'claude-sonnet-5';
+  return MAYOR_MODEL_DEFAULT;
 }
 
 function isAllowed(m) {
@@ -47,4 +49,4 @@ function list() {
   return Object.entries(MODELS).map(([id, meta]) => ({ id, ...meta }));
 }
 
-module.exports = { MODELS, DEFAULT_MODEL, MAYOR_MODEL, isAllowed, resolve, list };
+module.exports = { MODELS, DEFAULT_MODEL, MAYOR_MODEL_DEFAULT, resolveMayorModel, isAllowed, resolve, list };

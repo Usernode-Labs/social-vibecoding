@@ -104,7 +104,7 @@
     {
       "name": "Import Feature from a PR entry present in the Dev + menu (#687)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
-      "expectText": "Import Feature from a PR"
+      "expectSelector": "#dev-plus-menu [data-plus='import-pr']"
     },
     {
       "name": "Native-feel UI kit demo renders",

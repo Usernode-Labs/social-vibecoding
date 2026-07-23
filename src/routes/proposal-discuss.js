@@ -258,6 +258,8 @@ function proposalDiscussRoutes(config) {
           // read-only guarantee.
           onToken: (text) => send('token', { text }),
           apiKey: userApiKey,
+          role: 'proposal-advisor',
+          sessionId: id,
         });
       } catch (err) {
         log.error('proposal-discuss', 'streamChat failed', { message: err.message });

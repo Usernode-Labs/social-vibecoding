@@ -1155,6 +1155,20 @@
           While the coding agent works, a small AI model skims its progress log about once a minute and shows a rough guess of how far along it is. It's clearly labeled a guess and can be wrong. Adds a tiny per-run cost (billed to your own API key if you've saved one above).
         </p>
         <div id="ai-progress-estimate-status" class="text-xs mt-2 hidden"></div>
+
+        <!-- Per-user Mayor-model preference. Populated from GET /api/models
+             (same allowlist the build/scout model dropdowns use); posts to
+             POST /api/me/mayor-model on change. See settings.js. -->
+        <div class="mt-4">
+          <label for="mayor-model-select" class="block text-sm text-zinc-800 dark:text-zinc-200 mb-1">Mayor chat model</label>
+          <select id="mayor-model-select"
+            class="w-full rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1.5 text-sm text-zinc-800 dark:text-zinc-200">
+          </select>
+          <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+            The model the Mayor (routing/PM chat) uses when talking with you. This is separate from the model you pick for the coding agent when you dispatch a build or scout.
+          </p>
+          <div id="mayor-model-status" class="text-xs mt-2 hidden"></div>
+        </div>
       </div>
 
       <div class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">

@@ -62,12 +62,6 @@ die() {
 : "${PAT:=}"
 : "${CLAUDE_RESUME_SESSION_ID:=}"
 : "${BROWSER_MCP_CONFIG:=/home/node/.usernode-mcp.json}"
-# Token-optimization step 6: per-dispatch run ceilings, passed by the host
-# (worker.execInWorker) from config.js. 0 = unset (no limit) so an older
-# platform that doesn't pass these degrades to pre-limit behavior. Builds
-# get generous values; scouts are capped tighter. MODE=sync ignores both.
-: "${MAX_TURNS:=0}"
-: "${RUN_TIMEOUT_S:=0}"
 
 cd /home/node/workspace || die "no /home/node/workspace"
 
@@ -277,62 +271,28 @@ if [ "$MODE" = "build" ] && command -v pg_ctl >/dev/null 2>&1 \
   fi
 fi
 
-# Token-optimization step 6: compose the per-dispatch run ceilings.
-#   --max-turns caps the agent's tool/response loop.
-#   `timeout -s TERM Ns` wraps the invocation so a wall-clock runaway is
-#   killed; `timeout` exits 124 on expiry, which we map to a partial
-#   completion (commit/push the work in progress) below rather than a
-#   hard failure. Both are opt-in on a positive value, so MAX_TURNS=0 /
-#   RUN_TIMEOUT_S=0 reproduce the exact pre-limit command line.
-MAX_TURNS_FLAG=""
-case "$MAX_TURNS" in
-  ''|*[!0-9]*) ;;                                # non-numeric → unset
-  *) [ "$MAX_TURNS" -gt 0 ] && MAX_TURNS_FLAG="--max-turns $MAX_TURNS" ;;
-esac
-TIMEOUT_PREFIX=""
-case "$RUN_TIMEOUT_S" in
-  ''|*[!0-9]*) ;;
-  *) [ "$RUN_TIMEOUT_S" -gt 0 ] && TIMEOUT_PREFIX="timeout -s TERM ${RUN_TIMEOUT_S}s" ;;
-esac
-
 # stream-json emits one JSON object per line. The host parses this via
 # the docker-exec child's stdout (long-lived path) or `docker logs -f`
-# (legacy single-shot path) — same pipeline, different transport.
+# (legacy single-shot path) — same pipeline, different transport. No
+# --max-turns / timeout ceiling: a legitimate build runs to completion,
+# bounded only by the platform-side daily spend budget.
 if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
-  $TIMEOUT_PREFIX claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
+  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
-    --model "$MODEL" $MAX_TURNS_FLAG --output-format stream-json -p "$PROMPT"
+    --model "$MODEL" --output-format stream-json -p "$PROMPT"
   CC_EXIT=$?
-  # 124 = `timeout` fired. That's a partial completion, NOT a resume
-  # failure — retrying fresh would discard the resumed context and burn
-  # another full budget, so only retry on a genuine non-timeout error.
-  if [ "$CC_EXIT" -ne 0 ] && [ "$CC_EXIT" -ne 124 ]; then
+  if [ "$CC_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ resume failed (exit $CC_EXIT); retrying fresh"
-    $TIMEOUT_PREFIX claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
-      --model "$MODEL" $MAX_TURNS_FLAG --output-format stream-json -p "$PROMPT"
+    claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
+      --model "$MODEL" --output-format stream-json -p "$PROMPT"
     CC_EXIT=$?
   fi
 else
   echo "__USERNODE_PHASE__ claude (mode $MODE)"
-  $TIMEOUT_PREFIX claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
-    --model "$MODEL" $MAX_TURNS_FLAG --output-format stream-json -p "$PROMPT"
+  claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
+    --model "$MODEL" --output-format stream-json -p "$PROMPT"
   CC_EXIT=$?
-fi
-
-# Map a timeout expiry to a partial-completion signal. We still fall
-# through to the commit/push block so work in progress is saved; the
-# limit_hit=timeout key on __USERNODE_RESULT__ tells the platform the run
-# was truncated (vs a natural finish), and CC_EXIT is normalized to 0 so
-# downstream treats the pushed partial work as a (partial) success rather
-# than a failed turn. max-turns stops are a natural CLI exit (0), so they
-# don't surface a limit_hit — the turn simply ends; the platform's own
-# turn accounting still sees the shorter run.
-LIMIT_HIT=""
-if [ "$CC_EXIT" -eq 124 ]; then
-  LIMIT_HIT="timeout"
-  echo "__USERNODE_WARN__ run hit the ${RUN_TIMEOUT_S}s ${MODE} timeout; committing partial work"
-  CC_EXIT=0
 fi
 
 if [ "$MODE" = "scout" ]; then
@@ -343,7 +303,7 @@ if [ "$MODE" = "scout" ]; then
   # Terminal phase marker so the progress card ends on "Finished"
   # instead of freezing on the last action line.
   echo "__USERNODE_PHASE__ done"
-  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=scout limit_hit=$LIMIT_HIT"
+  echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=0 behind=0 sha= push_ok=0 mode=scout"
   exit "$CC_EXIT"
 fi
 
@@ -386,5 +346,5 @@ if [ "$PUSH_OK" = "1" ]; then
 else
   echo "__USERNODE_PHASE__ push_failed"
 fi
-echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build limit_hit=$LIMIT_HIT"
+echo "__USERNODE_RESULT__ cc_exit=$CC_EXIT ahead=$AHEAD behind=$BEHIND sha=$SHA push_ok=$PUSH_OK mode=build"
 exit "$CC_EXIT"

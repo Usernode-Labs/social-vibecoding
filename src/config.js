@@ -77,20 +77,6 @@ function load() {
     // shrink them in prod to fit more concurrent warm workers on one box.
     workerMemory: process.env.WORKER_MEMORY || '2g',
     workerCpus: process.env.WORKER_CPUS || '2',
-    // Token-optimization step 6: per-dispatch Claude Code run ceilings.
-    // Threaded into run-cc.sh via `docker exec -e` (worker.execInWorker)
-    // as MAX_TURNS / RUN_TIMEOUT_S / COST_CEILING_CENTS. Builds get
-    // generous room; scouts (read-only spec drafts) are capped tighter
-    // so a runaway read-only sweep can't burn a whole budget. A limit hit
-    // still commits/pushes partial work and reports limit_hit= on the
-    // result line. 0 disables a given ceiling. Cost ceiling is enforced
-    // platform-side (worker.js) off the run's reported cost.
-    ccBuildMaxTurns: parseInt(process.env.CC_BUILD_MAX_TURNS || '100', 10),
-    ccScoutMaxTurns: parseInt(process.env.CC_SCOUT_MAX_TURNS || '50', 10),
-    ccBuildTimeoutS: parseInt(process.env.CC_BUILD_TIMEOUT_S || '1800', 10),
-    ccScoutTimeoutS: parseInt(process.env.CC_SCOUT_TIMEOUT_S || '900', 10),
-    ccBuildCostCents: parseInt(process.env.CC_BUILD_COST_CENTS || '1200', 10),
-    ccScoutCostCents: parseInt(process.env.CC_SCOUT_COST_CENTS || '500', 10),
     // Postgres connection pool size (pg `Pool.max`). pg's built-in default
     // is 10, which can bottleneck under many concurrent SSE turns + staging
     // DB work. Tunable via env so prod can widen it without a code change.

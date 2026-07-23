@@ -11,19 +11,29 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
+const path = require('path');
 
 const models = require('../src/services/models');
 const prompts = require('../src/services/prompts');
 const attachments = require('../src/services/attachments');
 const sessions = require('../src/routes/sessions');
+const llm = require('../src/services/llm');
+const logger = require('../src/services/logger');
 
 // ── Step 1: compact Mayor policy + fixed router model ─────────────────
 
-test('Mayor router model is pinned to an allowlisted model (claude-sonnet-5 default)', () => {
-  assert.equal(typeof models.MAYOR_MODEL, 'string');
-  assert.ok(models.isAllowed(models.MAYOR_MODEL), 'MAYOR_MODEL must be in the allowlist');
-  // Absent a MAYOR_MODEL override in this env, it's the documented default.
-  if (!process.env.MAYOR_MODEL) assert.equal(models.MAYOR_MODEL, 'claude-sonnet-5');
+test('resolveMayorModel resolves a per-user preference, falling back to the sonnet default', () => {
+  // No preference (null/undefined, the common case) → documented default.
+  assert.equal(models.resolveMayorModel(null), 'claude-sonnet-5');
+  assert.equal(models.resolveMayorModel(undefined), 'claude-sonnet-5');
+  assert.equal(models.resolveMayorModel(), 'claude-sonnet-5');
+  // An allowlisted preference is honored verbatim.
+  assert.equal(models.resolveMayorModel('claude-opus-4-8'), 'claude-opus-4-8');
+  assert.ok(models.isAllowed(models.resolveMayorModel('claude-opus-4-8')));
+  // A bogus/unallowlisted preference degrades to the default rather than
+  // reaching the Anthropic API with an invalid model id.
+  assert.equal(models.resolveMayorModel('not-a-real-model'), 'claude-sonnet-5');
 });
 
 test('getMayorPolicy stays under the 12,000-char cap and interpolates the app name', () => {
@@ -74,12 +84,42 @@ test('buildMayorSystemBlocks wraps the stable half in a cache_control breakpoint
 });
 
 test('the live spec is clipped to MAYOR_SPEC_MAX_CHARS in the Mayor prompt', () => {
-  assert.equal(sessions.MAYOR_SPEC_MAX_CHARS, 24000);
+  assert.equal(sessions.MAYOR_SPEC_MAX_CHARS, 100000);
   const huge = 'S'.repeat(sessions.MAYOR_SPEC_MAX_CHARS + 5000);
   const { dynamic } = sessions.buildMayorSystemParts('App', false, huge, false, null);
-  assert.ok(dynamic.includes('[spec truncated'), 'oversized spec carries a truncation marker');
+  assert.ok(dynamic.includes('…[spec middle omitted'), 'oversized spec carries a truncation marker');
   // The inlined spec body itself is bounded (marker + framing add a little).
   assert.ok(dynamic.length < huge.length, 'the prompt is smaller than the raw spec');
+});
+
+test('a real-sized spec passes through the Mayor prompt with zero truncation', () => {
+  // A meaty but realistic spec (~27k chars) must NOT be truncated at all.
+  const realistic = 'Some spec content. '.repeat(1400); // ~28,000 chars
+  assert.ok(realistic.length > 20000 && realistic.length < sessions.MAYOR_SPEC_MAX_CHARS);
+  const { dynamic } = sessions.buildMayorSystemParts('App', false, realistic, false, null);
+  assert.ok(dynamic.includes(realistic), 'spec body appears byte-for-byte, untruncated');
+  assert.ok(!dynamic.includes('omitted'), 'no truncation marker for an under-cap spec');
+
+  // Even right up at the 100K cap, still untouched.
+  const atCap = 'X'.repeat(sessions.MAYOR_SPEC_MAX_CHARS);
+  const clipped = sessions.clipForPrompt(atCap, sessions.MAYOR_SPEC_MAX_CHARS);
+  assert.equal(clipped, atCap, 'a spec exactly at the cap is not truncated');
+
+  // One char over triggers truncation.
+  const overCap = 'X'.repeat(sessions.MAYOR_SPEC_MAX_CHARS + 1);
+  const overClipped = sessions.clipForPrompt(overCap, sessions.MAYOR_SPEC_MAX_CHARS);
+  assert.ok(overClipped.includes('…[spec middle omitted'), 'over-cap spec is truncated');
+  assert.ok(overClipped.length < overCap.length);
+});
+
+test('BUILD_SPEC_MAX_CHARS is 150000 and clipForPrompt keeps head+tail, cutting only the middle', () => {
+  assert.equal(sessions.BUILD_SPEC_MAX_CHARS, 150000);
+  const big = 'HEAD_MARKER'.padEnd(200000, 'x') + 'TAIL_MARKER';
+  const clipped = sessions.clipForPrompt(big, sessions.BUILD_SPEC_MAX_CHARS);
+  assert.ok(clipped.startsWith('HEAD_MARKER'), 'head survives');
+  assert.ok(clipped.endsWith('TAIL_MARKER'), 'tail survives');
+  assert.ok(clipped.includes('…[spec middle omitted'), 'middle-omission marker present');
+  assert.ok(clipped.length < big.length);
 });
 
 // ── Step 2: deterministic completion text + quick replies ─────────────
@@ -179,8 +219,8 @@ test('clipToolResult bounds a single result and shares a per-turn budget', () =>
   assert.match(three, /per-turn data budget exhausted/);
 });
 
-test('MAYOR_DATA_TOOLS_MAX_ITERS is capped at 2', () => {
-  assert.equal(sessions.MAYOR_DATA_TOOLS_MAX_ITERS, 2);
+test('MAYOR_DATA_TOOLS_MAX_ITERS is capped at 3 (list → fetch → fetch-url chain)', () => {
+  assert.equal(sessions.MAYOR_DATA_TOOLS_MAX_ITERS, 3);
 });
 
 test('planTextInclusion inlines only the newest turns within window + char budget', () => {
@@ -210,4 +250,180 @@ test('buildUserMessageContent inlines text only when includeText; else a placeho
   const replacedText = replaced.find((b) => b.type === 'text').text;
   assert.ok(!replacedText.includes('hello world'), 'stale text file NOT re-inlined');
   assert.ok(replacedText.includes('inlined in an earlier turn'), 'placeholder instead');
+});
+
+// ── Run ceilings removed: no --max-turns, no timeout wrapper ──────────
+
+test('run-cc.sh invokes claude directly with no --max-turns and no timeout wrapper', () => {
+  const src = fs.readFileSync(path.join(__dirname, '../worker/run-cc.sh'), 'utf8');
+  // Strip comment lines so explanatory prose (e.g. "no --max-turns ceiling")
+  // doesn't false-positive; only actual invocation code is checked.
+  const code = src
+    .split('\n')
+    .filter((line) => !/^\s*#/.test(line))
+    .join('\n');
+  assert.ok(!code.includes('--max-turns'), 'no --max-turns flag');
+  assert.ok(!/\btimeout\s+["$0-9]/.test(code), 'no timeout wrapper around the claude invocation');
+  assert.ok(!code.includes('limit_hit'), 'no limit_hit result field');
+  assert.ok(src.includes('claude --print'), 'plain claude --print invocation still present');
+});
+
+// ── Wrap-up recap reads the coding agent's real report ─────────────────
+
+function makeStubClient(response) {
+  return {
+    messages: {
+      create: async (params) => {
+        makeStubClient.lastParams = params;
+        return response;
+      },
+    },
+  };
+}
+
+async function withStubClient(response, fn) {
+  const stub = makeStubClient(response);
+  const prev = llm._setClientForTests(stub);
+  try {
+    return await fn(stub);
+  } finally {
+    llm._setClientForTests(prev);
+  }
+}
+
+function textResponse(text) {
+  return { content: [{ type: 'text', text }], usage: { input_tokens: 30, output_tokens: 20 } };
+}
+
+test('summarizeRunResult forwards the caveat the coding agent itself reported', async () => {
+  const caveat = 'Built the export button, but the CSV download link needs a manual follow-up — S3 credentials were not available in this environment.';
+  await withStubClient(textResponse(`I added the export button. ${caveat}`), async (stub) => {
+    const recap = await llm.summarizeRunResult({
+      toolKind: 'build',
+      ccSummary: caveat,
+      error: null,
+      prContext: { prNumber: 42, prTitle: 'Add CSV export' },
+      stagingUrl: 'https://staging.example.test',
+      testingBlock: null,
+      model: 'claude-sonnet-5',
+    });
+    assert.ok(recap.text.includes('manual follow-up'), 'the caveat text survives into the recap');
+    assert.equal(recap.model, 'claude-sonnet-5');
+  });
+});
+
+test('summarizeRunResult sends only the bounded facts + report — never a full conversation', async () => {
+  await withStubClient(textResponse('I updated the settings page.'), async (stub) => {
+    await llm.summarizeRunResult({
+      toolKind: 'build',
+      ccSummary: 'Updated the settings page to add a dark-mode toggle.',
+      error: null,
+      prContext: { prNumber: 7, prTitle: 'Dark mode toggle' },
+      stagingUrl: null,
+      testingBlock: null,
+      model: 'claude-haiku-4-5',
+    });
+  });
+  const params = makeStubClient.lastParams;
+  assert.equal(params.messages.length, 1, 'a single user message — no replayed conversation history');
+  assert.ok(params.messages[0].content.includes('dark-mode toggle'));
+  assert.ok(params.max_tokens <= 400, 'bounded output size');
+});
+
+test('summarizeRunResult falls back to haiku when no Mayor model is passed', async () => {
+  await withStubClient(textResponse('Done.'), async () => {
+    const recap = await llm.summarizeRunResult({
+      toolKind: 'build', ccSummary: 'Finished the change.', error: null,
+      prContext: null, stagingUrl: null, testingBlock: null, model: null,
+    });
+    assert.equal(recap.model, 'claude-haiku-4-5');
+  });
+});
+
+test('summarizeRunResult throws when there is nothing to summarize', async () => {
+  await withStubClient(textResponse('unused'), async () => {
+    await assert.rejects(() => llm.summarizeRunResult({
+      toolKind: 'build', ccSummary: '', error: '', prContext: null, stagingUrl: null, testingBlock: null, model: 'claude-sonnet-5',
+    }));
+  });
+});
+
+// ── llm-usage structured logging ────────────────────────────────────────
+
+function fakeStream(finalMessage) {
+  return { on() {}, finalMessage: async () => finalMessage };
+}
+
+function makeStreamStubClient(finalMessage) {
+  return {
+    messages: { stream: () => fakeStream(finalMessage) },
+    beta: { messages: { stream: () => fakeStream(finalMessage) } },
+  };
+}
+
+test('streamChat logs a bounded llm-usage line with cache/token/latency fields', async () => {
+  const finalMessage = {
+    model: 'claude-sonnet-5',
+    stop_reason: 'end_turn',
+    stop_details: null,
+    content: [{ type: 'text', text: 'hi' }],
+    usage: {
+      input_tokens: 120, output_tokens: 40,
+      cache_read_input_tokens: 900, cache_creation_input_tokens: 0,
+    },
+  };
+  const stub = makeStreamStubClient(finalMessage);
+  const prevClient = llm._setClientForTests(stub);
+  const logCalls = [];
+  const prevInfo = logger.info;
+  logger.info = (...args) => logCalls.push(args);
+  try {
+    await llm.streamChat({
+      messages: [{ role: 'user', content: 'hello' }],
+      systemPrompt: 'sys',
+      model: 'claude-sonnet-5',
+      role: 'mayor-phase1',
+      sessionId: 42,
+    });
+  } finally {
+    logger.info = prevInfo;
+    llm._setClientForTests(prevClient);
+  }
+  const usageCall = logCalls.find((args) => args[0] === 'llm-usage');
+  assert.ok(usageCall, 'an llm-usage line was logged');
+  const data = usageCall[2];
+  assert.equal(data.role, 'mayor-phase1');
+  assert.equal(data.model, 'claude-sonnet-5');
+  assert.equal(data.session_id, 42);
+  assert.equal(data.input_tokens, 120);
+  assert.equal(data.output_tokens, 40);
+  assert.equal(data.cache_read_input_tokens, 900);
+  assert.equal(data.cache_creation_input_tokens, 0);
+  assert.equal(typeof data.latency_ms, 'number');
+});
+
+test('streamChat still logs llm-usage (with nulls) when no role/sessionId is passed', async () => {
+  const finalMessage = {
+    model: 'claude-haiku-4-5',
+    stop_reason: 'end_turn',
+    stop_details: null,
+    content: [{ type: 'text', text: 'hi' }],
+    usage: { input_tokens: 10, output_tokens: 5 },
+  };
+  const stub = makeStreamStubClient(finalMessage);
+  const prevClient = llm._setClientForTests(stub);
+  const logCalls = [];
+  const prevInfo = logger.info;
+  logger.info = (...args) => logCalls.push(args);
+  try {
+    await llm.streamChat({ messages: [{ role: 'user', content: 'hi' }], systemPrompt: 'sys', model: 'claude-haiku-4-5' });
+  } finally {
+    logger.info = prevInfo;
+    llm._setClientForTests(prevClient);
+  }
+  const usageCall = logCalls.find((args) => args[0] === 'llm-usage');
+  assert.ok(usageCall);
+  assert.equal(usageCall[2].role, null);
+  assert.equal(usageCall[2].session_id, null);
+  assert.equal(usageCall[2].cache_read_input_tokens, 0, 'missing cache fields default to 0, not undefined');
 });

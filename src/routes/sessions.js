@@ -767,7 +767,7 @@ function sessionRoutes(config) {
       // mid-run is swept to 'failed' at boot — see migrate.js).
       runHeadlessSession({
         pool, config, session,
-        user: { id: req.user.id, username: req.user.username },
+        user: { id: req.user.id, username: req.user.username, mayorModel: req.user.mayorModel },
         selectedModel, repoOwner, repoName, userApiKey,
         issueNumber, issue, comments, botUsername,
       }).catch((err) => {
@@ -1812,10 +1812,12 @@ function sessionRoutes(config) {
       // GET /api/models, so there's no drift between what the UI
       // offers and what the server accepts.
       const selectedModel = models.resolve(model);
-      // Token-optimization (#): the Mayor (router/PM) runs on a fixed cheap
-      // model regardless of the user's selection — only the coding agent
-      // (scout/build, dispatched with `selectedModel`) needs the top tier.
-      const mayorModel = models.MAYOR_MODEL;
+      // Per-user Mayor-model preference (Settings → Experimental),
+      // resolved by the auth middleware onto req.user.mayorModel — the
+      // coding agent (scout/build, dispatched with `selectedModel`) is
+      // unaffected; it still runs whatever model the user picked for
+      // that dispatch.
+      const mayorModel = req.user.mayorModel;
 
       // SSE response
       res.writeHead(200, {
@@ -2173,6 +2175,8 @@ function sessionRoutes(config) {
               signal: stopHandle.abort.signal,
               onToken: (text) => send('token', { text }),
               apiKey: userApiKey,
+              role: 'mayor-phase1',
+              sessionId: session.id,
             });
             await noteModelFallback(mayor1);
 
@@ -2374,6 +2378,8 @@ function sessionRoutes(config) {
               signal: stopHandle.abort.signal,
               onToken: (text) => send('token', { text }),
               apiKey: userApiKey,
+              role: 'mayor-phase1-data-retry',
+              sessionId: session.id,
             });
             await noteModelFallback(retry);
             const retryText = retry.stopReason === 'refusal'
@@ -2663,16 +2669,18 @@ function sessionRoutes(config) {
           }
         }
 
-        // --- Phase 2: deterministic wrap-up (#-token-opt) ---
+        // --- Phase 2: deterministic shell + bounded LLM recap (#-token-opt) ---
         //
         // The old wrap-up re-invoked the Mayor with the ENTIRE conversation
         // + full system prompt just to phrase "here's what happened" — the
-        // single most expensive call in a build turn. We now compose the
-        // wrap-up deterministically (buildCompletionText) from structured
-        // signals, reaching for a bounded Haiku recap (llm.summarizeRunResult
-        // — input is ONLY the agent's own capped summary) only when a
-        // successful build left an agent summary worth phrasing more nicely.
-        // This phase is intentionally NOT abortable — CC already pushed the
+        // single most expensive call in a build turn. buildCompletionText
+        // composes a deterministic fallback from structured signals; the
+        // narrative sentence(s) actually shown come from a bounded
+        // llm.summarizeRunResult call whose ONLY input is the coding
+        // agent's own (already-capped) summary/error text — so a caveat the
+        // agent itself reported ("built X but Y needs manual follow-up")
+        // survives instead of being smoothed over by a fixed template. This
+        // phase is intentionally NOT abortable — CC already pushed the
         // commit, opened the PR, and rebuilt staging.
         setPhase('mayor2');
         // Re-read PR context: a dispatch this turn may have opened a PR
@@ -2688,15 +2696,23 @@ function sessionRoutes(config) {
           prNumber: prNumber2,
         });
 
-        // Bounded Haiku polish: only for a successful build whose agent
-        // summary is substantial enough that a plain-English recap reads
-        // better than the raw notes. Best-effort — any failure keeps the
-        // deterministic text. Billed as a tiny Haiku call, not a full turn.
-        if (toolKind === 'build' && !toolResult.isError
-            && toolResult.ccOutcome === 'success'
-            && String(toolResult.ccSummary || '').trim().length > 400) {
+        // Bounded recap: reaches for the agent's own report (success,
+        // no-op, or failure/caveat — anything it actually said) rather than
+        // only the narrow "long successful summary" case. Best-effort — any
+        // failure keeps the deterministic text above.
+        const errorText2 = toolResult.isError
+          ? String(toolResult.toolResultText || toolResult.ccLog || '').trim()
+          : '';
+        const summaryText2 = String(toolResult.ccSummary || '').trim();
+        if (toolKind === 'build' && (summaryText2 || errorText2)) {
           try {
-            const recap = await llm.summarizeRunResult({ ccSummary: toolResult.ccSummary, apiKey: userApiKey });
+            const prContext2 = prNumber2 ? { prNumber: prNumber2, prTitle: session.pr_title } : null;
+            const testingBlock2 = prMetadata.buildTestingBlock(session.testing_md, session.testing_path);
+            const recap = await llm.summarizeRunResult({
+              toolKind, ccSummary: summaryText2 || null, error: errorText2 || null,
+              prContext: prContext2, stagingUrl: toolResult.stagingUrl, testingBlock: testingBlock2,
+              model: mayorModel, apiKey: userApiKey,
+            });
             if (recap.text && recap.text.trim()) {
               const tail = [];
               if (prNumber2) tail.push(`It's on PR #${prNumber2}`);
@@ -2709,7 +2725,7 @@ function sessionRoutes(config) {
               send('usage', { costCents: recapCost, model: recap.model, byok: !!userApiKey });
             }
           } catch (err) {
-            log.warn('sessions', 'Bounded Haiku wrap-up failed — using deterministic text', {
+            log.warn('sessions', 'Bounded wrap-up recap failed — using deterministic text', {
               sessionId: session.id, err: err.message,
             });
           }
@@ -3845,10 +3861,11 @@ async function runHeadlessSession({
     return cost;
   };
 
-  // Token-optimization: the Mayor is a fixed-role router here too — pin it
-  // to the cheap router model so only the coding agent (scout/build,
-  // dispatched with `selectedModel`) sees the user-selected top tier.
-  const mayorModel = models.MAYOR_MODEL;
+  // Per-user Mayor-model preference (resolved by the caller from
+  // req.user.mayorModel or the users.mayor_model column) — the coding
+  // agent (scout/build, dispatched with `selectedModel`) is unaffected;
+  // it still runs whatever model the user picked for that dispatch.
+  const mayorModel = user.mayorModel || models.resolveMayorModel();
 
   // Fable 5 classifier fallback: same once-per-run notice + per-call
   // admin record as the interactive chat handler.
@@ -3912,6 +3929,8 @@ async function runHeadlessSession({
         model: mayorModel,
         tools,
         apiKey: userApiKey,
+        role: 'mayor-headless-phase1',
+        sessionId: session.id,
       });
       await noteModelFallback(mayor1);
 
@@ -4120,6 +4139,8 @@ async function runHeadlessSession({
           model: mayorModel,
           tools: [DISPATCH_TOOL],
           apiKey: userApiKey,
+          role: 'mayor-headless-decision',
+          sessionId: session.id,
         });
         await noteModelFallback(mayor2);
         const servedModel2 = mayor2.servedModel || mayorModel;
@@ -4165,6 +4186,10 @@ async function runHeadlessSession({
           await debitMayorUsage(mayor2.usage, mayor2.servedModel);
 
           const decisionToolResults = [];
+          // Hoisted so the phase-3 wrap-up below can read the coding
+          // agent's own report (ccSummary/error/stagingUrl) — stays null on
+          // the rejected-build (question) and stray-calls-only paths.
+          let buildResult = null;
           if (buildCall && specHasQuestions) {
             // #178 hard rail: the decision addendum forbids dispatching
             // over an open Questions section, but enforcement lives here —
@@ -4186,7 +4211,6 @@ async function runHeadlessSession({
             // file → the build proceeds on the key (previously it was
             // skipped); allowance gone + no key → skip, as today.
             const buildBilling = await limits.resolveBillingPath(pool, config.jwtSecret, user.id);
-            let buildResult;
             if (buildBilling.error) {
               await sendStatus('Spec drafted; implementation skipped — daily budget reached.');
               buildResult = {
@@ -4245,80 +4269,146 @@ async function runHeadlessSession({
             });
           }
 
-          // --- Phase 3: tool-less wrap-up (mirrors the old phase-2). ---
-          const mayor3 = await llm.streamChat({
-            messages: [
-              ...phase2Messages,
-              { role: 'assistant', content: mayor2.rawContent },
-              { role: 'user', content: decisionToolResults },
-            ],
-            systemPrompt: wrapPrompt,
-            model: mayorModel,
-            // #32: on the rejected-build (question) path the wrap-up
-            // re-asks the human-only questions — expose suggest_answers so
-            // it can attach answer chips, mirroring the phase-1 question
-            // turn. Other wrap-up outcomes ignore the tool.
-            tools: [SUGGEST_ANSWERS_TOOL],
-            apiKey: userApiKey,
-          });
-          await noteModelFallback(mayor3);
-          let mayorText3 = stripFakeCompletionMarker(mayor3.text, { sessionId: session.id });
-          // #32: persist suggestions only on the question outcome — that's
-          // the row a cloned session forwards onto its follow-up to render
-          // the answer chips. Non-question wrap-ups carry no metadata.
-          const { suggestions: decisionSuggestions } = outcome === 'question'
-            ? resolveSuggestedAnswers(mayor3.toolUses)
-            : { suggestions: null };
-          // #178: on the rejected-build path the wrap-up text IS the
-          // reporter-facing questions; blank text posts nothing (the spec
-          // carries the questions for the human reviewer).
-          if (outcome === 'question') questionTextToPost = mayorText3.trim();
-          if (!mayorText3.trim()) {
+          // --- Phase 3 wrap-up. The 'question' outcome (build rejected —
+          // spec has an open Questions section) needs genuine Mayor
+          // judgment: it must phrase the reporter-facing questions and may
+          // attach answer chips via suggest_answers, so that path stays a
+          // real streamChat call. Every other outcome (spec_code / spec)
+          // is pure narration of the build's own report — that path uses
+          // the same deterministic-shell + bounded-recap shape as the
+          // other wrap-ups (#-token-opt), so a caveat the coding agent
+          // itself reported survives instead of being re-synthesized from
+          // the whole conversation. ---
+          let mayorText3;
+          let decisionSuggestions = null;
+          if (outcome === 'question') {
+            const mayor3 = await llm.streamChat({
+              messages: [
+                ...phase2Messages,
+                { role: 'assistant', content: mayor2.rawContent },
+                { role: 'user', content: decisionToolResults },
+              ],
+              systemPrompt: wrapPrompt,
+              model: mayorModel,
+              tools: [SUGGEST_ANSWERS_TOOL],
+              apiKey: userApiKey,
+              role: 'mayor-headless-question-wrapup',
+              sessionId: session.id,
+            });
+            await noteModelFallback(mayor3);
+            mayorText3 = stripFakeCompletionMarker(mayor3.text, { sessionId: session.id });
+            ({ suggestions: decisionSuggestions } = resolveSuggestedAnswers(mayor3.toolUses));
+            // #178: on the rejected-build path the wrap-up text IS the
+            // reporter-facing questions; blank text posts nothing (the spec
+            // carries the questions for the human reviewer).
+            questionTextToPost = mayorText3.trim();
+            if (!mayorText3.trim()) {
+              mayorText3 = '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._';
+            }
+            send('mayor_reasoning', { text: mayorText3 });
+            const servedModel3 = mayor3.servedModel || mayorModel;
+            const costCents3 = llm.estimateCostCents(mayor3.usage, servedModel3);
+            await pool.query(
+              `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+               VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+              [session.id, mayorText3, servedModel3, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
+               JSON.stringify(decisionSuggestions ? { suggestions: decisionSuggestions } : {})]
+            );
+            await debitMayorUsage(mayor3.usage, mayor3.servedModel);
+          } else {
             mayorText3 = outcome === 'spec_code'
               ? '_Spec drafted and change committed — start a session from this auto session to review it and propose it to the group._'
-              : outcome === 'question'
-                ? '_The spec has open questions — review the Questions section in the spec viewer after starting a session from this auto session._'
-                : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+              : '_Spec drafted — the implementation attempt did not complete; review the spec in the spec viewer after starting a session from this auto session._';
+            let recapUsage = null;
+            let recapModel = null;
+            const errorText3 = buildResult && buildResult.isError
+              ? String(buildResult.toolResultText || buildResult.ccLog || '').trim()
+              : '';
+            const summaryText3 = buildResult ? String(buildResult.ccSummary || '').trim() : '';
+            if (summaryText3 || errorText3) {
+              try {
+                const prNumber3 = session.pr_number || null;
+                const prContext3 = prNumber3 ? { prNumber: prNumber3, prTitle: session.pr_title } : null;
+                const testingBlock3 = prMetadata.buildTestingBlock(session.testing_md, session.testing_path);
+                const recap = await llm.summarizeRunResult({
+                  toolKind: 'build', ccSummary: summaryText3 || null, error: errorText3 || null,
+                  prContext: prContext3, stagingUrl: buildResult.stagingUrl, testingBlock: testingBlock3,
+                  model: mayorModel, apiKey: userApiKey,
+                });
+                if (recap.text && recap.text.trim()) {
+                  const tail = [];
+                  if (prNumber3) tail.push(`It's on PR #${prNumber3}`);
+                  if (buildResult.stagingUrl) tail.push(`${prNumber3 ? 'preview' : "It's live to preview"} at ${buildResult.stagingUrl}`);
+                  mayorText3 = tail.length ? `${recap.text.trim()}\n\n${tail.join(' — ')}.` : recap.text.trim();
+                }
+                recapUsage = recap.usage || null;
+                recapModel = recap.model || null;
+              } catch (err) {
+                log.warn('sessions', 'Bounded decision-turn wrap-up recap failed — using deterministic text', {
+                  sessionId: session.id, err: err.message,
+                });
+              }
+            }
+            send('mayor_reasoning', { text: mayorText3 });
+            const servedModel3 = recapModel || mayorModel;
+            const costCents3 = recapUsage ? llm.estimateCostCents(recapUsage, servedModel3) : 0;
+            await pool.query(
+              `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+               VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+              [session.id, mayorText3, servedModel3, recapUsage ? recapUsage.input_tokens + recapUsage.output_tokens : 0, costCents3,
+               JSON.stringify({})]
+            );
+            await debitMayorUsage(recapUsage, recapModel);
           }
-          send('mayor_reasoning', { text: mayorText3 });
-          const servedModel3 = mayor3.servedModel || mayorModel;
-          const costCents3 = llm.estimateCostCents(mayor3.usage, servedModel3);
-          await pool.query(
-            `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
-             VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
-            [session.id, mayorText3, servedModel3, mayor3.usage.input_tokens + mayor3.usage.output_tokens, costCents3,
-             JSON.stringify(decisionSuggestions ? { suggestions: decisionSuggestions } : {})]
-          );
-          await debitMayorUsage(mayor3.usage, mayor3.servedModel);
         }
       } else {
-        // --- Phase 2: Mayor wrap-up (mirrors the chat handler) — scout
-        // error, direct phase-1 build, or any other dispatch path. ---
-        const mayor2 = await llm.streamChat({
-          messages: phase2Messages,
-          systemPrompt: wrapPrompt,
-          model: mayorModel,
-          tools,
-          toolChoice: { type: 'none' },
-          apiKey: userApiKey,
-        });
-        await noteModelFallback(mayor2);
-
-        let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
-        if (!mayorText2.trim()) {
-          mayorText2 = toolResult.isError
-            ? "_The auto session's dispatch didn't finish successfully — see the status above._"
-            : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
+        // --- Phase 2: deterministic shell + bounded LLM recap (#-token-opt)
+        // — scout error, direct phase-1 build, or any other dispatch path.
+        // Mirrors the interactive chat wrap-up: no full-conversation Mayor
+        // re-invocation, just a narrow recap of the dispatch's own
+        // summary/error text so its caveats survive verbatim. ---
+        let mayorText2 = toolResult.isError
+          ? "_The auto session's dispatch didn't finish successfully — see the status above._"
+          : '_Change committed and pushed — start a session from this auto session to review it and propose it to the group._';
+        let recapUsage = null;
+        let recapModel = null;
+        const errorText2 = toolResult.isError
+          ? String(toolResult.toolResultText || toolResult.ccLog || '').trim()
+          : '';
+        const summaryText2 = String(toolResult.ccSummary || '').trim();
+        if (toolKind === 'build' && (summaryText2 || errorText2)) {
+          try {
+            const prNumber2 = session.pr_number || null;
+            const prContext2 = prNumber2 ? { prNumber: prNumber2, prTitle: session.pr_title } : null;
+            const testingBlock2 = prMetadata.buildTestingBlock(session.testing_md, session.testing_path);
+            const recap = await llm.summarizeRunResult({
+              toolKind, ccSummary: summaryText2 || null, error: errorText2 || null,
+              prContext: prContext2, stagingUrl: toolResult.stagingUrl, testingBlock: testingBlock2,
+              model: mayorModel, apiKey: userApiKey,
+            });
+            if (recap.text && recap.text.trim()) {
+              const tail = [];
+              if (prNumber2) tail.push(`It's on PR #${prNumber2}`);
+              if (toolResult.stagingUrl) tail.push(`${prNumber2 ? 'preview' : "It's live to preview"} at ${toolResult.stagingUrl}`);
+              mayorText2 = tail.length ? `${recap.text.trim()}\n\n${tail.join(' — ')}.` : recap.text.trim();
+            }
+            recapUsage = recap.usage || null;
+            recapModel = recap.model || null;
+          } catch (err) {
+            log.warn('sessions', 'Bounded headless wrap-up recap failed — using deterministic text', {
+              sessionId: session.id, err: err.message,
+            });
+          }
         }
         send('mayor_reasoning', { text: mayorText2 });
-        const servedModelW = mayor2.servedModel || mayorModel;
-        const costCents2 = llm.estimateCostCents(mayor2.usage, servedModelW);
+        const servedModelW = recapModel || mayorModel;
+        const costCents2 = recapUsage ? llm.estimateCostCents(recapUsage, servedModelW) : 0;
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
            VALUES ($1, 'assistant', $2, $3, $4, $5)`,
-          [session.id, mayorText2, servedModelW, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2]
+          [session.id, mayorText2, servedModelW, recapUsage ? recapUsage.input_tokens + recapUsage.output_tokens : 0, costCents2]
         );
-        await debitMayorUsage(mayor2.usage, mayor2.servedModel);
+        await debitMayorUsage(recapUsage, recapModel);
       }
     }
 
@@ -4390,7 +4480,7 @@ async function resumeHeadlessRuns(config) {
   try {
     ({ rows } = await pool.query(
       `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url,
-              a.self_hosted AS app_self_hosted, u.username
+              a.self_hosted AS app_self_hosted, u.username, u.mayor_model
        FROM chat_sessions cs
        JOIN apps a ON cs.app_id = a.id
        JOIN users u ON cs.user_id = u.id
@@ -4454,7 +4544,10 @@ async function resumeOneHeadlessRun(args) {
 async function resumeOneHeadlessRunInner({ pool, config, session }) {
   const { broadcastGlobal } = require('../services/ws');
   const issueNumber = session.headless_issue_number;
-  const user = { id: session.user_id, username: session.username };
+  const user = {
+    id: session.user_id, username: session.username,
+    mayorModel: models.resolveMayorModel(session.mayor_model),
+  };
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   if (!repoOwner || !repoName) {
     return failHeadlessRun(pool, session, 'Auto session failed after restart: no GitHub repo configured.');
@@ -4721,49 +4814,40 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   }
 
   // step === 'wrapping' (directly, or fallen through from cc_running):
-  // re-issue just the phase-2 Mayor wrap-up from the persisted
-  // transcript. The original tool_use blocks died with the old process,
-  // so the dispatch outcome is delivered as a plain user message — the
-  // Anthropic API merges/accepts consecutive same-role messages.
-  const { rows: msgRows } = await pool.query(
-    `SELECT role, content FROM chat_session_messages
-     WHERE session_id = $1 AND role IN ('user', 'assistant')
-     ORDER BY id ASC`,
-    [session.id]
-  );
-  const convo = msgRows
-    .filter((r) => (r.content || '').trim())
-    .map((r) => ({ role: r.role, content: r.content }));
-  convo.push({
-    role: 'user',
-    content: `[SYSTEM NOTE — not the human] The platform restarted while this auto session was running; it has been resumed. The dispatched work finished with outcome '${outcome}'.${dispatchSummary ? `\n\nDispatch result:\n${dispatchSummary}` : ''}\n\nWrite the final wrap-up message for the human reviewer who will pick this session up later: state what was done and what they should do next. Do not call any tools.`,
-  });
-
-  const headlessAddendum = buildHeadlessAddendum(issueNumber);
-  const currentSpec = await loadSessionSpec(pool, session.id);
-  const wrapPrompt = getMayorSystemPrompt(session.app_name, false, currentSpec, !!session.app_self_hosted, null) + headlessAddendum;
-  // No tools passed → plain text turn; the API can't call anything, so
-  // tool_choice is unnecessary (and invalid without a tools array).
-  const mayorModel = models.MAYOR_MODEL;
-  const mayor2 = await llm.streamChat({
-    messages: convo,
-    systemPrompt: wrapPrompt,
-    model: mayorModel,
-    apiKey: userApiKey,
-  });
-  // Fable 5 fallback: admin record only on this rare resume path (there's
-  // no sendStatus plumbing here); attribution below uses the served model.
-  if (mayor2.fallbackServed) {
-    await modelFallback.record(pool, {
-      kind: events.EVENT_TYPES.MODEL_FALLBACK,
-      userId: user.id, appId: session.app_id, sessionId: session.id,
-      requested: mayorModel, served: mayor2.servedModel || llm.FALLBACK_TARGET_MODEL,
-      category: (mayor2.stopDetails && mayor2.stopDetails.category) || null,
-      source: 'headless-resume',
-    });
+  // compose the wrap-up deterministically, reaching for a bounded recap
+  // (llm.summarizeRunResult) of the dispatch's own summary/error text —
+  // same shape as the interactive chat wrap-up. This used to re-issue the
+  // phase-2 Mayor turn with the ENTIRE persisted transcript + full system
+  // prompt just to phrase "here's what happened"; that full re-invocation
+  // is gone, but the property that matters (the agent's own caveats
+  // survive into the message) is preserved via the bounded recap below.
+  const mayorModel = user.mayorModel || models.resolveMayorModel();
+  let mayorText2 = '';
+  let recapUsage = null;
+  let recapModel = null;
+  if (dispatchSummary && dispatchSummary.trim()) {
+    try {
+      const prContextR = session.pr_number ? { prNumber: session.pr_number, prTitle: session.pr_title } : null;
+      const testingBlockR = prMetadata.buildTestingBlock(session.testing_md, session.testing_path);
+      const recap = await llm.summarizeRunResult({
+        toolKind: outcome === 'question' || outcome === 'spec' ? 'scout' : 'build',
+        ccSummary: dispatchSummary,
+        error: null,
+        prContext: prContextR,
+        stagingUrl: session.staging_url || null,
+        testingBlock: testingBlockR,
+        model: mayorModel,
+        apiKey: userApiKey,
+      });
+      mayorText2 = (recap.text || '').trim();
+      recapUsage = recap.usage || null;
+      recapModel = recap.model || null;
+    } catch (err) {
+      log.warn('sessions', 'Bounded resume wrap-up recap failed — using deterministic text', {
+        sessionId: session.id, err: err.message,
+      });
+    }
   }
-
-  let mayorText2 = (mayor2.text || '').trim();
   if (!mayorText2) {
     mayorText2 = outcome === 'spec'
       ? '_Spec drafted — review it in the spec viewer after starting a session from this auto session._'
@@ -4773,13 +4857,13 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           ? '_Change committed and pushed — start a session from this auto session to open the PR._'
           : "_The auto session's dispatch didn't finish successfully — see the status above._";
   }
-  const servedModelR = mayor2.servedModel || mayorModel;
-  const costCents2 = mayor2.usage ? llm.estimateCostCents(mayor2.usage, servedModelR) : 0;
+  const servedModelR = recapModel || mayorModel;
+  const costCents2 = recapUsage ? llm.estimateCostCents(recapUsage, servedModelR) : 0;
   await pool.query(
     `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents)
      VALUES ($1, 'assistant', $2, $3, $4, $5)`,
     [session.id, mayorText2, servedModelR,
-      mayor2.usage ? mayor2.usage.input_tokens + mayor2.usage.output_tokens : 0, costCents2]
+      recapUsage ? recapUsage.input_tokens + recapUsage.output_tokens : 0, costCents2]
   );
   await limits.recordSpend(pool, user.id, costCents2, { byok: !!userApiKey });
 
@@ -5284,10 +5368,9 @@ const DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue', 'web_
 // Cap on how many consecutive data-tool fetches we'll service
 // within a single Mayor turn before forcing the model to move on. Bounds
 // the worst case where the model loops on the data tools instead of acting.
-// Token-optimization (#): lowered 3→2 — two fetch rounds is enough for the
-// router to gather context; a third round rarely changed the decision but
-// replayed the whole (growing) tool_result set through another Mayor call.
-const MAYOR_DATA_TOOLS_MAX_ITERS = 2;
+// 3 rounds covers the common list-issues → fetch-issue → fetch-referenced-URL
+// chain (each hop needs the prior result before it knows what to fetch next).
+const MAYOR_DATA_TOOLS_MAX_ITERS = 3;
 
 // Token-optimization (#): bound the size of data-tool results folded back
 // into the Mayor loop. A single tool_result is clipped to
@@ -6133,7 +6216,7 @@ async function runClaudeCodeTool({
 
 ==== SPEC DOC (planning context, authoritative for what to build) ====
 
-${currentSpec}
+${clipForPrompt(currentSpec, BUILD_SPEC_MAX_CHARS)}
 
 ==== END SPEC DOC ====
 
@@ -7068,20 +7151,33 @@ path: /another/changed/view
   };
 }
 
-// Token-optimization (#): the spec_md is injected into the Mayor's prompt
-// verbatim every turn so it can answer "what's in the spec?" and write
-// precise revision deltas — but an unbounded spec (they grow across
-// revisions) would dominate the prompt and defeat prompt caching. Cap it
-// with an explicit truncation marker so the Mayor knows the tail was cut
-// (it never needs the whole doc to route; the scout gets the full spec via
-// its own auto-injection). Keep the head — the overview/acceptance-criteria
-// live there.
-const MAYOR_SPEC_MAX_CHARS = 24000;
+// The spec_md is injected into the Mayor's prompt verbatim every turn so it
+// can answer "what's in the spec?" and write precise revision deltas —  but
+// an unbounded spec (they grow across revisions) would dominate the prompt
+// and defeat prompt caching. Real specs (even fairly long ones) should pass
+// through completely untouched; only a genuinely oversized doc gets
+// truncated, and even then we keep both the head (overview/acceptance
+// criteria) AND the tail (often has final decisions/open questions),
+// cutting only the middle.
+const MAYOR_SPEC_MAX_CHARS = 100000;
+
+// The build prompt's spec block feeds the coding agent, which needs more of
+// the doc in view than the Mayor (whose job is routing, not implementing) —
+// hence the larger cap.
+const BUILD_SPEC_MAX_CHARS = 150000;
 
 function clipForPrompt(text, max) {
   const s = typeof text === 'string' ? text : '';
   if (s.length <= max) return s;
-  return `${s.slice(0, max)}\n\n…[spec truncated — ${s.length - max} more chars omitted; ask the scout to revise for full-doc changes]`;
+  const omitted = s.length - max;
+  // The marker itself takes up room; reserve it out of `max` up front so
+  // head + marker + tail never exceeds max (otherwise a spec just over the
+  // cap could come out of clipping LONGER than it went in).
+  const marker = `\n\n…[spec middle omitted — ${omitted} chars cut]…\n\n`;
+  const budget = Math.max(0, max - marker.length);
+  const headLen = Math.ceil(budget * 0.7);
+  const tailLen = budget - headLen;
+  return `${s.slice(0, headLen)}${marker}${s.slice(s.length - tailLen)}`;
 }
 
 // Returns the two halves of the Mayor system prompt:
@@ -7317,7 +7413,8 @@ CMD ["node", "server.js"]
 module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine,
   // Token-optimization: deterministic bounds/blocks exported for unit tests.
   boundMayorHistory, MAYOR_HISTORY_MAX_TURNS, MAYOR_HISTORY_MAX_CHARS,
-  buildMayorSystemParts, buildMayorSystemBlocks, MAYOR_SPEC_MAX_CHARS,
+  buildMayorSystemParts, buildMayorSystemBlocks, MAYOR_SPEC_MAX_CHARS, BUILD_SPEC_MAX_CHARS,
+  clipForPrompt,
   buildCompletionText, buildCompletionQuickReplies,
   clipToolResult, MAYOR_TOOL_RESULT_MAX_CHARS, MAYOR_TOOL_RESULTS_TURN_MAX_CHARS,
   MAYOR_DATA_TOOLS_MAX_ITERS };

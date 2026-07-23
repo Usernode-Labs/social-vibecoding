@@ -9,6 +9,7 @@ const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits')
 const genesisAccounts = require('../services/genesis-accounts');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
+const models = require('../services/models');
 
 const SESSION_DAYS = 7;
 
@@ -215,6 +216,9 @@ function authRoutes(config) {
         // Experimental: opt-in AI progress estimate for coding runs
         // (Settings → Experimental). Default OFF.
         aiProgressEstimate: !!req.user.aiProgressEstimate,
+        // Per-user Mayor-model preference (Settings → Experimental),
+        // already resolved against the allowlist by the auth middleware.
+        mayorModel: req.user.mayorModel,
         hasApiKey,
         keyLast4,
         usernodePubkey,
@@ -346,6 +350,31 @@ function authRoutes(config) {
       res.json({ ok: true, enabled });
     } catch (err) {
       log.error('settings', 'Failed to toggle AI progress estimate', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Per-user Mayor-model preference — mirrors ai-progress-estimate above.
+  // Auth-gated (any logged-in user), NOT admin-gated: this is a personal
+  // routing-chat preference, not a platform-wide setting. Wired to the
+  // Settings modal's model dropdown (fires on change). The build/scout
+  // `selectedModel` a user picks per-dispatch is unrelated and untouched
+  // by this — it still comes from the request body at dispatch time.
+  router.post('/api/me/mayor-model', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { model } = req.body || {};
+    if (!models.isAllowed(model)) {
+      return res.status(400).json({ error: 'Unknown model' });
+    }
+    try {
+      await pool.query(
+        'UPDATE users SET mayor_model = $1 WHERE id = $2',
+        [model, req.user.id]
+      );
+      log.info('settings', 'Mayor model preference updated', { userId: req.user.id, model });
+      res.json({ ok: true, model });
+    } catch (err) {
+      log.error('settings', 'Failed to update Mayor model preference', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

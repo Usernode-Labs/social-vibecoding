@@ -119,7 +119,7 @@ Important rules:
   return prompt;
 }
 
-async function streamChat({ messages, systemPrompt, model, tools, toolChoice, onToken, onThinking, onDone, onError, signal, apiKey }) {
+async function streamChat({ messages, systemPrompt, model, tools, toolChoice, onToken, onThinking, onDone, onError, signal, apiKey, role, sessionId }) {
   // BYOK (#30): when the caller passes a user-provided key, we spin up
   // a transient client for this request instead of reusing the shared
   // one. Otherwise fall back to the admin key. Creating a client per
@@ -129,6 +129,7 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
   if (!activeClient) throw new Error('LLM not initialized');
 
   const requestedModel = model || DEFAULT_MODEL;
+  const startedAt = Date.now();
 
   // Pass the abort signal via request options so /api/sessions/:id/stop
   // can cancel an in-flight Mayor call cleanly (instead of us just
@@ -195,6 +196,23 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 
     const inputTokens = finalMessage.usage?.input_tokens || 0;
     const outputTokens = finalMessage.usage?.output_tokens || 0;
+    const cacheReadTokens = finalMessage.usage?.cache_read_input_tokens || 0;
+    const cacheCreationTokens = finalMessage.usage?.cache_creation_input_tokens || 0;
+
+    // Minimal usage instrumentation (#-token-opt): one structured log line
+    // per call, at the single funnel every platform-authored Messages call
+    // goes through — no new table, just a grep/dashboard-able record of
+    // spend and prompt-cache effectiveness.
+    log.info('llm-usage', 'streamChat', {
+      role: role || null,
+      model: finalMessage.model || requestedModel,
+      cache_read_input_tokens: cacheReadTokens,
+      cache_creation_input_tokens: cacheCreationTokens,
+      input_tokens: inputTokens,
+      output_tokens: outputTokens,
+      latency_ms: Date.now() - startedAt,
+      session_id: sessionId || null,
+    });
 
     // Walk the assembled content blocks so callers can orchestrate a
     // tool-use loop without having to re-derive text vs. tool_use from
@@ -589,29 +607,44 @@ ${stripLoneSurrogates(description).trim()}`,
   return { title, usage: resp.usage, model };
 }
 
-// Token-optimization (#): bounded Haiku wrap-up. The Mayor's old phase-2
+// Token-optimization (#): bounded wrap-up recap. The Mayor's old phase-2
 // wrap-up re-invoked the router model with the ENTIRE conversation +
 // system prompt just to phrase "here's what happened". This replaces it
-// with a tiny Haiku call whose ONLY input is the coding agent's own
-// summary (already capped at a few KB) — orders of magnitude fewer input
-// tokens. Callers use the deterministic buildCompletionText first and fall
-// back to this only when they want a friendlier natural-language recap.
-// Throws on any failure so the caller keeps its deterministic text.
-async function summarizeRunResult({ ccSummary, apiKey }) {
+// with a small call whose ONLY input is the coding agent's own bounded
+// summary/error text plus a few structured facts — orders of magnitude
+// fewer input tokens than replaying the conversation. Callers keep a
+// deterministic template as the fallback and use this for the narrative
+// sentence(s) so caveats ("built X but Y needs manual follow-up") the
+// agent itself reported survive into the user-facing text instead of
+// being smoothed over by a fixed template. Throws on any failure so the
+// caller keeps its deterministic text.
+async function summarizeRunResult({ toolKind, ccSummary, error, prContext, stagingUrl, testingBlock, model, apiKey }) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
-  const summary = stripLoneSurrogates(String(ccSummary || '')).trim().slice(0, 4000);
-  if (!summary) throw new Error('Nothing to summarize');
-  const model = 'claude-haiku-4-5';
+  const errorText = stripLoneSurrogates(String(error || '')).trim().slice(0, 4000);
+  const summaryText = stripLoneSurrogates(String(ccSummary || '')).trim().slice(0, 4000);
+  const body = errorText || summaryText;
+  if (!body) throw new Error('Nothing to summarize');
+  const resolvedModel = (typeof model === 'string' && model.trim()) ? model.trim() : 'claude-haiku-4-5';
+
+  const facts = [];
+  facts.push(`Tool: ${toolKind === 'scout' ? 'spec drafting (read-only)' : 'build (code changes)'}`);
+  facts.push(errorText ? 'Outcome: FAILED or did not complete cleanly' : 'Outcome: completed');
+  if (prContext && prContext.prNumber) {
+    facts.push(`PR: #${prContext.prNumber}${prContext.prTitle ? ` — "${prContext.prTitle}"` : ''}`);
+  }
+  if (stagingUrl) facts.push(`Staging preview available: ${stagingUrl}`);
+  if (testingBlock) facts.push('Testing guidance was provided separately (do not restate it).');
+
   const resp = await activeClient.messages.create({
-    model,
-    max_tokens: 200,
-    system: 'You are a project manager relaying to a non-technical user what a coding agent just finished building. Rewrite the agent\'s notes as 1-2 friendly, plain-English sentences in the first person ("I added…"). No markdown, no code, no preamble — just the recap.',
-    messages: [{ role: 'user', content: `The coding agent reported:\n\n${summary}` }],
+    model: resolvedModel,
+    max_tokens: 400,
+    system: 'You are a project manager relaying to a non-technical user what a coding agent just did. Rewrite the agent\'s own notes as 1-3 friendly, plain-English sentences in the first person ("I added…"). If the agent\'s report mentions a failure, a partial result, or anything that still needs manual follow-up, you MUST surface that caveat plainly — never smooth it over or imply success it did not report. No markdown, no code, no preamble — just the recap.',
+    messages: [{ role: 'user', content: `${facts.join('\n')}\n\nThe coding agent reported:\n\n${body}` }],
   });
   const text = ((resp.content || []).find((b) => b.type === 'text')?.text || '').trim();
   if (!text) throw new Error('Empty summary response');
-  return { text, usage: resp.usage, model };
+  return { text, usage: resp.usage, model: resolvedModel };
 }
 
 // Test hook: swap the shared client for a stub so streamChat's fallback

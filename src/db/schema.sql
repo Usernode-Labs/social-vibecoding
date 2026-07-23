@@ -79,6 +79,13 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 -- POST /api/me/ai-progress-estimate.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Per-user preferred model for the Mayor (routing/PM chat), mirroring
+-- ai_progress_estimate above. NULL means "no preference" — resolved to
+-- the platform default via models.resolveMayorModel(). Set from Settings
+-- via POST /api/me/mayor-model. No backfill: existing users simply get
+-- the default until they pick one.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mayor_model VARCHAR(64);
+
 CREATE TABLE IF NOT EXISTS sessions (
   token      VARCHAR(64) PRIMARY KEY,
   user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,

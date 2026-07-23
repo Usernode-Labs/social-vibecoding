@@ -12,7 +12,7 @@
 
   const Settings = {
     modal: null,
-    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false },
+    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, mayorModel: '' },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -70,6 +70,12 @@
       const estimateToggle = document.getElementById('ai-progress-estimate');
       if (estimateToggle) {
         estimateToggle.addEventListener('change', (e) => this._saveAiProgressEstimate(e.target.checked));
+      }
+
+      // Per-user Mayor-model preference dropdown.
+      const mayorModelSelect = document.getElementById('mayor-model-select');
+      if (mayorModelSelect) {
+        mayorModelSelect.addEventListener('change', (e) => this._saveMayorModel(e.target.value));
       }
 
       // #138 "Dev-chat sound & alerts" toggle. Client-only preference
@@ -179,6 +185,7 @@
         this.state.usernodePubkey = j.user?.usernodePubkey || null;
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
+        this.state.mayorModel = j.user?.mayorModel || '';
         this._renderIndicator();
       } catch {}
     },
@@ -235,6 +242,52 @@
       if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
       const status = document.getElementById('ai-progress-estimate-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      this._renderMayorModelSection();
+    },
+
+    // Model list comes from the same GET /api/models the build/scout
+    // dropdowns use, so this can never offer a model the server would reject.
+    async _renderMayorModelSection() {
+      const select = document.getElementById('mayor-model-select');
+      if (!select) return;
+      try {
+        const r = await fetch('/api/models');
+        const data = await r.json();
+        const list = Array.isArray(data.models) ? data.models : [];
+        const fallback = 'claude-sonnet-5';
+        const current = list.some((m) => m.id === this.state.mayorModel) ? this.state.mayorModel : fallback;
+        select.innerHTML = list.map((m) => `<option value="${m.id}">${m.label || m.id}</option>`).join('');
+        select.value = current;
+      } catch {}
+    },
+
+    async _saveMayorModel(model) {
+      const status = document.getElementById('mayor-model-status');
+      const select = document.getElementById('mayor-model-select');
+      const fail = (msg) => {
+        if (select) select.value = this.state.mayorModel || 'claude-sonnet-5';
+        if (status) {
+          status.textContent = msg;
+          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
+          status.classList.add('text-red-500');
+        }
+      };
+      try {
+        const r = await fetch('/api/me/mayor-model', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ model }),
+        });
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          return fail(j.error || 'Failed to save.');
+        }
+        this.state.mayorModel = model;
+        if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      } catch (err) {
+        fail(`Network error: ${err.message}`);
+      }
     },
 
     async _saveAiProgressEstimate(enabled) {
