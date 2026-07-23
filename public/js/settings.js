@@ -1417,18 +1417,35 @@
       aboutBox.appendChild(termsRow);
       this._renderUsernodeFaq(aboutBox, isAndroid, perms.deviceManufacturer);
 
-      // Account.
+      // Account. Auth-aware like the native settings screen: authenticated
+      // users get Log out; guests get Log in. Guest is the state where no
+      // wallet account exists yet — native onboarding (which creates the
+      // wallet) only runs after the app's own login, and since this modal
+      // replaced the native-push App Settings drawer row, this button is
+      // the only in-shell path to that flow. It deep-links the native
+      // Settings screen (allowlisted since bridge v2), whose Account
+      // section shows the Log in tile for guests.
       const acctBox = this._unSection(section, 'Usernode app — account');
-      this._unButton(acctBox, 'Log out of the Usernode app', async () => {
-        const ok = await PlatformUI.confirm({
-          title: 'Log out of the Usernode app?',
-          message: 'You will need to sign in again to keep earning points.',
-          confirmLabel: 'Log out',
-          danger: true,
-        });
-        if (!ok) return;
-        await window.usernode.logout();
-      }, { danger: true });
+      if (s.authStatus === 'authenticated') {
+        this._unButton(acctBox, 'Log out of the Usernode app', async () => {
+          const ok = await PlatformUI.confirm({
+            title: 'Log out of the Usernode app?',
+            message: 'You will need to sign in again to keep earning points.',
+            confirmLabel: 'Log out',
+            danger: true,
+          });
+          if (!ok) return;
+          await window.usernode.logout();
+        }, { danger: true });
+      } else {
+        acctBox.appendChild(this._unEl('p',
+          'text-xs text-zinc-500 dark:text-zinc-400',
+          'You are browsing as a guest. Log in to the Usernode app to ' +
+          'create your wallet and start earning points.'));
+        this._unButton(acctBox, 'Log in to the Usernode app', () =>
+          this._openNativeScreen('settings',
+            'Could not open the app settings'));
+      }
     },
 
     // Static port of the native FaqSection copy (Help & Info tiles).
