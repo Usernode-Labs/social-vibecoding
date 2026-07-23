@@ -27,6 +27,39 @@ function buildClosingBlock(issues) {
   return sanitizeIssueNumbers(issues).map((n) => `Closes #${n}`).join('\n');
 }
 
+// Apply one dispatch's issue declarations (#733) to a session's existing
+// linked set: union the additions in, then subtract the removals. A number
+// listed in both lists in the same call is REMOVED — removal is the
+// deliberate corrective action (a stale `Closes #N` silently closes a
+// still-open issue on merge, while re-adding later is cheap). Removing a
+// number that was never linked is a harmless no-op, and there are no
+// tombstones: a later addition may re-link a previously removed number.
+// Returns a sanitized (deduped, ascending) array.
+function applyIssueDeclarations(existing, adds, removes) {
+  const removed = new Set(sanitizeIssueNumbers(removes));
+  return sanitizeIssueNumbers([
+    ...sanitizeIssueNumbers(existing),
+    ...sanitizeIssueNumbers(adds),
+  ]).filter((n) => !removed.has(n));
+}
+
+// Strip the platform-format `Closes #N` line for each given number from a
+// PR body (#733): the targeted patch that keeps an already-open PR's
+// closing block truthful after a mid-session scope cut, without the
+// full-body regeneration (and LLM call) a build turn performs. Only exact
+// platform-emitted lines are touched — the whole line must be `Closes #N`
+// with optional trailing whitespace, and its newline is consumed — so
+// hand-written variants ("Fixes #166", prose like "see #166") and longer
+// numbers sharing a prefix (#1660 vs #166) are left alone.
+function stripClosingLines(body, numbers) {
+  if (typeof body !== 'string' || !body) return typeof body === 'string' ? body : '';
+  let out = body;
+  for (const n of sanitizeIssueNumbers(numbers)) {
+    out = out.replace(new RegExp(`^Closes #${n}[ \\t]*(?:\\r?\\n|$)`, 'gm'), '');
+  }
+  return out;
+}
+
 // Build the deterministic "How to test" section for a PR body (#127) from
 // the session's bot-emitted testing guidance (chat_sessions.testing_md /
 // testing_path, parsed by services/testing-notes.js). Like the closing
@@ -594,4 +627,5 @@ module.exports = {
   generatePrMetadata, applyPrMetadata, sanitizeIssueNumbers,
   buildClosingBlock, buildTestingBlock, parseClosingKeywords,
   buildVisualsBlock, upsertVisualsBlock,
+  applyIssueDeclarations, stripClosingLines, sameIssueSet,
 };
