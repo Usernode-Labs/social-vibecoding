@@ -127,6 +127,21 @@ function notificationsRoutes(config) {
           const mocks = stagingMockNotifications();
           payload.notifications = [...mocks, ...payload.notifications];
           payload.unread += mocks.length;
+          // Pinned-invite demo row: drives the drawer's Invites section
+          // and its swipe Accept/Decline path in a staging preview.
+          // Obviously fake (staging-demo-*); acting on it hits a
+          // nonexistent app and surfaces a normal error toast.
+          payload.pendingInvites = [
+            {
+              appId: 990001,
+              appSlug: 'staging-demo',
+              appName: 'Staging demo app',
+              invitedBy: 'staging-demo-user',
+              kind: 'collab',
+              createdAt: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+            },
+            ...(payload.pendingInvites || []),
+          ];
         }
       }
       res.json(payload);

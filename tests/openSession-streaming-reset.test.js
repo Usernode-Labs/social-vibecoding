@@ -139,6 +139,21 @@ function makeHarness() {
     // actually applies, matching the real phantom-state scenario.
     App: { currentTab: 'dev', currentSubTab: 'sessions' },
     Notifications: {},
+    // Native-kit adoption: renderChatView wires scroll/keyboard polish
+    // through PlatformUI — no-op it for the streaming-state contract.
+    PlatformUI: {
+      isTouch: () => false,
+      hasKit: () => false,
+      toast: () => {},
+      alert: async () => ({}),
+      confirm: async () => true,
+      transition: (fn) => fn(),
+      attachScreenFx: () => {},
+      detachScreenFx: () => {},
+      pullToRefresh: () => ({ detach() {} }),
+      swipeActions: () => ({ detach() {} }),
+      gestures: () => null,
+    },
     addEventListener() {},
     removeEventListener() {},
   };

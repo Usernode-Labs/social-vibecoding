@@ -40,11 +40,116 @@
   --accent-tint: rgba(167, 139, 250, 0.12);
 }
 
+/* ── usernode-native kit theming ─────────────────────────
+   The platform loads its own hosted kit (/usernode-native/v1/) — see
+   index.html. The kit's defaults already ARE the platform violet, but
+   we pin the surface/hairline tokens to the platform palette explicitly
+   so kit chrome (sheets, grouped cards, toasts, nav bars) tracks
+   app.css if either palette ever drifts. Override --un-* variables
+   only; never fork or out-specificity the kit CSS. */
+:root {
+  --un-accent: var(--accent);
+  --un-surface: var(--bg-secondary);
+  --un-hairline: var(--border);
+  --un-muted: var(--text-muted);
+  --un-group-bg: var(--bg-card);
+  --un-sheet-bg: var(--bg-primary);
+  --un-navbar-bg: rgba(255, 255, 255, 0.82);
+  --un-radius-card: 12px;
+}
+
+.dark {
+  --un-accent: var(--accent);
+  --un-surface: var(--bg-secondary);
+  --un-hairline: var(--border);
+  --un-muted: var(--text-faint);
+  --un-group-bg: #12121f;
+  --un-sheet-bg: #12121f;
+  --un-navbar-bg: rgba(8, 8, 15, 0.78);
+}
+
+/* Full-screen modal roots whose card is currently riding inside a kit
+   presentModal (see platform-ui.js adoptStaticModal): the legacy fixed
+   overlay/scrim must not paint a second backdrop. */
+.platform-modal-adopted {
+  display: none !important;
+}
+
+/* A legacy modal card riding inside the kit modal shell: the shell
+   already draws the surface, radius, shadow and padding — the card's
+   own chrome would stack on it (double border, doubled whitespace).
+   One chrome only: the kit's. */
+.un-modal .platform-modal-card {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  margin: 0 !important;
+}
+
+/* Panels adopted into kit bottom sheets on touch (header drawer,
+   notifications, work drawer, dev console). Their legacy classes pin
+   them as fixed dropdown/slide-over chrome; while riding inside a
+   sheet the sheet owns position, size and surface. */
+.platform-sheet-adopted {
+  position: static !important;
+  inset: auto !important;
+  transform: none !important;
+  transition: none !important;
+  width: auto !important;
+  max-width: none !important;
+  max-height: 70vh !important;
+  height: auto !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  display: flex !important;
+}
+
+/* Chat/proposal screen headers wired through unNative.attachNavBar
+   (platform-ui.js attachScreenFx): the kit toggles .un-scrolled once
+   the screen's scroller moves — that's the cue for the frosted
+   nav-bar treatment. The bars stay in-flow (not .un-navbar fixed);
+   only the scrolled-state styling changes. */
+.platform-chat-header.un-scrolled {
+  background: var(--un-navbar-bg);
+  -webkit-backdrop-filter: saturate(180%) blur(16px);
+  backdrop-filter: saturate(180%) blur(16px);
+  box-shadow: 0 0.5px 0 var(--un-hairline);
+}
+
+/* Pressed-state opt-outs: the kit gives every button an instant
+   scale-press, which reads wrong on dense strip controls that sit
+   flush against siblings (bottom tabs, segmented pills, theme mode
+   pills) — the scale makes adjacent cells appear to shift. Keep the
+   brightness dim, drop the transform. */
+.app-tab:active,
+.create-mode-pill:active,
+.create-vis-pill:active,
+.members-vis-pill:active,
+[data-theme-mode]:active {
+  transform: none;
+}
+
 html, body {
   height: 100dvh;
   overflow: hidden;
   touch-action: pan-x pan-y;
   -webkit-text-size-adjust: 100%;
+  /* The kit's pull-to-refresh owns the pull-down gesture on the
+     platform's scrollers — keep mobile Chrome's native page-refresh
+     from competing for the same drag. */
+  overscroll-behavior-y: none;
+}
+
+/* The home feed scroller: contain overscroll so a pull that starts on
+   a short list can't chain to the browser's own refresh gesture. */
+#home-screen {
+  overscroll-behavior-y: contain;
 }
 
 /* ── Tabs ──────────────────────────────────────────────── */

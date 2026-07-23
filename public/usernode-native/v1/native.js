@@ -864,10 +864,17 @@
    * Pull-to-refresh
    * ──────────────────────────────────────────────────────────────────── */
 
-  var PTR_THRESHOLD = 70; // px of displayed pull that arms a refresh
+  // Tuning note (v1 in-place fix): the original COEFF 0.4 / THRESHOLD 70
+  // pair required ~330px of raw finger travel to arm — more than half a
+  // phone screen, so short lists were nearly impossible to refresh. The
+  // pair below arms at ~125px of travel (UIRefreshControl territory)
+  // while keeping the same asymptote, so a deep pull still saturates at
+  // the familiar rubber-band feel.
+  var PTR_THRESHOLD = 60; // px of displayed pull that arms a refresh
   var PTR_HOLD = 56; // px the content holds at while refreshing
   var PTR_LIMIT = 150; // rubber-band asymptote
-  var PTR_COEFF = 0.4; // initial resistance slope (~dy/2.5)
+  var PTR_COEFF = 0.8; // initial resistance slope (~dy/1.25)
+  var PTR_MIN_HOLD_MS = 500; // spinner floor so instant refreshes still read
 
   // attachPullToRefresh(scrollEl, onRefresh, opts?) — scrollEl is either a
   // scrollable list container (needs `overscroll-behavior-y: contain`; the
@@ -962,14 +969,19 @@
       puck.classList.add('un-refreshing');
       puck.classList.remove('un-armed');
       springTo(PTR_HOLD, velocity);
-      Promise.resolve()
+      // Hold the spinner for a minimum beat even when onRefresh
+      // resolves instantly (cached data, fast network) — a refresh the
+      // eye can't see reads as "nothing happened" (UIRefreshControl
+      // does the same).
+      var minHold = new Promise(function (resolve) { setTimeout(resolve, PTR_MIN_HOLD_MS); });
+      var work = Promise.resolve()
         .then(function () { return onRefresh(); })
-        .catch(function () { /* refresh failures still settle the UI */ })
-        .then(function () {
-          refreshing = false;
-          puck.classList.remove('un-refreshing');
-          springTo(0, 0);
-        });
+        .catch(function () { /* refresh failures still settle the UI */ });
+      Promise.all([work, minHold]).then(function () {
+        refreshing = false;
+        puck.classList.remove('un-refreshing');
+        springTo(0, 0);
+      });
     }
 
     function onTouchStart(e) {
@@ -1689,6 +1701,13 @@
     }
 
     if (dismissible) backdrop.addEventListener('click', function () { dismiss(); });
+
+    // Commit the initial (hidden) style before the entrance class lands.
+    // Without this reflow the browser can coalesce append + class-add
+    // into one style pass and skip the fade entirely — reliably so when
+    // presentModal is called from a microtask (e.g. a MutationObserver
+    // callback), where no paint happens before the rAF below.
+    void card.offsetWidth;
 
     // Next frame: engage the CSS entrance (scale 1.04 → 1, fade in).
     requestAnimationFrame(function () {

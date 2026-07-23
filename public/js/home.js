@@ -242,19 +242,46 @@ const Home = {
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
         App.navigateToApp(card.dataset.slug);
       });
-      // One pointerdown handler per card: touch long-press opens the
-      // actions menu everywhere, and "Your apps" cards additionally
-      // promote to drag-to-reorder (mouse-move, or held-move on touch).
-      // When the widget strip is showing, every running card not yet in
-      // the widget can also be picked up and dropped onto the strip.
-      card.addEventListener('pointerdown', (e) => Home._onCardPointerDown(
-        e, card, listEl,
-        canDragYours && card.dataset.yours === 'true',
-        !!widgetSlugs
-          && card.dataset.status === 'running'
-          && !widgetSlugs.has(card.dataset.slug)
-      ));
+      // Gesture wiring, two eras (spec: reorder migration, old path
+      // kept behind a temporary flag for one release):
+      //
+      // Kit era (default): the kit's attachReorder (below, after this
+      // loop) owns long-press-lift-drag on "Your apps" cards. The
+      // long-press actions menu stays on NON-reorderable cards via an
+      // arbiter-claimed handler; reorderable cards reach the menu
+      // through their "…" button. Drag-a-card-onto-the-widget-strip is
+      // retired on this path (the card menu's "Add to widget" covers it).
+      //
+      // Legacy era (localStorage platform-legacy-reorder = '1', or kit
+      // failed to load): the original hand-rolled pointer machinery.
+      if (Home._useKitReorder()) {
+        if (!(canDragYours && card.dataset.yours === 'true')) {
+          Home._wireCardLongPressMenu(card);
+        }
+      } else {
+        card.addEventListener('pointerdown', (e) => Home._onCardPointerDown(
+          e, card, listEl,
+          canDragYours && card.dataset.yours === 'true',
+          !!widgetSlugs
+            && card.dataset.status === 'running'
+            && !widgetSlugs.has(card.dataset.slug)
+        ));
+      }
     });
+
+    // Kit reorder on the "Your apps" cards: long-press lifts (haptic
+    // tick), the row tracks the finger 1:1, edge auto-scroll and the
+    // spring settle come from the kit, and the kit's gesture arbiter
+    // keeps it from fighting scrolling / pull-to-refresh. The DOM move
+    // happens before onReorder, so the existing order-save just reads
+    // the DOM like the legacy path did.
+    if (Home._useKitReorder() && canDragYours) {
+      if (Home._reorderHandle) { try { Home._reorderHandle.detach(); } catch {} }
+      Home._reorderHandle = window.unNative.attachReorder(listEl, {
+        itemSelector: '.app-card[data-yours="true"]',
+        onReorder: () => { Home._saveYoursOrder(listEl); },
+      });
+    }
 
     // Retry stays visible on errored cards (it's the card's primary
     // recovery action); it is also offered in the hamburger menu.
@@ -279,7 +306,7 @@ const Home = {
   // message. Mirrors the status enum in main-drift-poller.js.
   reportCheckResult(data) {
     if (!data || !data.status) {
-      alert('Check finished (no details returned).');
+      PlatformUI.toast('Check finished (no details returned).');
       return;
     }
     switch (data.status) {
@@ -291,36 +318,40 @@ const Home = {
         // /redeploy endpoint instead of dead-ending. The Secrets
         // modal also exposes this same endpoint via "redeploy now",
         // but most operators reach for the home-card ⟳ first.
-        if (data.slug && confirm(
-          'Latest commit is already running.\n\n' +
-          'Force a rebuild anyway? (Useful if env vars or platform code changed.)'
-        )) {
-          fetch(`/api/apps/${data.slug}/redeploy`, { method: 'POST' })
-            .then((r) => r.ok ? r.json() : r.json().then((j) => Promise.reject(new Error(j.error || `HTTP ${r.status}`))))
-            .then(() => alert('Rebuild started — watch the version pill.'))
-            .catch((err) => alert(`Rebuild kickoff failed: ${err.message}`));
+        if (data.slug) {
+          PlatformUI.confirm({
+            title: 'Latest commit is already running',
+            message: 'Force a rebuild anyway? (Useful if env vars or platform code changed.)',
+            confirmLabel: 'Rebuild',
+          }).then((ok) => {
+            if (!ok) return;
+            fetch(`/api/apps/${data.slug}/redeploy`, { method: 'POST' })
+              .then((r) => r.ok ? r.json() : r.json().then((j) => Promise.reject(new Error(j.error || `HTTP ${r.status}`))))
+              .then(() => PlatformUI.toast('Rebuild started — watch the version pill.'))
+              .catch((err) => PlatformUI.toast(`Rebuild kickoff failed: ${err.message}`));
+          });
         }
         return;
       case 'redeployed':
-        alert(`Redeployed to ${(data.to || '').slice(0, 7)}.`);
+        PlatformUI.toast(`Redeployed to ${(data.to || '').slice(0, 7)}.`);
         return;
       case 'in_flight':
-        alert('A redeploy is already in progress for this app.');
+        PlatformUI.toast('A redeploy is already in progress for this app.');
         return;
       case 'first_seen':
-        alert(`Recorded current SHA (${(data.sha || '').slice(0, 7)}). Future drift will trigger a redeploy.`);
+        PlatformUI.toast(`Recorded current SHA (${(data.sha || '').slice(0, 7)}). Future drift will trigger a redeploy.`);
         return;
       case 'fetch_failed':
-        alert(`Couldn't reach GitHub: ${data.error || 'unknown error'}`);
+        PlatformUI.toast(`Couldn't reach GitHub: ${data.error || 'unknown error'}`);
         return;
       case 'invalid_repo':
-        alert('This app has an invalid repo URL.');
+        PlatformUI.toast('This app has an invalid repo URL.');
         return;
       case 'rebuild_failed':
-        alert(`Drift detected (${(data.from || '').slice(0, 7)} → ${(data.attempted || '').slice(0, 7)}) but redeploy failed: ${data.error || 'unknown error'}`);
+        PlatformUI.toast(`Drift detected (${(data.from || '').slice(0, 7)} → ${(data.attempted || '').slice(0, 7)}) but redeploy failed: ${data.error || 'unknown error'}`);
         return;
       default:
-        alert(`Check finished: ${data.status}`);
+        PlatformUI.toast(`Check finished: ${data.status}`);
     }
   },
 
@@ -664,10 +695,19 @@ const Home = {
         Home._removeWidgetItem(btn.dataset.wid);
       });
     });
-    strip.querySelectorAll('.widget-tile').forEach((tile) => {
-      tile.addEventListener('pointerdown', (e) =>
-        Home._onWidgetTilePointerDown(e, tile, strip));
-    });
+    if (Home._useKitReorder()) {
+      // Kit reorder on the widget tiles (same flag as the card grid).
+      if (Home._widgetReorderHandle) { try { Home._widgetReorderHandle.detach(); } catch {} }
+      Home._widgetReorderHandle = window.unNative.attachReorder(strip, {
+        itemSelector: '.widget-tile',
+        onReorder: () => { Home._saveWidgetOrder(strip); },
+      });
+    } else {
+      strip.querySelectorAll('.widget-tile').forEach((tile) => {
+        tile.addEventListener('pointerdown', (e) =>
+          Home._onWidgetTilePointerDown(e, tile, strip));
+      });
+    }
   },
 
   // Optimistic remove: the tile disappears immediately; on bridge
@@ -679,7 +719,7 @@ const Home = {
     try {
       await window.usernode.removeHomeScreenShortcut(id);
     } catch (err) {
-      alert(`Remove from widget failed: ${(err && err.message) || err}`);
+      PlatformUI.toast(`Remove from widget failed: ${(err && err.message) || err}`);
       await Home._refreshWidgetItems();
       Home.render();
     }
@@ -695,7 +735,7 @@ const Home = {
     try {
       await window.usernode.reorderHomeScreenShortcuts(ids);
     } catch (err) {
-      alert(`Widget reorder failed: ${(err && err.message) || err}`);
+      PlatformUI.toast(`Widget reorder failed: ${(err && err.message) || err}`);
       await Home._refreshWidgetItems();
       Home.render();
     }
@@ -1254,6 +1294,22 @@ const Home = {
     const items = Home.menuItemsFor(app);
     if (!items.length) return;
 
+    // Touch platforms get a native-style bottom action sheet (the
+    // anchored popover stays the desktop idiom). Destructive items
+    // land in the red slot; disabled informational rows are omitted
+    // (action sheets have no inert-row concept).
+    if (PlatformUI.isTouch()) {
+      PlatformUI.actionSheet({
+        title: app.name || app.slug,
+        actions: items.filter((i) => !i.disabled).map((i) => ({
+          label: i.label,
+          destructive: !!i.danger,
+          handler: () => i.run(null),
+        })),
+      });
+      return;
+    }
+
     const el = document.createElement('div');
     el.className = 'card-menu';
     el.setAttribute('role', 'menu');
@@ -1500,7 +1556,7 @@ const Home = {
       return true;
     } catch (err) {
       const msg = String((err && err.message) || err);
-      if (!/denied/i.test(msg)) alert(`Add to home screen failed: ${msg}`);
+      if (!/denied/i.test(msg)) PlatformUI.toast(`Add to home screen failed: ${msg}`);
       return false;
     }
   },
@@ -1526,7 +1582,7 @@ const Home = {
       if (app.is_collaborator) app.your_apps_hidden = !next;
       await Home.load();
     } catch (err) {
-      alert(`Update failed: ${err.message}`);
+      PlatformUI.toast(`Update failed: ${err.message}`);
     }
   },
 
@@ -1544,12 +1600,12 @@ const Home = {
       const res = await fetch(`/api/apps/${app.slug}/check-updates`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(data.error || `Check failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || `Check failed (HTTP ${res.status})`);
       } else {
         Home.reportCheckResult(data);
       }
     } catch (err) {
-      alert(`Check failed: ${err.message}`);
+      PlatformUI.toast(`Check failed: ${err.message}`);
     } finally {
       Home.closeCardMenu();
       await Home.load();
@@ -1566,21 +1622,21 @@ const Home = {
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        alert(data.error || `Lock toggle failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || `Lock toggle failed (HTTP ${res.status})`);
         return;
       }
       Home.updateAppCardLock(app.slug, nextLocked);
     } catch (err) {
-      alert(`Lock toggle failed: ${err.message}`);
+      PlatformUI.toast(`Lock toggle failed: ${err.message}`);
     }
   },
 
   async _menuDelete(app) {
-    if (!confirm('Delete this app?')) return;
+    if (!await PlatformUI.confirm({ title: 'Delete this app?', message: 'This removes the app for everyone.', confirmLabel: 'Delete', danger: true })) return;
     const res = await fetch(`/api/apps/${app.slug}`, { method: 'DELETE' });
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
-      alert(data.error || `Delete failed (HTTP ${res.status})`);
+      PlatformUI.toast(data.error || `Delete failed (HTTP ${res.status})`);
     }
     await Home.load();
   },
@@ -1606,6 +1662,54 @@ const Home = {
   // Eats the synthetic click the browser fires right after the
   // pointerup that ends a drag (see the card click handler in load()).
   _suppressClick: false,
+  _reorderHandle: null,
+  _widgetReorderHandle: null,
+
+  // Kit-vs-legacy reorder switch (spec: keep the old code path behind a
+  // temporary flag for one release). Kit path is the default; set
+  // localStorage['platform-legacy-reorder'] = '1' to fall back to the
+  // hand-rolled drag if the kit physics regress on some device.
+  _useKitReorder() {
+    let legacy = false;
+    try { legacy = localStorage.getItem('platform-legacy-reorder') === '1'; } catch {}
+    return !legacy && !!(window.unNative && typeof window.unNative.attachReorder === 'function');
+  },
+
+  // Kit-era long-press actions menu for cards the kit reorder does NOT
+  // own (non-"Your apps" cards). Joins the kit's gesture arbiter at
+  // fire time — if the touch is already claimed (swipe, PTR, a reorder
+  // lift), the menu backs off, so the two long-presses can't fight.
+  _wireCardLongPressMenu(card) {
+    card.addEventListener('pointerdown', (e) => {
+      if (e.pointerType !== 'touch' || e.button !== 0) return;
+      if (e.target.closest('.card-menu-btn') || e.target.closest('.retry-btn')) return;
+      const startX = e.clientX;
+      const startY = e.clientY;
+      let timer = setTimeout(() => {
+        timer = null;
+        const g = PlatformUI.gestures();
+        if (g && !g.claim('touch', 'home-card-menu')) return;
+        // Eat the synthetic click the browser fires on finger lift so
+        // releasing the long-press doesn't also open the app.
+        Home._suppressClick = true;
+        setTimeout(() => { Home._suppressClick = false; }, 700);
+        Home.openCardMenu(card.dataset.slug, card.getBoundingClientRect());
+      }, 350);
+      const cleanup = () => {
+        if (timer) { clearTimeout(timer); timer = null; }
+        card.removeEventListener('pointermove', onMove);
+        card.removeEventListener('pointerup', cleanup);
+        card.removeEventListener('pointercancel', cleanup);
+      };
+      const onMove = (ev) => {
+        // Movement before the timer fires means scrolling — bail.
+        if (Math.abs(ev.clientX - startX) > 10 || Math.abs(ev.clientY - startY) > 10) cleanup();
+      };
+      card.addEventListener('pointermove', onMove);
+      card.addEventListener('pointerup', cleanup);
+      card.addEventListener('pointercancel', cleanup);
+    });
+  },
 
   // Unified card pointer handler, attached to EVERY card by
   // _wireCards. Two gestures share it:
@@ -2114,7 +2218,7 @@ const Home = {
         throw new Error(data.error || `HTTP ${res.status}`);
       }
     } catch (err) {
-      alert(`Reorder failed: ${err.message}`);
+      PlatformUI.toast(`Reorder failed: ${err.message}`);
       await Home.load();
     }
   },

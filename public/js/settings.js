@@ -596,7 +596,7 @@
     },
 
     async remove() {
-      if (!confirm('Remove your API key? Future chats will fall back to the shared daily budget.')) return;
+      if (!await PlatformUI.confirm({ title: 'Remove your API key?', message: 'Future chats will fall back to the shared daily budget.', confirmLabel: 'Remove', danger: true })) return;
       const removeBtn = document.getElementById('settings-remove');
       removeBtn.disabled = true;
       try {
@@ -746,14 +746,12 @@
       }
 
       row.querySelector('[data-role="revoke"]').addEventListener('click', async () => {
-        const ok = window.ConfirmModal
-          ? await ConfirmModal.show({
-              title: `Revoke AI access for "${g.appName}"?`,
-              message: 'Its next AI call will fail immediately. The app can ask for access again later.',
-              confirmLabel: 'Revoke',
-              danger: true,
-            })
-          : confirm(`Revoke AI access for "${g.appName}"?`);
+        const ok = await ConfirmModal.show({
+          title: `Revoke AI access for "${g.appName}"?`,
+          message: 'Its next AI call will fail immediately. The app can ask for access again later.',
+          confirmLabel: 'Revoke',
+          danger: true,
+        });
         if (!ok) return;
         if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
         try {
@@ -990,14 +988,12 @@
       });
 
       row.querySelector('[data-role="delete"]').addEventListener('click', async () => {
-        const ok = window.ConfirmModal
-          ? await ConfirmModal.show({
-              title: `Delete "${f.name}"?`,
-              message: 'The coding agent stops using it from your next run. This cannot be undone.',
-              confirmLabel: 'Delete',
-              danger: true,
-            })
-          : confirm(`Delete "${f.name}"?`);
+        const ok = await ConfirmModal.show({
+          title: `Delete "${f.name}"?`,
+          message: 'The coding agent stops using it from your next run. This cannot be undone.',
+          confirmLabel: 'Delete',
+          danger: true,
+        });
         if (!ok) return;
         if (demo) { this._setAgentFilesStatus('Demo data — changes are not saved.', 'info'); return; }
         try {
@@ -1151,7 +1147,7 @@
     },
 
     async _unlinkWallet() {
-      if (!confirm('Unlink your Usernode wallet?')) return;
+      if (!await PlatformUI.confirm({ title: 'Unlink your Usernode wallet?', confirmLabel: 'Unlink', danger: true })) return;
       try {
         const r = await fetch('/api/me/wallet-link', { method: 'DELETE', credentials: 'same-origin' });
         if (!r.ok) {

@@ -388,6 +388,16 @@
     {
       "name": "PR-import: self-app dev proposals view loads with the flag on (#687)",
       "path": "/app/usernode-2d5619/dev/proposals"
+    },
+    {
+      "name": "Platform shell loads the native kit (safe-area header, kit tags)",
+      "path": "/",
+      "expectSelector": "header#platform-header.un-safe-top-extend"
+    },
+    {
+      "name": "Dev feed renders under the kit adoption (demo)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-forum-scroll"
     }
   ],
   "governance": {

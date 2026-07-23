@@ -70,6 +70,22 @@ function makeAppView({ els = {}, thread = null } = {}) {
     fetch: async () => ({ ok: true, json: async () => ({}) }),
     requestAnimationFrame: (fn) => fn(),
     alert() {},
+    // Native-kit adoption: renderDevView wires PTR / sheets through
+    // PlatformUI — no-op stub keeps the topic-open contract in focus.
+    PlatformUI: {
+      isTouch: () => false,
+      hasKit: () => false,
+      toast: () => {},
+      alert: async () => ({}),
+      confirm: async () => true,
+      transition: (fn) => fn(),
+      attachScreenFx: () => {},
+      detachScreenFx: () => {},
+      pullToRefresh: () => ({ detach() {} }),
+      swipeActions: () => ({ detach() {} }),
+      actionSheet: async () => null,
+      gestures: () => null,
+    },
     setTimeout, clearTimeout, setInterval, clearInterval,
     addEventListener() {},
     localStorage: { getItem: () => null, setItem() {} },

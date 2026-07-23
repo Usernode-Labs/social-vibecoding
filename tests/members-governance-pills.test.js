@@ -169,6 +169,23 @@ function makeHarness() {
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
+  // Native-kit adoption: the governance confirm gate goes through
+  // PlatformUI.confirm now — delegate to the same queued confirm stub
+  // so the accept/cancel scenarios keep driving it.
+  sandbox.PlatformUI = {
+    isTouch: () => false,
+    hasKit: () => false,
+    toast: () => {},
+    alert: async () => ({}),
+    confirm: async () => sandbox.confirm(''),
+    transition: (fn) => fn(),
+    attachScreenFx: () => {},
+    detachScreenFx: () => {},
+    pullToRefresh: () => ({ detach() {} }),
+    swipeActions: () => ({ detach() {} }),
+    actionSheet: async () => null,
+    gestures: () => null,
+  };
   vm.createContext(sandbox);
   vm.runInContext(VIEW_SRC, sandbox);
 

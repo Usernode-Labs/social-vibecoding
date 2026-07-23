@@ -175,6 +175,22 @@ function makeHarness({ appData = {} } = {}) {
     addEventListener: () => {},
     localStorage: { getItem: () => null, setItem: () => {} },
   };
+  // Native-kit adoption: the governance confirm gate goes through
+  // PlatformUI.confirm — delegate to the queued confirm stub above.
+  sandbox.PlatformUI = {
+    isTouch: () => false,
+    hasKit: () => false,
+    toast: () => {},
+    alert: async () => ({}),
+    confirm: async () => sandbox.confirm(''),
+    transition: (fn) => fn(),
+    attachScreenFx: () => {},
+    detachScreenFx: () => {},
+    pullToRefresh: () => ({ detach() {} }),
+    swipeActions: () => ({ detach() {} }),
+    actionSheet: async () => null,
+    gestures: () => null,
+  };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);

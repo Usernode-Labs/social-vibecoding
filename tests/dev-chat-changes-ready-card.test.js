@@ -61,6 +61,21 @@ function makeDevChat() {
     // #558: promotePR() calls alert() on both failure paths; record calls so
     // tests can assert the message without a real dialog.
     alert: (msg) => { sandbox.__alerts.push(msg); },
+    // Native-kit adoption: promotePR failure feedback is a PlatformUI
+    // toast now — record it through the same __alerts sink.
+    PlatformUI: {
+      isTouch: () => false,
+      hasKit: () => false,
+      toast: (msg) => { sandbox.__alerts.push(msg); },
+      alert: async (o) => { sandbox.__alerts.push((o && (o.message || o.title)) || o); return {}; },
+      confirm: async () => true,
+      transition: (fn) => fn(),
+      attachScreenFx: () => {},
+      detachScreenFx: () => {},
+      pullToRefresh: () => ({ detach() {} }),
+      swipeActions: () => ({ detach() {} }),
+      gestures: () => null,
+    },
     navigator: { sendBeacon: () => {} },
     setTimeout, clearTimeout, setInterval, clearInterval,
     localStorage: { getItem: () => null, setItem: () => {}, removeItem: () => {} },

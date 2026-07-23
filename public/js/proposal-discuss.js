@@ -41,6 +41,7 @@ const ProposalDiscuss = {
   close() {
     if (this._abort) { try { this._abort.abort(); } catch {} this._abort = null; }
     this._streaming = false;
+    PlatformUI.detachScreenFx('proposal-discuss');
     const root = document.getElementById('proposal-discuss-overlay');
     if (root) root.remove();
   },
@@ -56,7 +57,7 @@ const ProposalDiscuss = {
     root.innerHTML = `
       <div data-pd-backdrop class="absolute inset-0"></div>
       <div class="relative ml-auto h-full w-full max-w-xl flex flex-col bg-white dark:bg-zinc-900 shadow-2xl border-l border-zinc-200 dark:border-zinc-800">
-        <div class="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
+        <div id="pd-header" class="shrink-0 flex items-center gap-2 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800">
           <div class="min-w-0 flex-1">
             <div class="text-sm font-semibold text-zinc-900 dark:text-zinc-100 truncate">✨ Ask AI</div>
             <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">Private read-only chat about “${escapeHtml(title)}”</div>
@@ -80,6 +81,14 @@ const ProposalDiscuss = {
         </div>
       </div>`;
     document.body.appendChild(root);
+
+    // Kit polish: header hairline-on-scroll + keyboard avoidance on
+    // the discussion scroller; detached in close().
+    PlatformUI.attachScreenFx(
+      'proposal-discuss',
+      document.getElementById('pd-messages'),
+      document.getElementById('pd-header'),
+    );
 
     root.querySelector('[data-pd-backdrop]').addEventListener('click', () => this.close());
     document.getElementById('pd-close').addEventListener('click', () => this.close());

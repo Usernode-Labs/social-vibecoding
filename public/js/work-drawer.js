@@ -160,11 +160,42 @@ const WorkDrawer = {
     else WorkDrawer.show();
   },
 
+  _sheet: null,
+
   show() {
     const panel = document.getElementById('work-drawer-panel');
     if (!panel) return;
     // One drawer at a time: opening the cog closes the bell.
     if (window.Notifications && Notifications.open) Notifications.hide();
+    // Touch platforms: kit bottom sheet (a top-sheet variant was tried
+    // and reverted — the bottom sheet felt better). Desktop keeps the
+    // anchored dropdown below.
+    if (PlatformUI.isTouch() && !WorkDrawer._sheet) {
+      panel.classList.remove('hidden');
+      panel.classList.add('platform-sheet-adopted');
+      // Render BEFORE presenting — the kit sheet measures its height
+      // once at present time to seed the slide-up spring (see the
+      // matching note in notifications.js show()).
+      WorkDrawer._renderList();
+      const sheet = PlatformUI.sheet({
+        contentEl: panel,
+        onDismiss: () => {
+          panel.classList.remove('platform-sheet-adopted');
+          panel.classList.add('hidden');
+          document.body.appendChild(panel);
+          WorkDrawer._sheet = null;
+          WorkDrawer.open = false;
+          WorkDrawer._syncPolling();
+        },
+      });
+      if (sheet) {
+        WorkDrawer._sheet = sheet;
+        WorkDrawer.open = true;
+        WorkDrawer.refresh();
+        return;
+      }
+      panel.classList.remove('platform-sheet-adopted');
+    }
     panel.classList.remove('hidden');
     WorkDrawer.open = true;
     WorkDrawer._renderList();
@@ -172,6 +203,10 @@ const WorkDrawer = {
   },
 
   hide() {
+    if (WorkDrawer._sheet) {
+      WorkDrawer._sheet.dismiss();
+      return;
+    }
     const panel = document.getElementById('work-drawer-panel');
     if (!panel) return;
     panel.classList.add('hidden');
