@@ -315,10 +315,25 @@ const WorkDrawer = {
   // "Your sessions" — one compact row per non-archived dev session the
   // viewer owns, across all apps (ported from the home screen's
   // "Your active sessions" strip, which showed active-status rows only;
-  // paused and in-vote sessions now render too, with a muted tag).
+  // paused sessions render too, with a muted tag).
+  //
+  // #747: a promoted session IS its proposal (same chat_sessions row),
+  // so any session whose id appears in the loaded PR-proposal list is
+  // dropped here — it renders once, under "Your proposals". Id-match
+  // (not status-match) so the row only disappears when its proposal
+  // duplicate actually rendered; if the proposals fetch failed, the
+  // promoted session still shows here with its "in vote" tag. The
+  // governance list is deliberately excluded — its ids come from the
+  // issues table and could collide with session ids. Display-only:
+  // WorkDrawer.sessions stays unfiltered so isWorking() still sees
+  // busy promoted sessions.
   renderSessionsSection() {
     const esc = wdEscapeHtml;
-    const all = Array.isArray(WorkDrawer.sessions) ? WorkDrawer.sessions : [];
+    const proposalIds = new Set(
+      (Array.isArray(WorkDrawer.proposals) ? WorkDrawer.proposals : []).map((p) => p.id)
+    );
+    const all = (Array.isArray(WorkDrawer.sessions) ? WorkDrawer.sessions : [])
+      .filter((s) => !proposalIds.has(s.id));
     if (!all.length) return '';
 
     // Busy-first on top of the server's last_activity_at DESC order
@@ -406,6 +421,17 @@ const WorkDrawer = {
       return `<span class="shrink-0">${MergeStatus.badgeHtml(life)}</span>`;
     };
 
+    // #747: promoted sessions no longer render in "Your sessions", so a
+    // proposal whose underlying session has an AI turn in flight carries
+    // the same "working…" spinner tag here instead — in-flight work never
+    // becomes invisible. busy comes from the active-sessions payload
+    // (promoted sessions can be mid-turn; see /api/me/active-sessions).
+    const busyIds = new Set(
+      (Array.isArray(WorkDrawer.sessions) ? WorkDrawer.sessions : [])
+        .filter((s) => s.busy).map((s) => s.id)
+    );
+    const busyTag = '<span class="inline-flex items-center gap-1 text-xs text-emerald-500 shrink-0"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>working…</span>';
+
     let rows = '';
     for (const p of prs) {
       const t = tally(p, p.yes_count);
@@ -423,6 +449,7 @@ const WorkDrawer = {
           ${fallbackChip}
           ${lifeChip(p)}
           ${pill(t.yes, t.target, p.status, t.advisory)}
+          ${busyIds.has(p.id) ? busyTag : ''}
         </a>`;
     }
     for (const g of govs) {
