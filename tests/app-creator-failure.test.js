@@ -27,8 +27,9 @@ function makeRecordingPool() {
 }
 
 // Loads a FRESH app-creator with its collaborators stubbed. `dockerStubs`
-// lets each test choose whether buildImage throws.
-function loadAppCreator({ dockerStubs = {}, ws = {} } = {}) {
+// lets each test choose whether buildImage throws; `githubStubs` lets the
+// repo-provisioning tests enable GitHub and make createRepo fail.
+function loadAppCreator({ dockerStubs = {}, ws = {}, githubStubs = {} } = {}) {
   const ids = {
     logger: require.resolve('../src/services/logger'),
     github: require.resolve('../src/services/github'),
@@ -49,7 +50,15 @@ function loadAppCreator({ dockerStubs = {}, ws = {} } = {}) {
   const statusPushes = [];
 
   stub(ids.logger, { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} });
-  stub(ids.github, { isEnabled: () => false, parseGithubUrl: () => null });
+  stub(ids.github, {
+    isEnabled: () => false,
+    parseGithubUrl: () => null,
+    getBotUsername: async () => 'usernode-bot',
+    createRepo: async () => ({ html_url: 'https://github.com/usernode-bot/test-app' }),
+    pushFiles: async () => {},
+    getCloneUrl: async () => 'https://github.com/usernode-bot/test-app.git',
+    ...githubStubs,
+  });
   stub(ids.docker, {
     execFileAsync: async () => ({ stdout: '', stderr: '' }),
     buildImage: async () => {},
@@ -166,4 +175,50 @@ test('successful deploy clears last_failure and broadcasts running with no error
   const push = statusPushes.find((p) => p.status === 'running');
   assert.ok(push, 'expected a running broadcast');
   assert.ok(!statusPushes.some((p) => p.status === 'error'));
+});
+
+// Session-2585 fix: with GitHub enabled, a repo-creation failure is FATAL
+// (status='error', last_failure stage 'repo') instead of silently falling
+// back to a local build that leaves repo_url NULL on a 'running' app.
+test('GitHub enabled + createRepo failure ends status=error with stage repo', async () => {
+  const { appCreator, pool, statusPushes } = loadAppCreator({
+    githubStubs: {
+      isEnabled: () => true,
+      createRepo: async () => { throw new Error('API rate limit exceeded'); },
+    },
+  });
+
+  await appCreator.createApp({ jwtSecret: 's' }, {
+    id: 42, name: 'Test App', slug: 'test-app', self_hosted: false,
+  });
+
+  const failureWrite = pool.queries.find((q) => /SET last_failure = \$1/.test(q.sql));
+  assert.ok(failureWrite, 'expected an UPDATE apps SET last_failure write');
+  const record = JSON.parse(failureWrite.params[0]);
+  assert.equal(record.stage, 'repo');
+  assert.ok(record.reason.includes('GitHub repo creation failed'));
+  assert.ok(record.reason.includes('API rate limit exceeded'));
+
+  const statusWrite = pool.queries.find((q) => /SET status = \$1 WHERE/.test(q.sql) && q.params[0] === 'error');
+  assert.ok(statusWrite, 'expected the status=error flip');
+  assert.ok(!pool.queries.some((q) => /SET repo_url/.test(q.sql)),
+    'repo_url must not be written when provisioning failed');
+
+  const push = statusPushes.find((p) => p.status === 'error');
+  assert.ok(push && push.errorReason.includes('GitHub repo creation failed'));
+});
+
+test('GitHub disabled keeps the local-template fallback deploying to running', async () => {
+  const { appCreator, pool, statusPushes } = loadAppCreator(); // isEnabled: () => false
+
+  await appCreator.createApp({ jwtSecret: 's' }, {
+    id: 42, name: 'Test App', slug: 'test-app', self_hosted: false,
+  });
+
+  assert.ok(!pool.queries.some((q) => /SET status = \$1 WHERE/.test(q.sql) && q.params[0] === 'error'),
+    'no error flip in the no-GitHub mode');
+  const successWrite = pool.queries.find((q) => /last_failure = NULL/.test(q.sql));
+  assert.ok(successWrite, 'expected the success UPDATE clearing last_failure');
+  assert.equal(successWrite.params[0], 'running');
+  assert.ok(statusPushes.some((p) => p.status === 'running'));
 });

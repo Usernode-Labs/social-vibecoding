@@ -92,6 +92,7 @@ test('selfAppHashPath moves SPA hash routes into the fragment', () => {
   assert.equal(visuals.selfAppHashPath('/leaderboard'), '/#leaderboard');
   assert.equal(visuals.selfAppHashPath('/group-chat'), '/#group-chat');
   assert.equal(visuals.selfAppHashPath('/individual-chat/9'), '/#individual-chat/9');
+  assert.equal(visuals.selfAppHashPath('/create'), '/#create');
 });
 
 test('selfAppHashPath leaves bare /, already-fragment, and server pages alone', () => {

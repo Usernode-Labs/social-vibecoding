@@ -76,6 +76,12 @@
   ],
   "tests": [
     {
+      "name": "Create-app modal opens in 'new' mode with the state on the presented card (#748)",
+      "path": "/#create",
+      "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-import-state=\"idle\"]",
+      "expectText": "Create a new app"
+    },
+    {
       "name": "Issue cards render the Mark-in-progress claim button",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Mark in progress"

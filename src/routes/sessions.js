@@ -387,6 +387,21 @@ function sessionRoutes(config) {
             created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // #747: promoted own session whose id matches the first mock
+          // proposal (stagingMockProposals in votes.js), which the
+          // /api/me/proposals demo block also returns — so the work
+          // drawer's de-dup is reviewable via ?demo=1: this row must
+          // render under "Your proposals" only, never "Your sessions".
+          {
+            id: 9000001, branch_name: 'mock/my-promoted-session', pr_number: 900101,
+            pr_url: null,
+            pr_title: '[Mock] Promoted session — must NOT appear under Your sessions',
+            session_title: '[Mock] Promoted session — must NOT appear under Your sessions',
+            status: 'promoted', linked_issues: [], shared_at: null,
+            created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
           }
         );
       }
@@ -559,6 +574,16 @@ function sessionRoutes(config) {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
+
+      // No repo → every chat turn on the session would refuse to run
+      // (see the repo guard in POST /chat), so reject up front like the
+      // headless route does. Deliberately unconditional (also when GitHub
+      // is disabled platform-wide): a clear 400 beats a session whose
+      // every turn dies, and on GitHub-enabled deployments the app-heal
+      // sweep makes this state short-lived.
+      if (!(app.repo_url || '').match(/github\.com\/[^/]+\/[^/]+/)) {
+        return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+      }
 
       // Per-user cap (#193): only 'active' sessions count toward the
       // slot budget. Promoted sessions (PRs up for a merge vote) are
@@ -1961,8 +1986,24 @@ function sessionRoutes(config) {
         const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
 
         if (!repoOwner || !repoName) {
-          send('error', { error: 'No GitHub repo configured for this app' });
+          // Structural, not transient: the app has no GitHub repo (repo
+          // provisioning failed at creation — the app-heal sweep repairs
+          // this within a tick or two). The old SSE-only 'error' event
+          // died with the stream and left no server-side trace, so these
+          // dead turns were invisible everywhere (session 2585). Persist
+          // a status row that survives refresh and end the turn cleanly
+          // so 'done' hooks (notifySessionDone) still fire.
+          log.warn('sessions', 'Chat turn refused: app has no GitHub repo', {
+            sessionId: session.id, appSlug: session.app_slug,
+          });
+          await sendStatus(
+            'This turn can’t run: the app has no GitHub repository (repo provisioning failed when the app was created). The platform repairs this automatically — try again in a few minutes.',
+            { turnError: true }
+          );
+          send('done', {});
           res.end();
+          if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+          setTimeout(() => sessionBus.clearSession(session.id), 30000);
           return;
         }
 

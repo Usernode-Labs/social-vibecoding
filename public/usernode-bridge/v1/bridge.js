@@ -3795,6 +3795,136 @@
   };
 
   // =====================================================================
+  //  Public API: native chrome data (bridge v2)
+  //  (usernode.getBridgeInfo / getNodeStatus / getWalletState /
+  //   getTransactionRecords / openNativeScreen)
+  // =====================================================================
+  //
+  // Data feeds for SV's web chrome (header node pill, wallet sheet,
+  // receipts) when running inside the Usernode app — the app-as-SV-chrome
+  // migration. Versioned contract: NATIVE-BRIDGE.md in the
+  // social-vibecoding repo. Same old-build hazard as the shortcut
+  // methods (unknown methods are silently dropped), so every read
+  // resolves a safe fallback on timeout instead of hanging or rejecting
+  // — callers can always `await` and render "unavailable".
+
+  var _CHROME_PROBE_TIMEOUT_MS = 4000;
+  // getWalletState may legitimately take ~10s on a fresh app start (the
+  // native wallet provider waits for the node); don't cut it off early.
+  var _WALLET_STATE_TIMEOUT_MS = 12000;
+
+  function callNativeChromeRead(method, args, timeoutMs, fallbackValue) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        console.log(_BRIDGE_TAG, method, "timed out (old app build?)");
+        resolve(fallbackValue);
+      }, timeoutMs);
+      callNative(method, args).then(
+        function (v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(v);
+        },
+        function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          console.warn(_BRIDGE_TAG, method, "failed:", err && err.message);
+          resolve(fallbackValue);
+        }
+      );
+    });
+  }
+
+  // getBridgeInfo() → { version, capabilities: [...] }. Resolves
+  // { version: 0, capabilities: [] } outside the app and on old builds,
+  // so chrome can always `await` it and gate UI on capabilities
+  // (`capabilities.includes('getNodeStatus')` etc), never on version.
+  window.usernode.getBridgeInfo = function () {
+    var empty = { version: 0, capabilities: [] };
+    if (!window.usernode.isNative) return Promise.resolve(empty);
+    return callNativeChromeRead(
+      "getBridgeInfo", {}, _CHROME_PROBE_TIMEOUT_MS, empty
+    ).then(function (info) {
+      return info && Array.isArray(info.capabilities) ? info : empty;
+    });
+  };
+
+  // getNodeStatus() → { status: "synced"|"syncing"|"connecting"|"offline",
+  //   localBestHeight, networkBestHeight, connectedPeers, totalPeers }
+  // or null. The app also pushes the same snapshot as a
+  // `usernode:node-status` CustomEvent on window (once per page load and
+  // on pill-state transitions) — prefer the event stream over polling.
+  window.usernode.getNodeStatus = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getNodeStatus", {}, _CHROME_PROBE_TIMEOUT_MS, null
+    );
+  };
+
+  // getWalletState() → { address, balance (base units, string),
+  //   tokenAmount, tokenSymbol, lastUpdatedMs } or null.
+  window.usernode.getWalletState = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getWalletState", {}, _WALLET_STATE_TIMEOUT_MS, null
+    );
+  };
+
+  // getTransactionRecords() → { items: [...] } (newest first, capped at
+  // 100) or null. The app-side receipts for transactions sent from this
+  // webview — the same data behind the native receipts sheet.
+  window.usernode.getTransactionRecords = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getTransactionRecords", {}, _CHROME_PROBE_TIMEOUT_MS, null
+    );
+  };
+
+  // openNativeScreen(screen) → true. Pushes an allowlisted native route
+  // ("settings" | "profile"). Unlike the reads above this REJECTS on old
+  // builds / non-native — a silent no-op would strand the user's tap.
+  // The app additionally refuses callers that aren't the SV top frame.
+  window.usernode.openNativeScreen = function (screen) {
+    if (!screen) {
+      return Promise.reject(new Error("openNativeScreen requires a screen"));
+    }
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error(
+        "openNativeScreen is only available inside the Usernode mobile app."
+      ));
+    }
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(new Error(
+          "openNativeScreen is not supported by this app build"
+        ));
+      }, _CHROME_PROBE_TIMEOUT_MS);
+      callNative("openNativeScreen", { screen: screen }).then(
+        function (v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(v);
+        },
+        function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  };
+
+  // =====================================================================
   //  Public API: LLM access (usernode.requestLlmAccess / getLlmAccess /
   //  getLlmUsage)
   // =====================================================================

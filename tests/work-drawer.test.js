@@ -246,3 +246,86 @@ test('_renderBadge splits unread between the cog (green) and the bell (red)', ()
   assert.equal(green.textContent, '1');
   assert.equal(markAll.disabled, true, 'bell mark-all disabled when only cog items remain');
 });
+
+// ── 4. de-dup: promoted sessions render under "Your proposals" only (#747) ──
+
+const mkSession = (over = {}) => ({
+  id: 1, status: 'active', busy: false, app_slug: 'demo', app_name: 'Demo App',
+  session_title: 'A session', last_activity_at: new Date().toISOString(),
+  created_at: new Date().toISOString(), ...over,
+});
+
+const mkProposal = (over = {}) => ({
+  id: 1, status: 'promoted', pr_number: 101, pr_title: 'A proposal',
+  pr_title_fallback: false, app_slug: 'demo', app_name: 'Demo App',
+  yes_count: 1, no_count: 0, majority: 3, check_state: 'passing', ...over,
+});
+
+test('renderSessionsSection drops a session whose id appears in the proposals list', () => {
+  const sb = loadAll();
+  const W = drawerWith(sb, {
+    sessions: [
+      mkSession({ id: 7, status: 'promoted', session_title: 'Promoted dup' }),
+      mkSession({ id: 8, status: 'active', session_title: 'Plain active' }),
+    ],
+    proposals: [mkProposal({ id: 7, pr_title: 'Promoted dup' })],
+  });
+  const html = W.renderSessionsSection();
+  assert.match(html, /Your sessions/);
+  assert.match(html, /Plain active/, 'non-promoted session still renders');
+  assert.doesNotMatch(html, /dev\/sessions\/7/, 'duplicated promoted session is dropped');
+  assert.match(html, /dev\/sessions\/8/);
+});
+
+test('renderSessionsSection returns "" when every session is filtered out (no orphan header)', () => {
+  const sb = loadAll();
+  const W = drawerWith(sb, {
+    sessions: [mkSession({ id: 7, status: 'promoted' })],
+    proposals: [mkProposal({ id: 7 })],
+  });
+  assert.equal(W.renderSessionsSection(), '');
+});
+
+test('a session matching a governance row id is NOT filtered (PR proposals only)', () => {
+  const sb = loadAll();
+  const W = drawerWith(sb, {
+    sessions: [mkSession({ id: 42, session_title: 'Session colliding with an issue id' })],
+    proposals: [],
+  });
+  // Governance ids come from the issues table — same numeric space as
+  // nothing session-related; a collision must not hide the session.
+  W.governance = [{ id: 42, title: 'Secret change', app_slug: 'demo', app_name: 'Demo App', up_count: 0 }];
+  const html = W.renderSessionsSection();
+  assert.match(html, /dev\/sessions\/42/, 'session survives a governance id collision');
+});
+
+test('renderProposalsSection carries the "working…" tag from a busy matching session', () => {
+  const sb = loadAll();
+  const W = drawerWith(sb, {
+    sessions: [
+      mkSession({ id: 7, status: 'promoted', busy: true }),
+      mkSession({ id: 9, status: 'promoted', busy: false }),
+    ],
+    proposals: [
+      mkProposal({ id: 7, pr_title: 'Busy proposal' }),
+      mkProposal({ id: 9, pr_title: 'Idle proposal' }),
+    ],
+  });
+  const html = W.renderProposalsSection();
+  const rows = html.split('<a ');
+  const busyRow = rows.find((r) => r.includes('dev/proposals/7'));
+  const idleRow = rows.find((r) => r.includes('dev/proposals/9'));
+  assert.ok(busyRow && busyRow.includes('working…'), 'busy session\'s proposal row shows the spinner tag');
+  assert.ok(idleRow && !idleRow.includes('working…'), 'idle proposal row has no spinner tag');
+});
+
+test('isWorking stays true for a busy promoted session filtered from the rendered list', () => {
+  const sb = loadAll();
+  const W = drawerWith(sb, {
+    totals: { active: 0, promoted: 1, paused: 0, busy: 0, total: 1 },
+    sessions: [mkSession({ id: 7, status: 'promoted', busy: true })],
+    proposals: [mkProposal({ id: 7, check_state: 'passing' })],
+  });
+  assert.equal(W.renderSessionsSection(), '', 'row hidden from Your sessions');
+  assert.equal(W.isWorking(), true, 'cog spin still driven by the unfiltered data array');
+});
