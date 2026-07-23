@@ -2513,20 +2513,25 @@ function sessionRoutes(config) {
         send('assistant_message_end', {});
 
         // Persist any GitHub issues the Mayor declared this dispatch
-        // addresses (#75). Union with the session's existing linkage so the
-        // set grows across turns; pr-metadata.js turns each number into a
-        // `Closes #N` line in the PR body. Best-effort: a failure here
-        // must not block the build.
+        // addresses or drops (#75, #733). Additions union with the
+        // session's existing linkage so the set grows across turns;
+        // removals (`removes_issues`) subtract from it — winning over an
+        // addition of the same number in the same call — so a mid-session
+        // scope cut keeps the PR's `Closes #N` lines truthful.
+        // pr-metadata.js turns each linked number into a `Closes #N` line
+        // in the PR body. Best-effort: a failure here must not block the
+        // build.
         {
           const declared = prMetadata.sanitizeIssueNumbers(activeToolCall.input?.addresses_issues);
-          if (declared.length) {
+          const dropped = prMetadata.sanitizeIssueNumbers(activeToolCall.input?.removes_issues);
+          if (declared.length || dropped.length) {
             try {
               const { rows: liRows } = await pool.query(
-                `SELECT linked_issues FROM chat_sessions WHERE id = $1`,
+                `SELECT linked_issues, pr_linked_issues_applied FROM chat_sessions WHERE id = $1`,
                 [session.id]
               );
               const existing = prMetadata.sanitizeIssueNumbers(liRows[0] && liRows[0].linked_issues);
-              const merged = prMetadata.sanitizeIssueNumbers([...existing, ...declared]);
+              const merged = prMetadata.applyIssueDeclarations(existing, declared, dropped);
               const changed = merged.length !== existing.length || merged.some((n, i) => n !== existing[i]);
               if (changed) {
                 await pool.query(
@@ -2545,6 +2550,43 @@ function sessionRoutes(config) {
                   });
                 } catch (err) {
                   log.warn('sessions', 'linked_issues issue_update broadcast failed', { err: err.message, sessionId: session.id });
+                }
+              }
+
+              // #733: when numbers were actually removed and a PR is
+              // already open, patch its live body NOW. A scout turn never
+              // reaches applyPrMetadata, so without this a stale
+              // `Closes #N` line survives to merge and GitHub wrongly
+              // auto-closes the issue. Build turns regenerate the whole
+              // body at turn end anyway; running the strip here too covers
+              // a build that fails or is stopped before that.
+              const removedNow = existing.filter((n) => !merged.includes(n));
+              if (removedNow.length && session.pr_number) {
+                try {
+                  const pr = await github.getPR(repoOwner, repoName, session.pr_number);
+                  const patched = prMetadata.stripClosingLines(pr && pr.body, removedNow);
+                  if (pr && typeof pr.body === 'string' && patched !== pr.body) {
+                    await github.updatePR(repoOwner, repoName, session.pr_number, { body: patched });
+                  }
+                  // Subtract the removed numbers from the applied snapshot
+                  // so applyPrMetadata's drift gate keeps comparing against
+                  // what the live body actually carries.
+                  const applied = prMetadata.sanitizeIssueNumbers(liRows[0] && liRows[0].pr_linked_issues_applied);
+                  const appliedNew = applied.filter((n) => !removedNow.includes(n));
+                  if (appliedNew.length !== applied.length) {
+                    await pool.query(
+                      `UPDATE chat_sessions SET pr_linked_issues_applied = $1 WHERE id = $2`,
+                      [appliedNew, session.id]
+                    );
+                    session.pr_linked_issues_applied = appliedNew;
+                  }
+                  log.info('sessions', 'Stripped Closes lines from PR body after removes_issues', {
+                    sessionId: session.id, prNumber: session.pr_number, removed: removedNow,
+                  });
+                } catch (err) {
+                  log.warn('sessions', 'PR-body Closes strip failed (non-fatal)', {
+                    err: err.message, sessionId: session.id, prNumber: session.pr_number,
+                  });
                 }
               }
             } catch (err) {
@@ -4887,7 +4929,18 @@ const DISPATCH_TOOL = {
           + 'Populate ONLY with issues you have actually seen via list_github_issues AND have deliberately '
           + "decided this work resolves — never guess, never auto-match by keyword, and omit it entirely for "
           + 'tangentially-related issues. Each number listed becomes a `Closes #N` line in the PR body, so the '
-          + 'issue auto-closes when the PR merges. Numbers accumulate across turns; pass only the ones newly relevant.',
+          + 'issue auto-closes when the PR merges. Numbers accumulate across turns; pass only the ones newly relevant. '
+          + 'A previously-added number can be taken back out via `removes_issues`.',
+      },
+      removes_issues: {
+        type: 'array',
+        items: { type: 'integer' },
+        description:
+          'OPTIONAL. The numbers of previously-declared issues this session should NO LONGER close — use when '
+          + 'the user cuts an issue out of scope mid-session. Each listed number\'s `Closes #N` line is removed '
+          + 'from the PR body, so merging the PR no longer auto-closes that issue. Wins over `addresses_issues` '
+          + 'when the same number appears in both in one call; listing a number that was never linked is a '
+          + 'harmless no-op, and a later `addresses_issues` may re-add it.',
       },
     },
     required: ['prompt'],
@@ -4928,7 +4981,19 @@ const DISPATCH_SCOUT_TOOL = {
           + 'Populate ONLY with issues you have actually seen via list_github_issues AND have deliberately '
           + "decided this work resolves — never guess, never auto-match by keyword, and omit it for tangential issues. "
           + 'Each number becomes a `Closes #N` line in the PR body so the issue auto-closes on merge. '
-          + 'Numbers accumulate across turns; pass only the ones newly relevant.',
+          + 'Numbers accumulate across turns; pass only the ones newly relevant. '
+          + 'A previously-added number can be taken back out via `removes_issues`.',
+      },
+      removes_issues: {
+        type: 'array',
+        items: { type: 'integer' },
+        description:
+          'OPTIONAL. The numbers of previously-declared issues this session should NO LONGER close — use when '
+          + 'the user cuts an issue out of scope mid-session (e.g. the spec is revised to exclude it). Each '
+          + 'listed number\'s `Closes #N` line is removed from the PR body, so merging the PR no longer '
+          + 'auto-closes that issue. Wins over `addresses_issues` when the same number appears in both in one '
+          + 'call; listing a number that was never linked is a harmless no-op, and a later `addresses_issues` '
+          + 'may re-add it.',
       },
     },
     required: ['prompt'],
