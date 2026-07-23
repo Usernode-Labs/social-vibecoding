@@ -109,6 +109,7 @@
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Sheets &amp; dialogs</h2>
         <div class="flex flex-wrap items-center gap-3">
           <button id="sheet-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Bottom sheet</button>
+          <button id="sheet-late-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Sheet (late content)</button>
           <button id="action-sheet-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Action sheet</button>
           <button id="alert-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Alert</button>
           <button id="modal-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Modal</button>
@@ -367,6 +368,38 @@
           sheet.dismiss();
           unNative.toast('Saved');
         });
+      });
+
+      // Late-rendered content (issue #742): present an effectively-empty
+      // sheet and fill it AFTERWARDS — a microtask fill (the reported
+      // first-open pattern; the retarget happens before paint, so it
+      // reads as one full-height slide-up) and then a post-fetch-style
+      // growth 700ms later, which springs the extra rows up while the
+      // sheet is presented at rest.
+      document.getElementById('sheet-late-btn').addEventListener('click', function () {
+        var holder = document.createElement('div');
+        var sheet = unNative.presentSheet({
+          contentEl: holder,
+          onDismiss: function () { resultEl.textContent = 'Late-content sheet dismissed.'; },
+        });
+        function rows(n, label) {
+          var html = '';
+          for (var i = 1; i <= n; i++) {
+            html += '<div class="py-2.5 text-sm border-b border-zinc-200 dark:border-zinc-800">' +
+              label + ' row ' + i + '</div>';
+          }
+          return html;
+        }
+        Promise.resolve().then(function () {
+          holder.innerHTML =
+            '<div class="text-base font-semibold mb-2">Rendered after present</div>' +
+            '<p class="text-sm text-zinc-500 mb-2">This content was written into the sheet in a microtask AFTER presentSheet() — the sheet re-measured and still slid up through its full height.</p>' +
+            rows(4, 'Loaded');
+        });
+        setTimeout(function () {
+          if (!sheet.el.parentNode) return;
+          holder.innerHTML += rows(3, 'Fetched');
+        }, 700);
       });
       document.getElementById('action-sheet-btn').addEventListener('click', function () {
         unNative.actionSheet({
