@@ -455,14 +455,18 @@
   </div>
 
   <!-- Create app modal.
-       data-mode controls "new" vs "import"; data-import-state controls
-       the import sub-states (idle / checking / ok / error). CSS in
-       app.css keys off both attributes to show/hide inputs and the
-       submit button. JS only needs to flip attributes, never juggle
-       classes per element. -->
-  <div id="create-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60" data-mode="new" data-import-state="idle">
+       data-mode on #create-card controls "new" vs "import";
+       data-import-state controls the import sub-states (idle / checking
+       / ok / error). CSS in app.css keys off both attributes to
+       show/hide inputs and the submit button. JS only needs to flip
+       attributes, never juggle classes per element. -->
+  <div id="create-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
     <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
-    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
+    <!-- State attributes live on the CARD, not the root: the native-kit
+         adopter (platform-ui.js) re-parents this card into the kit's
+         modal shell while presented, so root-keyed descendant CSS would
+         stop matching. The card travels; its attributes travel with it. -->
+    <div id="create-card" class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl" data-mode="new" data-import-state="idle">
       <h2 id="create-title" class="text-lg font-bold mb-4">Create a new app</h2>
 
       <div class="flex p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
@@ -502,7 +506,7 @@
 
         <!-- Name field. Always visible in "new" mode; gated behind a
              successful access check in "import" mode (CSS hides it
-             until #create-modal[data-import-state="ok"]). -->
+             until #create-card[data-import-state="ok"]). -->
         <div id="create-name-block">
           <label for="app-name" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">App name</label>
           <input

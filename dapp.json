@@ -115,6 +115,11 @@
       "expectText": "Undo flow (priority)"
     },
     {
+      "name": "Create-app modal card carries mode state on the card (#748)",
+      "path": "/",
+      "expectSelector": "#create-card[data-mode=\"new\"][data-import-state=\"idle\"]"
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"

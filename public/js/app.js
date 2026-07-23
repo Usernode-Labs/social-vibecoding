@@ -1575,7 +1575,7 @@ const App = {
     document.getElementById('create-form').addEventListener('submit', App.handleCreateApp);
 
     // Create / Import mode pills. The active mode lives on
-    // #create-modal[data-mode="..."] (CSS keys off it for styling); these
+    // #create-card[data-mode="..."] (CSS keys off it for styling); these
     // handlers also flip the submit-button label and the URL block.
     document.querySelectorAll('.create-mode-pill').forEach((pill) => {
       pill.addEventListener('click', () => App.setCreateMode(pill.dataset.modePill));
@@ -2543,9 +2543,13 @@ const App = {
   // entry point (open, cancel, pill click) stays in sync.
   setCreateMode(mode) {
     const m = mode === 'import' ? 'import' : 'new';
-    const modal = document.getElementById('create-modal');
-    if (!modal) return;
-    modal.dataset.mode = m;
+    // State lives on the card (#create-card), not the modal root: the
+    // native-kit adopter re-parents the card out of #create-modal while
+    // presented, so the attribute must travel with the card for the CSS
+    // gating to keep matching (#748).
+    const card = document.getElementById('create-card');
+    if (!card) return;
+    card.dataset.mode = m;
     document.getElementById('create-title').textContent =
       m === 'import' ? 'Import existing app' : 'Create a new app';
     document.getElementById('create-submit').textContent =
@@ -2565,10 +2569,12 @@ const App = {
   // button only at state="ok"; everything else hides them. Called from
   // every transition so the DOM never gets stuck in a halfway state.
   _setImportState(state) {
-    const modal = document.getElementById('create-modal');
-    if (!modal) return;
+    // Same as setCreateMode: the attribute rides on #create-card so it
+    // survives the kit adopter's re-parenting.
+    const card = document.getElementById('create-card');
+    if (!card) return;
     const s = ['idle', 'checking', 'ok', 'error'].includes(state) ? state : 'idle';
-    modal.dataset.importState = s;
+    card.dataset.importState = s;
     const checkBtn = document.getElementById('import-check');
     const status = document.getElementById('import-status');
     if (checkBtn) {
@@ -2646,8 +2652,8 @@ const App = {
 
   async handleCreateApp(e) {
     e.preventDefault();
-    const modal = document.getElementById('create-modal');
-    const mode = modal?.dataset.mode === 'import' ? 'import' : 'new';
+    const card = document.getElementById('create-card');
+    const mode = card?.dataset.mode === 'import' ? 'import' : 'new';
     const name = document.getElementById('app-name').value.trim();
     const repoUrl = document.getElementById('import-url')?.value.trim() || '';
     const errorEl = document.getElementById('create-error');
@@ -2661,7 +2667,7 @@ const App = {
     // The server runs the pre-flight again on POST anyway.
     if (mode === 'import') {
       if (!repoUrl) return;
-      if (modal.dataset.importState !== 'ok') {
+      if (card.dataset.importState !== 'ok') {
         errorEl.textContent = 'Click "Check" to verify bot access first.';
         errorEl.classList.remove('hidden');
         return;
