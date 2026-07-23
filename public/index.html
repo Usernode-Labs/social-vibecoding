@@ -462,7 +462,11 @@
        classes per element. -->
   <div id="create-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60" data-mode="new" data-import-state="idle">
     <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
-    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl">
+    <!-- The mode/import-state attributes are mirrored onto this card
+         (see App.setCreateMode / App._setImportState) because the
+         native-kit modal adoption lifts the card out of #create-modal
+         while presented — CSS keyed off the card keeps matching. -->
+    <div id="create-card" class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-sm shadow-xl" data-mode="new" data-import-state="idle">
       <h2 id="create-title" class="text-lg font-bold mb-4">Create a new app</h2>
 
       <div class="flex p-1 mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
@@ -502,7 +506,7 @@
 
         <!-- Name field. Always visible in "new" mode; gated behind a
              successful access check in "import" mode (CSS hides it
-             until #create-modal[data-import-state="ok"]). -->
+             until #create-card[data-import-state="ok"]). -->
         <div id="create-name-block">
           <label for="app-name" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">App name</label>
           <input
