@@ -34,6 +34,8 @@ const {
   autoScrollVelocity,
   createArbiter,
   createToastSlot,
+  zoomPose,
+  zoomRectUsable,
 } = physics;
 
 // ── Spring integrator ──────────────────────────────────────────────────
@@ -705,4 +707,47 @@ test('toast slot: every record ends exactly once across a mixed sequence', () =>
   for (const r of records) {
     assert.equal(ended.get(r), 1, `record ${r.id} ended ${ended.get(r)} times`);
   }
+});
+
+// ── Zoom-from-element math (transition 'zoom-in'/'zoom-out') ───────────
+
+test('zoomPose maps the screen rect onto the tile rect (translate + scale)', () => {
+  // A 100×80 tile at (40, 300) inside a 390×700 screen region at (0, 60):
+  // the pose that shrinks the screen onto the tile (transform-origin 0 0).
+  const tile = { left: 40, top: 300, width: 100, height: 80 };
+  const screen = { left: 0, top: 60, width: 390, height: 700 };
+  const pose = zoomPose(tile, screen);
+  assert.equal(pose.tx, 40);
+  assert.equal(pose.ty, 240);
+  assert.ok(Math.abs(pose.sx - 100 / 390) < 1e-12);
+  assert.ok(Math.abs(pose.sy - 80 / 700) < 1e-12);
+  // Identity: a rect mapped onto itself is no transform at all.
+  assert.deepEqual(zoomPose(screen, screen), { tx: 0, ty: 0, sx: 1, sy: 1 });
+});
+
+test('zoomPose rejects degenerate rects', () => {
+  const ok = { left: 0, top: 0, width: 100, height: 100 };
+  assert.equal(zoomPose(null, ok), null);
+  assert.equal(zoomPose(ok, null), null);
+  assert.equal(zoomPose({ left: 0, top: 0, width: 0, height: 50 }, ok), null);
+  assert.equal(zoomPose(ok, { left: 0, top: 0, width: 390, height: 0 }), null);
+});
+
+test('zoomRectUsable accepts partially visible rects and rejects off-screen ones', () => {
+  const vh = 800;
+  // Fully on screen.
+  assert.equal(zoomRectUsable({ left: 0, top: 100, width: 100, height: 100, bottom: 200 }, vh), true);
+  // Partially visible at either edge still counts (the platform rule:
+  // reject only when the rect is entirely outside the vertical band).
+  assert.equal(zoomRectUsable({ left: 0, top: -50, width: 100, height: 100, bottom: 50 }, vh), true);
+  assert.equal(zoomRectUsable({ left: 0, top: 790, width: 100, height: 100, bottom: 890 }, vh), true);
+  // Entirely above / below the viewport → unusable.
+  assert.equal(zoomRectUsable({ left: 0, top: -200, width: 100, height: 100, bottom: -100 }, vh), false);
+  assert.equal(zoomRectUsable({ left: 0, top: 900, width: 100, height: 100, bottom: 1000 }, vh), false);
+  // Degenerate: zero-size (a display:none source screen) or missing.
+  assert.equal(zoomRectUsable({ left: 0, top: 0, width: 0, height: 0, bottom: 0 }, vh), false);
+  assert.equal(zoomRectUsable(null, vh), false);
+  // bottom is derived from top+height when absent (plain-object rects).
+  assert.equal(zoomRectUsable({ left: 0, top: -50, width: 10, height: 100 }, vh), true);
+  assert.equal(zoomRectUsable({ left: 0, top: -200, width: 10, height: 100 }, vh), false);
 });

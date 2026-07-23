@@ -96,6 +96,24 @@ test('kit absent: transition still runs the mutation synchronously', () => {
   assert.equal(ran, true);
 });
 
+test('kit absent: a zoom transition runs BOTH mutation halves (fn + after), never throws', () => {
+  const { PlatformUI } = makeSandbox();
+  const order = [];
+  PlatformUI.transition(() => order.push('fn'), {
+    type: 'zoom-in',
+    el: {},
+    fromEl: () => null,
+    after: () => order.push('after'),
+  });
+  assert.deepEqual(order, ['fn', 'after']);
+  // No `after` is fine too.
+  let ran = false;
+  assert.doesNotThrow(() => {
+    PlatformUI.transition(() => { ran = true; }, { type: 'zoom-out', el: {} });
+  });
+  assert.equal(ran, true);
+});
+
 test('kit absent: swipeActions / pullToRefresh / attachScreenFx are inert, never throw', () => {
   const { PlatformUI } = makeSandbox();
   const s = PlatformUI.swipeActions({}, {});
@@ -181,6 +199,21 @@ test('kit present: transition forwards the type and runs the mutation', () => {
   PlatformUI.transition(() => { ran = true; }, { type: 'pop' });
   assert.equal(ran, true);
   assert.deepEqual(seen.transitions[0], { type: 'pop' });
+});
+
+test('kit present: zoom opts (el, fromEl, fallback, after) forward to unNative untouched', () => {
+  const { kit, seen } = stubKit();
+  const { PlatformUI } = makeSandbox({ kit });
+  const el = { screen: true };
+  const fromEl = () => null;
+  const after = () => {};
+  const opts = { type: 'zoom-in', el, fromEl, fallback: 'push', after };
+  PlatformUI.transition(() => {}, opts);
+  assert.equal(seen.transitions[0], opts, 'the opts object passes through by reference');
+  assert.equal(seen.transitions[0].el, el);
+  assert.equal(seen.transitions[0].fromEl, fromEl);
+  assert.equal(seen.transitions[0].after, after);
+  assert.equal(seen.transitions[0].fallback, 'push');
 });
 
 // ── 3. Include regressions ─────────────────────────────────────────────
