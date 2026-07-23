@@ -1228,7 +1228,24 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   slide+parallax / Android shared-axis fade; instant cut where the API
   is missing). Use `'push'`/`'pop'` for real screen navigation ONLY;
   tab switches, menus and panel toggles must use `'none'` — repeated
-  animation on high-frequency UI reads as lag, not polish.
+  animation on high-frequency UI reads as lag, not polish. For
+  tile/card → detail navigation there are also `type: 'zoom-in'` /
+  `'zoom-out'` — the iOS-homescreen expand/collapse: the destination
+  screen grows out of the tapped tile's on-screen rect, and Back
+  shrinks it into the tile again. Pass `el` (the screen element that
+  moves) and `fromEl` (the tile element — or a function returning it,
+  resolved lazily; or a static `fromRect`), and split the mutation in
+  two: `fn` reveals the incoming screen (leave the outgoing one
+  visible — it shows beneath the moving card) and `after` conceals the
+  outgoing one (the kit runs it exactly once on every path). The LIVE
+  element is transform-animated as a pinned fixed overlay — no View
+  Transition snapshot, so it's iframe-safe and content keeps loading
+  mid-zoom — with an opaque `--un-zoom-bg` surface for the duration
+  and an exact inline-style restore at the end. When the zoom can't
+  run (tile off-screen, deep link, reduced motion) it falls back to
+  `fallback` (`'push'`/`'pop'` by default, or `'none'`) with the
+  combined mutation. Push/pop remain the default for plain screen
+  navigation.
 - **Safe areas.** Opt-in helpers `.un-safe-top` / `.un-safe-top-extend`
   / `.un-safe-bottom` / `.un-safe-bottom-extend` / `.un-safe-x` apply
   `env(safe-area-inset-*)` padding to fixed bars. They require
@@ -1293,7 +1310,8 @@ apps.
    text fields, wire `attachKeyboardAvoidance` on the content
    scroller and delete any hand-rolled visualViewport plumbing.
 6. Route real screen navigations through `unNative.transition`
-   (`'push'`/`'pop'`); leave tabs/menus/panels instant.
+   (`'push'`/`'pop'`; `'zoom-in'`/`'zoom-out'` for tile/card → detail);
+   leave tabs/menus/panels instant.
 7. Optionally override `--un-*` variables to match the app's branding.
 
 ## Vendored shared files

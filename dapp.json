@@ -109,6 +109,12 @@
       "expectText": "Sheets & dialogs"
     },
     {
+      "name": "Native-feel kit zoom-from-element demo section renders (#740)",
+      "path": "/usernode-native/v1/demo.html",
+      "expectSelector": "#zoom-grid [data-zoom-tile]",
+      "expectText": "Zoom from element"
+    },
+    {
       "name": "Native-feel kit reorder/toast/modal sections render",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": "#reorder-group-a .reorder-row .un-reorder-handle",

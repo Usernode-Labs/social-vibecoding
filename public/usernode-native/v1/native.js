@@ -23,7 +23,16 @@
  *                                        lift on touch, handle/pointer drag on
  *                                        desktop, overlay drop indicator,
  *                                        edge auto-scroll, spring settle)
- *   unNative.transition(fn, {type})   — View Transitions wrapper
+ *   unNative.transition(fn, {type})   — screen transitions. 'push' | 'pop'
+ *                                        | 'none' wrap fn in a View
+ *                                        Transition; 'zoom-in' | 'zoom-out'
+ *                                        play the iOS-homescreen expand /
+ *                                        collapse out of a tile ({ el,
+ *                                        fromEl | fromRect, after?,
+ *                                        fallback? } — fn reveals the
+ *                                        incoming screen, `after` conceals
+ *                                        the outgoing one; the LIVE el is
+ *                                        transform-animated, no snapshot)
  *   unNative.presentSheet(opts)       — bottom sheet (drag-to-dismiss)
  *   unNative.presentModal(opts)       — centered modal card, arbitrary content
  *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
@@ -411,6 +420,40 @@
     };
   }
 
+  /* ────────────────────────────────────────────────────────────────────
+   * Zoom-from-element math — pure functions for the 'zoom-in'/'zoom-out'
+   * transition types. Unit-tested via the physics export.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  // Whether a source rect can seed a zoom: non-degenerate and at least
+  // partially inside the viewport's vertical band. Off-screen tiles
+  // (deep links, filtered-away cards, scrolled-away grids) return false
+  // so the transition falls back to push/pop instead of animating
+  // from a rect the user can't see.
+  function zoomRectUsable(rect, viewportHeight) {
+    if (!rect) return false;
+    if (!(rect.width > 0) || !(rect.height > 0)) return false;
+    var bottom = rect.bottom != null ? rect.bottom : rect.top + rect.height;
+    if (bottom < 0) return false;
+    if (viewportHeight != null && rect.top > viewportHeight) return false;
+    return true;
+  }
+
+  // The transform pose that maps targetRect (the screen's resting rect)
+  // onto fromRect (the tile): apply as translate(tx,ty) scale(sx,sy)
+  // with transform-origin 0 0. null on degenerate input.
+  function zoomPose(fromRect, targetRect) {
+    if (!fromRect || !targetRect) return null;
+    if (!(fromRect.width > 0) || !(fromRect.height > 0)) return null;
+    if (!(targetRect.width > 0) || !(targetRect.height > 0)) return null;
+    return {
+      tx: fromRect.left - targetRect.left,
+      ty: fromRect.top - targetRect.top,
+      sx: fromRect.width / targetRect.width,
+      sy: fromRect.height / targetRect.height,
+    };
+  }
+
   var physics = {
     PRESETS: PRESETS,
     DECEL_RATE: DECEL_RATE,
@@ -439,6 +482,8 @@
     autoScrollVelocity: autoScrollVelocity,
     createArbiter: createArbiter,
     createToastSlot: createToastSlot,
+    zoomPose: zoomPose,
+    zoomRectUsable: zoomRectUsable,
   };
 
   // Node (unit tests): export the math and stop — no DOM below this line.
@@ -1767,32 +1812,189 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
-   * Page transitions — View Transitions wrapper. type 'none' (the default,
-   * and the REQUIRED choice for high-frequency UI like tab switches, menus
-   * and panels) runs the mutation with no animation. Re-entrant: a
-   * navigation during an active transition skips animation, never queues.
+   * Page transitions. type 'none' (the default, and the REQUIRED choice
+   * for high-frequency UI like tab switches, menus and panels) runs the
+   * mutation with no animation; 'push'/'pop' wrap it in a View
+   * Transition. Re-entrant: a navigation during an active transition
+   * skips animation, never queues.
+   *
+   * 'zoom-in'/'zoom-out' play the iOS-homescreen expand/collapse out of
+   * a tile ({ el, fromEl | fromRect, after?, fallback? }). No View
+   * Transition is involved: the LIVE screen element (opts.el) is pinned
+   * as a fixed overlay and transform-animated from/to the tile's rect —
+   * no snapshot, so it is iframe-safe and content keeps loading
+   * mid-zoom. The caller splits its mutation in two: `fn` reveals the
+   * incoming screen (leaving the outgoing one visible beneath the
+   * moving card) and `opts.after` conceals the outgoing one — `after`
+   * runs exactly once on every path (animated settle, instant settle,
+   * fallback). When the zoom can't run (no usable source rect, reduced
+   * motion, missing el) it falls back to opts.fallback ('push' for
+   * zoom-in, 'pop' for zoom-out, or 'none') with the combined mutation.
    * ──────────────────────────────────────────────────────────────────── */
 
   var vtActive = false;
+  var zoomCleanup = null; // instant-finish handle for the active zoom
+
+  var ZOOM_EASE = 'var(--un-ease-spring-stiff, cubic-bezier(0.3, 1, 0.4, 1))';
+  var ZOOM_RADIUS = '16px';
+
+  // Pin el as a fixed overlay over `rect` and return a restore function
+  // that puts its inline style back exactly (screens often carry
+  // load-bearing inline styles). The opaque background is the
+  // bleed-through guard: a transparent screen over the still-visible
+  // grid would let the grid show through the moving card. z-index 9960
+  // sits above app content but below every kit overlay (sheets 9990+).
+  function zoomPin(el, rect) {
+    var saved = el.style.cssText;
+    el.style.position = 'fixed';
+    el.style.top = rect.top + 'px';
+    el.style.left = rect.left + 'px';
+    el.style.width = rect.width + 'px';
+    el.style.height = rect.height + 'px';
+    el.style.margin = '0';
+    el.style.zIndex = '9960';
+    el.style.transformOrigin = '0 0';
+    el.style.overflow = 'hidden';
+    el.style.transition = 'none';
+    el.style.background = 'var(--un-zoom-bg)';
+    return function () { el.style.cssText = saved; };
+  }
+
+  // Resolve the tile rect. A caller-supplied fromRect is trusted except
+  // for zero size; anything derived from fromEl (element, or a function
+  // returning an element/rect) gets the full usability check, including
+  // the on-screen test — a hidden source screen yields a 0×0 rect and
+  // falls through to the fallback.
+  function resolveZoomSource(opts) {
+    if (opts.fromRect) {
+      var r = opts.fromRect;
+      return r.width > 0 && r.height > 0 ? r : null;
+    }
+    var src = null;
+    try {
+      src = typeof opts.fromEl === 'function' ? opts.fromEl() : opts.fromEl;
+    } catch (e) { return null; }
+    if (!src) return null;
+    var rect = typeof src.getBoundingClientRect === 'function'
+      ? src.getBoundingClientRect()
+      : src;
+    return zoomRectUsable(rect, window.innerHeight) ? rect : null;
+  }
+
+  function zoomTransition(fn, type, opts) {
+    var el = opts.el;
+    var after = typeof opts.after === 'function' ? opts.after : null;
+    var fallbackType = opts.fallback || (type === 'zoom-in' ? 'push' : 'pop');
+    // Fallback: the combined mutation through the normal machinery —
+    // byte-for-byte what a non-zoom push/pop navigation does. An active
+    // View Transition makes this an instant cut (the re-entrancy rule).
+    var fallback = function () {
+      return transition(after ? function () { fn(); after(); } : fn, { type: fallbackType });
+    };
+    if (!el || prefersReducedMotion || vtActive) return fallback();
+    if (zoomCleanup) zoomCleanup(); // finish any active zoom instantly
+
+    var resolveP;
+    var promise = new Promise(function (res) { resolveP = res; });
+    var done = false;
+    var unpin = null;
+    var onEnd = null;
+    var finish = function () {
+      if (done) return;
+      done = true;
+      if (zoomCleanup === finish) zoomCleanup = null;
+      if (onEnd) el.removeEventListener('transitionend', onEnd);
+      if (unpin) unpin();
+      if (after) after();
+      resolveP();
+    };
+    onEnd = function (e) {
+      if (e.target === el && e.propertyName === 'transform') finish();
+    };
+
+    if (type === 'zoom-in') {
+      // Tile resolved BEFORE fn (it lives on the outgoing screen).
+      var fromRect = resolveZoomSource(opts);
+      if (!fromRect) return fallback();
+      fn();
+      // Measured synchronously after fn, pre-paint: no full-screen flash.
+      var target = el.getBoundingClientRect();
+      var pose = zoomPose(fromRect, target);
+      if (!pose) {
+        // el didn't land anywhere measurable — settle instantly.
+        if (after) after();
+        return Promise.resolve();
+      }
+      unpin = zoomPin(el, target);
+      el.style.transform = 'translate(' + pose.tx + 'px, ' + pose.ty + 'px) '
+        + 'scale(' + pose.sx + ', ' + pose.sy + ')';
+      el.style.opacity = '0.3';
+      el.style.borderRadius = ZOOM_RADIUS;
+      void el.offsetHeight; // flush the start pose before enabling the transition
+      el.style.transition = 'transform 380ms ' + ZOOM_EASE
+        + ', opacity 220ms ease, border-radius 380ms ease';
+      el.style.transform = 'none';
+      el.style.opacity = '1';
+      el.style.borderRadius = '0px';
+      zoomCleanup = finish;
+      el.addEventListener('transitionend', onEnd);
+      setTimeout(finish, 500); // safety if transitionend never fires
+      return promise;
+    }
+
+    // zoom-out: pin the outgoing screen over its current rect FIRST,
+    // then reveal the screen beneath it.
+    var from = el.getBoundingClientRect();
+    if (!(from.width > 0) || !(from.height > 0)) return fallback();
+    unpin = zoomPin(el, from);
+    fn();
+    // Tile resolved AFTER fn (it lives on the just-revealed screen).
+    var outPose = zoomPose(resolveZoomSource(opts), from);
+    if (!outPose) {
+      // No tile on screen to land on — settle instantly.
+      finish();
+      return promise;
+    }
+    void el.offsetHeight;
+    el.style.transition = 'transform 340ms ' + ZOOM_EASE
+      + ', opacity 200ms ease 60ms, border-radius 340ms ease';
+    el.style.transform = 'translate(' + outPose.tx + 'px, ' + outPose.ty + 'px) '
+      + 'scale(' + outPose.sx + ', ' + outPose.sy + ')';
+    el.style.opacity = '0';
+    el.style.borderRadius = ZOOM_RADIUS;
+    zoomCleanup = finish;
+    el.addEventListener('transitionend', onEnd);
+    setTimeout(finish, 480); // safety if transitionend never fires
+    return promise;
+  }
 
   function transition(fn, opts) {
-    var type = (opts && opts.type) || 'none';
+    var o = opts || {};
+    var type = o.type || 'none';
+    if (type === 'zoom-in' || type === 'zoom-out') {
+      return zoomTransition(fn, type, o);
+    }
+    // Non-zoom types accept `after` too (the zoom fallback path relies
+    // on it): the two halves run together as one mutation.
+    var run = typeof o.after === 'function'
+      ? function () { fn(); o.after(); }
+      : fn;
     if (
       type === 'none' || vtActive || prefersReducedMotion ||
       typeof document.startViewTransition !== 'function'
     ) {
-      fn();
+      run();
       return Promise.resolve();
     }
     vtActive = true;
     document.documentElement.setAttribute('data-un-vt', type);
     var vt;
     try {
-      vt = document.startViewTransition(fn);
+      vt = document.startViewTransition(run);
     } catch (e) {
       vtActive = false;
       document.documentElement.removeAttribute('data-un-vt');
-      fn();
+      run();
       return Promise.resolve();
     }
     return vt.finished.catch(function () {}).then(function () {
