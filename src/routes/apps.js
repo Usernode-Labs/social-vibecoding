@@ -137,6 +137,10 @@ function demoIconApps() {
     icon_url: null,
     can_collaborate: false,
     can_manage: false,
+    // Marks the tile inert for client gestures: these slugs don't
+    // exist in the DB, so drag-to-favorite (issue #746) would 404 —
+    // home.js excludes [data-demo] cards from the kit drag.
+    demo: true,
   };
   return [
     { ...base, id: 900001, slug: 'staging-demo-emoji-icon', name: 'Staging demo emoji icon', icon_emoji: '🎮' },

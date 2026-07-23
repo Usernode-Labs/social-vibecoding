@@ -32,7 +32,10 @@ const events = require('../src/services/events');
 events.record = () => {};
 
 const appAccess = require('../src/services/app-access');
-appAccess.getAppForUser = async () => ({ id: 1, slug: 'demo', repo_url: null });
+// The route now 400s on repo-less apps (session-2585 fix), so the happy
+// path needs a real-looking repo_url; the guard has its own test below.
+let appRow = { id: 1, slug: 'demo', repo_url: 'https://github.com/bot/demo' };
+appAccess.getAppForUser = async () => appRow;
 
 const { sessionRoutes } = require('../src/routes/sessions');
 const express = require('express');
@@ -120,5 +123,28 @@ test('a non-positive / non-integer issueNumber is rejected to NULL', async () =>
       poolQueryHandler = async () => ({ rows: [] });
       server.close();
     }
+  }
+});
+
+test('repo-less app is rejected with 400 before any session INSERT', async () => {
+  const getInsert = installInsertCapture();
+  const prior = appRow;
+  appRow = { id: 1, slug: 'demo', repo_url: null };
+  const server = await startServer();
+  try {
+    const port = server.address().port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/apps/demo/sessions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    assert.strictEqual(res.status, 400);
+    const body = await res.json();
+    assert.match(body.error, /No GitHub repo configured/);
+    assert.strictEqual(getInsert(), null, 'no chat_sessions INSERT was issued');
+  } finally {
+    appRow = prior;
+    poolQueryHandler = async () => ({ rows: [] });
+    server.close();
   }
 });

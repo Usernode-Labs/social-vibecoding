@@ -174,6 +174,9 @@ RUN cd /usr/local/lib/node_modules/@playwright/mcp \
 #   SESSION_ID         used in the platform API URL
 #   PLATFORM_URL       internal endpoint of the platform server
 # Per-exec env via -e on `docker exec`:
-#   PROMPT, MODE, MODEL, COMMIT_MSG, CLAUDE_RESUME_SESSION_ID,
+#   PROMPT_FILE, MODE, MODEL, COMMIT_MSG, CLAUDE_RESUME_SESSION_ID,
 #   WORKER_JWT (re-minted each turn), SESSION_ID, PLATFORM_URL
+# (The dispatch prompt itself is materialized into the CC volume at
+# PROMPT_FILE before the exec — it must never ride argv/env, which Linux
+# caps at 128 KiB per string. See run-cc.sh / worker.js writeTurnPrompt.)
 CMD ["/usr/local/bin/worker-run.sh"]

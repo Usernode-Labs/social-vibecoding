@@ -121,6 +121,12 @@
       "expectText": "Undo flow (priority)"
     },
     {
+      "name": "Kit demo grid-reorder (displacement) section renders (#746)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios",
+      "expectSelector": "#reorder-grid .demo-grid-tile",
+      "expectText": "Grid reorder (homescreen displacement)"
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"
@@ -404,6 +410,16 @@
       "name": "Dev feed renders under the kit adoption (demo)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-forum-scroll"
+    },
+    {
+      "name": "All Apps tiles carry the drag-to-add grab cursor (#746)",
+      "path": "/",
+      "expectSelector": ".app-card:not([data-yours]).cursor-grab"
+    },
+    {
+      "name": "Staging demo tiles are tagged drag-inert (#746)",
+      "path": "/?demo=1",
+      "expectSelector": ".app-card[data-demo='true']"
     }
   ],
   "governance": {
