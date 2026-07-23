@@ -90,69 +90,6 @@
   margin: 0 !important;
 }
 
-/* Top sheet (platform-ui.js PlatformUI.topSheet) — the kit has no
-   top-anchored sheet primitive, so the notifications bell and the
-   work-drawer cog present through this platform-side one on touch:
-   drops down from under the notch, grabber at the bottom edge,
-   drag-UP on the grabber (1:1) to dismiss. Uses the kit's motion
-   variables so it reads as the same family. */
-.platform-top-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 9984;
-  background: var(--un-backdrop);
-  opacity: 0;
-  transition: opacity 220ms ease;
-}
-.platform-top-backdrop.platform-top-in {
-  opacity: 1;
-}
-.platform-top-sheet {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 9985;
-  display: flex;
-  flex-direction: column;
-  max-height: min(70vh, calc(100dvh - 72px));
-  padding-top: env(safe-area-inset-top, 0px);
-  background: var(--un-sheet-bg);
-  border-radius: 0 0 14px 14px;
-  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
-  transform: translateY(-100%);
-  will-change: transform;
-}
-.platform-top-sheet.platform-top-anim {
-  transition: transform var(--un-dur-spring-stiff) var(--un-ease-spring-stiff);
-}
-.platform-top-sheet.platform-top-in {
-  transform: translateY(0);
-}
-.platform-top-sheet-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-.platform-top-sheet-grabber {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 8px 0 10px;
-  cursor: grab;
-  touch-action: none;
-}
-.platform-top-sheet-grabber::before {
-  content: '';
-  width: 36px;
-  height: 5px;
-  border-radius: 999px;
-  background: var(--un-muted);
-  opacity: 0.4;
-}
-
 /* Panels adopted into kit bottom sheets on touch (header drawer,
    notifications, work drawer, dev console). Their legacy classes pin
    them as fixed dropdown/slide-over chrome; while riding inside a

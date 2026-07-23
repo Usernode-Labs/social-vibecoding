@@ -2726,6 +2726,11 @@ const App = {
       transformOrigin: '0 0',
       overflow: 'hidden',
       transition: 'none',
+      // The app view itself is transparent (its screens paint on the
+      // body background). While it overlays the visible home feed the
+      // zoom needs an opaque surface, or home shows through the moving
+      // card (worst on the Dev view, e.g. the self-app).
+      background: 'var(--bg-primary)',
     });
     return () => { av.style.cssText = savedCss; };
   },

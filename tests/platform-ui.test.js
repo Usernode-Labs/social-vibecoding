@@ -84,7 +84,6 @@ test('kit absent: sheets/modals return null, actionSheet resolves null, gestures
   assert.equal(PlatformUI.hasKit(), false);
   assert.equal(PlatformUI.isTouch(), false);
   assert.equal(PlatformUI.sheet({}), null);
-  assert.equal(PlatformUI.topSheet({}), null);
   assert.equal(PlatformUI.modal({}), null);
   assert.equal(await PlatformUI.actionSheet({ actions: [] }), null);
   assert.equal(PlatformUI.gestures(), null);
