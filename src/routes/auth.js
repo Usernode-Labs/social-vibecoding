@@ -219,6 +219,12 @@ function authRoutes(config) {
         // Per-user Mayor-model preference (Settings → Experimental),
         // already resolved against the allowlist by the auth middleware.
         mayorModel: req.user.mayorModel,
+        // #729 step 10: whether the user has ever explicitly chosen a
+        // Mayor model, and whether they've dismissed the one-time nudge
+        // suggesting they do so. The client shows the nudge only when
+        // both are false (see the mayor_model_hint SSE event).
+        mayorModelExplicit: !!req.user.mayorModelExplicit,
+        mayorModelHintDismissed: !!req.user.mayorModelHintDismissed,
         hasApiKey,
         keyLast4,
         usernodePubkey,
@@ -375,6 +381,26 @@ function authRoutes(config) {
       res.json({ ok: true, model });
     } catch (err) {
       log.error('settings', 'Failed to update Mayor model preference', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #729 step 10: dismiss the one-time Settings Mayor-model nudge.
+  // Mirrors ai-progress-estimate above — a personal, one-way preference.
+  // Once dismissed, mayorModelHintDismissed is permanently true (there's
+  // no undo — re-showing a dismissed nudge would be annoying, and picking
+  // a model separately already suppresses it via mayorModelExplicit).
+  router.post('/api/me/mayor-model-hint-dismissed', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    try {
+      await pool.query(
+        'UPDATE users SET mayor_model_hint_dismissed = TRUE WHERE id = $1',
+        [req.user.id]
+      );
+      log.info('settings', 'Mayor model hint dismissed', { userId: req.user.id });
+      res.json({ ok: true });
+    } catch (err) {
+      log.error('settings', 'Failed to dismiss Mayor model hint', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

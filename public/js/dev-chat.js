@@ -315,6 +315,41 @@ const DevChat = {
     });
   },
 
+  // #729 step 10: one-time dismissible nudge — the user just corrected the
+  // Mayor and has never explicitly picked a Mayor model. The server only
+  // ever emits 'mayor_model_hint' once per qualifying turn (and never again
+  // once dismissed or a model is picked), so no local "already shown this
+  // session" bookkeeping is needed beyond not re-inserting a second copy of
+  // the same banner element.
+  _showMayorModelHint() {
+    if (document.getElementById('dc-mayor-model-hint-banner')) return;
+    const body = document.querySelector('.dc-session-body');
+    if (!body) return;
+    const html = `
+      <div id="dc-mayor-model-hint-banner" class="flex items-center gap-2 px-3 py-2 bg-violet-50 dark:bg-violet-950/30 border-b border-violet-200 dark:border-violet-900/50 text-xs">
+        <svg class="w-4 h-4 text-violet-500 dark:text-violet-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09z"/>
+        </svg>
+        <span class="text-violet-900 dark:text-violet-200 flex-1">Not getting the plan you wanted? You can pick which model the Mayor uses in Settings.</span>
+        <button id="dc-mayor-model-hint-choose" type="button" class="rounded bg-violet-600 hover:bg-violet-500 text-white px-2 py-1 text-xs font-medium shrink-0">Choose model</button>
+        <button id="dc-mayor-model-hint-dismiss" type="button" class="text-violet-400 hover:text-violet-600 dark:hover:text-violet-200 shrink-0" aria-label="Dismiss">&times;</button>
+      </div>`;
+    body.insertAdjacentHTML('beforebegin', html);
+    document.getElementById('dc-mayor-model-hint-choose').addEventListener('click', () => {
+      DevChat._dismissMayorModelHint();
+      if (window.Settings) Settings.open({ focusMayorModel: true });
+    });
+    document.getElementById('dc-mayor-model-hint-dismiss').addEventListener('click', () => {
+      DevChat._dismissMayorModelHint();
+    });
+  },
+
+  _dismissMayorModelHint() {
+    const el = document.getElementById('dc-mayor-model-hint-banner');
+    if (el) el.remove();
+    fetch('/api/me/mayor-model-hint-dismissed', { method: 'POST' }).catch(() => {});
+  },
+
   async loadSessions(appSlug) {
     try {
       const res = await fetch(`/api/apps/${appSlug}/sessions`);
@@ -1245,6 +1280,12 @@ const DevChat = {
                   DevChat.renderChatView();
                 }
                 break;
+              case 'mayor_model_hint':
+                // #729 step 10: the user just corrected the Mayor and has
+                // never picked a Mayor model — show the one-time dismissible
+                // nudge pointing at Settings.
+                DevChat._showMayorModelHint();
+                break;
               case 'visuals_ready':
                 // #195: the capture finished after staging_ready — stash
                 // the artifact ids on the session and re-render so the
@@ -1695,6 +1736,10 @@ const DevChat = {
           DevChat.currentSession.session_title = data.sessionTitle;
           DevChat.renderChatView();
         }
+        break;
+      case 'mayor_model_hint':
+        // #729 step 10: same one-time nudge as the primary POST-SSE path.
+        DevChat._showMayorModelHint();
         break;
       case 'visuals_ready':
         // #195: same upgrade-in-place as the primary POST-SSE path.

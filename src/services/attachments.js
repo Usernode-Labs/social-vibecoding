@@ -555,6 +555,40 @@ async function loadForHistory(pool, history) {
   return map;
 }
 
+// Persistent attachment index (#729 step 9): lightweight listing of every
+// attachment ever uploaded to a session, EXCLUDING the `data` bytea column
+// so building the index doesn't load bytes into memory every Mayor turn.
+async function listSessionAttachments(pool, sessionId) {
+  const { rows } = await pool.query(
+    `SELECT id, kind, filename, content_type, size_bytes, meta, created_at
+       FROM chat_session_attachments
+      WHERE session_id = $1
+      ORDER BY created_at ASC, id ASC`,
+    [sessionId]
+  );
+  return rows.map((r) => ({
+    id: r.id, kind: r.kind, filename: r.filename,
+    contentType: r.content_type, sizeBytes: r.size_bytes, meta: r.meta,
+  }));
+}
+
+// Pure: one line per attachment (filename, kind, short description) for
+// the Mayor's persistent attachment-index prompt block. Lets the Mayor
+// remember attachments that have aged out of the replay window and, via
+// the get_attachment data tool, re-request one by id. '' when empty.
+function buildAttachmentIndex(attachments) {
+  const atts = attachments || [];
+  if (!atts.length) return '';
+  const lines = atts.map((att) => {
+    const meta = att.meta || {};
+    let desc = humanSize(att.sizeBytes);
+    if (att.kind === 'zip' && meta.entryCount != null) desc += `, ${meta.entryCount} files`;
+    if (att.kind === 'image' && meta.width && meta.height) desc += `, ${meta.width}x${meta.height}`;
+    return `- ${att.filename} (id ${att.id}, ${att.kind}, ${desc})`;
+  });
+  return lines.join('\n');
+}
+
 // Load the current turn's attachments (with bytes) for the dispatch
 // block. `ids` are already ownership-verified by the chat handler.
 async function loadByIds(pool, ids) {
@@ -607,4 +641,6 @@ module.exports = {
   buildDispatchBlock,
   loadForHistory,
   loadByIds,
+  listSessionAttachments,
+  buildAttachmentIndex,
 };

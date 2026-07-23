@@ -79,7 +79,7 @@ function authMiddleware(config) {
     if (cookieToken) {
       try {
         const { rows } = await pool.query(
-          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.mayor_model
+          `SELECT s.user_id, s.expires_at, u.username, u.is_admin, u.admin_readonly, u.app_quota, u.ai_progress_estimate, u.mayor_model, u.mayor_model_hint_dismissed
            FROM sessions s JOIN users u ON s.user_id = u.id
            WHERE s.token = $1`,
           [cookieToken]
@@ -145,6 +145,13 @@ function authMiddleware(config) {
             // NULL) resolved against the allowlist here so every route can
             // just read req.user.mayorModel instead of re-resolving it.
             mayorModel: models.resolveMayorModel(rows[0].mayor_model),
+            // #729 step 10: whether the user has ever explicitly picked a
+            // Mayor model (raw NULL-check — resolveMayorModel collapses
+            // NULL to the default and can't tell "chose Sonnet" from
+            // "never chose" apart) plus whether they've dismissed the
+            // one-time Settings nudge. Both gate the nudge client-side.
+            mayorModelExplicit: rows[0].mayor_model != null,
+            mayorModelHintDismissed: !!rows[0].mayor_model_hint_dismissed,
           };
           log.debug('auth', 'Session validated', { userId: req.user.id });
           return next();
@@ -207,7 +214,7 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   let userRow;
   try {
     const { rows } = await pool.query(
-      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, mayor_model FROM users WHERE id = $1',
+      'SELECT id, username, is_admin, admin_readonly, app_quota, ai_progress_estimate, mayor_model, mayor_model_hint_dismissed FROM users WHERE id = $1',
       [payload.id]
     );
     userRow = rows[0];
@@ -261,6 +268,8 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
     appQuota: userRow.app_quota ?? 0,
     aiProgressEstimate: !!userRow.ai_progress_estimate,
     mayorModel: models.resolveMayorModel(userRow.mayor_model),
+    mayorModelExplicit: userRow.mayor_model != null,
+    mayorModelHintDismissed: !!userRow.mayor_model_hint_dismissed,
   };
 }
 

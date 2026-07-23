@@ -1719,3 +1719,21 @@ CREATE INDEX IF NOT EXISTS idx_chat_message_attachments_orphan
 -- Private-FK-to-public is the allowed direction for the migration linter
 -- (the forbidden combination is a public table FK'ing a private one).
 COMMENT ON TABLE chat_message_attachments IS 'staging:private';
+
+-- Rolling session-decisions digest (#729 step 8). Whenever a batch of
+-- Mayor-history turns evicts from the bounded 16-turn window
+-- (sessions.js's boundMayorHistory), a bounded Sonnet-tier call distills
+-- the evicted turns into a short bullet digest, which is appended here
+-- so the Mayor never loses track of standing decisions once the raw
+-- turns age out of its context window. decisions_watermark_id is the
+-- highest chat_session_messages.id already folded into the digest, so
+-- each evicted batch is distilled exactly once even if the digest job
+-- races with itself across concurrent turns.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS session_decisions_digest TEXT NOT NULL DEFAULT '';
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS decisions_watermark_id   INTEGER NOT NULL DEFAULT 0;
+
+-- One-time dismissible Settings nudge (#729 step 10): shown when the
+-- user corrects the Mayor's routing/plan and has never explicitly
+-- picked a Mayor model. Suppressed permanently once dismissed or once
+-- mayor_model is set explicitly (see mayorModelExplicit in auth.js).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mayor_model_hint_dismissed BOOLEAN NOT NULL DEFAULT FALSE;

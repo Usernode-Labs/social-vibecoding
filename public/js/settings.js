@@ -228,6 +228,14 @@
           keyInput.scrollIntoView({ block: 'center' });
         }
       }
+      // #729 step 10: the Mayor-model nudge banner deep-links here — scroll
+      // the model picker into view (no auto-focus, same rationale as above).
+      if (opts.focusMayorModel) {
+        const select = document.getElementById('mayor-model-select');
+        if (select && typeof select.scrollIntoView === 'function') {
+          select.scrollIntoView({ block: 'center' });
+        }
+      }
     },
 
     _renderDevConsoleSection() {

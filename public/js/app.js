@@ -1089,6 +1089,11 @@ const App = {
           if (typeof DevChat.renderChatView === 'function') DevChat.renderChatView();
         }
         break;
+      case 'mayor_model_hint':
+        // #729 step 10: one-time nudge, broadcast on the WS too so it still
+        // shows if the POST SSE dropped before this event was sent.
+        if (typeof DevChat._showMayorModelHint === 'function') DevChat._showMayorModelHint();
+        break;
       case 'visuals_ready':
         // #195: before/after capture finished (it lands after
         // staging_ready, often after the turn's POST SSE is gone) —

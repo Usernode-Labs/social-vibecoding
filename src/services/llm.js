@@ -383,11 +383,11 @@ async function generatePrMetadata({ userRequest, ccSummary, requests, summaries,
   const system = `You write concise GitHub pull request titles and descriptions.
 
 A pull request may bundle several updates made over multiple turns. You are given the FULL history of the user's requests and the coding agent's summaries for this PR, and possibly the session's spec doc(s). Produce metadata that reflects ALL the changes in the PR, not just the latest update:
-- A title (max 72 chars, imperative mood, no trailing period, no PR #) that captures the overall scope of the PR. If the updates are related, summarize them as one theme; if they are distinct, lead with the most significant change.
+- A title (max 72 chars, imperative mood, no trailing period, no PR #) that captures the overall scope of the PR. When a spec is present, prefer ITS framing and terminology for the title over the literal wording of the first user request — the opening ask is often a rough, informal restatement of what the user wants, while the spec is the refined, considered version of the same intent, so the spec's own name for the feature is usually the better title. If the updates are related, summarize them as one theme; if they are distinct, lead with the most significant change.
 - A short markdown description (2-6 lines): 1 sentence of context, then bullet points covering the concrete changes across all updates. Keep it tight; no filler.
 - A summary: 1-3 short sentences in plain, everyday English describing what this change does for the people who USE the app. No file names, no code, no technical jargon, no developer terms — just what changes for a user. This is read by non-technical voters deciding on the change, so contrast it with the developer-oriented description above.
 
-The SPEC section (when present) describes the intended scope and overall theme — useful for framing — but it may describe work that isn't built yet, so base the concrete changes on the requests and coding-agent summaries, not the spec alone.
+The SPEC section (when present) describes the intended scope and overall theme — lean on it for framing the title and the description's opening context sentence — but it may describe work that isn't built yet, so base the concrete bullet points on the requests and coding-agent summaries, not the spec alone.
 
 Respond with ONLY a JSON object: {"title": "...", "body": "...", "summary": "..."}. No prose before or after.`;
 
@@ -537,6 +537,82 @@ ${tail || '(no output yet)'}`;
   return { text: estimate, remainingSeconds, usage: resp.usage, model };
 }
 
+// Structured-outputs schema for extractSessionDecisions (#729 step 8):
+// an array of short standing-decision bullets, nothing else.
+const DECISIONS_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    decisions: { type: 'array', items: { type: 'string' } },
+  },
+  required: ['decisions'],
+};
+
+// Sanitize one decision bullet: single line, hard-capped so a run of
+// verbose bullets can't blow out the digest column. Mirrors
+// sanitizeEstimate's posture (collapse whitespace, hard cap, drop empties).
+function sanitizeDecisionBullet(text) {
+  const s = String(text == null ? '' : text).replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+  return s.length > 200 ? `${s.slice(0, 199)}…` : s;
+}
+
+// Rolling session-decisions digest (#729 step 8). Called only when a
+// batch of turns evicts from the Mayor's bounded 16-turn history window,
+// so it never re-reads the same turns twice. Distills the evicted turns
+// (folded with the prior digest, so decisions accumulate rather than
+// reset each batch) into a short bulleted list of standing
+// decisions/constraints the Mayor should keep honoring after the raw
+// turns have aged out of its context. Bounded, fixed-model (Sonnet),
+// direct messages.create call — same posture as estimateRunProgress and
+// generatePrMetadata. Throws on any failure; callers must catch and skip
+// the update (the digest is best-effort, never load-bearing).
+async function extractSessionDecisions({ priorDigest, evictedTurns, apiKey }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+
+  const turnsText = (Array.isArray(evictedTurns) ? evictedTurns : [])
+    .map((t) => String(t == null ? '' : t))
+    .join('\n\n')
+    .slice(0, 12000);
+  if (!turnsText.trim()) throw new Error('No evicted turns to distill');
+
+  const system = `You maintain a running list of standing decisions for a coding-agent chat session. You will be shown the current list plus a new batch of conversation turns that are about to age out of the assistant's visible history. Update the list so it stays accurate and useful once those turns are gone.
+
+Keep only durable, forward-looking facts: explicit user decisions/preferences ("use Postgres, not SQLite"), constraints ("never touch auth.js"), rejected approaches, or commitments the agent made. Drop small talk, restated code, and anything already superseded by a later turn in this same batch. Merge duplicates. Keep each bullet under one sentence. Cap the list at 12 bullets, dropping the least important ones if there would be more — most important/most recent first.
+
+Respond with ONLY a JSON object: {"decisions": ["...", ...]}. No prose before or after.`;
+
+  const user = `CURRENT STANDING DECISIONS:
+${String(priorDigest || '').trim() || '(none yet)'}
+
+NEW TURNS TO FOLD IN (about to age out of history):
+${turnsText}`;
+
+  const model = 'claude-sonnet-5';
+  const resp = await activeClient.messages.create({
+    model,
+    max_tokens: 500,
+    system,
+    messages: [{ role: 'user', content: user }],
+    output_config: { format: { type: 'json_schema', schema: DECISIONS_SCHEMA } },
+  });
+  const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  const text = raw
+    .replace(/```(?:json)?/gi, '')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'");
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error('No JSON object in decisions response');
+  const parsed = JSON.parse(match[0]);
+  const decisions = (Array.isArray(parsed.decisions) ? parsed.decisions : [])
+    .map(sanitizeDecisionBullet)
+    .filter(Boolean)
+    .slice(0, 12);
+  const digest = decisions.map((d) => `- ${d}`).join('\n');
+  return { digest, decisions, usage: resp.usage, model };
+}
+
 // Parse + sanitize the model's session-title response (#249). Accepts
 // the requested {“title”: “...”} JSON shape or raw text (tolerating
 // code fences and wrapping quotes, same posture as generatePrMetadata's
@@ -607,6 +683,36 @@ ${stripLoneSurrogates(description).trim()}`,
   return { title, usage: resp.usage, model };
 }
 
+// Bounded Haiku fallback for spec-driven retitling (#729 step 11). Only
+// called when the spec has no usable H1 for the deterministic path
+// (extractSpecTitle in sessions.js) to reuse — a small, single-purpose
+// call scoped to the spec text alone, not the whole conversation. Reuses
+// parseSessionTitleText for parsing, same as the removed generateSessionTitle
+// this replaces. Throws on any failure so the caller treats it as "no title".
+async function generateSessionTitleFromSpec({ spec, apiKey }) {
+  const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
+  if (!activeClient) throw new Error('LLM not initialized');
+  const model = 'claude-haiku-4-5';
+  const specText = stripLoneSurrogates(String(spec || '')).trim().slice(0, 4000);
+  if (!specText) throw new Error('Empty spec text');
+  const resp = await activeClient.messages.create({
+    model,
+    max_tokens: 64,
+    messages: [{
+      role: 'user',
+      content: `You name development chat sessions. Based on this spec excerpt, produce a short descriptive session title: a noun phrase of 3-8 words, at most 60 characters, no trailing period, no quotes, no markdown.
+
+Respond with ONLY a JSON object: {"title": "..."}. No prose before or after.
+
+SPEC:
+${specText}`,
+    }],
+  });
+  const raw = (resp.content || []).find((b) => b.type === 'text')?.text || '';
+  const title = parseSessionTitleText(raw);
+  return { title, usage: resp.usage, model };
+}
+
 // Token-optimization (#): bounded wrap-up recap. The Mayor's old phase-2
 // wrap-up re-invoked the router model with the ENTIRE conversation +
 // system prompt just to phrase "here's what happened". This replaces it
@@ -662,6 +768,8 @@ module.exports = {
   parseSessionTitleText, estimateRunProgress, sanitizeEstimate, summarizeRunResult,
   sanitizeRemainingSeconds, DEFAULT_MODEL,
   stripLoneSurrogates, generateIssueTitle, FEEDBACK_FALLBACK_TITLE,
+  generateSessionTitleFromSpec,
+  extractSessionDecisions, sanitizeDecisionBullet,
   // Fable 5 classifier-fallback surface (+ tests)
   detectFallback, sanitizeFallbackContent, fallbackBoundary,
   FABLE_MODEL, FALLBACK_TARGET_MODEL, FALLBACK_BETA,

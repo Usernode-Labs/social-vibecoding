@@ -18,6 +18,7 @@
 // rejection — title generation must never fail or block a turn.
 
 const log = require('./logger');
+const llm = require('./llm');
 
 // Deterministic headless display name: "#N · <issue title>", truncated
 // to fit the VARCHAR(256) column. Returns null when the issue fetch
@@ -88,4 +89,45 @@ function maybeTitleFirstMessage({ pool, session, message, userId, apiKey, send }
   });
 }
 
-module.exports = { headlessTitle, deriveFromRequest, maybeTitleFirstMessage };
+// Hook 2b (#729 step 11): spec-driven retitle. Fires whenever a spec is
+// (re)written or a build first reaches a staging preview — the spec's own
+// framing is almost always a better name than whatever the opening message
+// happened to say. Deterministic first: reuse the caller's already-extracted
+// H1 (extractSpecTitle in sessions.js) with no model call. Only when the
+// spec has no usable H1 do we spend a bounded Haiku call to name it — and
+// only if an apiKey was actually supplied (headless recovery paths have no
+// live client/key and correctly skip straight to "nothing to do").
+// Guarded on `pr_number IS NULL` so a PR-owned title (applyPrMetadata) can
+// never be clobbered — once a PR exists, the PR title owns the name.
+async function maybeTitleFromSpec({ pool, session, specTitle, specContent, apiKey, send }) {
+  if (!session || session.pr_number) return null;
+  try {
+    let title = String(specTitle || '').trim();
+    if (!title && specContent && apiKey) {
+      const result = await llm.generateSessionTitleFromSpec({ spec: specContent, apiKey }).catch((err) => {
+        log.warn('session-title', 'Bounded spec-title fallback call failed (non-fatal)', {
+          sessionId: session.id, err: err.message,
+        });
+        return null;
+      });
+      title = result && result.title ? String(result.title).trim() : '';
+    }
+    title = title.slice(0, 256);
+    if (!title || title === session.session_title) return null;
+    const { rowCount } = await pool.query(
+      'UPDATE chat_sessions SET session_title = $1 WHERE id = $2 AND pr_number IS NULL',
+      [title, session.id]
+    );
+    if (!rowCount) return null;
+    session.session_title = title;
+    if (send) send('session_titled', { sessionTitle: title });
+    return title;
+  } catch (err) {
+    log.warn('session-title', 'Spec-driven retitle failed (non-fatal)', {
+      sessionId: session && session.id, err: err.message,
+    });
+    return null;
+  }
+}
+
+module.exports = { headlessTitle, deriveFromRequest, maybeTitleFirstMessage, maybeTitleFromSpec };

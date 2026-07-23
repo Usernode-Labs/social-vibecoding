@@ -2016,6 +2016,21 @@ function sessionRoutes(config) {
         );
         const history = boundMayorHistory(historyRaw);
 
+        // Rolling session-decisions digest (#729 step 8): rows present in
+        // historyRaw but absent from the bounded `history` window have just
+        // evicted from what the Mayor sees. Distill them (folded with the
+        // prior digest) into a short standing-decisions block BEFORE they're
+        // gone for good, watermarked by id so a given row is only ever
+        // distilled once even if this fires again next turn. Best-effort:
+        // any failure just means this turn's digest doesn't advance — the
+        // Mayor still gets whatever digest is already persisted.
+        maybeExtractSessionDecisions(pool, session, historyRaw, history).catch((err) => {
+          log.warn('sessions', 'Session-decisions digest extraction failed (continuing without update)', {
+            sessionId: session.id, err: err.message,
+          });
+        });
+        const decisionsBlock = buildDecisionsBlock(session.session_decisions_digest);
+
         // #450: bulk-load attachment bytes for user rows that carry
         // metadata.attachments so buildMayorMessages can emit vision
         // blocks + inlined text files. Best-effort — on failure the
@@ -2025,6 +2040,32 @@ function sessionRoutes(config) {
           historyAttachments = await attachmentsSvc.loadForHistory(pool, history);
         } catch (err) {
           log.warn('sessions', 'Failed to load history attachments', { sessionId: session.id, err: err.message });
+        }
+
+        // Persistent attachment index (#729 step 9): every attachment ever
+        // uploaded to this session (no bytes — just filename/kind/size),
+        // so the Mayor can reference one by id via get_attachment even
+        // after it aged out of the replay window. Advisory: any failure
+        // just drops the block.
+        let attachmentIndexBlock = '';
+        try {
+          const sessionAttachments = await attachmentsSvc.listSessionAttachments(pool, session.id);
+          attachmentIndexBlock = buildAttachmentIndexBlock(sessionAttachments);
+        } catch (err) {
+          log.warn('sessions', 'Attachment index load failed (continuing without block)', { sessionId: session.id, err: err.message });
+        }
+
+        // One-time dismissible Settings nudge (#729 step 10): the user is
+        // correcting a prior Mayor turn (there IS a prior assistant turn in
+        // this history window) AND has never explicitly picked a Mayor
+        // model AND hasn't already dismissed this nudge. Fires at most
+        // once per qualifying turn — the client renders it as a
+        // dismissible banner linking to Settings, and dismissing (or
+        // picking a model) suppresses it permanently.
+        if (!req.user.mayorModelExplicit && !req.user.mayorModelHintDismissed
+            && history.some((r) => r.role === 'assistant')
+            && looksLikeMayorCorrection(messageText)) {
+          send('mayor_model_hint', {});
         }
 
         // Same "in-flight only — warm-idle ≠ busy" rationale as the
@@ -2102,7 +2143,7 @@ function sessionRoutes(config) {
         // cache_control breakpoint; the per-turn spec/PR/status suffix lands
         // after it. Rebuilt (not just re-stringed) before phase-2 in case a
         // scout mutated the spec this turn.
-        const mayorSystem = buildMayorSystemBlocks(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock, agentFilesBlock, prodDebugEligible);
+        const mayorSystem = buildMayorSystemBlocks(session.app_name, isWorkerBusy, currentSpec, !!session.app_self_hosted, prContext, openProposalsBlock, agentFilesBlock, prodDebugEligible, decisionsBlock, attachmentIndexBlock);
         const messages = buildMayorMessages(history, historyAttachments);
 
         if (!llm.isEnabled()) {
@@ -2142,9 +2183,12 @@ function sessionRoutes(config) {
         // (admin owner + self-edit app) — ineligible Mayors never see the
         // tool, matching the prompt-block gating. Like the other data
         // tools it stays available while a worker is busy: it's read-only
-        // and cheap.
+        // and cheap. get_attachment (#729 step 9) is part of the STABLE
+        // tool superset — unlike get_prod_status it isn't gated by
+        // prod-debug eligibility, since re-reading an attachment is a
+        // normal chat action on any session.
         const dataTools = [
-          LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL,
+          LIST_GITHUB_ISSUES_TOOL, GET_GITHUB_ISSUE_TOOL, WEB_FETCH_TOOL, GET_ATTACHMENT_TOOL,
           ...(prodDebugEligible ? [GET_PROD_STATUS_TOOL] : []),
         ];
         const tools = isWorkerBusy
@@ -4733,6 +4777,14 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
           [ccText, session.id]
         );
         const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
+        session.spec_md = ccText;
+        // #729 step 11: retitle from the spec's own H1 whenever a spec is
+        // (re)written — resumed-run variant, no live client to notify.
+        sessionTitles.maybeTitleFromSpec({
+          pool, session, specTitle: extractSpecTitle(ccText), specContent: ccText,
+        }).catch((err) => log.warn('session-title', 'Spec-driven retitle at resumed spec write failed (non-fatal)', {
+          sessionId: session.id, err: err.message,
+        }));
         const lineCount = ccText.split('\n').length;
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, metadata)
@@ -4785,6 +4837,8 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
         let stagingResult = null;
         let stagingErr = null;
+        // #729 step 11: same first-push detection as the live headless path.
+        const isFirstStagingPush = !session.staging_url;
         // #461: pend the checks for the NEW commit before the build, so the
         // previous commit's verdict (e.g. a stale 'passing') can't satisfy
         // the merge gate while this build runs — or after it fails.
@@ -4800,7 +4854,15 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
             'UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3',
             [stagingResult.containerId, stagingResult.stagingUrl, session.id]
           ).catch(() => {});
+          session.staging_url = stagingResult.stagingUrl;
           await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl).catch(() => {});
+          if (isFirstStagingPush) {
+            sessionTitles.maybeTitleFromSpec({
+              pool, session, specTitle: extractSpecTitle(session.spec_md), specContent: session.spec_md,
+            }).catch((err) => log.warn('session-title', 'Spec-driven retitle at resumed first staging push failed (non-fatal)', {
+              sessionId: session.id, err: err.message,
+            }));
+          }
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, metadata)
              VALUES ($1, 'system', $2, $3)`,
@@ -5142,6 +5204,37 @@ const GET_PROD_STATUS_TOOL = {
   },
 };
 
+// Fifth data tool (#729 step 9): re-inline ONE attachment the persistent
+// attachment index mentions but whose bytes have aged out of the replay
+// window (the index lists every attachment ever uploaded to the session;
+// only the most recent few turns' worth get their bytes replayed into
+// context — see attachments.js's IMAGE_REPLAY_TURNS/TEXT_REPLAY_TURNS).
+// Unconditionally part of the stable tool superset (not gated by
+// prod-debug eligibility — attachments aren't a prod-debug concept).
+// Resolves in-process via attachmentsSvc.loadByIds; the result flows
+// through the same clipToolResult budget as every other data tool.
+const GET_ATTACHMENT_TOOL = {
+  name: 'get_attachment',
+  description:
+    'Re-fetch ONE attachment from this session by id, so you can read its content again after it aged out of your '
+    + 'context window (the attachment index earlier in this prompt lists every attachment uploaded so far, with its id). '
+    + 'Text attachments come back as JSON `{ kind: "text", filename, content }` (content clipped to the normal '
+    + 'per-result cap). Image, zip, and binary attachments cannot be re-displayed through this text-only tool — they '
+    + 'come back as `{ kind, filename, note }` describing the file and pointing you at the usernode-attachments CLI a '
+    + "dispatched agent would use to actually open it. Returns `{ error }` when the id does not belong to this "
+    + 'session. It only READS an attachment already in this session — it cannot upload, modify, or delete one.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      id: {
+        type: 'string',
+        description: 'The 32-character hex attachment id, exactly as shown in the attachment index (e.g. "a1b2c3...").',
+      },
+    },
+    required: ['id'],
+  },
+};
+
 // Q/A mode (#32): structured suggested answers attached to the Mayor's
 // clarifying questions. NOT a dispatch — the turn still ends as a plain
 // question turn. The input is sanitized server-side
@@ -5428,7 +5521,7 @@ function describeTurnError(err) {
 // get_prod_status is in the set so the loop services it, but the tool
 // itself is only OFFERED on prod-debug-eligible sessions (see the
 // tools-array construction in the chat handler).
-const DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue', 'web_fetch', 'get_prod_status']);
+const DATA_TOOL_NAMES = new Set(['list_github_issues', 'get_github_issue', 'web_fetch', 'get_prod_status', 'get_attachment']);
 
 // Cap on how many consecutive data-tool fetches we'll service
 // within a single Mayor turn before forcing the model to move on. Bounds
@@ -5557,16 +5650,59 @@ async function resolveProdStatusToolResult({ pool, config, sessionId }) {
   }
 }
 
+// Resolve a get_attachment tool call (#729 step 9): re-fetch one
+// attachment by id, scoped to THIS session so a stale/guessed id from
+// another session never leaks content. attachmentsSvc.loadByIds fetches
+// by a plain id array with no session filter, so ownership is enforced
+// here by cross-checking the result's id against a session-scoped lookup.
+async function resolveGetAttachmentToolResult(pool, sessionId, rawId) {
+  const id = typeof rawId === 'string' ? rawId.trim() : '';
+  if (!/^[0-9a-f]{32}$/i.test(id)) {
+    return JSON.stringify({ error: 'invalid attachment id' });
+  }
+  const { rows } = await pool.query(
+    `SELECT id FROM chat_session_attachments WHERE id = $1 AND session_id = $2`,
+    [id, sessionId]
+  );
+  if (!rows.length) {
+    return JSON.stringify({ error: 'attachment not found in this session' });
+  }
+  const [att] = await attachmentsSvc.loadByIds(pool, [id]);
+  if (!att) return JSON.stringify({ error: 'attachment not found in this session' });
+  if (att.kind === 'image') {
+    const meta = att.meta || {};
+    const dims = meta.width && meta.height ? `, ${meta.width}x${meta.height}` : '';
+    return JSON.stringify({
+      kind: 'image', filename: att.filename,
+      note: `Image attachment (${att.contentType}${dims}) — cannot be re-displayed through this text-only tool. `
+        + `A dispatched agent can view it with \`usernode-attachments ${att.id} /tmp/<name>\` then Read.`,
+    });
+  }
+  if (att.kind === 'zip' || att.kind === 'binary') {
+    return JSON.stringify({
+      kind: att.kind, filename: att.filename,
+      note: `${att.kind === 'zip' ? 'Zip archive' : 'Binary file'} — cannot be inlined. `
+        + `A dispatched agent can fetch it with \`usernode-attachments ${att.id} ...\`.`,
+    });
+  }
+  return JSON.stringify({ kind: 'text', filename: att.filename, content: att.data.toString('utf8') });
+}
+
 // Route one data tool_use to its resolver. Callers guard on
-// DATA_TOOL_NAMES so `tu.name` is always one of the four. `prodCtx`
+// DATA_TOOL_NAMES so `tu.name` is always one of the five. `ctx`
 // ({ pool, config, sessionId }) is only passed by the interactive chat
-// handler — call sites that never offer get_prod_status (headless) omit
-// it, and a get_prod_status call without it resolves to not_eligible.
-function resolveDataToolResult(tu, repoOwner, repoName, prodCtx = null) {
+// handler — call sites that never offer get_prod_status/get_attachment
+// (headless) omit it, and those calls resolve to a not-available note.
+function resolveDataToolResult(tu, repoOwner, repoName, ctx = null) {
   if (tu.name === 'get_prod_status') {
-    return prodCtx
-      ? resolveProdStatusToolResult(prodCtx)
+    return ctx
+      ? resolveProdStatusToolResult(ctx)
       : Promise.resolve(JSON.stringify({ status: null, note: 'not_eligible' }));
+  }
+  if (tu.name === 'get_attachment') {
+    return ctx
+      ? resolveGetAttachmentToolResult(ctx.pool, ctx.sessionId, tu.input && tu.input.id)
+      : Promise.resolve(JSON.stringify({ error: 'attachments unavailable in this context' }));
   }
   if (tu.name === 'web_fetch') {
     return resolveWebFetchToolResult(tu.input && tu.input.url);
@@ -5582,6 +5718,9 @@ function resolveDataToolResult(tu, repoOwner, repoName, prodCtx = null) {
 function dataToolStatusLine(calls) {
   if (calls.some((tc) => tc.name === 'get_prod_status')) {
     return 'Checking production status...';
+  }
+  if (calls.some((tc) => tc.name === 'get_attachment')) {
+    return 'Looking up an attachment...';
   }
   const wf = calls.find((tc) => tc.name === 'web_fetch');
   if (wf) {
@@ -5641,6 +5780,21 @@ function stripFakeCompletionMarker(text, { sessionId } = {}) {
   return text.replace(COMPLETION_MARKER_RE, '').trim();
 }
 
+// #729 step 10: deterministic sniff for "the user is correcting the Mayor's
+// prior routing or plan" — e.g. "no, don't build that" or "that's not what I
+// asked". Text-pattern only (no LLM call — this just gates a one-time UI
+// nudge, not a routing decision), checked against the START of the trimmed
+// message so it doesn't false-positive on a message that merely mentions one
+// of these words mid-sentence. Deliberately narrow: false negatives just
+// mean the nudge shows up later (or never, harmlessly); a false positive
+// costs the user one dismissable banner. Pure — exported for tests.
+const MAYOR_CORRECTION_RE = /^(no+[,.!\s]|nope\b|actually[,\s]|that'?s (not|wrong)|not what i (asked|meant|wanted)|don'?t (do|build) that|wrong (approach|plan|move)|(please )?undo that|revert that|stop[,.]|why did you|you (misunderstood|got it wrong|misread))/i;
+function looksLikeMayorCorrection(text) {
+  const s = String(text || '').trim();
+  if (!s) return false;
+  return MAYOR_CORRECTION_RE.test(s);
+}
+
 // Token-optimization (#): the Mayor routes on RECENT conversation state, so
 // only the tail of a long transcript is replayed into its context. Keep the
 // most recent rows such that the number of user/assistant turns ≤
@@ -5672,6 +5826,52 @@ function boundMayorHistory(rows, { maxTurns = MAYOR_HISTORY_MAX_TURNS, maxChars 
     chars += len;
   }
   return kept.reverse();
+}
+
+// Renders one evicted history row as plain text for the digest-extraction
+// prompt. Mirrors buildMayorMessages' role labeling closely enough for the
+// LLM to follow the conversation, without needing full message-content-block
+// fidelity (images/attachments are irrelevant to standing decisions).
+function renderEvictedRowForDigest(row) {
+  if (row.role === 'system' && row.metadata?.ccOutput) {
+    const outcome = row.metadata.ccOutcome;
+    const label = outcome === 'no_changes' ? 'CODING AGENT RAN — NO CHANGES'
+      : outcome === 'error' ? 'CODING AGENT FAILED'
+        : 'CODING AGENT COMPLETED';
+    return `[${label}]: ${String(row.metadata.ccOutput).slice(0, 2000)}`;
+  }
+  const label = row.role === 'user' ? 'USER' : 'MAYOR';
+  return `${label}: ${String(row.content || '').slice(0, 2000)}`;
+}
+
+// #729 step 8: fires the bounded digest-extraction call only when a batch of
+// turns has actually evicted from the bounded Mayor history window (rows in
+// historyRaw not present in the returned `history`), and only for rows past
+// the session's watermark so a given row is distilled exactly once. Persists
+// the updated digest + watermark onto the session row (both DB and the
+// in-memory `session` object, so buildDecisionsBlock below reflects it on a
+// later call within the same turn if needed). Never awaited by the caller —
+// this always resolves, matching session-title.js's non-blocking posture.
+async function maybeExtractSessionDecisions(pool, session, historyRaw, history) {
+  const watermark = Number(session.decisions_watermark_id) || 0;
+  const keptIds = new Set(history.map((r) => r.id));
+  const evicted = (Array.isArray(historyRaw) ? historyRaw : [])
+    .filter((r) => !keptIds.has(r.id) && r.id > watermark);
+  if (!evicted.length) return;
+  if (!llm.isEnabled()) return;
+
+  const evictedTurns = evicted.map(renderEvictedRowForDigest);
+  const result = await llm.extractSessionDecisions({
+    priorDigest: session.session_decisions_digest,
+    evictedTurns,
+  });
+  const newWatermark = Math.max(watermark, ...evicted.map((r) => r.id));
+  await pool.query(
+    `UPDATE chat_sessions SET session_decisions_digest = $1, decisions_watermark_id = $2 WHERE id = $3`,
+    [result.digest, newWatermark, session.id]
+  );
+  session.session_decisions_digest = result.digest;
+  session.decisions_watermark_id = newWatermark;
 }
 
 function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
@@ -6055,6 +6255,16 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
       const preview = buildSpecPreview(ccText);
       // #27: freeze the scout's draft so the inline card opens its own content.
       const specVersion = await snapshotSessionSpec(pool, session.id, ccText);
+      session.spec_md = ccText;
+      // #729 step 11: retitle from the spec's own H1 whenever a spec is
+      // (re)written — a later spec revision can flip a vague first-message
+      // title to something that actually matches what's being built.
+      sessionTitles.maybeTitleFromSpec({
+        pool, session, specTitle: extractSpecTitle(ccText), specContent: ccText,
+        apiKey: userApiKey, send,
+      }).catch((err) => log.warn('session-title', 'Spec-driven retitle at spec write failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      }));
       await sendStatus(
         existingSpec
           ? `Scout revised the spec (now ${lineCount} lines).`
@@ -6838,6 +7048,11 @@ path: /another/changed/view
       const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
       let stagingResult = null;
       let stagingErr = null;
+      // #729 step 11: capture BEFORE the UPDATE below overwrites it — this
+      // is the only way to tell "first build ever reaches staging" apart
+      // from a redeploy, and that first-push moment is one of the two spec
+      // triggers for the spec-driven retitle (the other is a spec write).
+      const isFirstStagingPush = !session.staging_url;
       // #461: pend the checks for the NEW commit before the build starts, so
       // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
       // the merge gate while this build runs — or after it fails.
@@ -6854,11 +7069,20 @@ path: /another/changed/view
           `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
           [stagingResult.containerId, stagingResult.stagingUrl, session.id]
         );
+        session.staging_url = stagingResult.stagingUrl;
         // Same cert pre-warm as the interactive tail: persist staging_url
         // first (Caddy's `ask` gate keys off it), warm before revealing
         // the preview anywhere.
         await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
         stagingUrl = stagingResult.stagingUrl;
+        if (isFirstStagingPush) {
+          sessionTitles.maybeTitleFromSpec({
+            pool, session, specTitle: extractSpecTitle(currentSpec), specContent: currentSpec,
+            apiKey: userApiKey, send,
+          }).catch((err) => log.warn('session-title', 'Spec-driven retitle at first staging push failed (non-fatal)', {
+            sessionId: session.id, err: err.message,
+          }));
+        }
         // The stagingUrl metadata is what makes this row render as the
         // "Changes ready" staging card (Preview / Test / Propose buttons)
         // in every dev chat later cloned from this auto session. The
@@ -6993,6 +7217,12 @@ path: /another/changed/view
       // "Chat error" toast and has no breadcrumb to follow.
       let stagingResult = null;
       let stagingErr = null;
+      // #729 step 11: same first-push detection as the headless path. In
+      // practice applyPrMetadata just above almost always sets pr_number
+      // first, so maybeTitleFromSpec's own PR guard makes this a no-op for
+      // most interactive builds — it only fires the rare turn where staging
+      // succeeds but PR creation didn't.
+      const isFirstStagingPush = !session.staging_url;
       // #461: pend the checks for the NEW commit before the build starts, so
       // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
       // the merge gate while this build runs — or after it fails.
@@ -7018,6 +7248,15 @@ path: /another/changed/view
         await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
 
         stagingUrl = stagingResult.stagingUrl;
+        session.staging_url = stagingResult.stagingUrl;
+        if (isFirstStagingPush) {
+          sessionTitles.maybeTitleFromSpec({
+            pool, session, specTitle: extractSpecTitle(currentSpec), specContent: currentSpec,
+            apiKey: userApiKey, send,
+          }).catch((err) => log.warn('session-title', 'Spec-driven retitle at first staging push failed (non-fatal)', {
+            sessionId: session.id, err: err.message,
+          }));
+        }
         // `changesReady: true` is now what drives the "Changes ready" card
         // (rather than incidentally `stagingUrl`), so the same card renders
         // on the staging-failed branch below. prNumber/prUrl ride along so
@@ -7253,7 +7492,7 @@ function clipForPrompt(text, max) {
 //             agent files, live spec) that must NOT be cached.
 // getMayorSystemPrompt concatenates them (plain-string callers/tests);
 // buildMayorSystemBlocks wraps them for cache_control.
-function buildMayorSystemParts(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false) {
+function buildMayorSystemParts(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false, decisionsBlock = '', attachmentIndexBlock = '') {
   const specIsEmpty = !((currentSpec || '').trim());
 
   // STABLE PREFIX — never varies within a session/app. The full
@@ -7301,16 +7540,16 @@ If the user's next request is a DISTINCT, separate change — a new feature or f
   // DYNAMIC SUFFIX — per-turn state, never cached. Ordered least→most
   // volatile isn't required (it's all post-breakpoint), but the spec goes
   // last so the largest block is easy to locate.
-  const dynamic = `${toolNote}${prodDebug ? debugAccess.mayorPromptBlock() : ''}${prBlock}${openProposalsBlock || ''}${agentFilesBlock || ''}${specBlock}`;
+  const dynamic = `${toolNote}${prodDebug ? debugAccess.mayorPromptBlock() : ''}${prBlock}${openProposalsBlock || ''}${agentFilesBlock || ''}${decisionsBlock || ''}${attachmentIndexBlock || ''}${specBlock}`;
 
   return { stable, dynamic };
 }
 
 // Plain-string Mayor system prompt (headless paths + tests). Interactive
 // call sites use buildMayorSystemBlocks for prompt caching.
-function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false) {
+function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false, decisionsBlock = '', attachmentIndexBlock = '') {
   const { stable, dynamic } = buildMayorSystemParts(
-    appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock, agentFilesBlock, prodDebug
+    appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock, agentFilesBlock, prodDebug, decisionsBlock, attachmentIndexBlock
   );
   return `${stable}${dynamic}`;
 }
@@ -7322,14 +7561,46 @@ function getMayorSystemPrompt(appName, isWorkerBusy, currentSpec, selfHosted, pr
 // for the dynamic suffix + messages. The dynamic block (spec/PR/status)
 // is deliberately AFTER the breakpoint so per-turn changes never bust the
 // cache. Callers must pass tools in a STABLE order for the prefix to hit.
-function buildMayorSystemBlocks(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false) {
+function buildMayorSystemBlocks(appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock = '', agentFilesBlock = '', prodDebug = false, decisionsBlock = '', attachmentIndexBlock = '') {
   const { stable, dynamic } = buildMayorSystemParts(
-    appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock, agentFilesBlock, prodDebug
+    appName, isWorkerBusy, currentSpec, selfHosted, prContext, openProposalsBlock, agentFilesBlock, prodDebug, decisionsBlock, attachmentIndexBlock
   );
   return [
     { type: 'text', text: stable, cache_control: { type: 'ephemeral' } },
     { type: 'text', text: dynamic },
   ];
+}
+
+// Rolling session-decisions digest block (#729 step 8): injected after
+// the open-proposals/agent-files blocks, before the spec block, so the
+// Mayor keeps honoring standing decisions once the raw turns that
+// produced them have aged out of its bounded history window.
+function buildDecisionsBlock(digest) {
+  const text = (digest || '').trim();
+  if (!text) return '';
+  return `
+
+## Standing decisions
+
+Decisions and constraints established earlier in this conversation, distilled after the turns that established them aged out of your visible history. Keep honoring these unless the user explicitly changes them.
+
+${text}`;
+}
+
+// Persistent attachment index block (#729 step 9): every attachment ever
+// uploaded to this session, one line each, so the Mayor can point the
+// get_attachment tool at one by id even after its bytes have aged out of
+// the replay window. '' when the session has no attachments.
+function buildAttachmentIndexBlock(attachments) {
+  const index = attachmentsSvc.buildAttachmentIndex(attachments);
+  if (!index) return '';
+  return `
+
+## Session attachments
+
+Files attached to this conversation so far. Use the get_attachment tool with an id below to re-read one whose content has aged out of your visible history.
+
+${index}`;
 }
 
 async function getFilesFromContainer(appSlug) {
@@ -7482,4 +7753,9 @@ module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehi
   clipForPrompt,
   buildCompletionText, buildCompletionQuickReplies,
   clipToolResult, MAYOR_TOOL_RESULT_MAX_CHARS, MAYOR_TOOL_RESULTS_TURN_MAX_CHARS,
-  MAYOR_DATA_TOOLS_MAX_ITERS };
+  MAYOR_DATA_TOOLS_MAX_ITERS,
+  // #729 step 8 (session-decisions digest) + step 9 (attachment index / get_attachment)
+  buildDecisionsBlock, maybeExtractSessionDecisions, renderEvictedRowForDigest,
+  GET_ATTACHMENT_TOOL, resolveGetAttachmentToolResult, buildAttachmentIndexBlock,
+  // #729 step 10 (Settings mayor-model nudge)
+  looksLikeMayorCorrection, MAYOR_CORRECTION_RE };
