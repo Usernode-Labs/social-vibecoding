@@ -341,7 +341,9 @@ const Home = {
     listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        Home.openCardMenu(btn.dataset.slug, btn.getBoundingClientRect());
+        // Pass the element itself so the kit popover can toggle closed
+        // on a re-click and manage aria-expanded.
+        Home.openCardMenu(btn.dataset.slug, btn);
       });
     });
   },
@@ -1165,14 +1167,14 @@ const Home = {
 
   // ===== "…" card actions menu =====
   //
-  // One popover implementation shared by the desktop "⋯" button and
-  // the mobile long-press (see _onCardPointerDown). Built lazily on
-  // open from the app object in the Home._apps cache — no hidden
-  // per-card menus in the DOM. Anchored to the trigger rect, appended
-  // to document.body, closed on outside pointerdown / Escape / scroll
-  // / resize / (by default) running an action.
-  _menuEl: null,
-  _menuCleanup: null,
+  // One adaptive menu shared by the desktop "⋯" button and the mobile
+  // long-press (see _onCardPointerDown). Built lazily on open from the
+  // app object in the Home._apps cache — no hidden per-card menus in
+  // the DOM. Presentation is kit-owned via PlatformUI.menu (#741):
+  // bottom action sheet on touch, anchored popover (flip/clamp
+  // positioning, outside-pointerdown / Escape / scroll / resize
+  // dismissal, menu focus handling) on desktop.
+  _menu: null,
 
   // Pure item builder, separate from the DOM so tests can pin the
   // permission gating. Mutating controls gate on canAdminWrite (full
@@ -1336,103 +1338,51 @@ const Home = {
       ${pillsHtml ? `<div class="card-menu-pills">${pillsHtml}</div>` : ''}`;
   },
 
-  openCardMenu(slug, anchorRect) {
+  // anchor: the trigger Element (the "…" button — lets the kit toggle
+  // the menu closed on a re-click) or a plain rect (the card's
+  // bounding box from the long-press paths).
+  openCardMenu(slug, anchor) {
     Home.closeCardMenu();
     const app = (Home._apps || []).find((a) => a.slug === slug);
     if (!app) return;
     const items = Home.menuItemsFor(app);
     if (!items.length) return;
 
-    // Touch platforms get a native-style bottom action sheet (the
-    // anchored popover stays the desktop idiom). Destructive items
-    // land in the red slot; disabled informational rows are omitted
-    // (action sheets have no inert-row concept).
-    if (PlatformUI.isTouch()) {
-      PlatformUI.actionSheet({
-        title: app.name || app.slug,
-        actions: items.filter((i) => !i.disabled).map((i) => ({
-          label: i.label,
-          destructive: !!i.danger,
-          handler: () => i.run(null),
-        })),
-      });
-      return;
-    }
-
-    const el = document.createElement('div');
-    el.className = 'card-menu';
-    el.setAttribute('role', 'menu');
-    const header = document.createElement('div');
-    header.className = 'card-menu-header';
-    header.innerHTML = Home.renderMenuHeaderHtml(app);
-    el.appendChild(header);
-    for (const item of items) {
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'card-menu-item' + (item.danger ? ' card-menu-item-danger' : '');
-      btn.textContent = item.label;
-      btn.dataset.key = item.key;
-      if (item.title) btn.title = item.title;
-      if (item.disabled) {
-        // Informational row: rendered but inert, so the affordance
-        // stays discoverable. (No builder emits one today — #618 made
-        // the member "In Your apps" row a working toggle — but the
-        // mechanism is kept for future informational items.)
-        btn.disabled = true;
-      } else {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          if (!item.keepOpen) Home.closeCardMenu();
-          item.run(btn);
-        });
-      }
-      el.appendChild(btn);
-    }
-
-    // Measure hidden, then anchor below the rect LEFT-aligned — the
-    // panel's left edge lines up with the hamburger and the list
-    // opens rightward (right-edge alignment made it hang leftward
-    // across the card). Clamp back toward the left when the right
-    // edge would overflow the viewport; flip above when it would poke
-    // past the bottom edge.
-    el.style.visibility = 'hidden';
-    document.body.appendChild(el);
-    const w = el.offsetWidth;
-    const h = el.offsetHeight;
-    const left = Math.max(8, Math.min(anchorRect.left, window.innerWidth - w - 8));
-    let top = anchorRect.bottom + 4;
-    if (top + h > window.innerHeight - 8) top = Math.max(8, anchorRect.top - h - 4);
-    el.style.left = `${left}px`;
-    el.style.top = `${top}px`;
-    el.style.visibility = '';
-
-    const onDocPointerDown = (ev) => {
-      if (!el.contains(ev.target)) Home.closeCardMenu();
-    };
-    const onKeyDown = (ev) => { if (ev.key === 'Escape') Home.closeCardMenu(); };
-    const onScroll = () => Home.closeCardMenu();
-    document.addEventListener('pointerdown', onDocPointerDown, true);
-    document.addEventListener('keydown', onKeyDown);
-    window.addEventListener('scroll', onScroll, true);
-    window.addEventListener('resize', onScroll);
-    Home._menuEl = el;
-    Home._menuCleanup = () => {
-      document.removeEventListener('pointerdown', onDocPointerDown, true);
-      document.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('scroll', onScroll, true);
-      window.removeEventListener('resize', onScroll);
-    };
+    // Rich build-info header is a desktop-popover affordance; the
+    // touch action sheet falls back to the plain title. The kit menu
+    // owns positioning, dismissal and focus; disabled rows render
+    // inert in the popover and are omitted from the sheet; keepOpen
+    // items (Check for updates) flip their label in place via the row
+    // element the popover hands the handler (null on the sheet path —
+    // run() already copes).
+    const headerEl = document.createElement('div');
+    headerEl.className = 'card-menu-header';
+    headerEl.innerHTML = Home.renderMenuHeaderHtml(app);
+    const anchorIsEl = !!(anchor && typeof anchor.getBoundingClientRect === 'function');
+    const menu = PlatformUI.menu({
+      anchorEl: anchorIsEl ? anchor : undefined,
+      anchorRect: anchorIsEl ? undefined : anchor,
+      title: app.name || app.slug,
+      headerEl,
+      items: items.map((i) => ({
+        label: i.label,
+        destructive: !!i.danger,
+        disabled: !!i.disabled,
+        keepOpen: !!i.keepOpen,
+        title: i.title,
+        handler: (btn) => i.run(btn || null),
+      })),
+    });
+    Home._menu = menu;
+    menu.then(() => {
+      if (Home._menu === menu) Home._menu = null;
+    });
   },
 
   closeCardMenu() {
-    if (Home._menuCleanup) {
-      Home._menuCleanup();
-      Home._menuCleanup = null;
-    }
-    if (Home._menuEl) {
-      Home._menuEl.remove();
-      Home._menuEl = null;
-    }
+    const menu = Home._menu;
+    Home._menu = null;
+    if (menu && typeof menu.dismiss === 'function') menu.dismiss();
   },
 
   // ── Menu actions ──────────────────────────────────────────────────

@@ -28,6 +28,19 @@
  *   unNative.presentModal(opts)       — centered modal card, arbitrary content
  *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
  *   unNative.alert(opts)              — iOS alert dialog, Promise-based
+ *   unNative.popover(opts)            — anchored popover / dropdown menu
+ *                                        ({ anchorEl | anchorRect, items |
+ *                                        contentEl, placement? }): flip/
+ *                                        clamp positioning, outside-click/
+ *                                        Escape/scroll dismissal, menu
+ *                                        focus handling. Items mode
+ *                                        resolves a Promise (with a
+ *                                        .dismiss() attached); content
+ *                                        mode returns { dismiss(), el }
+ *   unNative.menu(opts)               — adaptive menu: action sheet on
+ *                                        touch, anchored popover on
+ *                                        desktop — one actionSheet-shaped
+ *                                        call site serves both idioms
  *   unNative.toast(message, opts?)    — transient status toast / snackbar
  *                                        ({ duration?, action?, priority?,
  *                                        onClose?(reason) }; a priority
@@ -342,6 +355,43 @@
     return 0;
   }
 
+  // Anchored-popover placement: position a panel of `size` against an
+  // anchor rect, flipped to the opposite vertical side when the preferred
+  // side would overflow the viewport and clamped horizontally to stay
+  // inside it (the openCardMenu math, kit-owned — issue #741).
+  // input: { anchor: { left, top, right, bottom }, size: { w, h },
+  // viewport: { w, h }, placement?, gutter?, margin? }. placement is
+  // 'bottom-start' (default) | 'bottom-end' | 'top-start' | 'top-end';
+  // gutter (default 4) is the gap from the anchor, margin (default 8) the
+  // minimum distance from the viewport edges. Returns { left, top,
+  // placement } — placement reports the side actually used after
+  // flipping. Pure — unit-tested in tests/native-kit.test.js.
+  function placePopover(input) {
+    var a = input.anchor;
+    var s = input.size;
+    var vp = input.viewport;
+    var gutter = input.gutter == null ? 4 : input.gutter;
+    var margin = input.margin == null ? 8 : input.margin;
+    var parts = String(input.placement || 'bottom-start').split('-');
+    var side = parts[0] === 'top' ? 'top' : 'bottom';
+    var align = parts[1] === 'end' ? 'end' : 'start';
+
+    var left = align === 'end' ? a.right - s.w : a.left;
+    left = Math.max(margin, Math.min(left, vp.w - s.w - margin));
+
+    var top = side === 'bottom' ? a.bottom + gutter : a.top - s.h - gutter;
+    if (side === 'bottom' && top + s.h > vp.h - margin) {
+      side = 'top';
+      top = a.top - s.h - gutter;
+    } else if (side === 'top' && top < margin) {
+      side = 'bottom';
+      top = a.bottom + gutter;
+    }
+    top = Math.max(margin, Math.min(top, vp.h - s.h - margin));
+
+    return { left: left, top: top, placement: side + '-' + align };
+  }
+
   // Gesture arbiter core: one owner per gesture sequence, decided once —
   // the first recognizer to claim a sequence wins it, everyone else backs
   // off. Pure (no DOM); the kit wires one instance to real pointer/touch
@@ -437,6 +487,7 @@
     reorderDropIndex: reorderDropIndex,
     gridDropSide: gridDropSide,
     autoScrollVelocity: autoScrollVelocity,
+    placePopover: placePopover,
     createArbiter: createArbiter,
     createToastSlot: createToastSlot,
   };
@@ -1944,6 +1995,10 @@
 
   window.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape' || !modalStack.length) return;
+    // A popover open above a modal owns Escape (its own handler
+    // dismisses it) — this capture listener registered first, so it
+    // must stand aside or Escape would take both surfaces down.
+    if (activePopover) return;
     var top = modalStack[modalStack.length - 1];
     if (top.dismissible) {
       e.preventDefault();
@@ -2101,6 +2156,258 @@
 
       render(height);
       springTo(0);
+    });
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   * Anchored popover / dropdown menu — the desktop menu idiom (#741):
+   * a panel attached to the control that invoked it, flipped/clamped to
+   * stay in the viewport, dismissed by outside-click / Escape / scroll /
+   * resize. No backdrop and no entrance animation (menus are
+   * high-frequency UI — see the fidelity rules). Singleton: opening one
+   * dismisses any open popover.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  // The one open popover (also consulted by the modal Escape handler
+  // above). { dismiss } while a popover is up, null otherwise.
+  var activePopover = null;
+
+  // popover({ anchorEl | anchorRect, items | contentEl | content,
+  // title?, headerEl?, placement?, onDismiss? }).
+  //
+  // Items share the actionSheet shape plus popover extensions:
+  // { label, destructive?, disabled?, keepOpen?, title?, handler? } —
+  // disabled renders an inert row, keepOpen runs handler without
+  // dismissing (in-place feedback flows), and handler receives the row's
+  // <button> element. headerEl is adopted verbatim (it brings its own
+  // padding/hairline); title renders in the kit's own header slot.
+  //
+  // Items mode returns a Promise resolving the chosen item or null on
+  // dismissal, with a .dismiss() method attached for programmatic close;
+  // content mode returns { el, dismiss() }.
+  function popover(options) {
+    var opts = options || {};
+    if (Array.isArray(opts.items)) {
+      var handle;
+      var promise = new Promise(function (resolve) {
+        handle = presentPopover(opts, resolve);
+      });
+      promise.dismiss = handle.dismiss;
+      return promise;
+    }
+    return presentPopover(opts, null);
+  }
+
+  function presentPopover(opts, resolve) {
+    if (activePopover) activePopover.dismiss();
+
+    var anchorEl = opts.anchorEl && opts.anchorEl.nodeType === 1 ? opts.anchorEl : null;
+    var anchor = opts.anchorRect
+      || (anchorEl && anchorEl.getBoundingClientRect())
+      || { left: 8, top: 8, right: 8, bottom: 8 };
+    var itemsMode = Array.isArray(opts.items);
+
+    var el = document.createElement('div');
+    el.className = 'un-popover';
+    el.tabIndex = -1;
+
+    if (opts.headerEl) {
+      el.appendChild(opts.headerEl);
+    } else if (opts.title) {
+      var header = document.createElement('div');
+      header.className = 'un-popover-header';
+      var title = document.createElement('div');
+      title.className = 'un-popover-title';
+      title.textContent = opts.title;
+      header.appendChild(title);
+      el.appendChild(header);
+    }
+
+    var itemBtns = [];
+    var closed = false;
+
+    if (itemsMode) {
+      el.setAttribute('role', 'menu');
+      opts.items.forEach(function (item) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'un-popover-item' + (item.destructive ? ' un-destructive' : '');
+        btn.setAttribute('role', 'menuitem');
+        btn.textContent = item.label;
+        if (item.title) btn.title = item.title;
+        if (item.disabled) {
+          btn.disabled = true;
+        } else {
+          btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (item.keepOpen) {
+              if (item.handler) item.handler(btn);
+              return;
+            }
+            settle(item, btn);
+          });
+        }
+        el.appendChild(btn);
+        itemBtns.push(btn);
+      });
+    } else if (opts.contentEl) {
+      el.appendChild(opts.contentEl);
+    } else if (opts.content != null) {
+      el.innerHTML = opts.content;
+    }
+
+    // Measure hidden, place via the pure math, reveal — instant, no
+    // entrance animation.
+    el.style.visibility = 'hidden';
+    document.body.appendChild(el);
+    var pos = placePopover({
+      anchor: anchor,
+      size: { w: el.offsetWidth, h: el.offsetHeight },
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+      placement: opts.placement,
+    });
+    el.style.left = pos.left + 'px';
+    el.style.top = pos.top + 'px';
+    el.style.visibility = '';
+
+    var prevFocus = document.activeElement;
+    var entry = { dismiss: function () { settle(null, null); } };
+    activePopover = entry;
+    if (anchorEl) anchorEl.setAttribute('aria-expanded', 'true');
+
+    // One-shot suppressor for the click that follows an anchor
+    // pointerdown-dismiss: without it the anchor's own open handler
+    // fires and the menu instantly reopens instead of toggling closed.
+    function swallowAnchorClick(e) {
+      document.removeEventListener('click', swallowAnchorClick, true);
+      if (anchorEl && anchorEl.contains(e.target)) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }
+
+    function onDocPointerDown(e) {
+      if (el.contains(e.target)) return;
+      if (anchorEl && anchorEl.contains(e.target)) {
+        document.addEventListener('click', swallowAnchorClick, true);
+      }
+      settle(null, null);
+    }
+
+    function enabledBtns() {
+      return itemBtns.filter(function (b) { return !b.disabled; });
+    }
+
+    function onKeyDown(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        settle(null, null);
+        return;
+      }
+      if (e.key === 'Tab') {
+        // Native menu convention: Tab closes a MENU; focus restore +
+        // default Tab then move focus onward from the anchor. Content
+        // popovers keep Tab for their own focusables.
+        if (itemsMode) settle(null, null);
+        return;
+      }
+      var enabled = enabledBtns();
+      if (!enabled.length) return;
+      var idx = enabled.indexOf(document.activeElement);
+      var next = null;
+      if (e.key === 'ArrowDown') next = enabled[idx < 0 ? 0 : (idx + 1) % enabled.length];
+      else if (e.key === 'ArrowUp') next = enabled[idx < 0 ? enabled.length - 1 : (idx - 1 + enabled.length) % enabled.length];
+      else if (e.key === 'Home') next = enabled[0];
+      else if (e.key === 'End') next = enabled[enabled.length - 1];
+      if (next) {
+        e.preventDefault();
+        try { next.focus(); } catch (err) { /* ignore */ }
+      }
+    }
+
+    // Scroll/resize dismissal arms after the first painted frame: layout
+    // work around the opening click (scroll anchoring, text reflow) can
+    // emit an async scroll event that would otherwise kill the popover
+    // the instant it opens. A real user scroll is a stream of events —
+    // losing the pre-paint ones is imperceptible. pointerdown/keydown
+    // stay armed immediately (the intent there is unambiguous).
+    var scrollArmed = false;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { scrollArmed = true; });
+    });
+
+    function onScroll(e) {
+      if (!scrollArmed) return;
+      // A long menu scrolling internally must not dismiss itself.
+      if (e.target && e.target.nodeType === 1 && el.contains(e.target)) return;
+      settle(null, null);
+    }
+
+    function onResize() {
+      if (!scrollArmed) return;
+      settle(null, null);
+    }
+
+    document.addEventListener('pointerdown', onDocPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+
+    // settle(item, btn): tear down, run the chosen item's handler (none
+    // on plain dismissal), resolve. Exactly-once.
+    function settle(item, btn) {
+      if (closed) return;
+      closed = true;
+      if (activePopover === entry) activePopover = null;
+      document.removeEventListener('pointerdown', onDocPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+      if (anchorEl) anchorEl.setAttribute('aria-expanded', 'false');
+      if (el.parentNode) el.parentNode.removeChild(el);
+      if (prevFocus && typeof prevFocus.focus === 'function') {
+        try { prevFocus.focus(); } catch (e) { /* ignore */ }
+      }
+      if (item && item.handler) item.handler(btn || null);
+      if (opts.onDismiss) opts.onDismiss();
+      if (resolve) resolve(item || null);
+    }
+
+    // Focus moves into the menu (first enabled item) or the container.
+    var focusTarget = enabledBtns()[0] || el;
+    try { focusTarget.focus(); } catch (e) { /* ignore */ }
+
+    return { el: el, dismiss: entry.dismiss };
+  }
+
+  // menu({ anchorEl | anchorRect, title?, headerEl?, items, cancelLabel?,
+  // placement? }) — the adaptive menu: a bottom action sheet on touch
+  // platforms, an anchored popover on desktop, from one actionSheet-shaped
+  // call site. Always returns a Promise resolving the chosen item or null,
+  // with a .dismiss() attached (a no-op on the sheet path — action sheets
+  // have no programmatic dismissal).
+  function menu(options) {
+    var opts = options || {};
+    var items = opts.items || [];
+    if (platform !== 'desktop') {
+      // Action sheets have no inert-row concept — disabled rows are
+      // omitted; keepOpen degrades to a normal dismiss-and-run.
+      var p = actionSheet({
+        title: opts.title,
+        cancelLabel: opts.cancelLabel,
+        actions: items.filter(function (i) { return !i.disabled; }),
+      });
+      p.dismiss = function () {};
+      return p;
+    }
+    return popover({
+      anchorEl: opts.anchorEl,
+      anchorRect: opts.anchorRect,
+      title: opts.title,
+      headerEl: opts.headerEl,
+      placement: opts.placement,
+      items: items,
     });
   }
 
@@ -2729,6 +3036,8 @@
     presentSheet: presentSheet,
     presentModal: presentModal,
     actionSheet: actionSheet,
+    popover: popover,
+    menu: menu,
     alert: alertDialog,
     toast: toast,
     attachNavBar: attachNavBar,
