@@ -173,6 +173,10 @@ const WorkDrawer = {
     if (PlatformUI.isTouch() && !WorkDrawer._sheet) {
       panel.classList.remove('hidden');
       panel.classList.add('platform-sheet-adopted');
+      // Render BEFORE presenting — the kit sheet measures its height
+      // once at present time to seed the slide-up spring (see the
+      // matching note in notifications.js show()).
+      WorkDrawer._renderList();
       const sheet = PlatformUI.sheet({
         contentEl: panel,
         onDismiss: () => {
@@ -187,7 +191,6 @@ const WorkDrawer = {
       if (sheet) {
         WorkDrawer._sheet = sheet;
         WorkDrawer.open = true;
-        WorkDrawer._renderList();
         WorkDrawer.refresh();
         return;
       }

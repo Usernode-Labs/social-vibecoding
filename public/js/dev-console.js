@@ -211,6 +211,10 @@ const DevConsole = {
     if (PlatformUI.isTouch() && !DevConsole._sheet) {
       panel.classList.remove('hidden');
       panel.classList.add('platform-sheet-adopted');
+      // Render BEFORE presenting — the kit sheet measures its height
+      // once at present time to seed the slide-up spring (see the
+      // matching note in notifications.js show()).
+      DevConsole._rerenderLog();
       const sheet = PlatformUI.sheet({
         contentEl: panel,
         onDismiss: () => {
@@ -227,7 +231,6 @@ const DevConsole = {
         DevConsole.panelOpen = true;
         DevConsole.unseenErrors = 0;
         DevConsole._updateBadge();
-        DevConsole._rerenderLog();
         DevConsole._refreshButtonVisibility();
         return;
       }

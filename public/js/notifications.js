@@ -229,6 +229,14 @@ const Notifications = {
     if (PlatformUI.isTouch() && !Notifications._sheet) {
       panel.classList.remove('hidden');
       panel.classList.add('platform-sheet-adopted');
+      // Render BEFORE presenting: the kit sheet measures its height
+      // once at present time to seed the slide-up spring. Presenting
+      // the panel empty and filling it afterwards made the FIRST-ever
+      // open "pop" (a grabber-height slide, then the content snapped
+      // in); later opens still held the previous render, so only the
+      // first one looked broken.
+      Notifications._renderInvites();
+      Notifications._renderList();
       const sheet = PlatformUI.sheet({
         contentEl: panel,
         onDismiss: () => {
@@ -242,8 +250,6 @@ const Notifications = {
       if (sheet) {
         Notifications._sheet = sheet;
         Notifications.open = true;
-        Notifications._renderInvites();
-        Notifications._renderList();
         return;
       }
       panel.classList.remove('platform-sheet-adopted');
