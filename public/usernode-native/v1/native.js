@@ -235,6 +235,20 @@
     return bestIdx;
   }
 
+  // Grid-reorder drop side: does a pointer at (x, y) over the hovered
+  // tile `rect` ({ left, top, width, height }) mean "insert BEFORE it"
+  // or "insert AFTER it" in reading order? Tiles sharing a row with
+  // others (width < ~90% of the list) split at the horizontal midpoint;
+  // a full-width tile (single-column layout) splits at the vertical
+  // midpoint instead. Pure — unit-tested in tests/native-kit.test.js.
+  function gridDropSide(rect, listWidth, x, y) {
+    var multiCol = rect.width < listWidth * 0.9;
+    var before = multiCol
+      ? x < rect.left + rect.width / 2
+      : y < rect.top + rect.height / 2;
+    return before ? 'before' : 'after';
+  }
+
   // Minimum occlusion (px) treated as a real on-screen keyboard. Filters
   // URL-bar collapse transients and rotation jitter — no real keyboard is
   // shorter than this.
@@ -421,6 +435,7 @@
     isTextEntryField: isTextEntryField,
     revealScrollDelta: revealScrollDelta,
     reorderDropIndex: reorderDropIndex,
+    gridDropSide: gridDropSide,
     autoScrollVelocity: autoScrollVelocity,
     createArbiter: createArbiter,
     createToastSlot: createToastSlot,
@@ -1081,13 +1096,29 @@
   var REORDER_EDGE = 48; // auto-scroll edge band
   var REORDER_MAX_SCROLL = 14; // px per frame at the edge
 
-  // attachReorder(listEl, { handle?, itemSelector?, longPressMs?, canDrop?,
-  // onReorder }) — items default to listEl's element children minus
-  // .un-group-header / kit chrome; pass itemSelector for grouped markup
-  // (it may match across nested section containers — cross-section moves
-  // work because indices span the whole matched list). onReorder(from, to,
-  // itemEl) runs AFTER the kit has moved the element in the DOM (persist
-  // the order there). Returns { detach() }; never throws on bad input.
+  // attachReorder(listEl, { handle?, itemSelector?, longPressMs?, grid?,
+  // canDrop?, onLift?, onReorder?, onSettle? }) — items default to listEl's
+  // element children minus .un-group-header / kit chrome; pass itemSelector
+  // for grouped markup (it may match across nested section containers —
+  // cross-section moves work because indices span the whole matched list).
+  // onLift(itemEl) fires when a drag lifts (defer re-renders there);
+  // onReorder(from, to, itemEl) runs AFTER the kit has moved the element in
+  // the DOM (persist the order there); onSettle(moved) fires once the
+  // settle spring finishes — for drops, cancels, and a mid-lift detach —
+  // with moved=true iff onReorder ran for the gesture. Returns
+  // { detach() }; never throws on bad input.
+  //
+  // grid: true (opt-in) switches from the LIST model (item translates on
+  // Y only, siblings hold still, an accent line marks the drop gap) to the
+  // homescreen DISPLACEMENT model for multi-column tile grids: a fixed-
+  // position ghost clone tracks the pointer on BOTH axes, the real item
+  // stays in flow restyled as a dashed drop slot (.un-reorder-slot), and
+  // as the pointer crosses tiles the slot moves live through the DOM
+  // while siblings FLIP-animate aside. Drop indexing is cell-accurate
+  // (gridDropSide: x-half within a row, y-half for full-width tiles).
+  // Desktop lift needs no axis lock — movement past the slop in any
+  // direction lifts. The from/to indices, canDrop veto, and callback
+  // order are identical to list mode.
   function attachReorder(listEl, options) {
     var noop = { detach: function () {} };
     if (!listEl || listEl.nodeType !== 1) {
@@ -1098,6 +1129,7 @@
     var handleSel = typeof opts.handle === 'string' ? opts.handle : null;
     var itemSel = typeof opts.itemSelector === 'string' ? opts.itemSelector : null;
     var longPressMs = opts.longPressMs != null ? opts.longPressMs : REORDER_LONG_PRESS_MS;
+    var gridMode = opts.grid === true;
     var token = { reorder: listEl };
 
     var drag = null; // see states below
@@ -1105,6 +1137,10 @@
     var indicator = null;
     var raf = null;
     var suppressClick = false;
+    // Grid mode: completes an in-flight ghost settle if detach() stops
+    // the spring before onRest — the ghost must never outlive the handle
+    // and onSettle must still fire.
+    var pendingFinish = null;
 
     function matchedItems() {
       var els = itemSel
@@ -1188,6 +1224,10 @@
 
     function update() {
       if (!drag || !drag.lifted) return;
+      // Grid mode: the ghost is fixed-position and pinned to the pointer
+      // (no scroll compensation needed); the slot hit-test IS live, so
+      // the auto-scroll loop's re-update keeps it tracking.
+      if (gridMode) return gridUpdate();
       // The item tracks the finger in VIEWPORT space: compensate for any
       // content scrolled under a stationary pointer.
       var scrollDelta = scrollPos(drag.scroller) - drag.scrollBase;
@@ -1223,7 +1263,222 @@
       raf = requestAnimationFrame(autoScrollFrame);
     }
 
+    /* ── Grid (displacement) mode ─────────────────────────────────────
+     * The real item stays in flow as the dashed drop slot and moves LIVE
+     * through the DOM as the pointer crosses tiles; a body-mounted ghost
+     * clone tracks the pointer on both axes. Cached rects are useless
+     * here (siblings move), so hit-testing is live elementFromPoint —
+     * the ghost is pointer-events: none so it never occludes it. */
+
+    // Matched item under the viewport point, or null. Hits on headers,
+    // deadspace, and the dragged item itself fall through (the slot
+    // simply stays put).
+    function gridHitItem(x, y) {
+      var el = document.elementFromPoint(x, y);
+      if (!el || el.nodeType !== 1 || !listEl.contains(el)) return null;
+      var m;
+      if (itemSel) {
+        m = el.closest ? el.closest(itemSel) : null;
+      } else {
+        m = el;
+        while (m && m.parentNode !== listEl) m = m.parentNode;
+      }
+      if (!m || m === drag.item || !listEl.contains(m)) return null;
+      if (m.classList.contains('un-group-header') ||
+          m.classList.contains('un-reorder-indicator')) return null;
+      return m;
+    }
+
+    // FLIP-animate every matched sibling across the DOM move: measure
+    // where each one is RIGHT NOW (mid-animation positions included, so
+    // rapid slot changes retarget smoothly), apply the move, then play
+    // each from its old spot to its new grid position.
+    function gridFlip(applyMove) {
+      if (prefersReducedMotion) { applyMove(); return; }
+      var sibs = matchedItems().filter(function (el) { return el !== drag.item; });
+      var first = sibs.map(function (el) { return el.getBoundingClientRect(); });
+      applyMove();
+      var i;
+      // Clear in-flight transforms so the post-move measurement is the
+      // true layout position, not a mid-transition one.
+      for (i = 0; i < sibs.length; i++) {
+        sibs[i].style.transition = 'none';
+        sibs[i].style.transform = '';
+      }
+      for (i = 0; i < sibs.length; i++) {
+        var last = sibs[i].getBoundingClientRect();
+        var dx = first[i].left - last.left;
+        var dy = first[i].top - last.top;
+        if (dx || dy) sibs[i].style.transform = 'translate(' + dx + 'px, ' + dy + 'px)';
+      }
+      // Flush the inverted transforms before enabling transitions, so the
+      // jump back to the old position isn't itself animated.
+      void listEl.offsetHeight;
+      requestAnimationFrame(function () {
+        for (var j = 0; j < sibs.length; j++) {
+          sibs[j].style.transition = 'transform 200ms ease';
+          sibs[j].style.transform = '';
+        }
+      });
+    }
+
+    // Clear every FLIP style this gesture may have left on matched items.
+    function gridClearSibs() {
+      var items = matchedItems();
+      for (var i = 0; i < items.length; i++) {
+        items[i].style.transition = '';
+        items[i].style.transform = '';
+      }
+    }
+
+    function gridLift(e) {
+      var items = matchedItems();
+      var fromIndex = items.indexOf(drag.item);
+      if (fromIndex < 0) { drag = null; return; }
+      drag.lifted = true;
+      drag.fromIndex = fromIndex;
+      drag.scroller = findScroller();
+      drag.liftX = drag.lastX;
+      drag.liftY = drag.lastY;
+      drag.gx = 0;
+      drag.gy = 0;
+      // Where the item lifted from, for pointercancel / detach restores.
+      drag.origParent = drag.item.parentNode;
+      drag.origNext = drag.item.nextElementSibling;
+      haptic();
+      // Capture on the LIST, not the item: the live displacement below
+      // removes + reinserts the item, and Chromium releases pointer
+      // capture the moment the captured element leaves the DOM — capture
+      // on the item would die on the first slot move.
+      if (e && typeof e.pointerId === 'number') {
+        try { listEl.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      }
+      // "Pick up": a fixed-position clone floats above the page and
+      // tracks the pointer; pointer-events: none keeps it invisible to
+      // gridHitItem's elementFromPoint.
+      var rect = drag.item.getBoundingClientRect();
+      drag.ghostLeft = rect.left;
+      drag.ghostTop = rect.top;
+      var ghost = drag.item.cloneNode(true);
+      ghost.classList.add('un-reorder-ghost');
+      // Layout-critical styles go INLINE: the clone keeps the host's own
+      // classes, and a utility like Tailwind's `relative` would tie the
+      // ghost class on specificity and win on stylesheet order — the
+      // ghost must be viewport-fixed no matter what it cloned.
+      ghost.style.position = 'fixed';
+      ghost.style.left = rect.left + 'px';
+      ghost.style.top = rect.top + 'px';
+      ghost.style.width = rect.width + 'px';
+      ghost.style.height = rect.height + 'px';
+      ghost.style.margin = '0';
+      ghost.style.zIndex = '9985';
+      ghost.style.pointerEvents = 'none';
+      // Transparent tiles get a surface of their own (same rationale as
+      // the list mode's lifted-row background), resolved from the LIST so
+      // wrapper-level re-theming still applies to the body-mounted ghost.
+      var bg = getComputedStyle(drag.item).backgroundColor;
+      if (!bg || bg === 'transparent' || bg === 'rgba(0, 0, 0, 0)') {
+        try {
+          var surface = getComputedStyle(listEl).getPropertyValue('--un-group-bg');
+          ghost.style.background = surface ? surface.trim() : '';
+        } catch (err) { /* ignore */ }
+      }
+      document.body.appendChild(ghost);
+      drag.ghost = ghost;
+      // The real item stays in the grid as the drop slot (dashed box,
+      // contents hidden — see .un-reorder-slot in native.css).
+      drag.item.classList.add('un-reorder-slot');
+      listEl.classList.add('un-reordering');
+      if (opts.onLift) {
+        try { opts.onLift(drag.item); } catch (err) { /* ignore */ }
+      }
+      update();
+      raf = requestAnimationFrame(autoScrollFrame);
+    }
+
+    function gridUpdate() {
+      drag.gx = drag.lastX - drag.liftX;
+      drag.gy = drag.lastY - drag.liftY;
+      drag.ghost.style.transform = 'translate(' + drag.gx + 'px, ' + drag.gy + 'px)';
+      var target = gridHitItem(drag.lastX, drag.lastY);
+      if (!target) return; // deadspace / header / own slot: slot stays put
+      var r = target.getBoundingClientRect();
+      var side = gridDropSide(
+        { left: r.left, top: r.top, width: r.width, height: r.height },
+        listEl.getBoundingClientRect().width,
+        drag.lastX, drag.lastY
+      );
+      var items = matchedItems();
+      var cur = items.indexOf(drag.item);
+      var overIdx = items.indexOf(target);
+      if (cur < 0 || overIdx < 0) return;
+      // Prospective post-removal insertion index — the same semantics as
+      // list mode's `to`, so canDrop contracts carry over unchanged.
+      var without = overIdx - (cur < overIdx ? 1 : 0);
+      var to = side === 'before' ? without : without + 1;
+      if (to === cur) return; // already in that slot (covers DOM no-ops)
+      if (to !== drag.fromIndex && opts.canDrop && opts.canDrop(drag.item, to) === false) {
+        return; // vetoed slot: the placeholder visibly refuses to move
+      }
+      haptic(5); // slot-change tick
+      gridFlip(function () {
+        if (side === 'before') target.parentNode.insertBefore(drag.item, target);
+        else target.parentNode.insertBefore(drag.item, target.nextSibling);
+      });
+    }
+
+    // Grid release/cancel: glide the ghost onto the slot, swap the real
+    // item back in, then fire onReorder (the DOM move already happened
+    // live — the callback still runs after it, honoring the contract)
+    // and onSettle.
+    function gridRelease(cancelled) {
+      var item = drag.item;
+      var ghost = drag.ghost;
+      var from = drag.fromIndex;
+      if (cancelled && drag.origParent) {
+        // Browser took the gesture mid-drag: dropping at the current
+        // position would commit a move the user may not have meant —
+        // put the item back where it lifted from.
+        try { drag.origParent.insertBefore(item, drag.origNext); } catch (err) { /* ignore */ }
+      }
+      var to = matchedItems().indexOf(item);
+      var moved = !cancelled && to >= 0 && to !== from;
+      if (moved) haptic();
+      var slotRect = item.getBoundingClientRect();
+      var gx = drag.gx;
+      var gy = drag.gy;
+      var tx = slotRect.left - drag.ghostLeft;
+      var ty = slotRect.top - drag.ghostTop;
+      function finish() {
+        pendingFinish = null;
+        if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+        item.classList.remove('un-reorder-slot');
+        gridClearSibs();
+        if (moved && opts.onReorder) opts.onReorder(from, to, item);
+        if (opts.onSettle) {
+          try { opts.onSettle(moved); } catch (err) { /* ignore */ }
+        }
+      }
+      clearLiftVisuals();
+      drag = null;
+      if (prefersReducedMotion || (Math.abs(tx - gx) < 1 && Math.abs(ty - gy) < 1)) {
+        finish();
+        return;
+      }
+      if (activeSpring) activeSpring.stop();
+      pendingFinish = finish;
+      ghost.classList.add('un-reorder-ghost-drop'); // scale eases back to 1
+      activeSpring = spring(function (p) {
+        ghost.style.transform = 'translate(' +
+          (gx + (tx - gx) * p) + 'px, ' + (gy + (ty - gy) * p) + 'px)';
+      }, {
+        from: 0, to: 1, velocity: 0, preset: 'stiff',
+        onRest: function () { activeSpring = null; finish(); },
+      });
+    }
+
     function lift(e) {
+      if (gridMode) return gridLift(e);
       var items = matchedItems();
       var fromIndex = items.indexOf(drag.item);
       if (fromIndex < 0) { drag = null; return; }
@@ -1269,6 +1524,9 @@
       if (e && typeof e.pointerId === 'number') {
         try { drag.item.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       }
+      if (opts.onLift) {
+        try { opts.onLift(drag.item); } catch (err) { /* ignore */ }
+      }
       update();
       raf = requestAnimationFrame(autoScrollFrame);
     }
@@ -1284,8 +1542,9 @@
     }
 
     // Settle the lifted item to targetTy with a spring, run done, clean up.
-    // Reduced motion settles instantly.
-    function settle(targetTy, done) {
+    // Reduced motion settles instantly. `moved` is passed through to
+    // onSettle so the host knows whether onReorder ran for this gesture.
+    function settle(targetTy, done, moved) {
       var item = drag.item;
       var fromTy = drag.ty;
       var unclipped = drag.unclipped || [];
@@ -1296,6 +1555,9 @@
         if (bgSet) item.style.background = '';
         unclipped.forEach(function (u) { u.node.style.overflow = u.prev; });
         if (done) done();
+        if (opts.onSettle) {
+          try { opts.onSettle(!!moved); } catch (err) { /* ignore */ }
+        }
       }
       clearLiftVisuals();
       drag = null;
@@ -1315,6 +1577,7 @@
       if (!drag.lifted) { drag = null; return; }
       suppressClick = true;
       setTimeout(function () { suppressClick = false; }, 0);
+      if (gridMode) return gridRelease(cancelled);
       var gap = cancelled ? null : drag.gap;
       var from = drag.fromIndex;
       var item = drag.item;
@@ -1323,7 +1586,7 @@
       var n = rects.length;
       var to = gap == null ? from : (gap > from ? gap - 1 : gap);
       if (gap == null || to === from || gap === from + 1) {
-        settle(0, null); // home: no move, no callback
+        settle(0, null, false); // home: no move, no onReorder
         return;
       }
       haptic();
@@ -1338,7 +1601,7 @@
         if (ref) ref.parentNode.insertBefore(item, ref);
         else items[n - 1].parentNode.appendChild(item);
         if (opts.onReorder) opts.onReorder(from, to, item);
-      });
+      }, true);
     }
 
     function onPointerDown(e) {
@@ -1360,6 +1623,7 @@
         item: item,
         startX: e.clientX,
         startY: e.clientY,
+        lastX: e.clientX,
         lastY: e.clientY,
         lifted: false,
         armed: false,
@@ -1385,6 +1649,7 @@
 
     function onPointerMove(e) {
       if (!drag || e.pointerId !== drag.pointerId) return;
+      drag.lastX = e.clientX;
       drag.lastY = e.clientY;
       if (!drag.lifted) {
         var dx = e.clientX - drag.startX;
@@ -1397,6 +1662,15 @@
           return;
         }
         if (drag.armed) {
+          if (gridMode) {
+            // Grid drags are 2D — any-direction movement past the slop
+            // lifts (a y-axis lock would swallow horizontal pulls).
+            if (dx * dx + dy * dy > REORDER_SLOP * REORDER_SLOP) {
+              if (!gestures.claim(drag.seq, token)) { drag = null; return; }
+              lift(e);
+            }
+            return;
+          }
           var axis = lockIntent(dx, dy);
           if (axis === 'x') { drag = null; return; }
           if (axis === 'y') {
@@ -1451,15 +1725,41 @@
         listEl.removeEventListener('click', onClickCapture, true);
         if (drag) {
           if (drag.pressTimer) clearTimeout(drag.pressTimer);
-          if (drag.item) {
+          var wasLifted = drag.lifted;
+          if (gridMode && wasLifted) {
+            // Grid teardown: drop the ghost, un-slot the item, and put it
+            // back where it lifted from (the host is about to re-render
+            // anyway, but a detach with no re-render must not leave the
+            // grid half-shuffled).
+            if (drag.ghost && drag.ghost.parentNode) drag.ghost.parentNode.removeChild(drag.ghost);
+            if (drag.item) {
+              drag.item.classList.remove('un-reorder-slot');
+              if (drag.origParent) {
+                try { drag.origParent.insertBefore(drag.item, drag.origNext); } catch (err) { /* ignore */ }
+              }
+            }
+            gridClearSibs();
+          } else if (drag.item) {
             drag.item.style.transform = '';
             drag.item.classList.remove('un-reorder-lifting');
             if (drag.bgSet) drag.item.style.background = '';
           }
           (drag.unclipped || []).forEach(function (u) { u.node.style.overflow = u.prev; });
           drag = null;
+          // A mid-lift teardown never reaches settle(); fire onSettle here
+          // so a host deferral flag set in onLift can't get stuck.
+          if (wasLifted && opts.onSettle) {
+            try { opts.onSettle(false); } catch (err) { /* ignore */ }
+          }
         }
         if (activeSpring) { activeSpring.stop(); activeSpring = null; }
+        // A grid ghost settle stopped mid-spring still owes its cleanup
+        // and callbacks — run it now so the ghost can't outlive the handle.
+        if (pendingFinish) {
+          var f = pendingFinish;
+          pendingFinish = null;
+          f();
+        }
         clearLiftVisuals();
         listEl.classList.remove('un-reordering');
       },

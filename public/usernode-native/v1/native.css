@@ -406,6 +406,40 @@ html.un-android .un-switch:checked:active::before {
   box-sizing: border-box;
 }
 
+/* Grid (displacement) reorder — attachReorder({ grid: true }). The
+   ghost is the fixed-position clone floating under the pointer; the
+   slot is the real item left in flow as a dashed drop target while
+   siblings FLIP aside (homescreen idiom). */
+.un-reorder-ghost {
+  position: fixed;
+  z-index: 9985;
+  margin: 0;
+  pointer-events: none; /* invisible to the slot's elementFromPoint hit-test */
+  scale: 1.04;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.3);
+  border-radius: var(--un-radius);
+  will-change: transform;
+}
+.un-reorder-ghost-drop {
+  scale: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  transition: scale 180ms ease, box-shadow 180ms ease;
+}
+.un-reorder-slot {
+  /* !important: the slot must win over the host's own hover/background
+     rules for the duration of the gesture (the pointer often sits over
+     the slot, so :hover states would otherwise repaint it). Fallback
+     first for engines without color-mix. */
+  border: 1px dashed var(--un-accent) !important;
+  border-color: color-mix(in srgb, var(--un-accent) 55%, transparent) !important;
+  background: color-mix(in srgb, var(--un-accent) 7%, transparent) !important;
+  border-radius: var(--un-radius);
+  box-shadow: none !important;
+}
+.un-reorder-slot > * {
+  visibility: hidden;
+}
+
 /* ── Inset-grouped lists ───────────────────────────────────────────────
    Pure CSS: rounded grouped cards, uppercase section headers, and inset
    hairline separators painted on the STATIC row container (never on the
