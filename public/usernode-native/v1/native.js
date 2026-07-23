@@ -864,10 +864,16 @@
    * Pull-to-refresh
    * ──────────────────────────────────────────────────────────────────── */
 
-  var PTR_THRESHOLD = 70; // px of displayed pull that arms a refresh
+  // Tuning note (v1 in-place fix): the original COEFF 0.4 / THRESHOLD 70
+  // pair required ~330px of raw finger travel to arm — more than half a
+  // phone screen, so short lists were nearly impossible to refresh. The
+  // pair below arms at ~125px of travel (UIRefreshControl territory)
+  // while keeping the same asymptote, so a deep pull still saturates at
+  // the familiar rubber-band feel.
+  var PTR_THRESHOLD = 60; // px of displayed pull that arms a refresh
   var PTR_HOLD = 56; // px the content holds at while refreshing
   var PTR_LIMIT = 150; // rubber-band asymptote
-  var PTR_COEFF = 0.4; // initial resistance slope (~dy/2.5)
+  var PTR_COEFF = 0.8; // initial resistance slope (~dy/1.25)
 
   // attachPullToRefresh(scrollEl, onRefresh, opts?) — scrollEl is either a
   // scrollable list container (needs `overscroll-behavior-y: contain`; the

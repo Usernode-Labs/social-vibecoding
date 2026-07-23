@@ -167,12 +167,13 @@ const WorkDrawer = {
     if (!panel) return;
     // One drawer at a time: opening the cog closes the bell.
     if (window.Notifications && Notifications.open) Notifications.hide();
-    // Touch platforms: bottom sheet (kit); desktop keeps the anchored
-    // dropdown below.
+    // Touch platforms: TOP sheet — like the bell, the cog panel hangs
+    // off the header, so it drops down from the top (drag the grabber
+    // up to dismiss). Desktop keeps the anchored dropdown below.
     if (PlatformUI.isTouch() && !WorkDrawer._sheet) {
       panel.classList.remove('hidden');
       panel.classList.add('platform-sheet-adopted');
-      const sheet = PlatformUI.sheet({
+      const sheet = PlatformUI.topSheet({
         contentEl: panel,
         onDismiss: () => {
           panel.classList.remove('platform-sheet-adopted');

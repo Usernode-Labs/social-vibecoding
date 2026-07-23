@@ -127,6 +127,101 @@
       return un.presentSheet(opts || {});
     },
 
+    /** Top sheet — drops down from the top edge (the notifications
+        bell / work-drawer idiom: those panels hang off the header, so
+        they fall from it rather than rising from the bottom). The kit
+        has no top-anchored primitive, so this one is platform-side,
+        reusing the kit's motion variables, backdrop token and gesture
+        arbiter. Drag UP on the bottom grabber (1:1) to dismiss;
+        backdrop tap and Escape dismiss. Returns { dismiss, el } or
+        null when the kit is absent (callers keep their dropdown). */
+    topSheet(opts) {
+      const un = kit();
+      if (!un || !document.body) return null;
+      const o = opts || {};
+      const backdrop = document.createElement('div');
+      backdrop.className = 'platform-top-backdrop';
+      const wrap = document.createElement('div');
+      wrap.className = 'platform-top-sheet';
+      const body = document.createElement('div');
+      body.className = 'platform-top-sheet-body';
+      if (o.contentEl) body.appendChild(o.contentEl);
+      const grabber = document.createElement('div');
+      grabber.className = 'platform-top-sheet-grabber';
+      wrap.appendChild(body);
+      wrap.appendChild(grabber);
+      document.body.appendChild(backdrop);
+      document.body.appendChild(wrap);
+
+      let dismissed = false;
+      const onKey = (e) => { if (e.key === 'Escape') dismiss(); };
+      const finish = () => {
+        backdrop.remove();
+        wrap.remove();
+        document.removeEventListener('keydown', onKey);
+        if (typeof o.onDismiss === 'function') { try { o.onDismiss(); } catch {} }
+      };
+      const dismiss = () => {
+        if (dismissed) return;
+        dismissed = true;
+        wrap.classList.add('platform-top-anim');
+        wrap.classList.remove('platform-top-in');
+        wrap.style.transform = '';
+        backdrop.classList.remove('platform-top-in');
+        let done = false;
+        const off = () => { if (done) return; done = true; finish(); };
+        wrap.addEventListener('transitionend', off, { once: true });
+        setTimeout(off, 650); // reduced-motion / missed event fallback
+      };
+      backdrop.addEventListener('click', dismiss);
+      document.addEventListener('keydown', onKey);
+      requestAnimationFrame(() => {
+        wrap.classList.add('platform-top-anim', 'platform-top-in');
+        backdrop.classList.add('platform-top-in');
+      });
+
+      // Grabber drag — 1:1 upward tracking (fidelity rule: the sheet is
+      // a pure function of the finger mid-drag), spring release, flick
+      // or 35%-height travel commits the dismissal.
+      let drag = null;
+      grabber.addEventListener('pointerdown', (e) => {
+        if (dismissed) return;
+        drag = { startY: e.clientY, dy: 0, samples: [{ t: e.timeStamp, y: 0 }], claimed: false };
+        try { grabber.setPointerCapture(e.pointerId); } catch {}
+        wrap.classList.remove('platform-top-anim');
+      });
+      grabber.addEventListener('pointermove', (e) => {
+        if (!drag || dismissed) return;
+        if (!drag.claimed && Math.abs(e.clientY - drag.startY) > 6) {
+          const g = un.gestures;
+          const seq = e.pointerType === 'touch' ? 'touch' : e.pointerId;
+          if (g && !g.claim(seq, 'platform-top-sheet')) { drag = null; return; }
+          drag.claimed = true;
+        }
+        const dy = Math.min(0, e.clientY - drag.startY); // upward only
+        drag.dy = dy;
+        drag.samples.push({ t: e.timeStamp, y: dy });
+        if (drag.samples.length > 24) drag.samples.shift();
+        wrap.style.transform = `translateY(${dy}px)`;
+      });
+      const release = (e) => {
+        if (!drag || dismissed) { drag = null; return; }
+        const d = drag;
+        drag = null;
+        const windowStart = d.samples.find((s) => e.timeStamp - s.t < 120) || d.samples[0];
+        const dt = Math.max(1, e.timeStamp - windowStart.t);
+        const v = (d.dy - windowStart.y) / dt; // px/ms, upward negative
+        const commit = d.dy < -Math.min(140, wrap.offsetHeight * 0.35) || v < -0.5;
+        wrap.classList.add('platform-top-anim');
+        if (commit) dismiss();
+        else wrap.style.transform = ''; // ease back to the resting pose
+      };
+      grabber.addEventListener('pointerup', release);
+      grabber.addEventListener('pointercancel', release);
+
+      return { dismiss, el: wrap };
+    },
+
     /** Centered modal card. Returns the kit handle or null. */
     modal(opts) {
       const un = kit();
@@ -220,6 +315,7 @@
     let card = null;
 
     const restore = () => {
+      if (card) card.classList.remove('platform-modal-card');
       if (placeholder && card && placeholder.parentNode) {
         placeholder.parentNode.replaceChild(card, placeholder);
       }
@@ -235,6 +331,18 @@
       const backdrop = root.querySelector('[data-modal-backdrop]');
       card = (backdrop && backdrop.firstElementChild) || root.firstElementChild;
       if (!card) return;
+      // The kit modal draws the card chrome (surface, radius, shadow,
+      // 20/16 padding). The legacy card's own bg/radius/shadow/padding
+      // would stack on top of it — double borders, double whitespace —
+      // so it is neutralized while presented (class removed on restore).
+      // Measure the card's design width first so the kit shell can hug
+      // it instead of the kit's default 480px.
+      let designWidth = null;
+      try {
+        const mw = getComputedStyle(card).maxWidth;
+        if (mw && mw.endsWith('px')) designWidth = mw;
+      } catch {}
+      card.classList.add('platform-modal-card');
       placeholder = document.createComment('platform-modal-home');
       card.parentNode.replaceChild(placeholder, card);
       // Hide the legacy scrim while the kit owns presentation.
@@ -255,6 +363,9 @@
         },
       });
       if (!handle) restore();
+      else if (handle.el && designWidth) {
+        handle.el.style.width = `min(${designWidth}, calc(100vw - 32px))`;
+      }
     };
 
     const sync = () => {

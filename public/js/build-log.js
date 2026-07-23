@@ -105,7 +105,10 @@ const BuildLog = {
     if (PlatformUI.hasKit()) {
       // Kit path: the card presents with the kit's modal motion —
       // fade + scale-settle, backdrop tap / Escape dismiss. The
-      // hand-rolled overlay wrapper is never mounted.
+      // hand-rolled overlay wrapper is never mounted. The kit shell
+      // draws the card chrome, so the panel's own is neutralized
+      // (platform-modal-card) and the shell hugs the panel's width.
+      panel.classList.add('platform-modal-card');
       BuildLog._modal = PlatformUI.modal({
         contentEl: panel,
         onDismiss: () => {
@@ -115,6 +118,9 @@ const BuildLog = {
           }
         },
       });
+      if (BuildLog._modal && BuildLog._modal.el) {
+        BuildLog._modal.el.style.width = 'min(672px, calc(100vw - 32px))';
+      }
     } else {
       overlay.addEventListener('pointerdown', (e) => {
         if (e.target === overlay) BuildLog.close();
