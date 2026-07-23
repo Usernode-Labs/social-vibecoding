@@ -1,6 +1,11 @@
 const AppView = {
   appData: null,
   iframeToken: null,
+  // #743: validated inner app path (path+query, wire-encoded) from a
+  // chromeless deep link (#app/<slug>/full?path=/t/123). Written by
+  // App.restoreFromHash on every pass (null when the hash carries none),
+  // consumed by buildAppIframeSrc, cleared by close().
+  pendingInnerPath: null,
 
   // #621: true when the viewer may see the app (view access) but is not
   // a collaborator on an invite-only-build app. The Dev tab renders,
@@ -316,6 +321,7 @@ const AppView = {
       DevConsole.setCurrentApp(null);
     }
     if (window.Secrets) Secrets.hide();
+    AppView.pendingInnerPath = null;
     const slot = document.getElementById('app-version-pill-slot');
     if (slot) slot.innerHTML = '';
     const forkSlot = document.getElementById('app-fork-badge-slot');
@@ -332,16 +338,37 @@ const AppView = {
     } catch {}
   },
 
+  // Compose the production iframe src from the app origin, the pending
+  // chromeless inner path (#743), and the iframe token — same URL-API
+  // pattern as the staging buildSrc below, so an inner query composes
+  // with the token param (and searchParams.set clobbers any `token`
+  // smuggled inside the forwarded path). The origin check means a
+  // hostile path (`/\evil.com` and friends) can never point the iframe
+  // off the app's own origin — it falls back to the app root.
+  buildAppIframeSrc() {
+    const appUrl = resolveDevHost(AppView.appData.url);
+    let url;
+    try {
+      url = new URL(AppView.pendingInnerPath || '/', appUrl);
+      if (url.origin !== new URL(appUrl).origin) url = new URL(appUrl);
+    } catch {
+      try { url = new URL(appUrl); } catch { return appUrl; }
+    }
+    if (AppView.iframeToken) url.searchParams.set('token', AppView.iframeToken);
+    return url.toString();
+  },
+
   startTokenRefresh() {
     AppView.stopTokenRefresh();
     AppView.tokenRefreshInterval = setInterval(async () => {
       await AppView.refreshToken();
       // Rewrite the iframe src so the child app picks up the fresh token.
       // Only when the App tab is the visible one; other tabs re-fetch on
-      // next render anyway.
+      // next render anyway. Reuses the inner deep link so a mid-session
+      // refresh doesn't yank the viewer back to the app root (#743).
       const iframe = document.getElementById('app-iframe');
       if (iframe && AppView.appData?.url && AppView.iframeToken) {
-        iframe.src = `${resolveDevHost(AppView.appData.url)}?token=${AppView.iframeToken}`;
+        iframe.src = AppView.buildAppIframeSrc();
       }
     }, AppView.TOKEN_REFRESH_MS);
   },
@@ -446,10 +473,7 @@ const AppView = {
       return;
     }
 
-    const appUrl = resolveDevHost(appData.url);
-    const iframeSrc = AppView.iframeToken
-      ? `${appUrl}?token=${AppView.iframeToken}`
-      : appUrl;
+    const iframeSrc = AppView.buildAppIframeSrc();
 
     content.innerHTML = `
       <iframe
@@ -8881,6 +8905,54 @@ const AppView = {
     }
   },
 
+  // ── User locale bridge (issue #757) ────────────────────────────────
+  //
+  // The bridge's usernode.getUserLocale() posts a `__usernode_locale`
+  // "get" message to window.parent; the shell answers with the signed-in
+  // user's platform-level language preference (a BCP-47 tag, or null
+  // when unset). Read-only and instant — no dialog, no ack stage.
+  // Wired via the top-level message listener at the bottom of this file.
+
+  handleLocaleBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id || data.__usernode_locale !== 'get') return;
+
+    // Only the app iframes this shell owns may ask — same source gate
+    // as the LLM consent family above.
+    const appIframe = document.getElementById('app-iframe');
+    const stagingIframe = document.getElementById('staging-iframe');
+    const fromApp = appIframe && e.source === appIframe.contentWindow;
+    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
+    if (!fromApp && !fromStaging) return;
+
+    const locale = (typeof App !== 'undefined' && App.user) ? (App.user.locale || null) : null;
+    try {
+      e.source.postMessage(
+        { __usernode_locale: 'response', id: data.id, value: { locale } },
+        '*'
+      );
+    } catch {}
+  },
+
+  // Push a locale change into any open app/staging iframe so the bridge
+  // can dispatch its `usernode:locale-changed` event. Called by
+  // settings.js after a successful POST /api/me/locale. Deliberately
+  // does NOT rewrite the iframe src (that would reload the app mid-use);
+  // the periodic token refresh and next open handle the JWT claim.
+  notifyLocaleChanged(locale) {
+    ['app-iframe', 'staging-iframe'].forEach((id) => {
+      const iframe = document.getElementById(id);
+      if (iframe && iframe.contentWindow) {
+        try {
+          iframe.contentWindow.postMessage(
+            { __usernode_locale: 'changed', locale: locale || null },
+            '*'
+          );
+        } catch {}
+      }
+    });
+  },
+
   // ── App LLM access consent flow (issue #34) ────────────────────────
   //
   // The bridge's usernode.requestLlmAccess()/getLlmAccess()/
@@ -9164,6 +9236,8 @@ if (typeof window !== 'undefined') {
     try { AppView.handleLlmBridgeMessage(e); } catch {}
     // #685: issue-state availability announcements from the app iframe.
     try { AppView.handleIssueStateMessage(e); } catch {}
+    // #757: usernode.getUserLocale() reads from the app iframe.
+    try { AppView.handleLocaleBridgeMessage(e); } catch {}
   });
 }
 

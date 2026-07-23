@@ -62,6 +62,34 @@ test('hosted bridge relay refuses homescreen-shortcut calls from iframes', () =>
   );
 });
 
+// User locale (issue #757) — additive within v1. The shell
+// (public/js/app-view.js) answers the `__usernode_locale` message
+// family; these assertions pin the message shape both sides agree on,
+// the JWT-claim fallback, and the live-update event.
+test('hosted bridge exposes the user-locale API', () => {
+  const bridge = readBridge(versionedBridgePath);
+
+  assert.match(bridge, /window\.usernode\.getUserLocale/);
+  // Message family + the request/response/push types the shell uses.
+  assert.match(bridge, /__usernode_locale/);
+  assert.match(bridge, /"get"/);
+  assert.match(bridge, /"response"/);
+  assert.match(bridge, /"changed"/);
+  // Live-update event dispatched when the parent pushes a change.
+  assert.match(bridge, /usernode:locale-changed/);
+  // No-shell fallback: resolve (never reject) from the iframe JWT's
+  // `locale` claim, captured at script load.
+  assert.match(bridge, /_LOCALE_TIMEOUT_MS/);
+  assert.match(bridge, /_tokenLocale/);
+});
+
+test('shell side handles the same locale message family', () => {
+  const shell = fs.readFileSync(path.join(root, 'public', 'js', 'app-view.js'), 'utf8');
+  assert.match(shell, /handleLocaleBridgeMessage/);
+  assert.match(shell, /__usernode_locale/);
+  assert.match(shell, /notifyLocaleChanged/);
+});
+
 test('shell side handles the same LLM message family', () => {
   const shell = fs.readFileSync(path.join(root, 'public', 'js', 'app-view.js'), 'utf8');
   assert.match(shell, /handleLlmBridgeMessage/);

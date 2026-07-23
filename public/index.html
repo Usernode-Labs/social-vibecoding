@@ -1208,6 +1208,45 @@
         <p id="devchat-alerts-test-status" class="text-xs mt-2 hidden text-zinc-500 dark:text-zinc-400"></p>
       </div>
 
+      <!-- Platform-level user language preference (issue #757). A single
+           per-user BCP-47 locale apps read as their default language —
+           via the iframe JWT `locale` claim and the bridge's
+           usernode.getUserLocale(). "" (Auto) = unset (NULL in the DB).
+           Saves on change; settings.js wires the handler to
+           POST /api/me/locale and pushes a live `usernode:locale-changed`
+           notification into any open app iframe. -->
+      <div class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Language</h3>
+        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+          Apps on Usernode use this as their default language. Apps may offer their own override.
+        </p>
+        <select id="settings-locale"
+          class="w-full rounded-lg bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200">
+          <option value="">Auto — use device language</option>
+          <option value="en">English</option>
+          <option value="es">Español</option>
+          <option value="fr">Français</option>
+          <option value="de">Deutsch</option>
+          <option value="id">Bahasa Indonesia</option>
+          <option value="pt-BR">Português (Brasil)</option>
+          <option value="it">Italiano</option>
+          <option value="nl">Nederlands</option>
+          <option value="pl">Polski</option>
+          <option value="tr">Türkçe</option>
+          <option value="ru">Русский</option>
+          <option value="uk">Українська</option>
+          <option value="ar">العربية</option>
+          <option value="hi">हिन्दी</option>
+          <option value="vi">Tiếng Việt</option>
+          <option value="th">ไทย</option>
+          <option value="ja">日本語</option>
+          <option value="ko">한국어</option>
+          <option value="zh-CN">中文（简体）</option>
+          <option value="zh-TW">中文（繁體）</option>
+        </select>
+        <div id="settings-locale-status" class="text-xs mt-2 hidden"></div>
+      </div>
+
       <!-- Experimental: AI progress estimate (default OFF). When enabled,
            a small Haiku call skims the in-flight Claude Code progress log
            about once a minute and shows a vague "AI guess" next to the

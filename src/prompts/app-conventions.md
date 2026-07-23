@@ -78,8 +78,11 @@ app.use((req, res, next) => {
 
 Key properties:
 
-- `req.user` contains at minimum `{ id, username, usernode_pubkey }` once authenticated.
+- `req.user` contains at minimum `{ id, username, usernode_pubkey, locale }` once authenticated.
   `usernode_pubkey` is the user's linked Usernode wallet address (`ut1...`) or `null` if not linked.
+  `locale` is the user's platform-level language preference — a BCP-47
+  tag like `"id"` or `"pt-BR"`, or `null` when they haven't set one
+  (see "User language preference" below).
 - All non-GET requests + all `/api/*` requests are **deny-by-default**.
 - To intentionally expose an API route without auth, add its exact
   path to `PUBLIC_API_PATHS`. Do **not** remove the middleware.
@@ -93,6 +96,40 @@ Key properties:
 When adding a new API route, assume `req.user` is present. If a brand
 new endpoint **must** be public (e.g. a webhook), add its path to
 `PUBLIC_API_PATHS` and mention this in the dev-chat reply.
+
+### Chromeless deep links — forwarding share-link paths
+
+An unauthenticated **top-level document** visit to the app's own
+subdomain (a share link pasted into a browser) can't be served — the
+iframe token only exists inside the platform shell. The scaffold
+redirects such visits to the platform's chromeless view of the app:
+
+```
+<PLATFORM_BASE_URL>/#app/<slug>/full?path=<req.originalUrl>
+```
+
+The shell then embeds the app with a real token AND forwards the inner
+path+query into the iframe, so the visitor lands on the shared screen
+instead of the app's home. Contract for the `?path=` param (all inside
+the URL **fragment**):
+
+- The value is the app-relative path+query **verbatim in wire format**
+  (exactly `req.originalUrl` — already percent-encoded; do NOT
+  `encodeURIComponent` it, the shell does not decode it).
+- `path` must be the **final** fragment param — the shell takes
+  everything after the first `path=` as the value, so an inner query's
+  own `&`/`=`/`?` survive.
+- Relative-only: the value must start with a single literal `/` (a
+  `%2F`-encoded leading slash is rejected), never `//`, no scheme or
+  host, no whitespace or `` \ ` ' " < > ``, ≤ 512 chars. The shell
+  drops anything else and loads the app root.
+
+When redirecting, gate on `req.get('sec-fetch-dest') === 'document'`
+(as the scaffold does) so the platform shell is never loaded inside its
+own app iframe. Apps generated before this convention can adopt it by
+appending `'?path=' + req.originalUrl` to their existing chromeless
+redirect (see the current scaffold's `server.js` for the attribute-safe
+character check used on the landing-page anchor).
 
 ## Database
 
@@ -821,6 +858,111 @@ platform's Settings → "App AI permissions"; revocation is immediate,
 so treat `grant_required` as a state that can appear at any time, not
 just on first use.
 
+## App governance feed — the app's own proposal/vote/merge activity
+
+The platform tracks every proposal, vote, and merge for every app.
+A read-only API exposes the **calling app's own** feed so apps can
+render live governance surfaces — a "what's changing" strip, a
+changelog screen — instead of hand-maintaining a shadow table of the
+same data.
+
+Production containers receive one extra env var (platform-injected;
+`USERNODE_PLATFORM_API_URL` and the whole `USERNODE_PLATFORM_API_*`
+family are reserved manifest keys you must not declare):
+
+- `USERNODE_PLATFORM_API_URL` — base URL of the app-facing platform
+  API (`http://usernode:3000/api/app-platform` in-network).
+
+Auth reuses the app's existing credential,
+`USERNODE_LLM_PROXY_TOKEN` (see "App LLM access"). **Staging
+containers receive neither**, and standalone deploys have no platform
+to call — always detect absence and degrade gracefully, exactly like
+the LLM pattern:
+
+```js
+const FEED_ENABLED = !!process.env.USERNODE_PLATFORM_API_URL
+  && !!process.env.USERNODE_LLM_PROXY_TOKEN;
+// When false: hide the strip, or serve your staging mock feed (below).
+```
+
+### Calling the feed (server-side)
+
+The app's **server** calls the endpoint — never the frontend: the
+token must stay server-side. Proxy the result to your frontend
+through your own API, and cache it for ~30–60 seconds (the data
+changes on human voting timescales; don't hammer the platform per
+page view). No user token is needed — the feed contains only what any
+viewer of the app can already see in the platform's vote panel, and
+it is scoped by the token itself: an app can only ever read its own
+feed.
+
+```js
+const resp = await fetch(
+  `${process.env.USERNODE_PLATFORM_API_URL}/governance/feed?limit=10`,
+  { headers: { 'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN } }
+);
+const { items, has_more, next_cursor } = await resp.json();
+```
+
+Response shape:
+
+```json
+{
+  "items": [
+    {
+      "id": 812,
+      "pr_number": 41,
+      "title": "Custom tier colors",
+      "summary_md": "Adds a color picker so each tier row can have its own color.",
+      "status": "voting",
+      "votes_for": 3,
+      "votes_against": 1,
+      "votes_required": 4,
+      "contested": false,
+      "eta": "2026-07-24T06:10:00.000Z",
+      "author": "evan",
+      "proposed_at": "2026-07-21T18:02:11.000Z",
+      "merged_at": null
+    }
+  ],
+  "has_more": true,
+  "next_cursor": { "before": "2026-07-21T18:02:11.000Z", "before_id": 812 }
+}
+```
+
+Field semantics:
+
+- `status` — one of `proposed` (up for vote, no votes cast yet),
+  `voting` (votes coming in), `merging` (won the vote, in the merge
+  pipeline — lands within ~a minute), `merged` (shipped; `merged_at`
+  has the time). Withdrawn/rejected proposals simply drop out of the
+  feed. Private in-progress dev sessions never appear.
+- `eta` — ISO timestamp of the **earliest possible auto-merge time**
+  while a merge countdown is running ("merging in 9h"), or `null`
+  when no countdown applies. It is not a guarantee — more votes can
+  merge sooner, opposition can cancel it.
+- `title` / `summary_md` — plain-language proposal title and summary,
+  written for end users; render these directly.
+- `votes_for` / `votes_against` — the raw tallies the platform's vote
+  pill shows. `votes_required` is the current threshold (or the
+  at-merge snapshot on merged rows; may be `null` on old merges).
+
+Query params: `limit` (default 20, max 50), `status=open|merged|all`
+(default `all`), and keyset pagination via
+`before=<ISO>&before_id=<id>` — pass the previous response's
+`next_cursor` values to page older. Requests are rate-limited to
+60/min per app; cache instead of retrying on a
+`429 { code: 'rate_limited' }`.
+
+### Staging: seed a mock feed
+
+Staging previews cannot call the feed (no token), so a governance
+strip would render empty in every PR review. Per "Staging mock data",
+have your staging/dev fallback serve a small static mock feed — a
+handful of obviously-fake items covering all four statuses, one with
+a near-future `eta` — behind the `FEED_ENABLED === false` branch, so
+the strip is reviewable in previews and testers see the real layout.
+
 ## Don't `git push` yourself
 
 The worker container runs with **zero GitHub credentials in env** —
@@ -886,6 +1028,41 @@ Rules:
   running their own SV instance either accept that their dapps load
   the bridge from upstream prod, or fork the dapps and edit the URL.
   See [SELF-HOSTING.md](../../SELF-HOSTING.md) for details.
+
+## User language preference
+
+The platform owns a single per-user language/locale setting
+(Settings → Language on the platform shell). Apps that localize their
+UI should treat it as the **default** instead of building their own
+detection from `navigator.language` (which reflects the device, not
+the user's Usernode-level choice). It reaches apps two ways:
+
+- **JWT claim (server-side).** The iframe token carries a `locale`
+  claim alongside `id` / `username` / `usernode_pubkey`, so after
+  `jwt.verify` it's `req.user.locale` on every request — a BCP-47 tag
+  (`"id"`, `"pt-BR"`, …) or `null` when the user hasn't set one. Use
+  it for server-rendered strings and LLM prompt directives ("answer in
+  Bahasa Indonesia") with no client round-trip.
+- **Bridge API (frontend).** `usernode.getUserLocale()` resolves
+  `{ locale: "id" }` or `{ locale: null }`. It never rejects — inside
+  the platform shell it asks the shell directly; standalone it falls
+  back to the iframe JWT's claim, then `null`. When the user changes
+  the setting mid-session, the bridge dispatches a
+  `usernode:locale-changed` CustomEvent on `window` with
+  `detail.locale` — listen for it if your app can re-render live.
+
+Expected app behavior:
+
+- **Platform value is the default; an app-level override is allowed
+  and wins.** If your app has its own language picker, seed it from
+  the platform locale on first visit (falling back to
+  `navigator.language`, then your app default, when it's `null`) and
+  persist the user's in-app choice as usual.
+- **Map, don't match exactly.** Apps ship whatever locale set they
+  ship; map the platform tag onto it (language-subtag prefix match —
+  `"pt-BR"` → your `"pt"` — then your app default).
+- `null` means "no preference set", NOT "English" — keep it
+  distinguishable so device-language auto-detection still works.
 
 ## Native-feel UI kit — centrally hosted (`usernode-native`)
 
@@ -1089,7 +1266,24 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   slide+parallax / Android shared-axis fade; instant cut where the API
   is missing). Use `'push'`/`'pop'` for real screen navigation ONLY;
   tab switches, menus and panel toggles must use `'none'` — repeated
-  animation on high-frequency UI reads as lag, not polish.
+  animation on high-frequency UI reads as lag, not polish. For
+  tile/card → detail navigation there are also `type: 'zoom-in'` /
+  `'zoom-out'` — the iOS-homescreen expand/collapse: the destination
+  screen grows out of the tapped tile's on-screen rect, and Back
+  shrinks it into the tile again. Pass `el` (the screen element that
+  moves) and `fromEl` (the tile element — or a function returning it,
+  resolved lazily; or a static `fromRect`), and split the mutation in
+  two: `fn` reveals the incoming screen (leave the outgoing one
+  visible — it shows beneath the moving card) and `after` conceals the
+  outgoing one (the kit runs it exactly once on every path). The LIVE
+  element is transform-animated as a pinned fixed overlay — no View
+  Transition snapshot, so it's iframe-safe and content keeps loading
+  mid-zoom — with an opaque `--un-zoom-bg` surface for the duration
+  and an exact inline-style restore at the end. When the zoom can't
+  run (tile off-screen, deep link, reduced motion) it falls back to
+  `fallback` (`'push'`/`'pop'` by default, or `'none'`) with the
+  combined mutation. Push/pop remain the default for plain screen
+  navigation.
 - **Safe areas.** Opt-in helpers `.un-safe-top` / `.un-safe-top-extend`
   / `.un-safe-bottom` / `.un-safe-bottom-extend` / `.un-safe-x` apply
   `env(safe-area-inset-*)` padding to fixed bars. They require
@@ -1154,7 +1348,8 @@ apps.
    text fields, wire `attachKeyboardAvoidance` on the content
    scroller and delete any hand-rolled visualViewport plumbing.
 6. Route real screen navigations through `unNative.transition`
-   (`'push'`/`'pop'`); leave tabs/menus/panels instant.
+   (`'push'`/`'pop'`; `'zoom-in'`/`'zoom-out'` for tile/card → detail);
+   leave tabs/menus/panels instant.
 7. Optionally override `--un-*` variables to match the app's branding.
 
 ## Vendored shared files

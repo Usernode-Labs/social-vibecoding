@@ -79,6 +79,44 @@ async function resolveApp(pool, token) {
   return { id: app.id, slug: app.slug };
 }
 
+// App-token-only variant for the read-only app-platform API (issue
+// #744): same private-IP gate and opaque-token resolution as
+// appLlmAuth, but no user token and no grant check — the governance
+// feed returns data every viewer of the app can already see in the
+// vote panel, and the token → app-id resolution is itself the scoping
+// (an app can only ever read its own feed; there is no slug parameter
+// to tamper with). Staging containers never hold the token
+// (staging:private column), so unreviewed PR code is rejected here
+// exactly like at the LLM proxy.
+function appPlatformAuth(pool) {
+  return async function appPlatformAuthMiddleware(req, res, next) {
+    const ip = req.ip || req.socket?.remoteAddress || '';
+    if (!isPrivateIp(ip)) {
+      log.warn('app-platform-auth', 'Rejected non-private source IP', { ip, path: req.path });
+      return res.status(403).json({ ok: false, code: 'forbidden_ip' });
+    }
+
+    const appToken = req.headers['x-usernode-app-token'];
+    if (!appToken || typeof appToken !== 'string' || !/^[0-9a-f]{64}$/.test(appToken)) {
+      return res.status(401).json({ ok: false, code: 'missing_app_token' });
+    }
+
+    let app;
+    try {
+      app = await resolveApp(pool, appToken);
+    } catch (err) {
+      log.error('app-platform-auth', 'App token lookup failed', { err: err.message });
+      return res.status(500).json({ ok: false, code: 'lookup_failed' });
+    }
+    if (!app) {
+      return res.status(401).json({ ok: false, code: 'bad_app_token' });
+    }
+
+    req.appPlatform = { appId: app.id, appSlug: app.slug };
+    next();
+  };
+}
+
 function appLlmAuth(pool, config) {
   return async function appLlmAuthMiddleware(req, res, next) {
     const ip = req.ip || req.socket?.remoteAddress || '';
@@ -158,4 +196,4 @@ function appLlmAuth(pool, config) {
   };
 }
 
-module.exports = { appLlmAuth, invalidateGrant };
+module.exports = { appLlmAuth, appPlatformAuth, invalidateGrant };

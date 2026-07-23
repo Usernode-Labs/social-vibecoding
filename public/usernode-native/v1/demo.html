@@ -144,6 +144,18 @@
         <p class="text-xs text-zinc-500 mt-2">iOS: slide + parallax. Android: shared-axis fade. Old browsers: instant cut. Screen B shows the blurred nav bar with a collapsing large title.</p>
       </section>
 
+      <!-- Zoom from element (iOS homescreen expand) -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Zoom from element (iOS homescreen)</h2>
+        <div id="zoom-grid" class="grid grid-cols-2 gap-3">
+          <button data-zoom-tile class="h-24 rounded-2xl text-sm font-medium text-white" style="background:#7c3aed">Violet</button>
+          <button data-zoom-tile class="h-24 rounded-2xl text-sm font-medium text-white" style="background:#059669">Emerald</button>
+          <button data-zoom-tile class="h-24 rounded-2xl text-sm font-medium text-white" style="background:#d97706">Amber</button>
+          <button data-zoom-tile class="h-24 rounded-2xl text-sm font-medium text-white" style="background:#dc2626">Red</button>
+        </div>
+        <p class="text-xs text-zinc-500 mt-2">Tap a tile: Screen D expands out of its on-screen rect (<code>unNative.transition(fn, {type:'zoom-in', el, fromEl})</code>) while this grid stays visible beneath, and Back shrinks it into the same tile (<code>type:'zoom-out'</code>). The LIVE element animates — no View Transition snapshot, so embedded content keeps loading mid-zoom. When the zoom can't run (tile off-screen / deep link / reduced motion) it falls back to push/pop.</p>
+      </section>
+
       <!-- Keyboard avoidance (fixed shell) -->
       <section>
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Keyboard avoidance (fixed shell)</h2>
@@ -223,6 +235,22 @@
       <div class="un-navbar-title">Fixed-shell form</div>
       <span class="w-12"></span>
     </div>
+  </div>
+
+  <!-- Screen D (zoom-from-element target). An opaque fixed pane so it can
+       overlay Screen A — the tile grid stays visible beneath the zoom,
+       which is the homescreen idiom the transition demonstrates. -->
+  <div id="screen-d" class="hidden bg-white dark:bg-zinc-950" style="position:fixed; inset:0; z-index:40; overflow-y:auto">
+    <div id="navbar-d" class="un-navbar">
+      <button id="pop-d-btn" class="un-navbar-back un-touch-target">Back</button>
+      <div class="un-navbar-title">Screen D</div>
+      <span class="w-12"></span>
+    </div>
+    <main class="max-w-md mx-auto px-4 space-y-4" style="padding-top: calc(56px + env(safe-area-inset-top, 0px)); padding-bottom: 32px">
+      <div id="zoom-d-swatch" class="h-40 rounded-2xl"></div>
+      <h1 id="zoom-d-title" class="text-2xl font-bold">Screen D</h1>
+      <p class="text-sm text-zinc-500">This screen expanded out of the tile you tapped — the LIVE element was transform-animated as a pinned fixed overlay with an opaque <code>--un-zoom-bg</code> surface, and its inline styles were restored exactly when the zoom settled. Tap Back to shrink it into the same tile.</p>
+    </main>
   </div>
 
   <script>
@@ -536,6 +564,40 @@
           a.classList.remove('hidden');
           window.scrollTo(0, 0);
         }, { type: 'pop' });
+      });
+
+      // ── Zoom from element — Screen D ───────────────────────────────
+      // The fn/after split made concrete: `fn` reveals the incoming
+      // screen (the grid intentionally stays visible beneath the moving
+      // card — Screen D is an opaque fixed pane, so on zoom-in there is
+      // nothing to conceal and `after` is omitted); on zoom-out `after`
+      // hides D, and the kit runs it exactly once on every path.
+      var d = document.getElementById('screen-d');
+      var zoomTile = null;
+      Array.prototype.forEach.call(
+        document.querySelectorAll('#zoom-grid [data-zoom-tile]'),
+        function (tile) {
+          tile.addEventListener('click', function () {
+            zoomTile = tile;
+            document.getElementById('zoom-d-swatch').style.background = tile.style.background;
+            document.getElementById('zoom-d-title').textContent = tile.textContent.trim();
+            unNative.transition(function () {
+              d.classList.remove('hidden');
+            }, { type: 'zoom-in', el: d, fromEl: tile, fallback: 'push' });
+          });
+        }
+      );
+      document.getElementById('pop-d-btn').addEventListener('click', function () {
+        unNative.transition(function () {
+          // The grid never went away — in a real app this half would
+          // un-hide the underlying screen.
+        }, {
+          type: 'zoom-out',
+          el: d,
+          fromEl: function () { return zoomTile; },
+          fallback: 'pop',
+          after: function () { d.classList.add('hidden'); },
+        });
       });
 
       // ── Keyboard avoidance (fixed shell) — Screen C ────────────────
