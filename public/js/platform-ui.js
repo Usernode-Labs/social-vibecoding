@@ -213,12 +213,16 @@
       }
     },
 
-    /** Screen transition wrapper. type: 'push' | 'pop' | 'none'.
-        Falls back to calling fn() directly when the kit is absent. */
+    /** Screen transition wrapper. type: 'push' | 'pop' | 'none' |
+        'zoom-in' | 'zoom-out' (zoom opts — el, fromEl/fromRect, after,
+        fallback — forward to the kit untouched). Falls back to running
+        the mutation directly — both halves, since zoom callers split it
+        into fn (reveal) + after (conceal) — when the kit is absent. */
     transition(fn, opts) {
       const un = kit();
       if (!un || typeof un.transition !== 'function') {
         fn();
+        if (opts && typeof opts.after === 'function') opts.after();
         return;
       }
       un.transition(fn, opts || { type: 'none' });

@@ -4172,6 +4172,115 @@
     }
   })();
 
+  // =====================================================================
+  //  Public API: user locale (usernode.getUserLocale) — additive within v1
+  // =====================================================================
+  //
+  // Platform-level user language preference (SV issue #757). The user
+  // picks a language once in the platform's Settings; apps read it as
+  // their DEFAULT locale instead of guessing from navigator.language.
+  //
+  //   usernode.getUserLocale() → { locale: "id" } or { locale: null }
+  //       when the user has no platform preference set. NEVER rejects —
+  //       a null answer is meaningful ("auto — use device language").
+  //
+  // Like the LLM family above, this targets the SV shell (the parent
+  // page owning the app iframe) via a distinct `__usernode_locale`
+  // message family — the shell answers instantly from its cached user,
+  // so there is no ack stage, just a short timeout. Fallbacks, in order:
+  // the `locale` claim of the iframe's `?token=` JWT (captured at script
+  // load — SPA routers rewrite location.search later), then null. No
+  // signature verification on the fallback — same display-level-reads
+  // rationale as autoConfigureFromIframeToken above.
+  //
+  // The shell also PUSHES changes: when the user switches language in
+  // the platform Settings while an app is open, the shell posts
+  // { __usernode_locale: "changed", locale } and the bridge re-dispatches
+  // it as a `usernode:locale-changed` CustomEvent on window with
+  // detail { locale } (same convention as `usernode:node-status`).
+  // Apps following the platform default should listen and re-render.
+  (function () {
+    var _LOCALE_TIMEOUT_MS = 3000;
+    var _localePending = {};
+
+    // Capture the JWT `locale` claim once at load (mirrors
+    // autoConfigureFromIframeToken — kept separate so that path stays
+    // untouched).
+    var _tokenLocale = null;
+    try {
+      if (typeof location !== "undefined" && location.search) {
+        var _lp = new URLSearchParams(location.search);
+        var _ltok = _lp.get("token");
+        if (_ltok) {
+          var _lparts = _ltok.split(".");
+          if (_lparts.length >= 2) {
+            var _lpayload = _lparts[1].replace(/-/g, "+").replace(/_/g, "/");
+            while (_lpayload.length % 4) _lpayload += "=";
+            var _ldecoded = JSON.parse(atob(_lpayload));
+            if (_ldecoded && typeof _ldecoded.locale === "string" && _ldecoded.locale.trim()) {
+              _tokenLocale = _ldecoded.locale.trim();
+            }
+          }
+        }
+      }
+    } catch (_) { /* ignore parse errors — fall through to null */ }
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || !data.__usernode_locale) return;
+      if (data.__usernode_locale === "changed") {
+        try {
+          window.dispatchEvent(new CustomEvent("usernode:locale-changed", {
+            detail: { locale: typeof data.locale === "string" ? data.locale : null },
+          }));
+        } catch (_) {}
+        return;
+      }
+      if (data.__usernode_locale === "response" && data.id) {
+        var entry = _localePending[data.id];
+        if (!entry) return;
+        delete _localePending[data.id];
+        if (entry.timer) clearTimeout(entry.timer);
+        var value = data.value && typeof data.value.locale === "string"
+          ? { locale: data.value.locale }
+          : { locale: null };
+        entry.resolve(value);
+      }
+    });
+
+    if (typeof window.usernode.getUserLocale !== "function") {
+      window.usernode.getUserLocale = function getUserLocale() {
+        return new Promise(function (resolve) {
+          var fallback = { locale: _tokenLocale };
+          if (window === window.parent) {
+            // Standalone (no shell): the JWT claim is the best we have.
+            resolve(fallback);
+            return;
+          }
+          var id = "locale-" + String(Date.now()) + "-" +
+            Math.random().toString(16).slice(2);
+          var entry = { resolve: resolve, timer: null };
+          _localePending[id] = entry;
+          entry.timer = setTimeout(function () {
+            if (!_localePending[id]) return;
+            delete _localePending[id];
+            // No shell answer (non-SV host, or a shell predating the
+            // feature) — fall back to the JWT claim, then null.
+            resolve(fallback);
+          }, _LOCALE_TIMEOUT_MS);
+          try {
+            window.parent.postMessage({ __usernode_locale: "get", id: id }, "*");
+          } catch (err) {
+            delete _localePending[id];
+            if (entry.timer) clearTimeout(entry.timer);
+            resolve(fallback);
+          }
+        });
+      };
+    }
+  })();
+
   // Rendering invariants (issue #360) — additive within v1.
   //
   // Opt-in, no-op-by-default self-checks an app registers to catch

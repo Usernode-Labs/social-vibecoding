@@ -231,7 +231,11 @@
 	# `script`/`style`/`image`, API fetches are `empty`, and curl/tools
 	# send nothing) on a production host ({applink} non-empty) becomes a
 	# redirect to the platform shell's chromeless view, where the app is
-	# embedded with a real token and just works. Everything else —
+	# embedded with a real token and just works. The original request URI
+	# rides along as the fragment's FINAL `?path=` param (#743) — {uri} is
+	# already wire-encoded and can never contain `#`, and the shell
+	# extracts everything after the first `path=` verbatim, so no encoding
+	# step is needed (or possible) here. Everything else —
 	# including tokenless apps that deliberately serve a public page
 	# (they respond 200, so handle_response never fires; the #477 bridge
 	# pill keeps handling those) — passes through verbatim.
@@ -250,7 +254,7 @@
 				not vars {applink} ""
 			}
 			route {
-				redir @chromeless {applink} 302
+				redir @chromeless {applink}?path={uri} 302
 				copy_response
 			}
 		}

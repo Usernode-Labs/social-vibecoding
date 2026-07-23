@@ -56,6 +56,9 @@
   --un-sheet-bg: var(--bg-primary);
   --un-navbar-bg: rgba(255, 255, 255, 0.82);
   --un-radius-card: 12px;
+  /* The tile-zoom overlay surface: the app view's screens paint on the
+     body background, so the moving card must match it exactly. */
+  --un-zoom-bg: var(--bg-primary);
 }
 
 .dark {
@@ -66,6 +69,7 @@
   --un-group-bg: #12121f;
   --un-sheet-bg: #12121f;
   --un-navbar-bg: rgba(8, 8, 15, 0.78);
+  --un-zoom-bg: var(--bg-primary);
 }
 
 /* Full-screen modal roots whose card is currently riding inside a kit

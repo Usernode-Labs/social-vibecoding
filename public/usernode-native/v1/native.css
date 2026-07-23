@@ -47,6 +47,12 @@
   --un-navbar-bg: rgba(249, 249, 251, 0.82);
   --un-backdrop: rgba(0, 0, 0, 0.4);
 
+  /* Zoom transition overlay surface ('zoom-in'/'zoom-out'): the moving
+     screen gets this opaque background for the animation's duration so
+     the grid beneath can't bleed through a transparent screen mid-zoom.
+     Dark mode inherits via --un-sheet-bg. */
+  --un-zoom-bg: var(--un-sheet-bg);
+
   /* Toast (surface is dark in BOTH modes — the iOS HUD idiom — so the
      action color defaults to the light accent rather than --un-accent) */
   --un-toast-bg: rgba(28, 28, 42, 0.92);

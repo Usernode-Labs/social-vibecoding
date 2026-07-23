@@ -215,6 +215,11 @@ function authRoutes(config) {
         // Experimental: opt-in AI progress estimate for coding runs
         // (Settings → Experimental). Default OFF.
         aiProgressEstimate: !!req.user.aiProgressEstimate,
+        // Platform-level language preference (issue #757): a BCP-47 tag or
+        // null when unset. Settings → Language renders from this; apps read
+        // it via the iframe JWT `locale` claim and the bridge's
+        // usernode.getUserLocale().
+        locale: req.user.locale ?? null,
         hasApiKey,
         keyLast4,
         usernodePubkey,
@@ -346,6 +351,52 @@ function authRoutes(config) {
       res.json({ ok: true, enabled });
     } catch (err) {
       log.error('settings', 'Failed to toggle AI progress estimate', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Platform-level user language preference (issue #757). Wired to the
+  // Settings modal's Language dropdown (fires on change). Body
+  // { locale: string | null } — null (or "") clears the preference back
+  // to "auto — use device language". Non-null values must be BCP-47-ish;
+  // casing is normalized (language subtag lowercase, two-letter region
+  // subtags uppercase: "pt-br" → "pt-BR"). The stored value feeds the
+  // iframe JWT `locale` claim and /api/auth/me.
+  router.post('/api/me/locale', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    const { locale } = req.body || {};
+
+    let normalized = null;
+    if (locale !== null && locale !== undefined && locale !== '') {
+      if (typeof locale !== 'string') {
+        return res.status(400).json({ error: 'locale must be a string or null' });
+      }
+      const clean = locale.trim();
+      if (!clean) {
+        // Whitespace-only — treat like "" (clear).
+      } else if (clean.length > 35 || !/^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(clean)) {
+        return res.status(400).json({ error: 'locale must be a BCP-47 language tag (e.g. "id", "pt-BR")' });
+      } else {
+        normalized = clean
+          .split('-')
+          .map((sub, i) => {
+            if (i === 0) return sub.toLowerCase();
+            if (sub.length === 2) return sub.toUpperCase();
+            return sub;
+          })
+          .join('-');
+      }
+    }
+
+    try {
+      await pool.query(
+        'UPDATE users SET locale = $1 WHERE id = $2',
+        [normalized, req.user.id]
+      );
+      log.info('settings', 'Locale preference saved', { userId: req.user.id, locale: normalized });
+      res.json({ ok: true, locale: normalized });
+    } catch (err) {
+      log.error('settings', 'Failed to save locale preference', { userId: req.user.id, err: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
