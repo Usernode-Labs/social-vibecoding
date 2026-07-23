@@ -148,7 +148,7 @@ function withToken(url, token) {
 // real routes still resolve. Only applied for the self-app; child apps
 // are genuinely path-routed and pass through untouched.
 const SELF_APP_HASH_ROUTES = new Set([
-  'app', 'leaderboard', 'group-chat', 'individual-chat',
+  'app', 'leaderboard', 'group-chat', 'individual-chat', 'create',
 ]);
 function selfAppHashPath(p) {
   const path = typeof p === 'string' ? p : '/';

@@ -122,6 +122,73 @@ async function recoverFromScratch(config, pool, app) {
   return 'respawned';
 }
 
+// A 'running' app with repo_url NULL is permanently broken for the dev
+// workflow: every chat turn bails ("No GitHub repo configured"), sessions
+// can't be created, and NOTHING repaired it — /retry only accepts
+// status='error' apps. This state comes from a pre-fix createApp that
+// swallowed a GitHub repo-creation failure and fell back to a local build
+// (the failure is fatal at create time now, but existing apps need
+// healing). Provision the repo — create it under the bot account, push
+// the template (getTemplateFiles never embeds dbUrl/jwtSecret in file
+// contents, so nothing secret lands on GitHub), persist repo_url — then
+// rebuildProduction so prod converges with the new repo. A repo-less app
+// can never have merged any change (no repo → no PRs), so the current
+// template is the best available source for its content.
+async function provisionMissingRepo(config, pool, app) {
+  const github = require('./github');
+  const dbManager = require('./db-manager');
+  const { getTemplateFiles } = require('./template');
+
+  const botUsername = await github.getBotUsername();
+  // adoptExisting: the create-time failure that produces a repo-less app
+  // usually fired AFTER the GitHub create call succeeded (between it and
+  // the repo_url persist), so the repo typically already exists on the
+  // bot account — a plain create would 422 "name already exists" on
+  // every sweep forever. Adopting it is safe: this app has never merged
+  // anything (no repo_url → no PRs), and the template push below just
+  // commits on top of whatever the orphan contains.
+  const repo = await github.createRepo(botUsername, app.slug, {
+    description: `${app.name} — built on Usernode Social Vibecoding`,
+    adoptExisting: true,
+  });
+  const repoUrl = repo.html_url;
+
+  const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), app.db_password);
+  const files = getTemplateFiles(app.name, app.slug, dbUrl, config.jwtSecret);
+  await github.pushFiles(botUsername, app.slug, files, {
+    message: `Initialize ${app.name} from Usernode template (repo heal)`,
+  });
+
+  // Persist BEFORE the rebuild: if the rebuild fails the repo still
+  // exists and the app is already un-broken for the dev workflow — the
+  // container heal paths take over from here on the next tick.
+  await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, app.id]);
+  app.repo_url = repoUrl;
+  log.info('app-heal', 'GitHub repo provisioned for repo-less app', {
+    slug: app.slug, repoUrl,
+  });
+
+  const staging = require('./staging');
+  const { containerId, sha } = await staging.rebuildProduction(config, app);
+  await pool.query(
+    `UPDATE apps SET container_id = $1, main_sha = $2, last_deploy_at = NOW()
+     WHERE id = $3`,
+    [containerId, sha || null, app.id]
+  );
+  try {
+    const { broadcastGlobal } = require('./ws');
+    broadcastGlobal({
+      type: 'app_version_changed',
+      appSlug: app.slug,
+      sha: sha || null,
+      prNumber: null,
+    });
+  } catch (_) { /* ws failures are non-fatal */ }
+  log.info('app-heal', 'Production converged with provisioned repo', {
+    slug: app.slug, sha: (sha || '').slice(0, 7),
+  });
+}
+
 // Check one app's production container and heal it if needed. Returns a
 // structured status so the sweep loop and tests can act on the outcome:
 //   healthy         — container is running (and, when probed, answering)
@@ -134,6 +201,7 @@ async function recoverFromScratch(config, pool, app) {
 //   rebuilt         — full rebuildProduction succeeded
 //   respawned       — existing image re-run succeeded
 //   restarted       — hung-but-running container docker-restarted (probe path)
+//   repo_provisioned — missing GitHub repo created + prod converged
 //   heal_failed     — the attempt threw; cooldown stamped
 async function checkAndHealOne(config, pool, app, { probeRunning = false } = {}) {
   if (app.self_hosted) return { status: 'skipped', slug: app.slug };
@@ -142,6 +210,35 @@ async function checkAndHealOne(config, pool, app, { probeRunning = false } = {})
   const appDeployStatus = require('./app-deploy-status');
   const deploy = appDeployStatus.read(app.slug);
   if (deploy && deploy.deploying) return { status: 'deploying', slug: app.slug };
+
+  // Repo provisioning comes before the container-state logic: a repo-less
+  // app usually has a perfectly healthy container, which would otherwise
+  // return 'healthy' before we ever looked at repo_url. Same cooldown +
+  // in-flight machinery as container heals, so a persistent GitHub outage
+  // can't thrash the API every tick.
+  {
+    const github = require('./github');
+    if (!app.repo_url && github.isEnabled()) {
+      if (Date.now() - (healAttempts.get(app.slug) || 0) < cooldownMs(config)) {
+        return { status: 'cooldown', slug: app.slug };
+      }
+      healAttempts.set(app.slug, Date.now());
+      inFlight.add(app.slug);
+      try {
+        await provisionMissingRepo(config, pool, app);
+        healAttempts.delete(app.slug);
+        return { status: 'repo_provisioned', slug: app.slug };
+      } catch (err) {
+        // Cooldown stays stamped — retried next tick after it lapses.
+        log.warn('app-heal', 'Repo provisioning failed (will retry after cooldown)', {
+          slug: app.slug, err: err.message,
+        });
+        return { status: 'heal_failed', slug: app.slug, error: err.message };
+      } finally {
+        inFlight.delete(app.slug);
+      }
+    }
+  }
 
   const name = containerName(app.slug);
   const state = await docker.getContainerStatus(name);
@@ -246,7 +343,7 @@ async function poll(config) {
     if (attempts >= MAX_HEALS_PER_TICK) break;
     try {
       const result = await checkAndHealOne(config, pool, app);
-      if (['started', 'rebuilt', 'respawned', 'heal_failed'].includes(result.status)) {
+      if (['started', 'rebuilt', 'respawned', 'repo_provisioned', 'heal_failed'].includes(result.status)) {
         attempts++;
       }
     } catch (err) {

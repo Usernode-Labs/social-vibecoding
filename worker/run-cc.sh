@@ -3,7 +3,7 @@
 #
 # The worker container is bootstrapped once per session by `worker-run.sh`
 # (clone + checkout + restore .claude.json + sleep infinity). Each turn
-# the host invokes this script via `docker exec -e PROMPT=...
+# the host invokes this script via `docker exec -e PROMPT_FILE=...
 # -e MODE=build|scout <container> /usr/local/bin/run-cc.sh`. We do NOT
 # re-clone — the workspace is reused across turns. Pre-exec hygiene
 # (git fetch + reset --hard) gets us back to a known-good tree even
@@ -17,7 +17,15 @@
 #   __USERNODE_ERROR__  <msg>
 #
 # Required env (passed via -e on `docker exec`):
-#   PROMPT, BRANCH, WORKER_JWT, SESSION_ID, PLATFORM_URL
+#   PROMPT_FILE, BRANCH, WORKER_JWT, SESSION_ID, PLATFORM_URL
+#
+#   PROMPT_FILE points at the dispatch prompt the host materialized into
+#   the CC volume before this exec (see worker.js writeTurnPrompt). The
+#   prompt deliberately does NOT travel as an env value: Linux caps a
+#   single argv/env string at 128 KiB, and build prompts (conventions +
+#   spec doc) legitimately exceed it — passing them inline killed the
+#   dispatch with E2BIG. It is piped to `claude` on stdin below for the
+#   same reason.
 # Optional env:
 #   MODE                       build (default) | scout | sync
 #   MODEL                      default: claude-sonnet-5
@@ -51,7 +59,8 @@ die() {
   exit 1
 }
 
-: "${PROMPT:?PROMPT required}"
+: "${PROMPT_FILE:?PROMPT_FILE required}"
+[ -s "$PROMPT_FILE" ] || die "prompt file missing or empty: $PROMPT_FILE"
 : "${BRANCH:?BRANCH required}"
 : "${WORKER_JWT:?WORKER_JWT required}"
 : "${SESSION_ID:?SESSION_ID required}"
@@ -276,22 +285,26 @@ fi
 # (legacy single-shot path) — same pipeline, different transport. No
 # --max-turns / timeout ceiling: a legitimate build runs to completion,
 # bounded only by the platform-side daily spend budget.
+# The prompt is piped on stdin (`--print` reads it there) instead of an
+# inline `-p` argument: a single argv string is capped at 128 KiB in this
+# container too, so passing the file's contents as an argument would just
+# move the host-side E2BIG failure here.
 if [ -n "$CLAUDE_RESUME_SESSION_ID" ]; then
   echo "__USERNODE_PHASE__ claude (resume $CLAUDE_RESUME_SESSION_ID, mode $MODE)"
   claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
     --resume "$CLAUDE_RESUME_SESSION_ID" \
-    --model "$MODEL" --output-format stream-json -p "$PROMPT"
+    --model "$MODEL" --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
   if [ "$CC_EXIT" -ne 0 ]; then
     echo "__USERNODE_WARN__ resume failed (exit $CC_EXIT); retrying fresh"
     claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
-      --model "$MODEL" --output-format stream-json -p "$PROMPT"
+      --model "$MODEL" --output-format stream-json < "$PROMPT_FILE"
     CC_EXIT=$?
   fi
 else
   echo "__USERNODE_PHASE__ claude (mode $MODE)"
   claude --print $PERMISSION_FLAGS $BROWSER_MCP_FLAGS --verbose \
-    --model "$MODEL" --output-format stream-json -p "$PROMPT"
+    --model "$MODEL" --output-format stream-json < "$PROMPT_FILE"
   CC_EXIT=$?
 fi
 

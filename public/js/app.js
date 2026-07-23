@@ -21,6 +21,12 @@ const App = {
   // three top-level screens, and they're mutually exclusive. Flipped
   // by navigateToLeaderboard() / _exitLeaderboard() / navigateHome().
   _inLeaderboard: false,
+  // Same for the #challenges screen (app-as-SV-chrome migration) — set
+  // by navigateToChallenges() / _exitChallenges() / navigateHome().
+  _inChallenges: false,
+  // Same for the #profile screen (profile-and-settings-to-web migration)
+  // — set by navigateToProfile() / _exitProfile() / navigateHome().
+  _inProfile: false,
 
   // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -1434,11 +1440,34 @@ const App = {
   // (#122). Holds the secondary header actions: GitHub, Share,
   // Settings. (Members & visibility moved to the Dev "+" menu — #645.)
   HeaderMenu: {
+    _sheet: null,
     open() {
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
       if (!panel) return;
+      // Touch platforms: present the drawer's rows as a draggable
+      // bottom sheet (kit). The panel element itself is adopted via
+      // contentEl — its row listeners ride along — and is restored to
+      // <body> (off-screen, as usual) when the sheet dismisses.
+      // Desktop keeps the right-side slide-over below.
+      if (PlatformUI.isTouch()) {
+        App.HeaderMenu._renderThemeButtons();
+        panel.classList.add('platform-sheet-adopted');
+        const sheet = PlatformUI.sheet({
+          contentEl: panel,
+          onDismiss: () => {
+            panel.classList.remove('platform-sheet-adopted');
+            document.body.appendChild(panel);
+            App.HeaderMenu._sheet = null;
+          },
+        });
+        if (sheet) {
+          App.HeaderMenu._sheet = sheet;
+          return;
+        }
+        panel.classList.remove('platform-sheet-adopted');
+      }
       overlay.classList.remove('hidden');
       // Force a reflow so the transition fires (element was display:none).
       overlay.getBoundingClientRect();
@@ -1466,6 +1495,10 @@ const App = {
       });
     },
     close() {
+      if (App.HeaderMenu._sheet) {
+        App.HeaderMenu._sheet.dismiss();
+        return;
+      }
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
@@ -1494,6 +1527,11 @@ const App = {
       // Drawer row actions — each closes the menu after triggering its action.
       document.getElementById('drawer-row-github')
         .addEventListener('click', () => App.HeaderMenu.close());
+      const drawerChallenges = document.getElementById('drawer-row-challenges');
+      if (drawerChallenges) {
+        // Navigation itself rides the anchor's #challenges hash.
+        drawerChallenges.addEventListener('click', () => App.HeaderMenu.close());
+      }
       document.getElementById('drawer-row-share')
         .addEventListener('click', () => {
           App.HeaderMenu.close();
@@ -1521,11 +1559,31 @@ const App = {
     },
   },
 
+  // Pull-to-refresh on the static full-screen scrollers (element mode —
+  // the platform is a fixed shell). The kit no-ops these on desktop.
+  // The Dev tab feed's scroller is re-created per render and wires its
+  // own PTR in AppView.renderDevView.
+  _wirePullToRefresh() {
+    const home = document.getElementById('home-screen');
+    if (home) PlatformUI.pullToRefresh(home, () => Home.load());
+    const lb = document.getElementById('leaderboard-screen');
+    if (lb) {
+      PlatformUI.pullToRefresh(lb, () => {
+        if (!window.Leaderboard) return Promise.resolve();
+        Leaderboard._cache.clear();
+        return Leaderboard._load();
+      });
+    }
+    const notifList = document.getElementById('notifications-list');
+    if (notifList) PlatformUI.pullToRefresh(notifList, () => Notifications.refresh());
+  },
+
   bindEvents() {
     // Note: the "Create new app" entry point lives in the home feed
     // now (see Home.wireCreateButtons) — no static header button to
     // bind here anymore.
     App.HeaderMenu.init();
+    App._wirePullToRefresh();
     document.getElementById('create-cancel').addEventListener('click', App.hideCreateModal);
     document.getElementById('create-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) App.hideCreateModal();
@@ -1533,7 +1591,7 @@ const App = {
     document.getElementById('create-form').addEventListener('submit', App.handleCreateApp);
 
     // Create / Import mode pills. The active mode lives on
-    // #create-modal[data-mode="..."] (CSS keys off it for styling); these
+    // #create-card[data-mode="..."] (CSS keys off it for styling); these
     // handlers also flip the submit-button label and the URL block.
     document.querySelectorAll('.create-mode-pill').forEach((pill) => {
       pill.addEventListener('click', () => App.setCreateMode(pill.dataset.modePill));
@@ -1724,7 +1782,10 @@ const App = {
 
     // #556: live title generation. As the user types the description,
     // a debounced POST /api/feedback/title fills the editable Title
-    // field; whatever is in the field at submit time is the title used.
+    // field. At submit, a user-typed title is always used; an
+    // auto-filled one is used only while it still matches the submitted
+    // description — a stale fill from a partial description is dropped
+    // so the server re-names from the full text (#732).
     // Guards: once the user types in the Title field themselves
     // (titleDirty) auto-fill stops — clearing the field re-arms it;
     // responses landing after a newer request or a takeover are
@@ -1915,6 +1976,15 @@ const App = {
         showFeedbackNotice('Screenshot is still uploading — one moment…', false);
         return;
       }
+      // #732: freeze the title snapshot for this submit — cancel the
+      // pending debounce and invalidate any in-flight preview (a Submit
+      // click blurs the textarea, which flushes one) so a response
+      // generated from a partial description can't rewrite the field
+      // mid-submit. A failed submit re-arms normally: the next
+      // description input reschedules the debounce.
+      if (titleGenTimer) { clearTimeout(titleGenTimer); titleGenTimer = null; }
+      titleGenSeq++;
+      feedbackTitle.placeholder = titleIdlePlaceholder;
       feedbackBtn.disabled = true; feedbackBtn.textContent = 'Submitting...';
       try {
         // Capture the target + slug at submit time so navigating away
@@ -1922,9 +1992,14 @@ const App = {
         const target = feedbackTarget;
         const body = { description: text, target };
         // #556: optional user-chosen title — omitted entirely when blank
-        // so the server auto-generates one as before.
+        // so the server auto-generates one as before. #732: an
+        // auto-filled title is trusted only when it was generated from
+        // exactly the description being submitted (lastGeneratedFor);
+        // a stale fill from a partial description is dropped so the
+        // server names the issue from the full text. A title the user
+        // typed or edited (titleDirty) is always sent verbatim.
         const customTitle = feedbackTitle.value.trim();
-        if (customTitle) body.title = customTitle;
+        if (customTitle && (titleDirty || text === lastGeneratedFor)) body.title = customTitle;
         if (target === 'app') body.appSlug = App.currentApp;
         // #683: attach the uploaded screenshot — the server appends the
         // embed line and links the row to the filed issue.
@@ -2142,6 +2217,8 @@ const App = {
         App.setChromeless(false);
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
+        else if (App._inChallenges) App.navigateHome();
+        else if (App._inProfile) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -2159,6 +2236,20 @@ const App = {
       }
 
       const parts = hash.split('/');
+      if (parts[0] === 'create') {
+        // #create — deep link that opens the create-app modal over the
+        // home feed. Doubles as the addressable route the dapp.json
+        // regression test for the mode toggle uses (#748).
+        App.setChromeless(false);
+        if (App.currentApp || App._inLeaderboard) {
+          App.navigateHome();
+        } else {
+          App.setHeaderTitle('dApps');
+          Home.load();
+        }
+        App.showCreateModal();
+        return;
+      }
       if (parts[0] === 'leaderboard') {
         App.setChromeless(false);
         // Optional sub-view segment (#leaderboard/history etc.) — pass
@@ -2171,6 +2262,16 @@ const App = {
           ? decodeURIComponent(parts[2])
           : null;
         App.navigateToLeaderboard(parts[1], profileUser);
+        return;
+      }
+      if (parts[0] === 'challenges') {
+        App.setChromeless(false);
+        App.navigateToChallenges();
+        return;
+      }
+      if (parts[0] === 'profile') {
+        App.setChromeless(false);
+        App.navigateToProfile();
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
@@ -2230,6 +2331,8 @@ const App = {
           tab = 'app';
         }
         if (App._inLeaderboard) App._exitLeaderboard();
+        if (App._inChallenges) App._exitChallenges();
+        if (App._inProfile) App._exitProfile();
         App.setChromeless(chromeless);
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
@@ -2244,6 +2347,8 @@ const App = {
       } else {
         App.setChromeless(false);
         if (App._inLeaderboard) App._exitLeaderboard();
+        if (App._inChallenges) App._exitChallenges();
+        if (App._inProfile) App._exitProfile();
         App.setHeaderTitle('dApps');
         Home.load();
       }
@@ -2321,14 +2426,21 @@ const App = {
   // `profileUser` (#60) opens the per-user PR profile drill-in instead
   // of a plain tab.
   navigateToLeaderboard(sub, profileUser) {
+    // Same iframe caveat as navigateHome: no animated snapshot over a
+    // live App-tab iframe.
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
     if (App.currentApp) {
       AppView.close();
       App.currentApp = null;
-      document.getElementById('app-view').classList.add('hidden');
     }
-    document.getElementById('home-screen').classList.add('hidden');
+    if (App._inChallenges) App._exitChallenges();
+    if (App._inProfile) App._exitProfile();
     const screen = document.getElementById('leaderboard-screen');
-    if (screen) screen.classList.remove('hidden');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.add('hidden');
+      if (screen) screen.classList.remove('hidden');
+    }, { type: fromIframe ? 'none' : 'push' });
     document.getElementById('back-btn').classList.remove('hidden');
     const _drg = document.getElementById('drawer-row-github');
     const _drs = document.getElementById('drawer-row-share');
@@ -2355,6 +2467,82 @@ const App = {
     const screen = document.getElementById('leaderboard-screen');
     if (screen) screen.classList.add('hidden');
     if (window.Leaderboard?.close) Leaderboard.close();
+  },
+
+  // Show the challenges screen (app-as-SV-chrome migration). Sibling to
+  // navigateToLeaderboard — hides home + app, reveals the dedicated
+  // #challenges-screen, lets the Challenges module render itself into
+  // #challenges-root.
+  navigateToChallenges() {
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    const screen = document.getElementById('challenges-screen');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.add('hidden');
+      const lb = document.getElementById('leaderboard-screen');
+      if (lb) lb.classList.add('hidden');
+      if (screen) screen.classList.remove('hidden');
+    }, { type: fromIframe ? 'none' : 'push' });
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    App.setHeaderTitle('Challenges');
+    App._inChallenges = true;
+    if (window.Challenges?.open) Challenges.open();
+  },
+
+  _exitChallenges() {
+    App._inChallenges = false;
+    const screen = document.getElementById('challenges-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.Challenges?.close) Challenges.close();
+  },
+
+  // Show the profile screen (profile-and-settings-to-web migration).
+  // Sibling to navigateToChallenges — hides home + app, reveals the
+  // dedicated #profile-screen, lets the Profile module render itself
+  // into #profile-root.
+  navigateToProfile() {
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inChallenges) App._exitChallenges();
+    const screen = document.getElementById('profile-screen');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.add('hidden');
+      const lb = document.getElementById('leaderboard-screen');
+      if (lb) lb.classList.add('hidden');
+      const ch = document.getElementById('challenges-screen');
+      if (ch) ch.classList.add('hidden');
+      if (screen) screen.classList.remove('hidden');
+    }, { type: fromIframe ? 'none' : 'push' });
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    App.setHeaderTitle('Profile');
+    App._inProfile = true;
+    if (window.Profile?.open) Profile.open();
+  },
+
+  _exitProfile() {
+    App._inProfile = false;
+    const screen = document.getElementById('profile-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.Profile?.close) Profile.close();
   },
 
   // Push a new history entry on real screen transitions (entering an
@@ -2482,6 +2670,12 @@ const App = {
     const modal = document.getElementById('create-modal');
     if (!modal) return;
     modal.dataset.mode = m;
+    // Mirror onto the card: the native-kit modal adoption lifts the card
+    // out of #create-modal while presented, so CSS keyed off the modal
+    // root would stop matching (the bug that left the modal stuck in
+    // import mode). app.css keys off #create-card instead.
+    const card = document.getElementById('create-card');
+    if (card) card.dataset.mode = m;
     document.getElementById('create-title').textContent =
       m === 'import' ? 'Import existing app' : 'Create a new app';
     document.getElementById('create-submit').textContent =
@@ -2505,6 +2699,10 @@ const App = {
     if (!modal) return;
     const s = ['idle', 'checking', 'ok', 'error'].includes(state) ? state : 'idle';
     modal.dataset.importState = s;
+    // Mirrored onto the card for the same reason as setCreateMode: the
+    // kit modal adoption detaches the card from #create-modal.
+    const card = document.getElementById('create-card');
+    if (card) card.dataset.importState = s;
     const checkBtn = document.getElementById('import-check');
     const status = document.getElementById('import-status');
     if (checkBtn) {
@@ -2631,6 +2829,151 @@ const App = {
     }
   },
 
+  // ── Homescreen zoom transition ─────────────────────────────────────
+  // Opening an app expands the app view out of the clicked tile's
+  // on-screen rect (iOS-homescreen style) and Back shrinks it into the
+  // tile again. Implemented platform-side (the /v1/ kit has no zoom
+  // primitive) as a transform animation on the live #app-view pinned
+  // as a fixed overlay — no View Transition snapshot is involved, so
+  // the app iframe caveat doesn't apply. Falls back to the kit
+  // push/pop (or an instant cut) when there's no tile on screen or
+  // the user prefers reduced motion.
+  _zoomCleanup: null,
+
+  _zoomReady() {
+    try {
+      return !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch { return true; }
+  },
+
+  // The clicked/target tile's viewport rect, or null when the home
+  // screen isn't showing / the tile is off-screen (deep links,
+  // history restores, filtered-away tiles).
+  _tileRectFor(slug) {
+    const home = document.getElementById('home-screen');
+    if (!home || home.classList.contains('hidden')) return null;
+    let card = null;
+    try { card = document.querySelector(`.app-card[data-slug="${CSS.escape(slug)}"]`); } catch {}
+    if (!card) return null;
+    const r = card.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    if (r.bottom < 0 || r.top > window.innerHeight) return null;
+    return r;
+  },
+
+  // Pin #app-view as a fixed overlay over `regionRect` and return a
+  // restore function that puts its inline style back exactly (the
+  // element carries load-bearing inline flex styles).
+  _zoomPin(av, regionRect) {
+    const savedCss = av.style.cssText;
+    Object.assign(av.style, {
+      position: 'fixed',
+      top: `${regionRect.top}px`,
+      left: `${regionRect.left}px`,
+      width: `${regionRect.width}px`,
+      height: `${regionRect.height}px`,
+      margin: '0',
+      zIndex: '70',
+      transformOrigin: '0 0',
+      overflow: 'hidden',
+      transition: 'none',
+      // The app view itself is transparent (its screens paint on the
+      // body background). While it overlays the visible home feed the
+      // zoom needs an opaque surface, or home shows through the moving
+      // card (worst on the Dev view, e.g. the self-app).
+      background: 'var(--bg-primary)',
+    });
+    return () => { av.style.cssText = savedCss; };
+  },
+
+  _ZOOM_EASE: 'var(--un-ease-spring-stiff, cubic-bezier(0.3, 1, 0.4, 1))',
+
+  // Expand the app view out of `rect` (the tile). Home stays visible
+  // underneath for the duration, then hides.
+  _zoomInFromTile(rect) {
+    const av = document.getElementById('app-view');
+    const home = document.getElementById('home-screen');
+    if (App._zoomCleanup) App._zoomCleanup();
+    const target = home.getBoundingClientRect(); // the region av will occupy
+    if (!target.width || !target.height) {
+      home.classList.add('hidden');
+      av.classList.remove('hidden');
+      return;
+    }
+    const unpin = App._zoomPin(av, target);
+    av.style.transform = `translate(${rect.left - target.left}px, ${rect.top - target.top}px) `
+      + `scale(${rect.width / target.width}, ${rect.height / target.height})`;
+    av.style.opacity = '0.3';
+    av.style.borderRadius = '16px';
+    av.classList.remove('hidden');
+    void av.offsetHeight; // flush the start pose before enabling the transition
+    av.style.transition = `transform 380ms ${App._ZOOM_EASE}, opacity 220ms ease, border-radius 380ms ease`;
+    av.style.transform = 'none';
+    av.style.opacity = '1';
+    av.style.borderRadius = '0px';
+    let done = false;
+    const onEnd = (e) => {
+      if (e.target === av && e.propertyName === 'transform') cleanup();
+    };
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      App._zoomCleanup = null;
+      av.removeEventListener('transitionend', onEnd);
+      unpin();
+      home.classList.add('hidden');
+    };
+    App._zoomCleanup = cleanup;
+    av.addEventListener('transitionend', onEnd);
+    setTimeout(cleanup, 500);
+  },
+
+  // Shrink the (still-mounted) app view into `slug`'s tile, revealing
+  // home underneath. Returns false when the zoom can't run (caller
+  // falls back to the kit pop / instant cut). Clears #app-content
+  // itself once the overlay lands.
+  _zoomOutToTile(slug) {
+    if (!App._zoomReady()) return false;
+    const av = document.getElementById('app-view');
+    const home = document.getElementById('home-screen');
+    if (!av || !home || av.classList.contains('hidden')) return false;
+    if (App._zoomCleanup) App._zoomCleanup();
+    const from = av.getBoundingClientRect();
+    if (!from.width || !from.height) return false;
+    const unpin = App._zoomPin(av, from);
+    home.classList.remove('hidden'); // lays out beneath the pinned overlay
+    const rect = App._tileRectFor(slug);
+    let done = false;
+    const onEnd = (e) => {
+      if (e.target === av && e.propertyName === 'transform') cleanup();
+    };
+    const cleanup = () => {
+      if (done) return;
+      done = true;
+      App._zoomCleanup = null;
+      av.removeEventListener('transitionend', onEnd);
+      unpin();
+      av.classList.add('hidden');
+      const content = document.getElementById('app-content');
+      if (content) content.innerHTML = '';
+    };
+    if (!rect) {
+      // No tile on screen to land on — settle instantly.
+      cleanup();
+      return true;
+    }
+    void av.offsetHeight;
+    av.style.transition = `transform 340ms ${App._ZOOM_EASE}, opacity 200ms ease 60ms, border-radius 340ms ease`;
+    av.style.transform = `translate(${rect.left - from.left}px, ${rect.top - from.top}px) `
+      + `scale(${rect.width / from.width}, ${rect.height / from.height})`;
+    av.style.opacity = '0';
+    av.style.borderRadius = '16px';
+    App._zoomCleanup = cleanup;
+    av.addEventListener('transitionend', onEnd);
+    setTimeout(cleanup, 480);
+    return true;
+  },
+
   async navigateToApp(slug, tab, ref, subTab) {
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
@@ -2641,8 +2984,23 @@ const App = {
     }
     App.currentApp = slug;
     if (App._inLeaderboard) App._exitLeaderboard();
-    document.getElementById('home-screen').classList.add('hidden');
-    document.getElementById('app-view').classList.remove('hidden');
+    if (App._inChallenges) App._exitChallenges();
+    if (App._inProfile) App._exitProfile();
+    // Real screen navigation. From the home feed the app view expands
+    // out of the clicked tile (iOS-homescreen zoom, see _zoomInFromTile);
+    // from anywhere else (deep link, history restore, tile off-screen,
+    // reduced motion) it falls back to the kit's native push. The app
+    // iframe isn't mounted yet at this point (app-content is empty),
+    // so neither path animates over a live iframe on the way in.
+    const zoomRect = App._zoomReady() ? App._tileRectFor(slug) : null;
+    if (zoomRect) {
+      App._zoomInFromTile(zoomRect);
+    } else {
+      PlatformUI.transition(() => {
+        document.getElementById('home-screen').classList.add('hidden');
+        document.getElementById('app-view').classList.remove('hidden');
+      }, { type: 'push' });
+    }
     document.getElementById('back-btn').classList.remove('hidden');
     // Intentionally NOT setting the header to `slug` here. Slugs are
     // generated as `${name}-${randomHex}` (see routes/apps.js), so a
@@ -2699,18 +3057,37 @@ const App = {
 
   navigateHome() {
     App.setChromeless(false);
+    const leavingSlug = App.currentApp;
+    // Iframe caveat (spec): View Transitions snapshot the outgoing
+    // page, and a live app iframe in that snapshot can flash on iOS
+    // Safari. The zoom-out below transform-animates the LIVE view (no
+    // snapshot), so it's iframe-safe; the kit pop fallback still cuts
+    // instantly when leaving the App tab's iframe.
+    const transitionType = (App.currentApp && App.currentTab === 'app') ? 'none' : 'pop';
     AppView.close();
     App.currentApp = null;
-    document.getElementById('app-view').classList.add('hidden');
     if (App._inLeaderboard) App._exitLeaderboard();
-    document.getElementById('home-screen').classList.remove('hidden');
+    if (App._inChallenges) App._exitChallenges();
+    if (App._inProfile) App._exitProfile();
+    // Preferred: shrink the app view back into its home tile
+    // (_zoomOutToTile reveals home and clears #app-content itself).
+    const zoomed = leavingSlug ? App._zoomOutToTile(leavingSlug) : false;
+    if (!zoomed) {
+      PlatformUI.transition(() => {
+        document.getElementById('app-view').classList.add('hidden');
+        document.getElementById('home-screen').classList.remove('hidden');
+      }, { type: transitionType });
+    }
     document.getElementById('back-btn').classList.add('hidden');
     const _drgH = document.getElementById('drawer-row-github');
     const _drsH = document.getElementById('drawer-row-share');
     if (_drgH) _drgH.classList.add('hidden');
     if (_drsH) _drsH.classList.add('hidden');
     App.setHeaderTitle('dApps');
-    document.getElementById('app-content').innerHTML = '';
+    // When the zoom-out is animating, the shrinking overlay still shows
+    // the app's content — _zoomOutToTile clears #app-content once it
+    // lands. Only the fallback path clears immediately.
+    if (!zoomed) document.getElementById('app-content').innerHTML = '';
     App.updateHash();
     Home.load();
   },

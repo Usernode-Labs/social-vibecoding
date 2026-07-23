@@ -3795,6 +3795,273 @@
   };
 
   // =====================================================================
+  //  Public API: native chrome data (bridge v2)
+  //  (usernode.getBridgeInfo / getNodeStatus / getWalletState /
+  //   getTransactionRecords / openNativeScreen)
+  // =====================================================================
+  //
+  // Data feeds for SV's web chrome (header node pill, wallet sheet,
+  // receipts) when running inside the Usernode app — the app-as-SV-chrome
+  // migration. Versioned contract: NATIVE-BRIDGE.md in the
+  // social-vibecoding repo. Same old-build hazard as the shortcut
+  // methods (unknown methods are silently dropped), so every read
+  // resolves a safe fallback on timeout instead of hanging or rejecting
+  // — callers can always `await` and render "unavailable".
+
+  var _CHROME_PROBE_TIMEOUT_MS = 4000;
+  // getWalletState may legitimately take ~10s on a fresh app start (the
+  // native wallet provider waits for the node); don't cut it off early.
+  var _WALLET_STATE_TIMEOUT_MS = 12000;
+
+  function callNativeChromeRead(method, args, timeoutMs, fallbackValue) {
+    return new Promise(function (resolve) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        console.log(_BRIDGE_TAG, method, "timed out (old app build?)");
+        resolve(fallbackValue);
+      }, timeoutMs);
+      callNative(method, args).then(
+        function (v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(v);
+        },
+        function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          console.warn(_BRIDGE_TAG, method, "failed:", err && err.message);
+          resolve(fallbackValue);
+        }
+      );
+    });
+  }
+
+  // getBridgeInfo() → { version, capabilities: [...] }. Resolves
+  // { version: 0, capabilities: [] } outside the app and on old builds,
+  // so chrome can always `await` it and gate UI on capabilities
+  // (`capabilities.includes('getNodeStatus')` etc), never on version.
+  window.usernode.getBridgeInfo = function () {
+    var empty = { version: 0, capabilities: [] };
+    if (!window.usernode.isNative) return Promise.resolve(empty);
+    return callNativeChromeRead(
+      "getBridgeInfo", {}, _CHROME_PROBE_TIMEOUT_MS, empty
+    ).then(function (info) {
+      return info && Array.isArray(info.capabilities) ? info : empty;
+    });
+  };
+
+  // getNodeStatus() → { status: "synced"|"syncing"|"connecting"|"offline",
+  //   localBestHeight, networkBestHeight, connectedPeers, totalPeers }
+  // or null. The app also pushes the same snapshot as a
+  // `usernode:node-status` CustomEvent on window (once per page load and
+  // on pill-state transitions) — prefer the event stream over polling.
+  window.usernode.getNodeStatus = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getNodeStatus", {}, _CHROME_PROBE_TIMEOUT_MS, null
+    );
+  };
+
+  // getWalletState() → { address, balance (base units, string),
+  //   tokenAmount, tokenSymbol, lastUpdatedMs } or null.
+  window.usernode.getWalletState = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getWalletState", {}, _WALLET_STATE_TIMEOUT_MS, null
+    );
+  };
+
+  // getTransactionRecords() → { items: [...] } (newest first, capped at
+  // 100) or null. The app-side receipts for transactions sent from this
+  // webview — the same data behind the native receipts sheet.
+  window.usernode.getTransactionRecords = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getTransactionRecords", {}, _CHROME_PROBE_TIMEOUT_MS, null
+    );
+  };
+
+  // openNativeScreen(screen) → true. Pushes an allowlisted native route
+  // ("settings" | "profile"). Unlike the reads above this REJECTS on old
+  // builds / non-native — a silent no-op would strand the user's tap.
+  // The app additionally refuses callers that aren't the SV top frame.
+  window.usernode.openNativeScreen = function (screen) {
+    if (!screen) {
+      return Promise.reject(new Error("openNativeScreen requires a screen"));
+    }
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error(
+        "openNativeScreen is only available inside the Usernode mobile app."
+      ));
+    }
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(new Error(
+          "openNativeScreen is not supported by this app build"
+        ));
+      }, _CHROME_PROBE_TIMEOUT_MS);
+      callNative("openNativeScreen", { screen: screen }).then(
+        function (v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(v);
+        },
+        function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  };
+
+  // =====================================================================
+  //  Public API: native profile & settings (bridge v3)
+  //  (usernode.getProfileInfo / getSettingsState / setNodeSleepEnabled /
+  //   setDebugMode / setFacematchStrict / resetZkChallenge /
+  //   requestPermissions / openBatterySettings / setIosKeepAlive /
+  //   logout)
+  // =====================================================================
+  //
+  // Backs SV's #profile screen and the "Usernode app" sections of the
+  // Settings modal (profile-and-settings-to-web migration). Contract:
+  // NATIVE-BRIDGE.md. Reads resolve null on old builds / outside the app
+  // so callers can capability-gate UI; mutations REJECT on old builds —
+  // a silent no-op would leave a toggle lying about its state. The app
+  // additionally refuses callers that aren't the SV top frame.
+
+  // getSettingsState assembles platform-permission probes plus native
+  // provider reads (the terms lookup alone can take ~5s on a cold
+  // start), and every setter resolves the same refreshed snapshot — so
+  // they all share this budget rather than the short probe timeout.
+  var _SETTINGS_STATE_TIMEOUT_MS = 12000;
+  // requestPermissions blocks on an OS permission dialog the user may
+  // ponder for a while; the ceiling here is purely defensive.
+  var _PERMISSION_REQUEST_TIMEOUT_MS = 120000;
+
+  function callNativeChromeAction(method, args, timeoutMs) {
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error(
+        method + " is only available inside the Usernode mobile app."
+      ));
+    }
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(new Error(method + " is not supported by this app build"));
+      }, timeoutMs);
+      callNative(method, args).then(
+        function (v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(v);
+        },
+        function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
+
+  // getProfileInfo() → { participantId } or null (old build / outside
+  // the app). participantId is null when this install hasn't registered
+  // with the leaderboard yet.
+  window.usernode.getProfileInfo = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getProfileInfo", {}, _CHROME_PROBE_TIMEOUT_MS, null
+    );
+  };
+
+  // getSettingsState() → { buildInfo: { appVersion, buildNumber,
+  //   nodeVersion, commitHash, branch }, nodeSleepEnabled, debugMode,
+  //   facematchStrict, termsAccepted, authStatus,
+  //   permissions: { platform, exactAlarmGranted, batteryOptDisabled,
+  //   deviceManufacturer, iosKeepAliveActive } } or null.
+  window.usernode.getSettingsState = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getSettingsState", {}, _SETTINGS_STATE_TIMEOUT_MS, null
+    );
+  };
+
+  // Toggle setters. Each resolves the refreshed settings state (same
+  // shape as getSettingsState) so callers re-render from one source of
+  // truth instead of assuming the write landed.
+  window.usernode.setNodeSleepEnabled = function (enabled) {
+    return callNativeChromeAction(
+      "setNodeSleepEnabled", { enabled: !!enabled },
+      _SETTINGS_STATE_TIMEOUT_MS
+    );
+  };
+
+  window.usernode.setDebugMode = function (enabled) {
+    return callNativeChromeAction(
+      "setDebugMode", { enabled: !!enabled }, _SETTINGS_STATE_TIMEOUT_MS
+    );
+  };
+
+  window.usernode.setFacematchStrict = function (enabled) {
+    return callNativeChromeAction(
+      "setFacematchStrict", { enabled: !!enabled },
+      _SETTINGS_STATE_TIMEOUT_MS
+    );
+  };
+
+  // setIosKeepAlive(enabled) → refreshed settings state. iOS only; the
+  // app ignores it elsewhere (state simply won't change).
+  window.usernode.setIosKeepAlive = function (enabled) {
+    return callNativeChromeAction(
+      "setIosKeepAlive", { enabled: !!enabled }, _SETTINGS_STATE_TIMEOUT_MS
+    );
+  };
+
+  // resetZkChallenge() → true. Destructive: confirmation is the
+  // caller's job (web-side confirm, native commit).
+  window.usernode.resetZkChallenge = function () {
+    return callNativeChromeAction(
+      "resetZkChallenge", {}, _SETTINGS_STATE_TIMEOUT_MS
+    );
+  };
+
+  // requestPermissions() → refreshed settings state plus { granted }.
+  // May pend on an OS permission dialog.
+  window.usernode.requestPermissions = function () {
+    return callNativeChromeAction(
+      "requestPermissions", {}, _PERMISSION_REQUEST_TIMEOUT_MS
+    );
+  };
+
+  // openBatterySettings() → true. Android: opens the system battery
+  // optimization settings for the app.
+  window.usernode.openBatterySettings = function () {
+    return callNativeChromeAction(
+      "openBatterySettings", {}, _CHROME_PROBE_TIMEOUT_MS
+    );
+  };
+
+  // logout() → true. Confirm web-side; the post-logout auth flow stays
+  // native chrome (same category as onboarding).
+  window.usernode.logout = function () {
+    return callNativeChromeAction("logout", {}, _SETTINGS_STATE_TIMEOUT_MS);
+  };
+
+  // =====================================================================
   //  Public API: LLM access (usernode.requestLlmAccess / getLlmAccess /
   //  getLlmUsage)
   // =====================================================================

@@ -317,7 +317,21 @@ async function getBotUsername() {
   throw new Error('No installations found for GitHub App');
 }
 
-async function createRepo(owner, name, { description = '' } = {}) {
+// GitHub's "a repo with this name already exists" failure: HTTP 422
+// whose errors[] carries a Repository/name entry. Prefer the structured
+// shape (Octokit's RequestError exposes response.data.errors); fall back
+// to the message substring for error objects without it.
+function isRepoNameExistsError(err) {
+  if (!err || err.status !== 422) return false;
+  const errors = (err.response && err.response.data && err.response.data.errors) || [];
+  if (Array.isArray(errors)
+      && errors.some((e) => e && e.resource === 'Repository' && e.field === 'name')) {
+    return true;
+  }
+  return /name already exists on this account/i.test(err.message || '');
+}
+
+async function createRepo(owner, name, { description = '', adoptExisting = false } = {}) {
   // GitHub App installation tokens can't create repos on user accounts (GitHub limitation).
   // Use a PAT (GITHUB_BOT_TOKEN) for repo creation.
   const pat = process.env.GITHUB_BOT_TOKEN;
@@ -328,14 +342,33 @@ async function createRepo(owner, name, { description = '' } = {}) {
   const { Octokit } = await import('@octokit/rest');
   const octokit = new Octokit({ auth: pat });
 
-  const { data } = await octokit.rest.repos.createForAuthenticatedUser({
-    name,
-    description: safeMention(description),
-    auto_init: true,
-    private: false,
-  });
-  log.info('github', 'Repo created via PAT', { repo: data.full_name });
-  return data;
+  try {
+    const { data } = await octokit.rest.repos.createForAuthenticatedUser({
+      name,
+      description: safeMention(description),
+      auto_init: true,
+      private: false,
+    });
+    log.info('github', 'Repo created via PAT', { repo: data.full_name });
+    return data;
+  } catch (err) {
+    if (!adoptExisting || !isRepoNameExistsError(err)) throw err;
+    // The repo already exists on the bot account: a previous provisioning
+    // attempt got as far as the GitHub create call but died before
+    // repo_url was persisted (the session-2585 class of failure — see
+    // app-heal.provisionMissingRepo and the createApp repo block). Adopt
+    // the existing repo instead of 422ing forever: fetch it and return it
+    // in the same shape a fresh create would. Guard that it really is
+    // owned by the requested owner before adopting — it must be, since
+    // the 422 came from createForAuthenticatedUser on the bot PAT, but a
+    // mismatch means this isn't our orphan and the original error stands.
+    const { data } = await octokit.rest.repos.get({ owner, repo: name });
+    if (((data.owner && data.owner.login) || '').toLowerCase() !== owner.toLowerCase()) {
+      throw err;
+    }
+    log.info('github', 'Adopting existing repo', { repo: data.full_name });
+    return data;
+  }
 }
 
 // Test seam (null in every real deploy): when set via
@@ -1369,6 +1402,7 @@ module.exports = {
   getInstallationOctokit,
   getInstallationToken,
   createRepo,
+  _isRepoNameExistsError: isRepoNameExistsError,
   pushFiles,
   getFileContent,
   createBranch,

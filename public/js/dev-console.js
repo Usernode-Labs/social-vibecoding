@@ -200,9 +200,42 @@ const DevConsole = {
     else DevConsole.show();
   },
 
+  _sheet: null,
+
   show() {
     const panel = document.getElementById('dev-console-panel');
     if (!panel) return;
+    // Touch platforms: the console rides in a draggable kit bottom
+    // sheet (it was already a slide-up panel in spirit). Desktop keeps
+    // the fixed bottom panel below.
+    if (PlatformUI.isTouch() && !DevConsole._sheet) {
+      panel.classList.remove('hidden');
+      panel.classList.add('platform-sheet-adopted');
+      // Render BEFORE presenting — the kit sheet measures its height
+      // once at present time to seed the slide-up spring (see the
+      // matching note in notifications.js show()).
+      DevConsole._rerenderLog();
+      const sheet = PlatformUI.sheet({
+        contentEl: panel,
+        onDismiss: () => {
+          panel.classList.remove('platform-sheet-adopted');
+          panel.classList.add('hidden');
+          document.body.appendChild(panel);
+          DevConsole._sheet = null;
+          DevConsole.panelOpen = false;
+          DevConsole._refreshButtonVisibility();
+        },
+      });
+      if (sheet) {
+        DevConsole._sheet = sheet;
+        DevConsole.panelOpen = true;
+        DevConsole.unseenErrors = 0;
+        DevConsole._updateBadge();
+        DevConsole._refreshButtonVisibility();
+        return;
+      }
+      panel.classList.remove('platform-sheet-adopted');
+    }
     panel.classList.remove('hidden');
     DevConsole.panelOpen = true;
     DevConsole.unseenErrors = 0;
@@ -212,6 +245,10 @@ const DevConsole = {
   },
 
   hide() {
+    if (DevConsole._sheet) {
+      DevConsole._sheet.dismiss();
+      return;
+    }
     const panel = document.getElementById('dev-console-panel');
     if (panel) panel.classList.add('hidden');
     DevConsole.panelOpen = false;

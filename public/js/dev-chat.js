@@ -517,7 +517,7 @@ const DevChat = {
           const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
           body = await resp.json().catch(() => ({}));
           if (!resp.ok) {
-            alert(body.error || `Failed to ${action} session`);
+            PlatformUI.toast(body.error || `Failed to ${action} session`);
             btn.textContent = original;
             btn.disabled = false;
             return;
@@ -603,13 +603,13 @@ const DevChat = {
       });
       const data = await res.json();
       if (!res.ok) {
-        alert(data.error || 'Failed to create session');
+        PlatformUI.toast(data.error || 'Failed to create session');
         return null;
       }
       DevChat.sessions.unshift(data.session);
       return data.session;
     } catch {
-      alert('Network error');
+      PlatformUI.toast('Network error');
       return null;
     }
   },
@@ -654,7 +654,7 @@ const DevChat = {
       }
       if (!silent) {
         const data = await rr.json().catch(() => ({}));
-        alert(data.error || 'Could not resume this session right now. Try again in a moment.');
+        PlatformUI.toast(data.error || 'Could not resume this session right now. Try again in a moment.');
       }
       return false;
     } catch {
@@ -770,7 +770,7 @@ const DevChat = {
             session.status = 'active';
           } else {
             const data = await rr.json().catch(() => ({}));
-            alert(data.error || 'Could not resume this session right now. Try again in a moment.');
+            PlatformUI.toast(data.error || 'Could not resume this session right now. Try again in a moment.');
           }
         } catch { /* network blip — fall through; session stays paused */ }
       }
@@ -2444,7 +2444,7 @@ const DevChat = {
         // res.json() throwing here used to masquerade as "Network error".
         const data = await res.json().catch(() => ({}));
         if (stillCurrent()) {
-          alert(data.error || 'Failed to promote');
+          PlatformUI.toast(data.error || 'Failed to promote');
           restoreBtn();
         } else {
           // No context-free popup chasing the user to another page —
@@ -2455,7 +2455,7 @@ const DevChat = {
       }
     } catch (err) {
       if (stillCurrent()) {
-        alert('Network error');
+        PlatformUI.toast('Network error');
         restoreBtn();
       } else {
         // Stale rejection: swallow (the button node is detached DOM).
@@ -2500,7 +2500,7 @@ const DevChat = {
       );
       const data = await res.json().catch(() => ({}));
       if (!res.ok && res.status !== 409) {
-        alert(data.error || 'Failed — try again');
+        PlatformUI.toast(data.error || 'Failed — try again');
         if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
         return;
       }
@@ -2517,7 +2517,7 @@ const DevChat = {
         DevChat.renderMessages();
       }
     } catch {
-      alert('Network error');
+      PlatformUI.toast('Network error');
       if (card) card.querySelectorAll('button').forEach((b) => { b.disabled = false; });
     }
   },
@@ -3666,7 +3666,7 @@ const DevChat = {
           const resp = await fetch(`/api/sessions/${id}/${action}`, { method: 'POST' });
           body = await resp.json().catch(() => ({}));
           if (!resp.ok) {
-            alert(body.error || `Failed to ${action} session`);
+            PlatformUI.toast(body.error || `Failed to ${action} session`);
             btn.textContent = original;
             btn.disabled = false;
             return;
@@ -3732,13 +3732,13 @@ const DevChat = {
           const resp = await fetch(`/api/sessions/${btn.dataset.id}/unarchive`, { method: 'POST' });
           const data = await resp.json().catch(() => ({}));
           if (!resp.ok) {
-            alert(data.error || 'Failed to unarchive session');
+            PlatformUI.toast(data.error || 'Failed to unarchive session');
             btn.textContent = original;
             btn.disabled = false;
             return;
           }
           if (data.ccPurged) {
-            alert("Session restored. Note: Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch.");
+            PlatformUI.alert({ title: 'Session restored', message: "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch." });
           }
         } catch {
           btn.textContent = original;
@@ -4260,6 +4260,15 @@ const DevChat = {
     DevChat.restoreSessionScroll();
     DevChat._setupTextareaResize();
     DevChat._setupKeyboardShortcuts();
+    // Kit polish: hairline/blur on the session header once the chat
+    // scrolls, and fixed-shell keyboard avoidance on the message
+    // scroller (single-motion focus reveals on phones). Re-keyed on
+    // every re-render; detached in AppView.close().
+    PlatformUI.attachScreenFx(
+      'dev-chat',
+      document.getElementById('dc-messages'),
+      document.getElementById('dc-back')?.closest('div'),
+    );
     DevChat._setupAttachments();
     DevChat._restoreDraft();
     if (DevChat.isStreaming) DevChat._setStreamingUI(true);

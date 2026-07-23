@@ -56,8 +56,13 @@ async function createApp(config, appRow) {
     if (!repoUrl && github.isEnabled()) {
       try {
         const botUsername = await github.getBotUsername();
+        // adoptExisting: a Retry after a create that died between the
+        // GitHub create call and the repo_url persist re-runs with the
+        // SAME slug, so the repo already exists on the bot account and a
+        // plain create would 422 "name already exists" on every retry.
         const repo = await github.createRepo(botUsername, slug, {
           description: `${name} — built on Usernode Social Vibecoding`,
+          adoptExisting: true,
         });
         repoUrl = repo.html_url;
 
@@ -69,7 +74,16 @@ async function createApp(config, appRow) {
         await pool.query('UPDATE apps SET repo_url = $1 WHERE id = $2', [repoUrl, appId]);
         useGitHub = true;
       } catch (err) {
-        log.warn('app-creator', 'GitHub repo creation failed, falling back to local build', { err: err.message });
+        // GitHub is enabled but the repo couldn't be provisioned. Falling
+        // back to a local build here used to leave a healthy-looking app
+        // whose dev workflow could never work (repo_url NULL → every chat
+        // turn bails; see the session-2585 incident). Fail the creation
+        // instead: the outer catch records last_failure (stage 'repo') and
+        // flips status to 'error', so the creator sees the failed card and
+        // the Retry button re-runs creation. The local-template fallback
+        // below remains the designed path when GitHub is disabled entirely.
+        err.repoFailed = true;
+        throw err;
       }
     } else if (repoUrl) {
       log.info('app-creator', 'Importing existing repo (skipping create+push)', { appId, slug, repoUrl });

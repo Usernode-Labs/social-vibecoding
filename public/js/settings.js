@@ -210,6 +210,7 @@
       this._renderDevConsoleSection();
       this._renderExperimentalSection();
       this._renderAdminSection();
+      this._renderUsernodeSection();
       this._clearStatus();
       // Reveal via the shared gesture-safe path (see AppView.revealModal) so
       // the opening tap from the drawer row can't ghost-click the backdrop
@@ -657,7 +658,7 @@
     },
 
     async remove() {
-      if (!confirm('Remove your API key? Future chats will fall back to the shared daily budget.')) return;
+      if (!await PlatformUI.confirm({ title: 'Remove your API key?', message: 'Future chats will fall back to the shared daily budget.', confirmLabel: 'Remove', danger: true })) return;
       const removeBtn = document.getElementById('settings-remove');
       removeBtn.disabled = true;
       try {
@@ -807,14 +808,12 @@
       }
 
       row.querySelector('[data-role="revoke"]').addEventListener('click', async () => {
-        const ok = window.ConfirmModal
-          ? await ConfirmModal.show({
-              title: `Revoke AI access for "${g.appName}"?`,
-              message: 'Its next AI call will fail immediately. The app can ask for access again later.',
-              confirmLabel: 'Revoke',
-              danger: true,
-            })
-          : confirm(`Revoke AI access for "${g.appName}"?`);
+        const ok = await ConfirmModal.show({
+          title: `Revoke AI access for "${g.appName}"?`,
+          message: 'Its next AI call will fail immediately. The app can ask for access again later.',
+          confirmLabel: 'Revoke',
+          danger: true,
+        });
         if (!ok) return;
         if (isDemo) { status('Demo data — changes are not saved.', 'info'); return; }
         try {
@@ -1051,14 +1050,12 @@
       });
 
       row.querySelector('[data-role="delete"]').addEventListener('click', async () => {
-        const ok = window.ConfirmModal
-          ? await ConfirmModal.show({
-              title: `Delete "${f.name}"?`,
-              message: 'The coding agent stops using it from your next run. This cannot be undone.',
-              confirmLabel: 'Delete',
-              danger: true,
-            })
-          : confirm(`Delete "${f.name}"?`);
+        const ok = await ConfirmModal.show({
+          title: `Delete "${f.name}"?`,
+          message: 'The coding agent stops using it from your next run. This cannot be undone.',
+          confirmLabel: 'Delete',
+          danger: true,
+        });
         if (!ok) return;
         if (demo) { this._setAgentFilesStatus('Demo data — changes are not saved.', 'info'); return; }
         try {
@@ -1212,7 +1209,7 @@
     },
 
     async _unlinkWallet() {
-      if (!confirm('Unlink your Usernode wallet?')) return;
+      if (!await PlatformUI.confirm({ title: 'Unlink your Usernode wallet?', confirmLabel: 'Unlink', danger: true })) return;
       try {
         const r = await fetch('/api/me/wallet-link', { method: 'DELETE', credentials: 'same-origin' });
         if (!r.ok) {
@@ -1236,6 +1233,380 @@
       const cls = kind === 'error' ? 'text-red-500' : kind === 'ok' ? 'text-emerald-500' : 'text-zinc-500';
       el.classList.add(cls);
       if (kind === 'ok') setTimeout(() => el.classList.add('hidden'), 3000);
+    },
+
+    // ── "Usernode app" sections (profile-and-settings-to-web migration) ──
+    //
+    // The mobile app's native App Settings absorbed into this modal,
+    // rendered from the bridge's getSettingsState snapshot (bridge v3,
+    // NATIVE-BRIDGE.md). Capability-gated: hidden on desktop, in child-app
+    // iframes, and on old app builds. Every setter resolves the refreshed
+    // snapshot, so the section re-renders from a single source of truth.
+    // Device benchmark / HTTP debug logs / terms stay native and are
+    // reached via openNativeScreen deep-links.
+
+    _usernodeState: null,
+
+    async _renderUsernodeSection() {
+      const section = document.getElementById('settings-usernode-section');
+      if (!section) return;
+      const gated = window.NativeChrome &&
+        await NativeChrome.has('getSettingsState');
+      if (!gated) { section.classList.add('hidden'); return; }
+      section.classList.remove('hidden');
+      if (!this._usernodeState) {
+        section.textContent = '';
+        section.appendChild(this._unEl('div',
+          'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700 ' +
+          'text-xs text-zinc-500', 'Loading Usernode app settings…'));
+      }
+      try {
+        const state = await window.usernode.getSettingsState();
+        if (state) this._usernodeState = state;
+      } catch (err) {
+        console.warn('[settings] getSettingsState failed:', err);
+      }
+      if (!this._usernodeState) {
+        section.textContent = '';
+        section.appendChild(this._unEl('div',
+          'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700 ' +
+          'text-xs text-zinc-500',
+          'Could not load Usernode app settings.'));
+        return;
+      }
+      this._renderUsernodeBody();
+    },
+
+    _unEl(tag, className, text) {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      if (text != null) el.textContent = text;
+      return el;
+    },
+
+    _unSection(parent, title, description) {
+      const box = this._unEl('div',
+        'mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700');
+      box.appendChild(this._unEl('h3',
+        'text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1', title));
+      if (description) {
+        box.appendChild(this._unEl('p',
+          'text-xs text-zinc-500 dark:text-zinc-500 mb-3', description));
+      }
+      parent.appendChild(box);
+      return box;
+    },
+
+    _unToggle(parent, label, checked, onChange) {
+      const wrap = this._unEl('label',
+        'flex items-center gap-2 cursor-pointer select-none mt-2');
+      const input = this._unEl('input', 'un-switch');
+      input.type = 'checkbox';
+      input.checked = !!checked;
+      input.addEventListener('change', async (e) => {
+        input.disabled = true;
+        try {
+          await onChange(e.target.checked);
+        } catch (err) {
+          console.warn('[settings] usernode toggle failed:', err);
+          input.checked = !e.target.checked;
+          if (window.PlatformUI) PlatformUI.toast('Could not save the setting');
+        } finally {
+          input.disabled = false;
+        }
+      });
+      wrap.appendChild(input);
+      wrap.appendChild(this._unEl('span',
+        'text-sm text-zinc-800 dark:text-zinc-200', label));
+      parent.appendChild(wrap);
+      return input;
+    },
+
+    _unButton(parent, label, onClick, opts = {}) {
+      const btn = this._unEl('button',
+        'mt-3 mr-2 rounded-md border px-3 py-1.5 text-xs font-medium ' +
+        'transition-colors ' +
+        (opts.danger
+          ? 'border-red-400 dark:border-red-700 text-red-600 ' +
+            'dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950'
+          : 'border-zinc-300 dark:border-zinc-700 text-zinc-700 ' +
+            'dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800'),
+        label);
+      btn.type = 'button';
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        try {
+          await onClick();
+        } catch (err) {
+          console.warn('[settings] usernode action failed:', err);
+          if (window.PlatformUI) PlatformUI.toast('Action failed');
+        } finally {
+          btn.disabled = false;
+        }
+      });
+      parent.appendChild(btn);
+      return btn;
+    },
+
+    _unStatusRow(parent, label, ok, okText, badText) {
+      const row = this._unEl('div', 'flex items-center gap-2 mt-1 text-sm');
+      const dot = this._unEl('span',
+        'w-2 h-2 rounded-full shrink-0 ' +
+        (ok ? 'bg-emerald-500' : 'bg-amber-500'));
+      row.appendChild(dot);
+      row.appendChild(this._unEl('span',
+        'text-zinc-800 dark:text-zinc-200', label));
+      row.appendChild(this._unEl('span',
+        'ml-auto text-xs ' + (ok
+          ? 'text-emerald-600 dark:text-emerald-400'
+          : 'text-amber-600 dark:text-amber-400'),
+        ok ? okText : badText));
+      parent.appendChild(row);
+    },
+
+    _openNativeScreen(screen, failMsg) {
+      if (!window.usernode ||
+          typeof window.usernode.openNativeScreen !== 'function') return;
+      window.usernode.openNativeScreen(screen).catch((err) => {
+        console.warn('[settings] openNativeScreen failed:', err);
+        if (window.PlatformUI) PlatformUI.toast(failMsg);
+      });
+    },
+
+    // Awaits a bridge setter and re-renders the section from the refreshed
+    // snapshot it resolves with.
+    async _unApply(promise) {
+      const state = await promise;
+      if (state && typeof state === 'object') {
+        this._usernodeState = state;
+        this._renderUsernodeBody();
+      }
+    },
+
+    _renderUsernodeBody() {
+      const section = document.getElementById('settings-usernode-section');
+      const s = this._usernodeState;
+      if (!section || !s) return;
+      section.textContent = '';
+      const perms = s.permissions || {};
+      const isAndroid = perms.platform === 'android';
+
+      // Device permissions — mirrors the native QuickSettingsPanel.
+      const permBox = this._unSection(section, 'Usernode app — device permissions',
+        'Block production needs the app to wake your device at exact slot times.');
+      this._unStatusRow(permBox, isAndroid ? 'Exact alarms' : 'Alarm permissions',
+        !!perms.exactAlarmGranted, 'Granted', 'Not granted');
+      if (!perms.exactAlarmGranted) {
+        this._unButton(permBox, 'Request permissions', () =>
+          this._unApply(window.usernode.requestPermissions()));
+      }
+      if (isAndroid) {
+        this._unStatusRow(permBox, 'Battery optimization',
+          perms.batteryOptDisabled === true, 'Unrestricted', 'Restricted');
+        if (perms.batteryOptDisabled !== true) {
+          this._unButton(permBox, 'Open battery settings', () =>
+            window.usernode.openBatterySettings());
+        }
+        if (perms.deviceManufacturer) {
+          permBox.appendChild(this._unEl('p',
+            'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
+            `Device: ${perms.deviceManufacturer}`));
+        }
+      } else {
+        this._unToggle(permBox, 'Keep-alive mode (stay awake in foreground)',
+          perms.iosKeepAliveActive === true,
+          (v) => this._unApply(window.usernode.setIosKeepAlive(v)));
+      }
+
+      // Node.
+      const nodeBox = this._unSection(section, 'Usernode app — node',
+        'The node pauses when the app has been inactive for a while and wakes on your next interaction.');
+      this._unToggle(nodeBox, 'Node sleep on inactivity',
+        s.nodeSleepEnabled !== false,
+        (v) => this._unApply(window.usernode.setNodeSleepEnabled(v)));
+
+      // Privacy & identity.
+      const privBox = this._unSection(section, 'Usernode app — privacy & identity',
+        'Controls for the ZK passport identity flow.');
+      this._unToggle(privBox, 'Strict facematch',
+        s.facematchStrict !== false,
+        (v) => this._unApply(window.usernode.setFacematchStrict(v)));
+      this._unButton(privBox, 'Restart ZK challenge', async () => {
+        const ok = await PlatformUI.confirm({
+          title: 'Restart the ZK challenge?',
+          message: 'Your in-progress identity registration will be discarded.',
+          confirmLabel: 'Restart',
+          danger: true,
+        });
+        if (!ok) return;
+        await window.usernode.resetZkChallenge();
+        if (window.PlatformUI) PlatformUI.toast('Challenge state reset');
+      }, { danger: true });
+
+      // Diagnostics.
+      const diagBox = this._unSection(section, 'Usernode app — diagnostics',
+        'Debugging tools for the app and its embedded node.');
+      this._unToggle(diagBox, 'Debug mode',
+        s.debugMode === true,
+        (v) => this._unApply(window.usernode.setDebugMode(v)));
+      const diagBtns = this._unEl('div');
+      this._unButton(diagBtns, 'Device benchmark', () =>
+        this._openNativeScreen('benchmark', 'Could not open the benchmark'));
+      this._unButton(diagBtns, 'HTTP debug logs', () =>
+        this._openNativeScreen('httpLogs', 'Could not open the logs'));
+      diagBox.appendChild(diagBtns);
+
+      // About & legal.
+      const aboutBox = this._unSection(section, 'Usernode app — about & legal');
+      const bi = s.buildInfo || {};
+      const buildBits = [];
+      if (bi.appVersion) {
+        buildBits.push(`App ${bi.appVersion}` +
+          (bi.buildNumber ? ` (${bi.buildNumber})` : ''));
+      }
+      if (bi.nodeVersion) buildBits.push(`Node ${bi.nodeVersion}`);
+      if (bi.commitHash) buildBits.push(bi.commitHash);
+      if (buildBits.length) {
+        aboutBox.appendChild(this._unEl('p',
+          'text-xs text-zinc-500 dark:text-zinc-400 font-mono',
+          buildBits.join(' · ')));
+      }
+      const termsRow = this._unEl('div');
+      this._unButton(termsRow, s.termsAccepted === false
+        ? 'Review terms (not yet accepted)' : 'Terms', () =>
+        this._openNativeScreen('terms', 'Could not open the terms screen'));
+      aboutBox.appendChild(termsRow);
+      this._renderUsernodeFaq(aboutBox, isAndroid, perms.deviceManufacturer);
+
+      // Account. Auth-aware like the native settings screen: authenticated
+      // users get Log out; guests get Log in. Guest is the state where no
+      // wallet account exists yet — native onboarding (which creates the
+      // wallet) only runs after the app's own login, and since this modal
+      // replaced the native-push App Settings drawer row, this button is
+      // the only in-shell path to that flow. It deep-links the native
+      // Settings screen (allowlisted since bridge v2), whose Account
+      // section shows the Log in tile for guests.
+      const acctBox = this._unSection(section, 'Usernode app — account');
+      if (s.authStatus === 'authenticated') {
+        this._unButton(acctBox, 'Log out of the Usernode app', async () => {
+          const ok = await PlatformUI.confirm({
+            title: 'Log out of the Usernode app?',
+            message: 'You will need to sign in again to keep earning points.',
+            confirmLabel: 'Log out',
+            danger: true,
+          });
+          if (!ok) return;
+          await window.usernode.logout();
+        }, { danger: true });
+      } else {
+        acctBox.appendChild(this._unEl('p',
+          'text-xs text-zinc-500 dark:text-zinc-400',
+          'You are browsing as a guest. Log in to the Usernode app to ' +
+          'create your wallet and start earning points.'));
+        this._unButton(acctBox, 'Log in to the Usernode app', () =>
+          this._openNativeScreen('settings',
+            'Could not open the app settings'));
+      }
+    },
+
+    // Static port of the native FaqSection copy (Help & Info tiles).
+    _renderUsernodeFaq(parent, isAndroid, deviceManufacturer) {
+      const faq = this._unEl('div', 'mt-3');
+      faq.appendChild(this._unEl('div',
+        'text-xs font-semibold text-zinc-500 dark:text-zinc-400 mb-1',
+        'Help & Info'));
+
+      const addTile = (title, paragraphs) => {
+        const d = this._unEl('details',
+          'rounded-lg border border-zinc-200 dark:border-zinc-800 ' +
+          'px-3 py-2 mb-2');
+        const sum = this._unEl('summary',
+          'text-sm font-medium cursor-pointer select-none', title);
+        d.appendChild(sum);
+        for (const p of paragraphs) {
+          d.appendChild(this._unEl('p',
+            'text-xs text-zinc-500 dark:text-zinc-400 mt-2 leading-relaxed',
+            p));
+        }
+        faq.appendChild(d);
+        return d;
+      };
+
+      addTile('About', [
+        'Your device is part of a new network. It verifies, executes, and ' +
+        'contributes compute directly to the network, passively in the ' +
+        'background - with no central servers, no hidden infra. As long as ' +
+        'users keep the app running, the network will continue to operate, ' +
+        'peer to peer, with no external dependencies.',
+        "We're doing this to enable networks that can be hosted end-to-end " +
+        'by their own communities - both for decentralization, and to ' +
+        'enable a natural coordination point around participation, where ' +
+        'users who help operate and contribute to systems directly realize ' +
+        'the benefits from it.',
+        'Right now we are in testnet as we validate the core layer: block ' +
+        "production, consensus behavior, and network reliability. As these " +
+        "stabilize, we'll build upon the unique features of the platform - " +
+        'its decentralization, zero knowledge proofs, and sybil-resistant ' +
+        'identity - to introduce new activities, coordination mechanisms, ' +
+        'and tools for self-hosted, sybil-resistant communities.',
+        'Thanks for helping test at this early stage. The app right now is ' +
+        'simple, but as we prove out the core functionality, we hope to ' +
+        'make possible a new kind of community-owned network, where users ' +
+        'can directly run and benefit from the networks they use.',
+      ]);
+
+      addTile('What is Block Production?', [
+        'This feature automatically wakes your device to produce ' +
+        "blockchain blocks when your node wins a slot. Here's how it works:",
+        '1. VRF Selection — Each epoch, the network randomly selects which ' +
+        'validators will produce blocks using Verifiable Random Function ' +
+        '(VRF).',
+        '2. Slot Scheduling — When you win slots, the app schedules alarms ' +
+        'to wake your device ~1 minute before each slot.',
+        '3. Block Production — At slot time, the app monitors your node ' +
+        'and ensures the block is produced.',
+        '4. Success Tracking — Results are recorded to track your ' +
+        'reliability over time.',
+      ]);
+
+      const platformParas = isAndroid
+        ? [
+            "Uses Android's exact alarm system (AlarmManager) to wake your " +
+            'device precisely when needed for block production.',
+            'Reliability by mode: Default (Event-Driven) 90-95% — ' +
+            'battery-efficient, wakes only during slot windows. Keep-Alive ' +
+            'Mode 100% — persistent service, higher battery (~5-10%/hr).',
+          ]
+        : [
+            'Uses a combination of background tasks and keep-alive mode to ' +
+            'wake your device for block production.',
+            'Reliability by mode: Keep-Alive Mode 99% — app stays awake in ' +
+            'foreground, requires charger. Background Only 40-60% — iOS ' +
+            'controls execution, not guaranteed.',
+          ];
+      if (isAndroid && deviceManufacturer) {
+        platformParas.push(`Device: ${deviceManufacturer}`);
+      }
+      addTile('Platform & Reliability', platformParas);
+
+      addTile('Understanding VRF & Slots', [
+        'VRF (Verifiable Random Function) is how the network fairly ' +
+        'selects block producers. At the start of each epoch, the network ' +
+        'runs VRF calculations to determine which validators will produce ' +
+        'blocks in upcoming slots.',
+        'Status meanings — Pending: waiting for epoch transition to start ' +
+        'calculations. Calculating: VRF evaluation in progress (takes a ' +
+        'few hours). Complete: slot assignments are finalized and ' +
+        'scheduled.',
+        'When VRF selects your node to produce a block at a specific time, ' +
+        'you\'ve "won" that slot. Your responsibility is to have your ' +
+        'device awake and connected so the block can be produced.',
+        "Why timing matters: each slot has a ~5-seconds window. If your " +
+        "device doesn't wake up in time or loses network connectivity, the " +
+        'slot is missed and counted as "failed."',
+      ]);
+
+      parent.appendChild(faq);
     },
   };
 

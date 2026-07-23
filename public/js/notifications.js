@@ -215,11 +215,45 @@ const Notifications = {
     else Notifications.show();
   },
 
+  _sheet: null,
+
   show() {
     const panel = document.getElementById('notifications-panel');
     if (!panel) return;
     // One drawer at a time: opening the bell closes the cog drawer.
     if (window.WorkDrawer && WorkDrawer.open) WorkDrawer.hide();
+    // Touch platforms: the panel rides inside a draggable kit bottom
+    // sheet instead of the top-right dropdown. (A top-sheet variant
+    // was tried and reverted — the bottom sheet felt better.) Desktop
+    // keeps the anchored panel below.
+    if (PlatformUI.isTouch() && !Notifications._sheet) {
+      panel.classList.remove('hidden');
+      panel.classList.add('platform-sheet-adopted');
+      // Render BEFORE presenting: the kit sheet measures its height
+      // once at present time to seed the slide-up spring. Presenting
+      // the panel empty and filling it afterwards made the FIRST-ever
+      // open "pop" (a grabber-height slide, then the content snapped
+      // in); later opens still held the previous render, so only the
+      // first one looked broken.
+      Notifications._renderInvites();
+      Notifications._renderList();
+      const sheet = PlatformUI.sheet({
+        contentEl: panel,
+        onDismiss: () => {
+          panel.classList.remove('platform-sheet-adopted');
+          panel.classList.add('hidden');
+          document.body.appendChild(panel);
+          Notifications._sheet = null;
+          Notifications.open = false;
+        },
+      });
+      if (sheet) {
+        Notifications._sheet = sheet;
+        Notifications.open = true;
+        return;
+      }
+      panel.classList.remove('platform-sheet-adopted');
+    }
     panel.classList.remove('hidden');
     Notifications.open = true;
     Notifications._renderInvites();
@@ -227,6 +261,10 @@ const Notifications = {
   },
 
   hide() {
+    if (Notifications._sheet) {
+      Notifications._sheet.dismiss();
+      return;
+    }
     const panel = document.getElementById('notifications-panel');
     if (!panel) return;
     panel.classList.add('hidden');
@@ -575,6 +613,22 @@ const Notifications = {
         );
       });
     });
+    // Touch: swipe an invite row left for Accept / Decline directly
+    // (buttons remain for desktop and as the tap path everywhere).
+    // Rows render in Notifications.invites order, so index-match.
+    if (PlatformUI.isTouch()) {
+      box.querySelectorAll('[data-invite-app]').forEach((el, i) => {
+        const inv = Notifications.invites[i];
+        if (!inv) return;
+        const kind = inv.kind === 'approver' ? 'approver' : 'collab';
+        PlatformUI.swipeActions(el, {
+          actions: [
+            { label: 'Accept', handler: () => Notifications._acceptInvite(inv.appId, inv.appSlug || '', kind) },
+            { label: 'Decline', destructive: true, handler: () => Notifications._declineInvite(inv.appId, kind) },
+          ],
+        });
+      });
+    }
   },
 
   _removeInviteLocal(appId, kind) {
@@ -591,7 +645,7 @@ const Notifications = {
       const res = await fetch(`${base}/${appId}/accept`, { method: 'POST' });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        alert(data.error || `Accept failed (HTTP ${res.status})`);
+        PlatformUI.toast(data.error || `Accept failed (HTTP ${res.status})`);
         // The invite may have been revoked — re-sync.
         Notifications.refresh();
         return;
@@ -761,6 +815,24 @@ const Notifications = {
         Notifications._showMoreGroup(el.getAttribute('data-group-showmore'));
       });
     });
+    // Touch: swipe an unread leaf row left to mark it read (kit
+    // ride-along tray). Desktop keeps click-through + group buttons.
+    if (PlatformUI.isTouch()) {
+      list.querySelectorAll('[data-notif-id]').forEach((el) => {
+        const id = Number(el.getAttribute('data-notif-id'));
+        const item = Notifications.items.find((n) => n.id === id);
+        if (!item || item.readAt) return;
+        PlatformUI.swipeActions(el, {
+          actions: [{
+            label: 'Mark read',
+            handler: () => {
+              Notifications._markOneRead(id);
+              Notifications._renderList();
+            },
+          }],
+        });
+      });
+    }
   },
 
   // Reveal one more page (GROUP_LEAF_CAP) of leaves for a group. If every

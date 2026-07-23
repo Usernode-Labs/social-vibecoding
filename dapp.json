@@ -76,6 +76,12 @@
   ],
   "tests": [
     {
+      "name": "Create-app modal opens in 'new' mode with the state on the presented card (#748)",
+      "path": "/#create",
+      "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-import-state=\"idle\"]",
+      "expectText": "Create a new app"
+    },
+    {
       "name": "Issue cards render the Mark-in-progress claim button",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Mark in progress"
@@ -113,6 +119,12 @@
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": "#toast-undo-btn",
       "expectText": "Undo flow (priority)"
+    },
+    {
+      "name": "Kit demo grid-reorder (displacement) section renders (#746)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios",
+      "expectSelector": "#reorder-grid .demo-grid-tile",
+      "expectText": "Grid reorder (homescreen displacement)"
     },
     {
       "name": "Leaderboard Top-users tab renders",
@@ -388,6 +400,26 @@
     {
       "name": "PR-import: self-app dev proposals view loads with the flag on (#687)",
       "path": "/app/usernode-2d5619/dev/proposals"
+    },
+    {
+      "name": "Platform shell loads the native kit (safe-area header, kit tags)",
+      "path": "/",
+      "expectSelector": "header#platform-header.un-safe-top-extend"
+    },
+    {
+      "name": "Dev feed renders under the kit adoption (demo)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-forum-scroll"
+    },
+    {
+      "name": "All Apps tiles carry the drag-to-add grab cursor (#746)",
+      "path": "/",
+      "expectSelector": ".app-card:not([data-yours]).cursor-grab"
+    },
+    {
+      "name": "Staging demo tiles are tagged drag-inert (#746)",
+      "path": "/?demo=1",
+      "expectSelector": ".app-card[data-demo='true']"
     }
   ],
   "governance": {

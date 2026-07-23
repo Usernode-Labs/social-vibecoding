@@ -9,7 +9,7 @@
  *
  *   { stage, reason, log, at, sha }
  *
- *   stage  : 'clone' | 'build' | 'start' | 'healthcheck' | 'timeout' | 'other'
+ *   stage  : 'repo' | 'clone' | 'build' | 'start' | 'healthcheck' | 'timeout' | 'other'
  *   reason : concise human-readable line, <= 280 chars (same budget as
  *            chat_sessions.check_error_detail)
  *   log    : raw tail of the docker build output / container boot logs,
@@ -94,12 +94,16 @@ function classify(err, opts = {}) {
     }
     return { stage: 'build', reason: capReason(reason), log };
   }
-  const stage = opts.stage || (err && err.cloneFailed ? 'clone' : 'other');
+  const stage = opts.stage
+    || (err && err.repoFailed ? 'repo' : null)
+    || (err && err.cloneFailed ? 'clone' : null)
+    || 'other';
   // Clone timeouts / ENOENT-style failures carry no .stderr — fall back
   // to err.message, but prefer stderr when execFile captured any.
   const stderr = err && err.stderr ? truncateLog(err.stderr) : '';
+  const message = (err && err.message) ? String(err.message) : 'deploy failed';
   const reason = capReason(
-    (err && err.message) ? String(err.message) : 'deploy failed'
+    stage === 'repo' ? `GitHub repo creation failed: ${message}` : message
   );
   return { stage, reason, log: stderr };
 }
