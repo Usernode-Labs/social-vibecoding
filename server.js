@@ -29,6 +29,7 @@ const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
+const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { proposalDiscussRoutes } = require('./src/routes/proposal-discuss');
@@ -353,6 +354,16 @@ app.use(anthropicProxyRoutes(config));
 // proxy; mounted before authMiddleware because callers are app
 // containers, not browser sessions.
 app.use(appLlmProxyRoutes(config));
+
+// App-facing read-only platform API (#744). App containers call
+// /api/app-platform/governance/feed with the same per-app token
+// (USERNODE_LLM_PROXY_TOKEN) to read their OWN proposal/vote/merge
+// feed for in-app "what's changing" strips. App-token-only (no user
+// token or grant — the feed holds nothing an app viewer can't already
+// see in the vote panel), same private-IP gate; mounted before
+// authMiddleware because callers are app containers, not browser
+// sessions.
+app.use(appPlatformApiRoutes(config));
 
 // Before/after visuals artifacts (#195). Public by design: GitHub's camo
 // proxy fetches the PR-body embeds anonymously, so this must not redirect
