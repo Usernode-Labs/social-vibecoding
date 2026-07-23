@@ -1082,12 +1082,16 @@
   var REORDER_MAX_SCROLL = 14; // px per frame at the edge
 
   // attachReorder(listEl, { handle?, itemSelector?, longPressMs?, canDrop?,
-  // onReorder }) — items default to listEl's element children minus
-  // .un-group-header / kit chrome; pass itemSelector for grouped markup
-  // (it may match across nested section containers — cross-section moves
-  // work because indices span the whole matched list). onReorder(from, to,
-  // itemEl) runs AFTER the kit has moved the element in the DOM (persist
-  // the order there). Returns { detach() }; never throws on bad input.
+  // onLift?, onReorder?, onSettle? }) — items default to listEl's element
+  // children minus .un-group-header / kit chrome; pass itemSelector for
+  // grouped markup (it may match across nested section containers —
+  // cross-section moves work because indices span the whole matched list).
+  // onLift(itemEl) fires when a drag lifts (defer re-renders there);
+  // onReorder(from, to, itemEl) runs AFTER the kit has moved the element in
+  // the DOM (persist the order there); onSettle(moved) fires once the
+  // settle spring finishes — for drops, cancels, and a mid-lift detach —
+  // with moved=true iff onReorder ran for the gesture. Returns
+  // { detach() }; never throws on bad input.
   function attachReorder(listEl, options) {
     var noop = { detach: function () {} };
     if (!listEl || listEl.nodeType !== 1) {
@@ -1269,6 +1273,9 @@
       if (e && typeof e.pointerId === 'number') {
         try { drag.item.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       }
+      if (opts.onLift) {
+        try { opts.onLift(drag.item); } catch (err) { /* ignore */ }
+      }
       update();
       raf = requestAnimationFrame(autoScrollFrame);
     }
@@ -1284,8 +1291,9 @@
     }
 
     // Settle the lifted item to targetTy with a spring, run done, clean up.
-    // Reduced motion settles instantly.
-    function settle(targetTy, done) {
+    // Reduced motion settles instantly. `moved` is passed through to
+    // onSettle so the host knows whether onReorder ran for this gesture.
+    function settle(targetTy, done, moved) {
       var item = drag.item;
       var fromTy = drag.ty;
       var unclipped = drag.unclipped || [];
@@ -1296,6 +1304,9 @@
         if (bgSet) item.style.background = '';
         unclipped.forEach(function (u) { u.node.style.overflow = u.prev; });
         if (done) done();
+        if (opts.onSettle) {
+          try { opts.onSettle(!!moved); } catch (err) { /* ignore */ }
+        }
       }
       clearLiftVisuals();
       drag = null;
@@ -1323,7 +1334,7 @@
       var n = rects.length;
       var to = gap == null ? from : (gap > from ? gap - 1 : gap);
       if (gap == null || to === from || gap === from + 1) {
-        settle(0, null); // home: no move, no callback
+        settle(0, null, false); // home: no move, no onReorder
         return;
       }
       haptic();
@@ -1338,7 +1349,7 @@
         if (ref) ref.parentNode.insertBefore(item, ref);
         else items[n - 1].parentNode.appendChild(item);
         if (opts.onReorder) opts.onReorder(from, to, item);
-      });
+      }, true);
     }
 
     function onPointerDown(e) {
@@ -1451,6 +1462,7 @@
         listEl.removeEventListener('click', onClickCapture, true);
         if (drag) {
           if (drag.pressTimer) clearTimeout(drag.pressTimer);
+          var wasLifted = drag.lifted;
           if (drag.item) {
             drag.item.style.transform = '';
             drag.item.classList.remove('un-reorder-lifting');
@@ -1458,6 +1470,11 @@
           }
           (drag.unclipped || []).forEach(function (u) { u.node.style.overflow = u.prev; });
           drag = null;
+          // A mid-lift teardown never reaches settle(); fire onSettle here
+          // so a host deferral flag set in onLift can't get stuck.
+          if (wasLifted && opts.onSettle) {
+            try { opts.onSettle(false); } catch (err) { /* ignore */ }
+          }
         }
         if (activeSpring) { activeSpring.stop(); activeSpring = null; }
         clearLiftVisuals();

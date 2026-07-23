@@ -128,6 +128,11 @@ const Home = {
     const query = (Home._query || '').trim();
     let html = '';
     let canDragYours = false;
+    // Non-null only in the sectioned view: the count of "Your apps"
+    // cards, i.e. the boundary index the kit drag classifies drops
+    // against (add / remove / reorder). null = drag fully disabled
+    // (search results are a flat, unowned ordering).
+    let yoursCount = null;
 
     if (query) {
       // Active search: one flat grid of matches. The proposals /
@@ -143,9 +148,13 @@ const Home = {
       }
     } else {
       const { yours, rest } = Home.partitionApps(apps);
-      // Reordering is meaningless with a single card — skip the grab
-      // affordance and the drag wiring when there's only one.
+      yoursCount = yours.length;
+      // Legacy-path gate only: reordering is meaningless with a single
+      // card. The kit path drags every card in the sectioned view
+      // (issue #746 — All Apps cards drag INTO "Your apps", yours
+      // cards drag out), so it ignores this.
       canDragYours = yours.length >= 2;
+      const kitDrag = Home._useKitReorder();
       // iOS-in-app only: mirror of the homescreen widget's pinned grid,
       // manageable in place (drag in / reorder / ✕). Empty string
       // everywhere else — see _widgetUiActive.
@@ -153,24 +162,30 @@ const Home = {
       if (yours.length) {
         html += '<div class="home-section-header col-span-full">Your apps</div>';
         // Tag the cards at render time: data-yours drives both the
-        // drag wiring's selector and the long-press menu→drag
-        // promotion; cursor-grab replaces cursor-pointer as the
-        // discoverability hint when reordering is possible.
+        // drag wiring's selector and the drop classification;
+        // cursor-grab replaces cursor-pointer as the discoverability
+        // hint when the card is draggable.
         html += yours.map((a) => {
           let card = Home.renderAppCard(a);
           card = card.replace('class="app-card ', 'data-yours="true" class="app-card ');
-          if (canDragYours) card = card.replace('cursor-pointer', 'cursor-grab');
+          if (kitDrag || canDragYours) card = card.replace('cursor-pointer', 'cursor-grab');
           return card;
         }).join('');
         html += '<div class="home-section-header col-span-full mt-2">All Apps</div>';
       }
-      html += rest.map(Home.renderAppCard).join('');
+      html += rest.map((a) => {
+        let card = Home.renderAppCard(a);
+        // Kit path: All Apps cards are drag-to-add candidates (demo
+        // tiles excluded — they're inert, see renderAppCard).
+        if (kitDrag && !a.demo) card = card.replace('cursor-pointer', 'cursor-grab');
+        return card;
+      }).join('');
       html += canCreate ? Home.renderCreateTile() : '';
     }
 
     listEl.innerHTML = html;
     if (!query && canCreate) Home.wireCreateButtons();
-    Home._wireCards(listEl, canDragYours);
+    Home._wireCards(listEl, canDragYours, yoursCount);
     Home._wireWidgetStrip(listEl);
   },
 
@@ -218,7 +233,11 @@ const Home = {
 
   // ===== Per-render card wiring =====
 
-  _wireCards(listEl, canDragYours) {
+  // `yoursCount` is the "Your apps" section size in the sectioned view
+  // (0 included — adds must work with an empty section), or null when
+  // drag is off entirely (search view). Only the kit path consumes it;
+  // the legacy path still keys off canDragYours.
+  _wireCards(listEl, canDragYours, yoursCount = null) {
     // Cards already in the widget aren't drag-into-widget candidates —
     // computed once per render, not per card.
     const widgetSlugs = Home._widgetUiActive() ? Home._widgetSlugs() : null;
@@ -246,16 +265,20 @@ const Home = {
       // kept behind a temporary flag for one release):
       //
       // Kit era (default): the kit's attachReorder (below, after this
-      // loop) owns long-press-lift-drag on "Your apps" cards. The
-      // long-press actions menu stays on NON-reorderable cards via an
-      // arbiter-claimed handler; reorderable cards reach the menu
-      // through their "…" button. Drag-a-card-onto-the-widget-strip is
-      // retired on this path (the card menu's "Add to widget" covers it).
+      // loop) owns long-press-lift-drag on EVERY card in the sectioned
+      // view (issue #746 — All Apps cards drag into "Your apps", yours
+      // cards reorder or drag out). The long-press actions menu
+      // survives only where the kit doesn't own the gesture: the
+      // search view and inert staging demo tiles. All other cards
+      // reach the menu through their "…" button. Drag-a-card-onto-
+      // the-widget-strip is retired on this path (the card menu's
+      // "Add to widget" covers it).
       //
       // Legacy era (localStorage platform-legacy-reorder = '1', or kit
-      // failed to load): the original hand-rolled pointer machinery.
+      // failed to load): the original hand-rolled pointer machinery
+      // ("Your apps" reorder only — no cross-section drags).
       if (Home._useKitReorder()) {
-        if (!(canDragYours && card.dataset.yours === 'true')) {
+        if (yoursCount == null || card.dataset.demo === 'true') {
           Home._wireCardLongPressMenu(card);
         }
       } else {
@@ -269,17 +292,35 @@ const Home = {
       }
     });
 
-    // Kit reorder on the "Your apps" cards: long-press lifts (haptic
-    // tick), the row tracks the finger 1:1, edge auto-scroll and the
-    // spring settle come from the kit, and the kit's gesture arbiter
-    // keeps it from fighting scrolling / pull-to-refresh. The DOM move
-    // happens before onReorder, so the existing order-save just reads
-    // the DOM like the legacy path did.
-    if (Home._useKitReorder() && canDragYours) {
+    // Kit drag on every app card in the sectioned view: long-press
+    // lifts (haptic tick), the card tracks the finger 1:1, edge
+    // auto-scroll and the spring settle come from the kit, and the
+    // kit's gesture arbiter keeps it from fighting scrolling /
+    // pull-to-refresh. Indices span the whole matched list, so
+    // canDropCard vetoes the meaningless slots (All Apps isn't
+    // reorderable) and _onKitCardDrop classifies the rest against the
+    // yoursCount boundary: reorder within "Your apps", add from All
+    // Apps (issue #746), or remove by dragging out. onLift/onSettle
+    // hold _dragActive so a WS-driven Home.load() can't replace the
+    // grid under the gesture (the legacy path's guard, now shared).
+    if (Home._useKitReorder() && yoursCount != null) {
       if (Home._reorderHandle) { try { Home._reorderHandle.detach(); } catch {} }
       Home._reorderHandle = window.unNative.attachReorder(listEl, {
-        itemSelector: '.app-card[data-yours="true"]',
-        onReorder: () => { Home._saveYoursOrder(listEl); },
+        itemSelector: '.app-card:not([data-demo])',
+        canDrop: (item, to) => Home.canDropCard(item.dataset.yours === 'true', to, yoursCount),
+        onLift: () => { Home._dragActive = true; },
+        onSettle: () => {
+          Home._dragActive = false;
+          if (Home._reloadPending) {
+            Home._reloadPending = false;
+            Home._rerenderPending = false;
+            Home.load();
+          } else if (Home._rerenderPending) {
+            Home._rerenderPending = false;
+            Home.render();
+          }
+        },
+        onReorder: (from, to, item) => { Home._onKitCardDrop(from, to, item, yoursCount); },
       });
     }
 
@@ -553,8 +594,13 @@ const Home = {
     // every card, so text selection / the mobile callout must be
     // suppressed card-wide, while touch-pan-y keeps vertical
     // scrolling alive until a long-press actually fires (see app.css).
+    // Staging ?demo=1 tiles (routes/apps.js demoIconApps) carry
+    // data-demo so the kit drag's :not([data-demo]) selector skips
+    // them — their slugs don't exist in the DB, so a drag-to-favorite
+    // would 404. They keep the long-press menu instead.
+    const demoAttr = app.demo ? ' data-demo="true"' : '';
     return `
-      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}">
+      <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
         ${retryHtml}
         <div class="relative w-14 h-14 shrink-0">
           <div class="w-14 h-14 rounded-xl bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-xl" data-icon="${icon.kind}">
@@ -1659,6 +1705,11 @@ const Home = {
   // _reloadPending instead of re-rendering (see the guard in load()).
   _dragActive: false,
   _reloadPending: false,
+  // Kit path: a cross-section drop updates Home._apps inside onReorder
+  // (which fires while _dragActive still holds) and schedules the
+  // cheap local re-render here; onSettle consumes it. A full
+  // _reloadPending (server refetch) wins when both are set.
+  _rerenderPending: false,
   // Eats the synthetic click the browser fires right after the
   // pointerup that ends a drag (see the card click handler in load()).
   _suppressClick: false,
@@ -1673,6 +1724,120 @@ const Home = {
     let legacy = false;
     try { legacy = localStorage.getItem('platform-legacy-reorder') === '1'; } catch {}
     return !legacy && !!(window.unNative && typeof window.unNative.attachReorder === 'function');
+  },
+
+  // ===== Cross-section drop classification (issue #746) =====
+  //
+  // The kit drag matches EVERY app card, so its indices span both
+  // sections: 0..yoursCount-1 are "Your apps" cards, yoursCount.. are
+  // All Apps. `to` is the kit's post-removal insertion index.
+  //
+  // canDropCard vetoes the slots that mean nothing: an All Apps card
+  // may land anywhere in the Your-apps range (to === yoursCount is
+  // "append to the end of the section" — the only meaningful reading,
+  // since All Apps itself isn't reorderable), but not deeper into All
+  // Apps. A yours card may go anywhere: inside the section it's a
+  // reorder, past the boundary it's a removal (drop position within
+  // All Apps is ignored — that section keeps its activity order).
+  canDropCard(isYours, to, yoursCount) {
+    return isYours || to <= yoursCount;
+  },
+
+  // Pure classifier for a completed kit drop, unit-tested in
+  // tests/home-drag-add.test.js. Note the boundary asymmetry: a yours
+  // card arriving at to === yoursCount-1 via the section-boundary gap
+  // is still a reorder (the kit's gap>from adjustment already
+  // subtracted one), while to >= yoursCount is only reachable by
+  // dropping genuinely inside All Apps.
+  classifyCardDrop(from, to, yoursCount) {
+    if (from >= yoursCount) return { kind: 'add', index: Math.min(to, yoursCount) };
+    if (to >= yoursCount) return { kind: 'remove', index: null };
+    return { kind: 'reorder', index: to };
+  },
+
+  // Pure builder for the new "Your apps" slug order after a drop:
+  // moves (or inserts) `slug` to `index` within `yoursSlugs`. Shared
+  // by adds (slug absent from the list) and reorders (slug present).
+  buildYoursOrder(yoursSlugs, slug, index) {
+    const order = (yoursSlugs || []).filter((s) => s !== slug);
+    order.splice(Math.max(0, Math.min(index, order.length)), 0, slug);
+    return order;
+  },
+
+  // Completed kit drop: classify, update the Home._apps cache
+  // optimistically (the re-render is deferred to onSettle via
+  // _rerenderPending — onReorder fires while _dragActive still holds),
+  // then persist. Failure reverts to server truth via Home.load(),
+  // same optimistic-then-revert shape as _menuToggleFavorite.
+  _onKitCardDrop(from, to, item, yoursCount) {
+    const drop = Home.classifyCardDrop(from, to, yoursCount);
+    const slug = item?.dataset?.slug;
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    if (!app) return;
+    if (drop.kind === 'remove') {
+      app.is_favorited = false;
+      if (app.is_collaborator) app.your_apps_hidden = true;
+      app.favorite_order = null;
+      Home._rerenderPending = true;
+      Home._persistYoursDrop('remove', app, null);
+      return;
+    }
+    if (drop.kind === 'add') {
+      app.is_favorited = true;
+      if (app.is_collaborator) app.your_apps_hidden = false;
+    }
+    // New section order: current yours slugs with the dragged one at
+    // its drop index (buildYoursOrder tolerates the flag flip above
+    // having already pulled an added app into the partition — it
+    // extracts the slug before inserting). Mirror the server's
+    // contiguous sort_order rewrite locally so the deferred re-render
+    // agrees with what PUT /api/favorites/order is about to persist.
+    const yoursSlugs = Home.partitionApps(Home._apps).yours.map((a) => a.slug);
+    const order = Home.buildYoursOrder(yoursSlugs, slug, drop.index);
+    order.forEach((s, i) => {
+      const a = (Home._apps || []).find((x) => x.slug === s);
+      if (a) a.favorite_order = i;
+    });
+    Home._rerenderPending = true;
+    Home._persistYoursDrop(drop.kind, app, order);
+  },
+
+  // Persist a classified drop. Adds POST the favorite BEFORE the order
+  // PUT — the order upsert alone would leave a member's hidden=TRUE
+  // opt-out row hidden (#618), while the favorite endpoint's upsert
+  // clears it. Reorders skip the POST (membership is unchanged).
+  async _persistYoursDrop(kind, app, order) {
+    try {
+      if (kind !== 'reorder') {
+        const res = await fetch(`/api/apps/${app.slug}/favorite`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ favorited: kind === 'add' }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+      }
+      if (order) {
+        const res = await fetch('/api/favorites/order', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order }),
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || `HTTP ${res.status}`);
+        }
+      }
+      // Confirmation on removal only: the card jumps to its
+      // activity-ordered slot in All Apps (possibly off-screen), so
+      // the move needs a word; adds and reorders are self-evident.
+      if (kind === 'remove') PlatformUI.toast('Removed from Your apps');
+    } catch (err) {
+      PlatformUI.toast(`Update failed: ${err.message}`);
+      await Home.load();
+    }
   },
 
   // Kit-era long-press actions menu for cards the kit reorder does NOT
