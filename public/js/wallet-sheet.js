@@ -1,7 +1,9 @@
-// Header wallet chip + wallet sheet — the app's native wallet surface
+// Wallet drawer row + wallet sheet — the app's native wallet surface
 // absorbed into SV chrome (app-as-SV-chrome migration, NATIVE-BRIDGE.md).
+// Lived in the header as a balance chip originally; moved into the
+// hamburger drawer to keep the header uncluttered.
 //
-// Chip: balance readout in the header right group. Tap opens a bottom
+// Row: balance readout at the top of the drawer. Tap opens a bottom
 // sheet with the full balance, the user's address (copy + QR receive),
 // recent dapp-transaction receipts (`usernode.getTransactionRecords`),
 // and a Send form. Send routes through the bridge's `sendTransaction`,
@@ -24,6 +26,18 @@
     async init() {
       if (!window.NativeChrome) return;
       if (!(await NativeChrome.has('getWalletState'))) return;
+
+      const row = document.getElementById('drawer-row-wallet');
+      if (row) {
+        row.classList.remove('hidden');
+        row.addEventListener('click', () => {
+          if (window.App && App.HeaderMenu && App.HeaderMenu.close) {
+            App.HeaderMenu.close();
+          }
+          WalletSheet._openSheet();
+        });
+      }
+
       await WalletSheet._refreshState();
       WalletSheet._renderChip();
       WalletSheet._timer = setInterval(async () => {
@@ -67,23 +81,13 @@
       return addr.slice(0, 8) + '…' + addr.slice(-6);
     },
 
+    // Kept the historical name from the header-chip era; now paints the
+    // balance readout on the drawer row.
     _renderChip() {
-      const slot = document.getElementById('wallet-chip-slot');
-      if (!slot) return;
-      slot.classList.add('mr-3');
-      let btn = slot.firstElementChild;
-      if (!btn) {
-        btn = document.createElement('button');
-        btn.id = 'wallet-chip';
-        btn.setAttribute('aria-label', 'Wallet');
-        btn.className = 'inline-flex items-center gap-1 px-2 py-0.5 ' +
-          'rounded-full border border-violet-500/40 text-xs font-medium ' +
-          'text-violet-600 dark:text-violet-400 hover:bg-violet-500/10';
-        btn.addEventListener('click', () => WalletSheet._openSheet());
-        slot.appendChild(btn);
-      }
-      btn.textContent = `${WalletSheet._fmtBalance()} ${WalletSheet._symbol()}`;
-      if (window.HeaderLayout && HeaderLayout.refresh) HeaderLayout.refresh();
+      const balanceEl = document.getElementById('drawer-wallet-balance');
+      if (!balanceEl) return;
+      balanceEl.textContent =
+        `${WalletSheet._fmtBalance()} ${WalletSheet._symbol()}`;
     },
 
     // -- sheet ----------------------------------------------------------

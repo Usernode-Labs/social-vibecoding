@@ -136,7 +136,10 @@ app.use('/explorer-api', (req, res) => {
 // call that host cross-origin, so proxy a READ-ONLY allowlist of its
 // public endpoints here. Mounted before authMiddleware (public, like
 // /explorer-api) and restricted to GET + known paths so the participant-
-// scoped /register and /me/* surfaces are never reachable through SV.
+// scoped /register surface is never reachable through SV. The two /me/*
+// GETs backing the SV #profile screen are allowlisted: identity there is
+// just the participant_id query param, the same trust model as the mobile
+// app calling the leaderboard API directly.
 const CHALLENGES_UPSTREAM_BASE =
   process.env.CHALLENGES_API_BASE ||
   'https://leaderboard.usernodelabs.org/api/v2/mobile';
@@ -144,6 +147,8 @@ const CHALLENGES_ALLOWED_PATHS = new Set([
   '/seasons',
   '/challenges',
   '/leaderboard',
+  '/me/ranking',
+  '/me/breakdown',
 ]);
 
 app.use('/challenges-api', (req, res) => {

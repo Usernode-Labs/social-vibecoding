@@ -3,9 +3,13 @@
 //
 // Owns:
 //   - a single cached `getBridgeInfo()` probe (NativeChrome.getInfo()) so
-//     node-pill.js / wallet-sheet.js don't each round-trip the channel;
-//   - the drawer's native-only rows (Profile / App Settings), which push
-//     allowlisted native screens via `usernode.openNativeScreen`.
+//     node-pill.js / wallet-sheet.js / settings.js don't each round-trip
+//     the channel;
+//   - the drawer's Profile row (#profile hash route, profile.js), shown
+//     when the bridge reports getProfileInfo. The old native-push
+//     Profile / App Settings rows are gone (profile-and-settings-to-web
+//     migration): App Settings is now capability-gated sections inside
+//     the Settings modal (settings.js).
 //
 // Everything here is capability-gated: on desktop, in child-app iframes,
 // and on old app builds the probe resolves { version: 0, capabilities: [] }
@@ -39,23 +43,16 @@
     },
 
     async _initDrawerRows() {
-      if (!(await NativeChrome.has('openNativeScreen'))) return;
-      const wire = (rowId, screen) => {
-        const row = document.getElementById(rowId);
-        if (!row) return;
-        row.classList.remove('hidden');
-        row.addEventListener('click', () => {
-          if (window.App && App.HeaderMenu) App.HeaderMenu.close();
-          window.usernode.openNativeScreen(screen).catch((err) => {
-            console.warn('[native-chrome] openNativeScreen failed:', err);
-            if (window.PlatformUI) {
-              PlatformUI.toast('Could not open the native screen');
-            }
-          });
-        });
-      };
-      wire('drawer-row-native-profile', 'profile');
-      wire('drawer-row-native-settings', 'settings');
+      // The Profile row is a plain #profile anchor; hash navigation
+      // drives the screen (App.navigateToProfile), the click handler
+      // only closes the drawer — same wiring as the Challenges row.
+      if (!(await NativeChrome.has('getProfileInfo'))) return;
+      const row = document.getElementById('drawer-row-profile');
+      if (!row) return;
+      row.classList.remove('hidden');
+      row.addEventListener('click', () => {
+        if (window.App && App.HeaderMenu) App.HeaderMenu.close();
+      });
     },
 
     init() {

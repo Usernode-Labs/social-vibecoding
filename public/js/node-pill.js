@@ -1,14 +1,17 @@
-// Header node pill — surfaces the embedded Usernode node's sync state in
-// the SV header when the platform runs inside the Usernode app
-// (app-as-SV-chrome migration, see NATIVE-BRIDGE.md).
+// Node status row (top of the hamburger drawer) — surfaces the embedded
+// Usernode node's sync state when the platform runs inside the Usernode
+// app (app-as-SV-chrome migration, see NATIVE-BRIDGE.md). Lived in the
+// header as a pill originally; moved into the drawer to keep the header
+// uncluttered.
 //
 // Data flow: the app pushes `usernode:node-status` CustomEvents (once per
-// page load + on pill-state transitions), so the pill renders from the
+// page load + on pill-state transitions), so the row renders from the
 // event stream; `usernode.getNodeStatus()` is only called for the initial
 // value and when the detail sheet opens. No polling.
 //
-// Hidden entirely (empty slot) when the bridge lacks the `getNodeStatus`
-// capability — desktop browsers, child-app iframes, old app builds.
+// Hidden entirely (row stays display:none) when the bridge lacks the
+// `getNodeStatus` capability — desktop browsers, child-app iframes, old
+// app builds.
 (function () {
   'use strict';
 
@@ -45,6 +48,17 @@
       if (!window.NativeChrome) return;
       if (!(await NativeChrome.has('getNodeStatus'))) return;
 
+      const row = document.getElementById('drawer-row-node');
+      if (row) {
+        row.classList.remove('hidden');
+        row.addEventListener('click', () => {
+          if (window.App && App.HeaderMenu && App.HeaderMenu.close) {
+            App.HeaderMenu.close();
+          }
+          NodePill._openSheet();
+        });
+      }
+
       window.addEventListener('usernode:node-status', (e) => {
         NodePill._status = e.detail || null;
         NodePill._render();
@@ -64,26 +78,15 @@
     },
 
     _render() {
-      const slot = document.getElementById('node-pill-slot');
-      if (!slot) return;
+      const dot = document.getElementById('drawer-node-dot');
+      const statusEl = document.getElementById('drawer-node-status');
+      if (!dot || !statusEl) return;
       const s = NodePill._status;
       const style = NodePill._styleFor(s && s.status);
-      slot.classList.add('mr-3');
-      let btn = slot.firstElementChild;
-      if (!btn) {
-        btn = document.createElement('button');
-        btn.id = 'node-pill';
-        btn.setAttribute('aria-label', 'Node status');
-        btn.addEventListener('click', () => NodePill._openSheet());
-        btn.appendChild(document.createElement('span'));
-        slot.appendChild(btn);
-      }
-      btn.className = 'inline-flex items-center gap-1.5 px-2 py-0.5 ' +
-        'rounded-full border text-xs font-medium ' + style.tone;
-      const dot = btn.firstElementChild;
-      dot.className = 'w-2 h-2 rounded-full shrink-0 ' + style.dot;
-      btn.title = 'Node: ' + style.label;
-      if (window.HeaderLayout && HeaderLayout.refresh) HeaderLayout.refresh();
+      dot.className = 'w-2.5 h-2.5 rounded-full shrink-0 ' + style.dot;
+      statusEl.textContent = style.label;
+      statusEl.className = 'ml-auto text-xs font-medium ' +
+        style.tone.split(' ').filter((c) => !c.startsWith('border')).join(' ');
     },
 
     // -- detail sheet ---------------------------------------------------

@@ -3925,6 +3925,143 @@
   };
 
   // =====================================================================
+  //  Public API: native profile & settings (bridge v3)
+  //  (usernode.getProfileInfo / getSettingsState / setNodeSleepEnabled /
+  //   setDebugMode / setFacematchStrict / resetZkChallenge /
+  //   requestPermissions / openBatterySettings / setIosKeepAlive /
+  //   logout)
+  // =====================================================================
+  //
+  // Backs SV's #profile screen and the "Usernode app" sections of the
+  // Settings modal (profile-and-settings-to-web migration). Contract:
+  // NATIVE-BRIDGE.md. Reads resolve null on old builds / outside the app
+  // so callers can capability-gate UI; mutations REJECT on old builds —
+  // a silent no-op would leave a toggle lying about its state. The app
+  // additionally refuses callers that aren't the SV top frame.
+
+  // getSettingsState assembles platform-permission probes plus native
+  // provider reads (the terms lookup alone can take ~5s on a cold
+  // start), and every setter resolves the same refreshed snapshot — so
+  // they all share this budget rather than the short probe timeout.
+  var _SETTINGS_STATE_TIMEOUT_MS = 12000;
+  // requestPermissions blocks on an OS permission dialog the user may
+  // ponder for a while; the ceiling here is purely defensive.
+  var _PERMISSION_REQUEST_TIMEOUT_MS = 120000;
+
+  function callNativeChromeAction(method, args, timeoutMs) {
+    if (!window.usernode.isNative) {
+      return Promise.reject(new Error(
+        method + " is only available inside the Usernode mobile app."
+      ));
+    }
+    return new Promise(function (resolve, reject) {
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true;
+        reject(new Error(method + " is not supported by this app build"));
+      }, timeoutMs);
+      callNative(method, args).then(
+        function (v) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve(v);
+        },
+        function (err) {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(err);
+        }
+      );
+    });
+  }
+
+  // getProfileInfo() → { participantId } or null (old build / outside
+  // the app). participantId is null when this install hasn't registered
+  // with the leaderboard yet.
+  window.usernode.getProfileInfo = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getProfileInfo", {}, _CHROME_PROBE_TIMEOUT_MS, null
+    );
+  };
+
+  // getSettingsState() → { buildInfo: { appVersion, buildNumber,
+  //   nodeVersion, commitHash, branch }, nodeSleepEnabled, debugMode,
+  //   facematchStrict, termsAccepted, authStatus,
+  //   permissions: { platform, exactAlarmGranted, batteryOptDisabled,
+  //   deviceManufacturer, iosKeepAliveActive } } or null.
+  window.usernode.getSettingsState = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getSettingsState", {}, _SETTINGS_STATE_TIMEOUT_MS, null
+    );
+  };
+
+  // Toggle setters. Each resolves the refreshed settings state (same
+  // shape as getSettingsState) so callers re-render from one source of
+  // truth instead of assuming the write landed.
+  window.usernode.setNodeSleepEnabled = function (enabled) {
+    return callNativeChromeAction(
+      "setNodeSleepEnabled", { enabled: !!enabled },
+      _SETTINGS_STATE_TIMEOUT_MS
+    );
+  };
+
+  window.usernode.setDebugMode = function (enabled) {
+    return callNativeChromeAction(
+      "setDebugMode", { enabled: !!enabled }, _SETTINGS_STATE_TIMEOUT_MS
+    );
+  };
+
+  window.usernode.setFacematchStrict = function (enabled) {
+    return callNativeChromeAction(
+      "setFacematchStrict", { enabled: !!enabled },
+      _SETTINGS_STATE_TIMEOUT_MS
+    );
+  };
+
+  // setIosKeepAlive(enabled) → refreshed settings state. iOS only; the
+  // app ignores it elsewhere (state simply won't change).
+  window.usernode.setIosKeepAlive = function (enabled) {
+    return callNativeChromeAction(
+      "setIosKeepAlive", { enabled: !!enabled }, _SETTINGS_STATE_TIMEOUT_MS
+    );
+  };
+
+  // resetZkChallenge() → true. Destructive: confirmation is the
+  // caller's job (web-side confirm, native commit).
+  window.usernode.resetZkChallenge = function () {
+    return callNativeChromeAction(
+      "resetZkChallenge", {}, _SETTINGS_STATE_TIMEOUT_MS
+    );
+  };
+
+  // requestPermissions() → refreshed settings state plus { granted }.
+  // May pend on an OS permission dialog.
+  window.usernode.requestPermissions = function () {
+    return callNativeChromeAction(
+      "requestPermissions", {}, _PERMISSION_REQUEST_TIMEOUT_MS
+    );
+  };
+
+  // openBatterySettings() → true. Android: opens the system battery
+  // optimization settings for the app.
+  window.usernode.openBatterySettings = function () {
+    return callNativeChromeAction(
+      "openBatterySettings", {}, _CHROME_PROBE_TIMEOUT_MS
+    );
+  };
+
+  // logout() → true. Confirm web-side; the post-logout auth flow stays
+  // native chrome (same category as onboarding).
+  window.usernode.logout = function () {
+    return callNativeChromeAction("logout", {}, _SETTINGS_STATE_TIMEOUT_MS);
+  };
+
+  // =====================================================================
   //  Public API: LLM access (usernode.requestLlmAccess / getLlmAccess /
   //  getLlmUsage)
   // =====================================================================

@@ -70,6 +70,7 @@ const SHELL_ASSETS = [
   '/js/node-pill.js',
   '/js/notifications.js',
   '/js/offline.js',
+  '/js/profile.js',
   '/js/proposal-discuss.js',
   '/js/screenshot-select.js',
   '/js/settings.js',

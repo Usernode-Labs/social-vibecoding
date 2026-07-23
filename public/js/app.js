@@ -24,6 +24,9 @@ const App = {
   // Same for the #challenges screen (app-as-SV-chrome migration) — set
   // by navigateToChallenges() / _exitChallenges() / navigateHome().
   _inChallenges: false,
+  // Same for the #profile screen (profile-and-settings-to-web migration)
+  // — set by navigateToProfile() / _exitProfile() / navigateHome().
+  _inProfile: false,
 
   // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -2210,6 +2213,7 @@ const App = {
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
         else if (App._inChallenges) App.navigateHome();
+        else if (App._inProfile) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -2258,6 +2262,11 @@ const App = {
       if (parts[0] === 'challenges') {
         App.setChromeless(false);
         App.navigateToChallenges();
+        return;
+      }
+      if (parts[0] === 'profile') {
+        App.setChromeless(false);
+        App.navigateToProfile();
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
@@ -2318,6 +2327,7 @@ const App = {
         }
         if (App._inLeaderboard) App._exitLeaderboard();
         if (App._inChallenges) App._exitChallenges();
+        if (App._inProfile) App._exitProfile();
         App.setChromeless(chromeless);
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
@@ -2333,6 +2343,7 @@ const App = {
         App.setChromeless(false);
         if (App._inLeaderboard) App._exitLeaderboard();
         if (App._inChallenges) App._exitChallenges();
+        if (App._inProfile) App._exitProfile();
         App.setHeaderTitle('dApps');
         Home.load();
       }
@@ -2418,6 +2429,7 @@ const App = {
       App.currentApp = null;
     }
     if (App._inChallenges) App._exitChallenges();
+    if (App._inProfile) App._exitProfile();
     const screen = document.getElementById('leaderboard-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -2463,6 +2475,7 @@ const App = {
       App.currentApp = null;
     }
     if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
     const screen = document.getElementById('challenges-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -2486,6 +2499,45 @@ const App = {
     const screen = document.getElementById('challenges-screen');
     if (screen) screen.classList.add('hidden');
     if (window.Challenges?.close) Challenges.close();
+  },
+
+  // Show the profile screen (profile-and-settings-to-web migration).
+  // Sibling to navigateToChallenges — hides home + app, reveals the
+  // dedicated #profile-screen, lets the Profile module render itself
+  // into #profile-root.
+  navigateToProfile() {
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inChallenges) App._exitChallenges();
+    const screen = document.getElementById('profile-screen');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.add('hidden');
+      const lb = document.getElementById('leaderboard-screen');
+      if (lb) lb.classList.add('hidden');
+      const ch = document.getElementById('challenges-screen');
+      if (ch) ch.classList.add('hidden');
+      if (screen) screen.classList.remove('hidden');
+    }, { type: fromIframe ? 'none' : 'push' });
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    App.setHeaderTitle('Profile');
+    App._inProfile = true;
+    if (window.Profile?.open) Profile.open();
+  },
+
+  _exitProfile() {
+    App._inProfile = false;
+    const screen = document.getElementById('profile-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.Profile?.close) Profile.close();
   },
 
   // Push a new history entry on real screen transitions (entering an
@@ -2928,6 +2980,7 @@ const App = {
     App.currentApp = slug;
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inChallenges) App._exitChallenges();
+    if (App._inProfile) App._exitProfile();
     // Real screen navigation. From the home feed the app view expands
     // out of the clicked tile (iOS-homescreen zoom, see _zoomInFromTile);
     // from anywhere else (deep link, history restore, tile off-screen,
@@ -3010,6 +3063,7 @@ const App = {
     App.currentApp = null;
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inChallenges) App._exitChallenges();
+    if (App._inProfile) App._exitProfile();
     // Preferred: shrink the app view back into its home tile
     // (_zoomOutToTile reveals home and clears #app-content itself).
     const zoomed = leavingSlug ? App._zoomOutToTile(leavingSlug) : false;

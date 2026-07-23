@@ -19,7 +19,7 @@ detect with `getBridgeInfo`.
 - `version` bumps only on breaking changes. New methods are additive and
   appear in `capabilities`.
 - Feature-detect with `capabilities.includes('<method>')`, not `version`.
-- Current version: **2**.
+- Current version: **3**.
 
 ## Methods
 
@@ -115,10 +115,69 @@ sends, which run through the shell's bridge).
 
 #### `openNativeScreen({ screen })` → `true`
 
-Pushes an allowlisted native route. Allowed screens: `settings`, `profile`.
-Rejected for any other value, and rejected entirely unless the top frame is
-the trusted SV origin (sub-apps cannot drive native navigation). Escape
-hatch for chrome that stays native while SV owns the rest of the UI.
+Pushes an allowlisted native route. Allowed screens: `settings`, `profile`
+(legacy — both now have web equivalents), plus the v3 deep-link additions
+`benchmark`, `httpLogs`, and `terms`. Rejected for any other value, and
+rejected entirely unless the top frame is the trusted SV origin (sub-apps
+cannot drive native navigation). Escape hatch for chrome that stays native
+while SV owns the rest of the UI.
+
+### Profile & settings (v3 — profile-and-settings-to-web migration)
+
+All v3 methods are trusted-SV-origin gated like `openNativeScreen`. They
+power SV's `#profile` screen (`public/js/profile.js`) and the "Usernode
+app" sections in SV's Settings modal (`public/js/settings.js`).
+
+#### `getProfileInfo()` → `{ participantId }`
+
+`participantId` is the leaderboard participant id (number), or `null` when
+the user hasn't registered. SV's profile screen uses it to query the
+leaderboard API (`/me/ranking`, `/me/breakdown`) through the SV server's
+`/challenges-api` proxy.
+
+#### `getSettingsState()` → settings snapshot
+
+```json
+{
+  "buildInfo": {
+    "appVersion": "1.4.2", "buildNumber": "87",
+    "nodeVersion": "0.9.1", "commitHash": "a1b2c3d", "branch": "develop"
+  },
+  "nodeSleepEnabled": true,
+  "debugMode": false,
+  "facematchStrict": true,
+  "termsAccepted": true,          // null while terms haven't loaded
+  "authStatus": "authenticated",  // AuthStatus enum name
+  "permissions": {
+    "platform": "android",        // android | ios
+    "exactAlarmGranted": true,
+    "batteryOptDisabled": false,  // Android only, else null
+    "deviceManufacturer": "samsung", // Android only, else null
+    "iosKeepAliveActive": null    // iOS only, else null
+  }
+}
+```
+
+Permission probes and terms loading can take a few seconds on a fresh app
+start; the bridge wrapper uses a longer (12s) timeout for this method.
+
+#### Setters — each resolves the refreshed settings snapshot
+
+| Method | Args | Effect |
+|---|---|---|
+| `setNodeSleepEnabled(enabled)` | `{ enabled: bool }` | toggles node sleep on inactivity |
+| `setDebugMode(enabled)` | `{ enabled: bool }` | toggles the app's debug mode |
+| `setFacematchStrict(enabled)` | `{ enabled: bool }` | toggles strict ZK-passport facematch |
+| `setIosKeepAlive(enabled)` | `{ enabled: bool }` | starts/stops the iOS foreground keep-alive |
+| `requestPermissions()` | — | native alarm-permission prompt; snapshot plus a `granted` bool |
+
+#### Actions — resolve `true`
+
+| Method | Effect |
+|---|---|
+| `resetZkChallenge()` | discards in-progress ZK identity registration (confirm web-side first) |
+| `openBatterySettings()` | opens Android battery-optimization settings |
+| `logout()` | logs out of the app account; the native auth flow takes over (confirm web-side first) |
 
 ## Trust model
 
