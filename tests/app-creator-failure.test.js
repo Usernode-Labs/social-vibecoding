@@ -208,6 +208,48 @@ test('GitHub enabled + createRepo failure ends status=error with stage repo', as
   assert.ok(push && push.errorReason.includes('GitHub repo creation failed'));
 });
 
+// Adopt-existing (mypage-777ed2 incident): a Retry after a create that
+// died between the GitHub create call and the repo_url persist re-runs
+// with the SAME slug — the repo already exists on the bot account. The
+// real createRepo resolves that 422 to the existing repo when the caller
+// passes adoptExisting; this test pins that createApp opts in, so the
+// retry proceeds to a running deploy instead of flipping to error.
+test('GitHub enabled + repo already exists on retry adopts it and deploys to running', async () => {
+  let sawAdoptOption = false;
+  const { appCreator, pool, statusPushes } = loadAppCreator({
+    githubStubs: {
+      isEnabled: () => true,
+      createRepo: async (owner, slug, opts = {}) => {
+        sawAdoptOption = !!opts.adoptExisting;
+        if (!opts.adoptExisting) {
+          const err = new Error('Repository creation failed.: name already exists on this account');
+          err.status = 422;
+          throw err;
+        }
+        // Real createRepo adopts: fetches and returns the existing repo.
+        return { html_url: `https://github.com/${owner}/${slug}` };
+      },
+    },
+  });
+
+  await appCreator.createApp({ jwtSecret: 's' }, {
+    id: 42, name: 'Test App', slug: 'test-app', self_hosted: false,
+  });
+
+  assert.equal(sawAdoptOption, true, 'createApp must opt into adopt-existing');
+
+  const repoWrite = pool.queries.find((q) => /SET repo_url = \$1/.test(q.sql));
+  assert.ok(repoWrite, 'expected repo_url persisted from the adopted repo');
+  assert.equal(repoWrite.params[0], 'https://github.com/usernode-bot/test-app');
+
+  assert.ok(!pool.queries.some((q) => /SET status = \$1 WHERE/.test(q.sql) && q.params[0] === 'error'),
+    'no error flip when the existing repo is adopted');
+  const successWrite = pool.queries.find((q) => /last_failure = NULL/.test(q.sql));
+  assert.ok(successWrite, 'expected the success UPDATE');
+  assert.equal(successWrite.params[0], 'running');
+  assert.ok(statusPushes.some((p) => p.status === 'running'));
+});
+
 test('GitHub disabled keeps the local-template fallback deploying to running', async () => {
   const { appCreator, pool, statusPushes } = loadAppCreator(); // isEnabled: () => false
 

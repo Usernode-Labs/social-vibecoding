@@ -48,6 +48,7 @@ function freshFixtures() {
     githubEnabled: true,
     repoCreateCalls: [],
     repoCreateError: null,
+    repoAdopted: false,
     pushFilesCalls: [],
   };
 }
@@ -93,9 +94,17 @@ stub(ids.deployStatus, {
 stub(ids.github, {
   isEnabled: () => fx.githubEnabled,
   getBotUsername: async () => 'usernode-bot',
-  createRepo: async (owner, slug) => {
-    fx.repoCreateCalls.push({ owner, slug });
-    if (fx.repoCreateError) throw fx.repoCreateError;
+  createRepo: async (owner, slug, opts = {}) => {
+    fx.repoCreateCalls.push({ owner, slug, adoptExisting: !!opts.adoptExisting });
+    if (fx.repoCreateError) {
+      // Mirror the real createRepo's adopt-existing semantics: a 422
+      // "name already exists" resolves to the existing repo when the
+      // caller opted in; every other error propagates.
+      const isNameExists = fx.repoCreateError.status === 422
+        && /already exists/i.test(fx.repoCreateError.message || '');
+      if (!(opts.adoptExisting && isNameExists)) throw fx.repoCreateError;
+      fx.repoAdopted = true;
+    }
     return { html_url: `https://github.com/${owner}/${slug}` };
   },
   pushFiles: async (owner, slug) => { fx.pushFilesCalls.push({ owner, slug }); },
@@ -285,7 +294,8 @@ test('running app with repo_url NULL gets its repo provisioned and prod rebuilt'
   const r = await appHeal.checkAndHealOne(config, fakePool, app({ repo_url: null }));
   assert.equal(r.status, 'repo_provisioned');
 
-  assert.deepEqual(fx.repoCreateCalls, [{ owner: 'usernode-bot', slug: 'puzzle-chain' }]);
+  assert.deepEqual(fx.repoCreateCalls,
+    [{ owner: 'usernode-bot', slug: 'puzzle-chain', adoptExisting: true }]);
   assert.deepEqual(fx.pushFilesCalls, [{ owner: 'usernode-bot', slug: 'puzzle-chain' }]);
 
   const repoWrite = fx.queries.find((q) => /UPDATE apps SET repo_url/.test(q.sql));
@@ -296,6 +306,46 @@ test('running app with repo_url NULL gets its repo provisioned and prod rebuilt'
   const update = fx.queries.find((q) => /UPDATE apps SET container_id/.test(q.sql));
   assert.ok(update, 'rebuild result persisted');
   assert.equal(update.params[0], 'rebuilt-id');
+});
+
+// The mypage-777ed2 incident: the repo already exists on the bot account
+// (the original create died between the GitHub create call and the
+// repo_url persist), so a plain create 422s "name already exists" on
+// every sweep forever. With adoptExisting the sweep adopts the orphan
+// and completes the provisioning normally.
+test('repo provisioning adopts a repo that already exists on the bot account', async () => {
+  fx.containerStatus = 'running';
+  const err = new Error(
+    'Repository creation failed.: {"resource":"Repository","code":"custom","field":"name","message":"name already exists on this account"}'
+  );
+  err.status = 422;
+  fx.repoCreateError = err;
+
+  const r = await appHeal.checkAndHealOne(config, fakePool, app({ repo_url: null }));
+  assert.equal(r.status, 'repo_provisioned');
+  assert.equal(fx.repoAdopted, true, 'expected the adopt path, not a fresh create');
+  assert.deepEqual(fx.pushFilesCalls, [{ owner: 'usernode-bot', slug: 'puzzle-chain' }]);
+
+  const repoWrite = fx.queries.find((q) => /UPDATE apps SET repo_url/.test(q.sql));
+  assert.ok(repoWrite, 'expected the repo_url persist');
+  assert.equal(repoWrite.params[0], 'https://github.com/usernode-bot/puzzle-chain');
+
+  assert.deepEqual(fx.rebuildCalls, ['puzzle-chain'], 'prod converges via rebuildProduction');
+});
+
+test('non-422 provisioning error still fails the heal and stamps the cooldown', async () => {
+  fx.containerStatus = 'running';
+  const err = new Error('GitHub is down');
+  err.status = 503;
+  fx.repoCreateError = err;
+
+  const first = await appHeal.checkAndHealOne(config, fakePool, app({ repo_url: null }));
+  assert.equal(first.status, 'heal_failed');
+  assert.equal(fx.repoAdopted, false);
+
+  const second = await appHeal.checkAndHealOne(config, fakePool, app({ repo_url: null }));
+  assert.equal(second.status, 'cooldown');
+  assert.equal(fx.repoCreateCalls.length, 1, 'no second GitHub attempt within cooldown');
 });
 
 test('repo provisioning failure warns and sticks to cooldown, then retries after it lapses', async () => {

@@ -140,8 +140,16 @@ async function provisionMissingRepo(config, pool, app) {
   const { getTemplateFiles } = require('./template');
 
   const botUsername = await github.getBotUsername();
+  // adoptExisting: the create-time failure that produces a repo-less app
+  // usually fired AFTER the GitHub create call succeeded (between it and
+  // the repo_url persist), so the repo typically already exists on the
+  // bot account — a plain create would 422 "name already exists" on
+  // every sweep forever. Adopting it is safe: this app has never merged
+  // anything (no repo_url → no PRs), and the template push below just
+  // commits on top of whatever the orphan contains.
   const repo = await github.createRepo(botUsername, app.slug, {
     description: `${app.name} — built on Usernode Social Vibecoding`,
+    adoptExisting: true,
   });
   const repoUrl = repo.html_url;
 
