@@ -1,6 +1,11 @@
 const AppView = {
   appData: null,
   iframeToken: null,
+  // #743: validated inner app path (path+query, wire-encoded) from a
+  // chromeless deep link (#app/<slug>/full?path=/t/123). Written by
+  // App.restoreFromHash on every pass (null when the hash carries none),
+  // consumed by buildAppIframeSrc, cleared by close().
+  pendingInnerPath: null,
 
   // #621: true when the viewer may see the app (view access) but is not
   // a collaborator on an invite-only-build app. The Dev tab renders,
@@ -316,6 +321,7 @@ const AppView = {
       DevConsole.setCurrentApp(null);
     }
     if (window.Secrets) Secrets.hide();
+    AppView.pendingInnerPath = null;
     const slot = document.getElementById('app-version-pill-slot');
     if (slot) slot.innerHTML = '';
     const forkSlot = document.getElementById('app-fork-badge-slot');
@@ -332,16 +338,37 @@ const AppView = {
     } catch {}
   },
 
+  // Compose the production iframe src from the app origin, the pending
+  // chromeless inner path (#743), and the iframe token — same URL-API
+  // pattern as the staging buildSrc below, so an inner query composes
+  // with the token param (and searchParams.set clobbers any `token`
+  // smuggled inside the forwarded path). The origin check means a
+  // hostile path (`/\evil.com` and friends) can never point the iframe
+  // off the app's own origin — it falls back to the app root.
+  buildAppIframeSrc() {
+    const appUrl = resolveDevHost(AppView.appData.url);
+    let url;
+    try {
+      url = new URL(AppView.pendingInnerPath || '/', appUrl);
+      if (url.origin !== new URL(appUrl).origin) url = new URL(appUrl);
+    } catch {
+      try { url = new URL(appUrl); } catch { return appUrl; }
+    }
+    if (AppView.iframeToken) url.searchParams.set('token', AppView.iframeToken);
+    return url.toString();
+  },
+
   startTokenRefresh() {
     AppView.stopTokenRefresh();
     AppView.tokenRefreshInterval = setInterval(async () => {
       await AppView.refreshToken();
       // Rewrite the iframe src so the child app picks up the fresh token.
       // Only when the App tab is the visible one; other tabs re-fetch on
-      // next render anyway.
+      // next render anyway. Reuses the inner deep link so a mid-session
+      // refresh doesn't yank the viewer back to the app root (#743).
       const iframe = document.getElementById('app-iframe');
       if (iframe && AppView.appData?.url && AppView.iframeToken) {
-        iframe.src = `${resolveDevHost(AppView.appData.url)}?token=${AppView.iframeToken}`;
+        iframe.src = AppView.buildAppIframeSrc();
       }
     }, AppView.TOKEN_REFRESH_MS);
   },
@@ -446,10 +473,7 @@ const AppView = {
       return;
     }
 
-    const appUrl = resolveDevHost(appData.url);
-    const iframeSrc = AppView.iframeToken
-      ? `${appUrl}?token=${AppView.iframeToken}`
-      : appUrl;
+    const iframeSrc = AppView.buildAppIframeSrc();
 
     content.innerHTML = `
       <iframe

@@ -2207,7 +2207,14 @@ const App = {
   restoreFromHash() {
     App._isRestoring = true;
     try {
-      const hash = location.hash.replace('#', '');
+      const rawHash = location.hash.replace('#', '');
+      // Fragment-query (#743): a chromeless deep link carries the app's
+      // inner path after a `?` INSIDE the fragment
+      // (#app/<slug>/full?path=/t/123). Split it off before the segment
+      // split so every existing route parses byte-for-byte as before.
+      const qIdx = rawHash.indexOf('?');
+      const hash = qIdx === -1 ? rawHash : rawHash.slice(0, qIdx);
+      const fragQuery = qIdx === -1 ? '' : rawHash.slice(qIdx + 1);
       if (!hash) {
         App.setChromeless(false);
         if (App.currentApp) App.navigateHome();
@@ -2288,6 +2295,18 @@ const App = {
         // below and get the regular App tab — a graceful degrade.
         const chromeless = tab === 'full';
         if (chromeless) tab = 'app';
+        // Inner-path pass-through (#743): `path` is defined as the FINAL
+        // fragment-query param — its value is everything after the first
+        // `path=`, verbatim in wire encoding (an inner query may carry
+        // `&` / `=` / `?`, and the Caddy rescue redirect can't
+        // percent-encode placeholders, so no URLSearchParams here).
+        // Honored only on the chromeless route; every other route
+        // ignores the fragment-query entirely.
+        let innerPath = null;
+        if (chromeless && fragQuery) {
+          const pm = fragQuery.match(/(?:^|&)path=(.*)$/);
+          if (pm) innerPath = App._validateInnerPath(pm[1]);
+        }
         if (tab === 'dev') {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
@@ -2329,14 +2348,29 @@ const App = {
         if (App._inChallenges) App._exitChallenges();
         if (App._inProfile) App._exitProfile();
         App.setChromeless(chromeless);
+        // Stash the validated inner path where renderAppTab / the token
+        // refresh read it. Set on EVERY pass (null when absent) so
+        // leaving chromeless — e.g. via the pill — clears it without a
+        // re-render of the already-mounted iframe.
+        const prevInnerPath = typeof AppView !== 'undefined'
+          ? (AppView.pendingInnerPath || null) : null;
+        if (typeof AppView !== 'undefined') AppView.pendingInnerPath = innerPath;
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
+          // navigateToApp's synchronous prefix runs AppView.close() when
+          // jumping app-to-app, which clears pendingInnerPath — re-stash
+          // after the call (renderAppTab only runs once the awaited
+          // open() inside it resolves, so this always lands in time).
+          if (typeof AppView !== 'undefined') AppView.pendingInnerPath = innerPath;
         } else if (App.currentTab !== tab
             || (tab === 'dev' && App.currentSubTab !== subTab)
             // Same tab + sub-tab but a (possibly different) deep-link
             // target — re-dispatch so the accordion / session moves.
             // switchTab is idempotent, so a same-target re-render is fine.
-            || (tab === 'dev' && ref != null)) {
+            || (tab === 'dev' && ref != null)
+            // A chromeless hash carrying a DIFFERENT inner path than the
+            // one already applied — re-render so the iframe moves (#743).
+            || (chromeless && innerPath !== prevInnerPath)) {
           App.switchTab(tab, ref, subTab);
         }
       } else {
@@ -2350,6 +2384,25 @@ const App = {
     } finally {
       App._isRestoring = false;
     }
+  },
+
+  // Client-side mirror of testing-notes.validatePath (see
+  // src/services/testing-notes.js) for the chromeless inner path (#743):
+  // relative-only (leading `/`, never `//` — protocol-relative), no
+  // whitespace/control chars, and none of \ ` ' " < > — the src is
+  // interpolated into an innerHTML template in renderAppTab, so the
+  // blacklist is attribute-breakout defense on top of the URL-API origin
+  // check in AppView.buildAppIframeSrc. Invalid → null (app root, never
+  // an error).
+  _validateInnerPath(p) {
+    if (typeof p !== 'string') return null;
+    const path = p.trim();
+    if (!path || path.length > 512) return null;
+    if (!path.startsWith('/') || path.startsWith('//')) return null;
+    if (/[\s\\`'"<>]/.test(path)) return null;
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f\x7f]/.test(path)) return null;
+    return path;
   },
 
   // ── Chromeless full-screen mode ──────────────────────────────────────
@@ -2571,9 +2624,14 @@ const App = {
         }
       } else {
         // Chromeless mode round-trips through reloads/history via its
-        // own hash segment; the regular App tab keeps `/app`.
+        // own hash segment; the regular App tab keeps `/app`. An active
+        // inner deep link (#743) rides along as the final fragment param
+        // so the post-load hash rewrite doesn't strip it and
+        // reload/back/forward reproduce the shared screen.
+        const innerPath = (App.chromeless && typeof AppView !== 'undefined'
+          && AppView.pendingInnerPath) || null;
         newHash = App.chromeless
-          ? `#app/${App.currentApp}/full`
+          ? `#app/${App.currentApp}/full${innerPath ? `?path=${innerPath}` : ''}`
           : `#app/${App.currentApp}/app`;
       }
     } else {
@@ -2595,7 +2653,9 @@ const App = {
     // the same kind replaces in place).
     const SUB_SCREENS = new Set(['sessions', 'chat', 'issues', 'proposals', 'governance', 'shared']);
     const screenIdOf = (h) => {
-      const segs = String(h || '').replace(/^#/, '').split('/');
+      // Strip the fragment-query (#743) so #app/x/full?path=/t/1 and
+      // #app/x/full are the SAME screen (replace, not a spurious push).
+      const segs = String(h || '').replace(/^#/, '').split('?')[0].split('/');
       if (segs[0] === 'app' && segs[2] === 'dev') {
         return SUB_SCREENS.has(segs[3])
           ? segs.slice(0, 4).join('/')

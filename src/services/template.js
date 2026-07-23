@@ -277,15 +277,24 @@ app.use(express.static(path.join(__dirname, 'public')));
 // app iframe and stray visits still don't reveal the app.
 app.get('*', (req, res) => {
   if (!req.user) {
+    // Deep-link pass-through (platform #743): carry the visited
+    // path+query into the chromeless view so share links land on the
+    // shared screen, not Home. \`path\` must stay the FINAL fragment
+    // param and its value goes verbatim (wire-encoded; the shell
+    // validates relative-only before use). The character test keeps the
+    // value attribute-safe for the landing anchor below — anything
+    // unusual falls back to the bare link.
+    const deepPath = /^\\/[A-Za-z0-9\\-._~!$&()*+,;=:@\\/%?]*$/.test(req.originalUrl)
+      ? '?path=' + req.originalUrl : '';
     if (req.get('sec-fetch-dest') === 'document') {
-      return res.redirect(302, '${PLATFORM_BASE_URL}/#app/${slug}/full');
+      return res.redirect(302, '${PLATFORM_BASE_URL}/#app/${slug}/full' + deepPath);
     }
     return res.status(401).send(\`<!doctype html><meta charset=utf-8><title>Open in Usernode</title>
 <body style="font-family:system-ui;background:#09090b;color:#e4e4e7;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
   <div style="max-width:24rem;padding:2rem;text-align:center">
     <h1 style="font-size:1.25rem;margin:0 0 0.5rem">Open this app inside Usernode</h1>
     <p style="color:#a1a1aa;font-size:0.9rem;margin:0 0 1.25rem">This page is served via the platform; direct visits aren't authenticated.</p>
-    <a href="${PLATFORM_BASE_URL}/#app/${slug}/full" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Usernode</a>
+    <a href="${PLATFORM_BASE_URL}/#app/${slug}/full\${deepPath}" style="display:inline-block;padding:0.5rem 1rem;background:#7c3aed;color:white;border-radius:0.5rem;text-decoration:none;font-size:0.9rem">Open in Usernode</a>
   </div>
 </body>\`);
   }

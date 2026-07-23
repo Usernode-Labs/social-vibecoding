@@ -97,6 +97,40 @@ When adding a new API route, assume `req.user` is present. If a brand
 new endpoint **must** be public (e.g. a webhook), add its path to
 `PUBLIC_API_PATHS` and mention this in the dev-chat reply.
 
+### Chromeless deep links — forwarding share-link paths
+
+An unauthenticated **top-level document** visit to the app's own
+subdomain (a share link pasted into a browser) can't be served — the
+iframe token only exists inside the platform shell. The scaffold
+redirects such visits to the platform's chromeless view of the app:
+
+```
+<PLATFORM_BASE_URL>/#app/<slug>/full?path=<req.originalUrl>
+```
+
+The shell then embeds the app with a real token AND forwards the inner
+path+query into the iframe, so the visitor lands on the shared screen
+instead of the app's home. Contract for the `?path=` param (all inside
+the URL **fragment**):
+
+- The value is the app-relative path+query **verbatim in wire format**
+  (exactly `req.originalUrl` — already percent-encoded; do NOT
+  `encodeURIComponent` it, the shell does not decode it).
+- `path` must be the **final** fragment param — the shell takes
+  everything after the first `path=` as the value, so an inner query's
+  own `&`/`=`/`?` survive.
+- Relative-only: the value must start with a single literal `/` (a
+  `%2F`-encoded leading slash is rejected), never `//`, no scheme or
+  host, no whitespace or `` \ ` ' " < > ``, ≤ 512 chars. The shell
+  drops anything else and loads the app root.
+
+When redirecting, gate on `req.get('sec-fetch-dest') === 'document'`
+(as the scaffold does) so the platform shell is never loaded inside its
+own app iframe. Apps generated before this convention can adopt it by
+appending `'?path=' + req.originalUrl` to their existing chromeless
+redirect (see the current scaffold's `server.js` for the attribute-safe
+character check used on the landing-page anchor).
+
 ## Database
 
 - Each app gets its own Postgres DB. Schema is applied idempotently
