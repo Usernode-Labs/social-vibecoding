@@ -292,20 +292,23 @@ const Home = {
       }
     });
 
-    // Kit drag on every app card in the sectioned view: long-press
-    // lifts (haptic tick), the card tracks the finger 1:1, edge
-    // auto-scroll and the spring settle come from the kit, and the
-    // kit's gesture arbiter keeps it from fighting scrolling /
-    // pull-to-refresh. Indices span the whole matched list, so
-    // canDropCard vetoes the meaningless slots (All Apps isn't
-    // reorderable) and _onKitCardDrop classifies the rest against the
-    // yoursCount boundary: reorder within "Your apps", add from All
-    // Apps (issue #746), or remove by dragging out. onLift/onSettle
-    // hold _dragActive so a WS-driven Home.load() can't replace the
-    // grid under the gesture (the legacy path's guard, now shared).
+    // Kit drag on every app card in the sectioned view, in the kit's
+    // grid (displacement) mode: long-press lifts a floating ghost that
+    // tracks the finger on both axes, the real card stays in the grid
+    // as a dashed drop slot, siblings FLIP aside as the slot moves, and
+    // drops are cell-accurate (XY hit-testing, not row-only). Edge
+    // auto-scroll, springs, and the gesture arbiter come from the kit.
+    // Indices span the whole matched list, so canDropCard vetoes the
+    // meaningless slots (All Apps isn't reorderable) and _onKitCardDrop
+    // classifies the rest against the yoursCount boundary: reorder
+    // within "Your apps", add from All Apps (issue #746), or remove by
+    // dragging out. onLift/onSettle hold _dragActive so a WS-driven
+    // Home.load() can't replace the grid under the gesture (the legacy
+    // path's guard, now shared).
     if (Home._useKitReorder() && yoursCount != null) {
       if (Home._reorderHandle) { try { Home._reorderHandle.detach(); } catch {} }
       Home._reorderHandle = window.unNative.attachReorder(listEl, {
+        grid: true,
         itemSelector: '.app-card:not([data-demo])',
         canDrop: (item, to) => Home.canDropCard(item.dataset.yours === 'true', to, yoursCount),
         onLift: () => { Home._dragActive = true; },

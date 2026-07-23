@@ -30,6 +30,7 @@ const {
   isTextEntryField,
   revealScrollDelta,
   reorderDropIndex,
+  gridDropSide,
   autoScrollVelocity,
   createArbiter,
   createToastSlot,
@@ -515,6 +516,38 @@ test('reorderDropIndex: a section header / deadspace snaps to the NEAREST gap', 
 test('reorderDropIndex: degenerate input', () => {
   assert.equal(reorderDropIndex(50, []), 0);
   assert.equal(reorderDropIndex(50, null), 0);
+});
+
+// ── Grid reorder drop side (attachReorder grid mode) ───────────────────
+
+test('gridDropSide: a tile sharing its row splits at the horizontal midpoint', () => {
+  // 100px-wide tile at x 200..300 in a 1000px list (multi-column).
+  const tile = { left: 200, top: 100, width: 100, height: 120 };
+  assert.equal(gridDropSide(tile, 1000, 240, 160), 'before', 'left half → before');
+  assert.equal(gridDropSide(tile, 1000, 260, 160), 'after', 'right half → after');
+  // The y coordinate is irrelevant for multi-column tiles — top-right
+  // still reads as "after", bottom-left as "before".
+  assert.equal(gridDropSide(tile, 1000, 290, 101), 'after');
+  assert.equal(gridDropSide(tile, 1000, 210, 219), 'before');
+});
+
+test('gridDropSide: a full-width tile splits at the vertical midpoint', () => {
+  // Tile spanning (almost) the whole list — single-column layout.
+  const row = { left: 0, top: 100, width: 960, height: 80 };
+  assert.equal(gridDropSide(row, 1000, 480, 120), 'before', 'top half → before');
+  assert.equal(gridDropSide(row, 1000, 480, 170), 'after', 'bottom half → after');
+  // x is irrelevant for full-width rows.
+  assert.equal(gridDropSide(row, 1000, 950, 110), 'before');
+  assert.equal(gridDropSide(row, 1000, 10, 175), 'after');
+});
+
+test('gridDropSide: the ~90% width threshold separates the two regimes', () => {
+  // 89% of the list width → still a row-sharing tile (x decides)…
+  const narrow = { left: 0, top: 0, width: 890, height: 100 };
+  assert.equal(gridDropSide(narrow, 1000, 300, 90), 'before', 'x-left wins despite bottom y');
+  // …while 90%+ is treated as full-width (y decides).
+  const wide = { left: 0, top: 0, width: 900, height: 100 };
+  assert.equal(gridDropSide(wide, 1000, 300, 90), 'after', 'bottom y wins despite left x');
 });
 
 // ── Reorder edge auto-scroll ───────────────────────────────────────────

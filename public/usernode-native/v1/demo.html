@@ -99,6 +99,9 @@
         <div class="un-group-header mt-6">Swipe AND reorder (long-press to lift)</div>
         <div id="reorder-swipe" class="un-group shadow-sm"></div>
         <p class="text-xs text-zinc-500 mt-2">Same rows, two gestures: a horizontal drag swipes, a long-press (or vertical drag on desktop) reorders — the gesture arbiter keeps them from fighting.</p>
+        <div class="un-group-header mt-6">Grid reorder (homescreen displacement)</div>
+        <div id="reorder-grid" class="grid grid-cols-3 gap-3"></div>
+        <p class="text-xs text-zinc-500 mt-2"><code>grid: true</code>: long-press (or drag in any direction on desktop) lifts a floating ghost that tracks the pointer on both axes; the tiles slide aside and a dashed box marks the exact cell you'd drop into — like moving an icon on a phone home screen.</p>
       </section>
 
       <!-- Sheets & dialogs -->
@@ -325,6 +328,26 @@
       unNative.attachReorder(reorderSwipe, {
         onReorder: function (from, to) {
           reorderResult.textContent = 'Combined list reordered: ' + from + ' → ' + to + '.';
+        },
+      });
+
+      // Grid (displacement) reorder: homescreen-style tile grid. The
+      // dragged tile floats as a ghost, siblings FLIP aside, and the
+      // dashed slot marks the exact cell — grid: true.
+      var reorderGrid = document.getElementById('reorder-grid');
+      ['🎮', '🎧', '📷', '🗺️', '📚', '☕'].forEach(function (emoji, i) {
+        var tile = document.createElement('div');
+        tile.className = 'demo-grid-tile flex flex-col items-center gap-1.5 p-3 rounded-xl bg-white dark:bg-zinc-900 shadow-sm cursor-grab select-none';
+        tile.innerHTML =
+          '<div class="w-12 h-12 rounded-xl flex items-center justify-center text-2xl" style="background:color-mix(in srgb, var(--un-accent) 14%, transparent)">' + emoji + '</div>' +
+          '<div class="text-xs text-zinc-500">Tile ' + (i + 1) + '</div>';
+        reorderGrid.appendChild(tile);
+      });
+      unNative.attachReorder(reorderGrid, {
+        grid: true,
+        itemSelector: '.demo-grid-tile',
+        onReorder: function (from, to) {
+          reorderResult.textContent = 'Grid tile moved: cell ' + from + ' → ' + to + '.';
         },
       });
 
