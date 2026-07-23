@@ -1,6 +1,6 @@
-// Unit tests for #687 Slice 6 — checkAndMerge routes an IMPORTED merge
-// through the mock-GitHub client when the opt-in flag is on, exercising both
-// outcomes without real credentials:
+// Unit tests for #687 — checkAndMerge routes an IMPORTED merge through the
+// mock-GitHub client in staging (USERNODE_ENV === 'staging'), exercising
+// both outcomes without real credentials:
 //   - pinned sha matches the mock head → merge succeeds → shared finalizer runs;
 //   - pinned sha is stale (author pushed since the vote) → the mock refuses
 //     with a HeadMovedError, and checkAndMerge treats it as "head moved":
@@ -145,23 +145,22 @@ function mergeReadyPool() {
   ]);
 }
 
-function withFlags(fn) {
-  const prevE = process.env.PR_IMPORT_ENABLED;
-  const prevM = process.env.PR_IMPORT_MOCK_GITHUB;
-  process.env.PR_IMPORT_ENABLED = 'true';
-  process.env.PR_IMPORT_MOCK_GITHUB = 'true';
+// The mock merge client is selected whenever USERNODE_ENV === 'staging'
+// (see usesMockGithubForImports in config.js) — run the body in staging.
+function withStagingEnv(fn) {
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'staging';
   return (async () => {
     try { return await fn(); }
     finally {
-      if (prevE === undefined) delete process.env.PR_IMPORT_ENABLED; else process.env.PR_IMPORT_ENABLED = prevE;
-      if (prevM === undefined) delete process.env.PR_IMPORT_MOCK_GITHUB; else process.env.PR_IMPORT_MOCK_GITHUB = prevM;
+      if (prev === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prev;
     }
   })();
 }
 
 test('checkAndMerge (mock): imported merge with a matching head succeeds via the mock', async () => {
   githubMock._resetForTests();
-  await withFlags(async () => {
+  await withStagingEnv(async () => {
     const { subject, realMergeCalls, rebuildCalls, restore } = loadVotes();
     const pool = mergeReadyPool();
     try {
@@ -177,7 +176,7 @@ test('checkAndMerge (mock): imported merge with a matching head succeeds via the
 
 test('checkAndMerge (mock): a stale pinned head is refused (headMoved) and left recoverable', async () => {
   githubMock._resetForTests();
-  await withFlags(async () => {
+  await withStagingEnv(async () => {
     const { subject, realMergeCalls, voteUpdates, systemMessages, rebuildCalls, restore } = loadVotes();
     const pool = mergeReadyPool();
     try {
@@ -202,21 +201,18 @@ test('checkAndMerge (mock): a stale pinned head is refused (headMoved) and left 
   });
 });
 
-test('checkAndMerge (mock off): imported merge uses the REAL client, not the mock', async () => {
+test('checkAndMerge (production): imported merge uses the REAL client, not the mock', async () => {
   githubMock._resetForTests();
-  const prevE = process.env.PR_IMPORT_ENABLED;
-  const prevM = process.env.PR_IMPORT_MOCK_GITHUB;
-  process.env.PR_IMPORT_ENABLED = 'true';
-  delete process.env.PR_IMPORT_MOCK_GITHUB; // mock OFF
+  const prev = process.env.USERNODE_ENV;
+  process.env.USERNODE_ENV = 'production';
   const { subject, realMergeCalls, restore } = loadVotes();
   const pool = mergeReadyPool();
   try {
     await subject.checkAndMerge({ jwtSecret: 's' }, pool, importedSession('anyhead'), { force: true });
-    assert.equal(realMergeCalls.length, 1, 'real github.mergePR used when mock flag is off');
+    assert.equal(realMergeCalls.length, 1, 'real github.mergePR used outside staging');
     assert.equal(realMergeCalls[0].sha, 'anyhead', 'still pins the imported head sha');
   } finally {
     restore();
-    if (prevE === undefined) delete process.env.PR_IMPORT_ENABLED; else process.env.PR_IMPORT_ENABLED = prevE;
-    if (prevM === undefined) delete process.env.PR_IMPORT_MOCK_GITHUB; else process.env.PR_IMPORT_MOCK_GITHUB = prevM;
+    if (prev === undefined) delete process.env.USERNODE_ENV; else process.env.USERNODE_ENV = prev;
   }
 });

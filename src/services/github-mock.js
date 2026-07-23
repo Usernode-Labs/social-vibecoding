@@ -1,13 +1,13 @@
 'use strict';
 
-// #687 Slice 6 — opt-in in-memory mock GitHub source for the PR-import flow.
+// #687 — in-memory mock GitHub source for the PR-import flow.
 //
-// This is an EXPLICIT, opt-in testing adapter (never the silent default):
-// it is only ever consulted when `isPrImportMockGithubEnabled()` is true
-// (dapp.json ships PR_IMPORT_MOCK_GITHUB default:"false", staging_default:
-// "true"). Production keeps the flag off and always uses the real
-// services/github.js client. Selection is by MANIFEST VALUE only — no code
-// path here or in its callers branches on USERNODE_ENV.
+// Consulted only in STAGING previews (callers pick the client via
+// `usesMockGithubForImports()` in config.js, i.e. USERNODE_ENV ===
+// 'staging'). Staging previews of the platform have no GitHub credentials
+// (the GITHUB_* secrets are private), so the mock is what makes the
+// import → head-change → merge-409 flow exercisable there. Production
+// always uses the real services/github.js client.
 //
 // It exposes the exact subset of the github.js surface the imported-PR
 // consumers touch — isEnabled / listOpenPulls / getPR / listChangedFiles /
