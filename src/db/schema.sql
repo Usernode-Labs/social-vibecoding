@@ -462,9 +462,7 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 -- #687 (PR-import, Slice 1): provenance columns for proposals whose code
 -- was authored OUTSIDE the platform — an existing GitHub PR imported into
 -- the vote flow rather than opened by the group's AI dev-chat. Append-only:
--- these columns are inert until PR_IMPORT_ENABLED is turned on (later
--- slices add the routes/poller that populate them), and existing rows read
--- as native (source NULL/'native').
+-- existing rows read as native (source NULL/'native').
 --   source               = 'native' (implicit for every existing row; a
 --                          NULL value is treated as native) vs 'imported'.
 --                          Drives the "Imported PR" source badge + GitHub

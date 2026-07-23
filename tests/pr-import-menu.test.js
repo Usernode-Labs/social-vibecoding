@@ -1,8 +1,7 @@
 // #687 — frontend tests for the "Import Feature from a PR" "+" menu entry
 // and its picker modal. Loads the real public/js/app-view.js into a vm
 // context (so the tests can't drift from shipped code) and exercises:
-//   - the menu item renders only when pr_import_enabled && can_collaborate
-//     && !readOnly;
+//   - the menu item renders only when can_collaborate && !readOnly;
 //   - openImportPrModal() fetches candidates and renders one row per PR,
 //     escaping titles/authors;
 //   - the empty and GitHub-off (non-OK / 404) responses render their
@@ -147,8 +146,8 @@ async function renderCardListHtml(appData) {
   return captured.html;
 }
 
-test('import-pr item renders when pr_import_enabled && can_collaborate', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP, pr_import_enabled: true });
+test('import-pr item renders for a collaborator', async () => {
+  const html = await renderCardListHtml({ ...BASE_APP });
   assert.ok(html.includes('data-plus="import-pr"'), 'import-pr item present');
   assert.ok(html.includes('Import Feature from a PR'), 'label present');
   // Sits directly under "Propose a change".
@@ -158,13 +157,8 @@ test('import-pr item renders when pr_import_enabled && can_collaborate', async (
     'import-pr renders before the issue item');
 });
 
-test('import-pr item hidden when the flag is off', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP, pr_import_enabled: false });
-  assert.ok(!html.includes('data-plus="import-pr"'), 'no import-pr item without the flag');
-});
-
-test('import-pr item hidden for a non-collaborator even with the flag on', async () => {
-  const html = await renderCardListHtml({ ...BASE_APP, pr_import_enabled: true, can_collaborate: false });
+test('import-pr item hidden for a non-collaborator', async () => {
+  const html = await renderCardListHtml({ ...BASE_APP, can_collaborate: false });
   assert.ok(!html.includes('data-plus="import-pr"'), 'no import-pr item without collab');
 });
 
@@ -173,7 +167,7 @@ test('import-pr item hidden in read-only mode (can_collaborate === false)', asyn
   // import-pr item sits inside the !readOnly block AND is gated on
   // can_collaborate, so a read-only viewer never sees it — only Fork.
   const { AppView, captured } = makeRenderHarness();
-  AppView.appData = { ...BASE_APP, pr_import_enabled: true, can_collaborate: false };
+  AppView.appData = { ...BASE_APP, can_collaborate: false };
   assert.equal(AppView.readOnly, true, 'viewer is read-only');
   try { await AppView.renderDevView('forum', null); } catch { /* wiring */ }
   assert.ok(!captured.html.includes('data-plus="import-pr"'), 'read-only hides import-pr');

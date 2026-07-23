@@ -8,7 +8,7 @@
 //   - syncImportedProposal: no-op on an unchanged head; on a head change it
 //     advances imported_pr_head_sha, CLEARS the tally, posts the re-review
 //     note, refreshes drift, and re-runs checks pinned to the new head;
-//   - flag gating: with PR_IMPORT_ENABLED off the poller is a no-op.
+//   - non-imported rows are skipped without any DB work.
 //
 // Run with: node --test tests/pr-import-sync.test.js
 
@@ -17,6 +17,12 @@ const assert = require('node:assert/strict');
 
 const governance = require('../src/services/governance');
 const config = require('../src/config');
+
+// The client picker (usesMockGithubForImports) selects the in-memory mock
+// GitHub source when USERNODE_ENV === 'staging'. These tests exercise the
+// REAL-client path via the fakeGithub stub below, so pin the env to
+// production regardless of what the harness set.
+process.env.USERNODE_ENV = 'production';
 
 // The worker's unit environment ships a minimal node_modules (no `ws`,
 // `jsonwebtoken`, etc.), so several service modules can't be require()'d for
@@ -215,30 +221,8 @@ const SESSION = {
   imported_pr_head_sha: 'a'.repeat(40),
 };
 
-function withFlag(value, fn) {
-  const prev = process.env.PR_IMPORT_ENABLED;
-  if (value === undefined) delete process.env.PR_IMPORT_ENABLED;
-  else process.env.PR_IMPORT_ENABLED = value;
-  return (async () => {
-    try { return await fn(); }
-    finally {
-      if (prev === undefined) delete process.env.PR_IMPORT_ENABLED;
-      else process.env.PR_IMPORT_ENABLED = prev;
-    }
-  })();
-}
-
-test('syncImportedProposal: flag OFF is a no-op', async () => {
-  await withFlag(undefined, async () => {
-    const pool = recordingPool();
-    const res = await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION } });
-    assert.equal(res, 'skipped');
-    assert.equal(pool.calls.length, 0, 'no DB work when the flag is off');
-  });
-});
-
 test('syncImportedProposal: unchanged head no-ops (one getPR, no writes)', async () => {
-  await withFlag('true', () => withStubs([
+  await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: 'a'.repeat(40), ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
   ], async () => {
     let getPrCalls = 0;
@@ -249,7 +233,7 @@ test('syncImportedProposal: unchanged head no-ops (one getPR, no writes)', async
     assert.equal(res, 'unchanged');
     assert.equal(getPrCalls, 1);
     assert.equal(pool.calls.length, 0, 'unchanged head performs no writes');
-  }));
+  });
 });
 
 test('syncImportedProposal: head change resets tally, posts re-review, re-runs pinned checks', async () => {
@@ -258,7 +242,7 @@ test('syncImportedProposal: head change resets tally, posts re-review, re-runs p
   let buildSha = null;
   let captureSha = null;
 
-  await withFlag('true', () => withStubs([
+  await withStubs([
     [fakeGithub, 'getPR', async () => ({ head: { sha: NEW, ref: 'feature/x' }, base: { ref: 'main' }, mergeable: true })],
     [fakeGithub, 'getOctokit', async () => ({ rest: { repos: { compareCommits: async () => ({ data: { behind_by: 3 } }) } } })],
     [fakeWs, 'sendSystemMessage', async (_pool, _appId, content, msgType, meta, thread) => {
@@ -287,14 +271,12 @@ test('syncImportedProposal: head change resets tally, posts re-review, re-runs p
 
     assert.equal(buildSha, NEW, 'staging build pinned to the new head SHA');
     assert.equal(captureSha, NEW, 'checks captured against the new head SHA');
-  }));
+  });
 });
 
 test('syncImportedProposal: native rows are skipped', async () => {
-  await withFlag('true', async () => {
-    const pool = recordingPool();
-    const res = await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION, source: 'native' } });
-    assert.equal(res, 'skipped');
-    assert.equal(pool.calls.length, 0);
-  });
+  const pool = recordingPool();
+  const res = await prImportSync.syncImportedProposal({ config: {}, pool, session: { ...SESSION, source: 'native' } });
+  assert.equal(res, 'skipped');
+  assert.equal(pool.calls.length, 0);
 });

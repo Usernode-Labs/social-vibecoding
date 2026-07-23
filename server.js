@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cookieParser = require('cookie-parser');
 const path = require('path');
-const { load: loadConfig, isPrImportEnabled } = require('./src/config');
+const { load: loadConfig } = require('./src/config');
 const { migrate } = require('./src/db/migrate');
 const { shellAssetCacheControl } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
@@ -2177,48 +2177,44 @@ function startSessionAutoPauseSweeper(config) {
       log.warn('server', 'Orphaned group-chat attachment sweep failed', { err: err.message });
     }
 
-    // Pass 6: imported-PR head sync (#687, Slice 3). Flag-gated — with
-    // PR_IMPORT_ENABLED off this whole block is skipped, so the sweeper is
-    // byte-for-byte unchanged for anyone who hasn't turned the feature on.
-    // For each OPEN imported proposal, fetch the PR's current head.sha and
-    // no-op on an unchanged head; on a head change reset the vote tally,
-    // post a "please re-review" note, refresh drift, and re-run checks
-    // against the new head (see services/pr-import-sync.js). Reuses this
-    // sweeper's cadence + a per-session cooldown (importedHeadSyncAttempts)
-    // so the added getPR-per-open-imported-proposal cost stays bounded.
-    if (isPrImportEnabled()) {
-      try {
-        const prImportSync = require('./src/services/pr-import-sync');
-        const { rows } = await pool.query(
-          `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
-             FROM chat_sessions cs
-             JOIN apps a ON cs.app_id = a.id
-            WHERE cs.source = 'imported'
-              AND cs.status IN ('promoted', 'merging')
-              AND cs.pr_number IS NOT NULL
-            ORDER BY cs.promoted_at ASC NULLS FIRST
-            LIMIT 50`
-        );
-        const MAX_HEAD_SYNCS_PER_SWEEP = 10;
-        let synced = 0;
-        for (const session of rows) {
-          if (synced >= MAX_HEAD_SYNCS_PER_SWEEP) break;
-          if (worker.isInFlight(session.id)) continue;
-          const last = importedHeadSyncAttempts.get(session.id) || 0;
-          if (Date.now() - last < IMPORTED_HEAD_SYNC_COOLDOWN_MS) continue;
-          // Stamp BEFORE the getPR (+ possible minutes-long rebuild) so a
-          // later tick won't kick off a duplicate concurrent sync.
-          importedHeadSyncAttempts.set(session.id, Date.now());
-          synced++;
-          try {
-            await prImportSync.syncImportedProposal({ config, pool, session });
-          } catch (err) {
-            log.warn('server', 'Imported-PR head sync failed', { sessionId: session.id, err: err.message });
-          }
+    // Pass 6: imported-PR head sync (#687, Slice 3). For each OPEN imported
+    // proposal, fetch the PR's current head.sha and no-op on an unchanged
+    // head; on a head change reset the vote tally, post a "please
+    // re-review" note, refresh drift, and re-run checks against the new
+    // head (see services/pr-import-sync.js). Reuses this sweeper's cadence
+    // + a per-session cooldown (importedHeadSyncAttempts) so the added
+    // getPR-per-open-imported-proposal cost stays bounded.
+    try {
+      const prImportSync = require('./src/services/pr-import-sync');
+      const { rows } = await pool.query(
+        `SELECT cs.*, a.slug AS app_slug, a.name AS app_name, a.repo_url
+           FROM chat_sessions cs
+           JOIN apps a ON cs.app_id = a.id
+          WHERE cs.source = 'imported'
+            AND cs.status IN ('promoted', 'merging')
+            AND cs.pr_number IS NOT NULL
+          ORDER BY cs.promoted_at ASC NULLS FIRST
+          LIMIT 50`
+      );
+      const MAX_HEAD_SYNCS_PER_SWEEP = 10;
+      let synced = 0;
+      for (const session of rows) {
+        if (synced >= MAX_HEAD_SYNCS_PER_SWEEP) break;
+        if (worker.isInFlight(session.id)) continue;
+        const last = importedHeadSyncAttempts.get(session.id) || 0;
+        if (Date.now() - last < IMPORTED_HEAD_SYNC_COOLDOWN_MS) continue;
+        // Stamp BEFORE the getPR (+ possible minutes-long rebuild) so a
+        // later tick won't kick off a duplicate concurrent sync.
+        importedHeadSyncAttempts.set(session.id, Date.now());
+        synced++;
+        try {
+          await prImportSync.syncImportedProposal({ config, pool, session });
+        } catch (err) {
+          log.warn('server', 'Imported-PR head sync failed', { sessionId: session.id, err: err.message });
         }
-      } catch (err) {
-        log.warn('server', 'Imported-PR head-sync sweep failed', { err: err.message });
       }
+    } catch (err) {
+      log.warn('server', 'Imported-PR head-sync sweep failed', { err: err.message });
     }
   }, config.sessionSweepIntervalMs).unref();
 }

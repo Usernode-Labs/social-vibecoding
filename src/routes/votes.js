@@ -13,14 +13,14 @@ const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const topicAttrs = require('../services/topic-attributes');
-const { isPrImportEnabled, isPrImportMockGithubEnabled } = require('../config');
+const { usesMockGithubForImports } = require('../config');
 
-// #687 Slice 6: pick the GitHub client the imported-PR flow talks to. The
-// mock is consulted ONLY when its opt-in flag is on (default off everywhere,
-// so production always uses the real client). Selection is by manifest value
-// alone — never gated on USERNODE_ENV.
+// #687: pick the GitHub client the imported-PR flow talks to. Staging
+// previews use the in-memory mock (no GitHub credentials there — see
+// usesMockGithubForImports in config.js); production always uses the real
+// client. Only the client swaps; the surrounding flow is identical.
 function importGithubClient() {
-  return isPrImportMockGithubEnabled() ? githubMock : github;
+  return usesMockGithubForImports() ? githubMock : github;
 }
 
 // Staging-only mock PR proposals for GET /api/apps/:slug/promoted,
@@ -947,8 +947,7 @@ function voteRoutes(config) {
 
   // ── #687: import an existing GitHub PR as a proposal ────────────────
   //
-  // Everything here is dark unless PR_IMPORT_ENABLED is on. The three
-  // endpoints (candidate list, preview, import) let a collaborator pull an
+  // The three endpoints (candidate list, preview, import) let a collaborator pull an
   // externally-authored PR into the vote flow instead of building it in the
   // platform's AI dev-chat. Preview/candidates are read-only; import creates
   // a `source='imported'` chat_sessions row promoted straight into voting.
@@ -973,7 +972,7 @@ function voteRoutes(config) {
       // skip the staging build entirely and record a gate-passing 'skipped'
       // verdict — the imported proposal shows a neutral (mergeable) check so
       // the whole preview flow (import → vote → merge) is exercisable.
-      if (isPrImportMockGithubEnabled()) {
+      if (usesMockGithubForImports()) {
         await visualsService.storeChecksSkipped(pool, session.id, headSha || null,
           'mock GitHub preview — automated checks not run')
           .catch((err) => log.warn('votes', 'import mock storeChecksSkipped failed (non-fatal)', { sessionId: session.id, err: err.message }));
@@ -1016,7 +1015,6 @@ function voteRoutes(config) {
   // imported). Collab access.
   router.get('/api/apps/:slug/pr-import/candidates', async (req, res) => {
     try {
-      if (!isPrImportEnabled()) return res.status(404).json({ error: 'Not found' });
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
       if (!app) return res.status(404).json({ error: 'App not found' });
       const repo = parseRepo(app.repo_url);
@@ -1052,7 +1050,6 @@ function voteRoutes(config) {
   // GET a read-only preview of a single PR before importing. Collab access.
   router.get('/api/apps/:slug/pr-import/preview', async (req, res) => {
     try {
-      if (!isPrImportEnabled()) return res.status(404).json({ error: 'Not found' });
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
       if (!app) return res.status(404).json({ error: 'App not found' });
       const repo = parseRepo(app.repo_url);
@@ -1110,7 +1107,6 @@ function voteRoutes(config) {
   // `source='imported'` session and kicks its SHA-pinned checks build.
   router.post('/api/apps/:slug/pr-import', async (req, res) => {
     try {
-      if (!isPrImportEnabled()) return res.status(404).json({ error: 'Not found' });
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
       if (!app) return res.status(404).json({ error: 'App not found' });
       const repo = parseRepo(app.repo_url);
@@ -1216,7 +1212,7 @@ function voteRoutes(config) {
   //       exact-sha 409 (head-moved) path.
   router.post('/api/apps/:slug/pr-import/_mock/advance', async (req, res) => {
     try {
-      if (!isPrImportEnabled() || !isPrImportMockGithubEnabled()) {
+      if (!usesMockGithubForImports()) {
         return res.status(404).json({ error: 'Not found' });
       }
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
@@ -2785,12 +2781,12 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // Merge PR on GitHub
     // #687 Slice 4/6: for an IMPORTED proposal, pin the merge to the exact
     // reviewed commit (imported_pr_head_sha) so GitHub refuses (409) if the
-    // head moved. Slice 6: when the opt-in mock-GitHub flag is on, an imported
-    // merge talks to the in-memory mock client instead of the real one, so the
-    // 409/head-moved path is exercisable in a preview with no credentials.
+    // head moved. In staging previews an imported merge talks to the
+    // in-memory mock client instead of the real one, so the 409/head-moved
+    // path is exercisable in a preview with no credentials.
     // Native proposals ALWAYS use the real client with no sha (unchanged).
-    const isImported = isPrImportEnabled() && session.source === 'imported';
-    const useMockMerge = isImported && isPrImportMockGithubEnabled();
+    const isImported = session.source === 'imported';
+    const useMockMerge = isImported && usesMockGithubForImports();
     const mergeClient = useMockMerge ? githubMock : github;
     if ((mergeClient.isEnabled() || useMockMerge) && session.repo_url && session.pr_number) {
       const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
