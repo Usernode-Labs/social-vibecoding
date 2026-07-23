@@ -129,6 +129,59 @@ app.use('/explorer-api', (req, res) => {
   });
 });
 
+// ── Challenges API passthrough ─────────────────────────────────────────────
+// The SV challenges screen (public/js/challenges.js, #challenges hash route
+// — app-as-SV-chrome migration) renders the same data the mobile app's
+// native Challenges tab pulls from the leaderboard service. Browsers can't
+// call that host cross-origin, so proxy a READ-ONLY allowlist of its
+// public endpoints here. Mounted before authMiddleware (public, like
+// /explorer-api) and restricted to GET + known paths so the participant-
+// scoped /register and /me/* surfaces are never reachable through SV.
+const CHALLENGES_UPSTREAM_BASE =
+  process.env.CHALLENGES_API_BASE ||
+  'https://leaderboard.usernodelabs.org/api/v2/mobile';
+const CHALLENGES_ALLOWED_PATHS = new Set([
+  '/seasons',
+  '/challenges',
+  '/leaderboard',
+]);
+
+app.use('/challenges-api', (req, res) => {
+  const [subPath, query] = req.url.split('?');
+  const normalized = '/' + subPath.replace(/^\/+|\/+$/g, '');
+  if (req.method !== 'GET' || !CHALLENGES_ALLOWED_PATHS.has(normalized)) {
+    res.status(404).json({ error: 'not found' });
+    return;
+  }
+  const upstream = new URL(CHALLENGES_UPSTREAM_BASE + normalized +
+    (query ? `?${query}` : ''));
+  const transport = upstream.protocol === 'http:'
+    ? require('http') : require('https');
+  const upReq = transport.request(
+    upstream,
+    { method: 'GET', headers: { accept: 'application/json' } },
+    (upRes) => {
+      const rChunks = [];
+      upRes.on('data', (c) => rChunks.push(c));
+      upRes.on('end', () => {
+        res.writeHead(upRes.statusCode || 502, {
+          'content-type':
+            upRes.headers['content-type'] || 'application/json',
+          // Same short-cache tier as other read-only public data; the
+          // screen re-fetches on open anyway.
+          'cache-control': 'no-store',
+        });
+        res.end(Buffer.concat(rChunks));
+      });
+    }
+  );
+  upReq.on('error', (err) => {
+    log.error('challenges-proxy', 'upstream error', { err: err.message });
+    res.status(502).json({ error: `Challenges proxy error: ${err.message}` });
+  });
+  upReq.end();
+});
+
 // Skip the global JSON parser for the Anthropic-proxy path so the proxy
 // can mount its own parser with a 32MB limit (matching Anthropic's
 // actual request-size cap). With the default 100kb limit a normal CC
