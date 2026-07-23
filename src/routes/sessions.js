@@ -575,6 +575,16 @@ function sessionRoutes(config) {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
 
+      // No repo → every chat turn on the session would refuse to run
+      // (see the repo guard in POST /chat), so reject up front like the
+      // headless route does. Deliberately unconditional (also when GitHub
+      // is disabled platform-wide): a clear 400 beats a session whose
+      // every turn dies, and on GitHub-enabled deployments the app-heal
+      // sweep makes this state short-lived.
+      if (!(app.repo_url || '').match(/github\.com\/[^/]+\/[^/]+/)) {
+        return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+      }
+
       // Per-user cap (#193): only 'active' sessions count toward the
       // slot budget. Promoted sessions (PRs up for a merge vote) are
       // deliberately un-pausable — their status must stay 'promoted' so
@@ -1976,8 +1986,24 @@ function sessionRoutes(config) {
         const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
 
         if (!repoOwner || !repoName) {
-          send('error', { error: 'No GitHub repo configured for this app' });
+          // Structural, not transient: the app has no GitHub repo (repo
+          // provisioning failed at creation — the app-heal sweep repairs
+          // this within a tick or two). The old SSE-only 'error' event
+          // died with the stream and left no server-side trace, so these
+          // dead turns were invisible everywhere (session 2585). Persist
+          // a status row that survives refresh and end the turn cleanly
+          // so 'done' hooks (notifySessionDone) still fire.
+          log.warn('sessions', 'Chat turn refused: app has no GitHub repo', {
+            sessionId: session.id, appSlug: session.app_slug,
+          });
+          await sendStatus(
+            'This turn can’t run: the app has no GitHub repository (repo provisioning failed when the app was created). The platform repairs this automatically — try again in a few minutes.',
+            { turnError: true }
+          );
+          send('done', {});
           res.end();
+          if (stopRegistry.get(session.id) === stopHandle) stopRegistry.delete(session.id);
+          setTimeout(() => sessionBus.clearSession(session.id), 30000);
           return;
         }
 
