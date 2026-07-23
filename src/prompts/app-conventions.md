@@ -78,8 +78,11 @@ app.use((req, res, next) => {
 
 Key properties:
 
-- `req.user` contains at minimum `{ id, username, usernode_pubkey }` once authenticated.
+- `req.user` contains at minimum `{ id, username, usernode_pubkey, locale }` once authenticated.
   `usernode_pubkey` is the user's linked Usernode wallet address (`ut1...`) or `null` if not linked.
+  `locale` is the user's platform-level language preference — a BCP-47
+  tag like `"id"` or `"pt-BR"`, or `null` when they haven't set one
+  (see "User language preference" below).
 - All non-GET requests + all `/api/*` requests are **deny-by-default**.
 - To intentionally expose an API route without auth, add its exact
   path to `PUBLIC_API_PATHS`. Do **not** remove the middleware.
@@ -991,6 +994,41 @@ Rules:
   running their own SV instance either accept that their dapps load
   the bridge from upstream prod, or fork the dapps and edit the URL.
   See [SELF-HOSTING.md](../../SELF-HOSTING.md) for details.
+
+## User language preference
+
+The platform owns a single per-user language/locale setting
+(Settings → Language on the platform shell). Apps that localize their
+UI should treat it as the **default** instead of building their own
+detection from `navigator.language` (which reflects the device, not
+the user's Usernode-level choice). It reaches apps two ways:
+
+- **JWT claim (server-side).** The iframe token carries a `locale`
+  claim alongside `id` / `username` / `usernode_pubkey`, so after
+  `jwt.verify` it's `req.user.locale` on every request — a BCP-47 tag
+  (`"id"`, `"pt-BR"`, …) or `null` when the user hasn't set one. Use
+  it for server-rendered strings and LLM prompt directives ("answer in
+  Bahasa Indonesia") with no client round-trip.
+- **Bridge API (frontend).** `usernode.getUserLocale()` resolves
+  `{ locale: "id" }` or `{ locale: null }`. It never rejects — inside
+  the platform shell it asks the shell directly; standalone it falls
+  back to the iframe JWT's claim, then `null`. When the user changes
+  the setting mid-session, the bridge dispatches a
+  `usernode:locale-changed` CustomEvent on `window` with
+  `detail.locale` — listen for it if your app can re-render live.
+
+Expected app behavior:
+
+- **Platform value is the default; an app-level override is allowed
+  and wins.** If your app has its own language picker, seed it from
+  the platform locale on first visit (falling back to
+  `navigator.language`, then your app default, when it's `null`) and
+  persist the user's in-app choice as usual.
+- **Map, don't match exactly.** Apps ship whatever locale set they
+  ship; map the platform tag onto it (language-subtag prefix match —
+  `"pt-BR"` → your `"pt"` — then your app default).
+- `null` means "no preference set", NOT "English" — keep it
+  distinguishable so device-language auto-detection still works.
 
 ## Native-feel UI kit — centrally hosted (`usernode-native`)
 

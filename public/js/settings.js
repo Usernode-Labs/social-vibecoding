@@ -12,7 +12,7 @@
 
   const Settings = {
     modal: null,
-    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false },
+    state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, locale: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
     _walletExpiresAt: null,
@@ -70,6 +70,16 @@
       const estimateToggle = document.getElementById('ai-progress-estimate');
       if (estimateToggle) {
         estimateToggle.addEventListener('change', (e) => this._saveAiProgressEstimate(e.target.checked));
+      }
+
+      // Platform-level language preference (issue #757). Server-side
+      // per-user BCP-47 tag (default unset = "Auto"); apps read it via
+      // the iframe JWT claim and usernode.getUserLocale(). Fires the
+      // POST on change so it takes effect without closing the modal;
+      // revert the select if the save fails.
+      const localeSelect = document.getElementById('settings-locale');
+      if (localeSelect) {
+        localeSelect.addEventListener('change', (e) => this._saveLocale(e.target.value));
       }
 
       // #138 "Dev-chat sound & alerts" toggle. Client-only preference
@@ -179,6 +189,7 @@
         this.state.usernodePubkey = j.user?.usernodePubkey || null;
         this.state.walletLinkEnabled = !!j.user?.walletLinkEnabled;
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
+        this.state.locale = j.user?.locale || null;
         this._renderIndicator();
       } catch {}
     },
@@ -201,6 +212,7 @@
       this._renderWalletSection();
       this._renderChangePasswordSection();
       this._renderDevConsoleSection();
+      this._renderLanguageSection();
       this._renderExperimentalSection();
       this._renderAdminSection();
       this._renderUsernodeSection();
@@ -236,6 +248,64 @@
       if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
       const status = document.getElementById('ai-progress-estimate-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+    },
+
+    _renderLanguageSection() {
+      const select = document.getElementById('settings-locale');
+      if (!select) return;
+      const value = this.state.locale || '';
+      // A saved value outside the curated list (set via the API, or a
+      // future wider picker) still needs to render truthfully — inject
+      // an option for it so the select doesn't silently show "Auto".
+      if (value && ![...select.options].some((o) => o.value === value)) {
+        const opt = document.createElement('option');
+        opt.value = value;
+        opt.textContent = value;
+        select.appendChild(opt);
+      }
+      select.value = value;
+      const status = document.getElementById('settings-locale-status');
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+    },
+
+    async _saveLocale(value) {
+      const select = document.getElementById('settings-locale');
+      const status = document.getElementById('settings-locale-status');
+      const fail = (msg) => {
+        if (select) select.value = this.state.locale || '';
+        if (status) {
+          status.textContent = msg;
+          status.classList.remove('hidden', 'text-emerald-500', 'text-zinc-500');
+          status.classList.add('text-red-500');
+        }
+      };
+      try {
+        const r = await fetch('/api/me/locale', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ locale: value || null }),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) return fail(j.error || 'Failed to save.');
+        this.state.locale = j.locale || null;
+        // Keep the shell's cached user in sync so the bridge's
+        // getUserLocale answers (app-view.js) reflect the new value
+        // without a re-fetch. Bare `App` — app.js declares it with
+        // `const`, so `window.App` is undefined (see _renderAdminSection).
+        if (typeof App !== 'undefined' && App.user) App.user.locale = this.state.locale;
+        // Live-update any open app iframe (usernode:locale-changed).
+        if (window.AppView && typeof AppView.notifyLocaleChanged === 'function') {
+          try { AppView.notifyLocaleChanged(this.state.locale); } catch {}
+        }
+        if (status) {
+          status.textContent = '✓ Saved';
+          status.classList.remove('hidden', 'text-red-500', 'text-zinc-500');
+          status.classList.add('text-emerald-500');
+        }
+      } catch (err) {
+        fail(`Network error: ${err.message}`);
+      }
     },
 
     async _saveAiProgressEstimate(enabled) {

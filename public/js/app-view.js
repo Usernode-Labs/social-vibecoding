@@ -8881,6 +8881,54 @@ const AppView = {
     }
   },
 
+  // ── User locale bridge (issue #757) ────────────────────────────────
+  //
+  // The bridge's usernode.getUserLocale() posts a `__usernode_locale`
+  // "get" message to window.parent; the shell answers with the signed-in
+  // user's platform-level language preference (a BCP-47 tag, or null
+  // when unset). Read-only and instant — no dialog, no ack stage.
+  // Wired via the top-level message listener at the bottom of this file.
+
+  handleLocaleBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id || data.__usernode_locale !== 'get') return;
+
+    // Only the app iframes this shell owns may ask — same source gate
+    // as the LLM consent family above.
+    const appIframe = document.getElementById('app-iframe');
+    const stagingIframe = document.getElementById('staging-iframe');
+    const fromApp = appIframe && e.source === appIframe.contentWindow;
+    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
+    if (!fromApp && !fromStaging) return;
+
+    const locale = (typeof App !== 'undefined' && App.user) ? (App.user.locale || null) : null;
+    try {
+      e.source.postMessage(
+        { __usernode_locale: 'response', id: data.id, value: { locale } },
+        '*'
+      );
+    } catch {}
+  },
+
+  // Push a locale change into any open app/staging iframe so the bridge
+  // can dispatch its `usernode:locale-changed` event. Called by
+  // settings.js after a successful POST /api/me/locale. Deliberately
+  // does NOT rewrite the iframe src (that would reload the app mid-use);
+  // the periodic token refresh and next open handle the JWT claim.
+  notifyLocaleChanged(locale) {
+    ['app-iframe', 'staging-iframe'].forEach((id) => {
+      const iframe = document.getElementById(id);
+      if (iframe && iframe.contentWindow) {
+        try {
+          iframe.contentWindow.postMessage(
+            { __usernode_locale: 'changed', locale: locale || null },
+            '*'
+          );
+        } catch {}
+      }
+    });
+  },
+
   // ── App LLM access consent flow (issue #34) ────────────────────────
   //
   // The bridge's usernode.requestLlmAccess()/getLlmAccess()/
@@ -9164,6 +9212,8 @@ if (typeof window !== 'undefined') {
     try { AppView.handleLlmBridgeMessage(e); } catch {}
     // #685: issue-state availability announcements from the app iframe.
     try { AppView.handleIssueStateMessage(e); } catch {}
+    // #757: usernode.getUserLocale() reads from the app iframe.
+    try { AppView.handleLocaleBridgeMessage(e); } catch {}
   });
 }
 
