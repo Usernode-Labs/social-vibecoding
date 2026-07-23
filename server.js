@@ -406,15 +406,21 @@ app.use(debugRoutes(config));
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   let usernodePubkey = null;
+  // Platform-level language preference (issue #757): a BCP-47 tag or null
+  // when unset. Always present in the payload so app servers never need
+  // `'locale' in payload` checks. Additive claim only — signing secret,
+  // algorithm, expiry, and the existing claims are unchanged.
+  let userLocale = null;
   try {
     const { rows } = await getPool(config).query(
-      'SELECT usernode_pubkey FROM users WHERE id = $1',
+      'SELECT usernode_pubkey, locale FROM users WHERE id = $1',
       [req.user.id]
     );
     usernodePubkey = rows[0]?.usernode_pubkey || null;
+    userLocale = rows[0]?.locale || null;
   } catch {}
   const token = jwt.sign(
-    { id: req.user.id, username: req.user.username, usernode_pubkey: usernodePubkey },
+    { id: req.user.id, username: req.user.username, usernode_pubkey: usernodePubkey, locale: userLocale },
     config.jwtSecret,
     { expiresIn: '1h' }
   );
