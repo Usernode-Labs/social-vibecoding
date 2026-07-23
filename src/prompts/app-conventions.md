@@ -821,6 +821,111 @@ platform's Settings → "App AI permissions"; revocation is immediate,
 so treat `grant_required` as a state that can appear at any time, not
 just on first use.
 
+## App governance feed — the app's own proposal/vote/merge activity
+
+The platform tracks every proposal, vote, and merge for every app.
+A read-only API exposes the **calling app's own** feed so apps can
+render live governance surfaces — a "what's changing" strip, a
+changelog screen — instead of hand-maintaining a shadow table of the
+same data.
+
+Production containers receive one extra env var (platform-injected;
+`USERNODE_PLATFORM_API_URL` and the whole `USERNODE_PLATFORM_API_*`
+family are reserved manifest keys you must not declare):
+
+- `USERNODE_PLATFORM_API_URL` — base URL of the app-facing platform
+  API (`http://usernode:3000/api/app-platform` in-network).
+
+Auth reuses the app's existing credential,
+`USERNODE_LLM_PROXY_TOKEN` (see "App LLM access"). **Staging
+containers receive neither**, and standalone deploys have no platform
+to call — always detect absence and degrade gracefully, exactly like
+the LLM pattern:
+
+```js
+const FEED_ENABLED = !!process.env.USERNODE_PLATFORM_API_URL
+  && !!process.env.USERNODE_LLM_PROXY_TOKEN;
+// When false: hide the strip, or serve your staging mock feed (below).
+```
+
+### Calling the feed (server-side)
+
+The app's **server** calls the endpoint — never the frontend: the
+token must stay server-side. Proxy the result to your frontend
+through your own API, and cache it for ~30–60 seconds (the data
+changes on human voting timescales; don't hammer the platform per
+page view). No user token is needed — the feed contains only what any
+viewer of the app can already see in the platform's vote panel, and
+it is scoped by the token itself: an app can only ever read its own
+feed.
+
+```js
+const resp = await fetch(
+  `${process.env.USERNODE_PLATFORM_API_URL}/governance/feed?limit=10`,
+  { headers: { 'x-usernode-app-token': process.env.USERNODE_LLM_PROXY_TOKEN } }
+);
+const { items, has_more, next_cursor } = await resp.json();
+```
+
+Response shape:
+
+```json
+{
+  "items": [
+    {
+      "id": 812,
+      "pr_number": 41,
+      "title": "Custom tier colors",
+      "summary_md": "Adds a color picker so each tier row can have its own color.",
+      "status": "voting",
+      "votes_for": 3,
+      "votes_against": 1,
+      "votes_required": 4,
+      "contested": false,
+      "eta": "2026-07-24T06:10:00.000Z",
+      "author": "evan",
+      "proposed_at": "2026-07-21T18:02:11.000Z",
+      "merged_at": null
+    }
+  ],
+  "has_more": true,
+  "next_cursor": { "before": "2026-07-21T18:02:11.000Z", "before_id": 812 }
+}
+```
+
+Field semantics:
+
+- `status` — one of `proposed` (up for vote, no votes cast yet),
+  `voting` (votes coming in), `merging` (won the vote, in the merge
+  pipeline — lands within ~a minute), `merged` (shipped; `merged_at`
+  has the time). Withdrawn/rejected proposals simply drop out of the
+  feed. Private in-progress dev sessions never appear.
+- `eta` — ISO timestamp of the **earliest possible auto-merge time**
+  while a merge countdown is running ("merging in 9h"), or `null`
+  when no countdown applies. It is not a guarantee — more votes can
+  merge sooner, opposition can cancel it.
+- `title` / `summary_md` — plain-language proposal title and summary,
+  written for end users; render these directly.
+- `votes_for` / `votes_against` — the raw tallies the platform's vote
+  pill shows. `votes_required` is the current threshold (or the
+  at-merge snapshot on merged rows; may be `null` on old merges).
+
+Query params: `limit` (default 20, max 50), `status=open|merged|all`
+(default `all`), and keyset pagination via
+`before=<ISO>&before_id=<id>` — pass the previous response's
+`next_cursor` values to page older. Requests are rate-limited to
+60/min per app; cache instead of retrying on a
+`429 { code: 'rate_limited' }`.
+
+### Staging: seed a mock feed
+
+Staging previews cannot call the feed (no token), so a governance
+strip would render empty in every PR review. Per "Staging mock data",
+have your staging/dev fallback serve a small static mock feed — a
+handful of obviously-fake items covering all four statuses, one with
+a near-future `eta` — behind the `FEED_ENABLED === false` branch, so
+the strip is reviewable in previews and testers see the real layout.
+
 ## Don't `git push` yourself
 
 The worker container runs with **zero GitHub credentials in env** —

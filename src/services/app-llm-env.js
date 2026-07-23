@@ -3,26 +3,41 @@
 const crypto = require('crypto');
 const log = require('./logger');
 
-// Production-deploy plumbing for app LLM access (issue #34): the two
-// env vars an app container needs to reach the platform's LLM proxy,
-// plus lazy generation of the per-app credential.
+// Production-deploy plumbing for app → platform calls: the env vars an
+// app container needs to reach the platform's LLM proxy (issue #34) and
+// the read-only app-platform API (#744), plus lazy generation of the
+// per-app credential.
 //
 //   USERNODE_LLM_PROXY_URL    — in-network base URL of the proxy
 //                               (http://usernode:3000/api/app-llm).
 //   USERNODE_LLM_PROXY_TOKEN  — apps.llm_proxy_token, random 64-hex,
 //                               generated at first production deploy
 //                               (same adoption shape as db_password).
+//   USERNODE_PLATFORM_API_URL — in-network base URL of the app-facing
+//                               read-only platform API
+//                               (http://usernode:3000/api/app-platform),
+//                               authenticated with the same token.
 //
-// STAGING DEPLOYS INJECT NEITHER — the exact `private: true` secret
-// precedent: unreviewed PR code must not be able to spend grants. Apps
-// detect the absent env vars and degrade their AI features (see
-// app-conventions.md "App LLM access").
+// STAGING DEPLOYS INJECT NONE OF THESE — the exact `private: true`
+// secret precedent: unreviewed PR code must not be able to spend grants
+// (and gets no platform-API access either). Apps detect the absent env
+// vars and degrade their AI / governance-feed features (see
+// app-conventions.md "App LLM access" + "App governance feed").
 
 // Same default as PLATFORM_INTERNAL_URL in services/worker.js — the
 // platform's in-network hostname on the shared docker network.
 function llmProxyBaseUrl() {
   const base = process.env.PLATFORM_INTERNAL_URL || 'http://usernode:3000';
   return `${base.replace(/\/$/, '')}/api/app-llm`;
+}
+
+// #744: base URL of the app-facing read-only platform API (governance
+// feed). Injected as USERNODE_PLATFORM_API_URL alongside the proxy
+// pair below; authenticated with the SAME per-app token
+// (USERNODE_LLM_PROXY_TOKEN), so no extra credential plumbing.
+function platformApiBaseUrl() {
+  const base = process.env.PLATFORM_INTERNAL_URL || 'http://usernode:3000';
+  return `${base.replace(/\/$/, '')}/api/app-platform`;
 }
 
 // Get-or-create apps.llm_proxy_token. The WHERE ... IS NULL guard +
@@ -57,6 +72,10 @@ async function productionLlmEnv(pool, appId) {
     return {
       USERNODE_LLM_PROXY_URL: llmProxyBaseUrl(),
       USERNODE_LLM_PROXY_TOKEN: token,
+      // #744: app-facing read-only platform API (governance feed),
+      // authenticated with the same token. Production-only like the
+      // proxy pair — the staging deploy path injects none of these.
+      USERNODE_PLATFORM_API_URL: platformApiBaseUrl(),
     };
   } catch (err) {
     log.warn('app-llm-env', 'Failed to resolve LLM proxy env; deploying without', {
@@ -66,4 +85,4 @@ async function productionLlmEnv(pool, appId) {
   }
 }
 
-module.exports = { llmProxyBaseUrl, ensureLlmProxyToken, productionLlmEnv };
+module.exports = { llmProxyBaseUrl, platformApiBaseUrl, ensureLlmProxyToken, productionLlmEnv };
