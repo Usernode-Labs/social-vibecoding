@@ -32,11 +32,12 @@ const MAX_HTML_BYTES = 2 * 1024 * 1024;
 const MAX_APP_CHAT_BYTES = 200 * 1024 * 1024;
 // Per-file inline cap when text-file content is injected into a prompt.
 const INLINE_CHAR_CAP = 50000;
-// Aggregate inline cap across ALL text files in one dispatch block. The
-// dispatch prompt travels as a single `docker exec -e PROMPT=...`
-// argument and Linux caps one argument at 128 KiB — text files that
-// don't fit the aggregate budget degrade to a download instruction
-// instead of blowing the exec with E2BIG.
+// Aggregate inline cap across ALL text files in one dispatch block.
+// Historically this guarded Linux's 128 KiB per-argument cap (the prompt
+// rode a `docker exec -e PROMPT=...` arg and oversized ones E2BIG'd the
+// exec); the prompt now travels as a file (worker.TURN_PROMPT_PATH), so
+// the cap survives purely as a token-cost bound — text files that don't
+// fit the budget degrade to a download instruction.
 const INLINE_TOTAL_CHAR_CAP = 80000;
 // Image replay policy: image blocks are re-sent to the Mayor only for
 // user rows within the last IMAGE_REPLAY_TURNS user turns, and at most

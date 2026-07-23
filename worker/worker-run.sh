@@ -29,9 +29,10 @@
 #                        the platform anymore. If present we still wire
 #                        the credential helper, but the platform-side
 #                        push proxy is the only legitimate write path.
-#   PROMPT, MODEL,       only required for legacy single-shot MODE=build|scout;
-#   COMMIT_MSG,          ignored in MODE=warm.
-#   CLAUDE_RESUME_SESSION_ID
+#   MODEL, COMMIT_MSG,   only required for legacy single-shot MODE=build|scout;
+#   CLAUDE_RESUME_SESSION_ID  ignored in MODE=warm. (The per-turn dispatch
+#                        prompt never travels as env — run-cc.sh reads it
+#                        from PROMPT_FILE in the CC volume.)
 #
 # All output goes to stdout. The host tails it via `docker logs -f`
 # during bootstrap to surface phase markers, then drives per-turn work
