@@ -1155,7 +1155,11 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   with momentum commit (a touch mid-spring inherits position and
   velocity), backdrop tap dismisses. Keyboard avoidance is built in
   (see below) — sheets with text fields ride above the on-screen
-  keyboard automatically. Returns `{ dismiss(), el }`.
+  keyboard automatically. Content may be rendered into the sheet
+  AFTER presenting (fill from state or a fetch): the kit re-measures
+  on content growth and retargets the entrance spring, backdrop
+  dimming and dismissal travel, so late-rendered content still gets
+  the full slide-up instead of popping in. Returns `{ dismiss(), el }`.
 - **Centered modal.** `unNative.presentModal({ content | contentEl,
   onDismiss?, dismissible? })` — arbitrary content in a centered card
   over the same dimmed backdrop as the sheet/alert, with the alert's
