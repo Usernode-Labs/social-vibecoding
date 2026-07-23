@@ -4,9 +4,9 @@
 //   - github.mergePR forwards an optional `sha` to octokit.rest.pulls.merge,
 //     and surfaces GitHub's 409 (only when a sha was pinned) as a distinct
 //     HeadMovedError; native calls (no sha) keep the raw error.
-//   - checkAndMerge passes imported_pr_head_sha for source='imported' rows
-//     (gated on the flag), leaves the row recoverable ('promoted') on a
-//     head-moved 409, and does NOT error the proposal.
+//   - checkAndMerge passes imported_pr_head_sha for source='imported' rows,
+//     leaves the row recoverable ('promoted') on a head-moved 409, and does
+//     NOT error the proposal.
 //   - finalizeMerge runs byte-for-byte identically for native and imported
 //     merges (same deploy/stamp/teardown/announce tail).
 //
@@ -17,6 +17,12 @@ const assert = require('node:assert/strict');
 
 // The REAL pure merge gate, grabbed before any stubbing.
 const { mergeGate } = require('../src/services/active-users');
+
+// The imported-merge path picks the mock GitHub client when
+// USERNODE_ENV === 'staging'. This suite exercises the REAL-client path
+// (github is stubbed below), so pin the env to production regardless of
+// what the harness set.
+process.env.USERNODE_ENV = 'production';
 
 // routes/votes.js requires express at module level but only calls Router()
 // inside voteRoutes(), which this suite never invokes. Serve a stub through
@@ -235,8 +241,6 @@ function mergeReadyPool() {
 }
 
 test('checkAndMerge: imported merge pins imported_pr_head_sha; native passes no sha', async () => {
-  const prev = process.env.PR_IMPORT_ENABLED;
-  process.env.PR_IMPORT_ENABLED = 'true';
   const { subject, mergeCalls, restore } = loadVotes({
     mergeImpl: () => ({ sha: 'squashsha', merged: true }),
   });
@@ -250,29 +254,10 @@ test('checkAndMerge: imported merge pins imported_pr_head_sha; native passes no 
     assert.ok(native.sha == null, 'native merge passes no sha');
   } finally {
     restore();
-    if (prev === undefined) delete process.env.PR_IMPORT_ENABLED; else process.env.PR_IMPORT_ENABLED = prev;
-  }
-});
-
-test('checkAndMerge: flag OFF never pins a sha even for an imported row', async () => {
-  const prev = process.env.PR_IMPORT_ENABLED;
-  delete process.env.PR_IMPORT_ENABLED;
-  const { subject, mergeCalls, restore } = loadVotes({
-    mergeImpl: () => ({ sha: 'squashsha', merged: true }),
-  });
-  try {
-    await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...importedSession }, { force: true });
-    const imported = mergeCalls.find((c) => c.prNumber === 31);
-    assert.ok(imported.sha == null, 'no sha pinned while the feature is dark');
-  } finally {
-    restore();
-    if (prev === undefined) delete process.env.PR_IMPORT_ENABLED; else process.env.PR_IMPORT_ENABLED = prev;
   }
 });
 
 test('checkAndMerge: head-moved 409 leaves the imported row recoverable and does not error', async () => {
-  const prev = process.env.PR_IMPORT_ENABLED;
-  process.env.PR_IMPORT_ENABLED = 'true';
   const { subject, voteUpdates, systemMessages, rebuildCalls, restore } = loadVotes({
     mergeImpl: () => { throw new (require('../src/services/github').HeadMovedError)(); },
   });
@@ -297,13 +282,10 @@ test('checkAndMerge: head-moved 409 leaves the imported row recoverable and does
     assert.ok(!voteUpdates.some((u) => u.mergeFailed), 'a head move is not a merge failure');
   } finally {
     restore();
-    if (prev === undefined) delete process.env.PR_IMPORT_ENABLED; else process.env.PR_IMPORT_ENABLED = prev;
   }
 });
 
 test('finalizeMerge: runs the identical deploy tail for native and imported merges', async () => {
-  const prev = process.env.PR_IMPORT_ENABLED;
-  process.env.PR_IMPORT_ENABLED = 'true';
   const { subject, rebuildCalls, teardownCalls, systemMessages, voteUpdates, restore } = loadVotes({
     mergeImpl: () => ({ sha: 'squashsha', merged: true }),
   });
@@ -328,6 +310,5 @@ test('finalizeMerge: runs the identical deploy tail for native and imported merg
     assert.ok(mergeAnnouncements.length >= 2, 'both announced a successful merge identically');
   } finally {
     restore();
-    if (prev === undefined) delete process.env.PR_IMPORT_ENABLED; else process.env.PR_IMPORT_ENABLED = prev;
   }
 });

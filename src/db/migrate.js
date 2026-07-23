@@ -160,7 +160,7 @@ async function auditDuplicatePrSessions(pool) {
     throw new Error(
       `PR-import boot audit: ${rows.length} duplicate (app_id, pr_number) group(s) in ` +
       `chat_sessions violate the uniqueness invariant PR-import relies on. ` +
-      `Resolve the conflicting sessions before enabling PR_IMPORT_ENABLED. ` +
+      `Resolve the conflicting sessions before booting. ` +
       `Conflicts: ${detail.join('; ')}`
     );
   }

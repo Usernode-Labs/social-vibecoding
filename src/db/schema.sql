@@ -462,9 +462,7 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 -- #687 (PR-import, Slice 1): provenance columns for proposals whose code
 -- was authored OUTSIDE the platform — an existing GitHub PR imported into
 -- the vote flow rather than opened by the group's AI dev-chat. Append-only:
--- these columns are inert until PR_IMPORT_ENABLED is turned on (later
--- slices add the routes/poller that populate them), and existing rows read
--- as native (source NULL/'native').
+-- existing rows read as native (source NULL/'native').
 --   source               = 'native' (implicit for every existing row; a
 --                          NULL value is treated as native) vs 'imported'.
 --                          Drives the "Imported PR" source badge + GitHub
@@ -514,11 +512,13 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS notify_on_done BOOLEAN NOT NU
 
 -- GitHub issue linkage (#75): the open issues this session's work addresses,
 -- declared by the Mayor via dispatch_claude_code / dispatch_scout's
--- `addresses_issues` arg. Accumulates (union) across turns. pr-metadata.js
--- appends a `Closes #N` line per number to the PR body so merging the PR
--- auto-closes the issue. `pr_linked_issues_applied` snapshots what was last
--- written to the live PR body so the existing-PR update path can detect a
--- changed linkage even when the title is unchanged.
+-- `addresses_issues` arg. Accumulates (union) across turns, and shrinks via
+-- the tools' `removes_issues` counterpart (#733) when scope is cut
+-- mid-session — removal wins over an addition of the same number in the
+-- same call. pr-metadata.js appends a `Closes #N` line per number to the PR
+-- body so merging the PR auto-closes the issue. `pr_linked_issues_applied`
+-- snapshots what was last written to the live PR body so the existing-PR
+-- update path can detect a changed linkage even when the title is unchanged.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS linked_issues             INTEGER[] NOT NULL DEFAULT '{}';
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_linked_issues_applied  INTEGER[] NOT NULL DEFAULT '{}';
 -- One-shot marker for the migrate-time backfill that recovers linked_issues

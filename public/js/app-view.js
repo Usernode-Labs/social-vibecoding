@@ -685,7 +685,7 @@ const AppView = {
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Propose a change</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Start an AI dev session — promoting its PR creates the proposal</span>
               </button>
-              ${(AppView.appData?.pr_import_enabled && AppView.appData?.can_collaborate) ? `
+              ${AppView.appData?.can_collaborate ? `
               <button data-plus="import-pr" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
                 <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">Import Feature from a PR</span>
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Turn an existing GitHub pull request into a proposal people can vote on</span>
@@ -1420,8 +1420,8 @@ const AppView = {
         AppView.createProposal();
       });
     }
-    // import-pr renders only when pr_import_enabled && can_collaborate, so
-    // (like members/fork) its handler needs an existence check.
+    // import-pr renders only when can_collaborate, so (like members/fork)
+    // its handler needs an existence check.
     const importPrBtn = menu.querySelector('[data-plus="import-pr"]');
     if (importPrBtn) {
       importPrBtn.addEventListener('click', () => {
@@ -7209,9 +7209,8 @@ const AppView = {
   // GET /pr-import/candidates; importing one POSTs /pr-import and lands the
   // user on the resulting proposal thread — the same navigation
   // createProposal() performs. Mirrors the promptFork / submitFork /
-  // closeForkModal shape. Every endpoint 404s when pr_import_enabled is off,
-  // so a stale-appData open degrades to the GitHub-off/empty message rather
-  // than crashing.
+  // closeForkModal shape. A 404 from the candidates endpoint degrades to
+  // the GitHub-off/empty message rather than crashing.
   _importPrSelected: null,
 
   async openImportPrModal() {
@@ -7237,7 +7236,7 @@ const AppView = {
       return;
     }
     if (!ok) {
-      // 404 = flag off / GitHub not configured for this app. Treat as the
+      // 404 = GitHub not configured for this app. Treat as the
       // GitHub-off state rather than an error the user can't act on.
       list.innerHTML = '<div class="text-sm text-zinc-500 dark:text-zinc-400 py-6 text-center">GitHub isn’t configured for this app, so there’s nothing to import.</div>';
       return;
