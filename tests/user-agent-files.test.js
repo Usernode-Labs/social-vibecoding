@@ -229,7 +229,11 @@ test('worker.js exports syncUserAgentFiles and pipes the script via stdin', () =
   const src = read('src/services/worker.js');
   assert.match(src, /async function syncUserAgentFiles\(/);
   assert.match(src, /syncUserAgentFiles,/);
-  assert.match(src, /\['exec', '-i', meta\.containerName, 'sh'\]/);
+  // Since the prompt-file transport (E2BIG fix) the stdin plumbing lives
+  // in docker.execShellStdin, shared with writeTurnPrompt.
+  assert.match(src, /docker\.execShellStdin\(meta\.containerName, buildSyncShellScript\(files \|\| \[\]\)/);
+  const dockerSrc = read('src/services/docker.js');
+  assert.match(dockerSrc, /\['exec', '-i', containerName, 'sh'\]/);
 });
 
 test('routes: demo mode is staging-gated and the POST uses a scoped body parser', () => {

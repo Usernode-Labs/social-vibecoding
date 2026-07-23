@@ -5428,6 +5428,15 @@ function describeTurnError(err) {
   if (status === 529 || /overloaded/i.test(message)) {
     return 'The AI provider is overloaded right now — try again in a minute.';
   }
+  // spawn E2BIG: the OS rejected a process launch because a single
+  // argument crossed Linux's 128 KiB limit. Deterministic — a verbatim
+  // retry can never succeed — so say what to change instead of parroting
+  // the errno. Should be unreachable for the dispatch prompt itself now
+  // that it travels as a file (worker.TURN_PROMPT_PATH), but other
+  // spawns can still theoretically hit it.
+  if (/\bE2BIG\b/.test(message)) {
+    return 'This request was too large to hand to the coding agent — trim the session spec or attachments before retrying';
+  }
   return message;
 }
 

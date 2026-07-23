@@ -1,8 +1,38 @@
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const { promisify } = require('util');
 const log = require('./logger');
 
 const execFileAsync = promisify(execFile);
+
+// Run `docker exec -i <container> sh` with `script` fed on stdin. Used to
+// materialize files inside a container without putting their contents on
+// the docker CLI's argv/env: Linux caps a single argv or envp string at
+// 128 KiB (MAX_ARG_STRLEN), so oversized values kill the spawn with
+// E2BIG before the exec even exists. Content travels base64-inlined
+// within the script, which also keeps it out of `ps` and `docker
+// inspect`.
+async function execShellStdin(containerName, script, { timeoutMs = 20000, label = 'execShellStdin' } = {}) {
+  await new Promise((resolve, reject) => {
+    const proc = spawn('docker', ['exec', '-i', containerName, 'sh'], {
+      stdio: ['pipe', 'ignore', 'pipe'],
+    });
+    const timer = setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch {}
+      reject(new Error(`${label}: timed out`));
+    }, timeoutMs);
+    let stderr = '';
+    proc.stderr.on('data', (d) => { stderr += String(d); });
+    proc.on('error', (err) => { clearTimeout(timer); reject(err); });
+    proc.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) return resolve();
+      reject(new Error(`${label}: docker exec exited ${code}: ${stderr.slice(0, 300)}`));
+    });
+    proc.stdin.on('error', () => {});
+    proc.stdin.write(script);
+    proc.stdin.end();
+  });
+}
 
 const APP_MEMORY = '256m';
 const APP_CPUS = '0.5';
@@ -283,6 +313,7 @@ async function removeVolume(name) {
 
 module.exports = {
   execFileAsync,
+  execShellStdin,
   buildImage,
   runContainer,
   runOneShot,

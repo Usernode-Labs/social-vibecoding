@@ -379,6 +379,52 @@ function turnJournalPath(turnId) {
   return `/home/node/.claude/turn-${turnId}.log`;
 }
 
+// Per-turn prompt file inside the CC volume. The dispatch prompt used to
+// travel as a `docker exec -e PROMPT=<value>` argument, but Linux caps a
+// single argv/env string at 128 KiB (MAX_ARG_STRLEN) — a session with a
+// large spec doc pushed the build prompt past the cap and every dispatch
+// died with `spawn E2BIG` before the exec existed (prod session 2538).
+// The prompt is now materialized here via stdin (base64-inlined, so it
+// never rides argv/env) and run-cc.sh pipes it to the claude CLI from
+// disk. Lives outside the repo checkout, so `git add -A` can't commit
+// it; the detached wrapper rm's it when the turn ends.
+const TURN_PROMPT_PATH = '/home/node/.claude/turn-prompt.txt';
+
+// Shell script that writes `prompt` to TURN_PROMPT_PATH. The base64
+// payload is split into bounded chunks appended by `printf` (a shell
+// builtin — no exec, so no MAX_ARG_STRLEN exposure) so the script works
+// for prompts of any size regardless of the container shell's line
+// handling. Pure — exported for unit tests.
+const PROMPT_B64_CHUNK = 64 * 1024;
+function buildTurnPromptScript(prompt) {
+  const b64 = Buffer.from(String(prompt), 'utf8').toString('base64');
+  const lines = [
+    'set -e',
+    'mkdir -p /home/node/.claude',
+    `: > ${TURN_PROMPT_PATH}.b64`,
+  ];
+  for (let i = 0; i < b64.length; i += PROMPT_B64_CHUNK) {
+    lines.push(`printf '%s' '${b64.slice(i, i + PROMPT_B64_CHUNK)}' >> ${TURN_PROMPT_PATH}.b64`);
+  }
+  lines.push(`base64 -d < ${TURN_PROMPT_PATH}.b64 > ${TURN_PROMPT_PATH}`);
+  lines.push(`rm -f ${TURN_PROMPT_PATH}.b64`);
+  return lines.join('\n') + '\n';
+}
+
+// Materialize the dispatch prompt into the warm worker's CC volume ahead
+// of the detached exec. Unlike syncUserAgentFiles this file is required:
+// a failure here fails the turn (before active_turn is persisted, so
+// there is nothing to clean up).
+async function writeTurnPrompt(sessionId, prompt) {
+  const meta = _registryGet(sessionId);
+  if (!meta) {
+    throw new Error(`writeTurnPrompt: no warm worker registered for session ${sessionId}`);
+  }
+  await docker.execShellStdin(meta.containerName, buildTurnPromptScript(prompt), {
+    timeoutMs: 20000, label: 'writeTurnPrompt',
+  });
+}
+
 // ──────────────────────────────────────────────────────────────────────
 // Durable turn records (chat_sessions.active_turn)
 // ──────────────────────────────────────────────────────────────────────
@@ -837,6 +883,13 @@ async function execInWorker(sessionId, {
   // shorter later) and the next push fails with 401 from the proxy.
   const workerJwt = mintWorkerJwt(sessionId);
 
+  // The prompt travels as a file, never as exec argv/env — a single
+  // argv/env string is capped at 128 KiB on Linux, and build prompts
+  // (conventions block + spec doc) legitimately exceed it. See
+  // TURN_PROMPT_PATH. Written before active_turn is persisted so a
+  // failure here surfaces as a plain turn error with nothing to reap.
+  await writeTurnPrompt(sessionId, prompt);
+
   // Anthropic-proxy: when the caller provides a BYOK key (anthropicApiKey
   // truthy), the worker hits api.anthropic.com directly with that key
   // — same flow as before. When no BYOK key is provided we route the
@@ -875,7 +928,7 @@ async function execInWorker(sessionId, {
     prodDebugJwt: prodDebug && mode !== 'sync' ? mintProdDebugJwt(sessionId) : null,
   });
   const safeEnv = {
-    PROMPT: prompt,
+    PROMPT_FILE: TURN_PROMPT_PATH,
     MODE: mode,
     MODEL: models.resolve(model),
     COMMIT_MSG: commitMsg || 'Changes via Usernode',
@@ -921,10 +974,14 @@ async function execInWorker(sessionId, {
     containerName,
     'sh', '-c',
     // rm stale journals first so the tailer's existence-wait can't latch
-    // onto a leftover file from a previous turn.
+    // onto a leftover file from a previous turn. The prompt file is
+    // removed AFTER the run (it was freshly written just above; run-cc.sh
+    // reads it mid-turn) so a stale prompt can never be re-read by a
+    // manual/errant exec.
     'rm -f /home/node/.claude/turn-*.log 2>/dev/null; '
       + '/usr/local/bin/run-cc.sh > "$TURN_JOURNAL" 2>&1; '
-      + 'echo "__USERNODE_EXIT__ $?" >> "$TURN_JOURNAL"',
+      + 'echo "__USERNODE_EXIT__ $?" >> "$TURN_JOURNAL"; '
+      + 'rm -f "$PROMPT_FILE" 2>/dev/null',
   ];
 
   // #361: record the in-flight turn's mode in the warm registry so the
@@ -1297,26 +1354,8 @@ async function syncUserAgentFiles(sessionId, files) {
     throw new Error(`syncUserAgentFiles: no warm worker registered for session ${sessionId}`);
   }
   const { buildSyncShellScript } = require('./user-agent-files');
-  const script = buildSyncShellScript(files || []);
-  await new Promise((resolve, reject) => {
-    const proc = spawn('docker', ['exec', '-i', meta.containerName, 'sh'], {
-      stdio: ['pipe', 'ignore', 'pipe'],
-    });
-    const timer = setTimeout(() => {
-      try { proc.kill('SIGKILL'); } catch {}
-      reject(new Error('syncUserAgentFiles: timed out'));
-    }, 20000);
-    let stderr = '';
-    proc.stderr.on('data', (d) => { stderr += String(d); });
-    proc.on('error', (err) => { clearTimeout(timer); reject(err); });
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      if (code === 0) return resolve();
-      reject(new Error(`syncUserAgentFiles: docker exec exited ${code}: ${stderr.slice(0, 300)}`));
-    });
-    proc.stdin.on('error', () => {});
-    proc.stdin.write(script);
-    proc.stdin.end();
+  await docker.execShellStdin(meta.containerName, buildSyncShellScript(files || []), {
+    timeoutMs: 20000, label: 'syncUserAgentFiles',
   });
   log.info('worker', 'Personal agent files synced', {
     sessionId, count: (files || []).length,
@@ -1692,4 +1731,8 @@ module.exports = {
   // #616: prod-debug JWT + pure turn-env builder (exported for tests)
   mintProdDebugJwt,
   buildTurnSecretEnv,
+  // file-based dispatch-prompt transport (E2BIG fix; exported for tests)
+  TURN_PROMPT_PATH,
+  buildTurnPromptScript,
+  writeTurnPrompt,
 };
