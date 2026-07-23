@@ -1575,7 +1575,7 @@ const App = {
     document.getElementById('create-form').addEventListener('submit', App.handleCreateApp);
 
     // Create / Import mode pills. The active mode lives on
-    // #create-modal[data-mode="..."] (CSS keys off it for styling); these
+    // #create-card[data-mode="..."] (CSS keys off it for styling); these
     // handlers also flip the submit-button label and the URL block.
     document.querySelectorAll('.create-mode-pill').forEach((pill) => {
       pill.addEventListener('click', () => App.setCreateMode(pill.dataset.modePill));
@@ -2218,6 +2218,20 @@ const App = {
       }
 
       const parts = hash.split('/');
+      if (parts[0] === 'create') {
+        // #create — deep link that opens the create-app modal over the
+        // home feed. Doubles as the addressable route the dapp.json
+        // regression test for the mode toggle uses (#748).
+        App.setChromeless(false);
+        if (App.currentApp || App._inLeaderboard) {
+          App.navigateHome();
+        } else {
+          App.setHeaderTitle('dApps');
+          Home.load();
+        }
+        App.showCreateModal();
+        return;
+      }
       if (parts[0] === 'leaderboard') {
         App.setChromeless(false);
         // Optional sub-view segment (#leaderboard/history etc.) — pass
@@ -2546,6 +2560,12 @@ const App = {
     const modal = document.getElementById('create-modal');
     if (!modal) return;
     modal.dataset.mode = m;
+    // Mirror onto the card: the native-kit modal adoption lifts the card
+    // out of #create-modal while presented, so CSS keyed off the modal
+    // root would stop matching (the bug that left the modal stuck in
+    // import mode). app.css keys off #create-card instead.
+    const card = document.getElementById('create-card');
+    if (card) card.dataset.mode = m;
     document.getElementById('create-title').textContent =
       m === 'import' ? 'Import existing app' : 'Create a new app';
     document.getElementById('create-submit').textContent =
@@ -2569,6 +2589,10 @@ const App = {
     if (!modal) return;
     const s = ['idle', 'checking', 'ok', 'error'].includes(state) ? state : 'idle';
     modal.dataset.importState = s;
+    // Mirrored onto the card for the same reason as setCreateMode: the
+    // kit modal adoption detaches the card from #create-modal.
+    const card = document.getElementById('create-card');
+    if (card) card.dataset.importState = s;
     const checkBtn = document.getElementById('import-check');
     const status = document.getElementById('import-status');
     if (checkBtn) {
