@@ -387,6 +387,21 @@ function sessionRoutes(config) {
             created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // #747: promoted own session whose id matches the first mock
+          // proposal (stagingMockProposals in votes.js), which the
+          // /api/me/proposals demo block also returns — so the work
+          // drawer's de-dup is reviewable via ?demo=1: this row must
+          // render under "Your proposals" only, never "Your sessions".
+          {
+            id: 9000001, branch_name: 'mock/my-promoted-session', pr_number: 900101,
+            pr_url: null,
+            pr_title: '[Mock] Promoted session — must NOT appear under Your sessions',
+            session_title: '[Mock] Promoted session — must NOT appear under Your sessions',
+            status: 'promoted', linked_issues: [], shared_at: null,
+            created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
           }
         );
       }

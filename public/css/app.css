@@ -3068,18 +3068,21 @@ html.in-native-webview #header-title {
 }
 
 /* Create-app modal: segmented "Create new | Import existing" toggle.
-   The active state is keyed off the parent #create-modal[data-mode="..."]
+   The active state is keyed off the parent #create-card[data-mode="..."]
    attribute so app.js only has to flip a single attribute to change modes
-   (no per-button class juggling, no race with the form-reset path). */
-#create-modal .create-mode-pill {
+   (no per-button class juggling, no race with the form-reset path).
+   It must be the CARD, not #create-modal: the native-kit modal adoption
+   (platform-ui.js adoptStaticModal) lifts the card out of #create-modal
+   while presented, so selectors rooted at the modal stop matching. */
+#create-card .create-mode-pill {
   color: var(--text-muted);
   cursor: pointer;
 }
-#create-modal .create-mode-pill:hover {
+#create-card .create-mode-pill:hover {
   color: var(--text-secondary);
 }
-#create-modal[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
-#create-modal[data-mode="import"] .create-mode-pill[data-mode-pill="import"] {
+#create-card[data-mode="new"]    .create-mode-pill[data-mode-pill="new"],
+#create-card[data-mode="import"] .create-mode-pill[data-mode-pill="import"] {
   background: var(--bg-primary);
   color: var(--text-primary);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
@@ -3114,16 +3117,16 @@ html.in-native-webview #header-title {
 /* Import-mode visibility gating.
    The flow is: paste URL → click Check → on success, the name field +
    submit button reveal so the user can confirm/edit and click Import.
-   data-import-state on #create-modal drives the reveal so app.js only
+   data-import-state on #create-card drives the reveal so app.js only
    needs to flip an attribute, never toggle .hidden on each child. */
-#create-modal[data-mode="new"] .create-import-block { display: none; }
+#create-card[data-mode="new"] .create-import-block { display: none; }
 
-#create-modal[data-mode="import"] #create-name-block,
-#create-modal[data-mode="import"] #create-submit {
+#create-card[data-mode="import"] #create-name-block,
+#create-card[data-mode="import"] #create-submit {
   display: none;
 }
-#create-modal[data-mode="import"][data-import-state="ok"] #create-name-block { display: block; }
-#create-modal[data-mode="import"][data-import-state="ok"] #create-submit     { display: block; }
+#create-card[data-mode="import"][data-import-state="ok"] #create-name-block { display: block; }
+#create-card[data-mode="import"][data-import-state="ok"] #create-submit     { display: block; }
 
 /* Import status row — spinner on checking, green check on success,
    red text on failure. JS sets the text + adds an --ok / --err
