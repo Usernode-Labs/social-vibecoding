@@ -1766,7 +1766,10 @@ const App = {
 
     // #556: live title generation. As the user types the description,
     // a debounced POST /api/feedback/title fills the editable Title
-    // field; whatever is in the field at submit time is the title used.
+    // field. At submit, a user-typed title is always used; an
+    // auto-filled one is used only while it still matches the submitted
+    // description — a stale fill from a partial description is dropped
+    // so the server re-names from the full text (#732).
     // Guards: once the user types in the Title field themselves
     // (titleDirty) auto-fill stops — clearing the field re-arms it;
     // responses landing after a newer request or a takeover are
@@ -1957,6 +1960,15 @@ const App = {
         showFeedbackNotice('Screenshot is still uploading — one moment…', false);
         return;
       }
+      // #732: freeze the title snapshot for this submit — cancel the
+      // pending debounce and invalidate any in-flight preview (a Submit
+      // click blurs the textarea, which flushes one) so a response
+      // generated from a partial description can't rewrite the field
+      // mid-submit. A failed submit re-arms normally: the next
+      // description input reschedules the debounce.
+      if (titleGenTimer) { clearTimeout(titleGenTimer); titleGenTimer = null; }
+      titleGenSeq++;
+      feedbackTitle.placeholder = titleIdlePlaceholder;
       feedbackBtn.disabled = true; feedbackBtn.textContent = 'Submitting...';
       try {
         // Capture the target + slug at submit time so navigating away
@@ -1964,9 +1976,14 @@ const App = {
         const target = feedbackTarget;
         const body = { description: text, target };
         // #556: optional user-chosen title — omitted entirely when blank
-        // so the server auto-generates one as before.
+        // so the server auto-generates one as before. #732: an
+        // auto-filled title is trusted only when it was generated from
+        // exactly the description being submitted (lastGeneratedFor);
+        // a stale fill from a partial description is dropped so the
+        // server names the issue from the full text. A title the user
+        // typed or edited (titleDirty) is always sent verbatim.
         const customTitle = feedbackTitle.value.trim();
-        if (customTitle) body.title = customTitle;
+        if (customTitle && (titleDirty || text === lastGeneratedFor)) body.title = customTitle;
         if (target === 'app') body.appSlug = App.currentApp;
         // #683: attach the uploaded screenshot — the server appends the
         // embed line and links the row to the filed issue.
