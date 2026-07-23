@@ -302,6 +302,8 @@ const AppView = {
     AppView.stopTokenRefresh();
     AppView._issueStateSource = null;
     GroupChat.disconnect();
+    // Detach kit scroll/keyboard handles for every app-scoped screen.
+    ['dev-chat', 'group-chat', 'gc-thread', 'dev-feed'].forEach((k) => PlatformUI.detachScreenFx(k));
     // Drop any in-memory dev-chat session state belonging to the app
     // we're leaving. Without this, opening a different app and clicking
     // the dev-chat tab would render the prior app's session instead of
@@ -746,6 +748,12 @@ const AppView = {
       </div>`;
 
     AppView._wirePlusMenu(content);
+    // Pull down on the dev feed to re-pull it (touch only; the scroller
+    // is re-created on every render so this re-attaches each time).
+    const devScroll = document.getElementById('dev-forum-scroll');
+    if (devScroll) {
+      PlatformUI.pullToRefresh(devScroll, () => AppView._loadDevFeed());
+    }
     AppView._wireViewToggle(content);
     AppView._attrInit();
     document.getElementById('dev-chat-card').addEventListener('click', () => {
@@ -1376,6 +1384,21 @@ const AppView = {
     };
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      // Touch platforms: present the same items as a bottom action
+      // sheet (the anchored dropdown stays the desktop idiom). Each
+      // sheet action delegates to the hidden menu row's own click
+      // handler, so both idioms share one wiring path.
+      if (PlatformUI.isTouch()) {
+        AppView.refreshDevChatSecretsState();
+        const rows = Array.from(menu.querySelectorAll('button[data-plus]'));
+        PlatformUI.actionSheet({
+          actions: rows.map((row) => ({
+            label: (row.querySelector('span')?.textContent || row.textContent).replace(/\s+/g, ' ').trim(),
+            handler: () => row.click(),
+          })),
+        });
+        return;
+      }
       const open = menu.classList.toggle('hidden') === false;
       btn.setAttribute('aria-expanded', open ? 'true' : 'false');
       // Refresh the App secrets item's "N required missing" state only
@@ -1637,6 +1660,16 @@ const AppView = {
           <div id="gc-spec-side-panel" class="gc-spec-side-panel"></div>
         </div>
       </div>`;
+
+    // Kit polish: fixed-shell keyboard avoidance on the general-chat
+    // scroller (the screen's top bar is the shared platform header, so
+    // the nav-bar hairline treatment is skipped — navBar:false).
+    PlatformUI.attachScreenFx(
+      'group-chat',
+      document.getElementById('gc-messages'),
+      document.getElementById('platform-header'),
+      { navBar: false },
+    );
 
     const gcInput = document.getElementById('gc-input');
     // #621: read-only viewers have no composer — mount the live stream
@@ -2803,7 +2836,7 @@ const AppView = {
     } catch {
       AppView._boardOrder = prev;
       AppView._repaintKanbanBoard();
-      alert('Couldn’t save the new order — reverted.');
+      PlatformUI.toast('Couldn’t save the new order — reverted.');
     }
   },
 
@@ -2876,7 +2909,7 @@ const AppView = {
       // repaint from the reloaded cache.
       if (AppView.refreshDevData) AppView.refreshDevData('pm-order');
       else AppView._repaintPmView();
-      alert('Couldn’t save that change — reverted.');
+      PlatformUI.toast('Couldn’t save that change — reverted.');
     }
   },
 
@@ -3563,7 +3596,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/${shared ? 'share' : 'unshare'}`, { method: 'POST' });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(body.error || `Failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(body.error || `Failed (HTTP ${resp.status}).`);
         if (btn) { btn.disabled = false; btn.textContent = original; }
         return;
       }
@@ -3584,7 +3617,7 @@ const AppView = {
         });
       }
     } catch (err) {
-      alert(`Failed: ${err.message}`);
+      PlatformUI.toast(`Failed: ${err.message}`);
       if (btn) { btn.disabled = false; btn.textContent = original; }
     }
   },
@@ -3600,16 +3633,16 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/unarchive`, { method: 'POST' });
       const body = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(body.error || 'Failed to unarchive session');
+        PlatformUI.toast(body.error || 'Failed to unarchive session');
         btn.textContent = original;
         btn.disabled = false;
         return;
       }
       if (body.ccPurged) {
-        alert("Session restored. Note: Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch.");
+        PlatformUI.alert({ title: 'Session restored', message: "Claude's memory had already been cleared, so this picks up as a fresh chat on the same branch." });
       }
     } catch (err) {
-      alert(`Unarchive failed: ${err.message}`);
+      PlatformUI.toast(`Unarchive failed: ${err.message}`);
       btn.textContent = original;
       btn.disabled = false;
       return;
@@ -3635,11 +3668,11 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Archive failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Archive failed (HTTP ${resp.status}).`);
         return false;
       }
     } catch (err) {
-      alert(`Archive failed: ${err.message}`);
+      PlatformUI.toast(`Archive failed: ${err.message}`);
       return false;
     }
     return true;
@@ -4383,14 +4416,14 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Re-run failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Re-run failed (HTTP ${resp.status}).`);
         if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
         return;
       }
       const data = await resp.json().catch(() => ({}));
       // Rechecks can't run inside a staging preview of the platform itself.
       if (data.status === 'unavailable') {
-        alert('Re-running checks is unavailable in this preview.');
+        PlatformUI.toast('Re-running checks is unavailable in this preview.');
         if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
         return;
       }
@@ -4399,7 +4432,7 @@ const AppView = {
       // pending broadcast covers everyone else's screens).
       AppView.refreshDevData('recheck');
     } catch (err) {
-      alert(`Re-run failed: ${err.message}`);
+      PlatformUI.toast(`Re-run failed: ${err.message}`);
       if (btn) { btn.disabled = false; btn.textContent = 'Re-run checks'; }
     } finally {
       AppView._recheckInFlight.delete(sessionId);
@@ -4632,11 +4665,11 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${sessionId}/archive`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Withdraw failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Withdraw failed (HTTP ${resp.status}).`);
         return;
       }
     } catch (err) {
-      alert(`Withdraw failed: ${err.message}`);
+      PlatformUI.toast(`Withdraw failed: ${err.message}`);
       return;
     }
     await AppView._loadDevFeed();
@@ -4668,11 +4701,11 @@ const AppView = {
       const resp = await fetch(`/api/issues/${issueId}/close`, { method: 'POST' });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Withdraw failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Withdraw failed (HTTP ${resp.status}).`);
         return;
       }
     } catch (err) {
-      alert(`Withdraw failed: ${err.message}`);
+      PlatformUI.toast(`Withdraw failed: ${err.message}`);
       return;
     }
     await AppView._loadDevFeed();
@@ -4726,7 +4759,7 @@ const AppView = {
     const submitBtn = document.getElementById('close-issue-submit');
     const reason = (document.getElementById('close-issue-reason')?.value || '').trim();
     const showErr = (msg) => {
-      if (!err) { alert(msg); return; }
+      if (!err) { PlatformUI.toast(msg); return; }
       err.textContent = msg;
       err.classList.remove('hidden');
     };
@@ -5161,7 +5194,7 @@ const AppView = {
         body: JSON.stringify({ field, value }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) { alert(data.error || 'Could not save your vote.'); return; }
+      if (!res.ok) { PlatformUI.toast(data.error || 'Could not save your vote.'); return; }
       // Update the cached item's summary so re-renders show the new leader.
       AppView._applyAttrSummary(targetType, targetRef, field, data);
       // Repaint whichever card surface is mounted (list / kanban / PM /
@@ -5172,7 +5205,7 @@ const AppView = {
         AppView._renderAttrPopoverBody(data);
       }
     } catch (err) {
-      alert(`Could not save your vote: ${err.message}`);
+      PlatformUI.toast(`Could not save your vote: ${err.message}`);
     }
   },
 
@@ -5313,11 +5346,11 @@ const AppView = {
         // 409 means a revert is already in flight, or eligibility was
         // lost between render and click. Show the message and re-fetch
         // so the UI reflects reality.
-        alert(data.error || `Undo failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Undo failed (HTTP ${resp.status}).`);
       }
       AppView.refreshDevData('vote');
     } catch (err) {
-      alert(`Undo failed: ${err.message}`);
+      PlatformUI.toast(`Undo failed: ${err.message}`);
     } finally {
       AppView._voteInFlight.delete(key);
     }
@@ -5358,11 +5391,11 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Admin apply failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Admin apply failed (HTTP ${resp.status}).`);
       }
       AppView.refreshDevData('vote');
     } catch (err) {
-      alert(`Admin apply failed: ${err.message}`);
+      PlatformUI.toast(`Admin apply failed: ${err.message}`);
     } finally {
       AppView._voteInFlight.delete(key);
     }
@@ -5907,7 +5940,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(data.error || `Couldn't place bounty (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Couldn't place bounty (HTTP ${resp.status}).`);
         return;
       }
       // Reflect the new state locally: mark this issue bountied, set its
@@ -5920,7 +5953,7 @@ const AppView = {
       if (typeof data.remaining === 'number') AppView._ghIssuesMeta.myRemaining = data.remaining;
       AppView._repaintCards();
     } catch (err) {
-      alert(`Couldn't place bounty: ${err.message}`);
+      PlatformUI.toast(`Couldn't place bounty: ${err.message}`);
     } finally {
       AppView._bountyInFlight.delete(key);
     }
@@ -5940,7 +5973,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(data.error || `Couldn't mark in progress (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Couldn't mark in progress (HTTP ${resp.status}).`);
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -5960,7 +5993,7 @@ const AppView = {
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
       }
     } catch (err) {
-      alert(`Couldn't mark in progress: ${err.message}`);
+      PlatformUI.toast(`Couldn't mark in progress: ${err.message}`);
     }
   },
 
@@ -5982,7 +6015,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(data.error || `Couldn't clear the in-progress mark (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Couldn't clear the in-progress mark (HTTP ${resp.status}).`);
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -6000,7 +6033,7 @@ const AppView = {
         if (document.getElementById('gc-thread-head')) AppView._renderTopicHead();
       }
     } catch (err) {
-      alert(`Couldn't clear the in-progress mark: ${err.message}`);
+      PlatformUI.toast(`Couldn't clear the in-progress mark: ${err.message}`);
     }
   },
 
@@ -6095,7 +6128,7 @@ const AppView = {
       models = Array.isArray(data.models) ? data.models : [];
       defaultModel = data.default || (models[0] && models[0].id) || '';
     } catch {
-      alert("Couldn't load the model list — try again.");
+      PlatformUI.toast("Couldn't load the model list — try again.");
       return;
     }
     const stored = localStorage.getItem('usernode:dc:model');
@@ -6112,7 +6145,7 @@ const AppView = {
       });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Couldn't start generating the proposal (HTTP ${resp.status}).`);
         return;
       }
       const issue = (AppView._ghIssues || []).find((i) => i.number === issueNumber);
@@ -6122,7 +6155,7 @@ const AppView = {
       // topic view advances to its outcome label without a manual refresh.
       AppView._syncHeadlessPolling();
     } catch (err) {
-      alert(`Couldn't start generating the proposal: ${err.message}`);
+      PlatformUI.toast(`Couldn't start generating the proposal: ${err.message}`);
     }
   },
 
@@ -6204,7 +6237,7 @@ const AppView = {
       const resp = await fetch(`/api/sessions/${headlessSessionId}/clone-headless`, { method: 'POST' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        alert(data.error || `Couldn't start a session from the proposal (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Couldn't start a session from the proposal (HTTP ${resp.status}).`);
         return;
       }
       // #172: remember the clone locally so a back-navigation to the
@@ -6221,7 +6254,7 @@ const AppView = {
         await App.switchTab('dev', data.session.id, 'sessions');
       }
     } catch (err) {
-      alert(`Couldn't start a session from the proposal: ${err.message}`);
+      PlatformUI.toast(`Couldn't start a session from the proposal: ${err.message}`);
     }
   },
 
@@ -6995,11 +7028,11 @@ const AppView = {
       });
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        alert(data.error || `Force-merge failed (HTTP ${resp.status}).`);
+        PlatformUI.toast(data.error || `Force-merge failed (HTTP ${resp.status}).`);
       }
       AppView.refreshDevData('vote');
     } catch (err) {
-      alert(`Force-merge failed: ${err.message}`);
+      PlatformUI.toast(`Force-merge failed: ${err.message}`);
     } finally {
       AppView._voteInFlight.delete(key);
     }
@@ -8334,10 +8367,11 @@ const AppView = {
     };
     setStatus('', false);
 
-    if (!window.confirm(
-      'Changing visibility opens a proposal that needs the group\'s vote. '
-      + 'The change applies after the vote passes and the app redeploys. Open the proposal?'
-    )) return;
+    if (!await PlatformUI.confirm({
+      title: 'Open a visibility proposal?',
+      message: 'Changing visibility opens a proposal that needs the group\'s vote. The change applies after the vote passes and the app redeploys.',
+      confirmLabel: 'Open proposal',
+    })) return;
 
     try {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/visibility-pr`, {
@@ -8421,7 +8455,7 @@ const AppView = {
           }
           AppView.loadCollaborators();
         } catch (err) {
-          alert(`Remove failed: ${err.message}`);
+          PlatformUI.toast(`Remove failed: ${err.message}`);
           btn.disabled = false;
         }
       });
@@ -8668,10 +8702,11 @@ const AppView = {
 
     // The initial-approvers step's Propose button IS the explicit
     // consent (skipConfirm) — every other path keeps the dialog.
-    if (!skipConfirm && !window.confirm(
-      'Changing the approval settings opens a proposal that is voted on under the current rules. '
-      + 'The change applies after the vote passes and the app redeploys. Open the proposal?'
-    )) {
+    if (!skipConfirm && !await PlatformUI.confirm({
+      title: 'Open an approval-settings proposal?',
+      message: 'Changing the approval settings opens a proposal that is voted on under the current rules. The change applies after the vote passes and the app redeploys.',
+      confirmLabel: 'Open proposal',
+    })) {
       // The pill click already painted the tapped mode (see
       // _showMembersGovModeDraft) — snap back to the app's real settings.
       AppView._renderMembersGovPills();
@@ -8788,7 +8823,7 @@ const AppView = {
           if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
           AppView.loadApprovers();
         } catch (err) {
-          alert(`Remove failed: ${err.message}`);
+          PlatformUI.toast(`Remove failed: ${err.message}`);
           btn.disabled = false;
         }
       });

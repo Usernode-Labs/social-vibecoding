@@ -381,25 +381,11 @@ const Kudos = {
   },
 
   _toast(msg) {
-    // Lightweight toast — we don't have a global toast system, so
-    // surface it as a transient bottom-center banner that fades
-    // after a few seconds. Stacking is handled by replacing the
-    // previous toast in-place.
-    let el = document.getElementById('kudos-toast');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = 'kudos-toast';
-      el.className = 'fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] px-4 py-2 rounded-lg bg-zinc-900 text-white text-sm shadow-xl border border-zinc-700 transition-opacity duration-300 opacity-0 pointer-events-none';
-      document.body.appendChild(el);
-    }
-    el.textContent = msg;
-    el.classList.remove('opacity-0');
-    el.classList.add('opacity-100');
-    clearTimeout(el._timer);
-    el._timer = setTimeout(() => {
-      el.classList.remove('opacity-100');
-      el.classList.add('opacity-0');
-    }, 3000);
+    // Delegates to the platform-wide toast system (the native kit's
+    // capsule HUD / Material snackbar via PlatformUI). The old
+    // hand-rolled #kudos-toast div is gone.
+    if (window.PlatformUI) { window.PlatformUI.toast(msg); return; }
+    console.log('[kudos]', msg);
   },
 
   // ----------------------------------------------------------------

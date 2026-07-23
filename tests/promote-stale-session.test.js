@@ -101,6 +101,21 @@ function makeHarness() {
     AbortController,
     fetch: async () => ({ ok: false, status: 500, json: async () => ({}) }),
     alert: (msg) => alerts.push(String(msg)),
+    // Native-kit adoption: dev-chat feedback routes through PlatformUI
+    // (toast/alert); record both through the same alerts sink.
+    PlatformUI: {
+      isTouch: () => false,
+      hasKit: () => false,
+      toast: (msg) => alerts.push(String(msg)),
+      alert: async (o) => { alerts.push(String((o && (o.message || o.title)) || o)); return {}; },
+      confirm: async () => true,
+      transition: (fn) => fn(),
+      attachScreenFx: () => {},
+      detachScreenFx: () => {},
+      pullToRefresh: () => ({ detach() {} }),
+      swipeActions: () => ({ detach() {} }),
+      gestures: () => null,
+    },
     escapeHtml: (s) => String(s == null ? '' : s),
     App: { currentTab: 'dev', currentSubTab: 'sessions' },
     Notifications: {},

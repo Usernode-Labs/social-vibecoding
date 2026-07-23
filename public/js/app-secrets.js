@@ -214,7 +214,12 @@ const Secrets = {
   },
 
   async handleSet(key, sensitive) {
-    const value = window.prompt(`New value for ${key}` + (sensitive ? ' (sensitive)' : ''));
+    const value = await PlatformUI.prompt({
+      title: `Set ${key}`,
+      message: sensitive ? 'This value is sensitive — it is encrypted at rest and never shown again.' : undefined,
+      placeholder: 'value',
+      confirmLabel: 'Save',
+    });
     if (value == null || !value.length) return;
     Secrets.setStatus(`Setting ${key}…`, 'info');
     try {
@@ -236,7 +241,7 @@ const Secrets = {
   },
 
   async handleClear(key) {
-    if (!window.confirm(`Clear ${key}?`)) return;
+    if (!await PlatformUI.confirm({ title: `Clear ${key}?`, confirmLabel: 'Clear', danger: true })) return;
     Secrets.setStatus(`Clearing ${key}…`, 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/secrets/${encodeURIComponent(key)}`, { method: 'DELETE' });
@@ -253,8 +258,12 @@ const Secrets = {
   },
 
   async handleProposeSet(key, sensitive) {
-    const value = window.prompt(`Propose setting ${key}` + (sensitive ? ' (sensitive)' : '') +
-      `\n\nA majority of active users must vote up before this applies.`);
+    const value = await PlatformUI.prompt({
+      title: `Propose setting ${key}`,
+      message: (sensitive ? 'This value is sensitive. ' : '') + 'A majority of active users must vote up before this applies.',
+      placeholder: 'value',
+      confirmLabel: 'Propose',
+    });
     if (value == null || !value.length) return;
     Secrets.setStatus(`Opening proposal for ${key}…`, 'info');
     try {
@@ -277,7 +286,7 @@ const Secrets = {
   },
 
   async handleProposeClear(key) {
-    if (!window.confirm(`Propose removing ${key}?`)) return;
+    if (!await PlatformUI.confirm({ title: `Propose removing ${key}?`, confirmLabel: 'Propose', danger: true })) return;
     Secrets.setStatus(`Opening proposal for ${key}…`, 'info');
     try {
       const res = await fetch(`/api/apps/${Secrets.currentSlug}/issues`, {

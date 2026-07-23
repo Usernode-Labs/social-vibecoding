@@ -1429,11 +1429,34 @@ const App = {
   // (#122). Holds the secondary header actions: GitHub, Share,
   // Settings. (Members & visibility moved to the Dev "+" menu — #645.)
   HeaderMenu: {
+    _sheet: null,
     open() {
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
       if (!panel) return;
+      // Touch platforms: present the drawer's rows as a draggable
+      // bottom sheet (kit). The panel element itself is adopted via
+      // contentEl — its row listeners ride along — and is restored to
+      // <body> (off-screen, as usual) when the sheet dismisses.
+      // Desktop keeps the right-side slide-over below.
+      if (PlatformUI.isTouch()) {
+        App.HeaderMenu._renderThemeButtons();
+        panel.classList.add('platform-sheet-adopted');
+        const sheet = PlatformUI.sheet({
+          contentEl: panel,
+          onDismiss: () => {
+            panel.classList.remove('platform-sheet-adopted');
+            document.body.appendChild(panel);
+            App.HeaderMenu._sheet = null;
+          },
+        });
+        if (sheet) {
+          App.HeaderMenu._sheet = sheet;
+          return;
+        }
+        panel.classList.remove('platform-sheet-adopted');
+      }
       overlay.classList.remove('hidden');
       // Force a reflow so the transition fires (element was display:none).
       overlay.getBoundingClientRect();
@@ -1461,6 +1484,10 @@ const App = {
       });
     },
     close() {
+      if (App.HeaderMenu._sheet) {
+        App.HeaderMenu._sheet.dismiss();
+        return;
+      }
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
@@ -1516,11 +1543,31 @@ const App = {
     },
   },
 
+  // Pull-to-refresh on the static full-screen scrollers (element mode —
+  // the platform is a fixed shell). The kit no-ops these on desktop.
+  // The Dev tab feed's scroller is re-created per render and wires its
+  // own PTR in AppView.renderDevView.
+  _wirePullToRefresh() {
+    const home = document.getElementById('home-screen');
+    if (home) PlatformUI.pullToRefresh(home, () => Home.load());
+    const lb = document.getElementById('leaderboard-screen');
+    if (lb) {
+      PlatformUI.pullToRefresh(lb, () => {
+        if (!window.Leaderboard) return Promise.resolve();
+        Leaderboard._cache.clear();
+        return Leaderboard._load();
+      });
+    }
+    const notifList = document.getElementById('notifications-list');
+    if (notifList) PlatformUI.pullToRefresh(notifList, () => Notifications.refresh());
+  },
+
   bindEvents() {
     // Note: the "Create new app" entry point lives in the home feed
     // now (see Home.wireCreateButtons) — no static header button to
     // bind here anymore.
     App.HeaderMenu.init();
+    App._wirePullToRefresh();
     document.getElementById('create-cancel').addEventListener('click', App.hideCreateModal);
     document.getElementById('create-modal').addEventListener('click', (e) => {
       if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) App.hideCreateModal();
@@ -2316,14 +2363,19 @@ const App = {
   // `profileUser` (#60) opens the per-user PR profile drill-in instead
   // of a plain tab.
   navigateToLeaderboard(sub, profileUser) {
+    // Same iframe caveat as navigateHome: no animated snapshot over a
+    // live App-tab iframe.
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
     if (App.currentApp) {
       AppView.close();
       App.currentApp = null;
-      document.getElementById('app-view').classList.add('hidden');
     }
-    document.getElementById('home-screen').classList.add('hidden');
     const screen = document.getElementById('leaderboard-screen');
-    if (screen) screen.classList.remove('hidden');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.add('hidden');
+      if (screen) screen.classList.remove('hidden');
+    }, { type: fromIframe ? 'none' : 'push' });
     document.getElementById('back-btn').classList.remove('hidden');
     const _drg = document.getElementById('drawer-row-github');
     const _drs = document.getElementById('drawer-row-share');
@@ -2636,8 +2688,16 @@ const App = {
     }
     App.currentApp = slug;
     if (App._inLeaderboard) App._exitLeaderboard();
-    document.getElementById('home-screen').classList.add('hidden');
-    document.getElementById('app-view').classList.remove('hidden');
+    // Real screen navigation: home → app view animates as a native
+    // push (iOS slide+parallax / Android shared-axis fade; instant cut
+    // where View Transitions are missing or reduced-motion is set —
+    // the kit handles both). The app iframe isn't mounted yet at this
+    // point (app-content is empty), so the iframe snapshot caveat only
+    // applies on the way OUT (see navigateHome).
+    PlatformUI.transition(() => {
+      document.getElementById('home-screen').classList.add('hidden');
+      document.getElementById('app-view').classList.remove('hidden');
+    }, { type: 'push' });
     document.getElementById('back-btn').classList.remove('hidden');
     // Intentionally NOT setting the header to `slug` here. Slugs are
     // generated as `${name}-${randomHex}` (see routes/apps.js), so a
@@ -2694,11 +2754,18 @@ const App = {
 
   navigateHome() {
     App.setChromeless(false);
+    // Iframe caveat (spec): View Transitions snapshot the outgoing
+    // page, and a live app iframe in that snapshot can flash on iOS
+    // Safari. Pop only when leaving Dev-side screens or the
+    // leaderboard; cut instantly when leaving the App tab's iframe.
+    const transitionType = (App.currentApp && App.currentTab === 'app') ? 'none' : 'pop';
     AppView.close();
     App.currentApp = null;
-    document.getElementById('app-view').classList.add('hidden');
     if (App._inLeaderboard) App._exitLeaderboard();
-    document.getElementById('home-screen').classList.remove('hidden');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.remove('hidden');
+    }, { type: transitionType });
     document.getElementById('back-btn').classList.add('hidden');
     const _drgH = document.getElementById('drawer-row-github');
     const _drsH = document.getElementById('drawer-row-share');

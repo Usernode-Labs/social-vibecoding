@@ -2,11 +2,12 @@
 <html lang="en" class="dark">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>dApps</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>tailwind.config = {
     darkMode: 'class',
+    future: { hoverOnlyWhenSupported: true },
     theme: { extend: { colors: {
       zinc: { 50:'#f6f6fb',100:'#eeeef6',200:'#d4d4e4',300:'#b0b0c8',400:'#9898b0',500:'#6e6e8a',600:'#4e4e6a',700:'#484870',800:'#2e2e50',900:'#1a1a30',950:'#08080f' },
       violet: { 400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9' },
@@ -38,6 +39,12 @@
        script fails to load, renderMarkdown falls back to a raw <pre> view. -->
   <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js" integrity="sha384-948ahk4ZmxYVYOc+rxN1H2gM1EJ2Duhp7uHtZ4WSLkV4Vtx5MUqnV+l7u9B+jFv+" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.4.4/dist/purify.min.js" integrity="sha384-ljaibG+rFiOlF9Y2x5ulbWhmu7GWQMKeAPHRiLXj0iozfwSIrIs1Ud1WeQ0Z+FqY" crossorigin="anonymous"></script>
+  <!-- usernode-native kit: the platform dogfoods its own hosted kit
+       (same-origin absolute path — the canonical copy this server
+       serves to every app). Loaded before app.css so the platform's
+       --un-* overrides there win the cascade. -->
+  <link rel="stylesheet" href="/usernode-native/v1/native.css">
+  <script src="/usernode-native/v1/native.js"></script>
   <link rel="stylesheet" href="/css/app.css">
   <!-- PWA (#487): installable shell + read-only offline mode. The service
        worker is registered by /js/offline.js (loaded with the app bundle
@@ -79,7 +86,7 @@
        - The title's default state is flow mode (left-aligned). JS
          upgrades to centered after measurement, so first paint is safe
          even if the JS is slow to run. -->
-  <header id="platform-header" class="relative flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+  <header id="platform-header" class="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
     <div class="w-5 shrink-0">
       <button id="back-btn" class="text-zinc-400 hover:text-zinc-100 hidden" aria-label="Home">
         <svg id="back-icon-home" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"/></svg>
@@ -312,7 +319,7 @@
          sessions, and the intermixed issues & proposals feed — rendered
          by AppView.renderDevView, with full-screen chat / session /
          settings sub-views). -->
-    <nav id="app-tabs" class="flex border-t border-zinc-200 dark:border-zinc-800 shrink-0">
+    <nav id="app-tabs" class="un-safe-bottom flex border-t border-zinc-200 dark:border-zinc-800 shrink-0">
       <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="app">App</button>
       <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="dev">Dev</button>
     </nav>
@@ -1084,7 +1091,7 @@
           Hide admin-only UI so the app looks the way it does for a regular user. Useful for spotting UX issues that only affect non-admins.
         </p>
         <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input id="view-as-non-admin" type="checkbox" class="accent-violet-500 w-4 h-4" />
+          <input id="view-as-non-admin" type="checkbox" class="un-switch" />
           <span class="text-sm text-zinc-800 dark:text-zinc-200">View as non-admin</span>
         </label>
         <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
@@ -1104,7 +1111,7 @@
           The bug icon in the header opens a slide-up log of console output and errors forwarded from the running app.
         </p>
         <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input id="dev-console-always-show" type="checkbox" class="accent-violet-500 w-4 h-4" />
+          <input id="dev-console-always-show" type="checkbox" class="un-switch" />
           <span class="text-sm text-zinc-800 dark:text-zinc-200">Always show the icon</span>
         </label>
         <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
@@ -1123,7 +1130,7 @@
           Get a heads-up when a dev-chat AI agent finishes and is waiting for your reply.
         </p>
         <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input id="devchat-alerts-toggle" type="checkbox" class="accent-violet-500 w-4 h-4" />
+          <input id="devchat-alerts-toggle" type="checkbox" class="un-switch" />
           <span class="text-sm text-zinc-800 dark:text-zinc-200">Play a sound, and notify me when the app is in the background</span>
         </label>
         <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
@@ -1148,7 +1155,7 @@
           Early features we're still testing. They may change or disappear.
         </p>
         <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input id="ai-progress-estimate" type="checkbox" class="accent-violet-500 w-4 h-4" />
+          <input id="ai-progress-estimate" type="checkbox" class="un-switch" />
           <span class="text-sm text-zinc-800 dark:text-zinc-200">AI progress estimate</span>
         </label>
         <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
@@ -1187,6 +1194,10 @@
     </div>
   </div>
 
+  <!-- PlatformUI — the platform's single wrapper over the native kit
+       (toasts, alerts, confirms, sheets). Loaded FIRST in the bundle:
+       every other platform script calls PlatformUI, never unNative. -->
+  <script src="/js/platform-ui.js"></script>
   <script src="/js/offline.js"></script>
   <script src="/js/dev-host.js"></script>
   <script src="/js/header-layout.js"></script>

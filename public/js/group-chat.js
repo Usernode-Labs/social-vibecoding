@@ -637,6 +637,17 @@ const GroupChat = {
           ${composerHtml}
         </div>`;
 
+    // Kit polish: keyboard avoidance on the unified thread scroller
+    // (fill mode only — the legacy boxed layout scrolls inside a card).
+    if (fill) {
+      PlatformUI.attachScreenFx(
+        'gc-thread',
+        container.querySelector('#gc-thread-scroll'),
+        document.getElementById('platform-header'),
+        { navBar: false },
+      );
+    }
+
     // Full general-chat interaction set on the thread list: tap-to-quote,
     // long-press / hover reactions, quote-jump, reference chips.
     const msgsEl = container.querySelector('#gc-thread-messages');

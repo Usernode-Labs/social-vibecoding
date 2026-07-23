@@ -101,17 +101,33 @@ const BuildLog = {
         </div>
       </div>`;
 
-    overlay.addEventListener('pointerdown', (e) => {
-      if (e.target === overlay) BuildLog.close();
-    });
-    document.body.appendChild(overlay);
-    BuildLog._el = overlay;
-    BuildLog._keyHandler = (e) => { if (e.key === 'Escape') BuildLog.close(); };
-    document.addEventListener('keydown', BuildLog._keyHandler);
+    const panel = overlay.firstElementChild;
+    if (PlatformUI.hasKit()) {
+      // Kit path: the card presents with the kit's modal motion —
+      // fade + scale-settle, backdrop tap / Escape dismiss. The
+      // hand-rolled overlay wrapper is never mounted.
+      BuildLog._modal = PlatformUI.modal({
+        contentEl: panel,
+        onDismiss: () => {
+          if (BuildLog._modal) {
+            BuildLog._modal = null;
+            BuildLog.close();
+          }
+        },
+      });
+    } else {
+      overlay.addEventListener('pointerdown', (e) => {
+        if (e.target === overlay) BuildLog.close();
+      });
+      document.body.appendChild(overlay);
+      BuildLog._el = overlay;
+      BuildLog._keyHandler = (e) => { if (e.key === 'Escape') BuildLog.close(); };
+      document.addEventListener('keydown', BuildLog._keyHandler);
+    }
 
-    overlay.querySelector('#build-log-close')?.addEventListener('click', () => BuildLog.close());
+    panel.querySelector('#build-log-close')?.addEventListener('click', () => BuildLog.close());
 
-    const copyBtn = overlay.querySelector('#build-log-copy');
+    const copyBtn = panel.querySelector('#build-log-copy');
     if (copyBtn && failure) {
       copyBtn.addEventListener('click', async () => {
         const text = [
@@ -133,7 +149,7 @@ const BuildLog = {
       });
     }
 
-    const retryBtn = overlay.querySelector('#build-log-retry');
+    const retryBtn = panel.querySelector('#build-log-retry');
     if (retryBtn) {
       retryBtn.addEventListener('click', async () => {
         retryBtn.disabled = true;
@@ -142,7 +158,7 @@ const BuildLog = {
           const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/retry`, { method: 'POST' });
           if (!res.ok) {
             const data = await res.json().catch(() => ({}));
-            alert(data.error || `Retry failed (HTTP ${res.status})`);
+            PlatformUI.toast(data.error || `Retry failed (HTTP ${res.status})`);
             retryBtn.disabled = false;
             retryBtn.textContent = 'Retry deploy';
             return;
@@ -164,6 +180,11 @@ const BuildLog = {
   },
 
   close() {
+    if (BuildLog._modal) {
+      const m = BuildLog._modal;
+      BuildLog._modal = null;
+      m.dismiss();
+    }
     if (BuildLog._keyHandler) {
       document.removeEventListener('keydown', BuildLog._keyHandler);
       BuildLog._keyHandler = null;
