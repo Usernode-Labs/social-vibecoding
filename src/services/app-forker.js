@@ -72,8 +72,12 @@ async function copyRepoTree({ sourceApp, botUsername, forkSlug, forkName, tempDi
   // supplied via an inline credential helper scoped to this one push
   // (same pattern as services/worker.js execPushFromWorker) and passed
   // through the process env so it never lands in argv.
+  // adoptExisting: a fork retry after a partial failure re-uses the same
+  // fork slug, so the repo may already exist on the bot account — adopt
+  // it rather than 422ing; the force-push below overwrites its content.
   const repo = await github.createRepo(botUsername, forkSlug, {
     description: `${forkName} — forked on Usernode Social Vibecoding`,
+    adoptExisting: true,
   });
   const repoUrl = repo.html_url;
   const pushUrl = `https://github.com/${botUsername}/${forkSlug}.git`;
