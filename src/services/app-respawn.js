@@ -18,6 +18,7 @@ const docker = require('./docker');
 const dbManager = require('./db-manager');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
+const appStorageEnv = require('./app-storage-env');
 const { getPool } = require('../db/pool');
 
 // Core shared by respawnAppContainer (boot migration) and app-heal.js:
@@ -63,8 +64,10 @@ async function runExistingImage(config, app) {
   await docker.stopAndRemove(containerName).catch(() => {});
 
   // Same production env contract as app-creator / rebuildProduction —
-  // a respawn must not silently drop the LLM-proxy pair (issue #34).
+  // a respawn must not silently drop the LLM-proxy pair (issue #34) or
+  // the app-storage pair (#752).
   const llmEnv = await appLlmEnv.productionLlmEnv(pool, app.id);
+  const storageEnv = await appStorageEnv.productionStorageEnv(pool, app.id);
   const containerId = await docker.runContainer(containerName, {
     image: imageName,
     env: {
@@ -73,6 +76,7 @@ async function runExistingImage(config, app) {
       PORT: '3000',
       USERNODE_ENV: 'production',
       ...llmEnv,
+      ...storageEnv,
       ...merge.env,
     },
     port: 3000,

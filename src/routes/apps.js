@@ -1470,6 +1470,24 @@ function appRoutes(config) {
       const dbManager = require('../services/db-manager');
       await dbManager.dropDatabase(dbManager.appDbName(app.slug)).catch(() => {});
 
+      // Remove the app's stored user files from the object store (#752)
+      // BEFORE the row delete cascades away the app_files metadata.
+      // Best-effort with a loud log: a failure here leaves orphaned
+      // objects under app/<id>/ for manual cleanup, never a broken
+      // delete.
+      try {
+        const appFilesSvc = require('../services/app-files');
+        const store = appFilesSvc.getStore(config);
+        if (store) {
+          const removed = await store.removeAppPrefix(app.id);
+          if (removed) log.info('apps', 'Removed app files from object store', { appId: app.id, count: removed });
+        }
+      } catch (err) {
+        log.warn('apps', 'Object-store cleanup failed on app delete (orphans remain under app/<id>/)', {
+          appId: app.id, err: err.message,
+        });
+      }
+
       // Delete from DB (cascades to chat_messages, sessions, etc.)
       await pool.query('DELETE FROM apps WHERE id = $1', [app.id]);
       appAccess.invalidateVisibility(app.id, app.slug);

@@ -148,6 +148,17 @@ function load() {
     // come and go) keeps the failure mode obvious — "no node reachable
     // at <name>" is clearly a setup issue, not a transient outage.
     nodeRpcUrl: process.env.NODE_RPC_URL || 'http://usernode-node:3000',
+    // App file storage (#752): the MinIO object-store sidecar
+    // (docker-compose service `usernode-minio`, internal
+    // `usernode-storage` network — reachable only from the platform).
+    // All three unset is a supported state: uploads return a clear
+    // storage_unavailable error and everything else works, so local
+    // dev / forks without the sidecar don't crash. Credentials ride
+    // the .env file (same handling as USERNODE_DB_PASSWORD).
+    storageEndpoint: process.env.MINIO_ENDPOINT || '',
+    storageAccessKey: process.env.MINIO_ROOT_USER || '',
+    storageSecretKey: process.env.MINIO_ROOT_PASSWORD || '',
+    storageBucket: process.env.STORAGE_BUCKET || 'usernode-app-files',
     // GitHub URL of the platform's own repo. Read by feedback (file
     // issues here), the import-flow guard (refuse to import the self-
     // repo as a child app), and the self-app boot seed (Phase 2f).

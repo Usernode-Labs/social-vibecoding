@@ -6,6 +6,7 @@ const dbManager = require('./db-manager');
 const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
+const appStorageEnv = require('./app-storage-env');
 const deployFailure = require('./deploy-failure');
 const { getTemplateFiles } = require('./template');
 const { getPool } = require('../db/pool');
@@ -266,6 +267,8 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
     // first deploy) so the app can call the platform's app-LLM proxy.
     // Staging deploys deliberately don't (see services/app-llm-env.js).
     const llmEnv = await appLlmEnv.productionLlmEnv(pool, appId);
+    // Likewise the app-storage env pair (#752) — production only.
+    const storageEnv = await appStorageEnv.productionStorageEnv(pool, appId);
     const containerId = await docker.runContainer(containerName, {
       image: imageName,
       env: {
@@ -274,6 +277,7 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
         PORT: '3000',
         USERNODE_ENV: 'production',
         ...llmEnv,
+        ...storageEnv,
         ...merge.env,
       },
       port: 3000,

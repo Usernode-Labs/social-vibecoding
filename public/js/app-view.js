@@ -8988,6 +8988,102 @@ const AppView = {
     }
   },
 
+  // ── App file storage relay (#752) ───────────────────────────────────
+  //
+  // The bridge's usernode.uploadFile()/deleteFile()/getStorageUsage()
+  // post a `__usernode_storage` message to window.parent; the shell
+  // (this file — it owns the app iframe) performs the authenticated
+  // call with its own session cookie against /api/apps/:slug/files*.
+  // The staging preview iframe is accepted too (uploads from it are
+  // stamped staging=1 server-side and GC'd after 7 days) so photo
+  // flows are exercisable in PR previews. Wired via the top-level
+  // message listener at the bottom of this file.
+
+  async handleStorageBridgeMessage(e) {
+    const data = e.data;
+    if (!data || !data.id) return;
+    const type = data.__usernode_storage;
+    if (type !== 'upload' && type !== 'delete' && type !== 'get-usage') return;
+
+    const appIframe = document.getElementById('app-iframe');
+    const stagingIframe = document.getElementById('staging-iframe');
+    const fromApp = appIframe && e.source === appIframe.contentWindow;
+    const fromStaging = stagingIframe && e.source === stagingIframe.contentWindow;
+    if (!fromApp && !fromStaging) return;
+    const slug = AppView.appData?.slug;
+    if (!slug) return;
+
+    const reply = (value, error) => {
+      try {
+        e.source.postMessage(
+          { __usernode_storage: 'response', id: data.id, value: value ?? null, error: error ?? null },
+          '*'
+        );
+      } catch {}
+    };
+    // Ack immediately so the bridge stops its "no shell here" timer —
+    // a multi-MB upload POST can take a while on a slow link.
+    try { e.source.postMessage({ __usernode_storage: 'ack', id: data.id }, '*'); } catch {}
+
+    try {
+      if (type === 'upload') {
+        const bytes = data.bytes;
+        if (!(bytes instanceof ArrayBuffer) || !bytes.byteLength) {
+          reply(null, 'No file bytes received.');
+          return;
+        }
+        const params = new URLSearchParams({ filename: String(data.filename || '') });
+        if (data.visibility === 'private') params.set('visibility', 'private');
+        if (fromStaging) params.set('staging', '1');
+        const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files?${params}`, {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: bytes,
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          reply(null, j.error || `Upload failed (${r.status}).`);
+          return;
+        }
+        reply(j);
+        return;
+      }
+
+      if (type === 'delete') {
+        const fileId = String(data.fileId || '');
+        if (!/^[a-f0-9]{32}$/.test(fileId)) {
+          reply(null, 'File not found.');
+          return;
+        }
+        const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/${fileId}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          reply(null, j.error || `Delete failed (${r.status}).`);
+          return;
+        }
+        reply({ ok: true });
+        return;
+      }
+
+      // get-usage
+      const r = await fetch(`/api/apps/${encodeURIComponent(slug)}/files/usage`, {
+        credentials: 'same-origin',
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        reply(null, j.error || `Usage read failed (${r.status}).`);
+        return;
+      }
+      reply(j);
+    } catch {
+      reply(null, 'Network error talking to the platform.');
+    }
+  },
+
   // ── Issue-state snapshots (issue #685) ─────────────────────────────
   //
   // The bridge's usernode.issueState.register() posts an `available`
@@ -9164,6 +9260,8 @@ if (typeof window !== 'undefined') {
     try { AppView.handleLlmBridgeMessage(e); } catch {}
     // #685: issue-state availability announcements from the app iframe.
     try { AppView.handleIssueStateMessage(e); } catch {}
+    // #752: file-storage relay (uploadFile/deleteFile/getStorageUsage).
+    try { AppView.handleStorageBridgeMessage(e); } catch {}
   });
 }
 

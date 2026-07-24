@@ -6,6 +6,7 @@ const github = require('./github');
 const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
+const appStorageEnv = require('./app-storage-env');
 const { getPool } = require('../db/pool');
 
 // Custom error thrown by both staging + prod build paths when the cloned
@@ -522,6 +523,9 @@ async function rebuildProductionInner(config, app) {
     // token); the staging path above deliberately does not — staging
     // containers must not be able to spend LLM grants (issue #34).
     const llmEnv = await appLlmEnv.productionLlmEnv(prodPool, app.id);
+    // Likewise the app-storage env pair (#752) — production only; the
+    // staging path above deliberately injects neither storage var.
+    const storageEnv = await appStorageEnv.productionStorageEnv(prodPool, app.id);
     const containerId = await docker.runContainer(containerName, {
       image: imageName,
       env: {
@@ -530,6 +534,7 @@ async function rebuildProductionInner(config, app) {
         PORT: '3000',
         USERNODE_ENV: 'production',
         ...llmEnv,
+        ...storageEnv,
         ...merge.env,
       },
       port: 3000,

@@ -1712,3 +1712,46 @@ CREATE INDEX IF NOT EXISTS idx_chat_message_attachments_orphan
 -- Private-FK-to-public is the allowed direction for the migration linter
 -- (the forbidden combination is a public table FK'ing a private one).
 COMMENT ON TABLE chat_message_attachments IS 'staging:private';
+
+-- App file storage (#752): user-uploaded images apps store through the
+-- platform (usernode.uploadFile() / POST /api/app-storage/files). This
+-- table holds METADATA ONLY — the bytes live in the MinIO object-store
+-- sidecar under key `app/<app_id>/<id>` (see services/app-files.js), so
+-- the platform DB, its pg_dump backups, and self-app staging clones
+-- never carry image payloads. Ids are random 16-byte hex, served on the
+-- public pre-auth GET /app-files/:id route — the unguessable id is the
+-- access control for visibility='public' rows (same stance as
+-- app_icons); visibility='private' rows additionally require a valid
+-- platform user JWT at serve time. `staging` marks uploads made from a
+-- staging preview (bridge relay path); the server.js sweeper GCs those
+-- after 7 days. Quota sums (per app / per app+user) read size_bytes.
+CREATE TABLE IF NOT EXISTS app_files (
+  id           VARCHAR(32) PRIMARY KEY,
+  app_id       INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  filename     VARCHAR(256) NOT NULL,
+  content_type VARCHAR(64)  NOT NULL,
+  size_bytes   INTEGER      NOT NULL,
+  visibility   VARCHAR(7)   NOT NULL DEFAULT 'public',
+  staging      BOOLEAN      NOT NULL DEFAULT FALSE,
+  created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_app_files_app ON app_files(app_id);
+CREATE INDEX IF NOT EXISTS idx_app_files_app_user ON app_files(app_id, user_id);
+CREATE INDEX IF NOT EXISTS idx_app_files_staging
+  ON app_files(created_at) WHERE staging = TRUE;
+-- Private: upload ownership is user content a staging clone has no
+-- business seeing (same stance as issue_screenshots). Rows are metadata
+-- only, so this is about privacy, not clone size. Private-FK-to-public
+-- is the allowed linter direction.
+COMMENT ON TABLE app_files IS 'staging:private';
+
+-- Per-app credential for the app-storage API (#752), the exact
+-- llm_proxy_token pattern: random 64-hex generated lazily at first
+-- production deploy (services/app-storage-env.js), injected as
+-- USERNODE_STORAGE_TOKEN into production containers only. Staging
+-- deploys never receive it. Credential-bearing: tagged staging:private
+-- AND listed in debug-access.js's DENIED_COLUMNS (the
+-- prod-debug-access test cross-checks the two).
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS storage_api_token VARCHAR(64);
+COMMENT ON COLUMN apps.storage_api_token IS 'staging:private';

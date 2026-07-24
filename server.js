@@ -27,6 +27,8 @@ const { appErrorRoutes } = require('./src/routes/app-error');
 const { visualsRoutes } = require('./src/routes/visuals');
 const { appIconRoutes } = require('./src/routes/app-icons');
 const { issueImageRoutes } = require('./src/routes/issue-images');
+const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-files');
+const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
@@ -354,6 +356,13 @@ app.use(anthropicProxyRoutes(config));
 // containers, not browser sessions.
 app.use(appLlmProxyRoutes(config));
 
+// Dapp → platform app-storage API (#752). App containers upload/delete
+// user files with their per-app token (USERNODE_STORAGE_TOKEN) plus the
+// user's iframe JWT — same credential pattern and private-IP gate as
+// the app-LLM proxy above; mounted before authMiddleware because
+// callers are app containers, not browser sessions.
+app.use(appStorageRoutes(config));
+
 // Before/after visuals artifacts (#195). Public by design: GitHub's camo
 // proxy fetches the PR-body embeds anonymously, so this must not redirect
 // to login. Access control is the unguessable 32-hex artifact id.
@@ -369,6 +378,13 @@ app.use(appIconRoutes(config));
 // control is the unguessable 32-hex screenshot id.
 app.use(issueImageRoutes(config));
 
+// App-stored user files (#752). Public for the same reason as app-icons:
+// app pages load them with plain <img> tags from their own subdomains.
+// visibility='public' rows are guarded by the unguessable 32-hex id;
+// visibility='private' rows additionally require a user JWT (?token=)
+// inside the route. Bytes stream from the MinIO sidecar.
+app.use(appFileServeRoutes(config));
+
 // Friendly "app is restarting" page for dead app containers (#426).
 // Caddy's wildcard-site handle_errors rewrites upstream 502/503/504s to
 // /__app_unavailable and proxies them here with the original app-
@@ -380,6 +396,10 @@ app.use(appErrorRoutes(config));
 app.use(authMiddleware(config));
 app.use(authRoutes(config));
 app.use(appRoutes(config));
+// Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()
+// (#752): session-cookie authed, called only by public/js/app-view.js's
+// storage bridge handler on behalf of the app iframe.
+app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
 app.use(sessionRoutes(config));
 app.use(voteRoutes(config));
@@ -2233,6 +2253,18 @@ function startSessionAutoPauseSweeper(config) {
       if (rowCount) log.info('server', 'GC\'d orphaned group-chat attachments', { count: rowCount });
     } catch (err) {
       log.warn('server', 'Orphaned group-chat attachment sweep failed', { err: err.message });
+    }
+
+    // Staging app-file GC (#752): uploads made from staging previews
+    // (bridge relay path, app_files.staging = TRUE) are test data and
+    // reclaim their object-store bytes after 7 days. Object first, row
+    // second — a row whose object delete failed is retried next sweep.
+    try {
+      const appFilesSvc = require('./src/services/app-files');
+      const removed = await appFilesSvc.sweepStagingFiles(pool, appFilesSvc.getStore(config));
+      if (removed) log.info('server', 'GC\'d expired staging app files', { count: removed });
+    } catch (err) {
+      log.warn('server', 'Staging app-file sweep failed', { err: err.message });
     }
 
     // Pass 6: imported-PR head sync (#687, Slice 3). For each OPEN imported

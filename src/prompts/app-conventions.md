@@ -821,6 +821,119 @@ platform's Settings → "App AI permissions"; revocation is immediate,
 so treat `grant_required` as a state that can appear at any time, not
 just on first use.
 
+## App file storage — user-uploaded images
+
+Apps that let users upload photos (avatars, "here's how mine turned
+out" shots, attachment images) store them **platform-side** and
+persist only the returned URL in their own database. **Never store
+image bytes in your Postgres DB** (base64/bytea columns bloat the DB
+and its staging clones) and never build your own disk storage — the
+app container has no persistent volume.
+
+Two ways in; both return the same shape. Persist `url` (to render)
+and `id` (to delete later) in your own tables:
+
+```json
+{ "id": "<32-hex>", "url": "https://<platform>/app-files/<32-hex>",
+  "filename": "dish.jpg", "contentType": "image/jpeg",
+  "sizeBytes": 812345, "visibility": "public" }
+```
+
+Limits and rules (both paths):
+
+- **Images only**: PNG, JPEG, GIF, WebP — sniffed from the bytes, and
+  the file extension must match. Max **5 MB** per file. There is no
+  server-side resizing: downscale large camera photos client-side
+  (canvas) before uploading.
+- **Quotas**: 2 GB per app, 200 MB per user per app (staging-preview
+  uploads: 100 MB per app, auto-deleted after 7 days). Structured
+  error codes on rejection: `file_too_large`, `invalid_image`,
+  `app_quota_exceeded`, `user_quota_exceeded`,
+  `staging_quota_exceeded`, `storage_unavailable`.
+- **Visibility**: `public` (default) serves the file to anyone with
+  the link — the unguessable id is the access control, right for
+  content the app shows to all its users. `private` additionally
+  requires a platform user token at view time: render those as
+  `<img src="${url}?token=${theIframeToken}">`.
+- **Files are immutable** — there is no overwrite; upload a new file
+  and update your stored URL. Deleting makes the URL 404 for fresh
+  fetches immediately.
+
+### Frontend path (via the bridge) — zero server code
+
+```js
+// From an <input type="file"> change handler:
+const file = input.files[0];
+try {
+  const stored = await usernode.uploadFile(file, { visibility: 'public' });
+  // Persist stored.url + stored.id via your own API, then render it.
+} catch (err) {
+  // Quota/validation errors, or no platform shell (standalone/dev).
+}
+```
+
+- `usernode.uploadFile(file, { visibility })` — uploads a `File`/`Blob`
+  as the signed-in user, resolves the stored-file shape above.
+- `usernode.deleteFile(id)` — deletes one of the **current user's
+  own** uploads (use it for "remove my photo" flows).
+- `usernode.getStorageUsage()` — resolves `{ appBytes, appCapBytes,
+  userBytes, userCapBytes }` for a quota meter.
+
+All three reject when there's no platform shell (standalone/dev) —
+treat a rejection as "uploads unavailable here", same stance as
+`usernode.requestLlmAccess()`. This path **works in staging
+previews** (uploads are marked as staging test data and cleaned up
+automatically), so testers can exercise the full flow.
+
+### Server path (takedowns and server-mediated flows)
+
+Production containers receive two extra env vars (platform-injected;
+both — and the whole `USERNODE_STORAGE_*` family — are reserved
+manifest keys you must not declare):
+
+- `USERNODE_STORAGE_URL` — base URL of the storage API
+  (`http://usernode:3000/api/app-storage` in-network).
+- `USERNODE_STORAGE_TOKEN` — this app's opaque credential.
+
+**Staging containers receive NEITHER** (unreviewed PR code must not
+write durable production storage) — detect absence and degrade, or
+prefer the bridge path which staging supports:
+
+```js
+const STORAGE_ENABLED = !!process.env.USERNODE_STORAGE_TOKEN;
+```
+
+Endpoints (auth headers exactly like the LLM proxy — the app token
+plus the user's forwarded iframe token):
+
+```js
+// Upload: raw bytes, filename/visibility as query params (NOT multipart)
+await fetch(`${process.env.USERNODE_STORAGE_URL}/files?filename=${encodeURIComponent(name)}&visibility=public`, {
+  method: 'POST',
+  headers: {
+    'content-type': 'application/octet-stream',
+    'x-usernode-app-token': process.env.USERNODE_STORAGE_TOKEN,
+    'x-usernode-user-token': req.headers['x-usernode-token'],
+  },
+  body: imageBuffer,
+});
+// DELETE `${USERNODE_STORAGE_URL}/files/<id>`  — removes ANY of this
+//   app's files (the takedown/moderation path), same two headers.
+// GET `${USERNODE_STORAGE_URL}/usage`          — quota meter, same headers.
+```
+
+### Staging notes
+
+- Platform-stored files are **not** cloned into staging: the
+  `app_files` registry is staging-private and your app's own DB copy
+  only carries whatever URLs prod rows hold. If a staging testing
+  step needs an image to render, seed your staging rows with a small
+  data-URI placeholder image (per "Staging mock data") rather than a
+  real `/app-files/` URL.
+- Uploads made in a staging preview via the bridge are quarantined
+  (smaller quota, deleted after 7 days) — fine for testing, never for
+  durable content.
+
 ## Don't `git push` yourself
 
 The worker container runs with **zero GitHub credentials in env** —
