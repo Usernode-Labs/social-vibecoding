@@ -12,8 +12,10 @@
 //   DOM path and must branch on the return / isTouch()).
 //
 // Adaptive rule (spec decision): touch platforms get action sheets and
-// bottom sheets; desktop keeps anchored popovers and dropdown panels.
-// Callers branch via PlatformUI.isTouch() at open time.
+// bottom sheets; desktop gets anchored popovers — now also kit-owned
+// (unNative.popover / unNative.menu, #741). New menu call sites should
+// use PlatformUI.menu() and let the kit pick the idiom; isTouch()
+// remains for surfaces the kit doesn't cover yet.
 
 (function () {
   'use strict';
@@ -117,6 +119,26 @@
       const un = kit();
       if (!un || typeof un.actionSheet !== 'function') return Promise.resolve(null);
       return un.actionSheet(opts || {});
+    },
+
+    /** Anchored popover / dropdown (the desktop menu idiom). Items mode
+        resolves the chosen item or null (with .dismiss() attached);
+        content mode returns the kit handle { dismiss, el }. Returns
+        null when the kit is missing. */
+    popover(opts) {
+      const un = kit();
+      if (!un || typeof un.popover !== 'function') return null;
+      return un.popover(opts || {});
+    },
+
+    /** Adaptive menu: bottom action sheet on touch, anchored popover on
+        desktop, from one actionSheet-shaped call. Resolves the chosen
+        item or null — including when the kit is missing (same silent
+        degradation as actionSheet). */
+    menu(opts) {
+      const un = kit();
+      if (!un || typeof un.menu !== 'function') return Promise.resolve(null);
+      return un.menu(opts || {});
     },
 
     /** Bottom sheet. Returns the kit handle { dismiss, el } or null

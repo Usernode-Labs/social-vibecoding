@@ -117,6 +117,17 @@
         <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. On a phone, tap the sheet's text field: the sheet (and the modal/alert) rides above the on-screen keyboard. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses.</p>
       </section>
 
+      <!-- Popover / dropdown menu -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Popover / dropdown menu</h2>
+        <div class="flex flex-wrap items-center gap-3">
+          <button id="popover-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)" aria-haspopup="menu">Anchored menu</button>
+          <button id="adaptive-menu-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700" aria-haspopup="menu">Adaptive menu</button>
+          <button id="popover-edge-btn" class="ml-auto px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700" aria-haspopup="menu">Edge clamp/flip</button>
+        </div>
+        <p id="popover-result" class="text-xs text-zinc-500 mt-2">The desktop menu idiom: opens attached to its button, flipped/clamped to stay in the viewport, dismissed by outside-click / Escape / scroll — click the button again to toggle it closed. Arrow keys walk the entries. "Edge clamp/flip" sits at the right edge (and flips above when there's no room below — scroll it near the bottom). "Adaptive menu" is ONE <code>unNative.menu()</code> call: a bottom action sheet on touch (<code>?un-platform=ios</code>), this popover on desktop.</p>
+      </section>
+
       <!-- Toasts -->
       <section>
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Toasts</h2>
@@ -453,6 +464,42 @@
         }).then(function (r) {
           resultEl.textContent = 'Alert: ' + r.button.label + (r.value != null ? ' — “' + r.value + '”' : '');
         });
+      });
+
+      // ── Popover / dropdown menu ────────────────────────────────────
+      var popResult = document.getElementById('popover-result');
+      function demoMenuItems() {
+        return [
+          { label: 'Open' },
+          { label: 'Duplicate', title: 'Make a copy of this item' },
+          { label: 'Unavailable here', disabled: true },
+          { label: 'Delete', destructive: true },
+        ];
+      }
+      function reportMenuChoice(kind) {
+        return function (item) {
+          popResult.textContent = kind + ': ' + (item ? item.label : 'dismissed.');
+        };
+      }
+      document.getElementById('popover-btn').addEventListener('click', function (e) {
+        unNative.popover({
+          anchorEl: e.currentTarget,
+          title: 'Demo item',
+          items: demoMenuItems(),
+        }).then(reportMenuChoice('Popover'));
+      });
+      document.getElementById('popover-edge-btn').addEventListener('click', function (e) {
+        unNative.popover({
+          anchorEl: e.currentTarget,
+          items: demoMenuItems(),
+        }).then(reportMenuChoice('Popover'));
+      });
+      document.getElementById('adaptive-menu-btn').addEventListener('click', function (e) {
+        unNative.menu({
+          anchorEl: e.currentTarget,
+          title: 'Demo item',
+          items: demoMenuItems(),
+        }).then(reportMenuChoice('Adaptive menu'));
       });
 
       // ── Centered modal ─────────────────────────────────────────────

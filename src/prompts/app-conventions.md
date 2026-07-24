@@ -1183,6 +1183,25 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   not replace `window.alert`). The field autofocuses, and keyboard
   avoidance is built in (see below): the alert re-centers above the
   on-screen keyboard.
+- **Anchored popover / dropdown menu (the desktop idiom).**
+  `unNative.popover({ anchorEl | anchorRect, items | contentEl,
+  title?, headerEl?, placement?, onDismiss? })` — a menu attached to
+  the control that invoked it: flip/clamp positioning that stays in
+  the viewport, outside-click / Escape / scroll dismissal, anchor
+  re-click toggles it closed, arrow-key focus roving, instant (no
+  animation — menus are high-frequency UI). `items` share the action
+  sheet's shape plus `disabled` (inert row), `keepOpen` (run the
+  handler without dismissing — the handler receives the row's button
+  for in-place feedback) and `title` (tooltip); items mode resolves a
+  Promise with the chosen item or `null` (a `.dismiss()` is attached
+  for programmatic close), `contentEl` mode returns `{ dismiss(),
+  el }`. `placement` defaults to `'bottom-start'` (also `bottom-end` /
+  `top-start` / `top-end`). And the one to reach for by default:
+  **`unNative.menu({ anchorEl | anchorRect, title?, items,
+  cancelLabel? })`** presents the SAME items as a bottom action sheet
+  on touch platforms and an anchored popover on desktop — one call
+  site, both idioms, no `unNative.platform` branching. Always resolves
+  the chosen item or `null`.
 - **Keyboard avoidance (automatic).** On mobile the kit tracks the
   on-screen keyboard via `visualViewport` and maintains
   `--un-kb-inset` (the keyboard's occlusion of the layout viewport,

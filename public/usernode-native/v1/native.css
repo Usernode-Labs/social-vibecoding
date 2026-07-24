@@ -596,6 +596,62 @@ html.un-kb .un-action-sheet {
   font-weight: 600;
 }
 
+/* ── Anchored popover / dropdown menu ──────────────────────────────────
+   unNative.popover(): the desktop menu idiom. No backdrop and no
+   entrance animation on purpose (menus are high-frequency UI — see the
+   fidelity rules). Sits one layer above sheets/modals so a popover can
+   open from inside one. position/left/top are JS-owned (the pure
+   placePopover math); max-height keeps a long menu scrolling internally
+   instead of overflowing the viewport. */
+
+.un-popover {
+  position: fixed;
+  z-index: 9992;
+  min-width: 11rem;
+  max-width: 20rem;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 4px 0;
+  background: var(--un-group-bg);
+  border: 1px solid var(--un-hairline);
+  border-radius: var(--un-radius-card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  text-align: left;
+  outline: none;
+}
+.un-popover-header {
+  padding: 8px 14px 9px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--un-hairline);
+}
+.un-popover-title {
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.un-popover-item {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: 0.8125rem;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.un-popover-item:hover:not(:disabled),
+.un-popover-item:focus-visible {
+  background: var(--un-surface);
+}
+.un-popover-item:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.un-popover-item.un-destructive {
+  color: var(--un-action-danger);
+}
+
 /* ── Alert dialog ──────────────────────────────────────────────────────
    unNative.alert(): 270px centered card, centered title, optional inset
    field, hairline Cancel|OK row. Fade + scale-down entrance (alerts
