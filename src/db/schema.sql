@@ -549,10 +549,15 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS linked_issues_backfilled  BOO
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS testing_md         TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS testing_path       VARCHAR(512);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS pr_testing_applied TEXT;
---   testing_paths      : ordered list of validated deep-link paths the
+--   testing_paths      : ordered list of validated deep-link routes the
 --                        before/after capture pipeline shoots a pair at
---                        (#270). NULL/absent falls back to [testing_path
---                        || '/'], so legacy single-path rows are unchanged.
+--                        (#270). Since #768 elements are objects —
+--                        { path, viewport: 'desktop'|'mobile' } (`@mobile`
+--                        path annotation → phone-sized capture frame);
+--                        older rows hold plain path strings and readers
+--                        normalize via testing-notes.normalizeStoredPath.
+--                        NULL/absent falls back to [testing_path || '/'],
+--                        so legacy single-path rows are unchanged.
 --                        testing_path stays the PRIMARY path (= the first
 --                        of this list) for the "Test this change" button.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS testing_paths      JSONB;
@@ -1361,9 +1366,15 @@ CREATE TABLE IF NOT EXISTS session_visuals (
   -- labelled before/after row per group. Defaults to 0 so pre-#270 rows
   -- form a single legacy group with no migration backfill needed.
   capture_index SMALLINT NOT NULL DEFAULT 0,
+  -- #768: viewport label the group was shot at ('mobile' for a testing
+  -- path annotated `@mobile`; NULL = the default desktop frame). Renderers
+  -- suffix labelled groups with "(mobile)" so reviewers know what frame
+  -- they're looking at. NULL on pre-#768 rows — desktop by definition.
+  captured_viewport VARCHAR(16),
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS capture_index SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS captured_viewport VARCHAR(16);
 CREATE INDEX IF NOT EXISTS idx_session_visuals_session ON session_visuals(session_id);
 
 -- Private like its parent chat_sessions (public-FK-to-private is the

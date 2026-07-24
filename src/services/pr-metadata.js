@@ -125,14 +125,23 @@ function buildVisualsBlock(visuals, domain) {
   for (const g of groups) {
     const after = embed(g.after);
     if (!after) continue;
-    usable.push({ path: g.path || '/', before: embed(g.before), after });
+    usable.push({
+      path: g.path || '/',
+      viewport: g.viewport === 'mobile' ? 'mobile' : null,
+      before: embed(g.before),
+      after,
+    });
   }
   if (!usable.length) return '';
 
-  // Single group at the app root → the legacy heading with no suffix, so
-  // existing PR bodies stay byte-identical. Otherwise label each group
-  // with its captured path so reviewers know which screen each pair shows.
-  const single = usable.length === 1 && (usable[0].path === '/' || !usable[0].path);
+  // Single DESKTOP group at the app root → the legacy heading with no
+  // suffix, so existing PR bodies stay byte-identical. Otherwise label
+  // each group with its captured path so reviewers know which screen each
+  // pair shows — plus "(mobile)" for a group shot in the phone-sized
+  // frame (#768), which also forces the label onto a lone root group.
+  const single = usable.length === 1
+    && (usable[0].path === '/' || !usable[0].path)
+    && !usable[0].viewport;
 
   const lines = [VISUALS_MARKER_START];
   usable.forEach((g, i) => {
@@ -140,7 +149,7 @@ function buildVisualsBlock(visuals, domain) {
     if (single) {
       lines.push('## Before / after', '');
     } else {
-      lines.push(`### Before / after — \`${g.path}\``, '');
+      lines.push(`### Before / after — \`${g.path}\`${g.viewport === 'mobile' ? ' (mobile)' : ''}`, '');
     }
     if (g.before) {
       lines.push(
@@ -367,7 +376,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
         // buildVisualsBlock consumes, using captured_path as each group's
         // label. Pre-#270 rows all carry capture_index 0 → a single group.
         const { rows: visRows } = await pool.query(
-          `SELECT id, kind, media, captured_path, capture_index
+          `SELECT id, kind, media, captured_path, capture_index, captured_viewport
              FROM session_visuals WHERE session_id = $1`,
           [sessionId]
         );
@@ -376,16 +385,20 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
           for (const v of visRows) {
             const idx = parseInt(v.capture_index, 10) || 0;
             let g = byIndex.get(idx);
-            if (!g) { g = { index: idx, path: null }; byIndex.set(idx, g); }
+            if (!g) { g = { index: idx, path: null, viewport: null }; byIndex.set(idx, g); }
             if (!g[v.kind]) g[v.kind] = {};
             g[v.kind][v.media] = v.id;
             if (v.captured_path && !g.path) g.path = v.captured_path;
+            if (v.captured_viewport && !g.viewport) g.viewport = v.captured_viewport;
           }
           const captures = Array.from(byIndex.keys())
             .sort((a, b) => a - b)
             .map((idx) => {
               const g = byIndex.get(idx);
-              return { index: g.index, path: g.path || '/', before: g.before || null, after: g.after || null };
+              return {
+                index: g.index, path: g.path || '/', viewport: g.viewport || null,
+                before: g.before || null, after: g.after || null,
+              };
             });
           ctx.visuals = { captures };
         }

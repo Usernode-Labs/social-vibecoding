@@ -6,7 +6,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { extract, validatePath, TESTING_MD_MAX, CAPTURE_MAX_PATHS } = require('../src/services/testing-notes');
+const {
+  extract, validatePath, normalizeStoredPath, TESTING_MD_MAX, CAPTURE_MAX_PATHS,
+} = require('../src/services/testing-notes');
+
+// testingPaths entries are { path, viewport } objects (#768).
+const desk = (path) => ({ path, viewport: 'desktop' });
+const mob = (path) => ({ path, viewport: 'mobile' });
 
 test('no block -> text unchanged, fields null/empty', () => {
   const text = 'Built the thing.\n\n- added a route\n- wired the UI';
@@ -111,9 +117,9 @@ test('testingMd is truncated to the cap', () => {
 
 // ── multiple path: lines (#270) ────────────────────────────────────────
 
-test('single path -> testingPaths is the one path, testingPath the same', () => {
+test('single path -> testingPaths is the one entry, testingPath the plain string', () => {
   const r = extract('S.\n==== TESTING ====\npath: /board\nSteps.\n==== END TESTING ====');
-  assert.deepEqual(r.testingPaths, ['/board']);
+  assert.deepEqual(r.testingPaths, [desk('/board')]);
   assert.equal(r.testingPath, '/board');
 });
 
@@ -124,7 +130,7 @@ test('multiple consecutive path lines parse into testingPaths in order', () => {
     '1. Step one.', '==== END TESTING ====',
   ].join('\n');
   const r = extract(text);
-  assert.deepEqual(r.testingPaths, ['/board', '/settings?demo=1', '/profile']);
+  assert.deepEqual(r.testingPaths, [desk('/board'), desk('/settings?demo=1'), desk('/profile')]);
   assert.equal(r.testingPath, '/board');
   assert.equal(r.testingMd, '1. Step one.');
 });
@@ -132,7 +138,7 @@ test('multiple consecutive path lines parse into testingPaths in order', () => {
 test('blank lines between path lines are tolerated', () => {
   const text = 'S.\n==== TESTING ====\n\npath: /a\n\npath: /b\n\nSteps.\n==== END TESTING ====';
   const r = extract(text);
-  assert.deepEqual(r.testingPaths, ['/a', '/b']);
+  assert.deepEqual(r.testingPaths, [desk('/a'), desk('/b')]);
   assert.equal(r.testingMd, 'Steps.');
 });
 
@@ -143,14 +149,14 @@ test('invalid path lines are dropped, valid ones kept in order', () => {
     'Steps.', '==== END TESTING ====',
   ].join('\n');
   const r = extract(text);
-  assert.deepEqual(r.testingPaths, ['/ok1', '/ok2']);
+  assert.deepEqual(r.testingPaths, [desk('/ok1'), desk('/ok2')]);
   assert.equal(r.testingPath, '/ok1');
 });
 
 test('duplicate paths collapse preserving first-seen order', () => {
   const text = 'S.\n==== TESTING ====\npath: /a\npath: /b\npath: /a\nSteps.\n==== END TESTING ====';
   const r = extract(text);
-  assert.deepEqual(r.testingPaths, ['/a', '/b']);
+  assert.deepEqual(r.testingPaths, [desk('/a'), desk('/b')]);
 });
 
 test('path list is capped at CAPTURE_MAX_PATHS, extras dropped', () => {
@@ -159,15 +165,75 @@ test('path list is capped at CAPTURE_MAX_PATHS, extras dropped', () => {
   lines.push('Steps.', '==== END TESTING ====');
   const r = extract(lines.join('\n'));
   assert.equal(r.testingPaths.length, CAPTURE_MAX_PATHS);
-  assert.equal(r.testingPaths[0], '/p0');
+  assert.deepEqual(r.testingPaths[0], desk('/p0'));
   assert.equal(r.testingPath, '/p0');
 });
 
 test('a non-path line stops path collection (later path: lines are md, not paths)', () => {
   const text = 'S.\n==== TESTING ====\npath: /a\n1. step\npath: /b\n==== END TESTING ====';
   const r = extract(text);
-  assert.deepEqual(r.testingPaths, ['/a']);
+  assert.deepEqual(r.testingPaths, [desk('/a')]);
   assert.equal(r.testingMd, '1. step\npath: /b');
+});
+
+// ── @mobile viewport annotation (#768) ─────────────────────────────────
+
+test('@mobile annotation sets the entry viewport, testingPath stays the plain path', () => {
+  const r = extract('S.\n==== TESTING ====\npath: /board?demo=1 @mobile\nSteps.\n==== END TESTING ====');
+  assert.deepEqual(r.testingPaths, [mob('/board?demo=1')]);
+  assert.equal(r.testingPath, '/board?demo=1');
+});
+
+test('@mobile is case-insensitive', () => {
+  const r = extract('S.\n==== TESTING ====\npath: /a @MOBILE\nSteps.\n==== END TESTING ====');
+  assert.deepEqual(r.testingPaths, [mob('/a')]);
+});
+
+test('unknown annotations are ignored, the path is kept as desktop', () => {
+  const r = extract('S.\n==== TESTING ====\npath: /a @tablet\nSteps.\n==== END TESTING ====');
+  assert.deepEqual(r.testingPaths, [desk('/a')]);
+});
+
+test('the same path may appear once per viewport', () => {
+  const text = 'S.\n==== TESTING ====\npath: /board\npath: /board @mobile\nSteps.\n==== END TESTING ====';
+  const r = extract(text);
+  assert.deepEqual(r.testingPaths, [desk('/board'), mob('/board')]);
+  assert.equal(r.testingPath, '/board');
+});
+
+test('duplicate path+viewport pairs collapse', () => {
+  const text = 'S.\n==== TESTING ====\npath: /a @mobile\npath: /a @mobile\nSteps.\n==== END TESTING ====';
+  assert.deepEqual(extract(text).testingPaths, [mob('/a')]);
+});
+
+test('an invalid path with an annotation is still dropped', () => {
+  const r = extract('S.\n==== TESTING ====\npath: https://evil/x @mobile\nSteps.\n==== END TESTING ====');
+  assert.deepEqual(r.testingPaths, []);
+  assert.equal(r.testingPath, null);
+});
+
+// ── normalizeStoredPath (stored-row back-compat, #768) ─────────────────
+
+test('normalizeStoredPath maps legacy strings to desktop entries', () => {
+  assert.deepEqual(normalizeStoredPath('/board'), desk('/board'));
+  assert.deepEqual(normalizeStoredPath('/'), desk('/'));
+});
+
+test('normalizeStoredPath passes object entries through, defaulting bad viewports to desktop', () => {
+  assert.deepEqual(normalizeStoredPath(mob('/a')), mob('/a'));
+  assert.deepEqual(normalizeStoredPath(desk('/a')), desk('/a'));
+  assert.deepEqual(normalizeStoredPath({ path: '/a', viewport: 'tablet' }), desk('/a'));
+  assert.deepEqual(normalizeStoredPath({ path: '/a' }), desk('/a'));
+});
+
+test('normalizeStoredPath returns null for unusable entries', () => {
+  assert.equal(normalizeStoredPath(''), null);
+  assert.equal(normalizeStoredPath(null), null);
+  assert.equal(normalizeStoredPath(undefined), null);
+  assert.equal(normalizeStoredPath(42), null);
+  assert.equal(normalizeStoredPath({}), null);
+  assert.equal(normalizeStoredPath({ path: '' }), null);
+  assert.equal(normalizeStoredPath({ viewport: 'mobile' }), null);
 });
 
 test('absent block -> empty testingPaths list', () => {

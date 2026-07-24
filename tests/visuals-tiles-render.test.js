@@ -106,3 +106,31 @@ test('empty / missing visuals render nothing', () => {
   assert.equal(AppView.visualsTilesHtml({}), '');
   assert.equal(AppView.visualsTilesHtml({ captures: [] }), '');
 });
+
+// ── mobile capture groups (#768) ───────────────────────────────────────
+
+test('a mobile group is labelled "(mobile)" and stamps data-viewport on its tiles', () => {
+  const AppView = makeAppView();
+  const html = AppView.visualsTilesHtml({
+    captures: [{
+      index: 0, path: '/board', viewport: 'mobile',
+      before: { png: ID('a') },
+      after: { png: ID('b') },
+    }],
+  });
+  assert.match(html, /Before \/ after — <code>\/board<\/code> \(mobile\)/, 'row label carries the frame');
+  assert.match(html, /data-viewport="mobile"/, 'tiles carry the viewport for the overlay');
+});
+
+test('a lone mobile ROOT group is still labelled (desktop root stays unlabelled)', () => {
+  const AppView = makeAppView();
+  const mobileHtml = AppView.visualsTilesHtml({
+    captures: [{ index: 0, path: '/', viewport: 'mobile', after: { png: ID('b') } }],
+  });
+  assert.match(mobileHtml, /Before \/ after — <code>\/<\/code> \(mobile\)/);
+  const desktopHtml = AppView.visualsTilesHtml({
+    captures: [{ index: 0, path: '/', after: { png: ID('b') } }],
+  });
+  assert.doesNotMatch(desktopHtml, /Before \/ after —/, 'single desktop root group renders unlabelled');
+  assert.doesNotMatch(desktopHtml, /data-viewport=/);
+});

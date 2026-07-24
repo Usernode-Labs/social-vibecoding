@@ -6639,8 +6639,9 @@ const AppView = {
     // A clickable tile for one side. Carries the FULL group's ids (both
     // sides) plus which side was clicked, so the overlay opens straight
     // onto the matching pair. ids are 32-hex-validated, so they're safe
-    // inside the data-* attributes; path goes through esc().
-    const tile = (label, side, b, a, path) => {
+    // inside the data-* attributes; path goes through esc(). `mobile`
+    // flags a phone-frame capture group (#768) so the overlay can label it.
+    const tile = (label, side, b, a, path, mobile) => {
       const v = side === 'before' ? b : a;
       if (!v) return '';
       const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:6px';
@@ -6650,6 +6651,7 @@ const AppView = {
       const dataAttrs = [
         `data-visual-tile="${side}"`,
         `data-path="${esc(path)}"`,
+        mobile ? 'data-viewport="mobile"' : '',
         b && b.png ? `data-before-png="${b.png}"` : '',
         b && b.webm ? `data-before-webm="${b.webm}"` : '',
         b && b.gif ? `data-before-gif="${b.gif}"` : '',
@@ -6669,14 +6671,17 @@ const AppView = {
       const b = sideIds(g.before);
       const a = sideIds(g.after);
       const path = g.path || '/';
-      const before = tile('Before', 'before', b, a, path);
-      const after = tile('After', 'after', b, a, path);
+      const mobile = g.viewport === 'mobile';
+      const before = tile('Before', 'before', b, a, path, mobile);
+      const after = tile('After', 'after', b, a, path, mobile);
       if (!after && !before) continue;
       // Label the row with its captured path unless it's the single
-      // root-only group (unchanged from the pre-#270 single-tile output).
-      const label = (single && (path === '/' || !path))
+      // root-only DESKTOP group (unchanged from the pre-#270 single-tile
+      // output). A mobile group (#768) is always labelled — the phone
+      // frame needs calling out even at the root.
+      const label = (single && (path === '/' || !path) && !mobile)
         ? ''
-        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after — <code>${esc(path)}</code></div>`;
+        : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`;
       rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`);
     }
     return rows.join('');
@@ -6713,7 +6718,11 @@ const AppView = {
       { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]
     ));
     const path = d.path || '/';
-    if (labelEl) labelEl.textContent = (path && path !== '/') ? path : '';
+    const mobile = d.viewport === 'mobile';
+    if (labelEl) {
+      const base = (path && path !== '/') ? path : (mobile ? '/' : '');
+      labelEl.textContent = base ? `${base}${mobile ? ' (mobile)' : ''}` : '';
+    }
 
     const colStyle = 'flex:1 1 320px;min-width:0;display:flex;flex-direction:column;gap:6px';
     const mediaStyle = 'display:block;width:100%;max-height:78vh;object-fit:contain;object-position:top;background:rgba(0,0,0,0.35);border:1px solid rgba(127,127,127,0.25);border-radius:8px';
@@ -6733,8 +6742,8 @@ const AppView = {
       return `<div style="${colStyle}">${heading}${media}${origLink}</div>`;
     };
 
-    const pathLabel = (path && path !== '/')
-      ? `<div class="text-xs text-zinc-400" style="margin-bottom:10px">Before / after — <code>${esc(path)}</code></div>`
+    const pathLabel = ((path && path !== '/') || mobile)
+      ? `<div class="text-xs text-zinc-400" style="margin-bottom:10px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`
       : '';
     body.innerHTML = `${pathLabel}<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">${column('Before', before)}${column('After', after)}</div>`;
 

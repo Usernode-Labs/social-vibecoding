@@ -13,10 +13,14 @@
 // list of routes, so capture shoots one before/after pair per route):
 //   TARGETS             JSON array of capture targets, each:
 //                         { index, beforeUrl, afterUrl, beforeFallbackUrl,
-//                           beforeCookie, afterCookie }
+//                           beforeCookie, afterCookie, viewport? }
 //                       Looped over sequentially; `index` tags every shot
 //                       frame so the orchestrator attributes each artifact
 //                       to its route. Per-target failures stay independent.
+//                       `viewport` ({ width, height }, #768) overrides the
+//                       default 1280x800 frame for BOTH sides of that
+//                       target's pair (a `@mobile` testing path); absent /
+//                       malformed → the desktop default.
 //   BEFORE_URL          single-target fallback when TARGETS is unset/empty
 //   AFTER_URL           (an older orchestrator, or a rolling deploy). Each
 //   BEFORE_FALLBACK_URL of these mirrors the same-named TARGETS field for a
@@ -94,6 +98,21 @@ const VIEWPORT = {
   height: 800,
   deviceScaleFactor: resolveDeviceScaleFactor(process.env.DEVICE_SCALE_FACTOR),
 };
+
+// #768: optional per-target viewport override ({ width, height } from the
+// TARGETS entry — a `@mobile` testing path). Bounds keep a corrupted value
+// from asking Chromium for a degenerate or absurd frame; anything invalid
+// falls back to the desktop default. deviceScaleFactor is NOT part of the
+// override — the run's global density (DEVICE_SCALE_FACTOR) applies to
+// every frame.
+function parseTargetViewport(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const width = parseInt(raw.width, 10);
+  const height = parseInt(raw.height, 10);
+  if (!Number.isInteger(width) || !Number.isInteger(height)) return null;
+  if (width < 200 || width > 4000 || height < 200 || height > 4000) return null;
+  return { width, height };
+}
 const NAV_TIMEOUT_MS = 30000;
 const SETTLE_MS = 500;
 const PRE_SCROLL_HOLD_MS = 1500;
@@ -283,7 +302,11 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   let navigated = false;
   let status = 200;
   try {
-    await page.setViewport(VIEWPORT);
+    // Per-target viewport override (#768): a `@mobile` route shoots in a
+    // phone-sized frame; the run's global pixel density applies either way.
+    await page.setViewport(opts.viewport
+      ? { ...opts.viewport, deviceScaleFactor: VIEWPORT.deviceScaleFactor }
+      : VIEWPORT);
     // Auth cookie (self-app prod): set against the target URL so domain/
     // path resolve before the first navigation. The fallback URL is the
     // same origin, so the one cookie covers the retry navigation too.
@@ -429,6 +452,9 @@ function resolveTargets(env) {
       beforeFallbackUrl: String(t.beforeFallbackUrl || '').trim(),
       beforeCookie: parseCookie(t.beforeCookie),
       afterCookie: parseCookie(t.afterCookie),
+      // #768: per-target frame override; null (legacy scalar fallback,
+      // absent/garbage field) → the desktop default at capture time.
+      viewport: parseTargetViewport(t.viewport),
     });
   }
   return out;
@@ -603,11 +629,12 @@ async function main() {
     // the after-target navigation entirely — the tests cover that load.
     for (const t of targets) {
       if (media && t.beforeUrl) {
-        await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index, { media });
+        await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index,
+          { media, viewport: t.viewport });
       }
       if (t.afterUrl && (media || !haveTests)) {
         await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index,
-          { media, collectConsole: !haveTests });
+          { media, collectConsole: !haveTests, viewport: t.viewport });
       }
     }
     // #47: run the declared test suite (assertions + per-test console
@@ -643,4 +670,4 @@ if (require.main === module) {
     .then(() => process.exit(0));
 }
 
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, mediaEnabled, resolveTests, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, mediaEnabled, resolveTests, CHROMIUM_LAUNCH_ARGS };

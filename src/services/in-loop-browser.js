@@ -90,6 +90,15 @@ const IN_LOOP_BROWSER_GUIDANCE = `- OPTIONAL in-loop browser (encouraged, NOT re
   - SELF-APP (social-vibecoding) only: it is a hash-routed SPA, so put the
     route after the \`#\` (e.g. \`http://127.0.0.1:$INLOOP_PORT/#/leaderboard\`)
     or the page just boots to the home feed.
+  - EXPECTED (not optional) when your TESTING block points \`path:\` at a
+    screenshot-state deep link you added this turn (a query/hash param that
+    boots the app straight into the changed state — see "Make the changed
+    screen URL-reachable" in the conventions): navigate the exact \`path:\`
+    URL(s) and confirm with \`browser_take_screenshot\` that the changed UI
+    is actually visible before you commit. For a \`@mobile\`-annotated path,
+    call \`browser_resize\` to a phone-sized frame (390x844) first. A state
+    link that renders the home screen means the reviewer-facing
+    before/after screenshots will show the home screen too.
   - Keep it tight: budget at most a couple of launch→check→fix cycles and a
     minute or two of wall-clock. If the app won't boot (a missing required
     secret, a crash on start), DON'T fight it — note that you skipped the

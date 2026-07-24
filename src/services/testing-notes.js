@@ -25,6 +25,18 @@
 // CAPTURE_MAX_PATHS. `testingPath` (the first path) is retained unchanged
 // for the single-valued consumers — the "Test this change" deep-link
 // button and buildTestingBlock's "Deep link:" line.
+//
+// A `path:` line may also carry a whitespace-separated annotation after
+// the path (#768):
+//
+//   path: /board?demo=1 @mobile
+//
+// `@mobile` asks the capture step to shoot that route in a phone-sized
+// viewport (for changes only visible on narrow screens). `testingPaths`
+// entries are therefore objects — { path, viewport: 'desktop'|'mobile' } —
+// and chat_sessions.testing_paths stores that object form. Rows written
+// before #768 hold plain strings; normalizeStoredPath() maps either form
+// onto { path, viewport } so readers stay back-compatible in one place.
 
 const log = require('./logger');
 
@@ -41,6 +53,34 @@ const CAPTURE_MAX_PATHS = 3;
 // surrounding whitespace, but require the exact TESTING / END TESTING label.
 const OPEN_RE = /^[ \t]*={2,}[ \t]*TESTING[ \t]*={2,}[ \t]*$/gm;
 const CLOSE_RE = /^[ \t]*={2,}[ \t]*END TESTING[ \t]*={2,}[ \t]*$/gm;
+
+// Viewport labels a capture path may carry (#768). Desktop is the default
+// (the capture container's fixed 1280x800); `@mobile` opts one route into
+// a phone-sized frame for changes only visible on narrow screens. The
+// label→pixel mapping lives in services/visuals.js — this module only
+// deals in the labels.
+const VIEWPORT_DESKTOP = 'desktop';
+const VIEWPORT_MOBILE = 'mobile';
+
+// Normalize one stored chat_sessions.testing_paths element into
+// { path, viewport }. Rows written before #768 hold plain path strings;
+// newer rows hold { path, viewport } objects. Anything unusable (empty,
+// wrong type, malformed object) returns null so callers can filter.
+// Deliberately does NOT re-run validatePath — stored rows were validated
+// at extract time, and re-validating here would silently drop a stored
+// capture route on a rules change.
+function normalizeStoredPath(entry) {
+  if (typeof entry === 'string') {
+    return entry ? { path: entry, viewport: VIEWPORT_DESKTOP } : null;
+  }
+  if (entry && typeof entry === 'object' && typeof entry.path === 'string' && entry.path) {
+    return {
+      path: entry.path,
+      viewport: entry.viewport === VIEWPORT_MOBILE ? VIEWPORT_MOBILE : VIEWPORT_DESKTOP,
+    };
+  }
+  return null;
+}
 
 // Validate a deep-link path emitted by the agent. The path is later joined
 // onto the staging origin and loaded in the preview iframe, so anything
@@ -68,8 +108,9 @@ function validatePath(p) {
 // after the opening marker is the block). Returns:
 //   { cleanedText, testingMd, testingPath, testingPaths }
 // with testingMd null when the block is absent or carries no instructions,
-// testingPaths the ordered (deduped, capped) list of validated paths, and
-// testingPath = testingPaths[0] || null for the single-valued consumers.
+// testingPaths the ordered (deduped, capped) list of validated
+// { path, viewport } entries, and testingPath = the first entry's plain
+// path string (or null) for the single-valued consumers.
 function extract(text) {
   const none = (t) => ({ cleanedText: t, testingMd: null, testingPath: null, testingPaths: [] });
   if (typeof text !== 'string' || !text) return none(typeof text === 'string' ? text : '');
@@ -95,12 +136,18 @@ function extract(text) {
   const blockLines = text.slice(blockStart, blockEnd).split('\n');
 
   // Optional `path:` lines — the consecutive leading lines of the block
-  // (blank lines tolerated between them). Each is validated independently;
-  // invalid ones are dropped, duplicates collapse preserving first-seen
-  // order, and the list is capped at CAPTURE_MAX_PATHS (extras logged, not
-  // silently truncated). The first non-blank line that isn't a `path:`
-  // line begins the markdown instructions.
+  // (blank lines tolerated between them). Each line's value splits on
+  // whitespace: the first token is the path (validated independently;
+  // invalid ones are dropped), the rest are annotations — `@mobile` sets
+  // the entry's viewport, anything unrecognized is logged and ignored so
+  // a typo'd annotation degrades to a desktop shot rather than losing the
+  // route. Duplicates collapse by path+viewport preserving first-seen
+  // order (the same path may legitimately appear once per viewport), and
+  // the list is capped at CAPTURE_MAX_PATHS (extras logged, not silently
+  // truncated). The first non-blank line that isn't a `path:` line begins
+  // the markdown instructions.
   const testingPaths = [];
+  const seenKeys = new Set();
   let droppedForCap = 0;
   let mdStart = 0;
   for (let i = 0; i < blockLines.length; i++) {
@@ -109,9 +156,23 @@ function extract(text) {
     const pm = line.match(/^path:\s*(.+)$/i);
     if (!pm) { mdStart = i; break; }
     mdStart = i + 1;
-    const valid = validatePath(pm[1]);
-    if (!valid || testingPaths.includes(valid)) continue;
-    if (testingPaths.length < CAPTURE_MAX_PATHS) testingPaths.push(valid);
+    const tokens = pm[1].trim().split(/\s+/);
+    const valid = validatePath(tokens[0]);
+    if (!valid) continue;
+    let viewport = VIEWPORT_DESKTOP;
+    for (const annotation of tokens.slice(1)) {
+      if (/^@mobile$/i.test(annotation)) {
+        viewport = VIEWPORT_MOBILE;
+      } else {
+        log.warn('testing-notes', 'Unknown path annotation ignored', {
+          annotation: annotation.slice(0, 32), path: valid,
+        });
+      }
+    }
+    const key = `${viewport} ${valid}`;
+    if (seenKeys.has(key)) continue;
+    seenKeys.add(key);
+    if (testingPaths.length < CAPTURE_MAX_PATHS) testingPaths.push({ path: valid, viewport });
     else droppedForCap++;
   }
   if (droppedForCap > 0) {
@@ -126,9 +187,18 @@ function extract(text) {
   return {
     cleanedText,
     testingMd: testingMd || null,
-    testingPath: testingPaths[0] || null,
+    testingPath: testingPaths.length ? testingPaths[0].path : null,
     testingPaths,
   };
 }
 
-module.exports = { extract, validatePath, TESTING_MD_MAX, TESTING_PATH_MAX, CAPTURE_MAX_PATHS };
+module.exports = {
+  extract,
+  validatePath,
+  normalizeStoredPath,
+  TESTING_MD_MAX,
+  TESTING_PATH_MAX,
+  CAPTURE_MAX_PATHS,
+  VIEWPORT_DESKTOP,
+  VIEWPORT_MOBILE,
+};

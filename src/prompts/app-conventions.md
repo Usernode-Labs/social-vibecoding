@@ -252,6 +252,62 @@ Tie-in with testing instructions: the testing steps you emit must
 reference the seeded entities by name ("Open the thread 'Staging demo
 thread' and …"), so a tester knows exactly what they should be seeing.
 
+### Make the changed screen URL-reachable — screenshot-state deep links
+
+The before/after screenshots and the "Test this change" button can only
+**navigate to a URL** — they never click, play, or fill anything in. A
+screen reached by interacting (starting a game match, opening a modal or
+bottom sheet, stepping through a wizard) is invisible to them unless some
+URL renders it directly; without one the screenshots fall back to the
+home screen and show a screen the change never touched.
+
+So when your change affects UI that plain navigation can't reach, you
+MUST make it reachable: add a **screenshot-state deep link** — a query or
+hash param the app handles at boot to programmatically enter that state —
+and point the TESTING block's `path:` at it. Example: a game's settlement
+panel only exists mid-match, so handle `/?shot=settlement-sheet` by
+starting a solo match on a fixed map seed, selecting the player
+settlement and opening its panel; then emit
+`path: /?shot=settlement-sheet`.
+
+Rules:
+
+- **Deterministic.** Enter a fixed state (fixed seed, fixed entities) so
+  before/after shots of the same path are comparable run to run.
+- **Data writes stay staging-gated.** If entering the state writes to
+  the database, gate it per the seed rules above (`IS_STAGING`,
+  `?demo=1`). A pure UI-state link (start a local demo match, open a
+  panel — no persistent writes) should work in **all** environments: the
+  "before" shot is taken from production, so an env-gated link starves
+  it forever, while an ungated one starts working the moment it ships.
+- **Lock it in with a test.** Add or extend a `dapp.json` test in the
+  same commit (`expectSelector` on the changed element at that path — see
+  "Proposal tests" below) so a state link that stops rendering fails
+  checks instead of silently regressing to home-screen shots.
+- **Verify it renders.** On a build turn, load the exact `path:` URL in
+  the in-loop browser and confirm the changed UI is actually visible
+  before you commit.
+- Expect the FIRST proposal that adds a state link to show the home
+  screen on its "before" side — production doesn't know the param yet.
+  That's fine: the "after" side is what matters, and every later proposal
+  to the same screen gets a real before shot. State links accumulate in
+  the repo exactly like `dapp.json` tests.
+
+Two related notes on `path:` form:
+
+- **Hash-routed child apps.** If this app is a single-page app that
+  routes off the URL fragment, write the fragment into the path —
+  `path: /#/settings` — so the shot lands on the right screen. (The
+  self-app has its own special handling; see the next section.)
+- **Mobile-only changes.** A `path:` line may end with the annotation
+  `@mobile` (whitespace-separated, e.g. `path: /board @mobile`) to shoot
+  that route in a phone-sized viewport (390×844) instead of the default
+  1280×800 desktop frame. Use it whenever the change only shows on
+  narrow screens — a desktop screenshot of a mobile-only change shows
+  nothing — and the before/after row is labelled "(mobile)" so reviewers
+  know what frame they're looking at. The same path may appear twice,
+  once per frame, when a change is visible on both.
+
 ### Testing `path:` for a hash-routed SPA (the self-app)
 
 The before/after screenshots and the "Test this change" button visit the
@@ -1741,6 +1797,12 @@ locally inside the worker the same way a staging container does:
 - Navigate to `http://127.0.0.1:$INLOOP_PORT` joined with the SAME
   route(s) you put in the TESTING block's `path:` lines. For the
   hash-routed self-app, put the route after the `#`.
+- **EXPECTED when you added a screenshot-state deep link this turn**
+  (see "Make the changed screen URL-reachable"): load the exact `path:`
+  URL and confirm the changed UI is actually visible before committing —
+  for a `@mobile` path, resize the browser to a phone-sized frame
+  (390×844) first. A state link that renders the home screen means the
+  before/after screenshots will too.
 - A **blank or empty page usually means missing seed data, not a bug** —
   the local DB starts empty. Add the `IS_STAGING` seed (or a `?demo=1`
   route) per "Staging mock data" and re-check, rather than "fixing"

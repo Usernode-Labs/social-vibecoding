@@ -226,7 +226,7 @@ test('shapeAgg accepts the legacy kind_media key as a single group 0', () => {
     before_png: ID_A, after_gif: ID_B, garbage_key: 'x', after_avi: 'y',
   });
   assert.deepEqual(shaped, {
-    captures: [{ index: 0, path: '/', before: { png: ID_A }, after: { gif: ID_B } }],
+    captures: [{ index: 0, path: '/', viewport: null, before: { png: ID_A }, after: { gif: ID_B } }],
   });
   assert.equal(visuals.shapeAgg(null), null);
   assert.equal(visuals.shapeAgg({}), null);
@@ -239,8 +239,8 @@ test('shapeAgg parses the new kind_index_media key into ordered groups', () => {
     junk_2_x: 'q',
   });
   assert.equal(shaped.captures.length, 2);
-  assert.deepEqual(shaped.captures[0], { index: 0, path: '/', before: { png: ID_A }, after: { png: ID_B } });
-  assert.deepEqual(shaped.captures[1], { index: 1, path: '/', before: { png: ID_B }, after: { gif: ID_A } });
+  assert.deepEqual(shaped.captures[0], { index: 0, path: '/', viewport: null, before: { png: ID_A }, after: { png: ID_B } });
+  assert.deepEqual(shaped.captures[1], { index: 1, path: '/', viewport: null, before: { png: ID_B }, after: { gif: ID_A } });
 });
 
 test('shapeAgg drops a group with no after artifact', () => {
@@ -323,6 +323,38 @@ test('storeArtifacts returns null when no after artifact at all', async () => {
   assert.equal(await visuals.storeArtifacts(pool, 7, null, [{ index: 0, path: '/' }], shots), null);
 });
 
+// ── captured_viewport round-trip (#768) ────────────────────────────────
+
+test('storeArtifacts persists and returns each group viewport label', async () => {
+  const pool = fakePool();
+  const buf = Buffer.from('x');
+  const targets = [
+    { index: 0, path: '/', viewport: null },
+    { index: 1, path: '/board', viewport: 'mobile' },
+  ];
+  const shots = [
+    { kind: 'after', media: 'png', status: 200, index: 0, buf },
+    { kind: 'after', media: 'png', status: 200, index: 1, buf },
+  ];
+  const stored = await visuals.storeArtifacts(pool, 7, 'abc', targets, shots);
+  assert.equal(stored.captures[0].viewport, null);
+  assert.equal(stored.captures[1].viewport, 'mobile');
+  assert.equal(stored.captures[1].path, '/board');
+  // captured_viewport is the 10th INSERT param.
+  assert.equal(pool.inserted[0][9], null);
+  assert.equal(pool.inserted[1][9], 'mobile');
+});
+
+test('storeArtifacts leaves viewport null for targets without one (pre-#768 shape)', async () => {
+  const pool = fakePool();
+  const buf = Buffer.from('x');
+  const stored = await visuals.storeArtifacts(
+    pool, 7, null, [{ index: 0, path: '/x' }],
+    [{ kind: 'after', media: 'png', status: 200, index: 0, buf }]
+  );
+  assert.equal(stored.captures[0].viewport, null);
+});
+
 // ── buildVisualsBlock grouped + back-compat (#270) ─────────────────────
 
 test('buildVisualsBlock single root group is byte-identical to the legacy form', () => {
@@ -359,6 +391,26 @@ test('buildVisualsBlock labels a single non-root group with its path', () => {
     DOMAIN
   );
   assert.ok(block.includes('### Before / after — `/board`'));
+});
+
+test('buildVisualsBlock suffixes a mobile group label with (mobile) (#768)', () => {
+  const block = buildVisualsBlock({
+    captures: [
+      { index: 0, path: '/board', viewport: null, after: { gif: ID_A } },
+      { index: 1, path: '/board', viewport: 'mobile', after: { gif: ID_B } },
+    ],
+  }, DOMAIN);
+  assert.ok(block.includes('### Before / after — `/board`\n'));
+  assert.ok(block.includes('### Before / after — `/board` (mobile)'));
+});
+
+test('buildVisualsBlock labels a lone mobile ROOT group instead of the legacy heading', () => {
+  const block = buildVisualsBlock(
+    { captures: [{ index: 0, path: '/', viewport: 'mobile', after: { gif: ID_A } }] },
+    DOMAIN
+  );
+  assert.ok(block.includes('### Before / after — `/` (mobile)'));
+  assert.ok(!block.includes('## Before / after\n'));
 });
 
 // ── resolveTargets (container env, #270) ───────────────────────────────
