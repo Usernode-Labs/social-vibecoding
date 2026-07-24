@@ -33,7 +33,10 @@
  *                                        incoming screen, `after` conceals
  *                                        the outgoing one; the LIVE el is
  *                                        transform-animated, no snapshot)
- *   unNative.presentSheet(opts)       — bottom sheet (drag-to-dismiss)
+ *   unNative.presentSheet(opts)       — bottom sheet (drag-to-dismiss;
+ *                                        content rendered AFTER present is
+ *                                        re-measured and the entrance
+ *                                        spring retargeted — no pop-in)
  *   unNative.presentModal(opts)       — centered modal card, arbitrary content
  *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
  *   unNative.alert(opts)              — iOS alert dialog, Promise-based
@@ -226,6 +229,16 @@
   // Dismiss when the projected landing crosses half the sheet height.
   function decideSheetRelease(input) {
     return projectDisplacement(input.y, input.v, input.horizonMs) >= 0.5 * input.sheetHeight;
+  }
+
+  // Top-edge-preserving offset after a presenting/presented bottom-anchored
+  // sheet is re-measured (issue #742). A height change of
+  // Δ = newHeight - oldHeight instantly moves the sheet's top edge by Δ;
+  // shifting the translateY offset by the same Δ keeps the edge visually
+  // continuous, so the retargeted spring animates the added (or removed)
+  // distance instead of the content popping in.
+  function remeasuredSheetY(input) {
+    return input.y + (input.newHeight - input.oldHeight);
   }
 
   // Reorder hit-testing: map a pointer y to a gap index (0..n) over an
@@ -523,6 +536,7 @@
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
     decideSheetRelease: decideSheetRelease,
+    remeasuredSheetY: remeasuredSheetY,
     KB_MIN_INSET: KB_MIN_INSET,
     keyboardInset: keyboardInset,
     isTextEntryField: isTextEntryField,
@@ -2059,6 +2073,36 @@
    * momentum commit. A touch mid-spring inherits position + velocity.
    * ──────────────────────────────────────────────────────────────────── */
 
+  // Watch an overlay's border-box height while it is presented (issue
+  // #742): content rendered AFTER present (fill from state, async fetch)
+  // changes the height the entrance spring and backdrop math were seeded
+  // with. Calls onChange(newHeight, oldHeight) on material (≥1px) changes.
+  // ResizeObserver fires after layout and BEFORE paint, so the common
+  // present-then-render-synchronously pattern retargets before a frame at
+  // the wrong offset is ever painted; transforms don't affect layout, so
+  // the per-frame translateY writes can't re-trigger it. Where RO is
+  // missing, a single first-rAF re-measure covers the same pattern.
+  // Returns a disconnect function.
+  function watchHeight(el, onChange) {
+    var last = el.offsetHeight || 1;
+    function check() {
+      var h = el.offsetHeight || 1;
+      if (Math.abs(h - last) < 1) return;
+      var prev = last;
+      last = h;
+      onChange(h, prev);
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+      try {
+        var ro = new ResizeObserver(check);
+        ro.observe(el);
+        return function () { ro.disconnect(); };
+      } catch (e) { /* fall through to the rAF fallback */ }
+    }
+    var raf = requestAnimationFrame(check);
+    return function () { cancelAnimationFrame(raf); };
+  }
+
   // presentSheet({ content | contentEl, onDismiss }) — content is an HTML
   // string, contentEl an Element to adopt. Returns { dismiss(), el }.
   function presentSheet(options) {
@@ -2100,6 +2144,7 @@
     }
 
     function teardown() {
+      if (unwatch) unwatch();
       if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
       if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
       if (opts.onDismiss) opts.onDismiss();
@@ -2175,6 +2220,25 @@
     sheet.addEventListener('pointermove', onPointerMove);
     sheet.addEventListener('pointerup', onPointerEnd);
     sheet.addEventListener('pointercancel', onPointerEnd);
+
+    // Late-rendered content (issue #742): the height variable feeds the
+    // backdrop denominator, the dismissal travel and the release decision,
+    // so refreshing it keeps them all consistent; the offset shift keeps
+    // the top edge visually continuous so growth springs up (a full
+    // slide-up on the first-open repro) instead of popping in.
+    var unwatch = watchHeight(sheet, function (newHeight, oldHeight) {
+      height = newHeight;
+      if (drag && drag.locked) return; // the finger owns the position 1:1
+      var v = activeSpring ? activeSpring.current().v : 0;
+      if (closed) {
+        // The exit spring was aiming at the old height — retarget so the
+        // sheet fully leaves the screen before teardown.
+        springTo(height, v, teardown);
+        return;
+      }
+      render(remeasuredSheetY({ y: y, oldHeight: oldHeight, newHeight: newHeight }));
+      springTo(0, v);
+    });
 
     render(height);
     springTo(0, 0);
@@ -2335,29 +2399,45 @@
         backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / height)));
       }
 
-      function springTo(to, onRest) {
+      function springTo(to, velocity, onRest) {
         if (activeSpring) activeSpring.stop();
         activeSpring = spring(function (v) { render(v); }, {
-          from: y, to: to, velocity: 0, preset: 'default',
+          from: y, to: to, velocity: velocity || 0, preset: 'default',
           onRest: function () { activeSpring = null; if (onRest) onRest(); },
         });
+      }
+
+      var settleAction = null; // the chosen action while the exit spring runs
+      function finishSettle() {
+        if (unwatch) unwatch();
+        if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+        if (settleAction && settleAction.handler) settleAction.handler();
+        resolve(settleAction || null);
       }
 
       function settle(action) {
         if (settled) return;
         settled = true;
-        springTo(height, function () {
-          if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-          if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
-          if (action && action.handler) action.handler();
-          resolve(action || null);
-        });
+        settleAction = action || null;
+        springTo(height, 0, finishSettle);
       }
 
       backdrop.addEventListener('click', function () { settle(null); });
 
+      // Same present-time height assumption as the bottom sheet (issue
+      // #742). The API can't receive late content, but a re-measure (e.g.
+      // a web-font reflow of labels) still retargets cleanly.
+      var unwatch = watchHeight(wrap, function (newHeight, oldHeight) {
+        height = newHeight;
+        var v = activeSpring ? activeSpring.current().v : 0;
+        if (settled) { springTo(height, v, finishSettle); return; }
+        render(remeasuredSheetY({ y: y, oldHeight: oldHeight, newHeight: newHeight }));
+        springTo(0, v);
+      });
+
       render(height);
-      springTo(0);
+      springTo(0, 0);
     });
   }
 
@@ -2683,6 +2763,11 @@
 
       document.body.appendChild(backdrop);
       document.body.appendChild(card);
+      // Commit the initial (hidden) style before the entrance class lands —
+      // the same coalescing hazard presentModal guards against: without
+      // this reflow a microtask-origin call (e.g. a MutationObserver
+      // callback) can skip the fade + scale entrance entirely.
+      void card.offsetWidth;
       // Next frame: engage the CSS entrance (scale 1.12 → 1, fade in).
       requestAnimationFrame(function () {
         backdrop.style.opacity = '1';

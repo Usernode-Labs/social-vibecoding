@@ -26,6 +26,7 @@ const {
   decideSwipeRelease,
   decidePtrRelease,
   decideSheetRelease,
+  remeasuredSheetY,
   keyboardInset,
   isTextEntryField,
   revealScrollDelta,
@@ -193,6 +194,30 @@ test('sheet release: flick dismisses, deep drag dismisses, shallow drag cancels'
   assert.equal(decideSheetRelease({ y: 80, v: 0, sheetHeight: 400 }), false);
   // Past the line but drifting back UP at release: cancels.
   assert.equal(decideSheetRelease({ y: 230, v: -1, sheetHeight: 400 }), false);
+});
+
+// ── Sheet re-measure (issue #742) ──────────────────────────────────────
+
+test('remeasuredSheetY: growth mid-entrance shifts the offset by the delta', () => {
+  // Sheet grew from grabber-only (21px) to full content (313px) while the
+  // entrance spring was at y=15: the top edge stays continuous and the
+  // spring animates the added 292px.
+  assert.equal(remeasuredSheetY({ y: 15, oldHeight: 21, newHeight: 313 }), 307);
+});
+
+test('remeasuredSheetY: growth at rest springs the new content up', () => {
+  // Presented at rest (y=0), content grows by 200px: retarget from 200.
+  assert.equal(remeasuredSheetY({ y: 0, oldHeight: 313, newHeight: 513 }), 200);
+});
+
+test('remeasuredSheetY: shrink at rest lands in the rubber-band zone above rest', () => {
+  // Content shrank by 100px: the offset goes negative (sheet momentarily
+  // above rest) and the spring settles it back down to 0.
+  assert.equal(remeasuredSheetY({ y: 0, oldHeight: 400, newHeight: 300 }), -100);
+});
+
+test('remeasuredSheetY: equal heights is a no-op', () => {
+  assert.equal(remeasuredSheetY({ y: 42, oldHeight: 313, newHeight: 313 }), 42);
 });
 
 // ── Keyboard occlusion (issue #719) ────────────────────────────────────
