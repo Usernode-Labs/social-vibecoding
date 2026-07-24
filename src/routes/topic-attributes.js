@@ -11,6 +11,18 @@
 //        refreshed option list (same shape as GET) so the FE repaints the
 //        chip + open dropdown in one round-trip.
 //
+// #780: for field='category' both of the above also carry `categories` —
+// the app's full vocabulary (built-ins + custom) — because the dropdown
+// must list options this card has no votes for yet. A third route serves
+// that vocabulary on its own for the Dev tab's first paint:
+//
+//   GET  /api/apps/:slug/topic-categories
+//        → { categories: [{ value, label, custom }] }
+//
+// There is deliberately NO create endpoint: typing a new category IS
+// casting a vote for it (the POST above registers it), mirroring how
+// suggesting an assignee and voting for one are the same operation.
+//
 // Access is collab-level on the app (same gate the feed routes use). The
 // vote is a social signal only — no notification, no feed re-sort, no
 // merge-rule impact.
@@ -68,6 +80,12 @@ function topicAttributeRoutes(config) {
       const data = await attrs.listOptions(
         pool, app.id, t.targetType, t.targetRef, field, req.user?.id || null, linkedIssues
       );
+      // #780: the category dropdown must list every option the APP offers,
+      // not just the ones this card has votes for, so ship the vocabulary
+      // alongside the tally. Also self-heals a stale FE cache on each open.
+      if (field === 'category') {
+        data.categories = await attrs.listCategories(pool, app.id);
+      }
       res.json(data);
     } catch (err) {
       log.error('topic-attrs', 'Failed to list attribute options', { message: err.message });
@@ -90,13 +108,19 @@ function topicAttributeRoutes(config) {
       if (!attrs.FIELDS.includes(field)) {
         return res.status(400).json({ error: 'Invalid field' });
       }
-      const value = attrs.normalizeValue(field, req.body?.value);
+      // #780: a category is now free text, so keep the normalized pair —
+      // castVote needs the typed LABEL to register a brand-new option with
+      // the casing the user typed, while the vote itself stores the slug.
+      const category = field === 'category'
+        ? attrs.normalizeCategoryInput(req.body?.value) : null;
+      const value = field === 'category'
+        ? (category && category.slug) : attrs.normalizeValue(field, req.body?.value);
       if (value == null) {
         let error;
         if (field === 'priority') {
           error = 'Priority must be low, medium or high';
         } else if (field === 'category') {
-          error = `Category must be one of ${attrs.CATEGORY_VALUES.join(', ')}`;
+          error = `Category must be 1–${attrs.MAX_CATEGORY_LEN} characters`;
         } else {
           error = `Name must be 1–${attrs.MAX_ASSIGNEE_LEN} characters`;
         }
@@ -104,12 +128,47 @@ function topicAttributeRoutes(config) {
       }
 
       const linkedIssues = await linkedIssuesFor(pool, app.id, t);
-      const data = await attrs.castVote(
-        pool, app.id, t.targetType, t.targetRef, field, value, req.user.id, linkedIssues
-      );
+      let data;
+      try {
+        data = await attrs.castVote(
+          pool, app.id, t.targetType, t.targetRef, field, value, req.user.id, linkedIssues,
+          category ? category.label : null
+        );
+      } catch (err) {
+        // The app is already at its custom-category cap and this is a NEW
+        // slug — a user error, not a server fault.
+        if (err.message === attrs.CATEGORY_CAP_ERROR) {
+          return res.status(400).json({
+            error: `This app already has the maximum of ${attrs.MAX_CUSTOM_CATEGORIES_PER_APP} custom categories.`,
+          });
+        }
+        throw err;
+      }
+      if (field === 'category') {
+        data.categories = await attrs.listCategories(pool, app.id);
+      }
       res.json(data);
     } catch (err) {
       log.error('topic-attrs', 'Failed to cast attribute vote', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // #780: the app's category vocabulary (six built-ins + this app's custom
+  // options). The Dev tab fetches this once per mount so the chips can label
+  // + colour a custom category and the kanban / PM filter bar can offer it.
+  // View-level like the attributes GET — reading the taxonomy is not a
+  // collaborator-only act.
+  router.get('/api/apps/:slug/topic-categories', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      const categories = await attrs.listCategories(pool, app.id);
+      res.json({ categories });
+    } catch (err) {
+      log.error('topic-attrs', 'Failed to list categories', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -389,7 +389,10 @@ function stagingMockProposals(viewer) {
   const attrOverrides = new Map([
     [9000001, { priority: { top: 'medium', count: 2, myValue: null }, assignee: { top: 'staging-demo-user', count: 2, myValue: null }, category: { top: 'improvement', count: 2, myValue: null } }],
     [9000002, { priority: { top: 'low', count: 1, myValue: null }, assignee: { top: 'maya-builder', count: 1, myValue: null }, category: { top: 'design', count: 1, myValue: null } }],
-    [9000013, { priority: { top: 'low', count: 3, myValue: null }, assignee: { top: 'staging-demo-user', count: 1, myValue: null }, category: { top: 'chore', count: 2, myValue: null } }],
+    // #780: a CUSTOM category on a PROPOSAL card too (matching the second
+    // demo entry listCategories() appends in staging), so the custom chip is
+    // reviewable across both card types and the filter catches both columns.
+    [9000013, { priority: { top: 'low', count: 3, myValue: null }, assignee: { top: 'staging-demo-user', count: 1, myValue: null }, category: { top: 'staging demo onboarding', count: 2, myValue: null } }],
   ]);
   for (const row of rows) {
     const o = attrOverrides.get(row.id);

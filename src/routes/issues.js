@@ -1150,6 +1150,15 @@ function issueRoutes(config) {
             // A second, distinct category leader so the filter has choices.
             category: { top: 'feature', count: 2, myValue: null },
           }],
+          // #780: a CUSTOM category leader, matching one of the two demo
+          // entries listCategories() appends in staging — so the custom chip
+          // colour, and narrowing the board by a custom category in the
+          // filter bar, are both reviewable in a preview.
+          [900007, {
+            priority: { top: 'high', count: 1, myValue: null },
+            assignee: { top: 'staging-demo-user', count: 1, myValue: null },
+            category: { top: 'staging demo perf', count: 2, myValue: null },
+          }],
           // 900002 deliberately left untouched → muted "Set priority" /
           // "Unassigned" / "Set category"; opening its assignee dropdown
           // pre-fills the viewer's own username.
