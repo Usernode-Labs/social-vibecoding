@@ -31,6 +31,7 @@ const { appFileServeRoutes, appFileShellRoutes } = require('./src/routes/app-fil
 const appStorageRoutes = require('./src/routes/app-storage');
 const anthropicProxyRoutes = require('./src/routes/anthropic-proxy');
 const appLlmProxyRoutes = require('./src/routes/app-llm-proxy');
+const appPlatformApiRoutes = require('./src/routes/app-platform-api');
 const { llmGrantsRoutes } = require('./src/routes/llm-grants');
 const { userAgentFilesRoutes } = require('./src/routes/user-agent-files');
 const { proposalDiscussRoutes } = require('./src/routes/proposal-discuss');
@@ -363,6 +364,16 @@ app.use(appLlmProxyRoutes(config));
 // callers are app containers, not browser sessions.
 app.use(appStorageRoutes(config));
 
+// App-facing read-only platform API (#744). App containers call
+// /api/app-platform/governance/feed with the same per-app token
+// (USERNODE_LLM_PROXY_TOKEN) to read their OWN proposal/vote/merge
+// feed for in-app "what's changing" strips. App-token-only (no user
+// token or grant — the feed holds nothing an app viewer can't already
+// see in the vote panel), same private-IP gate; mounted before
+// authMiddleware because callers are app containers, not browser
+// sessions.
+app.use(appPlatformApiRoutes(config));
+
 // Before/after visuals artifacts (#195). Public by design: GitHub's camo
 // proxy fetches the PR-body embeds anonymously, so this must not redirect
 // to login. Access control is the unguessable 32-hex artifact id.
@@ -426,15 +437,21 @@ app.use(debugRoutes(config));
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
   let usernodePubkey = null;
+  // Platform-level language preference (issue #757): a BCP-47 tag or null
+  // when unset. Always present in the payload so app servers never need
+  // `'locale' in payload` checks. Additive claim only — signing secret,
+  // algorithm, expiry, and the existing claims are unchanged.
+  let userLocale = null;
   try {
     const { rows } = await getPool(config).query(
-      'SELECT usernode_pubkey FROM users WHERE id = $1',
+      'SELECT usernode_pubkey, locale FROM users WHERE id = $1',
       [req.user.id]
     );
     usernodePubkey = rows[0]?.usernode_pubkey || null;
+    userLocale = rows[0]?.locale || null;
   } catch {}
   const token = jwt.sign(
-    { id: req.user.id, username: req.user.username, usernode_pubkey: usernodePubkey },
+    { id: req.user.id, username: req.user.username, usernode_pubkey: usernodePubkey, locale: userLocale },
     config.jwtSecret,
     { expiresIn: '1h' }
   );

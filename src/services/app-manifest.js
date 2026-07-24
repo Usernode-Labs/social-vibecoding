@@ -116,13 +116,14 @@ const RESERVED_KEYS = new Set([
   'USERNODE_LLM_PROXY_TOKEN',
   'USERNODE_STORAGE_URL',
   'USERNODE_STORAGE_TOKEN',
+  'USERNODE_PLATFORM_API_URL',
 ]);
 
-// Reserved prefixes for the LLM-proxy (issue #34) and app-storage
-// (#752) env-var families — any future USERNODE_LLM_PROXY_* /
-// USERNODE_STORAGE_* addition stays platform-owned without another
-// set entry.
-const RESERVED_KEY_PREFIXES = ['USERNODE_LLM_PROXY', 'USERNODE_STORAGE'];
+// Reserved prefixes for the LLM-proxy (issue #34), app-storage (#752),
+// and app-platform-API (#744) env-var families — any future
+// USERNODE_LLM_PROXY_* / USERNODE_STORAGE_* / USERNODE_PLATFORM_API_*
+// addition stays platform-owned without another set entry.
+const RESERVED_KEY_PREFIXES = ['USERNODE_LLM_PROXY', 'USERNODE_STORAGE', 'USERNODE_PLATFORM_API'];
 
 const KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 

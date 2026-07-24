@@ -26,6 +26,7 @@ const {
   decideSwipeRelease,
   decidePtrRelease,
   decideSheetRelease,
+  remeasuredSheetY,
   keyboardInset,
   isTextEntryField,
   revealScrollDelta,
@@ -34,6 +35,8 @@ const {
   autoScrollVelocity,
   createArbiter,
   createToastSlot,
+  zoomPose,
+  zoomRectUsable,
 } = physics;
 
 // ── Spring integrator ──────────────────────────────────────────────────
@@ -191,6 +194,30 @@ test('sheet release: flick dismisses, deep drag dismisses, shallow drag cancels'
   assert.equal(decideSheetRelease({ y: 80, v: 0, sheetHeight: 400 }), false);
   // Past the line but drifting back UP at release: cancels.
   assert.equal(decideSheetRelease({ y: 230, v: -1, sheetHeight: 400 }), false);
+});
+
+// ── Sheet re-measure (issue #742) ──────────────────────────────────────
+
+test('remeasuredSheetY: growth mid-entrance shifts the offset by the delta', () => {
+  // Sheet grew from grabber-only (21px) to full content (313px) while the
+  // entrance spring was at y=15: the top edge stays continuous and the
+  // spring animates the added 292px.
+  assert.equal(remeasuredSheetY({ y: 15, oldHeight: 21, newHeight: 313 }), 307);
+});
+
+test('remeasuredSheetY: growth at rest springs the new content up', () => {
+  // Presented at rest (y=0), content grows by 200px: retarget from 200.
+  assert.equal(remeasuredSheetY({ y: 0, oldHeight: 313, newHeight: 513 }), 200);
+});
+
+test('remeasuredSheetY: shrink at rest lands in the rubber-band zone above rest', () => {
+  // Content shrank by 100px: the offset goes negative (sheet momentarily
+  // above rest) and the spring settles it back down to 0.
+  assert.equal(remeasuredSheetY({ y: 0, oldHeight: 400, newHeight: 300 }), -100);
+});
+
+test('remeasuredSheetY: equal heights is a no-op', () => {
+  assert.equal(remeasuredSheetY({ y: 42, oldHeight: 313, newHeight: 313 }), 42);
 });
 
 // ── Keyboard occlusion (issue #719) ────────────────────────────────────
@@ -705,4 +732,156 @@ test('toast slot: every record ends exactly once across a mixed sequence', () =>
   for (const r of records) {
     assert.equal(ended.get(r), 1, `record ${r.id} ended ${ended.get(r)} times`);
   }
+});
+
+// ── Anchored popover placement (issue #741) ────────────────────────────
+//
+// placePopover is the pure half of unNative.popover(): given the anchor
+// rect, the measured panel size and the viewport, it returns where the
+// panel goes — flipped to the opposite vertical side when the preferred
+// side overflows, clamped horizontally, and reporting the side actually
+// used. All placement decisions live here precisely so they're testable
+// without a DOM.
+
+const { placePopover } = physics;
+
+test('popover placement: fits below → bottom-start at the anchor left edge with the default gutter', () => {
+  const p = placePopover({
+    anchor: { left: 100, top: 50, right: 130, bottom: 80 },
+    size: { w: 200, h: 240 },
+    viewport: { w: 1200, h: 800 },
+  });
+  assert.deepEqual(p, { left: 100, top: 84, placement: 'bottom-start' });
+});
+
+test('popover placement: flips above when the panel would poke past the bottom edge, and reports it', () => {
+  const p = placePopover({
+    anchor: { left: 100, top: 600, right: 130, bottom: 630 },
+    size: { w: 200, h: 240 },
+    viewport: { w: 1200, h: 800 },
+  });
+  // 630 + 4 + 240 = 874 > 800 - 8 → flip: top = 600 - 240 - 4
+  assert.equal(p.top, 356);
+  assert.equal(p.placement, 'top-start');
+});
+
+test('popover placement: clamps at the right viewport edge (never past w - margin)', () => {
+  const p = placePopover({
+    anchor: { left: 1150, top: 50, right: 1180, bottom: 80 },
+    size: { w: 200, h: 100 },
+    viewport: { w: 1200, h: 800 },
+  });
+  assert.equal(p.left, 1200 - 200 - 8);
+  assert.equal(p.placement, 'bottom-start');
+});
+
+test('popover placement: clamps at the left viewport edge (bottom-end hanging leftward)', () => {
+  const p = placePopover({
+    anchor: { left: 10, top: 50, right: 40, bottom: 80 },
+    size: { w: 200, h: 100 },
+    viewport: { w: 1200, h: 800 },
+    placement: 'bottom-end',
+  });
+  // end-align wants left = 40 - 200 = -160 → clamped to the 8px margin
+  assert.equal(p.left, 8);
+  assert.equal(p.placement, 'bottom-end');
+});
+
+test('popover placement: bottom-end aligns the panel right edge to the anchor right edge', () => {
+  const p = placePopover({
+    anchor: { left: 500, top: 50, right: 530, bottom: 80 },
+    size: { w: 200, h: 100 },
+    viewport: { w: 1200, h: 800 },
+    placement: 'bottom-end',
+  });
+  assert.equal(p.left, 330);
+  assert.equal(p.top, 84);
+});
+
+test('popover placement: top-start flips back below when there is no room above', () => {
+  const p = placePopover({
+    anchor: { left: 100, top: 40, right: 130, bottom: 70 },
+    size: { w: 200, h: 240 },
+    viewport: { w: 1200, h: 800 },
+    placement: 'top-start',
+  });
+  assert.equal(p.top, 74);
+  assert.equal(p.placement, 'bottom-start');
+});
+
+test('popover placement: a zero-size anchor rect works as point anchoring', () => {
+  const p = placePopover({
+    anchor: { left: 300, top: 200, right: 300, bottom: 200 },
+    size: { w: 200, h: 100 },
+    viewport: { w: 1200, h: 800 },
+  });
+  assert.deepEqual(p, { left: 300, top: 204, placement: 'bottom-start' });
+});
+
+test('popover placement: a flipped panel taller than the space above still clamps inside the viewport', () => {
+  // No room below AND not enough above: flip is chosen, then the top
+  // clamps to the margin so the panel (max-height'd by the CSS) never
+  // leaves the viewport.
+  const p = placePopover({
+    anchor: { left: 100, top: 100, right: 130, bottom: 780 },
+    size: { w: 200, h: 400 },
+    viewport: { w: 1200, h: 800 },
+  });
+  assert.equal(p.placement, 'top-start');
+  assert.equal(p.top, 8);
+});
+
+test('popover placement: gutter and margin are tunable', () => {
+  const p = placePopover({
+    anchor: { left: 0, top: 50, right: 30, bottom: 80 },
+    size: { w: 200, h: 100 },
+    viewport: { w: 1200, h: 800 },
+    gutter: 10,
+    margin: 16,
+  });
+  assert.equal(p.top, 90);
+  assert.equal(p.left, 16);
+});
+
+// ── Zoom-from-element math (transition 'zoom-in'/'zoom-out') ───────────
+
+test('zoomPose maps the screen rect onto the tile rect (translate + scale)', () => {
+  // A 100×80 tile at (40, 300) inside a 390×700 screen region at (0, 60):
+  // the pose that shrinks the screen onto the tile (transform-origin 0 0).
+  const tile = { left: 40, top: 300, width: 100, height: 80 };
+  const screen = { left: 0, top: 60, width: 390, height: 700 };
+  const pose = zoomPose(tile, screen);
+  assert.equal(pose.tx, 40);
+  assert.equal(pose.ty, 240);
+  assert.ok(Math.abs(pose.sx - 100 / 390) < 1e-12);
+  assert.ok(Math.abs(pose.sy - 80 / 700) < 1e-12);
+  // Identity: a rect mapped onto itself is no transform at all.
+  assert.deepEqual(zoomPose(screen, screen), { tx: 0, ty: 0, sx: 1, sy: 1 });
+});
+
+test('zoomPose rejects degenerate rects', () => {
+  const ok = { left: 0, top: 0, width: 100, height: 100 };
+  assert.equal(zoomPose(null, ok), null);
+  assert.equal(zoomPose(ok, null), null);
+  assert.equal(zoomPose({ left: 0, top: 0, width: 0, height: 50 }, ok), null);
+  assert.equal(zoomPose(ok, { left: 0, top: 0, width: 390, height: 0 }), null);
+});
+
+test('zoomRectUsable accepts partially visible rects and rejects off-screen ones', () => {
+  const vh = 800;
+  // Fully on screen.
+  assert.equal(zoomRectUsable({ left: 0, top: 100, width: 100, height: 100, bottom: 200 }, vh), true);
+  // Partially visible at either edge still counts (the platform rule:
+  // reject only when the rect is entirely outside the vertical band).
+  assert.equal(zoomRectUsable({ left: 0, top: -50, width: 100, height: 100, bottom: 50 }, vh), true);
+  assert.equal(zoomRectUsable({ left: 0, top: 790, width: 100, height: 100, bottom: 890 }, vh), true);
+  // Entirely above / below the viewport → unusable.
+  assert.equal(zoomRectUsable({ left: 0, top: -200, width: 100, height: 100, bottom: -100 }, vh), false);
+  assert.equal(zoomRectUsable({ left: 0, top: 900, width: 100, height: 100, bottom: 1000 }, vh), false);
+  // Degenerate: zero-size (a display:none source screen) or missing.
+  assert.equal(zoomRectUsable({ left: 0, top: 0, width: 0, height: 0, bottom: 0 }, vh), false);
+  assert.equal(zoomRectUsable(null, vh), false);
+  // bottom is derived from top+height when absent (plain-object rects).
+  assert.equal(zoomRectUsable({ left: 0, top: -50, width: 10, height: 100 }, vh), true);
+  assert.equal(zoomRectUsable({ left: 0, top: -200, width: 10, height: 100 }, vh), false);
 });

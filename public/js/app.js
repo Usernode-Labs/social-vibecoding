@@ -2207,7 +2207,14 @@ const App = {
   restoreFromHash() {
     App._isRestoring = true;
     try {
-      const hash = location.hash.replace('#', '');
+      const rawHash = location.hash.replace('#', '');
+      // Fragment-query (#743): a chromeless deep link carries the app's
+      // inner path after a `?` INSIDE the fragment
+      // (#app/<slug>/full?path=/t/123). Split it off before the segment
+      // split so every existing route parses byte-for-byte as before.
+      const qIdx = rawHash.indexOf('?');
+      const hash = qIdx === -1 ? rawHash : rawHash.slice(0, qIdx);
+      const fragQuery = qIdx === -1 ? '' : rawHash.slice(qIdx + 1);
       if (!hash) {
         App.setChromeless(false);
         if (App.currentApp) App.navigateHome();
@@ -2288,6 +2295,18 @@ const App = {
         // below and get the regular App tab — a graceful degrade.
         const chromeless = tab === 'full';
         if (chromeless) tab = 'app';
+        // Inner-path pass-through (#743): `path` is defined as the FINAL
+        // fragment-query param — its value is everything after the first
+        // `path=`, verbatim in wire encoding (an inner query may carry
+        // `&` / `=` / `?`, and the Caddy rescue redirect can't
+        // percent-encode placeholders, so no URLSearchParams here).
+        // Honored only on the chromeless route; every other route
+        // ignores the fragment-query entirely.
+        let innerPath = null;
+        if (chromeless && fragQuery) {
+          const pm = fragQuery.match(/(?:^|&)path=(.*)$/);
+          if (pm) innerPath = App._validateInnerPath(pm[1]);
+        }
         if (tab === 'dev') {
           const sec = parts[3] || null;
           if (sec === 'sessions' && parts[4]) {
@@ -2329,14 +2348,29 @@ const App = {
         if (App._inChallenges) App._exitChallenges();
         if (App._inProfile) App._exitProfile();
         App.setChromeless(chromeless);
+        // Stash the validated inner path where renderAppTab / the token
+        // refresh read it. Set on EVERY pass (null when absent) so
+        // leaving chromeless — e.g. via the pill — clears it without a
+        // re-render of the already-mounted iframe.
+        const prevInnerPath = typeof AppView !== 'undefined'
+          ? (AppView.pendingInnerPath || null) : null;
+        if (typeof AppView !== 'undefined') AppView.pendingInnerPath = innerPath;
         if (App.currentApp !== slug) {
           App.navigateToApp(slug, tab, ref, subTab);
+          // navigateToApp's synchronous prefix runs AppView.close() when
+          // jumping app-to-app, which clears pendingInnerPath — re-stash
+          // after the call (renderAppTab only runs once the awaited
+          // open() inside it resolves, so this always lands in time).
+          if (typeof AppView !== 'undefined') AppView.pendingInnerPath = innerPath;
         } else if (App.currentTab !== tab
             || (tab === 'dev' && App.currentSubTab !== subTab)
             // Same tab + sub-tab but a (possibly different) deep-link
             // target — re-dispatch so the accordion / session moves.
             // switchTab is idempotent, so a same-target re-render is fine.
-            || (tab === 'dev' && ref != null)) {
+            || (tab === 'dev' && ref != null)
+            // A chromeless hash carrying a DIFFERENT inner path than the
+            // one already applied — re-render so the iframe moves (#743).
+            || (chromeless && innerPath !== prevInnerPath)) {
           App.switchTab(tab, ref, subTab);
         }
       } else {
@@ -2350,6 +2384,25 @@ const App = {
     } finally {
       App._isRestoring = false;
     }
+  },
+
+  // Client-side mirror of testing-notes.validatePath (see
+  // src/services/testing-notes.js) for the chromeless inner path (#743):
+  // relative-only (leading `/`, never `//` — protocol-relative), no
+  // whitespace/control chars, and none of \ ` ' " < > — the src is
+  // interpolated into an innerHTML template in renderAppTab, so the
+  // blacklist is attribute-breakout defense on top of the URL-API origin
+  // check in AppView.buildAppIframeSrc. Invalid → null (app root, never
+  // an error).
+  _validateInnerPath(p) {
+    if (typeof p !== 'string') return null;
+    const path = p.trim();
+    if (!path || path.length > 512) return null;
+    if (!path.startsWith('/') || path.startsWith('//')) return null;
+    if (/[\s\\`'"<>]/.test(path)) return null;
+    // eslint-disable-next-line no-control-regex
+    if (/[\x00-\x1f\x7f]/.test(path)) return null;
+    return path;
   },
 
   // ── Chromeless full-screen mode ──────────────────────────────────────
@@ -2571,9 +2624,14 @@ const App = {
         }
       } else {
         // Chromeless mode round-trips through reloads/history via its
-        // own hash segment; the regular App tab keeps `/app`.
+        // own hash segment; the regular App tab keeps `/app`. An active
+        // inner deep link (#743) rides along as the final fragment param
+        // so the post-load hash rewrite doesn't strip it and
+        // reload/back/forward reproduce the shared screen.
+        const innerPath = (App.chromeless && typeof AppView !== 'undefined'
+          && AppView.pendingInnerPath) || null;
         newHash = App.chromeless
-          ? `#app/${App.currentApp}/full`
+          ? `#app/${App.currentApp}/full${innerPath ? `?path=${innerPath}` : ''}`
           : `#app/${App.currentApp}/app`;
       }
     } else {
@@ -2595,7 +2653,9 @@ const App = {
     // the same kind replaces in place).
     const SUB_SCREENS = new Set(['sessions', 'chat', 'issues', 'proposals', 'governance', 'shared']);
     const screenIdOf = (h) => {
-      const segs = String(h || '').replace(/^#/, '').split('/');
+      // Strip the fragment-query (#743) so #app/x/full?path=/t/1 and
+      // #app/x/full are the SAME screen (replace, not a spurious push).
+      const segs = String(h || '').replace(/^#/, '').split('?')[0].split('/');
       if (segs[0] === 'app' && segs[2] === 'dev') {
         return SUB_SCREENS.has(segs[3])
           ? segs.slice(0, 4).join('/')
@@ -2827,146 +2887,21 @@ const App = {
   // ── Homescreen zoom transition ─────────────────────────────────────
   // Opening an app expands the app view out of the clicked tile's
   // on-screen rect (iOS-homescreen style) and Back shrinks it into the
-  // tile again. Implemented platform-side (the /v1/ kit has no zoom
-  // primitive) as a transform animation on the live #app-view pinned
-  // as a fixed overlay — no View Transition snapshot is involved, so
-  // the app iframe caveat doesn't apply. Falls back to the kit
-  // push/pop (or an instant cut) when there's no tile on screen or
-  // the user prefers reduced motion.
-  _zoomCleanup: null,
+  // tile again — the kit's 'zoom-in'/'zoom-out' transition types (#740;
+  // this replaced the platform's hand-rolled _zoom* implementation).
+  // The kit owns the pitfalls: pinning the LIVE #app-view as a fixed
+  // overlay (no View Transition snapshot, so the app-iframe caveat
+  // doesn't apply), the opaque --un-zoom-bg surface, exact inline-style
+  // restore, and the fallback to push/pop or an instant cut when the
+  // tile isn't on screen or the user prefers reduced motion.
 
-  _zoomReady() {
+  // The home tile for `slug`, or null. A hidden home screen or
+  // filtered-away tile yields no element / a 0×0 rect, which the kit
+  // rejects — so the old home-visible checks live in the kit now.
+  _tileFor(slug) {
     try {
-      return !(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-    } catch { return true; }
-  },
-
-  // The clicked/target tile's viewport rect, or null when the home
-  // screen isn't showing / the tile is off-screen (deep links,
-  // history restores, filtered-away tiles).
-  _tileRectFor(slug) {
-    const home = document.getElementById('home-screen');
-    if (!home || home.classList.contains('hidden')) return null;
-    let card = null;
-    try { card = document.querySelector(`.app-card[data-slug="${CSS.escape(slug)}"]`); } catch {}
-    if (!card) return null;
-    const r = card.getBoundingClientRect();
-    if (!r.width || !r.height) return null;
-    if (r.bottom < 0 || r.top > window.innerHeight) return null;
-    return r;
-  },
-
-  // Pin #app-view as a fixed overlay over `regionRect` and return a
-  // restore function that puts its inline style back exactly (the
-  // element carries load-bearing inline flex styles).
-  _zoomPin(av, regionRect) {
-    const savedCss = av.style.cssText;
-    Object.assign(av.style, {
-      position: 'fixed',
-      top: `${regionRect.top}px`,
-      left: `${regionRect.left}px`,
-      width: `${regionRect.width}px`,
-      height: `${regionRect.height}px`,
-      margin: '0',
-      zIndex: '70',
-      transformOrigin: '0 0',
-      overflow: 'hidden',
-      transition: 'none',
-      // The app view itself is transparent (its screens paint on the
-      // body background). While it overlays the visible home feed the
-      // zoom needs an opaque surface, or home shows through the moving
-      // card (worst on the Dev view, e.g. the self-app).
-      background: 'var(--bg-primary)',
-    });
-    return () => { av.style.cssText = savedCss; };
-  },
-
-  _ZOOM_EASE: 'var(--un-ease-spring-stiff, cubic-bezier(0.3, 1, 0.4, 1))',
-
-  // Expand the app view out of `rect` (the tile). Home stays visible
-  // underneath for the duration, then hides.
-  _zoomInFromTile(rect) {
-    const av = document.getElementById('app-view');
-    const home = document.getElementById('home-screen');
-    if (App._zoomCleanup) App._zoomCleanup();
-    const target = home.getBoundingClientRect(); // the region av will occupy
-    if (!target.width || !target.height) {
-      home.classList.add('hidden');
-      av.classList.remove('hidden');
-      return;
-    }
-    const unpin = App._zoomPin(av, target);
-    av.style.transform = `translate(${rect.left - target.left}px, ${rect.top - target.top}px) `
-      + `scale(${rect.width / target.width}, ${rect.height / target.height})`;
-    av.style.opacity = '0.3';
-    av.style.borderRadius = '16px';
-    av.classList.remove('hidden');
-    void av.offsetHeight; // flush the start pose before enabling the transition
-    av.style.transition = `transform 380ms ${App._ZOOM_EASE}, opacity 220ms ease, border-radius 380ms ease`;
-    av.style.transform = 'none';
-    av.style.opacity = '1';
-    av.style.borderRadius = '0px';
-    let done = false;
-    const onEnd = (e) => {
-      if (e.target === av && e.propertyName === 'transform') cleanup();
-    };
-    const cleanup = () => {
-      if (done) return;
-      done = true;
-      App._zoomCleanup = null;
-      av.removeEventListener('transitionend', onEnd);
-      unpin();
-      home.classList.add('hidden');
-    };
-    App._zoomCleanup = cleanup;
-    av.addEventListener('transitionend', onEnd);
-    setTimeout(cleanup, 500);
-  },
-
-  // Shrink the (still-mounted) app view into `slug`'s tile, revealing
-  // home underneath. Returns false when the zoom can't run (caller
-  // falls back to the kit pop / instant cut). Clears #app-content
-  // itself once the overlay lands.
-  _zoomOutToTile(slug) {
-    if (!App._zoomReady()) return false;
-    const av = document.getElementById('app-view');
-    const home = document.getElementById('home-screen');
-    if (!av || !home || av.classList.contains('hidden')) return false;
-    if (App._zoomCleanup) App._zoomCleanup();
-    const from = av.getBoundingClientRect();
-    if (!from.width || !from.height) return false;
-    const unpin = App._zoomPin(av, from);
-    home.classList.remove('hidden'); // lays out beneath the pinned overlay
-    const rect = App._tileRectFor(slug);
-    let done = false;
-    const onEnd = (e) => {
-      if (e.target === av && e.propertyName === 'transform') cleanup();
-    };
-    const cleanup = () => {
-      if (done) return;
-      done = true;
-      App._zoomCleanup = null;
-      av.removeEventListener('transitionend', onEnd);
-      unpin();
-      av.classList.add('hidden');
-      const content = document.getElementById('app-content');
-      if (content) content.innerHTML = '';
-    };
-    if (!rect) {
-      // No tile on screen to land on — settle instantly.
-      cleanup();
-      return true;
-    }
-    void av.offsetHeight;
-    av.style.transition = `transform 340ms ${App._ZOOM_EASE}, opacity 200ms ease 60ms, border-radius 340ms ease`;
-    av.style.transform = `translate(${rect.left - from.left}px, ${rect.top - from.top}px) `
-      + `scale(${rect.width / from.width}, ${rect.height / from.height})`;
-    av.style.opacity = '0';
-    av.style.borderRadius = '16px';
-    App._zoomCleanup = cleanup;
-    av.addEventListener('transitionend', onEnd);
-    setTimeout(cleanup, 480);
-    return true;
+      return document.querySelector(`.app-card[data-slug="${CSS.escape(slug)}"]`);
+    } catch { return null; }
   },
 
   async navigateToApp(slug, tab, ref, subTab) {
@@ -2982,20 +2917,21 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     // Real screen navigation. From the home feed the app view expands
-    // out of the clicked tile (iOS-homescreen zoom, see _zoomInFromTile);
-    // from anywhere else (deep link, history restore, tile off-screen,
-    // reduced motion) it falls back to the kit's native push. The app
-    // iframe isn't mounted yet at this point (app-content is empty),
-    // so neither path animates over a live iframe on the way in.
-    const zoomRect = App._zoomReady() ? App._tileRectFor(slug) : null;
-    if (zoomRect) {
-      App._zoomInFromTile(zoomRect);
-    } else {
-      PlatformUI.transition(() => {
-        document.getElementById('home-screen').classList.add('hidden');
-        document.getElementById('app-view').classList.remove('hidden');
-      }, { type: 'push' });
-    }
+    // out of the clicked tile (kit 'zoom-in'); from anywhere else (deep
+    // link, history restore, tile off-screen, reduced motion) the kit
+    // falls back to its native push. The app iframe isn't mounted yet
+    // at this point (app-content is empty), so neither path animates
+    // over a live iframe on the way in. Home stays visible beneath the
+    // zoom (fn reveals, `after` conceals — kit contract).
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.remove('hidden');
+    }, {
+      type: 'zoom-in',
+      el: document.getElementById('app-view'),
+      fromEl: () => App._tileFor(slug),
+      fallback: 'push',
+      after: () => document.getElementById('home-screen').classList.add('hidden'),
+    });
     document.getElementById('back-btn').classList.remove('hidden');
     // Intentionally NOT setting the header to `slug` here. Slugs are
     // generated as `${name}-${randomHex}` (see routes/apps.js), so a
@@ -3055,34 +2991,40 @@ const App = {
     const leavingSlug = App.currentApp;
     // Iframe caveat (spec): View Transitions snapshot the outgoing
     // page, and a live app iframe in that snapshot can flash on iOS
-    // Safari. The zoom-out below transform-animates the LIVE view (no
-    // snapshot), so it's iframe-safe; the kit pop fallback still cuts
+    // Safari. The kit 'zoom-out' transform-animates the LIVE view (no
+    // snapshot), so it's iframe-safe; the fallback still cuts
     // instantly when leaving the App tab's iframe.
-    const transitionType = (App.currentApp && App.currentTab === 'app') ? 'none' : 'pop';
+    const fallbackType = (App.currentApp && App.currentTab === 'app') ? 'none' : 'pop';
     AppView.close();
     App.currentApp = null;
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
-    // Preferred: shrink the app view back into its home tile
-    // (_zoomOutToTile reveals home and clears #app-content itself).
-    const zoomed = leavingSlug ? App._zoomOutToTile(leavingSlug) : false;
-    if (!zoomed) {
-      PlatformUI.transition(() => {
-        document.getElementById('app-view').classList.add('hidden');
-        document.getElementById('home-screen').classList.remove('hidden');
-      }, { type: transitionType });
-    }
+    // Preferred: shrink the app view back into its home tile (kit
+    // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
+    // hides the app view and clears its content — exactly once on
+    // every path, so the shrinking overlay keeps showing the app's
+    // content until it lands).
+    const av = document.getElementById('app-view');
+    PlatformUI.transition(() => {
+      document.getElementById('home-screen').classList.remove('hidden');
+    }, {
+      type: 'zoom-out',
+      el: av,
+      fromEl: () => (leavingSlug ? App._tileFor(leavingSlug) : null),
+      fallback: fallbackType,
+      after: () => {
+        av.classList.add('hidden');
+        const content = document.getElementById('app-content');
+        if (content) content.innerHTML = '';
+      },
+    });
     document.getElementById('back-btn').classList.add('hidden');
     const _drgH = document.getElementById('drawer-row-github');
     const _drsH = document.getElementById('drawer-row-share');
     if (_drgH) _drgH.classList.add('hidden');
     if (_drsH) _drsH.classList.add('hidden');
     App.setHeaderTitle('dApps');
-    // When the zoom-out is animating, the shrinking overlay still shows
-    // the app's content — _zoomOutToTile clears #app-content once it
-    // lands. Only the fallback path clears immediately.
-    if (!zoomed) document.getElementById('app-content').innerHTML = '';
     App.updateHash();
     Home.load();
   },

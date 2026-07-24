@@ -79,6 +79,14 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 -- POST /api/me/ai-progress-estimate.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Platform-level user language preference (issue #757). A BCP-47 language
+-- tag ("id", "pt-BR", …) or NULL for "unset/auto — use device language".
+-- Set from Settings → Language via POST /api/me/locale; exposed to apps as
+-- the `locale` claim in the iframe JWT (server.js /api/iframe-token) and
+-- through /api/auth/me → the shell → the bridge's usernode.getUserLocale().
+-- 35 chars is the RFC 5646 recommended buffer for BCP-47 tags.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS locale VARCHAR(35);
+
 CREATE TABLE IF NOT EXISTS sessions (
   token      VARCHAR(64) PRIMARY KEY,
   user_id    INTEGER REFERENCES users(id) ON DELETE CASCADE,

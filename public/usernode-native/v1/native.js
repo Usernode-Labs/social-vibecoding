@@ -23,11 +23,36 @@
  *                                        lift on touch, handle/pointer drag on
  *                                        desktop, overlay drop indicator,
  *                                        edge auto-scroll, spring settle)
- *   unNative.transition(fn, {type})   — View Transitions wrapper
- *   unNative.presentSheet(opts)       — bottom sheet (drag-to-dismiss)
+ *   unNative.transition(fn, {type})   — screen transitions. 'push' | 'pop'
+ *                                        | 'none' wrap fn in a View
+ *                                        Transition; 'zoom-in' | 'zoom-out'
+ *                                        play the iOS-homescreen expand /
+ *                                        collapse out of a tile ({ el,
+ *                                        fromEl | fromRect, after?,
+ *                                        fallback? } — fn reveals the
+ *                                        incoming screen, `after` conceals
+ *                                        the outgoing one; the LIVE el is
+ *                                        transform-animated, no snapshot)
+ *   unNative.presentSheet(opts)       — bottom sheet (drag-to-dismiss;
+ *                                        content rendered AFTER present is
+ *                                        re-measured and the entrance
+ *                                        spring retargeted — no pop-in)
  *   unNative.presentModal(opts)       — centered modal card, arbitrary content
  *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
  *   unNative.alert(opts)              — iOS alert dialog, Promise-based
+ *   unNative.popover(opts)            — anchored popover / dropdown menu
+ *                                        ({ anchorEl | anchorRect, items |
+ *                                        contentEl, placement? }): flip/
+ *                                        clamp positioning, outside-click/
+ *                                        Escape/scroll dismissal, menu
+ *                                        focus handling. Items mode
+ *                                        resolves a Promise (with a
+ *                                        .dismiss() attached); content
+ *                                        mode returns { dismiss(), el }
+ *   unNative.menu(opts)               — adaptive menu: action sheet on
+ *                                        touch, anchored popover on
+ *                                        desktop — one actionSheet-shaped
+ *                                        call site serves both idioms
  *   unNative.toast(message, opts?)    — transient status toast / snackbar
  *                                        ({ duration?, action?, priority?,
  *                                        onClose?(reason) }; a priority
@@ -206,6 +231,16 @@
     return projectDisplacement(input.y, input.v, input.horizonMs) >= 0.5 * input.sheetHeight;
   }
 
+  // Top-edge-preserving offset after a presenting/presented bottom-anchored
+  // sheet is re-measured (issue #742). A height change of
+  // Δ = newHeight - oldHeight instantly moves the sheet's top edge by Δ;
+  // shifting the translateY offset by the same Δ keeps the edge visually
+  // continuous, so the retargeted spring animates the added (or removed)
+  // distance instead of the content popping in.
+  function remeasuredSheetY(input) {
+    return input.y + (input.newHeight - input.oldHeight);
+  }
+
   // Reorder hit-testing: map a pointer y to a gap index (0..n) over an
   // ordered list of item rects ({ top, bottom }, same coordinate space as
   // pointerY). Inside an item, above the midpoint inserts before it and
@@ -342,6 +377,43 @@
     return 0;
   }
 
+  // Anchored-popover placement: position a panel of `size` against an
+  // anchor rect, flipped to the opposite vertical side when the preferred
+  // side would overflow the viewport and clamped horizontally to stay
+  // inside it (the openCardMenu math, kit-owned — issue #741).
+  // input: { anchor: { left, top, right, bottom }, size: { w, h },
+  // viewport: { w, h }, placement?, gutter?, margin? }. placement is
+  // 'bottom-start' (default) | 'bottom-end' | 'top-start' | 'top-end';
+  // gutter (default 4) is the gap from the anchor, margin (default 8) the
+  // minimum distance from the viewport edges. Returns { left, top,
+  // placement } — placement reports the side actually used after
+  // flipping. Pure — unit-tested in tests/native-kit.test.js.
+  function placePopover(input) {
+    var a = input.anchor;
+    var s = input.size;
+    var vp = input.viewport;
+    var gutter = input.gutter == null ? 4 : input.gutter;
+    var margin = input.margin == null ? 8 : input.margin;
+    var parts = String(input.placement || 'bottom-start').split('-');
+    var side = parts[0] === 'top' ? 'top' : 'bottom';
+    var align = parts[1] === 'end' ? 'end' : 'start';
+
+    var left = align === 'end' ? a.right - s.w : a.left;
+    left = Math.max(margin, Math.min(left, vp.w - s.w - margin));
+
+    var top = side === 'bottom' ? a.bottom + gutter : a.top - s.h - gutter;
+    if (side === 'bottom' && top + s.h > vp.h - margin) {
+      side = 'top';
+      top = a.top - s.h - gutter;
+    } else if (side === 'top' && top < margin) {
+      side = 'bottom';
+      top = a.bottom + gutter;
+    }
+    top = Math.max(margin, Math.min(top, vp.h - s.h - margin));
+
+    return { left: left, top: top, placement: side + '-' + align };
+  }
+
   // Gesture arbiter core: one owner per gesture sequence, decided once —
   // the first recognizer to claim a sequence wins it, everyone else backs
   // off. Pure (no DOM); the kit wires one instance to real pointer/touch
@@ -411,6 +483,40 @@
     };
   }
 
+  /* ────────────────────────────────────────────────────────────────────
+   * Zoom-from-element math — pure functions for the 'zoom-in'/'zoom-out'
+   * transition types. Unit-tested via the physics export.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  // Whether a source rect can seed a zoom: non-degenerate and at least
+  // partially inside the viewport's vertical band. Off-screen tiles
+  // (deep links, filtered-away cards, scrolled-away grids) return false
+  // so the transition falls back to push/pop instead of animating
+  // from a rect the user can't see.
+  function zoomRectUsable(rect, viewportHeight) {
+    if (!rect) return false;
+    if (!(rect.width > 0) || !(rect.height > 0)) return false;
+    var bottom = rect.bottom != null ? rect.bottom : rect.top + rect.height;
+    if (bottom < 0) return false;
+    if (viewportHeight != null && rect.top > viewportHeight) return false;
+    return true;
+  }
+
+  // The transform pose that maps targetRect (the screen's resting rect)
+  // onto fromRect (the tile): apply as translate(tx,ty) scale(sx,sy)
+  // with transform-origin 0 0. null on degenerate input.
+  function zoomPose(fromRect, targetRect) {
+    if (!fromRect || !targetRect) return null;
+    if (!(fromRect.width > 0) || !(fromRect.height > 0)) return null;
+    if (!(targetRect.width > 0) || !(targetRect.height > 0)) return null;
+    return {
+      tx: fromRect.left - targetRect.left,
+      ty: fromRect.top - targetRect.top,
+      sx: fromRect.width / targetRect.width,
+      sy: fromRect.height / targetRect.height,
+    };
+  }
+
   var physics = {
     PRESETS: PRESETS,
     DECEL_RATE: DECEL_RATE,
@@ -430,6 +536,7 @@
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
     decideSheetRelease: decideSheetRelease,
+    remeasuredSheetY: remeasuredSheetY,
     KB_MIN_INSET: KB_MIN_INSET,
     keyboardInset: keyboardInset,
     isTextEntryField: isTextEntryField,
@@ -437,8 +544,11 @@
     reorderDropIndex: reorderDropIndex,
     gridDropSide: gridDropSide,
     autoScrollVelocity: autoScrollVelocity,
+    placePopover: placePopover,
     createArbiter: createArbiter,
     createToastSlot: createToastSlot,
+    zoomPose: zoomPose,
+    zoomRectUsable: zoomRectUsable,
   };
 
   // Node (unit tests): export the math and stop — no DOM below this line.
@@ -1767,32 +1877,189 @@
   }
 
   /* ────────────────────────────────────────────────────────────────────
-   * Page transitions — View Transitions wrapper. type 'none' (the default,
-   * and the REQUIRED choice for high-frequency UI like tab switches, menus
-   * and panels) runs the mutation with no animation. Re-entrant: a
-   * navigation during an active transition skips animation, never queues.
+   * Page transitions. type 'none' (the default, and the REQUIRED choice
+   * for high-frequency UI like tab switches, menus and panels) runs the
+   * mutation with no animation; 'push'/'pop' wrap it in a View
+   * Transition. Re-entrant: a navigation during an active transition
+   * skips animation, never queues.
+   *
+   * 'zoom-in'/'zoom-out' play the iOS-homescreen expand/collapse out of
+   * a tile ({ el, fromEl | fromRect, after?, fallback? }). No View
+   * Transition is involved: the LIVE screen element (opts.el) is pinned
+   * as a fixed overlay and transform-animated from/to the tile's rect —
+   * no snapshot, so it is iframe-safe and content keeps loading
+   * mid-zoom. The caller splits its mutation in two: `fn` reveals the
+   * incoming screen (leaving the outgoing one visible beneath the
+   * moving card) and `opts.after` conceals the outgoing one — `after`
+   * runs exactly once on every path (animated settle, instant settle,
+   * fallback). When the zoom can't run (no usable source rect, reduced
+   * motion, missing el) it falls back to opts.fallback ('push' for
+   * zoom-in, 'pop' for zoom-out, or 'none') with the combined mutation.
    * ──────────────────────────────────────────────────────────────────── */
 
   var vtActive = false;
+  var zoomCleanup = null; // instant-finish handle for the active zoom
+
+  var ZOOM_EASE = 'var(--un-ease-spring-stiff, cubic-bezier(0.3, 1, 0.4, 1))';
+  var ZOOM_RADIUS = '16px';
+
+  // Pin el as a fixed overlay over `rect` and return a restore function
+  // that puts its inline style back exactly (screens often carry
+  // load-bearing inline styles). The opaque background is the
+  // bleed-through guard: a transparent screen over the still-visible
+  // grid would let the grid show through the moving card. z-index 9960
+  // sits above app content but below every kit overlay (sheets 9990+).
+  function zoomPin(el, rect) {
+    var saved = el.style.cssText;
+    el.style.position = 'fixed';
+    el.style.top = rect.top + 'px';
+    el.style.left = rect.left + 'px';
+    el.style.width = rect.width + 'px';
+    el.style.height = rect.height + 'px';
+    el.style.margin = '0';
+    el.style.zIndex = '9960';
+    el.style.transformOrigin = '0 0';
+    el.style.overflow = 'hidden';
+    el.style.transition = 'none';
+    el.style.background = 'var(--un-zoom-bg)';
+    return function () { el.style.cssText = saved; };
+  }
+
+  // Resolve the tile rect. A caller-supplied fromRect is trusted except
+  // for zero size; anything derived from fromEl (element, or a function
+  // returning an element/rect) gets the full usability check, including
+  // the on-screen test — a hidden source screen yields a 0×0 rect and
+  // falls through to the fallback.
+  function resolveZoomSource(opts) {
+    if (opts.fromRect) {
+      var r = opts.fromRect;
+      return r.width > 0 && r.height > 0 ? r : null;
+    }
+    var src = null;
+    try {
+      src = typeof opts.fromEl === 'function' ? opts.fromEl() : opts.fromEl;
+    } catch (e) { return null; }
+    if (!src) return null;
+    var rect = typeof src.getBoundingClientRect === 'function'
+      ? src.getBoundingClientRect()
+      : src;
+    return zoomRectUsable(rect, window.innerHeight) ? rect : null;
+  }
+
+  function zoomTransition(fn, type, opts) {
+    var el = opts.el;
+    var after = typeof opts.after === 'function' ? opts.after : null;
+    var fallbackType = opts.fallback || (type === 'zoom-in' ? 'push' : 'pop');
+    // Fallback: the combined mutation through the normal machinery —
+    // byte-for-byte what a non-zoom push/pop navigation does. An active
+    // View Transition makes this an instant cut (the re-entrancy rule).
+    var fallback = function () {
+      return transition(after ? function () { fn(); after(); } : fn, { type: fallbackType });
+    };
+    if (!el || prefersReducedMotion || vtActive) return fallback();
+    if (zoomCleanup) zoomCleanup(); // finish any active zoom instantly
+
+    var resolveP;
+    var promise = new Promise(function (res) { resolveP = res; });
+    var done = false;
+    var unpin = null;
+    var onEnd = null;
+    var finish = function () {
+      if (done) return;
+      done = true;
+      if (zoomCleanup === finish) zoomCleanup = null;
+      if (onEnd) el.removeEventListener('transitionend', onEnd);
+      if (unpin) unpin();
+      if (after) after();
+      resolveP();
+    };
+    onEnd = function (e) {
+      if (e.target === el && e.propertyName === 'transform') finish();
+    };
+
+    if (type === 'zoom-in') {
+      // Tile resolved BEFORE fn (it lives on the outgoing screen).
+      var fromRect = resolveZoomSource(opts);
+      if (!fromRect) return fallback();
+      fn();
+      // Measured synchronously after fn, pre-paint: no full-screen flash.
+      var target = el.getBoundingClientRect();
+      var pose = zoomPose(fromRect, target);
+      if (!pose) {
+        // el didn't land anywhere measurable — settle instantly.
+        if (after) after();
+        return Promise.resolve();
+      }
+      unpin = zoomPin(el, target);
+      el.style.transform = 'translate(' + pose.tx + 'px, ' + pose.ty + 'px) '
+        + 'scale(' + pose.sx + ', ' + pose.sy + ')';
+      el.style.opacity = '0.3';
+      el.style.borderRadius = ZOOM_RADIUS;
+      void el.offsetHeight; // flush the start pose before enabling the transition
+      el.style.transition = 'transform 380ms ' + ZOOM_EASE
+        + ', opacity 220ms ease, border-radius 380ms ease';
+      el.style.transform = 'none';
+      el.style.opacity = '1';
+      el.style.borderRadius = '0px';
+      zoomCleanup = finish;
+      el.addEventListener('transitionend', onEnd);
+      setTimeout(finish, 500); // safety if transitionend never fires
+      return promise;
+    }
+
+    // zoom-out: pin the outgoing screen over its current rect FIRST,
+    // then reveal the screen beneath it.
+    var from = el.getBoundingClientRect();
+    if (!(from.width > 0) || !(from.height > 0)) return fallback();
+    unpin = zoomPin(el, from);
+    fn();
+    // Tile resolved AFTER fn (it lives on the just-revealed screen).
+    var outPose = zoomPose(resolveZoomSource(opts), from);
+    if (!outPose) {
+      // No tile on screen to land on — settle instantly.
+      finish();
+      return promise;
+    }
+    void el.offsetHeight;
+    el.style.transition = 'transform 340ms ' + ZOOM_EASE
+      + ', opacity 200ms ease 60ms, border-radius 340ms ease';
+    el.style.transform = 'translate(' + outPose.tx + 'px, ' + outPose.ty + 'px) '
+      + 'scale(' + outPose.sx + ', ' + outPose.sy + ')';
+    el.style.opacity = '0';
+    el.style.borderRadius = ZOOM_RADIUS;
+    zoomCleanup = finish;
+    el.addEventListener('transitionend', onEnd);
+    setTimeout(finish, 480); // safety if transitionend never fires
+    return promise;
+  }
 
   function transition(fn, opts) {
-    var type = (opts && opts.type) || 'none';
+    var o = opts || {};
+    var type = o.type || 'none';
+    if (type === 'zoom-in' || type === 'zoom-out') {
+      return zoomTransition(fn, type, o);
+    }
+    // Non-zoom types accept `after` too (the zoom fallback path relies
+    // on it): the two halves run together as one mutation.
+    var run = typeof o.after === 'function'
+      ? function () { fn(); o.after(); }
+      : fn;
     if (
       type === 'none' || vtActive || prefersReducedMotion ||
       typeof document.startViewTransition !== 'function'
     ) {
-      fn();
+      run();
       return Promise.resolve();
     }
     vtActive = true;
     document.documentElement.setAttribute('data-un-vt', type);
     var vt;
     try {
-      vt = document.startViewTransition(fn);
+      vt = document.startViewTransition(run);
     } catch (e) {
       vtActive = false;
       document.documentElement.removeAttribute('data-un-vt');
-      fn();
+      run();
       return Promise.resolve();
     }
     return vt.finished.catch(function () {}).then(function () {
@@ -1805,6 +2072,36 @@
    * Bottom sheet — spring presentation, grabber, 1:1 drag-to-dismiss with
    * momentum commit. A touch mid-spring inherits position + velocity.
    * ──────────────────────────────────────────────────────────────────── */
+
+  // Watch an overlay's border-box height while it is presented (issue
+  // #742): content rendered AFTER present (fill from state, async fetch)
+  // changes the height the entrance spring and backdrop math were seeded
+  // with. Calls onChange(newHeight, oldHeight) on material (≥1px) changes.
+  // ResizeObserver fires after layout and BEFORE paint, so the common
+  // present-then-render-synchronously pattern retargets before a frame at
+  // the wrong offset is ever painted; transforms don't affect layout, so
+  // the per-frame translateY writes can't re-trigger it. Where RO is
+  // missing, a single first-rAF re-measure covers the same pattern.
+  // Returns a disconnect function.
+  function watchHeight(el, onChange) {
+    var last = el.offsetHeight || 1;
+    function check() {
+      var h = el.offsetHeight || 1;
+      if (Math.abs(h - last) < 1) return;
+      var prev = last;
+      last = h;
+      onChange(h, prev);
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+      try {
+        var ro = new ResizeObserver(check);
+        ro.observe(el);
+        return function () { ro.disconnect(); };
+      } catch (e) { /* fall through to the rAF fallback */ }
+    }
+    var raf = requestAnimationFrame(check);
+    return function () { cancelAnimationFrame(raf); };
+  }
 
   // presentSheet({ content | contentEl, onDismiss }) — content is an HTML
   // string, contentEl an Element to adopt. Returns { dismiss(), el }.
@@ -1847,6 +2144,7 @@
     }
 
     function teardown() {
+      if (unwatch) unwatch();
       if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
       if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
       if (opts.onDismiss) opts.onDismiss();
@@ -1923,6 +2221,25 @@
     sheet.addEventListener('pointerup', onPointerEnd);
     sheet.addEventListener('pointercancel', onPointerEnd);
 
+    // Late-rendered content (issue #742): the height variable feeds the
+    // backdrop denominator, the dismissal travel and the release decision,
+    // so refreshing it keeps them all consistent; the offset shift keeps
+    // the top edge visually continuous so growth springs up (a full
+    // slide-up on the first-open repro) instead of popping in.
+    var unwatch = watchHeight(sheet, function (newHeight, oldHeight) {
+      height = newHeight;
+      if (drag && drag.locked) return; // the finger owns the position 1:1
+      var v = activeSpring ? activeSpring.current().v : 0;
+      if (closed) {
+        // The exit spring was aiming at the old height — retarget so the
+        // sheet fully leaves the screen before teardown.
+        springTo(height, v, teardown);
+        return;
+      }
+      render(remeasuredSheetY({ y: y, oldHeight: oldHeight, newHeight: newHeight }));
+      springTo(0, v);
+    });
+
     render(height);
     springTo(0, 0);
 
@@ -1944,6 +2261,10 @@
 
   window.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape' || !modalStack.length) return;
+    // A popover open above a modal owns Escape (its own handler
+    // dismisses it) — this capture listener registered first, so it
+    // must stand aside or Escape would take both surfaces down.
+    if (activePopover) return;
     var top = modalStack[modalStack.length - 1];
     if (top.dismissible) {
       e.preventDefault();
@@ -2078,29 +2399,297 @@
         backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / height)));
       }
 
-      function springTo(to, onRest) {
+      function springTo(to, velocity, onRest) {
         if (activeSpring) activeSpring.stop();
         activeSpring = spring(function (v) { render(v); }, {
-          from: y, to: to, velocity: 0, preset: 'default',
+          from: y, to: to, velocity: velocity || 0, preset: 'default',
           onRest: function () { activeSpring = null; if (onRest) onRest(); },
         });
+      }
+
+      var settleAction = null; // the chosen action while the exit spring runs
+      function finishSettle() {
+        if (unwatch) unwatch();
+        if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+        if (settleAction && settleAction.handler) settleAction.handler();
+        resolve(settleAction || null);
       }
 
       function settle(action) {
         if (settled) return;
         settled = true;
-        springTo(height, function () {
-          if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-          if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
-          if (action && action.handler) action.handler();
-          resolve(action || null);
-        });
+        settleAction = action || null;
+        springTo(height, 0, finishSettle);
       }
 
       backdrop.addEventListener('click', function () { settle(null); });
 
+      // Same present-time height assumption as the bottom sheet (issue
+      // #742). The API can't receive late content, but a re-measure (e.g.
+      // a web-font reflow of labels) still retargets cleanly.
+      var unwatch = watchHeight(wrap, function (newHeight, oldHeight) {
+        height = newHeight;
+        var v = activeSpring ? activeSpring.current().v : 0;
+        if (settled) { springTo(height, v, finishSettle); return; }
+        render(remeasuredSheetY({ y: y, oldHeight: oldHeight, newHeight: newHeight }));
+        springTo(0, v);
+      });
+
       render(height);
-      springTo(0);
+      springTo(0, 0);
+    });
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   * Anchored popover / dropdown menu — the desktop menu idiom (#741):
+   * a panel attached to the control that invoked it, flipped/clamped to
+   * stay in the viewport, dismissed by outside-click / Escape / scroll /
+   * resize. No backdrop and no entrance animation (menus are
+   * high-frequency UI — see the fidelity rules). Singleton: opening one
+   * dismisses any open popover.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  // The one open popover (also consulted by the modal Escape handler
+  // above). { dismiss } while a popover is up, null otherwise.
+  var activePopover = null;
+
+  // popover({ anchorEl | anchorRect, items | contentEl | content,
+  // title?, headerEl?, placement?, onDismiss? }).
+  //
+  // Items share the actionSheet shape plus popover extensions:
+  // { label, destructive?, disabled?, keepOpen?, title?, handler? } —
+  // disabled renders an inert row, keepOpen runs handler without
+  // dismissing (in-place feedback flows), and handler receives the row's
+  // <button> element. headerEl is adopted verbatim (it brings its own
+  // padding/hairline); title renders in the kit's own header slot.
+  //
+  // Items mode returns a Promise resolving the chosen item or null on
+  // dismissal, with a .dismiss() method attached for programmatic close;
+  // content mode returns { el, dismiss() }.
+  function popover(options) {
+    var opts = options || {};
+    if (Array.isArray(opts.items)) {
+      var handle;
+      var promise = new Promise(function (resolve) {
+        handle = presentPopover(opts, resolve);
+      });
+      promise.dismiss = handle.dismiss;
+      return promise;
+    }
+    return presentPopover(opts, null);
+  }
+
+  function presentPopover(opts, resolve) {
+    if (activePopover) activePopover.dismiss();
+
+    var anchorEl = opts.anchorEl && opts.anchorEl.nodeType === 1 ? opts.anchorEl : null;
+    var anchor = opts.anchorRect
+      || (anchorEl && anchorEl.getBoundingClientRect())
+      || { left: 8, top: 8, right: 8, bottom: 8 };
+    var itemsMode = Array.isArray(opts.items);
+
+    var el = document.createElement('div');
+    el.className = 'un-popover';
+    el.tabIndex = -1;
+
+    if (opts.headerEl) {
+      el.appendChild(opts.headerEl);
+    } else if (opts.title) {
+      var header = document.createElement('div');
+      header.className = 'un-popover-header';
+      var title = document.createElement('div');
+      title.className = 'un-popover-title';
+      title.textContent = opts.title;
+      header.appendChild(title);
+      el.appendChild(header);
+    }
+
+    var itemBtns = [];
+    var closed = false;
+
+    if (itemsMode) {
+      el.setAttribute('role', 'menu');
+      opts.items.forEach(function (item) {
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'un-popover-item' + (item.destructive ? ' un-destructive' : '');
+        btn.setAttribute('role', 'menuitem');
+        btn.textContent = item.label;
+        if (item.title) btn.title = item.title;
+        if (item.disabled) {
+          btn.disabled = true;
+        } else {
+          btn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            if (item.keepOpen) {
+              if (item.handler) item.handler(btn);
+              return;
+            }
+            settle(item, btn);
+          });
+        }
+        el.appendChild(btn);
+        itemBtns.push(btn);
+      });
+    } else if (opts.contentEl) {
+      el.appendChild(opts.contentEl);
+    } else if (opts.content != null) {
+      el.innerHTML = opts.content;
+    }
+
+    // Measure hidden, place via the pure math, reveal — instant, no
+    // entrance animation.
+    el.style.visibility = 'hidden';
+    document.body.appendChild(el);
+    var pos = placePopover({
+      anchor: anchor,
+      size: { w: el.offsetWidth, h: el.offsetHeight },
+      viewport: { w: window.innerWidth, h: window.innerHeight },
+      placement: opts.placement,
+    });
+    el.style.left = pos.left + 'px';
+    el.style.top = pos.top + 'px';
+    el.style.visibility = '';
+
+    var prevFocus = document.activeElement;
+    var entry = { dismiss: function () { settle(null, null); } };
+    activePopover = entry;
+    if (anchorEl) anchorEl.setAttribute('aria-expanded', 'true');
+
+    // One-shot suppressor for the click that follows an anchor
+    // pointerdown-dismiss: without it the anchor's own open handler
+    // fires and the menu instantly reopens instead of toggling closed.
+    function swallowAnchorClick(e) {
+      document.removeEventListener('click', swallowAnchorClick, true);
+      if (anchorEl && anchorEl.contains(e.target)) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }
+
+    function onDocPointerDown(e) {
+      if (el.contains(e.target)) return;
+      if (anchorEl && anchorEl.contains(e.target)) {
+        document.addEventListener('click', swallowAnchorClick, true);
+      }
+      settle(null, null);
+    }
+
+    function enabledBtns() {
+      return itemBtns.filter(function (b) { return !b.disabled; });
+    }
+
+    function onKeyDown(e) {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopPropagation();
+        settle(null, null);
+        return;
+      }
+      if (e.key === 'Tab') {
+        // Native menu convention: Tab closes a MENU; focus restore +
+        // default Tab then move focus onward from the anchor. Content
+        // popovers keep Tab for their own focusables.
+        if (itemsMode) settle(null, null);
+        return;
+      }
+      var enabled = enabledBtns();
+      if (!enabled.length) return;
+      var idx = enabled.indexOf(document.activeElement);
+      var next = null;
+      if (e.key === 'ArrowDown') next = enabled[idx < 0 ? 0 : (idx + 1) % enabled.length];
+      else if (e.key === 'ArrowUp') next = enabled[idx < 0 ? enabled.length - 1 : (idx - 1 + enabled.length) % enabled.length];
+      else if (e.key === 'Home') next = enabled[0];
+      else if (e.key === 'End') next = enabled[enabled.length - 1];
+      if (next) {
+        e.preventDefault();
+        try { next.focus(); } catch (err) { /* ignore */ }
+      }
+    }
+
+    // Scroll/resize dismissal arms after the first painted frame: layout
+    // work around the opening click (scroll anchoring, text reflow) can
+    // emit an async scroll event that would otherwise kill the popover
+    // the instant it opens. A real user scroll is a stream of events —
+    // losing the pre-paint ones is imperceptible. pointerdown/keydown
+    // stay armed immediately (the intent there is unambiguous).
+    var scrollArmed = false;
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { scrollArmed = true; });
+    });
+
+    function onScroll(e) {
+      if (!scrollArmed) return;
+      // A long menu scrolling internally must not dismiss itself.
+      if (e.target && e.target.nodeType === 1 && el.contains(e.target)) return;
+      settle(null, null);
+    }
+
+    function onResize() {
+      if (!scrollArmed) return;
+      settle(null, null);
+    }
+
+    document.addEventListener('pointerdown', onDocPointerDown, true);
+    document.addEventListener('keydown', onKeyDown, true);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onResize);
+
+    // settle(item, btn): tear down, run the chosen item's handler (none
+    // on plain dismissal), resolve. Exactly-once.
+    function settle(item, btn) {
+      if (closed) return;
+      closed = true;
+      if (activePopover === entry) activePopover = null;
+      document.removeEventListener('pointerdown', onDocPointerDown, true);
+      document.removeEventListener('keydown', onKeyDown, true);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onResize);
+      if (anchorEl) anchorEl.setAttribute('aria-expanded', 'false');
+      if (el.parentNode) el.parentNode.removeChild(el);
+      if (prevFocus && typeof prevFocus.focus === 'function') {
+        try { prevFocus.focus(); } catch (e) { /* ignore */ }
+      }
+      if (item && item.handler) item.handler(btn || null);
+      if (opts.onDismiss) opts.onDismiss();
+      if (resolve) resolve(item || null);
+    }
+
+    // Focus moves into the menu (first enabled item) or the container.
+    var focusTarget = enabledBtns()[0] || el;
+    try { focusTarget.focus(); } catch (e) { /* ignore */ }
+
+    return { el: el, dismiss: entry.dismiss };
+  }
+
+  // menu({ anchorEl | anchorRect, title?, headerEl?, items, cancelLabel?,
+  // placement? }) — the adaptive menu: a bottom action sheet on touch
+  // platforms, an anchored popover on desktop, from one actionSheet-shaped
+  // call site. Always returns a Promise resolving the chosen item or null,
+  // with a .dismiss() attached (a no-op on the sheet path — action sheets
+  // have no programmatic dismissal).
+  function menu(options) {
+    var opts = options || {};
+    var items = opts.items || [];
+    if (platform !== 'desktop') {
+      // Action sheets have no inert-row concept — disabled rows are
+      // omitted; keepOpen degrades to a normal dismiss-and-run.
+      var p = actionSheet({
+        title: opts.title,
+        cancelLabel: opts.cancelLabel,
+        actions: items.filter(function (i) { return !i.disabled; }),
+      });
+      p.dismiss = function () {};
+      return p;
+    }
+    return popover({
+      anchorEl: opts.anchorEl,
+      anchorRect: opts.anchorRect,
+      title: opts.title,
+      headerEl: opts.headerEl,
+      placement: opts.placement,
+      items: items,
     });
   }
 
@@ -2174,6 +2763,11 @@
 
       document.body.appendChild(backdrop);
       document.body.appendChild(card);
+      // Commit the initial (hidden) style before the entrance class lands —
+      // the same coalescing hazard presentModal guards against: without
+      // this reflow a microtask-origin call (e.g. a MutationObserver
+      // callback) can skip the fade + scale entrance entirely.
+      void card.offsetWidth;
       // Next frame: engage the CSS entrance (scale 1.12 → 1, fade in).
       requestAnimationFrame(function () {
         backdrop.style.opacity = '1';
@@ -2729,6 +3323,8 @@
     presentSheet: presentSheet,
     presentModal: presentModal,
     actionSheet: actionSheet,
+    popover: popover,
+    menu: menu,
     alert: alertDialog,
     toast: toast,
     attachNavBar: attachNavBar,
