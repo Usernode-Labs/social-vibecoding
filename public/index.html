@@ -454,6 +454,13 @@
       <!-- #127: bot-generated testing guidance. Hidden unless the session
            carries testing_md / testing_path; wired in AppView.swapToStaging. -->
       <button id="staging-test-btn" class="hidden text-xs font-medium px-2.5 py-1 rounded bg-violet-500/15 text-violet-300 hover:bg-violet-500/25 shrink-0">Test this change</button>
+      <!-- #771: docked-mode toggle. In the docked side panel it reads
+           "Full screen" (expand to today's fullscreen overlay); in
+           fullscreen — when the preview was opened from dev chat and can
+           re-dock — it reads "Exit full screen". Same element, same
+           iframe: toggling never reloads the preview. Wired in
+           AppView._updateStagingModeUi. -->
+      <button id="staging-fullscreen-btn" class="hidden text-xs font-medium px-2.5 py-1 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 shrink-0">Full screen</button>
       <span id="staging-url-label" class="text-xs text-zinc-500 font-mono truncate"></span>
       <!-- Mirror of the main dev-console button. The overlay covers the
            global header (z-40), so the original button is obscured —
@@ -463,6 +470,10 @@
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
         <span id="staging-dev-console-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
       </button>
+      <!-- #771: close button for the docked side panel. CSS shows it only
+           in docked mode (where "Back to session" is hidden — closing the
+           panel IS going back to the session, which never left). -->
+      <button id="staging-dock-close" class="staging-dock-only text-zinc-400 hover:text-zinc-100 text-lg leading-none px-1 shrink-0" aria-label="Close preview">&times;</button>
     </div>
     <!-- Explains why this change isn't live yet — a common point of
          confusion the first time someone previews their own PR. -->

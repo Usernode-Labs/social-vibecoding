@@ -3156,6 +3156,16 @@ const App = {
       subTab = 'forum';
       ref = null;
     }
+    // #771: a docked staging preview is pinned to the dev-chat session
+    // layout, which every tab switch re-renders or unmounts — close it.
+    // (A fullscreen preview keeps floating above the tabs, as before.)
+    // open=false first so closeStagingOverlay skips its own chat
+    // re-render; the switch repaints the destination view anyway.
+    if (typeof AppView !== 'undefined' && AppView._stagingMode === 'docked'
+        && AppView.closeStagingOverlay) {
+      if (typeof DevChat !== 'undefined' && DevChat.stagingPanel) DevChat.stagingPanel.open = false;
+      AppView.closeStagingOverlay();
+    }
     // #621: the Dev mode is visible to non-collaborators too, read-only
     // (see AppView.readOnly).
     App.currentTab = tab;

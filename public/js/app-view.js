@@ -7693,22 +7693,36 @@ const AppView = {
   //                only when the server says `ready` without echoing a URL.
   //   testing    — the session's testing guidance ({ md, path } | null).
   //   opts.jump  — open the deep link directly (the "Test this change" btn).
+  //   opts.dock  — #771: open as the docked side panel beside the dev chat
+  //                (the caller must have mounted #dc-staging-panel first —
+  //                see DevChat.previewStaging / openStagingPanel).
   async ensureStaging(sessionId, fallbackUrl, testing, opts) {
     const overlay = document.getElementById('staging-overlay');
     if (!overlay) return;
     const jump = !!(opts && opts.jump);
+    const dock = !!(opts && opts.dock);
 
     // #621: read-only viewers can't trigger a rebuild (the ensure POST is
     // collab-gated) — open the last-known staging URL directly. If it was
     // GC'd they see the dead-preview page rather than a rebuild spinner.
     if (AppView.readOnly) {
-      if (fallbackUrl) AppView.swapToStaging(fallbackUrl, testing, { jump });
+      if (fallbackUrl) AppView.swapToStaging(fallbackUrl, testing, { jump, dock });
       return;
     }
 
     // Open the overlay + "spinning back up" loader right away, and take a
     // fresh load id so backing out (closeStagingOverlay) cancels this wait.
     overlay.classList.remove('hidden');
+    // #771: apply the requested mode before anything paints, so the loader
+    // shows inside the side panel on a docked open (and a stale docked
+    // class can't leak into a fullscreen open from the vote panel).
+    if (dock && document.getElementById('dc-staging-panel')) {
+      AppView._stagingDockable = true;
+      AppView._setStagingMode('docked');
+    } else {
+      AppView._stagingDockable = false;
+      AppView._setStagingMode('fullscreen');
+    }
     if (window.DevConsole) DevConsole.setButtonVisible(true);
     const loadId = ++AppView._stagingLoadId;
     document.getElementById('staging-iframe').src = '';
@@ -7752,7 +7766,7 @@ const AppView = {
     // staging_failed WS handlers match against, then keep the loader up.
     // A client-side give-up keeps the loader honest if the event never
     // lands (the server rebuild is still allowed to finish on its own).
-    AppView._pendingStagingPreview = { sessionId, jump, testing, loadId };
+    AppView._pendingStagingPreview = { sessionId, jump, testing, dock, loadId };
     if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
     AppView._stagingRebuildTimer = setTimeout(() => {
       if (loadId !== AppView._stagingLoadId) return;
@@ -7796,7 +7810,7 @@ const AppView = {
     if (url) AppView.swapToStaging(url, pending.testing, { jump: pending.jump });
   },
 
-  // Open staging in fullscreen overlay.
+  // Open staging in the overlay (fullscreen, or docked beside dev chat).
   //
   // #127: `testing` is the session's bot-generated testing guidance
   // ({ md, path } | null) and `opts.jump` opens the iframe directly at the
@@ -7804,11 +7818,27 @@ const AppView = {
   // Callers must never thread the markdown through an HTML attribute —
   // use a wrapper that looks the object up at click time
   // (swapToStagingForSession / DevChat.previewStaging).
+  //
+  // #771: `opts.dock` (explicit boolean) selects the docked side-panel
+  // mode. When absent the CURRENT mode is preserved — the rebuild
+  // resolution path (onStagingRebuildResult) relies on this so a mid-wait
+  // fullscreen/dock toggle wins over the mode the click originally asked
+  // for.
   swapToStaging(stagingUrl, testing, opts) {
     const overlay = document.getElementById('staging-overlay');
     const iframe = document.getElementById('staging-iframe');
     const label = document.getElementById('staging-url-label');
     if (!overlay || !iframe) return;
+
+    if (opts && typeof opts.dock === 'boolean') {
+      if (opts.dock && document.getElementById('dc-staging-panel')) {
+        AppView._stagingDockable = true;
+        if (AppView._stagingMode !== 'docked') AppView._setStagingMode('docked');
+      } else {
+        AppView._stagingDockable = false;
+        if (AppView._stagingMode !== 'fullscreen') AppView._setStagingMode('fullscreen');
+      }
+    }
 
     const resolved = resolveDevHost(stagingUrl);
 
@@ -7841,6 +7871,8 @@ const AppView = {
 
     if (label) label.textContent = resolved;
     overlay.classList.remove('hidden');
+    // #771: the toggle's visibility depends on the overlay being open.
+    AppView._updateStagingModeUi();
     if (window.DevConsole) DevConsole.setButtonVisible(true);
 
     AppView._renderTestingControls(buildSrc, pending, jump);
@@ -7878,10 +7910,169 @@ const AppView = {
   },
 
   // #439: pending on-demand-rebuild marker ({ sessionId, jump, testing,
-  // loadId } | null), set by ensureStaging and consumed by the
+  // dock, loadId } | null), set by ensureStaging and consumed by the
   // staging_ready / staging_failed WS handlers via onStagingRebuildResult.
   _pendingStagingPreview: null,
   _stagingRebuildTimer: null,
+
+  // ── Docked staging preview (#771) ─────────────────────────────────
+  //
+  // Dev chat opens the staging preview as a resizable side panel beside
+  // the chat (like the spec viewer) instead of the fullscreen overlay.
+  // The overlay element never moves in the DOM — reparenting an iframe
+  // reloads it — so "docked" is a mode on the SAME fixed #staging-overlay:
+  // dev-chat renders an empty placeholder slot (#dc-staging-panel) as a
+  // flex sibling of the chat pane, and we pin the overlay over the slot's
+  // bounding rect (kept in sync by a ResizeObserver + window resize).
+  // Toggling fullscreen just adds/removes the docked class, so the iframe
+  // keeps its state either way.
+  _stagingMode: 'fullscreen',   // 'fullscreen' | 'docked'
+  // True while the current preview was opened from dev chat with a dock
+  // request — gates the "Exit full screen" re-dock affordance. Cleared on
+  // close so an unrelated later preview can't re-dock into a stale slot.
+  _stagingDockable: false,
+  _stagingDockObserver: null,   // ResizeObserver on the current slot
+  _stagingDockOnResize: null,   // bound window-resize handler (added once)
+  _stagingDockMql: null,        // matchMedia('(min-width: 1024px)') (bound once)
+  _STAGING_DOCK_MEDIA: '(min-width: 1024px)',
+
+  // Same breakpoint as the spec viewer's side-panel layout.
+  _stagingDockViewport() {
+    try { return !!(window.matchMedia && window.matchMedia(AppView._STAGING_DOCK_MEDIA).matches); }
+    catch { return false; }
+  },
+
+  // Enter/leave docked mode on the overlay. Pure presentation — callers
+  // own the DevChat slot state (see expandStagingFullscreen /
+  // dockStagingPanel / closeStagingOverlay).
+  _setStagingMode(mode) {
+    const overlay = document.getElementById('staging-overlay');
+    AppView._stagingMode = mode === 'docked' ? 'docked' : 'fullscreen';
+    if (overlay) {
+      if (AppView._stagingMode === 'docked') {
+        overlay.classList.add('staging-overlay-docked');
+        AppView._ensureStagingDockListeners();
+        AppView.rebindStagingDock();
+      } else {
+        overlay.classList.remove('staging-overlay-docked');
+        // Back to the CSS `inset: 0` fullscreen geometry.
+        overlay.style.top = '';
+        overlay.style.left = '';
+        overlay.style.width = '';
+        overlay.style.height = '';
+        if (AppView._stagingDockObserver) AppView._stagingDockObserver.disconnect();
+      }
+    }
+    AppView._updateStagingModeUi();
+  },
+
+  // One-time global listeners: window resize re-syncs the pinned overlay,
+  // and crossing below the desktop breakpoint while docked flips to
+  // fullscreen (the slot's CSS hides below 1024px, so a docked overlay
+  // would be glued to a zero rect). No auto-re-dock on widening — the
+  // user explicitly toggles back.
+  _ensureStagingDockListeners() {
+    if (!AppView._stagingDockOnResize) {
+      AppView._stagingDockOnResize = () => AppView._syncStagingDockGeometry();
+      try { window.addEventListener('resize', AppView._stagingDockOnResize); } catch {}
+    }
+    if (!AppView._stagingDockMql && window.matchMedia) {
+      try {
+        const mql = window.matchMedia(AppView._STAGING_DOCK_MEDIA);
+        const onChange = () => {
+          if (!mql.matches && AppView._stagingMode === 'docked') {
+            AppView.expandStagingFullscreen();
+          }
+        };
+        if (mql.addEventListener) mql.addEventListener('change', onChange);
+        else if (mql.addListener) mql.addListener(onChange);
+        AppView._stagingDockMql = mql;
+      } catch {}
+    }
+  },
+
+  // Re-attach the ResizeObserver to the CURRENT slot element and re-sync.
+  // Called by dev-chat's renderChatView after every re-render (the slot
+  // node is recreated by innerHTML rewrites) and by _setStagingMode.
+  // Fail-safe: a missing slot while docked means the session view
+  // unmounted under us — close rather than float over a dead rect.
+  rebindStagingDock() {
+    if (AppView._stagingMode !== 'docked') return;
+    const slot = document.getElementById('dc-staging-panel');
+    if (!slot) { AppView.closeStagingOverlay(); return; }
+    if (!AppView._stagingDockObserver && typeof ResizeObserver !== 'undefined') {
+      AppView._stagingDockObserver = new ResizeObserver(() => AppView._syncStagingDockGeometry());
+    }
+    if (AppView._stagingDockObserver) {
+      AppView._stagingDockObserver.disconnect();
+      try { AppView._stagingDockObserver.observe(slot); } catch {}
+    }
+    AppView._syncStagingDockGeometry();
+  },
+
+  // Pin the overlay over the slot's current bounding rect.
+  _syncStagingDockGeometry() {
+    if (AppView._stagingMode !== 'docked') return;
+    const overlay = document.getElementById('staging-overlay');
+    if (!overlay) return;
+    const slot = document.getElementById('dc-staging-panel');
+    if (!slot) { AppView.closeStagingOverlay(); return; }
+    const r = slot.getBoundingClientRect();
+    overlay.style.top = `${Math.round(r.top)}px`;
+    overlay.style.left = `${Math.round(r.left)}px`;
+    overlay.style.width = `${Math.round(r.width)}px`;
+    overlay.style.height = `${Math.round(r.height)}px`;
+  },
+
+  // "Full screen" (docked header button, and the narrow-viewport
+  // auto-flip): expand the SAME overlay to fullscreen — no iframe touch,
+  // no reload — and collapse the dev-chat slot so the chat reflows.
+  expandStagingFullscreen() {
+    if (AppView._stagingMode !== 'docked') return;
+    AppView._setStagingMode('fullscreen');
+    if (typeof DevChat !== 'undefined' && DevChat.stagingPanel && DevChat.stagingPanel.open) {
+      DevChat.stagingPanel.open = false;
+      DevChat.renderChatView();
+    }
+  },
+
+  // "Exit full screen": re-dock the live preview beside the chat. Only
+  // meaningful while the preview is dockable (opened from dev chat), the
+  // session view is still mounted, and the viewport is wide enough.
+  dockStagingPanel() {
+    if (AppView._stagingMode === 'docked' || !AppView._stagingDockable) return;
+    if (typeof DevChat === 'undefined' || !DevChat.currentSession) return;
+    if (!AppView._stagingDockViewport()) return;
+    if (DevChat.openStagingPanel) DevChat.openStagingPanel();
+    AppView._setStagingMode('docked');
+  },
+
+  toggleStagingFullscreen() {
+    if (AppView._stagingMode === 'docked') AppView.expandStagingFullscreen();
+    else AppView.dockStagingPanel();
+  },
+
+  // Sync the mode-dependent header chrome: the Full screen / Exit full
+  // screen toggle and the docked ×-close. Idempotent; safe with the
+  // overlay hidden.
+  _updateStagingModeUi() {
+    const overlay = document.getElementById('staging-overlay');
+    const btn = document.getElementById('staging-fullscreen-btn');
+    const dockClose = document.getElementById('staging-dock-close');
+    if (dockClose) dockClose.onclick = () => AppView.closeStagingOverlay();
+    if (!btn) return;
+    btn.onclick = () => AppView.toggleStagingFullscreen();
+    const docked = AppView._stagingMode === 'docked';
+    const overlayOpen = !!overlay && !overlay.classList.contains('hidden');
+    const canRedock = AppView._stagingDockable
+      && typeof DevChat !== 'undefined' && !!DevChat.currentSession
+      && AppView._stagingDockViewport();
+    btn.classList.toggle('hidden', !overlayOpen || (!docked && !canRedock));
+    btn.textContent = docked ? 'Full screen' : 'Exit full screen';
+    btn.title = docked
+      ? 'Expand the preview to fill the screen'
+      : 'Dock the preview back beside the chat';
+  },
 
   // #127: per-render registry of { md, path } testing guidance keyed by
   // session id, populated by voteButtonsHtml. Exists so bot-authored
@@ -8018,6 +8209,20 @@ const AppView = {
   closeStagingOverlay() {
     const overlay = document.getElementById('staging-overlay');
     const iframe = document.getElementById('staging-iframe');
+    // #771: leave docked mode first (strips the docked class + pinned
+    // geometry, disconnects the slot observer) and collapse the dev-chat
+    // placeholder slot. The open check on stagingPanel makes this safe to
+    // call from DevChat's own teardown paths without re-render loops.
+    const wasDocked = AppView._stagingMode === 'docked';
+    AppView._stagingDockable = false;
+    if (wasDocked) AppView._setStagingMode('fullscreen');
+    if (wasDocked && typeof DevChat !== 'undefined'
+        && DevChat.stagingPanel && DevChat.stagingPanel.open) {
+      DevChat.stagingPanel.open = false;
+      DevChat.renderChatView();
+    }
+    const fsBtn = document.getElementById('staging-fullscreen-btn');
+    if (fsBtn) fsBtn.classList.add('hidden');
     // Invalidate any in-flight readiness poll and hide the loader.
     AppView._stagingLoadId += 1;
     // #439: drop any pending on-demand rebuild marker + its give-up timer so
