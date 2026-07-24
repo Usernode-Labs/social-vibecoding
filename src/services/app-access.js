@@ -17,6 +17,49 @@ const log = require('./logger');
 
 const ACCESS_COLUMNS = 'id, slug, created_by, self_hosted, collab_visibility, view_visibility';
 
+// Credential-bearing `apps` columns that must NEVER reach an HTTP
+// response. Kept in sync with the `staging:private` tags in
+// src/db/schema.sql — a new secret-bearing column added there MUST be
+// added here too (tests/app-secret-exposure.test.js cross-checks the
+// schema tags against this list, mirroring debug-access.js's
+// DENIED_COLUMNS/prod-debug-access.test.js pattern). This is a
+// defense-in-depth denylist layered on TOP of explicit non-secret SQL
+// column lists at the call sites below — the SQL layer is what keeps
+// these values from ever leaving Postgres; this is the fail-closed net
+// for the day a response site regresses to `SELECT *`.
+const SECRET_APP_COLUMNS = ['db_password', 'llm_proxy_token', 'storage_api_token'];
+
+// Shallow-copies `row` with every SECRET_APP_COLUMNS key removed.
+// Safe to call on a row that already lacks them (no-op) or on
+// something that isn't a plain row at all.
+function stripAppSecrets(row) {
+  if (!row || typeof row !== 'object') return row;
+  const out = { ...row };
+  for (const col of SECRET_APP_COLUMNS) delete out[col];
+  return out;
+}
+
+// Every current `apps` column EXCEPT the SECRET_APP_COLUMNS above —
+// the explicit allowlist client-facing SELECTs should use instead of
+// `SELECT *` / `SELECT a.*`, so secrets never leave Postgres for those
+// queries in the first place. Update this alongside SECRET_APP_COLUMNS
+// (and schema.sql) whenever an `apps` column is added or removed.
+const NON_SECRET_APP_COLUMNS = [
+  'id', 'name', 'slug', 'repo_url', 'container_id', 'status', 'retry_count',
+  'created_by', 'created_at', 'main_sha', 'main_pr_number', 'last_deploy_at',
+  'manifest_snapshot', 'last_failure', 'locked', 'self_hosted',
+  'collab_visibility', 'view_visibility', 'approver_policy',
+  'approvals_required', 'screenshot_device_scale', 'icon_emoji',
+  'icon_image_id', 'forked_from',
+];
+
+// `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list
+// (for `SELECT <cols> FROM apps`) or, with a table alias, prefixed for
+// use in a joined query (`SELECT <cols> FROM apps a JOIN ...`).
+function nonSecretAppColumnList(alias = null) {
+  return NON_SECRET_APP_COLUMNS.map((c) => (alias ? `${alias}.${c}` : c)).join(', ');
+}
+
 async function isCollaborator(pool, appId, userId) {
   if (!userId || !appId) return false;
   const { rows } = await pool.query(
@@ -249,6 +292,10 @@ async function isViewMember(pool, appId, userId) {
 
 module.exports = {
   ACCESS_COLUMNS,
+  SECRET_APP_COLUMNS,
+  NON_SECRET_APP_COLUMNS,
+  stripAppSecrets,
+  nonSecretAppColumnList,
   isCollaborator,
   checkAppAccess,
   getAppForUser,
