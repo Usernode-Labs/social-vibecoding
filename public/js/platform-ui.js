@@ -215,7 +215,7 @@
 
     /** Screen transition wrapper. type: 'push' | 'pop' | 'none' |
         'zoom-in' | 'zoom-out' (zoom opts — el, fromEl/fromRect, after,
-        fallback — forward to the kit untouched). Falls back to running
+        fallback, outEl — forward to the kit untouched). Falls back to running
         the mutation directly — both halves, since zoom callers split it
         into fn (reveal) + after (conceal) — when the kit is absent. */
     transition(fn, opts) {

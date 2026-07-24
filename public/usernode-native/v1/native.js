@@ -1884,17 +1884,25 @@
    * skips animation, never queues.
    *
    * 'zoom-in'/'zoom-out' play the iOS-homescreen expand/collapse out of
-   * a tile ({ el, fromEl | fromRect, after?, fallback? }). No View
-   * Transition is involved: the LIVE screen element (opts.el) is pinned
-   * as a fixed overlay and transform-animated from/to the tile's rect —
-   * no snapshot, so it is iframe-safe and content keeps loading
+   * a tile ({ el, fromEl | fromRect, after?, fallback?, outEl? }). No
+   * View Transition is involved: the LIVE screen element (opts.el) is
+   * pinned as a fixed overlay and transform-animated from/to the tile's
+   * rect — no snapshot, so it is iframe-safe and content keeps loading
    * mid-zoom. The caller splits its mutation in two: `fn` reveals the
    * incoming screen (leaving the outgoing one visible beneath the
    * moving card) and `opts.after` conceals the outgoing one — `after`
    * runs exactly once on every path (animated settle, instant settle,
-   * fallback). When the zoom can't run (no usable source rect, reduced
-   * motion, missing el) it falls back to opts.fallback ('push' for
-   * zoom-in, 'pop' for zoom-out, or 'none') with the combined mutation.
+   * fallback). When the incoming screen shares layout flow with the
+   * outgoing one (flex siblings that split the space while both are
+   * visible), pass `outEl` — the outgoing screen element, or a function
+   * returning it: zoom-in hides it (inline display) for the synchronous
+   * pre-paint destination measurement so `el` measures its SETTLED
+   * rect, then restores it before pinning; without it the zoom would
+   * animate to the shared-layout rect and snap at the end. zoom-out
+   * ignores `outEl`. When the zoom can't run (no usable source rect,
+   * reduced motion, missing el) it falls back to opts.fallback ('push'
+   * for zoom-in, 'pop' for zoom-out, or 'none') with the combined
+   * mutation.
    * ──────────────────────────────────────────────────────────────────── */
 
   var vtActive = false;
@@ -1983,7 +1991,26 @@
       if (!fromRect) return fallback();
       fn();
       // Measured synchronously after fn, pre-paint: no full-screen flash.
-      var target = el.getBoundingClientRect();
+      // When the caller names the outgoing screen (opts.outEl), hide it
+      // for the measurement so a flow-sharing `el` (e.g. flex siblings
+      // splitting the column while both are visible) measures its
+      // SETTLED rect — the one it will occupy after `after()` conceals
+      // the outgoing screen — instead of the transient shared-layout
+      // rect. Hide → measure → restore is all synchronous pre-paint, so
+      // the outgoing screen never visibly blinks.
+      var outEl = null;
+      try {
+        outEl = typeof opts.outEl === 'function' ? opts.outEl() : opts.outEl;
+      } catch (e) { outEl = null; }
+      var target;
+      if (outEl && outEl !== el && outEl.style) {
+        var savedOutDisplay = outEl.style.display;
+        outEl.style.display = 'none';
+        target = el.getBoundingClientRect();
+        outEl.style.display = savedOutDisplay;
+      } else {
+        target = el.getBoundingClientRect();
+      }
       var pose = zoomPose(fromRect, target);
       if (!pose) {
         // el didn't land anywhere measurable — settle instantly.
