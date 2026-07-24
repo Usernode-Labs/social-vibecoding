@@ -2894,6 +2894,16 @@ const App = {
   // doesn't apply), the opaque --un-zoom-bg surface, exact inline-style
   // restore, and the fallback to push/pop or an instant cut when the
   // tile isn't on screen or the user prefers reduced motion.
+  //
+  // One pitfall needs a hint from us (#764): #app-view and #home-screen
+  // are flex:1 siblings in the body column, so while BOTH are visible
+  // (fn reveals app-view, home stays beneath the zoom) they split the
+  // height 50/50 and the kit would measure app-view's destination as
+  // the bottom half — the zoom then landed there and snapped to full
+  // size when `after` hid home. Passing `outEl: #home-screen` lets the
+  // kit hide it for the synchronous pre-paint measurement, so the zoom
+  // targets app-view's true settled rect (full screen in chromeless
+  // mode, the band between header and tab bar otherwise).
 
   // The home tile for `slug`, or null. A hidden home screen or
   // filtered-away tile yields no element / a 0×0 rect, which the kit
@@ -2929,6 +2939,10 @@ const App = {
       type: 'zoom-in',
       el: document.getElementById('app-view'),
       fromEl: () => App._tileFor(slug),
+      // The outgoing screen: the kit hides it while measuring the
+      // destination so the flex-sibling split doesn't skew the target
+      // rect (see the comment block above).
+      outEl: document.getElementById('home-screen'),
       fallback: 'push',
       after: () => document.getElementById('home-screen').classList.add('hidden'),
     });

@@ -201,19 +201,22 @@ test('kit present: transition forwards the type and runs the mutation', () => {
   assert.deepEqual(seen.transitions[0], { type: 'pop' });
 });
 
-test('kit present: zoom opts (el, fromEl, fallback, after) forward to unNative untouched', () => {
+test('kit present: zoom opts (el, fromEl, fallback, after, outEl) forward to unNative untouched', () => {
   const { kit, seen } = stubKit();
   const { PlatformUI } = makeSandbox({ kit });
   const el = { screen: true };
   const fromEl = () => null;
   const after = () => {};
-  const opts = { type: 'zoom-in', el, fromEl, fallback: 'push', after };
+  const outEl = { outgoingScreen: true };
+  const opts = { type: 'zoom-in', el, fromEl, fallback: 'push', after, outEl };
   PlatformUI.transition(() => {}, opts);
   assert.equal(seen.transitions[0], opts, 'the opts object passes through by reference');
   assert.equal(seen.transitions[0].el, el);
   assert.equal(seen.transitions[0].fromEl, fromEl);
   assert.equal(seen.transitions[0].after, after);
   assert.equal(seen.transitions[0].fallback, 'push');
+  assert.equal(seen.transitions[0].outEl, outEl,
+    'outEl (#764: destination measured with the outgoing screen hidden) forwards untouched');
 });
 
 // ── 3. Include regressions ─────────────────────────────────────────────
