@@ -457,41 +457,98 @@ async function createBranch(owner, repo, branchName, fromBranch = 'main') {
   log.info('github', 'Branch created', { repo: `${owner}/${repo}`, branch: branchName, from: fromBranch });
 }
 
+// Log-safe description of a GitHub/Octokit error. Octokit's
+// RequestError.message is EMPTY when GitHub answers with an empty or
+// non-JSON body (the 2026-07-24 create-PR outage logged `{"err":""}` for
+// hours), so warn sites should spread this instead of logging err.message.
+function describeGithubError(err) {
+  if (!err) return { status: null, requestId: null, message: 'unknown error', data: null };
+  const status = err.status || (err.response && err.response.status) || null;
+  const requestId = (err.response && err.response.headers
+    && err.response.headers['x-github-request-id']) || null;
+  let data = (err.response && err.response.data !== undefined) ? err.response.data : null;
+  if (typeof data === 'string') data = data.slice(0, 300) || null;
+  const message = (err.message && String(err.message).trim())
+    || (status ? `HTTP ${status} from GitHub (empty response body)` : String(err));
+  return { status, requestId, message, data };
+}
+
+// createPR retries transient GitHub failures (5xx / status-less network
+// errors) before giving up: POST /pulls is the one platform write with a
+// user-blocking dead end when GitHub hiccups (2026-07-24 outage: every
+// create 500'd with an empty body while all other endpoints worked).
+// Delays are injectable so tests don't sleep.
+let createPrRetryDelaysMs = [2000, 8000];
+function _setCreatePrRetryDelaysForTests(delays) {
+  createPrRetryDelaysMs = delays || [2000, 8000];
+}
+
 async function createPR(owner, repo, { branch, title, body }) {
   const octokit = await getOctokit(owner);
+  const attempts = createPrRetryDelaysMs.length + 1;
   let data;
-  try {
-    ({ data } = await octokit.rest.pulls.create({
-      owner, repo,
-      title: safeMention(title),
-      body: safeMention(body),
-      head: branch,
-      base: 'main',
-    }));
-  } catch (err) {
-    // GitHub answers 422 "No commits between main and <branch>" when the
-    // head branch has nothing to merge (typically: committed locally but
-    // never pushed). Surface this as a typed, non-transient error so
-    // callers can tell the user the truth instead of "try again in a
-    // moment" — retrying a permanently-empty branch never succeeds.
-    const detail = err && (err.message || '') +
-      ' ' + JSON.stringify(err?.response?.data?.errors || err?.response?.data || '');
-    if (err && err.status === 422 && /No commits between/i.test(detail)) {
-      const e = new Error(`No commits between main and ${branch} — the branch has no pushed commits.`);
-      e.code = 'no_commits';
-      throw e;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      ({ data } = await octokit.rest.pulls.create({
+        owner, repo,
+        title: safeMention(title),
+        body: safeMention(body),
+        head: branch,
+        base: 'main',
+      }));
+      break;
+    } catch (err) {
+      // GitHub answers 422 "No commits between main and <branch>" when the
+      // head branch has nothing to merge (typically: committed locally but
+      // never pushed). Surface this as a typed, non-transient error so
+      // callers can tell the user the truth instead of "try again in a
+      // moment" — retrying a permanently-empty branch never succeeds.
+      const detail = err && (err.message || '') +
+        ' ' + JSON.stringify(err?.response?.data?.errors || err?.response?.data || '');
+      if (err && err.status === 422 && /No commits between/i.test(detail)) {
+        const e = new Error(`No commits between main and ${branch} — the branch has no pushed commits.`);
+        e.code = 'no_commits';
+        throw e;
+      }
+      // GitHub answers 422 "A pull request already exists for <owner>:<branch>"
+      // when the PR was created but the caller never learned about it — the
+      // restart race: the old process created the PR and died before writing
+      // pr_number to the DB (session 2262, 2026-07-14). Type it so callers can
+      // look the existing PR up and adopt it instead of failing forever.
+      if (err && err.status === 422 && /pull request already exists/i.test(detail)) {
+        const e = new Error(`A pull request already exists for ${owner}:${branch}.`);
+        e.code = 'pr_exists';
+        throw e;
+      }
+      // Transient: a GitHub 5xx or a status-less network failure. Retry on
+      // the short schedule above. Non-idempotency is safe here: if a 500
+      // actually created the PR, the retry 422s "already exists" and flows
+      // into the pr_exists adopt path in applyPrMetadata.
+      const transient = !err || !err.status || err.status >= 500;
+      const desc = describeGithubError(err);
+      if (transient && attempt < attempts) {
+        log.warn('github', 'PR creation failed — retrying', {
+          repo: `${owner}/${repo}`, branch, attempt, attempts, ...desc,
+        });
+        await new Promise((resolve) => setTimeout(resolve, createPrRetryDelaysMs[attempt - 1]));
+        continue;
+      }
+      if (transient) {
+        // GitHub itself is failing. Typed so callers can tell users the
+        // truth — GitHub-side, wait and retry — instead of the generic
+        // "re-run your request in the session".
+        const e = new Error(
+          `GitHub failed to create the PR for ${owner}:${branch} after ${attempts} attempts `
+          + `(${desc.status ? `HTTP ${desc.status}` : 'network error'}`
+          + `${desc.requestId ? `, request id ${desc.requestId}` : ''}).`
+        );
+        e.code = 'github_unavailable';
+        e.status = desc.status;
+        e.requestId = desc.requestId;
+        throw e;
+      }
+      throw err;
     }
-    // GitHub answers 422 "A pull request already exists for <owner>:<branch>"
-    // when the PR was created but the caller never learned about it — the
-    // restart race: the old process created the PR and died before writing
-    // pr_number to the DB (session 2262, 2026-07-14). Type it so callers can
-    // look the existing PR up and adopt it instead of failing forever.
-    if (err && err.status === 422 && /pull request already exists/i.test(detail)) {
-      const e = new Error(`A pull request already exists for ${owner}:${branch}.`);
-      e.code = 'pr_exists';
-      throw e;
-    }
-    throw err;
   }
   log.info('github', 'PR created', { repo: `${owner}/${repo}`, pr: data.number });
   return data;
@@ -1407,6 +1464,8 @@ module.exports = {
   getFileContent,
   createBranch,
   createPR,
+  describeGithubError,
+  _setCreatePrRetryDelaysForTests,
   findOpenPrByBranch,
   listOpenPulls,
   updatePR,

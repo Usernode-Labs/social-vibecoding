@@ -6851,13 +6851,31 @@ path: /another/changed/view
       }
 
       const wasNewPR = !session.pr_number;
-      const prResult = await prMetadata.applyPrMetadata({
-        pool, session, repoOwner, repoName,
-        userMessage, ccSummary: ccText, username: req.user.username,
-        broadcast: (event, data) => send(event, data),
-        apiKey: userApiKey,
-        userId: req.user.id,
-      });
+      let prResult = null;
+      try {
+        prResult = await prMetadata.applyPrMetadata({
+          pool, session, repoOwner, repoName,
+          userMessage, ccSummary: ccText, username: req.user.username,
+          broadcast: (event, data) => send(event, data),
+          apiKey: userApiKey,
+          userId: req.user.id,
+        });
+      } catch (prErr) {
+        // applyPrMetadata throws typed errors ('github_unavailable' — a
+        // GitHub-side outage like 2026-07-24's create-PR 500s — and, in
+        // principle, 'no_commits'). None of them may abort the turn: the
+        // commit and push already landed, and the staging build below
+        // doesn't need the PR to exist. Tell the user and the Mayor what
+        // happened instead of dying silently mid-turn.
+        log.warn('sessions', 'Turn-end PR creation/update failed', {
+          sessionId: session.id, code: prErr.code || null,
+          ...github.describeGithubError(prErr),
+        });
+        if (prErr.code === 'github_unavailable') {
+          await sendStatus('GitHub is having trouble creating the pull request right now (their side, not this change) — it will be created when you propose, or on the next turn.');
+          summaryParts.push('NOTE: GitHub\'s API is currently failing to create pull requests (GitHub-side outage). The commit is pushed and safe on the branch; the PR will be created automatically at propose time or on the next turn. Do NOT retry by dispatching extra commits — just tell the user to wait a few minutes.');
+        }
+      }
       if (prResult && wasNewPR) {
         await sendStatus(`PR #${prResult.prNumber} created`);
         summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);

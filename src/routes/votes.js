@@ -673,7 +673,10 @@ function voteRoutes(config) {
           });
         } catch (err) {
           prError = err;
-          log.warn('votes', 'Lazy PR creation/backfill threw', { sessionId: session.id, backfill: isBackfill, err: err.message, code: err.code || null });
+          log.warn('votes', 'Lazy PR creation/backfill threw', {
+            sessionId: session.id, backfill: isBackfill,
+            code: err.code || null, ...github.describeGithubError(err),
+          });
         }
         if (!isBackfill && (!prResult || !session.pr_number)) {
           // Refuse to promote PR-less — a vote with nothing to merge is a
@@ -684,6 +687,20 @@ function voteRoutes(config) {
             // in a moment" would loop forever — tell the truth instead.
             return res.status(409).json({
               error: 'This change has no committed code on its branch yet, so there is nothing to open a pull request for. Re-run your request in the session so it produces and pushes a commit, then propose again.',
+            });
+          }
+          if (prError && prError.code === 'github_unavailable') {
+            // GitHub-side outage (2026-07-24: hours of empty-body 500s on
+            // POST /pulls only). Retrying immediately or re-running the
+            // request in the session cannot help — say so honestly. This
+            // message also reaches the Mayor, which stops it from making
+            // no-op commits to "fix" a problem that isn't in the change.
+            const detail = [
+              prError.status ? `HTTP ${prError.status} from GitHub` : 'network error reaching GitHub',
+              prError.requestId ? `request id ${prError.requestId}` : null,
+            ].filter(Boolean).join(', ');
+            return res.status(503).json({
+              error: `GitHub is currently failing to create pull requests (${detail}). This is a GitHub-side problem, not this change — the work is safe on its branch. Try proposing again in a few minutes; do not re-run the request or push extra commits.`,
             });
           }
           return res.status(502).json({

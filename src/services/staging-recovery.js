@@ -158,7 +158,8 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
       });
     } catch (err) {
       log.warn('staging-recovery', 'Recovery PR creation via applyPrMetadata failed', {
-        sessionId: session.id, err: err.message,
+        sessionId: session.id, code: err.code || null,
+        ...require('./github').describeGithubError(err),
       });
     }
   }

@@ -570,14 +570,20 @@ async function applyPrMetadata({
         if (broadcast) broadcast('pr_created', { prNumber: existing.number, prUrl: existing.html_url, prTitle: existing.title });
         // Fall through to the existing-PR path below.
       } else {
+        // describeGithubError (not err.message): Octokit's RequestError
+        // message is empty when GitHub answers with an empty body, which
+        // logged a useless `{"err":""}` throughout the 2026-07-24 outage.
+        const describe = github.describeGithubError
+          || ((e) => ({ message: (e && e.message) || String(e) }));
         log.warn('pr-metadata', 'PR creation failed', {
-          err: err.message, sessionId: session.id, code: err.code || null,
+          sessionId: session.id, code: err.code || null, ...describe(err),
         });
-        // Re-throw the typed "branch has no pushed commits" failure so the
-        // caller can give the user an honest, non-transient message
-        // instead of the generic "try again in a moment". Other failures
-        // stay best-effort (return null) as before.
-        if (err && err.code === 'no_commits') throw err;
+        // Re-throw the typed failures the caller can act on: 'no_commits'
+        // (permanent — the branch has no pushed commits) and
+        // 'github_unavailable' (GitHub-side outage — the user should wait,
+        // not re-run their request). Other failures stay best-effort
+        // (return null) as before.
+        if (err && (err.code === 'no_commits' || err.code === 'github_unavailable')) throw err;
         return null;
       }
     }
