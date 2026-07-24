@@ -86,6 +86,18 @@ const DevChat = {
     activeTab: 'user',         // #196: 'user' | 'tech' — selected half of a two-section spec
   },
 
+  // ----- Staging preview side panel state (#771) -----
+  // On wide viewports, Preview staging / Test this change open the
+  // preview docked beside the chat like the spec viewer. `open` only
+  // tracks whether the #dc-staging-panel placeholder slot is mounted —
+  // the preview itself (iframe, loader, testing panel) lives in the
+  // fixed #staging-overlay, which AppView geometry-syncs onto the slot
+  // (see AppView.rebindStagingDock; mounting the iframe here would
+  // reload it on every renderChatView innerHTML rewrite). Deliberately
+  // NOT persisted across reloads: a preview needs the ensure-staging
+  // round-trip anyway, so auto-reopening an empty panel has no payoff.
+  stagingPanel: { open: false },
+
   // Initial MODELS map. Populated authoritatively from GET /api/models
   // at startup so the UI dropdown can never offer something the server
   // wouldn't accept (server-side allowlist lives in src/services/models.js).
@@ -166,6 +178,7 @@ const DevChat = {
     DevChat._staleTimer = null;
     DevChat._lastSeenSeq = null;
     DevChat._resetSpecViewer();
+    DevChat._resetStagingPanel();
     DevChat.stopActiveSessionsPoll();
     if (DevChat._abortController) {
       try { DevChat._abortController.abort(); } catch {}
@@ -174,6 +187,19 @@ const DevChat = {
     if (DevChat._eventSource) {
       try { DevChat._eventSource.close(); } catch {}
       DevChat._eventSource = null;
+    }
+  },
+
+  // #771: drop the staging side-panel slot and, if the preview overlay is
+  // currently docked onto it, close the preview too (a docked overlay
+  // must never outlive its slot). open=false is set BEFORE the close call
+  // so closeStagingOverlay's own slot-collapse branch sees nothing to do
+  // — no re-render loop.
+  _resetStagingPanel() {
+    DevChat.stagingPanel = { open: false };
+    if (typeof AppView !== 'undefined' && AppView._stagingMode === 'docked'
+        && AppView.closeStagingOverlay) {
+      AppView.closeStagingOverlay();
     }
   },
 
@@ -700,6 +726,10 @@ const DevChat = {
     const switchingSession = !DevChat.currentSession
       || Number(DevChat.currentSession.id) !== Number(sessionId);
     if (switchingSession) {
+      // #771: a docked staging preview belongs to the session we're
+      // leaving — close it so session A's preview can't render beside
+      // session B's chat.
+      if (DevChat.stagingPanel.open) DevChat._resetStagingPanel();
       DevChat.isStreaming = false;
       DevChat._streamingPhase = null;
       DevChat._stopProgressPolling();
@@ -2311,15 +2341,23 @@ const DevChat = {
     const testing = (s.testing_md || s.testing_path)
       ? { md: s.testing_md || null, path: s.testing_path || null }
       : null;
+    // #771: on wide viewports the preview docks beside the chat like the
+    // spec viewer (a Full screen button in its header expands it). Narrow
+    // viewports keep today's fullscreen overlay — a side panel doesn't
+    // fit there. Mount the slot BEFORE ensureStaging so the docked
+    // geometry has something to pin to.
+    const dock = !!(s.id && typeof AppView !== 'undefined'
+      && AppView._stagingDockViewport && AppView._stagingDockViewport());
+    if (dock) DevChat.openStagingPanel();
     // #439: route through ensure-then-open so a preview torn down while the
     // user was away (idle GC, lost container) rebuilds on click. Prefer the
     // session's live staging_url over the (possibly stale) message URL as
     // the fallback for the already-live case. With no session id we can't
     // ensure — fall back to the legacy direct open.
     if (s.id) {
-      AppView.ensureStaging(s.id, s.staging_url || url, testing, { jump: !!jump });
+      AppView.ensureStaging(s.id, s.staging_url || url, testing, { jump: !!jump, dock });
     } else {
-      AppView.swapToStaging(url, testing, { jump: !!jump });
+      AppView.swapToStaging(url, testing, { jump: !!jump, dock: false });
     }
   },
 
@@ -4121,6 +4159,9 @@ const DevChat = {
 
     if (!DevChat.currentSession) {
       if (meta) meta.classList.remove('hidden');
+      // #771: the staging panel slot only exists inside a session view —
+      // leaving the session closes a docked preview with it.
+      if (DevChat.stagingPanel.open) DevChat._resetStagingPanel();
       content.innerHTML = `
         <div id="dc-session-list" class="divide-y divide-zinc-800" style="flex:1;overflow-y:auto;min-height:0"></div>`;
       DevChat.renderSessionList();
@@ -4145,6 +4186,14 @@ const DevChat = {
     const savedWidth = DevChat._readSpecViewerWidth();
     const viewerStyle = viewerOpen && savedWidth
       ? ` style="width:${savedWidth}px"`
+      : '';
+
+    // #771: staging preview panel slot — same width-persistence pattern
+    // as the spec viewer, separate key (previews want to be wider).
+    const stagingOpen = !!DevChat.stagingPanel.open;
+    const stagingSavedWidth = DevChat._readStagingPanelWidth();
+    const stagingStyle = stagingOpen && stagingSavedWidth
+      ? ` style="width:${stagingSavedWidth}px"`
       : '';
 
     content.innerHTML = `
@@ -4198,6 +4247,8 @@ const DevChat = {
         </div>
         <div id="dc-spec-resizer" class="dc-spec-resizer ${viewerOpen ? 'dc-spec-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"></div>
         <div id="dc-spec-viewer" class="dc-spec-viewer ${viewerOpen ? 'dc-spec-viewer-open' : ''}"${viewerStyle}></div>
+        <div id="dc-staging-resizer" class="dc-staging-resizer ${stagingOpen ? 'dc-staging-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize staging preview"></div>
+        <div id="dc-staging-panel" class="dc-staging-panel ${stagingOpen ? 'dc-staging-panel-open' : ''}"${stagingStyle}></div>
       </div>`;
 
     DevChat.renderMessages();
@@ -4249,6 +4300,10 @@ const DevChat = {
     }
 
     document.getElementById('dc-back').addEventListener('click', () => {
+      // #771: leaving the session unmounts the staging panel slot — close
+      // a docked preview with it (fullscreen previews float independently
+      // and are unaffected).
+      DevChat._resetStagingPanel();
       DevChat.currentSession = null;
       DevChat.messages = [];
       // The title marker describes the session we just left — drop it
@@ -4293,6 +4348,14 @@ const DevChat = {
     // we re-bind on every renderChatView since the resizer element gets
     // recreated whenever the session view re-renders.
     DevChat._initSpecResizer();
+
+    // #771: same re-bind for the staging panel's divider, and re-glue the
+    // docked overlay to the freshly-created slot node (innerHTML above
+    // destroyed the one AppView was observing).
+    DevChat._initStagingResizer();
+    if (typeof AppView !== 'undefined' && AppView.rebindStagingDock) {
+      AppView.rebindStagingDock();
+    }
   },
 
   _submitFromInput() {
@@ -4752,6 +4815,99 @@ const DevChat = {
     });
   },
 
+  // ===== Staging preview side panel (#771) =====
+  //
+  // The slot + resizer mirror the spec viewer's layout mechanics; the
+  // preview content itself stays in AppView's fixed #staging-overlay
+  // (docked mode) — see the stagingPanel state comment for why.
+
+  _STAGING_PANEL_WIDTH_KEY: 'dc-staging-panel-width-v1',
+
+  _readStagingPanelWidth() {
+    try {
+      const v = parseInt(localStorage.getItem(DevChat._STAGING_PANEL_WIDTH_KEY) || '', 10);
+      return Number.isFinite(v) && v > 0 ? v : null;
+    } catch { return null; }
+  },
+
+  _writeStagingPanelWidth(px) {
+    try { localStorage.setItem(DevChat._STAGING_PANEL_WIDTH_KEY, String(Math.round(px))); }
+    catch {}
+  },
+
+  // Mount the staging panel slot beside the chat. One right-hand panel
+  // at a time: the spec viewer yields (and vice versa in openSpecViewer)
+  // so the chat is never squeezed between two panels.
+  openStagingPanel() {
+    if (!DevChat.currentSession) return;
+    DevChat.stagingPanel.open = true;
+    if (DevChat.specViewer.open) {
+      DevChat.specViewer.open = false;
+      DevChat._writeSpecViewerOpen(DevChat.currentSession.id, false);
+    }
+    DevChat.renderChatView();
+  },
+
+  // Drag logic cloned from _initSpecResizer (panel on the right, drag
+  // left grows it), with two staging-specific twists: a 320px floor
+  // (previews render real app UIs) and pointer-events disabled on the
+  // preview iframe during the drag — unlike the spec viewer's markdown,
+  // an iframe swallows pointermove events and would kill the drag the
+  // moment the cursor crossed into it.
+  _initStagingResizer() {
+    const handle = document.getElementById('dc-staging-resizer');
+    const panel = document.getElementById('dc-staging-panel');
+    if (!handle || !panel) return;
+
+    handle.addEventListener('pointerdown', (e) => {
+      if (!DevChat.stagingPanel.open) return;
+      e.preventDefault();
+
+      const sessionBody = handle.parentElement;
+      const iframe = document.getElementById('staging-iframe');
+      const startX = e.clientX;
+      const startWidth = panel.getBoundingClientRect().width;
+      const bodyRect = sessionBody.getBoundingClientRect();
+      const minWidth = 320;
+      const maxWidth = Math.max(minWidth + 1, bodyRect.width - 320);
+
+      handle.setPointerCapture(e.pointerId);
+      handle.classList.add('dc-staging-resizer-active');
+      document.body.style.userSelect = 'none';
+      document.body.style.cursor = 'col-resize';
+      if (iframe) iframe.style.pointerEvents = 'none';
+
+      const onMove = (ev) => {
+        // Dragging right shrinks the panel (its left edge moves right).
+        const delta = ev.clientX - startX;
+        const next = Math.max(minWidth, Math.min(maxWidth, startWidth - delta));
+        panel.style.width = `${next}px`;
+        // Keep the docked overlay glued during the drag — the slot's
+        // ResizeObserver fires too, but syncing here keeps it crisp.
+        if (typeof AppView !== 'undefined' && AppView._syncStagingDockGeometry) {
+          AppView._syncStagingDockGeometry();
+        }
+      };
+
+      const onUp = () => {
+        handle.removeEventListener('pointermove', onMove);
+        handle.removeEventListener('pointerup', onUp);
+        handle.removeEventListener('pointercancel', onUp);
+        try { handle.releasePointerCapture(e.pointerId); } catch {}
+        handle.classList.remove('dc-staging-resizer-active');
+        document.body.style.userSelect = '';
+        document.body.style.cursor = '';
+        if (iframe) iframe.style.pointerEvents = '';
+        const finalWidth = panel.getBoundingClientRect().width;
+        DevChat._writeStagingPanelWidth(finalWidth);
+      };
+
+      handle.addEventListener('pointermove', onMove);
+      handle.addEventListener('pointerup', onUp);
+      handle.addEventListener('pointercancel', onUp);
+    });
+  },
+
   // ===== Spec viewer helpers =====
   //
   // Read-only viewer that opens when the user clicks an inline spec
@@ -4770,6 +4926,17 @@ const DevChat = {
   openSpecViewer(version) {
     if (!DevChat.currentSession) return;
     const sid = DevChat.currentSession.id;
+    // #771: one right-hand panel at a time — a docked staging preview
+    // yields to the spec viewer (mirrors openStagingPanel). open=false is
+    // set first so closeStagingOverlay skips its own re-render; the
+    // renderChatView below repaints the layout once.
+    if (DevChat.stagingPanel.open) {
+      DevChat.stagingPanel.open = false;
+      if (typeof AppView !== 'undefined' && AppView._stagingMode === 'docked'
+          && AppView.closeStagingOverlay) {
+        AppView.closeStagingOverlay();
+      }
+    }
     DevChat.specViewer.open = true;
     DevChat.specViewer.sessionId = sid;
     DevChat.specViewer.viewVersion = (version === 'draft' || version === 'latest' || version == null) ? 'latest' : version;
