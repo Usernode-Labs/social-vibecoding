@@ -95,7 +95,7 @@ test('detectFallback: missing/absent iterations is NOT a fallback', () => {
 
 test('detectFallback: sticky-served shape (iterations entry, NO fallback content block) is detected', () => {
   const msg = baseMessage({
-    model: 'claude-opus-4-8', // sticky routing serves directly on the fallback model
+    model: 'claude-opus-5', // sticky routing serves directly on the fallback model
     content: [{ type: 'text', text: 'served sticky' }], // no {type:'fallback'} block
     usage: {
       input_tokens: 10, output_tokens: 5,
@@ -113,7 +113,7 @@ test('sanitizeFallbackContent: pre-boundary tool_use/thinking dropped, text and 
     { type: 'text', text: 'partial before decline' },
     { type: 'thinking', thinking: 'truncated reasoning' },
     { type: 'tool_use', id: 'tu_truncated', name: 'dispatch_scout', input: {} },
-    { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-4-8' } },
+    { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-5' } },
     { type: 'text', text: 'continued by the fallback' },
     { type: 'tool_use', id: 'tu_valid', name: 'dispatch_scout', input: {} },
   ];
@@ -167,11 +167,11 @@ test('streamChat: fable requests use the beta path with the fallback opt-in', as
 });
 
 test('streamChat: non-fable models never get the beta path', async () => {
-  await withStubClient([baseMessage({ model: 'claude-opus-4-8' })], async (stub) => {
+  await withStubClient([baseMessage({ model: 'claude-opus-5' })], async (stub) => {
     await llm.streamChat({
       messages: [{ role: 'user', content: 'hi' }],
       systemPrompt: 'sys',
-      model: 'claude-opus-4-8',
+      model: 'claude-opus-5',
     });
     assert.equal(stub.calls.length, 1);
     assert.equal(stub.calls[0].kind, 'plain');
@@ -182,9 +182,9 @@ test('streamChat: non-fable models never get the beta path', async () => {
 
 test('streamChat: fallback-served response reports servedModel + fallbackServed', async () => {
   const served = baseMessage({
-    model: 'claude-opus-4-8',
+    model: 'claude-opus-5',
     content: [
-      { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-4-8' } },
+      { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-5' } },
       { type: 'text', text: 'rescued' },
     ],
     usage: {
@@ -199,18 +199,18 @@ test('streamChat: fallback-served response reports servedModel + fallbackServed'
       model: 'claude-fable-5',
     });
     assert.equal(result.fallbackServed, true);
-    assert.equal(result.servedModel, 'claude-opus-4-8');
-    assert.deepEqual(result.fallbackBoundary, { from: 'claude-fable-5', to: 'claude-opus-4-8' });
+    assert.equal(result.servedModel, 'claude-opus-5');
+    assert.deepEqual(result.fallbackBoundary, { from: 'claude-fable-5', to: 'claude-opus-5' });
     assert.equal(result.text, 'rescued');
   });
 });
 
 test('streamChat: toolUses derive from SANITIZED content (truncated pre-boundary tool_use never surfaces)', async () => {
   const served = baseMessage({
-    model: 'claude-opus-4-8',
+    model: 'claude-opus-5',
     content: [
       { type: 'tool_use', id: 'tu_truncated', name: 'dispatch_scout', input: {} },
-      { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-4-8' } },
+      { type: 'fallback', from: { model: 'claude-fable-5' }, to: { model: 'claude-opus-5' } },
       { type: 'text', text: 'after' },
       { type: 'tool_use', id: 'tu_valid', name: 'web_fetch', input: { url: 'https://x.test' } },
     ],
@@ -232,12 +232,12 @@ test('streamChat: toolUses derive from SANITIZED content (truncated pre-boundary
 test('streamChat: refusal with recommended_model triggers exactly one direct retry on the plain path', async () => {
   const refusal = baseMessage({
     stop_reason: 'refusal',
-    stop_details: { type: 'refusal', category: 'cyber', recommended_model: 'claude-opus-4-8' },
+    stop_details: { type: 'refusal', category: 'cyber', recommended_model: 'claude-opus-5' },
     content: [],
     usage: { input_tokens: 0, output_tokens: 0 },
   });
   const retryOk = baseMessage({
-    model: 'claude-opus-4-8',
+    model: 'claude-opus-5',
     content: [{ type: 'text', text: 'retried fine' }],
   });
   await withStubClient([refusal, retryOk], async (stub) => {
@@ -249,9 +249,9 @@ test('streamChat: refusal with recommended_model triggers exactly one direct ret
     assert.equal(stub.calls.length, 2);
     assert.equal(stub.calls[0].kind, 'beta');
     assert.equal(stub.calls[1].kind, 'plain'); // retry needs no fallbacks param
-    assert.equal(stub.calls[1].params.model, 'claude-opus-4-8');
+    assert.equal(stub.calls[1].params.model, 'claude-opus-5');
     assert.equal(result.stopReason, 'end_turn');
-    assert.equal(result.servedModel, 'claude-opus-4-8');
+    assert.equal(result.servedModel, 'claude-opus-5');
     assert.equal(result.fallbackServed, true);
     assert.equal(result.text, 'retried fine');
   });
@@ -260,11 +260,11 @@ test('streamChat: refusal with recommended_model triggers exactly one direct ret
 test('streamChat: refusal-after-retry is final (no second retry) and surfaces stopDetails', async () => {
   const refusal1 = baseMessage({
     stop_reason: 'refusal',
-    stop_details: { type: 'refusal', category: 'bio', recommended_model: 'claude-opus-4-8' },
+    stop_details: { type: 'refusal', category: 'bio', recommended_model: 'claude-opus-5' },
     content: [],
   });
   const refusal2 = baseMessage({
-    model: 'claude-opus-4-8',
+    model: 'claude-opus-5',
     stop_reason: 'refusal',
     stop_details: { type: 'refusal', category: 'bio', explanation: 'nope' },
     content: [],
@@ -316,7 +316,7 @@ test('streamChat: non-refusal responses carry null stopDetails', async () => {
 test('estimateCostCents: fable priced per models.js, above sonnet and opus', () => {
   const usage = { input_tokens: 1000, output_tokens: 1000 };
   const fable = llm.estimateCostCents(usage, 'claude-fable-5');
-  const opus = llm.estimateCostCents(usage, 'claude-opus-4-8');
+  const opus = llm.estimateCostCents(usage, 'claude-opus-5');
   const sonnet = llm.estimateCostCents(usage, 'claude-sonnet-5');
   const haiku = llm.estimateCostCents(usage, 'claude-haiku-4-5');
   // $10/MTok in + $50/MTok out → 1¢ + 5¢ per 1k+1k tokens.

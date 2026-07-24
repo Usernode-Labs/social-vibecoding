@@ -1,6 +1,6 @@
 // Tests for the model allowlist (src/services/models.js). Locks in the
 // Fable 5 re-addition and the resolve() fallback contract: a genuinely
-// unknown model id coerces to DEFAULT_MODEL (now Opus 4.8), and list()
+// unknown model id coerces to DEFAULT_MODEL (now Opus 5), and list()
 // exposes exactly the four model ids to GET /api/models.
 //
 // Run with: node --test tests/models-allowlist.test.js
@@ -17,8 +17,8 @@ test('an allowed Fable 5 selection resolves to itself', () => {
   assert.equal(models.resolve('claude-fable-5'), 'claude-fable-5');
 });
 
-test('an unknown model id resolves to the default model (Opus 4.8)', () => {
-  assert.equal(models.resolve('claude-nope'), 'claude-opus-4-8');
+test('an unknown model id resolves to the default model (Opus 5)', () => {
+  assert.equal(models.resolve('claude-nope'), 'claude-opus-5');
 });
 
 test('list() exposes exactly the four model ids', () => {
@@ -26,7 +26,7 @@ test('list() exposes exactly the four model ids', () => {
   assert.deepEqual(ids, [
     'claude-fable-5',
     'claude-haiku-4-5',
-    'claude-opus-4-8',
+    'claude-opus-5',
     'claude-sonnet-5',
   ]);
 });

@@ -16,7 +16,7 @@ const log = require('./logger');
 const models = require('./models');
 const events = require('./events');
 
-// Short human label for a model id ("Fable 5", "Opus 4.8"). Falls back
+// Short human label for a model id ("Fable 5", "Opus 5"). Falls back
 // to the raw id so an unknown slug still reads as something identifiable.
 function label(modelId) {
   const entry = modelId && models.MODELS[modelId];
