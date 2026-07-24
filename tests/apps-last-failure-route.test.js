@@ -50,7 +50,7 @@ let collaboratorIds = new Set();
 poolMod.getPool = () => ({
   query: async (sql, params) => {
     const s = String(sql);
-    if (/SELECT \* FROM apps WHERE slug = \$1/.test(s)) {
+    if (/FROM apps WHERE slug = \$1/.test(s)) {
       return appRow ? { rows: [appRow] } : { rows: [] };
     }
     if (/FROM app_collaborators/.test(s)) {

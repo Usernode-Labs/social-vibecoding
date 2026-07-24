@@ -270,7 +270,7 @@ function appRoutes(config) {
       // View-private apps are simply absent from the list for outsiders
       // — same non-disclosure stance as the self_hosted filter.
       const { rows } = await pool.query(`
-        SELECT a.*,
+        SELECT ${appAccess.nonSecretAppColumnList('a')},
           COALESCE(msg_counts.cnt, 0) AS message_count,
           COALESCE(activity.total_seconds, 0) AS total_seconds,
           COALESCE(au.cnt, 0) AS active_users,
@@ -419,7 +419,7 @@ function appRoutes(config) {
         const lf = (canSeeFailure && a.last_failure && typeof a.last_failure === 'object')
           ? a.last_failure : null;
         return {
-          ...a,
+          ...appAccess.stripAppSecrets(a),
           last_failure: undefined,
           last_failure_reason: lf ? (lf.reason || null) : null,
           last_failure_at: lf ? (lf.at || null) : null,
@@ -641,7 +641,7 @@ function appRoutes(config) {
       // watchdog will unstick the row after CREATION_TIMEOUT_MS.
       scheduleCreationWatchdog(pool, appRow.id);
 
-      res.status(201).json({ app: appRow });
+      res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
@@ -749,7 +749,7 @@ function appRoutes(config) {
       });
       scheduleCreationWatchdog(pool, appRow.id);
 
-      res.status(201).json({ app: appRow });
+      res.status(201).json({ app: appAccess.stripAppSecrets(appRow) });
     } catch (err) {
       if (err.code === '23505') {
         return res.status(409).json({ error: 'An app with that name already exists' });
@@ -762,7 +762,7 @@ function appRoutes(config) {
   router.get('/api/apps/:slug', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        'SELECT * FROM apps WHERE slug = $1',
+        `SELECT ${appAccess.nonSecretAppColumnList()} FROM apps WHERE slug = $1`,
         [req.params.slug]
       );
 
@@ -826,7 +826,7 @@ function appRoutes(config) {
         || !!isCollaborator
         || (req.user?.id != null && appRow.created_by === req.user.id);
       const appPayload = {
-        ...appRow,
+        ...appAccess.stripAppSecrets(appRow),
         last_failure: undefined,
         lastFailure: (canSeeFailure && appRow.last_failure && typeof appRow.last_failure === 'object')
           ? appRow.last_failure : null,
