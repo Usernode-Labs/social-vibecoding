@@ -115,6 +115,12 @@
       "expectText": "Zoom from element"
     },
     {
+      "name": "Native-feel kit popover demo section renders (#741)",
+      "path": "/usernode-native/v1/demo.html",
+      "expectSelector": "#popover-btn",
+      "expectText": "Popover / dropdown menu"
+    },
+    {
       "name": "Native-feel kit reorder/toast/modal sections render",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": "#reorder-group-a .reorder-row .un-reorder-handle",
