@@ -82,9 +82,10 @@ function createActivityService(config, {
     throw new Error('Activity integration requires fetch');
   }
   if (readPath === 'activity') {
-    if (!baseUrl || !ledgerId || !config.activitySocialAssertionKey) {
+    if (!baseUrl || !producerToken || !ledgerId || !config.activitySocialAssertionKey) {
       throw new Error(
-        'Activity read path requires ACTIVITY_BASE_URL, ACTIVITY_LEDGER_ID, and ACTIVITY_SOCIAL_ASSERTION_KEY'
+        'Activity read path requires ACTIVITY_BASE_URL, ACTIVITY_PRODUCER_TOKEN, '
+        + 'ACTIVITY_LEDGER_ID, and ACTIVITY_SOCIAL_ASSERTION_KEY'
       );
     }
     if (!/^[A-Za-z0-9_-]+$/.test(config.activitySocialAssertionKey)) {
@@ -97,7 +98,7 @@ function createActivityService(config, {
   }
 
   function publisherEnabled() {
-    return !!(pool && baseUrl && producerToken);
+    return !!(readPath === 'activity' && pool && baseUrl && producerToken);
   }
 
   function evictSessionCacheIfNeeded() {
@@ -236,39 +237,35 @@ function createActivityService(config, {
 
   async function recordPublished(row) {
     const { rows } = await pool.query(
-      `UPDATE notifications
-          SET activity_published_at = NOW(),
-              activity_attempt_count = activity_attempt_count + 1,
-              activity_next_attempt_at = NULL,
-              activity_last_error = NULL
-        WHERE id = $1 AND activity_published_at IS NULL
-        RETURNING user_id`,
-      [row.id]
+      `DELETE FROM activity_notification_outbox
+        WHERE notification_id = $1
+        RETURNING recipient_user_id`,
+      [row.notification_id]
     );
     if (!rows.length) return;
     try {
       const { pushNotificationToUser } = require('./ws');
-      pushNotificationToUser(rows[0].user_id, { type: 'notifications_changed' });
+      pushNotificationToUser(rows[0].recipient_user_id, { type: 'notifications_changed' });
     } catch (err) {
       log.warn('activity', 'published notification invalidation failed', {
-        notificationId: row.id,
+        notificationId: row.notification_id,
         err: err.message,
       });
     }
   }
 
   async function recordFailure(row, message, retry) {
-    const nextDelay = retry ? retryDelayMs(row.activity_attempt_count + 1) : null;
+    const nextDelay = retry ? retryDelayMs(row.attempt_count + 1) : null;
     await pool.query(
-      `UPDATE notifications
-          SET activity_attempt_count = activity_attempt_count + 1,
-              activity_next_attempt_at = CASE
+      `UPDATE activity_notification_outbox
+          SET attempt_count = attempt_count + 1,
+              next_attempt_at = CASE
                 WHEN $2::integer IS NULL THEN NULL
                 ELSE NOW() + ($2::integer * INTERVAL '1 millisecond')
               END,
-              activity_last_error = $3
-        WHERE id = $1 AND activity_published_at IS NULL`,
-      [row.id, nextDelay, boundedText(message)]
+              last_error = $3
+        WHERE notification_id = $1`,
+      [row.notification_id, nextDelay, boundedText(message)]
     );
   }
 
@@ -282,7 +279,7 @@ function createActivityService(config, {
           'content-type': 'application/json',
           accept: 'application/json',
         },
-        body: JSON.stringify(row.activity_event),
+        body: JSON.stringify(row.event),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
     } catch (err) {
@@ -307,7 +304,7 @@ function createActivityService(config, {
     );
     if (!retry) {
       log.error('activity', 'notification publication stopped after permanent response', {
-        notificationId: row.id,
+        notificationId: row.notification_id,
         status: response.status,
         code,
       });
@@ -319,13 +316,11 @@ function createActivityService(config, {
     publisherRunning = true;
     try {
       const { rows } = await pool.query(
-        `SELECT id, user_id, activity_event, activity_attempt_count
-           FROM notifications
-          WHERE activity_event IS NOT NULL
-            AND activity_published_at IS NULL
-            AND activity_next_attempt_at IS NOT NULL
-            AND activity_next_attempt_at <= NOW()
-          ORDER BY activity_next_attempt_at, id
+        `SELECT notification_id, recipient_user_id, event, attempt_count
+           FROM activity_notification_outbox
+          WHERE next_attempt_at IS NOT NULL
+            AND next_attempt_at <= NOW()
+          ORDER BY next_attempt_at, notification_id
           LIMIT $1`,
         [PUBLISH_BATCH_SIZE]
       );

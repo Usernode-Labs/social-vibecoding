@@ -386,10 +386,10 @@ function kudosRoutes(config) {
         return res.status(404).json({ error: 'No kudos to retract on this PR' });
       }
 
-      // Best-effort cleanup of the author's "gave kudos" notification —
-      // the underlying event no longer stands, read or unread. Never
-      // fail the retract itself over it. (No WS "notification removed"
-      // push exists; an open dropdown stays stale until next load.)
+      // Best-effort cleanup of any legacy Social notification. Activity
+      // occurrences are append-only history: Activity-mode staging leaves no
+      // row here, and retracting kudos does not introduce a family-specific
+      // cancellation contract. Never fail the retract itself over cleanup.
       try {
         await pool.query(
           `DELETE FROM notifications

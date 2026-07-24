@@ -112,6 +112,7 @@ function makeMockPool(initial = {}) {
     kudos: [], // array of { session_id, giver_user_id, week_start }
     bounties: [], // array of { app_id, github_issue_number, giver_user_id, week_start }
     notifications: [],
+    outbox: [],
     nextId: 1,
   };
   const seq = () => state.nextId++;
@@ -168,7 +169,14 @@ function makeMockPool(initial = {}) {
       const [row] = state.kudos.splice(idx, 1);
       return { rows: [{ id: row.id, week_start: row.week_start }], rowCount: 1 };
     }
-    // ------------ DELETE notifications (retract cleanup) ------------
+    // ------------ DELETE staged Activity notifications ------------
+    if (/^\s*DELETE FROM notifications\s+WHERE id = ANY/i.test(s)) {
+      const ids = params[0];
+      const before = state.notifications.length;
+      state.notifications = state.notifications.filter((n) => !ids.includes(n.id));
+      return { rows: [], rowCount: before - state.notifications.length };
+    }
+    // ------------ DELETE legacy notifications (retract cleanup) ------------
     if (/^\s*DELETE FROM notifications/i.test(s)) {
       const [sessionId, sourceUserId] = params;
       const before = state.notifications.length;
@@ -206,7 +214,7 @@ function makeMockPool(initial = {}) {
       state.notifications.push(row);
       return { rows: [row] };
     }
-    // ------------ Generic occurrence hydrate + outbox update ------------
+    // ------------ Generic occurrence hydrate + dedicated outbox handoff ------------
     if (/SELECT n\.id, n\.user_id, n\.kind[\s\S]*FROM notifications n/i.test(s)) {
       const ids = params[0];
       return {
@@ -219,10 +227,13 @@ function makeMockPool(initial = {}) {
         })),
       };
     }
-    if (/UPDATE notifications AS n[\s\S]*activity_event = payload\.event/i.test(s)) {
+    if (/INSERT INTO activity_notification_outbox/i.test(s)) {
       for (const item of JSON.parse(params[0])) {
-        const row = state.notifications.find((n) => n.id === item.id);
-        if (row) row.activity_event = item.event;
+        state.outbox.push({
+          notification_id: item.notification_id,
+          recipient_user_id: item.recipient_user_id,
+          event: item.event,
+        });
       }
       return { rows: [], rowCount: JSON.parse(params[0]).length };
     }

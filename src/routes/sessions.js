@@ -221,10 +221,10 @@ function extractSpecSnippet(content, title) {
 // #138: every interactive turn completion now creates a
 // session_done notification UNCONDITIONALLY (the persistent green bell
 // item the user can return to any time), not just when notify_on_done was
-// armed. The occurrence is frozen into the Activity outbox with the Social
-// row. We still clear notify_on_done for tidiness, but it no longer gates
-// creation. Called fire-and-forget from the chat handler's done hook —
-// never throws into the SSE path.
+// armed. When Activity is authoritative, the occurrence is frozen into its
+// outbox with the Social row. We still clear notify_on_done for tidiness, but
+// it no longer gates creation. Called fire-and-forget from the chat handler's
+// done hook — never throws into the SSE path.
 async function notifySessionDone(pool, sessionId) {
   try {
     const { rows } = await pool.query(

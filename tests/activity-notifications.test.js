@@ -1,10 +1,33 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 
 const notifications = require('../src/services/notifications');
 const { createActivityService, mapActivityItem } = require('../src/services/activity');
+
+const TEST_ASSERTION_KEY = Buffer.alloc(32, 7).toString('base64url');
+
+test('Activity outbox is truncated from staging database clones', () => {
+  const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
+  assert.match(
+    schema,
+    /COMMENT ON TABLE activity_notification_outbox IS 'staging:private';/
+  );
+});
+
+function activityConfig(overrides = {}) {
+  return {
+    activityBaseUrl: 'http://activity',
+    activityProducerToken: 'producer',
+    activityLedgerId: 'activity-development',
+    activitySocialAssertionKey: TEST_ASSERTION_KEY,
+    activityNotificationsReadPath: 'activity',
+    ...overrides,
+  };
+}
 
 function jsonResponse(status, body) {
   return new Response(JSON.stringify(body), {
@@ -101,7 +124,9 @@ test('read scopes cover the existing consumer gestures without family APIs', () 
   }
 });
 
-test('notification insert and frozen Activity body share one transaction', async () => {
+test('Activity mode commits only the frozen outbox occurrence', async (t) => {
+  notifications.configureActivity({}, 'activity');
+  t.after(() => notifications.configureActivity(null, 'legacy'));
   const calls = [];
   let released = false;
   const inserted = {
@@ -116,7 +141,10 @@ test('notification insert and frozen Activity body share one transaction', async
       if (/SELECT n\.id, n\.user_id, n\.kind/.test(String(sql))) {
         return { rows: [hydratedNotification()] };
       }
-      if (/activity_event = payload\.event/.test(String(sql))) return { rows: [], rowCount: 1 };
+      if (/INSERT INTO activity_notification_outbox/.test(String(sql))) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (/DELETE FROM notifications/.test(String(sql))) return { rows: [], rowCount: 1 };
       throw new Error(`unexpected SQL: ${sql}`);
     },
     release() { released = true; },
@@ -131,10 +159,156 @@ test('notification insert and frozen Activity body share one transaction', async
   assert.deepEqual(rows, [inserted]);
   assert.deepEqual(calls.map((c) => c.sql === 'BEGIN' || c.sql === 'COMMIT'
     ? c.sql
-    : c.sql.match(/^(INSERT|SELECT|UPDATE)/)?.[1]), ['BEGIN', 'INSERT', 'SELECT', 'UPDATE', 'COMMIT']);
-  const frozen = JSON.parse(calls.find((c) => /activity_event = payload\.event/.test(c.sql)).params[0]);
+    : c.sql.match(/^(INSERT|SELECT|DELETE)/)?.[1]),
+  ['BEGIN', 'INSERT', 'SELECT', 'INSERT', 'DELETE', 'COMMIT']);
+  const frozen = JSON.parse(
+    calls.find((c) => /INSERT INTO activity_notification_outbox/.test(c.sql)).params[0]
+  );
+  assert.equal(frozen[0].notification_id, 1201);
+  assert.equal(frozen[0].recipient_user_id, 42);
   assert.equal(frozen[0].event.sourceEventId, 'social.notification:1201');
+  assert.deepEqual(
+    calls.find((c) => /DELETE FROM notifications/.test(c.sql)).params[0],
+    [1201]
+  );
   assert.equal(released, true);
+});
+
+test('Activity outbox failure rolls back the staged Social row', async (t) => {
+  notifications.configureActivity({}, 'activity');
+  t.after(() => notifications.configureActivity(null, 'legacy'));
+  const calls = [];
+  let released = false;
+  const client = {
+    async query(sql) {
+      const text = String(sql);
+      calls.push(text);
+      if (text === 'BEGIN' || text === 'ROLLBACK') return { rows: [] };
+      if (/^INSERT INTO notifications/.test(text)) {
+        return {
+          rows: [{
+            id: 1201, user_id: 42, app_id: 7, chat_message_id: 9001,
+            source_user_id: 88, kind: 'mention', created_at: '2026-07-22T15:04:05Z',
+          }],
+        };
+      }
+      if (/SELECT n\.id, n\.user_id, n\.kind/.test(text)) {
+        return { rows: [hydratedNotification()] };
+      }
+      if (/INSERT INTO activity_notification_outbox/.test(text)) {
+        throw new Error('outbox unavailable');
+      }
+      throw new Error(`unexpected SQL: ${sql}`);
+    },
+    release() { released = true; },
+  };
+
+  await assert.rejects(
+    notifications.insertNotificationRows(
+      { connect: async () => client },
+      'INSERT INTO notifications VALUES ($1) RETURNING *',
+      [42]
+    ),
+    /outbox unavailable/
+  );
+  assert.equal(calls.at(-1), 'ROLLBACK');
+  assert.equal(calls.includes('COMMIT'), false);
+  assert.equal(released, true);
+});
+
+test('legacy notification insert does not enqueue an Activity occurrence', async () => {
+  notifications.configureActivity(null, 'legacy');
+  const calls = [];
+  let released = false;
+  const inserted = {
+    id: 1201, user_id: 42, app_id: 7, chat_message_id: 9001,
+    source_user_id: 88, kind: 'mention', created_at: '2026-07-22T15:04:05Z',
+  };
+  const client = {
+    async query(sql) {
+      calls.push(String(sql));
+      if (String(sql) === 'BEGIN' || String(sql) === 'COMMIT') return { rows: [] };
+      if (/^INSERT INTO notifications/.test(String(sql))) return { rows: [inserted] };
+      throw new Error(`unexpected SQL: ${sql}`);
+    },
+    release() { released = true; },
+  };
+
+  const rows = await notifications.insertNotificationRows(
+    { connect: async () => client },
+    'INSERT INTO notifications VALUES ($1) RETURNING *',
+    [42]
+  );
+
+  assert.deepEqual(rows, [inserted]);
+  assert.deepEqual(calls, [
+    'BEGIN',
+    'INSERT INTO notifications VALUES ($1) RETURNING *',
+    'COMMIT',
+  ]);
+  assert.equal(released, true);
+});
+
+test('pr_proposed keeps durable de-dupe only in legacy mode', async (t) => {
+  t.after(() => notifications.configureActivity(null, 'legacy'));
+  const insertCalls = [];
+  const inserted = {
+    id: 1201, user_id: 42, app_id: 7, session_id: 33,
+    source_user_id: 88, kind: 'pr_proposed', created_at: '2026-07-22T15:04:05Z',
+  };
+  const client = {
+    async query(sql, params = []) {
+      const text = String(sql);
+      if (text === 'BEGIN' || text === 'COMMIT') return { rows: [] };
+      if (/^INSERT INTO notifications/.test(text)) {
+        insertCalls.push({ sql: text, params });
+        return { rows: [inserted] };
+      }
+      if (/SELECT n\.id, n\.user_id, n\.kind/.test(text)) {
+        return {
+          rows: [hydratedNotification({
+            kind: 'pr_proposed', chat_message_id: null, session_id: 33,
+          })],
+        };
+      }
+      if (/INSERT INTO activity_notification_outbox/.test(text)) {
+        return { rows: [], rowCount: 1 };
+      }
+      if (/DELETE FROM notifications/.test(text)) return { rows: [], rowCount: 1 };
+      throw new Error(`unexpected client SQL: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    connect: async () => client,
+    async query(sql) {
+      const text = String(sql);
+      if (/SELECT self_hosted FROM apps/.test(text)) {
+        return { rows: [{ self_hosted: true }] };
+      }
+      if (/SELECT created_by AS id FROM apps/.test(text)) return { rows: [{ id: 42 }] };
+      if (/SELECT collab_visibility FROM apps/.test(text)) {
+        return { rows: [{ collab_visibility: 'public' }] };
+      }
+      throw new Error(`unexpected pool SQL: ${sql}`);
+    },
+  };
+
+  notifications.configureActivity({}, 'activity');
+  await notifications.createPrProposedNotifications(pool, {
+    appId: 7, sessionId: 33, proposerId: 88,
+  });
+  notifications.configureActivity(null, 'legacy');
+  await notifications.createPrProposedNotifications(pool, {
+    appId: 7, sessionId: 33, proposerId: 88,
+  });
+
+  assert.equal(insertCalls.length, 2);
+  assert.match(insertCalls[0].sql, /WHERE \$5::boolean OR NOT EXISTS/);
+  assert.equal(insertCalls[0].params[4], true,
+    'Activity treats a re-promotion as a new occurrence');
+  assert.equal(insertCalls[1].params[4], false,
+    'legacy mode retains the existing durable notification de-dupe');
 });
 
 function publisherPool(row) {
@@ -145,13 +319,15 @@ function publisherPool(row) {
     reset() { served = false; },
     async query(sql, params = []) {
       const text = String(sql);
-      if (/SELECT id, user_id, activity_event/.test(text)) {
+      if (/SELECT notification_id, recipient_user_id, event, attempt_count/.test(text)) {
         if (served) return { rows: [] };
         served = true;
         return { rows: [row] };
       }
       updates.push({ sql: text, params });
-      if (/RETURNING user_id/.test(text)) return { rows: [{ user_id: row.user_id }] };
+      if (/RETURNING recipient_user_id/.test(text)) {
+        return { rows: [{ recipient_user_id: row.recipient_user_id }] };
+      }
       return { rows: [], rowCount: 1 };
     },
   };
@@ -160,18 +336,14 @@ function publisherPool(row) {
 test('publisher treats accepted and exact replay as delivered', async () => {
   for (const status of [200, 201]) {
     const row = {
-      id: 1201,
-      user_id: 42,
-      activity_event: notifications.buildActivityEvent(hydratedNotification()),
-      activity_attempt_count: 0,
+      notification_id: 1201,
+      recipient_user_id: 42,
+      event: notifications.buildActivityEvent(hydratedNotification()),
+      attempt_count: 0,
     };
     const pool = publisherPool(row);
     let sentBody;
-    const service = createActivityService({
-      activityBaseUrl: 'http://activity',
-      activityProducerToken: 'producer',
-      activityNotificationsReadPath: 'legacy',
-    }, {
+    const service = createActivityService(activityConfig(), {
       pool,
       fetchImpl: async (_url, options) => {
         sentBody = JSON.parse(options.body);
@@ -179,17 +351,17 @@ test('publisher treats accepted and exact replay as delivered', async () => {
       },
     });
     await service.drainPublisher();
-    assert.deepEqual(sentBody, row.activity_event);
-    assert.match(pool.updates[0].sql, /activity_published_at = NOW\(\)/);
+    assert.deepEqual(sentBody, row.event);
+    assert.match(pool.updates[0].sql, /DELETE FROM activity_notification_outbox/);
   }
 });
 
 test('publisher retries transient/unbound failures and parks permanent contract failures', async () => {
   const row = {
-    id: 1201,
-    user_id: 42,
-    activity_event: notifications.buildActivityEvent(hydratedNotification()),
-    activity_attempt_count: 2,
+    notification_id: 1201,
+    recipient_user_id: 42,
+    event: notifications.buildActivityEvent(hydratedNotification()),
+    attempt_count: 2,
   };
   for (const [status, code, shouldRetry] of [
     [422, 'recipient_not_bound', true],
@@ -199,11 +371,7 @@ test('publisher retries transient/unbound failures and parks permanent contract 
     [409, 'source_event_identity_conflict', false],
   ]) {
     const pool = publisherPool(row);
-    const service = createActivityService({
-      activityBaseUrl: 'http://activity',
-      activityProducerToken: 'producer',
-      activityNotificationsReadPath: 'legacy',
-    }, {
+    const service = createActivityService(activityConfig(), {
       pool,
       random: () => 0.5,
       fetchImpl: async () => jsonResponse(status, { error: code }),
@@ -215,17 +383,13 @@ test('publisher retries transient/unbound failures and parks permanent contract 
 
 test('a fresh publisher process resumes an outbox row left retryable', async () => {
   const row = {
-    id: 1201,
-    user_id: 42,
-    activity_event: notifications.buildActivityEvent(hydratedNotification()),
-    activity_attempt_count: 0,
+    notification_id: 1201,
+    recipient_user_id: 42,
+    event: notifications.buildActivityEvent(hydratedNotification()),
+    attempt_count: 0,
   };
   const pool = publisherPool(row);
-  const config = {
-    activityBaseUrl: 'http://activity',
-    activityProducerToken: 'producer',
-    activityNotificationsReadPath: 'legacy',
-  };
+  const config = activityConfig();
   await createActivityService(config, {
     pool,
     fetchImpl: async () => { throw new Error('offline'); },
@@ -237,7 +401,33 @@ test('a fresh publisher process resumes an outbox row left retryable', async () 
     pool,
     fetchImpl: async () => jsonResponse(201, { result: 'accepted' }),
   }).drainPublisher();
-  assert.match(pool.updates.at(-1).sql, /activity_published_at = NOW\(\)/);
+  assert.match(pool.updates.at(-1).sql, /DELETE FROM activity_notification_outbox/);
+});
+
+test('legacy authority cannot start or drain the Activity publisher', async () => {
+  let queried = false;
+  const service = createActivityService(activityConfig({
+    activityNotificationsReadPath: 'legacy',
+  }), {
+    pool: {
+      async query() {
+        queried = true;
+        return { rows: [] };
+      },
+    },
+  });
+
+  assert.equal(service.publisherEnabled(), false);
+  assert.equal(service.startPublisher(), false);
+  await service.drainPublisher();
+  assert.equal(queried, false);
+});
+
+test('Activity authority fails fast without a producer token', () => {
+  assert.throws(
+    () => createActivityService(activityConfig({ activityProducerToken: '' })),
+    /ACTIVITY_PRODUCER_TOKEN/
+  );
 });
 
 test('consumer assertion exchange is cached and feed/read use string identities', async () => {
@@ -252,12 +442,9 @@ test('consumer assertion exchange is cached and feed/read use string identities'
     readAt: null,
     activityEvent: { sourceEvent },
   };
-  const service = createActivityService({
-    activityBaseUrl: 'http://activity',
-    activityLedgerId: 'activity-development',
+  const service = createActivityService(activityConfig({
     activitySocialAssertionKey: rawKey.toString('base64url'),
-    activityNotificationsReadPath: 'activity',
-  }, {
+  }), {
     now: () => now,
     fetchImpl: async (url, options = {}) => {
       calls.push({ url, options });

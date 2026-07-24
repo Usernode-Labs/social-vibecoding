@@ -90,19 +90,32 @@ In the repo's Settings → Secrets and variables → Actions:
 - `USERNODE_GITHUB_APP_ID`, `USERNODE_GITHUB_PRIVATE_KEY`
   (single line with literal `\n`), `USERNODE_GITHUB_BOT_TOKEN`
 - `USERNODE_ANTHROPIC_API_KEY` (optional — BYOK covers the rest)
+- `ACTIVITY_PRODUCER_TOKEN`, `ACTIVITY_SOCIAL_ASSERTION_KEY`
+  (required only when Activity becomes notification authority)
 
 **Variables:**
 - `USERNODE_DOMAIN` — the domain DNS now points at
+- `ACTIVITY_BASE_URL`, `ACTIVITY_LEDGER_ID`,
+  `ACTIVITY_NOTIFICATIONS_READ_PATH` (required only for Activity authority)
 
 ### First deploy
 
 Actions tab → **Deploy** → Run workflow. The workflow rsyncs code to
 `/opt/usernode` on the VPS, writes `.env` from the secrets above, and
-runs `docker compose up -d --build`. Caddy auto-issues TLS on the
-first HTTPS request.
+runs the scoped Docker Compose build and health-checked startup. Caddy
+auto-issues TLS on the first HTTPS request.
 
-Once the first run is green end-to-end, uncomment the `push`-on-main
-trigger in `.github/workflows/deploy.yml` to enable auto-deploy.
+Pushes to `main` deploy automatically; `workflow_dispatch` remains
+available for an intentional re-run after configuration changes.
+
+### Activity notification cutover
+
+The default `ACTIVITY_NOTIFICATIONS_READ_PATH=legacy` keeps notification
+occurrence creation, feed, unread, and read state in Social. Moving the whole
+authority to Activity is an explicit cutover with no historical backfill.
+Follow [`docs/activity-notifications-production.md`](docs/activity-notifications-production.md)
+for prerequisites, deployment order, smoke checks, rollback limits, and
+outbox recovery.
 
 ### Recovery (rollback to a known-good SHA)
 

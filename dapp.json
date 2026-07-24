@@ -82,6 +82,12 @@
       "description": "Log verbosity for the platform process: DEBUG, INFO, WARN or ERROR. Raising it to DEBUG is the one tunable you actually want to change without a code change while chasing something in prod."
     },
     {
+      "key": "ACTIVITY_NOTIFICATIONS_READ_PATH",
+      "group": "Activity",
+      "default": "legacy",
+      "description": "Whole notification-authority cutover. `legacy` keeps occurrence storage, feed, unread and reads in Social; `activity` sends new occurrences through the transient delivery outbox and makes Activity authoritative for durable notification data and read state. Switch only after the Activity connection, producer token, ledger id and assertion key are deployed."
+    },
+    {
       "key": "MAX_GLOBAL_SESSIONS",
       "group": "Scaling",
       "default": "75",

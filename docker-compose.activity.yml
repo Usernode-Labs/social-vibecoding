@@ -15,8 +15,8 @@
 services:
   app:
     environment:
-      # Use ACTIVITY_LOCAL_READ_PATH=legacy to exercise the whole-path rollout
-      # fallback. The integration stack defaults to Activity authority.
+      # Use ACTIVITY_LOCAL_READ_PATH=legacy to exercise the whole-authority
+      # rollout fallback. The integration stack defaults to Activity.
       ACTIVITY_NOTIFICATIONS_READ_PATH: ${ACTIVITY_LOCAL_READ_PATH:-activity}
       ACTIVITY_BASE_URL: http://activity:3000
       ACTIVITY_PRODUCER_TOKEN: local-activity-producer-token

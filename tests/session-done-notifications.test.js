@@ -68,6 +68,7 @@ function makeMockPool(initial = {}) {
   const state = {
     sessions: new Map(initial.sessions || []),
     notifications: (initial.notifications || []).slice(),
+    outbox: (initial.outbox || []).slice(),
     nextId: 1000,
   };
   const calls = [];
@@ -125,7 +126,7 @@ function makeMockPool(initial = {}) {
       state.notifications.push(row);
       return { rows: [row] };
     }
-    // Generic occurrence hydration + frozen outbox update.
+    // Generic occurrence hydration + dedicated outbox handoff.
     if (/SELECT n\.id, n\.user_id, n\.kind[\s\S]*FROM notifications n[\s\S]*WHERE n\.id = ANY/i.test(s)) {
       const ids = params[0];
       return {
@@ -137,12 +138,21 @@ function makeMockPool(initial = {}) {
         })),
       };
     }
-    if (/UPDATE notifications AS n[\s\S]*activity_event = payload\.event/i.test(s)) {
+    if (/INSERT INTO activity_notification_outbox/i.test(s)) {
       for (const item of JSON.parse(params[0])) {
-        const row = state.notifications.find((n) => n.id === item.id);
-        if (row) row.activity_event = item.event;
+        state.outbox.push({
+          notification_id: item.notification_id,
+          recipient_user_id: item.recipient_user_id,
+          event: item.event,
+        });
       }
       return { rows: [], rowCount: JSON.parse(params[0]).length };
+    }
+    if (/DELETE FROM notifications\s+WHERE id = ANY/i.test(s)) {
+      const ids = params[0];
+      const before = state.notifications.length;
+      state.notifications = state.notifications.filter((n) => !ids.includes(n.id));
+      return { rows: [], rowCount: before - state.notifications.length };
     }
     // markReadForAction.
     if (/UPDATE notifications[\s\S]*SET read_at = NOW\(\)[\s\S]*kind = ANY\(\$3\)/i.test(s)) {
@@ -248,28 +258,28 @@ test('POST /notify-on-done 404s for a session the caller does not own', async ()
 
 // ── 2. Turn-completion helpers ──────────────────────────────────────────
 
-test('notifySessionDone: armed → clears flag and enqueues one generic occurrence', async () => {
+test('notifySessionDone: Activity authority clears flag and enqueues one occurrence', async () => {
   const pool = makeMockPool({
     sessions: [[10, { id: 10, user_id: 1, app_id: 5, notify_on_done: true }]],
   });
   const loaded = loadSessions(pool);
+  loaded.notifications.configureActivity({}, 'activity');
   try {
     await loaded.subject.notifySessionDone(pool, 10);
 
     assert.equal(pool.state.sessions.get(10).notify_on_done, false);
-    const rows = pool.state.notifications.filter((n) => n.kind === 'session_done');
+    assert.equal(pool.state.notifications.length, 0,
+      'Activity-mode staging rows do not commit to Social');
+    const rows = pool.state.outbox.filter((n) => n.event.facts.kind === 'session_done');
     assert.equal(rows.length, 1);
-    assert.equal(rows[0].user_id, 1);
-    assert.equal(rows[0].session_id, 10);
-    assert.equal(rows[0].source_user_id, null);
+    assert.equal(rows[0].recipient_user_id, 1);
 
-    assert.equal(loaded.pushes.length, 1);
-    assert.equal(loaded.pushes[0].userId, 1);
-    assert.equal(loaded.pushes[0].payload.type, 'notifications_changed');
-    assert.equal(rows[0].activity_event.kind, 'social.notification.occurred');
-    assert.equal(rows[0].activity_event.facts.kind, 'session_done');
-    assert.equal(rows[0].activity_event.facts.prTitle, 'Add a feature');
-    assert.equal(rows[0].activity_event.facts.branchName, 'dev/alice-123');
+    assert.equal(loaded.pushes.length, 0,
+      'Activity invalidates the browser only after publication succeeds');
+    assert.equal(rows[0].event.kind, 'social.notification.occurred');
+    assert.equal(rows[0].event.facts.sessionId, '10');
+    assert.equal(rows[0].event.facts.prTitle, 'Add a feature');
+    assert.equal(rows[0].event.facts.branchName, 'dev/alice-123');
   } finally {
     loaded.restore();
   }
@@ -317,25 +327,29 @@ test('notifySessionDone: repeat creates a second occurrence independent of read 
 test('notifyAutoSolveDone: each terminal hook freezes an occurrence with detail', async () => {
   const pool = makeMockPool({ sessions: [] });
   const loaded = loadSessions(pool);
+  loaded.notifications.configureActivity({}, 'activity');
   try {
     await loaded.subject.notifyAutoSolveDone(pool, {
       userId: 2, appId: 5, sessionId: 30, detail: 'spec',
     });
-    const rows = pool.state.notifications.filter((n) => n.kind === 'auto_solve_done');
+    assert.equal(pool.state.notifications.length, 0,
+      'Activity-mode staging rows do not commit to Social');
+    const rows = pool.state.outbox.filter((n) => n.event.facts.kind === 'auto_solve_done');
     assert.equal(rows.length, 1);
-    assert.equal(rows[0].detail, 'spec');
-    assert.equal(loaded.pushes.length, 1);
-    assert.equal(loaded.pushes[0].userId, 2);
-    assert.equal(loaded.pushes[0].payload.type, 'notifications_changed');
-    assert.equal(rows[0].activity_event.facts.kind, 'auto_solve_done');
-    assert.equal(rows[0].activity_event.facts.headlessIssueNumber, 42);
+    assert.equal(rows[0].event.facts.detail, 'spec');
+    assert.equal(loaded.pushes.length, 0,
+      'Activity invalidates the browser only after publication succeeds');
+    assert.equal(rows[0].event.facts.headlessIssueNumber, 42);
 
     // A second terminal fire is a tolerated second occurrence.
     await loaded.subject.notifyAutoSolveDone(pool, {
       userId: 2, appId: 5, sessionId: 30, detail: 'spec',
     });
-    assert.equal(pool.state.notifications.filter((n) => n.kind === 'auto_solve_done').length, 2);
-    assert.equal(loaded.pushes.length, 2);
+    assert.equal(pool.state.notifications.length, 0);
+    assert.equal(pool.state.outbox.filter(
+      (n) => n.event.facts.kind === 'auto_solve_done'
+    ).length, 2);
+    assert.equal(loaded.pushes.length, 0);
   } finally {
     loaded.restore();
   }

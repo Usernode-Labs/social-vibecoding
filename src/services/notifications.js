@@ -171,9 +171,15 @@ async function invalidateUsersBestEffort(userIds) {
   }
 }
 
-// Insert Social business rows and freeze their generic Activity source events
-// atomically. A pg Pool gets a private transaction; callers already holding a
-// transaction may pass its client directly.
+// Insert legacy Social feed rows or, while Activity is authoritative, freeze
+// generic Activity source events atomically into the delivery outbox. Activity
+// mode uses the legacy row only as transaction-local staging for its allocated
+// id and joined renderer facts, then deletes it before commit. Social therefore
+// has no second durable feed/read record for an Activity notification.
+// Enabling Activity starts at that explicit cutover instead of silently
+// publishing notifications previously read only in Social.
+// A pg Pool gets a private transaction; callers already holding a transaction
+// may pass its client directly.
 async function insertNotificationRows(pool, sql, params) {
   const ownsClient = typeof pool.connect === 'function';
   const client = ownsClient ? await pool.connect() : pool;
@@ -181,7 +187,7 @@ async function insertNotificationRows(pool, sql, params) {
   try {
     if (ownsClient) await client.query('BEGIN');
     ({ rows: inserted } = await client.query(sql, params));
-    if (inserted.length) {
+    if (inserted.length && notificationReadPath === 'activity') {
       const ids = inserted.map((row) => row.id);
       const { rows: hydrated } = await client.query(
         `SELECT n.id, n.user_id, n.kind, n.created_at,
@@ -203,16 +209,30 @@ async function insertNotificationRows(pool, sql, params) {
       if (hydrated.length !== inserted.length) {
         throw new Error('could not hydrate every inserted notification');
       }
-      const frozen = hydrated.map((row) => ({ id: row.id, event: buildActivityEvent(row) }));
-      await client.query(
-        `UPDATE notifications AS n
-            SET activity_event = payload.event,
-                activity_enqueued_at = NOW(),
-                activity_next_attempt_at = NOW()
-           FROM jsonb_to_recordset($1::jsonb) AS payload(id integer, event jsonb)
-          WHERE n.id = payload.id`,
+      const frozen = hydrated.map((row) => ({
+        notification_id: row.id,
+        recipient_user_id: row.user_id,
+        event: buildActivityEvent(row),
+      }));
+      const enqueued = await client.query(
+        `INSERT INTO activity_notification_outbox
+           (notification_id, recipient_user_id, event)
+         SELECT payload.notification_id, payload.recipient_user_id, payload.event
+           FROM jsonb_to_recordset($1::jsonb)
+             AS payload(notification_id integer, recipient_user_id integer, event jsonb)`,
         [JSON.stringify(frozen)]
       );
+      if (enqueued.rowCount !== inserted.length) {
+        throw new Error('could not enqueue every inserted notification');
+      }
+      const removed = await client.query(
+        `DELETE FROM notifications
+          WHERE id = ANY($1::int[])`,
+        [ids]
+      );
+      if (removed.rowCount !== inserted.length) {
+        throw new Error('could not remove every staged notification');
+      }
     }
     if (ownsClient) await client.query('COMMIT');
   } catch (err) {
@@ -446,10 +466,11 @@ async function createSpecSharedNotification(pool, { recipientId, appId, sessionI
 // active users are skipped entirely (see inline comment below) — only
 // creator + favoriters are pinged.
 //
-// De-dupe: skips any recipient who already has a pr_proposed row for this
-// session, so a re-promote (e.g. a PR that went stale then was proposed
-// again) doesn't re-spam people who were already pinged. `source_user_id`
-// is the proposer so the dropdown can render "@user proposed a PR…".
+// Legacy mode de-dupes recipients who already have a pr_proposed row for this
+// session. Activity mode deliberately treats each re-promotion as a fresh
+// occurrence: preserving the old durable per-session suppression would require
+// a separate family-specific ledger in Social. `source_user_id` is the proposer
+// so the dropdown can render "@user proposed a PR…".
 async function createPrProposedNotifications(pool, { appId, sessionId, proposerId }) {
   if (!appId || !sessionId) return [];
 
@@ -484,19 +505,20 @@ async function createPrProposedNotifications(pool, { appId, sessionId, proposerI
   recipientIds = new Set(await filterToCollaborators(pool, appId, [...recipientIds]));
   if (!recipientIds.size) return [];
 
-  // INSERT ... SELECT with a NOT EXISTS guard so the per-recipient
-  // de-dupe is atomic (no read-then-write race on concurrent promotes).
+  // INSERT ... SELECT with a NOT EXISTS guard keeps legacy-mode de-dupe atomic
+  // (no read-then-write race on concurrent promotes). Activity-mode staging
+  // rows are removed before commit, so a later re-promotion emits again.
   const ids = [...recipientIds];
   const rows = await insertNotificationRows(pool,
     `INSERT INTO notifications (user_id, app_id, session_id, source_user_id, kind)
      SELECT u, $2, $3, $4, 'pr_proposed'
        FROM UNNEST($1::int[]) AS u
-      WHERE NOT EXISTS (
+      WHERE $5::boolean OR NOT EXISTS (
         SELECT 1 FROM notifications n
         WHERE n.user_id = u AND n.session_id = $3 AND n.kind = 'pr_proposed'
       )
      RETURNING id, user_id, app_id, session_id, source_user_id, kind, created_at`,
-    [ids, appId, sessionId, proposerId || null]
+    [ids, appId, sessionId, proposerId || null, notificationReadPath === 'activity']
   );
   return rows;
 }

@@ -1058,8 +1058,9 @@ function voteRoutes(config) {
       // Vote-request fan-out. Non-fatal + post-response: the promote
       // itself has already succeeded, so a notification hiccup must not
       // 500 the request. Pings the app's active users + creator +
-      // favoriters (minus the proposer) so the right people come vote,
-      // and de-dupes per session so a re-promote doesn't re-spam.
+      // favoriters (minus the proposer) so the right people come vote.
+      // Legacy mode keeps its old per-session suppression; Activity mode
+      // treats a genuine re-promotion as a new occurrence.
       try {
         const notifRows = await notifications.createPrProposedNotifications(pool, {
           appId: session.app_id,

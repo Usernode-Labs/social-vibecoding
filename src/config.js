@@ -310,11 +310,9 @@ function load() {
     // error table row for this exact condition) until an operator sets
     // TOPOCHAIN_ZK_BRIDGE_URL. See src/services/topochain/zk-bridge.js.
     topochainZkBridgeUrl: process.env.TOPOCHAIN_ZK_BRIDGE_URL || '',
-    // Notification occurrences may be published while the legacy Social
-    // read path remains active. This one flag switches the entire feed,
-    // unread, and read surface together; requests never fall back between
-    // authorities. The publisher is enabled when base URL + producer token
-    // are present, independently from the read-path rollout.
+    // One flag switches the whole notification authority: occurrence
+    // enqueue/publication, feed, unread, and reads. Legacy mode stays entirely
+    // local; Activity-mode requests never fall back to Social.
     activityNotificationsReadPath,
     activityBaseUrl: (process.env.ACTIVITY_BASE_URL || '').replace(/\/+$/, ''),
     activityProducerToken: process.env.ACTIVITY_PRODUCER_TOKEN || '',

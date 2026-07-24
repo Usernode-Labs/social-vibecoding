@@ -4,7 +4,7 @@ name: Deploy
 #
 # Targets a dedicated VPS (see README — "Standalone deployment"). Code
 # is rsync'd to /opt/usernode, an `.env` is written from GitHub
-# secrets, then `docker compose up -d --build` brings the stack up.
+# secrets, then the platform is built, preflighted, and health-checked.
 #
 # Auto-deploys on every push to `main`. workflow_dispatch is kept for
 # manual re-runs (e.g. rolling forward without a new commit, or
@@ -406,7 +406,7 @@ jobs:
             # node image bumps. `--ignore-buildable` skips services with
             # a build context (the platform `usernode` image), so this
             # only pulls caddy / postgres / usernode-node. The platform
-            # image is rebuilt below by `up -d --build`.
+            # image is built separately below before any cutover work.
             #
             # We capture usernodelabs/usernode's image ID before+after
             # so the gating block below can treat an upstream bump as
@@ -417,6 +417,17 @@ jobs:
             BEFORE_NODE_IMG=$(docker image inspect usernodelabs/usernode:latest --format '{{.Id}}' 2>/dev/null || echo "none")
             docker compose pull --ignore-buildable
             AFTER_NODE_IMG=$(docker image inspect usernodelabs/usernode:latest --format '{{.Id}}' 2>/dev/null || echo "none")
+
+            # Build and validate the new platform image before any later
+            # migration path can stop the currently serving Social container.
+            # The one-off probe uses the production Compose network and the
+            # exact ACTIVITY_BASE_URL that the replacement container will use.
+            docker compose build usernode
+            if [ "$ACTIVITY_NOTIFICATIONS_READ_PATH" = "activity" ]; then
+              echo "==> Checking Activity readiness from the Social network..."
+              docker compose run --rm --no-deps -T usernode \
+                sh -c 'wget -T 10 -qO- "${ACTIVITY_BASE_URL%/}/health/ready"'
+            fi
 
             # ----------------------------------------------------------
             # Decide whether to refresh the sidecar's archive snapshot
@@ -712,14 +723,14 @@ jobs:
             # SSE/WS stream cut) on a deploy that didn't touch caddy at
             # all.
             #
-            # 1. Scoped `up usernode`: rebuild is required on every
-            #    deploy — the platform image bakes in `COPY . .`, so a
-            #    rebuild is how new code gets in. Recreates only the
-            #    platform container (and starts its depends_on services
-            #    if they're stopped). If the migration block above
-            #    stopped usernode, this restarts it pointed at the new
-            #    DB; if the archive-refresh branch already recreated
-            #    usernode-node, this is a no-op for that service.
+            # The platform image and Activity route were validated above,
+            # before any migration path could stop Social.
+            #
+            # 1. Scoped `up usernode` recreates only the platform container
+            #    from that image and waits for its healthcheck. If the
+            #    migration block above stopped usernode, this restarts it
+            #    pointed at the new DB; if the archive-refresh branch already
+            #    recreated usernode-node, this is a no-op for that service.
             # 2. Unscoped `up` WITHOUT --build: ensures caddy/acme-dns/
             #    db/node are running and prunes orphans. Images are only
             #    built here if they don't exist at all (green-field
@@ -731,20 +742,6 @@ jobs:
             #    changes need no rebuild — the `caddy reload` below
             #    applies them to the running container.
             # ----------------------------------------------------------
-            # Build first, separately from `up`, so the freshly-built
-            # image can resolve the admin-console platform variables into
-            # .env BEFORE the platform container starts with it. (This
-            # was `up -d --build usernode`; splitting it is what makes
-            # the step below possible on the same deploy that introduces
-            # a variable, rather than one deploy later.)
-            docker compose build usernode
-
-            if [ "$ACTIVITY_NOTIFICATIONS_READ_PATH" = "activity" ]; then
-              echo "==> Checking Activity readiness from the Social network..."
-              docker compose run --rm --no-deps -T usernode \
-                sh -c 'wget -T 10 -qO- "${ACTIVITY_BASE_URL%/}/health/ready"'
-            fi
-
             # ----------------------------------------------------------
             # Materialize the platform variables an admin set in the
             # console. They live encrypted in the platform's own
@@ -839,6 +836,9 @@ jobs:
             # because on the very first deploy caddy may not be fully
             # up yet (it's racing with TLS issuance).
             docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile || true
+
+            echo "==> Verifying Social health..."
+            docker compose exec -T usernode wget -T 10 -qO- http://localhost:3000/health >/dev/null
 
       # Always clear the deploy-in-progress flag so the /status banner goes
       # away even when the deploy itself failed or was cancelled.
