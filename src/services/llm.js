@@ -6,7 +6,7 @@ const log = require('./logger');
 // across hardcoded slugs (which is how the conflict-resolver previously
 // pinned a stale model). Kept aligned with services/models.js
 // DEFAULT_MODEL (the user-facing allowlist default).
-const DEFAULT_MODEL = 'claude-opus-4-8';
+const DEFAULT_MODEL = 'claude-opus-5';
 
 // ── Fable 5 classifier fallback ─────────────────────────────────────
 // claude-fable-5 requests run through Anthropic's safety classifiers,
@@ -22,7 +22,7 @@ const DEFAULT_MODEL = 'claude-opus-4-8';
 // fallback config, the detection, and the billing attribution — route
 // new Messages calls through streamChat.
 const FABLE_MODEL = 'claude-fable-5';
-const FALLBACK_TARGET_MODEL = 'claude-opus-4-8';
+const FALLBACK_TARGET_MODEL = 'claude-opus-5';
 const FALLBACK_BETA = 'server-side-fallback-2026-06-01';
 
 // A fallback-served response is detected reliably ONLY via
@@ -140,7 +140,7 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 
     // One attempt against `runModel`. Fable 5 requests go through the
     // beta surface with the server-side fallback opt-in (see the module
-    // header) so a classifier decline is re-served by Opus 4.8 inside
+    // header) so a classifier decline is re-served by Opus 5 inside
     // the same call; every other model keeps the plain path byte-for-byte.
     const runStream = async (runModel, { withFallbacks }) => {
       const params = {
