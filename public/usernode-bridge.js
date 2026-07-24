@@ -4172,6 +4172,132 @@
     }
   })();
 
+  // App file storage (#752) — additive within v1.
+  //
+  // usernode.uploadFile(file, { visibility }) stores a user-picked image
+  // platform-side and resolves { id, url, ... } — the app persists `url`
+  // (and `id`, for deletion) in its own DB. usernode.deleteFile(id)
+  // removes one of the CURRENT USER's own uploads (app-wide takedowns go
+  // through the server-side /api/app-storage API instead).
+  // usernode.getStorageUsage() is the read-only quota meter.
+  //
+  // Same shell-relay mechanics as the LLM consent flow above: the iframe
+  // posts a `__usernode_storage` message to window.parent and the
+  // platform shell (public/js/app-view.js) performs the authenticated
+  // upload with its own session — the bridge never holds a credential.
+  // All three reject when there's no platform shell (standalone/dev);
+  // feature-detect by calling and handling rejection, same stance as
+  // requestLlmAccess.
+  /* __USERNODE_STORAGE_BEGIN__ */
+  (function () {
+    var _ST_ACK_TIMEOUT_MS = 15000;
+    // Uploads relay a few MB across postMessage + a platform POST;
+    // generous, but bounded so a dropped relay can't hang the app.
+    var _ST_RESULT_TIMEOUT_MS = 120000;
+    var _ST_MAX_FILE_BYTES = 5 * 1024 * 1024; // mirror of the server cap
+    var _stPending = {};
+
+    window.addEventListener("message", function (e) {
+      if (e.source !== window.parent) return;
+      var data = e.data;
+      if (!data || !data.__usernode_storage || !data.id) return;
+      var entry = _stPending[data.id];
+      if (!entry) return;
+      if (data.__usernode_storage === "ack") {
+        if (entry.ackTimer) { clearTimeout(entry.ackTimer); entry.ackTimer = null; }
+        return;
+      }
+      if (data.__usernode_storage === "response") {
+        delete _stPending[data.id];
+        if (entry.ackTimer) clearTimeout(entry.ackTimer);
+        if (entry.timer) clearTimeout(entry.timer);
+        if (data.error) entry.reject(new Error(data.error));
+        else entry.resolve(data.value);
+      }
+    });
+
+    function storageCall(type, payload, transfer) {
+      return new Promise(function (resolve, reject) {
+        if (window === window.parent) {
+          reject(new Error(
+            "File storage requires the Usernode platform shell (not available standalone)."
+          ));
+          return;
+        }
+        var id = "storage-" + String(Date.now()) + "-" +
+          Math.random().toString(16).slice(2);
+        var entry = { resolve: resolve, reject: reject, ackTimer: null, timer: null };
+        _stPending[id] = entry;
+        entry.ackTimer = setTimeout(function () {
+          if (!_stPending[id]) return;
+          delete _stPending[id];
+          if (entry.timer) clearTimeout(entry.timer);
+          reject(new Error(
+            "Usernode shell did not respond — not running inside the platform, " +
+            "or the host page predates file storage."
+          ));
+        }, _ST_ACK_TIMEOUT_MS);
+        entry.timer = setTimeout(function () {
+          if (!_stPending[id]) return;
+          delete _stPending[id];
+          if (entry.ackTimer) clearTimeout(entry.ackTimer);
+          reject(new Error("File storage request timed out."));
+        }, _ST_RESULT_TIMEOUT_MS);
+        try {
+          var msg = { __usernode_storage: type, id: id };
+          if (payload) {
+            for (var k in payload) {
+              if (Object.prototype.hasOwnProperty.call(payload, k)) msg[k] = payload[k];
+            }
+          }
+          console.log(_BRIDGE_TAG, "storage → parent:", type, "id", id);
+          window.parent.postMessage(msg, "*", transfer || []);
+        } catch (err) {
+          delete _stPending[id];
+          if (entry.ackTimer) clearTimeout(entry.ackTimer);
+          if (entry.timer) clearTimeout(entry.timer);
+          reject(err);
+        }
+      });
+    }
+
+    if (typeof window.usernode.uploadFile !== "function") {
+      window.usernode.uploadFile = function uploadFile(file, opts) {
+        opts = opts || {};
+        if (!file || typeof file.arrayBuffer !== "function") {
+          return Promise.reject(new Error(
+            "uploadFile expects a File or Blob (e.g. from an <input type=\"file\">)."
+          ));
+        }
+        if (file.size > _ST_MAX_FILE_BYTES) {
+          return Promise.reject(new Error(
+            "Image too large (max " + Math.round(_ST_MAX_FILE_BYTES / 1024 / 1024) + " MB)."
+          ));
+        }
+        var filename = String(opts.filename || file.name || "upload").slice(0, 256);
+        var visibility = opts.visibility === "private" ? "private" : "public";
+        return file.arrayBuffer().then(function (buf) {
+          return storageCall("upload", {
+            filename: filename,
+            visibility: visibility,
+            bytes: buf,
+          }, [buf]);
+        });
+      };
+    }
+    if (typeof window.usernode.deleteFile !== "function") {
+      window.usernode.deleteFile = function deleteFile(fileId) {
+        return storageCall("delete", { fileId: String(fileId || "") });
+      };
+    }
+    if (typeof window.usernode.getStorageUsage !== "function") {
+      window.usernode.getStorageUsage = function getStorageUsage() {
+        return storageCall("get-usage", null);
+      };
+    }
+  })();
+  /* __USERNODE_STORAGE_END__ */
+
   // =====================================================================
   //  Public API: user locale (usernode.getUserLocale) — additive within v1
   // =====================================================================

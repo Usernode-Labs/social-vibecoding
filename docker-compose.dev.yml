@@ -59,6 +59,12 @@ services:
       # with `ENOTFOUND usernode` and the spec just shows
       # "Unable to connect to API". See src/services/worker.js.
       PLATFORM_INTERNAL_URL: http://vibecoding-dev:3000
+      # App file storage (#752): local MinIO sidecar with fixed dev
+      # credentials (mirrors the prod usernode-minio service; dev skips
+      # the separate internal network — everything is localhost anyway).
+      MINIO_ENDPOINT: http://vibecoding-minio-dev:9000
+      MINIO_ROOT_USER: localdev
+      MINIO_ROOT_PASSWORD: localdev-minio-secret
     command: node --watch --watch-path=server.js --watch-path=src server.js
     volumes:
       - ./public:/app/public
@@ -103,6 +109,22 @@ services:
       timeout: 3s
       retries: 10
 
+  # Local mirror of prod's usernode-minio object-store sidecar (#752).
+  # Fixed dev credentials (matching the app service's env above); no
+  # published ports needed — the platform reaches it by container name.
+  minio:
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: vibecoding-minio-dev
+    restart: unless-stopped
+    command: server /data
+    volumes:
+      - minio-data:/data
+    environment:
+      MINIO_ROOT_USER: localdev
+      MINIO_ROOT_PASSWORD: localdev-minio-secret
+    networks:
+      - usernode-net
+
 networks:
   # Same name as production so the DOCKER_NETWORK env var matches and
   # behavior is consistent. Child apps will be added here at runtime
@@ -113,3 +135,4 @@ networks:
 
 volumes:
   db-data:
+  minio-data:

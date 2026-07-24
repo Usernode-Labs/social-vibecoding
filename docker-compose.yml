@@ -126,6 +126,11 @@ services:
     stop_grace_period: 10s
     networks:
       - usernode-net
+      # Internal network shared with ONLY the MinIO sidecar (#752): app
+      # and staging containers live on usernode-net and must never be
+      # able to reach the object store directly — all bytes flow
+      # through platform routes.
+      - usernode-storage
     expose:
       - "3000"
     env_file:
@@ -157,6 +162,10 @@ services:
       # from when it spawns child-app DBs.
       DATABASE_URL: postgres://usernode:${USERNODE_DB_PASSWORD}@usernode-db:5432/app_usernode_2d5619
       NODE_RPC_URL: http://usernode-node:3000
+      # App file storage (#752): the MinIO sidecar below, reachable only
+      # over the internal usernode-storage network. Credentials
+      # (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD) arrive via env_file.
+      MINIO_ENDPOINT: http://usernode-minio:9000
     volumes:
       # Required: the platform spawns child-app containers via the
       # host Docker daemon. Standard Usernode pattern.
@@ -169,6 +178,12 @@ services:
       usernode-db:
         condition: service_healthy
       usernode-node:
+        condition: service_started
+      # service_started, NOT service_healthy: a wedged MinIO must
+      # degrade file uploads to a clear storage_unavailable error, never
+      # block the whole platform from booting. The storage service
+      # lazily (re)ensures its bucket per call. See services/app-files.js.
+      usernode-minio:
         condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
@@ -222,6 +237,45 @@ services:
         limits:
           memory: 4g
           cpus: "4"
+    security_opt:
+      - no-new-privileges:true
+
+  # Object storage for app file uploads (#752): user photos apps store
+  # via usernode.uploadFile() / the /api/app-storage API. Bytes live
+  # here (bucket `usernode-app-files`, keys `app/<app_id>/<file_id>`);
+  # metadata/quotas live in Postgres (app_files). Deliberately NOT on
+  # usernode-net — app and staging containers share that network and
+  # must never reach the object store; only the platform (which proxies
+  # every read and write) joins the internal usernode-storage network,
+  # and no ports are published. Credentials are generated once at
+  # rollout into .env (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD), same
+  # handling as USERNODE_DB_PASSWORD.
+  usernode-minio:
+    # Pinned release, never :latest — same stance as postgres:17-alpine.
+    image: minio/minio:RELEASE.2025-04-22T22-12-26Z
+    container_name: usernode-minio
+    restart: unless-stopped
+    command: server /data
+    networks:
+      - usernode-storage
+    volumes:
+      - usernode-minio-data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-}
+    healthcheck:
+      # `mc ready local` is MinIO's documented container healthcheck —
+      # the bundled mc client with the image's auto-configured `local`
+      # alias (curl is not guaranteed in the image).
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+          cpus: "0.5"
     security_opt:
       - no-new-privileges:true
 
@@ -290,6 +344,13 @@ networks:
   usernode-net:
     name: usernode-net
     driver: bridge
+  # Internal-only network for the platform ↔ MinIO hop (#752). Child
+  # app / staging / worker containers are spawned onto usernode-net and
+  # can never route here.
+  usernode-storage:
+    name: usernode-storage
+    driver: bridge
+    internal: true
 
 volumes:
   caddy-data:
@@ -306,3 +367,8 @@ volumes:
   # duration. See the usernode-node service comment.
   usernode-node-data:
   usernode-node-archive:
+  # App file-storage bytes (#752). MUST be included in host-level
+  # backups alongside usernode-db-data: the pg_dump-based scripts only
+  # cover metadata, and a restore without this volume degrades every
+  # stored image to a 404. See SELF-HOSTING.md "App file storage".
+  usernode-minio-data:

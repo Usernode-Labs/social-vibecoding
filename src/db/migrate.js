@@ -63,6 +63,7 @@ async function migrate(config) {
   await seedStagingCloneSpecPills(pool, config);
   await seedStagingChatAttachments(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
+  await seedStagingAppFiles(pool);
   await seedStagingSpecViewerSessions(pool, config);
   await seedStagingDemoProposal(pool, config);
   await seedStagingSpecUserShareFixtures(pool, config);
@@ -4001,6 +4002,45 @@ function buildFixturePng(width, height) {
 // sandboxed preview runs scripts), and one file-only message (empty
 // content) carrying a text file. Idempotent via the fixed-attachment-id
 // existence check; attachment inserts are ON CONFLICT DO NOTHING.
+// App file-storage fixture (#752). app_files is staging:private
+// (schema-only in clones), so seed one obviously-fake public image
+// metadata row against the staging demo app (seedStagingDemoAppCard
+// runs earlier and provides users/apps id 900001). Exercises the
+// GET /app-files/:id metadata path and the quota/usage sums in a
+// self-app staging preview; the object-store hop itself is absent
+// there by design (staging platform containers hold no MinIO
+// credentials), so serving the fixture id yields the 503/404
+// degrade path rather than bytes — exactly what a preview can test.
+async function seedStagingAppFiles(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // Resolve by slug (not a hard-coded id) so the fixture still lands
+    // when the demo-app seeder was skipped; fall back to any app row.
+    const { rows: appRows } = await pool.query(
+      `SELECT id FROM apps ORDER BY (slug = 'staging-demo-app') DESC, id LIMIT 1`
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Staging app-files fixture skipped: no app row to attach to');
+      return;
+    }
+    const { rows: userRows } = await pool.query(
+      `SELECT id FROM users ORDER BY (username = 'staging-demo-user') DESC, id LIMIT 1`
+    );
+    await pool.query(
+      `INSERT INTO app_files (id, app_id, user_id, filename, content_type, size_bytes, visibility, staging)
+       VALUES ('facade00facade00facade00facade00', $1, $2,
+               'staging-demo-photo.png', 'image/png', 2048, 'public', FALSE)
+       ON CONFLICT (id) DO NOTHING`,
+      [appId, userRows[0]?.id ?? null]
+    );
+    log.info('db', 'Staging app-files fixture seeded', { appId });
+  } catch (err) {
+    log.warn('db', 'Staging app-files seeding failed', { message: err.message });
+  }
+}
+
 async function seedStagingGroupChatAttachments(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 

@@ -63,6 +63,7 @@ const DENIED_COLUMNS = {
   apps: [
     'db_password',
     'llm_proxy_token',
+    'storage_api_token',
   ],
   chat_session_attachments: [
     'data', // raw upload bytes — large and potentially private

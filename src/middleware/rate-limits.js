@@ -196,6 +196,20 @@ const attachmentUploadLimiter = makeLimiter({
   message: 'Too many file uploads — slow down for a minute.',
 });
 
+// App file-storage uploads via the shell relay (#752): 20 / minute /
+// user. Honest use is a photo or two per action, so 20/min never bites,
+// while a scripted loop trying to fill an app's quota bounces quickly
+// (per-app and per-user byte caps are additionally enforced in the
+// route). Per-user keyed for shared-NAT fairness; matches the 20/min
+// the server-side /api/app-storage path applies per (app, user).
+const appFileUploadLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 20,
+  name: 'app-file-upload',
+  keyByUser: true,
+  message: 'Too many file uploads — slow down for a minute.',
+});
+
 // #683: feedback-modal screenshot uploads. Each is a ≤4 MB bytea INSERT;
 // honest use is one per filed issue, so 10 / 10 min never bites, while a
 // scripted loop trying to balloon the DB bounces off quickly (orphans are
@@ -231,4 +245,4 @@ const boardOrderLimiter = makeLimiter({
   message: 'Too many reorder updates — slow down for a minute.',
 });
 
-module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter };
+module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter };

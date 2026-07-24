@@ -946,6 +946,43 @@ Operational consequences for self-hosting:
   change on next page load. Self-hosters that want isolation should
   pursue option 2 or 3 above.
 
+## App file storage (MinIO sidecar)
+
+Issue #752 added platform-side storage for user-uploaded app images
+(usernode.uploadFile() / the `/api/app-storage` API). Bytes live in a
+MinIO object-store sidecar; Postgres's `app_files` table holds only
+metadata (ownership, quotas, visibility).
+
+Operational notes for self-hosting:
+
+- **Compose additions**: the `usernode-minio` service, the
+  `usernode-minio-data` volume, and the `usernode-storage` network in
+  `docker-compose.yml`. The network is `internal: true` and joined
+  ONLY by the platform and MinIO — child app/staging/worker containers
+  on `usernode-net` can never reach the object store; every read and
+  write is proxied through platform routes (`GET /app-files/:id`,
+  `/api/app-storage/*`, `/api/apps/:slug/files*`).
+- **Two new `.env` credentials**: `MINIO_ROOT_USER` and
+  `MINIO_ROOT_PASSWORD`. Generate them once at rollout (same handling
+  as `USERNODE_DB_PASSWORD`, e.g. `openssl rand -hex 24`). With them
+  unset, the platform boots fine and file uploads return a clear
+  `storage_unavailable` error — nothing else degrades.
+- **Backups**: `usernode-minio-data` MUST be included in host-level
+  backups alongside `usernode-db-data`. The `pg_dump`-based
+  pull/push scripts cover only metadata; restoring the DB without the
+  volume degrades every stored image to a 404 (annoying, not
+  corrupting — restore order between the two doesn't matter).
+- **Disk headroom**: quotas cap growth at 2 GB per app (100 MB for
+  staging-preview uploads, GC'd after 7 days), so the theoretical
+  ceiling is `2 GB × app count`. Watch the volume as the fleet grows.
+- **External S3 instead of the sidecar**: the platform speaks the S3
+  wire protocol via the `minio` client — point `MINIO_ENDPOINT` /
+  `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` (and optionally
+  `STORAGE_BUCKET`) at any S3-compatible endpoint and drop the
+  sidecar service; no code change needed.
+- MinIO is AGPLv3, run unmodified as a separate service — the normal,
+  compliant deployment shape for a self-hosted stack.
+
 ## Cross-references
 
 - [EXTRACT-PLAN.md](./EXTRACT-PLAN.md) — the standalone-deploy
