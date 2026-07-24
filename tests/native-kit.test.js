@@ -69,6 +69,20 @@ test('spring gains no energy (overshoot stays bounded for the shipped presets)',
   }
 });
 
+test('sheet preset is snappy: 90% of travel in ≤200ms and rests sooner than default (issue #769)', () => {
+  // A 500px slide-up is a typical tray height. The `sheet` preset exists
+  // so trays feel "there" noticeably faster than the soft `default` —
+  // pin that so a future retune can't quietly regress it.
+  const fast = simulateSpring(500, 0, 0, PRESETS.sheet);
+  const soft = simulateSpring(500, 0, 0, PRESETS.default);
+  const t90 = fast.samples.find((s) => Math.abs(s.x) <= 500 * 0.10).t;
+  assert.ok(t90 <= 200, `sheet preset reached 90% travel at ${t90}ms, expected ≤200ms`);
+  assert.ok(
+    fast.durationMs < soft.durationMs * 0.8,
+    `sheet preset rests at ${fast.durationMs}ms — not meaningfully sooner than default's ${soft.durationMs}ms`
+  );
+});
+
 test('velocity seeding shifts the trajectory (a flicked release moves faster early)', () => {
   const still = simulateSpring(0, 100, 0, PRESETS.default);
   const flicked = simulateSpring(0, 100, 1.5, PRESETS.default); // 1.5 px/ms toward target

@@ -96,11 +96,15 @@
   // Named spring presets (mass / tension / friction, per Comeau's damped
   // harmonic oscillator model). Tuned on-device via the demo page's
   // ?un-tune=1 overlay; the CSS linear() curves in native.css are
-  // pre-computed from these same numbers so JS and CSS motion match.
+  // pre-computed from default/stiff/gentle so JS and CSS motion match.
+  // `sheet` drives bottom/action sheet presentation only (issue #769:
+  // snappier tray open/close) — it is JS-driven end to end, so no CSS
+  // linear() curve is derived from it.
   var PRESETS = {
     default: { mass: 1, tension: 170, friction: 26 },
     stiff: { mass: 1, tension: 250, friction: 30 },
     gentle: { mass: 1, tension: 120, friction: 24 },
+    sheet: { mass: 1, tension: 380, friction: 34 },
   };
 
   // iOS-style deceleration rate, per millisecond.
@@ -2165,7 +2169,7 @@
     function springTo(to, velocity, onRest) {
       if (activeSpring) activeSpring.stop();
       activeSpring = spring(function (v) { render(v); }, {
-        from: y, to: to, velocity: velocity || 0, preset: 'default',
+        from: y, to: to, velocity: velocity || 0, preset: 'sheet',
         onRest: function () { activeSpring = null; if (onRest) onRest(); },
       });
     }
@@ -2429,7 +2433,7 @@
       function springTo(to, velocity, onRest) {
         if (activeSpring) activeSpring.stop();
         activeSpring = spring(function (v) { render(v); }, {
-          from: y, to: to, velocity: velocity || 0, preset: 'default',
+          from: y, to: to, velocity: velocity || 0, preset: 'sheet',
           onRest: function () { activeSpring = null; if (onRest) onRest(); },
         });
       }
