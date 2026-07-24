@@ -1914,6 +1914,11 @@ const AppView = {
         // parallel load; the helper stores them on AppView directly, so
         // there's no destructured slot for it.
         AppView._refreshSessionCaches(slug),
+        // #780: the app's category vocabulary (built-ins + custom), needed
+        // before the first paint so custom chips get their label/colour and
+        // the filter bar offers them. Stores onto AppView directly and
+        // swallows failures, so no destructured slot and no board-load risk.
+        AppView._loadAppCategories(),
       ]);
       const ghData = ghRes.ok ? await ghRes.json() : { issues: [] };
       const issuesData = issuesRes.ok ? await issuesRes.json() : { issues: [] };
@@ -2561,6 +2566,31 @@ const AppView = {
     return Array.from(set).sort((a, b) => a.localeCompare(b));
   },
 
+  // #780: the category filter's options — built-ins then this app's custom
+  // categories, mirroring the dropdown's order. Like the assignee select, the
+  // current selection is always kept in the list even if it vanishes from the
+  // vocabulary, so an active filter never silently self-clears.
+  _kanbanCategoryOptionsHtml() {
+    const f = AppView._kanbanFilters || {};
+    const opt = (v, label) =>
+      `<option value="${escapeAttr(v)}"${f.category === v ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+    const seen = new Set();
+    let html = '<option value="">Any category</option>';
+    for (const v of AppView.ATTR_CATEGORY_VALUES) {
+      seen.add(v);
+      html += opt(v, AppView._categoryMeta(v).label);
+    }
+    for (const c of AppView._customCategories()) {
+      if (seen.has(c.value)) continue;
+      seen.add(c.value);
+      html += opt(c.value, AppView._categoryMeta(c.value).label);
+    }
+    if (f.category && !seen.has(f.category)) {
+      html += opt(f.category, AppView._categoryMeta(f.category).label);
+    }
+    return html;
+  },
+
   _kanbanNeedsVoteChipCls(active) {
     return 'text-xs px-2.5 py-1.5 rounded-lg border transition-colors shrink-0 '
       + (active
@@ -2597,8 +2627,6 @@ const AppView = {
     const ctlCls = 'rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-2 py-1.5 text-xs text-zinc-900 dark:text-zinc-100';
     const priOpt = (v, label) =>
       `<option value="${v}"${f.priority === v ? ' selected' : ''}>${label}</option>`;
-    const catOpt = (v, label) =>
-      `<option value="${v}"${f.category === v ? ' selected' : ''}>${label}</option>`;
     el.innerHTML = `
       <div class="flex flex-wrap items-center gap-2">
         <input id="dev-kanban-search" type="search" placeholder="Filter by title, author or #number"
@@ -2609,8 +2637,7 @@ const AppView = {
           ${priOpt('high', 'High')}${priOpt('medium', 'Medium')}${priOpt('low', 'Low')}
         </select>
         <select id="dev-kanban-category" class="${ctlCls}" aria-label="Filter by category">
-          <option value="">Any category</option>
-          ${AppView.ATTR_CATEGORY_VALUES.map((v) => catOpt(v, AppView._categoryMeta(v).label)).join('')}
+          ${AppView._kanbanCategoryOptionsHtml()}
         </select>
         <select id="dev-kanban-assignee" class="${ctlCls}" aria-label="Filter by assignee">
           ${AppView._kanbanAssigneeOptionsHtml()}
@@ -2670,6 +2697,13 @@ const AppView = {
     // being interacted with; the next repaint catches it up.
     if (sel && document.activeElement !== sel) {
       sel.innerHTML = AppView._kanbanAssigneeOptionsHtml();
+    }
+    // #780: same treatment for the category select, so a category created
+    // during this session (or a vocabulary that finished loading after the
+    // bar was built) shows up without a reload.
+    const catSel = bar.querySelector('#dev-kanban-category');
+    if (catSel && document.activeElement !== catSel) {
+      catSel.innerHTML = AppView._kanbanCategoryOptionsHtml();
     }
   },
 
@@ -4860,15 +4894,60 @@ const AppView = {
     }
   },
 
-  // #504: the fixed category vocabulary (mirrors CATEGORY_VALUES in
-  // services/topic-attributes.js — keep the two in sync). Community-voted
-  // like priority: a small controlled set so chip colours stay consistent
-  // and filtering never fragments on casing.
+  // #504: the BUILT-IN category vocabulary (mirrors CATEGORY_VALUES in
+  // services/topic-attributes.js — keep the two in sync). #780 added
+  // per-app CUSTOM categories on top of these; they arrive from the server
+  // in _appCategories and list under these six everywhere.
   ATTR_CATEGORY_VALUES: ['feature', 'bug', 'improvement', 'design', 'docs', 'chore'],
+
+  // #780: mirrors MAX_CATEGORY_LEN in services/topic-attributes.js — the
+  // input's maxlength, so the server's length rejection is unreachable by
+  // typing (paste still hits it and toasts).
+  ATTR_CATEGORY_MAX_LEN: 24,
+
+  // #780: the app's full category vocabulary as
+  // [{ value, label, custom }] — the six built-ins plus this app's custom
+  // options — loaded once per Dev-tab mount and refreshed from any
+  // attributes GET/POST that carries `categories`. `null` means "not loaded
+  // yet"; every reader falls back to built-ins-only so a failed fetch just
+  // degrades to the pre-#780 behaviour instead of blanking the chips.
+  _appCategories: null,
+
+  // #780: tint pairs for CUSTOM categories, deliberately in colour families
+  // the six built-ins don't use so a custom chip never reads as a built-in
+  // one. Picked by a stable string hash (see _categoryTint) so a given
+  // category is always the same colour across the board, list and filter.
+  CATEGORY_CUSTOM_TINTS: [
+    { cls: 'bg-teal-500/10 text-teal-500', hover: 'hover:bg-teal-500/20' },
+    { cls: 'bg-cyan-500/10 text-cyan-500', hover: 'hover:bg-cyan-500/20' },
+    { cls: 'bg-fuchsia-500/10 text-fuchsia-500', hover: 'hover:bg-fuchsia-500/20' },
+    { cls: 'bg-lime-500/10 text-lime-600', hover: 'hover:bg-lime-500/20' },
+    { cls: 'bg-indigo-500/10 text-indigo-400', hover: 'hover:bg-indigo-500/20' },
+    { cls: 'bg-orange-500/10 text-orange-500', hover: 'hover:bg-orange-500/20' },
+  ],
+
+  // Deterministic tint for a custom category slug — the same small string
+  // hash _assigneeTint uses, so two different categories generally differ
+  // and a given one never changes colour between repaints.
+  _categoryTint(slug) {
+    const s = String(slug || '');
+    let h = 0;
+    for (let i = 0; i < s.length; i += 1) {
+      h = ((h * 31) + s.charCodeAt(i)) | 0;
+    }
+    const tints = AppView.CATEGORY_CUSTOM_TINTS;
+    return tints[Math.abs(h) % tints.length];
+  },
 
   // Display label + colour classes for a category slug, drawn from the same
   // badge palette family the priority chip / assignee avatars use. `cls` is
   // the static tint; `hover` deepens it to /20 on the interactive chip.
+  //
+  // #780: unknown (custom) slugs no longer return null — they resolve to
+  // their registered label (or a title-cased slug when the vocabulary hasn't
+  // loaded) plus a deterministic tint. Callers dereference the result for
+  // any non-empty value, so returning null here would throw. `label` is RAW
+  // USER INPUT for custom categories — every caller must escapeHtml it.
   _categoryMeta(value) {
     switch (value) {
       case 'feature': return { label: 'Feature', cls: 'bg-emerald-500/10 text-emerald-500', hover: 'hover:bg-emerald-500/20' };
@@ -4877,8 +4956,42 @@ const AppView = {
       case 'design': return { label: 'Design', cls: 'bg-violet-500/10 text-violet-400', hover: 'hover:bg-violet-500/20' };
       case 'docs': return { label: 'Docs', cls: 'bg-amber-500/10 text-amber-500', hover: 'hover:bg-amber-500/20' };
       case 'chore': return { label: 'Chore', cls: 'bg-zinc-500/10 text-zinc-500', hover: 'hover:bg-zinc-500/20' };
-      default: return null;
+      default: break;
     }
+    if (!value) return null;
+    const known = (AppView._appCategories || []).find((c) => c.value === value);
+    const slug = String(value);
+    const label = (known && known.label) || (slug.charAt(0).toUpperCase() + slug.slice(1));
+    const tint = AppView._categoryTint(slug);
+    return { label, cls: tint.cls, hover: tint.hover, custom: true };
+  },
+
+  // #780: the custom half of the vocabulary, in registry (creation) order.
+  // Empty until the vocabulary loads, which is exactly the pre-#780 view.
+  _customCategories() {
+    return (AppView._appCategories || []).filter((c) => c.custom);
+  },
+
+  // #780: adopt a `categories` payload from any attributes GET/POST (or the
+  // dedicated vocabulary endpoint) so a category typed just now can be
+  // labelled + coloured by the very next repaint. Ignores anything that
+  // isn't an array, so a partial/failed response never clears the cache.
+  _setAppCategories(categories) {
+    if (!Array.isArray(categories)) return;
+    AppView._appCategories = categories.filter((c) => c && typeof c.value === 'string');
+  },
+
+  // #780: load the app's category vocabulary. Called on Dev-tab mount;
+  // failures are swallowed (the UI falls back to built-ins only).
+  async _loadAppCategories() {
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!slug) return;
+    try {
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topic-categories`);
+      if (!res.ok) return;
+      const data = await res.json();
+      AppView._setAppCategories(data && data.categories);
+    } catch { /* built-ins only */ }
   },
 
   // #489: a small fixed palette of tint pairs (bg /20 + text 600/dark 300)
@@ -4942,8 +5055,9 @@ const AppView = {
     } else if (field === 'category') {
       // #504: lead with a small colour swatch (the same attr-dot used in the
       // popover) so the category reads at a glance, then the label.
+      // #780: escapeHtml the label — for a custom category it is user input.
       const meta = AppView._categoryMeta(s.top);
-      if (meta) { label = `<span class="attr-dot ${meta.cls}"></span>${meta.label}`; cls = meta.cls; hover = meta.hover; }
+      if (meta) { label = `<span class="attr-dot ${meta.cls}"></span>${escapeHtml(meta.label)}`; cls = meta.cls; hover = meta.hover; }
       else { label = '<span class="attr-dot bg-zinc-500/10 text-zinc-500"></span>Set category'; cls = 'bg-zinc-500/10 text-zinc-500'; hover = 'hover:bg-zinc-500/20'; }
     } else {
       // #489: the assignee now leads with a coloured initial-avatar (an at-a-
@@ -5077,6 +5191,9 @@ const AppView = {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/topics/${targetType}/${targetRef}/attributes?field=${field}`);
       if (!res.ok) throw new Error('load failed');
       const data = await res.json();
+      // #780: adopt the vocabulary BEFORE rendering so the custom block and
+      // its labels/colours paint on this first open.
+      AppView._setAppCategories(data && data.categories);
       // The popover may have been closed/replaced while the fetch was in flight.
       if (AppView._attrPopover && AppView._attrPopover.field === field
           && AppView._attrPopover.targetRef === targetRef) {
@@ -5126,13 +5243,29 @@ const AppView = {
     } else if (field === 'category') {
       // #504: list the fixed category set (like priority), each with its
       // colour swatch, showing counts + the viewer's current check.
+      // #780: then the app's CUSTOM options under a divider, and a text box
+      // to type a new one. Counts come from this card's tally either way, so
+      // an option nobody has voted for here shows 0.
       const byVal = new Map((data.options || []).map((o) => [o.value, o]));
-      inner += '<div class="attr-pop-head">Category</div>';
-      for (const v of AppView.ATTR_CATEGORY_VALUES) {
+      const catRow = (v) => {
         const o = byVal.get(v);
         const meta = AppView._categoryMeta(v);
-        inner += optRow(`<span class="attr-dot ${meta.cls}"></span>${meta.label}`, v, o ? o.count : 0, !!(o && o.mine));
+        return optRow(
+          `<span class="attr-dot ${meta.cls}"></span>${escapeHtml(meta.label)}`,
+          v, o ? o.count : 0, !!(o && o.mine)
+        );
+      };
+      inner += '<div class="attr-pop-head">Category</div>';
+      for (const v of AppView.ATTR_CATEGORY_VALUES) inner += catRow(v);
+      const customs = AppView._customCategories();
+      if (customs.length) {
+        inner += '<div class="attr-pop-head attr-pop-head-divided">Custom</div>';
+        for (const c of customs) inner += catRow(c.value);
       }
+      inner += `<div class="attr-pop-add">
+        <input type="text" id="attr-category-input" class="attr-pop-input" placeholder="Type a category…" autocomplete="off" maxlength="${AppView.ATTR_CATEGORY_MAX_LEN}" />
+        <button type="button" id="attr-category-add" class="attr-pop-addbtn">Add</button>
+      </div>`;
     } else {
       inner += '<div class="attr-pop-head">Assigned person</div>';
       const opts = data.options || [];
@@ -5157,7 +5290,29 @@ const AppView = {
       b.addEventListener('click', () => AppView._castAttrVote(b.dataset.attrOptValue));
     });
 
-    if (field === 'assignee') {
+    if (field === 'category') {
+      // #780: type a new category. No typeahead (unlike assignee) — the
+      // options are all listed right above. Before POSTing we fold the typed
+      // text onto an option already listed when it matches case-insensitively,
+      // so "Bug" votes for the built-in `bug` and "PERFORMANCE" votes for the
+      // existing custom option rather than attempting a duplicate.
+      const input = pop.querySelector('#attr-category-input');
+      const addBtn = pop.querySelector('#attr-category-add');
+      const submit = () => {
+        const typed = (input.value || '').trim().replace(/\s+/g, ' ');
+        if (!typed) return;
+        const lower = typed.toLowerCase();
+        const known = AppView.ATTR_CATEGORY_VALUES.includes(lower)
+          ? lower
+          : (AppView._customCategories().find((c) => c.value.toLowerCase() === lower) || {}).value;
+        AppView._castAttrVote(known || typed);
+      };
+      addBtn.addEventListener('click', submit);
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') { ev.preventDefault(); submit(); }
+      });
+      input.focus();
+    } else if (field === 'assignee') {
       const input = pop.querySelector('#attr-assignee-input');
       const addBtn = pop.querySelector('#attr-assignee-add');
       const suggest = pop.querySelector('#attr-assignee-suggest');
@@ -5219,6 +5374,9 @@ const AppView = {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { PlatformUI.toast(data.error || 'Could not save your vote.'); return; }
+      // #780: adopt the refreshed vocabulary FIRST — a just-typed category
+      // has no entry yet, and the chip repaint below needs its label+colour.
+      AppView._setAppCategories(data.categories);
       // Update the cached item's summary so re-renders show the new leader.
       AppView._applyAttrSummary(targetType, targetRef, field, data);
       // Repaint whichever card surface is mounted (list / kanban / PM /

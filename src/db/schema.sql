@@ -774,6 +774,30 @@ CREATE TABLE IF NOT EXISTS topic_attribute_votes (
 CREATE INDEX IF NOT EXISTS idx_topic_attribute_votes_target
   ON topic_attribute_votes (app_id, target_type, target_ref, field);
 
+-- #780: per-app registry of CUSTOM category options, listed under the six
+-- built-in slugs (feature|bug|improvement|design|docs|chore) in the category
+-- chip's dropdown and in the kanban / PM filter bar. Typing a new category
+-- in that dropdown registers a row here (scoped to ONE app) and casts the
+-- typer's vote for it in the same request — "suggesting" and "voting" stay
+-- the same operation, mirroring the free-text assignee field.
+--   slug  — lowercased dedupe key; ALSO the literal string written into
+--           topic_attribute_votes.value, so a custom category tallies
+--           byte-for-byte like a built-in one and needs no vote migration.
+--   label — the display casing as FIRST typed ("iOS", "UX"), so a later
+--           "ios" votes for the same option without rewriting the label.
+-- NOT staging:private — like topic_attribute_votes this is a shared,
+-- governance-style signal everyone in the app sees, so it must copy into
+-- staging clones.
+CREATE TABLE IF NOT EXISTS app_topic_categories (
+  id          SERIAL PRIMARY KEY,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  slug        TEXT NOT NULL,           -- lowercase dedupe key + vote value
+  label       TEXT NOT NULL,           -- display casing as first typed
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(app_id, slug)
+);
+
 -- #613: manual drag-and-drop ordering of cards WITHIN a Dev-board kanban
 -- column. The board's default order is derived (recency / merge-priority);
 -- this table is an OVERLAY: cards whose identity appears here sort first,

@@ -3273,7 +3273,20 @@ button.attr-chip { cursor: pointer; }
   text-align: left;
 }
 .attr-opt:hover { background: var(--accent-tint); }
-.attr-opt-label { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+/* #780: custom category labels are free text up to 24 chars, so clip rather
+   than wrap inside the 260px-max-width popover. The dot is a flex child and
+   keeps its size; only the text span truncates. */
+.attr-opt-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* #780: separates the app's custom categories from the built-in block. */
+.attr-pop-head-divided { border-top: 1px solid var(--border-light); margin-top: 4px; }
 .attr-opt-right { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
 .attr-opt-count {
   font-size: 11px;

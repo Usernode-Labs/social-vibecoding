@@ -97,6 +97,11 @@
       "expectSelector": "[data-plus=\"import-pr\"]"
     },
     {
+      "name": "Custom category chip renders on a Dev card (#780)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Staging demo perf"
+    },
+    {
       "name": "Native-feel UI kit demo renders",
       "path": "/usernode-native/v1/demo.html",
       "expectSelector": ".un-switch",

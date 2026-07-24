@@ -40,17 +40,47 @@ test('normalizeValue: assignee trims, rejects empty + over-long, keeps casing', 
   assert.equal(attrs.normalizeValue('bogus', 'x'), null);
 });
 
-test('normalizeValue: category accepts only the fixed slug set (case-folded, trimmed)', () => {
+// #780: category is free text now (a typed value becomes a per-app option),
+// so normalizeValue returns the lower-cased SLUG for anything typeable —
+// it no longer rejects values outside the built-in six.
+test('normalizeValue: category lower-cases + trims any typeable value', () => {
   assert.equal(attrs.normalizeValue('category', 'bug'), 'bug');
   assert.equal(attrs.normalizeValue('category', 'BUG'), 'bug'); // case-folded
   assert.equal(attrs.normalizeValue('category', '  Feature '), 'feature'); // trimmed
   assert.equal(attrs.normalizeValue('category', 'improvement'), 'improvement');
-  assert.equal(attrs.normalizeValue('category', 'urgent'), null); // not in the set
+  assert.equal(attrs.normalizeValue('category', 'urgent'), 'urgent'); // #780: custom, accepted
   assert.equal(attrs.normalizeValue('category', ''), null);
   assert.equal(attrs.normalizeValue('category', 7), null);
-  // The exported vocabulary is exactly the fixed set.
+  assert.equal(attrs.normalizeValue('category', 'x'.repeat(25)), null); // over the cap
+  // The exported vocabulary is exactly the BUILT-IN set (customs live in the
+  // app_topic_categories registry, not in this constant).
   assert.deepEqual(attrs.CATEGORY_VALUES, ['feature', 'bug', 'improvement', 'design', 'docs', 'chore']);
   assert.ok(attrs.FIELDS.includes('category'), 'category is a recognised field');
+});
+
+test('normalizeCategoryInput: returns { slug, label } keeping the typed casing', () => {
+  assert.deepEqual(attrs.normalizeCategoryInput('performance'), { slug: 'performance', label: 'performance' });
+  // Casing is preserved for display but lower-cased for the dedupe key, so
+  // "iOS" reads right on the chip yet collapses with a later "ios".
+  assert.deepEqual(attrs.normalizeCategoryInput('iOS'), { slug: 'ios', label: 'iOS' });
+  assert.deepEqual(attrs.normalizeCategoryInput('  Dev Experience  '), { slug: 'dev experience', label: 'Dev Experience' });
+  // Internal whitespace runs collapse, so "dev  experience" is one option.
+  assert.deepEqual(attrs.normalizeCategoryInput('dev  experience'), { slug: 'dev experience', label: 'dev experience' });
+  // Control characters become a space rather than gluing words together.
+  const tabbed = attrs.normalizeCategoryInput(`a${String.fromCharCode(9)}b`);
+  assert.deepEqual(tabbed, { slug: 'a b', label: 'a b' });
+  assert.equal(attrs.normalizeCategoryInput(`x${String.fromCharCode(0)}`).slug, 'x');
+  // Length boundary: exactly at the cap passes, one over fails.
+  assert.equal(attrs.normalizeCategoryInput('x'.repeat(attrs.MAX_CATEGORY_LEN)).slug, 'x'.repeat(attrs.MAX_CATEGORY_LEN));
+  assert.equal(attrs.normalizeCategoryInput('x'.repeat(attrs.MAX_CATEGORY_LEN + 1)), null);
+  // Rejections.
+  assert.equal(attrs.normalizeCategoryInput(''), null);
+  assert.equal(attrs.normalizeCategoryInput('   '), null);
+  assert.equal(attrs.normalizeCategoryInput('---'), null, 'needs at least one letter or digit');
+  assert.equal(attrs.normalizeCategoryInput('!!!'), null);
+  assert.equal(attrs.normalizeCategoryInput(7), null, 'non-strings rejected');
+  assert.equal(attrs.normalizeCategoryInput(null), null);
+  assert.equal(attrs.MAX_CATEGORY_LEN, 24);
 });
 
 test('emptySummary carries a category slot', () => {
@@ -86,7 +116,11 @@ test('pickTop: count desc, then earliest first-suggestion, then alpha', () => {
 // an in-memory `store` so the real JS aggregation / dedupe / ranking runs.
 function makeMockPool() {
   const store = []; // { app_id, target_type, target_ref, field, value, user_id, created_at }
+  // #780: the per-app custom-category registry, modelled with its real
+  // UNIQUE(app_id, slug) so first-label-wins and the cap are exercised.
+  const cats = []; // { app_id, slug, label, created_by, created_at, id }
   let seq = 0;
+  let catSeq = 0;
   const norm = (field, value) => (field === 'assignee' ? String(value).toLowerCase() : String(value));
 
   function grouped(filter) {
@@ -114,7 +148,51 @@ function makeMockPool() {
 
   const pool = {
     store,
+    cats,
     async query(sql, params) {
+      // ── #780: app_topic_categories (the custom-category registry) ──
+      // ensureCategory's cap probe: total rows for the app + whether this
+      // slug is already registered.
+      if (/SELECT COUNT\(\*\)::int FROM app_topic_categories/.test(sql)) {
+        const [appId, slug] = params;
+        return {
+          rows: [{
+            total: cats.filter((c) => c.app_id === appId).length,
+            existing: cats.filter((c) => c.app_id === appId && c.slug === slug).length,
+          }],
+        };
+      }
+      // ensureCategory's insert — ON CONFLICT (app_id, slug) DO NOTHING.
+      if (/INSERT INTO app_topic_categories/.test(sql)) {
+        const [appId, slug, label, userId] = params;
+        if (!cats.some((c) => c.app_id === appId && c.slug === slug)) {
+          catSeq += 1;
+          cats.push({
+            id: catSeq, app_id: appId, slug, label, created_by: userId,
+            created_at: new Date(Date.now() + catSeq).toISOString(),
+          });
+        }
+        return { rows: [] };
+      }
+      // listCategories — the app's registry rows, in creation order.
+      if (/SELECT slug, label FROM app_topic_categories/.test(sql)) {
+        const [appId] = params;
+        return {
+          rows: cats
+            .filter((c) => c.app_id === appId)
+            .sort((a, b) => (Date.parse(a.created_at) - Date.parse(b.created_at)) || (a.id - b.id))
+            .map((c) => ({ slug: c.slug, label: c.label })),
+        };
+      }
+      // listCategories — the self-heal tail: category values in use that
+      // have no registry row.
+      if (/SELECT DISTINCT value FROM topic_attribute_votes/.test(sql)) {
+        const [appId] = params;
+        const vals = [...new Set(store
+          .filter((r) => r.app_id === appId && r.field === 'category')
+          .map((r) => r.value))].sort();
+        return { rows: vals.map((value) => ({ value })) };
+      }
       // summarizeForTargets — grouped tally over a set of refs.
       if (/GROUP BY target_ref, field, norm/.test(sql)) {
         const [appId, type, ids] = params;
@@ -224,6 +302,138 @@ test('clearVote removes only the caller\'s own vote, leaving others\' intact', a
   // Idempotent: clearing again is a no-op.
   await attrs.clearVote(pool, 1, 'issue', 7, 'assignee', 1);
   assert.equal(pool.store.length, 1);
+});
+
+// ── #780: per-app custom categories ────────────────────────────────────
+//
+// Typing a category IS voting for it: castVote registers an unknown slug in
+// app_topic_categories (scoped to the app) and then upserts the vote, so a
+// new option appears on every card in that app.
+
+test('castVote: an unknown category registers exactly one registry row', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 7, 'category', 'performance', 100, [], 'Performance');
+  assert.equal(pool.cats.length, 1);
+  assert.deepEqual(
+    { app_id: pool.cats[0].app_id, slug: pool.cats[0].slug, label: pool.cats[0].label, created_by: pool.cats[0].created_by },
+    { app_id: 1, slug: 'performance', label: 'Performance', created_by: 100 }
+  );
+  // The vote itself stores the SLUG, so it tallies like a built-in.
+  assert.equal(pool.store[0].value, 'performance');
+});
+
+test('castVote: a BUILT-IN category creates no registry row', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 7, 'category', 'bug', 100, [], 'bug');
+  assert.equal(pool.cats.length, 0, 'the six built-ins need no registry row');
+  assert.equal(pool.store[0].value, 'bug');
+});
+
+test('castVote: re-typing a category in different casing reuses the row + keeps the first label', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 7, 'category', 'performance', 100, [], 'Performance');
+  // A second user types it LOUDLY on another card — same slug, so no second
+  // row, and the original display casing survives.
+  await attrs.castVote(pool, 1, 'issue', 8, 'category', 'performance', 200, [], 'PERFORMANCE');
+  assert.equal(pool.cats.length, 1, 'no duplicate registry row');
+  assert.equal(pool.cats[0].label, 'Performance', 'first typed label wins');
+});
+
+test('castVote: the same category is per-app — two apps get their own row', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 7, 'category', 'performance', 100, [], 'Performance');
+  await attrs.castVote(pool, 2, 'issue', 7, 'category', 'performance', 100, [], 'Performance');
+  assert.equal(pool.cats.length, 2, 'a custom category never leaks between apps');
+  assert.deepEqual(pool.cats.map((c) => c.app_id), [1, 2]);
+});
+
+test('ensureCategory: rejects a NEW slug at the per-app cap, still allows existing ones', async () => {
+  const pool = makeMockPool();
+  for (let i = 0; i < attrs.MAX_CUSTOM_CATEGORIES_PER_APP; i += 1) {
+    await attrs.castVote(pool, 1, 'issue', 7, 'category', `custom ${i}`, 100 + i, [], `custom ${i}`);
+  }
+  assert.equal(pool.cats.length, attrs.MAX_CUSTOM_CATEGORIES_PER_APP);
+
+  await assert.rejects(
+    () => attrs.castVote(pool, 1, 'issue', 7, 'category', 'one too many', 999, [], 'One too many'),
+    (err) => err.message === attrs.CATEGORY_CAP_ERROR,
+    'a brand-new slug is refused at the cap'
+  );
+  assert.equal(pool.cats.length, attrs.MAX_CUSTOM_CATEGORIES_PER_APP, 'nothing was registered');
+
+  // Voting for an ALREADY-registered option must keep working at the cap.
+  await attrs.castVote(pool, 1, 'issue', 9, 'category', 'custom 0', 999, [], 'custom 0');
+  assert.ok(pool.store.some((r) => r.target_ref === 9 && r.value === 'custom 0'));
+
+  // Another app is unaffected by app 1 being full.
+  await attrs.castVote(pool, 2, 'issue', 7, 'category', 'fresh', 999, [], 'Fresh');
+  assert.ok(pool.cats.some((c) => c.app_id === 2 && c.slug === 'fresh'));
+});
+
+test('listCategories: built-ins first, then customs in creation order', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 7, 'category', 'performance', 100, [], 'Performance');
+  await attrs.castVote(pool, 1, 'issue', 8, 'category', 'onboarding', 101, [], 'Onboarding');
+
+  const list = await attrs.listCategories(pool, 1);
+  assert.deepEqual(
+    list.slice(0, 6).map((c) => c.value),
+    attrs.CATEGORY_VALUES,
+    'the six built-ins lead, in their fixed order'
+  );
+  assert.ok(list.slice(0, 6).every((c) => c.custom === false));
+  assert.deepEqual(
+    list.slice(6).map((c) => ({ value: c.value, label: c.label, custom: c.custom })),
+    [
+      { value: 'performance', label: 'Performance', custom: true },
+      { value: 'onboarding', label: 'Onboarding', custom: true },
+    ],
+    'customs follow, oldest-first, carrying their display label'
+  );
+});
+
+test('listCategories: is scoped to one app', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 7, 'category', 'app-one-only', 100, [], 'App one only');
+  const other = await attrs.listCategories(pool, 2);
+  assert.deepEqual(other.map((c) => c.value), attrs.CATEGORY_VALUES, 'app 2 sees built-ins only');
+});
+
+test('listCategories: self-heals a category that has votes but no registry row', async () => {
+  const pool = makeMockPool();
+  // Simulate a vote whose registry row is gone (manual DB cleanup, or a row
+  // written before #780) by writing the vote directly.
+  pool.store.push({
+    app_id: 1, target_type: 'issue', target_ref: 7, field: 'category',
+    value: 'orphaned', user_id: 100, created_at: new Date().toISOString(),
+  });
+  const list = await attrs.listCategories(pool, 1);
+  const orphan = list.find((c) => c.value === 'orphaned');
+  assert.ok(orphan, 'a value a chip can display is always listed in the picker');
+  assert.equal(orphan.custom, true);
+  // Built-in values in use are NOT duplicated into the tail.
+  pool.store.push({
+    app_id: 1, target_type: 'issue', target_ref: 8, field: 'category',
+    value: 'bug', user_id: 101, created_at: new Date().toISOString(),
+  });
+  const again = await attrs.listCategories(pool, 1);
+  assert.equal(again.filter((c) => c.value === 'bug').length, 1);
+});
+
+test('a custom category tallies + wins the chip exactly like a built-in', async () => {
+  const pool = makeMockPool();
+  await attrs.castVote(pool, 1, 'issue', 7, 'category', 'performance', 1, [], 'Performance');
+  await attrs.castVote(pool, 1, 'issue', 7, 'category', 'performance', 2, [], 'Performance');
+  await attrs.castVote(pool, 1, 'issue', 7, 'category', 'bug', 3, [], 'bug');
+
+  const map = await attrs.summarizeForTargets(pool, 1, 'issue', [7], 3);
+  assert.equal(map.get(7).category.top, 'performance', 'custom (2) beats built-in (1)');
+  assert.equal(map.get(7).category.count, 2);
+  assert.equal(map.get(7).category.myValue, 'bug');
+
+  const opts = await attrs.listOptions(pool, 1, 'issue', 7, 'category', 3);
+  assert.equal(opts.options[0].value, 'performance');
+  assert.ok(opts.options.find((o) => o.value === 'bug').mine);
 });
 
 // ── #639: proposal inheritance from linked issue(s) ────────────────────
@@ -422,6 +632,101 @@ test('DELETE withdraws the caller\'s assignee vote (drag-to-Unassigned)', async 
   assert.equal(bad.status, 400);
 });
 
+// ── #780: custom categories over HTTP ──────────────────────────────────
+
+test('POST rejects a category that is empty, punctuation-only, or over-long', async () => {
+  for (const value of ['', '   ', '---', 'x'.repeat(25)]) {
+    const r = await fetch(`${base}/api/apps/demo/topics/issue/60/attributes`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field: 'category', value }),
+    });
+    assert.equal(r.status, 400, `rejected ${JSON.stringify(value)}`);
+    const body = await r.json();
+    assert.match(body.error, /Category must be 1–24 characters/);
+  }
+});
+
+test('POST a typed category registers it and returns the app vocabulary', async () => {
+  const r = await fetch(`${base}/api/apps/demo/topics/issue/61/attributes`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field: 'category', value: '  Developer Experience ' }),
+  });
+  assert.equal(r.status, 200);
+  const body = await r.json();
+  // The vote landed on the normalized slug; the chip reads the label.
+  assert.equal(body.myValue, 'developer experience');
+  assert.ok(Array.isArray(body.categories), 'POST carries the vocabulary');
+  const added = body.categories.find((c) => c.value === 'developer experience');
+  assert.deepEqual(
+    { label: added.label, custom: added.custom },
+    { label: 'Developer Experience', custom: true },
+    'trimmed, whitespace-collapsed, typed casing kept'
+  );
+  assert.deepEqual(
+    body.categories.slice(0, 6).map((c) => c.value),
+    attrs.CATEGORY_VALUES,
+    'built-ins still lead the list'
+  );
+
+  // GET the same card's category options — the vocabulary rides along there
+  // too, so opening the dropdown self-heals a stale FE cache.
+  const get = await fetch(`${base}/api/apps/demo/topics/issue/61/attributes?field=category`).then((x) => x.json());
+  assert.ok(get.categories.some((c) => c.value === 'developer experience'));
+  assert.equal(get.myValue, 'developer experience');
+});
+
+test('GET/POST carry `categories` ONLY for the category field', async () => {
+  const get = await fetch(`${base}/api/apps/demo/topics/issue/61/attributes?field=priority`).then((x) => x.json());
+  assert.equal(get.categories, undefined, 'priority GET has no vocabulary');
+  const post = await fetch(`${base}/api/apps/demo/topics/issue/61/attributes`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field: 'assignee', value: 'someone' }),
+  }).then((x) => x.json());
+  assert.equal(post.categories, undefined, 'assignee POST has no vocabulary');
+});
+
+test('GET /topic-categories returns the vocabulary; 404 for an inaccessible app', async () => {
+  const r = await fetch(`${base}/api/apps/demo/topic-categories`);
+  assert.equal(r.status, 200);
+  const { categories } = await r.json();
+  assert.deepEqual(categories.slice(0, 6).map((c) => c.value), attrs.CATEGORY_VALUES);
+  assert.ok(categories.every((c) => typeof c.label === 'string' && typeof c.custom === 'boolean'));
+
+  // The route is view-gated through the same helper as the attributes GET.
+  const orig = appAccess.getAppForUser;
+  appAccess.getAppForUser = async () => null;
+  try {
+    const denied = await fetch(`${base}/api/apps/nope/topic-categories`);
+    assert.equal(denied.status, 404);
+  } finally {
+    appAccess.getAppForUser = orig;
+  }
+});
+
+test('POST returns a distinct 400 (not a 500) once the app is at its category cap', async () => {
+  // Fill app 1's registry straight through the service, then let the route
+  // hit the cap so the error mapping is what's under test.
+  const pool = poolMod.getPool();
+  while (pool.cats.filter((c) => c.app_id === 1).length < attrs.MAX_CUSTOM_CATEGORIES_PER_APP) {
+    const n = pool.cats.length;
+    await attrs.ensureCategory(pool, 1, { slug: `filler ${n}`, label: `Filler ${n}` }, 100);
+  }
+  const r = await fetch(`${base}/api/apps/demo/topics/issue/62/attributes`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field: 'category', value: 'one too many' }),
+  });
+  assert.equal(r.status, 400, 'a user error, not a server fault');
+  const body = await r.json();
+  assert.match(body.error, /maximum of 24 custom categories/);
+
+  // Voting for a BUILT-IN still works at the cap (no registry row needed).
+  const builtin = await fetch(`${base}/api/apps/demo/topics/issue/62/attributes`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ field: 'category', value: 'bug' }),
+  });
+  assert.equal(builtin.status, 200);
+});
+
 // ── 3. Source guards ───────────────────────────────────────────────────
 test('feed routes attach the priority/assignee/category summary', () => {
   const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
@@ -450,6 +755,98 @@ test('card renderer emits the three chips (priority, category, assignee)', () =>
   assert.match(fe, /_attrChipHtml\('category'/, 'the category chip is rendered');
   assert.match(fe, /ATTR_CATEGORY_VALUES: \['feature', 'bug', 'improvement', 'design', 'docs', 'chore'\]/,
     'FE category vocabulary mirrors the service CATEGORY_VALUES');
+});
+
+// #780: the category dropdown gained a free-text box, a "Custom" block for
+// the app's registered options, and — because those labels are USER INPUT —
+// escaping on every label interpolation.
+test('category dropdown offers a text box + the app custom block', () => {
+  const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
+  assert.match(fe, /id="attr-category-input"/, 'the type-a-category box exists');
+  assert.match(fe, /maxlength="\$\{AppView\.ATTR_CATEGORY_MAX_LEN\}"/,
+    'the box caps typed length from the mirrored constant');
+  assert.match(fe, /ATTR_CATEGORY_MAX_LEN: 24/, 'FE cap mirrors the service MAX_CATEGORY_LEN');
+  assert.match(fe, /id="attr-category-add"/, 'the Add button exists');
+  assert.match(fe, /attr-pop-head-divided">Custom</, 'customs sit under a divided "Custom" heading');
+  assert.match(fe, /_customCategories\(\)/, 'the custom block reads the app vocabulary');
+
+  // The vocabulary is loaded once per Dev mount and refreshed from the
+  // GET/POST payloads, so a just-typed category can be labelled immediately.
+  assert.match(fe, /_loadAppCategories\(\)/, 'Dev data load fetches the vocabulary');
+  assert.match(fe, /topic-categories/, 'hits the vocabulary endpoint');
+  assert.match(fe, /_setAppCategories\(data\.categories\)/, 'a cast adopts the refreshed vocabulary');
+
+  // Escaping: custom labels are user-supplied, so both the chip and the
+  // dropdown row must run them through escapeHtml.
+  assert.match(fe, /<span class="attr-dot \$\{meta\.cls\}"><\/span>\$\{escapeHtml\(meta\.label\)\}/,
+    'category chip escapes its label');
+  assert.match(fe, /escapeHtml\(meta\.label\)/, 'popover rows escape the label');
+  assert.match(fe, /`<option value="\$\{escapeAttr\(v\)\}"/, 'filter options escape the value attribute');
+
+  // _categoryMeta must resolve unknown (custom) slugs rather than returning
+  // null — every caller dereferences the result.
+  assert.match(fe, /_categoryTint\(/, 'custom categories get a deterministic tint');
+  assert.match(fe, /CATEGORY_CUSTOM_TINTS/, 'a dedicated custom-category palette exists');
+
+  // The filter bar is vocabulary-driven, and refreshes after a repaint.
+  assert.match(fe, /_kanbanCategoryOptionsHtml\(\)/, 'the category filter is vocabulary-driven');
+  assert.match(fe, /catSel\.innerHTML = AppView\._kanbanCategoryOptionsHtml\(\)/,
+    'the category select is rebuilt after a repaint so new options appear');
+});
+
+// #780: _categoryMeta must never return null for a non-empty slug — chips,
+// the popover and the filter bar all dereference it directly.
+test('_categoryMeta resolves custom slugs (label + tint), null only for empty', () => {
+  const fe = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app-view.js'), 'utf-8');
+  // Evaluate the two helpers in isolation against a stubbed vocabulary.
+  const metaSrc = fe.slice(fe.indexOf('  _categoryTint(slug) {'));
+  const body = metaSrc.slice(0, metaSrc.indexOf('\n  // #780: the custom half'));
+  const AppView = { CATEGORY_CUSTOM_TINTS: [{ cls: 'c1', hover: 'h1' }, { cls: 'c2', hover: 'h2' }] };
+  // eslint-disable-next-line no-new-func
+  const build = new Function('AppView', `return { ${body} };`);
+  Object.assign(AppView, build(AppView));
+  AppView._appCategories = [{ value: 'dev experience', label: 'Dev Experience', custom: true }];
+
+  assert.equal(AppView._categoryMeta('bug').label, 'Bug', 'built-ins keep their fixed label');
+  const known = AppView._categoryMeta('dev experience');
+  assert.equal(known.label, 'Dev Experience', 'registered label wins');
+  assert.ok(known.cls && known.hover, 'custom slugs still get colour classes');
+  // Not yet in the cache → title-cased fallback, never null.
+  assert.equal(AppView._categoryMeta('performance').label, 'Performance');
+  assert.equal(AppView._categoryMeta(null), null, 'only an empty value is null');
+  // Deterministic: the same slug always resolves to the same tint.
+  assert.equal(AppView._categoryMeta('performance').cls, AppView._categoryMeta('performance').cls);
+});
+
+// #780: staging must seed the custom-category UI — app_topic_categories is
+// created by this change, so it lands EMPTY in every staging clone.
+test('staging seeds a custom-category vocabulary + cards using it', () => {
+  const svc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'topic-attributes.js'), 'utf-8');
+  assert.match(svc, /IS_STAGING = process\.env\.USERNODE_ENV === 'staging'/, 'staging gate is the canonical helper');
+  assert.match(svc, /Staging demo perf/, 'a demo custom category is appended in staging');
+  assert.match(svc, /Staging demo onboarding/, 'and a second one');
+
+  // One mock ISSUE and one mock PROPOSAL carry a custom category, so the
+  // chip colour + the filter narrowing are reviewable on both card types.
+  const issuesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'issues.js'), 'utf-8');
+  assert.match(issuesSrc, /category: \{ top: 'staging demo perf'/, 'a mock issue leads with a custom category');
+  const votesSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'routes', 'votes.js'), 'utf-8');
+  assert.match(votesSrc, /category: \{ top: 'staging demo onboarding'/, 'a mock proposal too');
+});
+
+// #780: the registry table must exist and stay staging-copyable (like
+// topic_attribute_votes) — a private marker would empty it in previews.
+test('app_topic_categories is declared idempotently and is NOT staging:private', () => {
+  const schema = fs.readFileSync(path.join(__dirname, '..', 'src', 'db', 'schema.sql'), 'utf-8');
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS app_topic_categories/, 'idempotent create');
+  assert.match(schema, /UNIQUE\(app_id, slug\)/, 'one row per (app, slug) — the dedupe key');
+  assert.match(schema, /app_id\s+INTEGER NOT NULL REFERENCES apps\(id\) ON DELETE CASCADE/,
+    'scoped to one app, cleaned up with it');
+  assert.doesNotMatch(
+    schema,
+    /COMMENT ON TABLE app_topic_categories IS 'staging:private'/,
+    'the taxonomy is a shared signal — it must copy into staging'
+  );
 });
 
 // #600: the assignee dropdown pre-fills the name box with the viewer's own

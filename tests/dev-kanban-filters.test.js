@@ -179,6 +179,53 @@ test('category filter composes with priority, assignee and search', () => {
   assert.equal(AppView._devCardMatches('proposal', card, { ...f, category: 'bug' }), false);
 });
 
+// #780: custom categories are per-app options stored as ordinary slugs, so
+// the predicate needs no special case — filtering by one just works.
+test('category filter matches a CUSTOM category slug like a built-in', () => {
+  const AppView = makeAppView();
+  const f = { ...none, category: 'dev experience' };
+  assert.equal(AppView._devCardMatches('issue', issue({ category: { top: 'dev experience', count: 2 } }), f), true);
+  assert.equal(AppView._devCardMatches('proposal', prop({ category: { top: 'dev experience', count: 1 } }), f), true);
+  assert.equal(AppView._devCardMatches('issue', issue({ category: { top: 'bug', count: 5 } }), f), false);
+});
+
+// #780: the filter dropdown is built from the app's vocabulary — built-ins
+// first, then customs — instead of the hardcoded six.
+test('category filter options list built-ins then the app custom categories', () => {
+  const AppView = makeAppView();
+  AppView._kanbanFilters = { ...none };
+  AppView._appCategories = [
+    ...AppView.ATTR_CATEGORY_VALUES.map((v) => ({ value: v, label: v, custom: false })),
+    { value: 'dev experience', label: 'Dev Experience', custom: true },
+    { value: 'performance', label: 'Performance', custom: true },
+  ];
+  const html = AppView._kanbanCategoryOptionsHtml();
+  assert.match(html, /<option value="">Any category<\/option>/, 'the any-category default leads');
+  // Built-ins keep their fixed display labels and come first.
+  const order = [...html.matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(
+    order,
+    ['', ...AppView.ATTR_CATEGORY_VALUES, 'dev experience', 'performance'],
+    'built-ins precede the customs, in registry order'
+  );
+  assert.match(html, /Dev Experience/, 'a custom option shows its registered label');
+
+  // With no vocabulary loaded it degrades to built-ins only (pre-#780 view).
+  AppView._appCategories = null;
+  const bare = [...AppView._kanbanCategoryOptionsHtml().matchAll(/<option value="([^"]*)"/g)].map((m) => m[1]);
+  assert.deepEqual(bare, ['', ...AppView.ATTR_CATEGORY_VALUES]);
+});
+
+// Mirrors the assignee select's rule: an active selection is never dropped
+// from the list, so a filter can't silently self-clear on a refresh.
+test('category filter keeps an active selection that left the vocabulary', () => {
+  const AppView = makeAppView();
+  AppView._appCategories = null;
+  AppView._kanbanFilters = { ...none, category: 'retired category' };
+  const html = AppView._kanbanCategoryOptionsHtml();
+  assert.match(html, /<option value="retired category" selected>/, 'the active filter survives');
+});
+
 test('assignee filter matches the top-voted assignee; unassigned cards fail', () => {
   const AppView = makeAppView();
   const f = { ...none, assignee: 'sam' };
