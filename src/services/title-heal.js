@@ -80,7 +80,9 @@ async function healPrTitles(pool, { limit = 5 } = {}) {
         pushVoteUpdate({ sessionId: session.id, appId: session.app_id, appSlug: session.heal_app_slug, merged: false });
       }
     } catch (err) {
-      log.warn('title-heal', 'PR title heal attempt failed', { sessionId: session.id, err: err.message });
+      log.warn('title-heal', 'PR title heal attempt failed', {
+        sessionId: session.id, code: err.code || null, ...github.describeGithubError(err),
+      });
     }
   }
   return { scanned: rows.length, healed };

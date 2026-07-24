@@ -653,3 +653,40 @@ test('existing PR makes no GitHub call when summary (and everything else) is unc
     restore();
   }
 });
+
+// ---- 2026-07-24 outage: GitHub-side create-PR failures are typed ----
+//
+// createPR (after its internal retries) throws code 'github_unavailable'
+// when GitHub itself is failing. applyPrMetadata must re-throw it — like
+// no_commits — so the promote route / turn-end path can tell the user the
+// truth ("GitHub-side, wait a few minutes") instead of the generic
+// "re-run your request", while every other failure stays best-effort.
+
+test('applyPrMetadata re-throws createPR "github_unavailable" for honest caller handling', async () => {
+  const githubCalls = [];
+  const unavailable = async () => {
+    const e = new Error('GitHub failed to create the PR for acme:feat/x after 3 attempts (HTTP 500, request id AB36:1).');
+    e.code = 'github_unavailable';
+    e.status = 500;
+    e.requestId = 'AB36:1';
+    throw e;
+  };
+  const { subject, restore } = loadWithStubs({
+    onGenerate: () => {}, githubCalls, createPR: unavailable,
+  });
+  try {
+    const pool = mockPool([{ role: 'user', content: 'x', metadata: {} }]);
+    const session = { id: 1, branch_name: 'feat/x', pr_number: null };
+    await assert.rejects(
+      subject.applyPrMetadata({
+        pool, session, repoOwner: 'acme', repoName: 'app',
+        userMessage: 'x', ccSummary: 'y', username: 'evan',
+      }),
+      (err) => err && err.code === 'github_unavailable' && err.status === 500,
+      'the typed github_unavailable error propagates to the caller'
+    );
+    assert.equal(session.pr_number, null, 'no PR was persisted');
+  } finally {
+    restore();
+  }
+});
