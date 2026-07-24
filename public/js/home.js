@@ -747,10 +747,28 @@ const Home = {
       });
     });
     if (Home._useKitReorder()) {
-      // Kit reorder on the widget tiles (same flag as the card grid).
+      // Kit reorder on the widget tiles (same flag as the card grid), in
+      // the kit's grid (displacement) mode — the list model's Y-only
+      // ghost and drop line are degenerate for a one-row tile strip
+      // (issue #770). onLift/onSettle hold _dragActive so a WS-driven
+      // Home.load() can't replace the strip mid-gesture (same guard as
+      // the card grid above).
       if (Home._widgetReorderHandle) { try { Home._widgetReorderHandle.detach(); } catch {} }
       Home._widgetReorderHandle = window.unNative.attachReorder(strip, {
+        grid: true,
         itemSelector: '.widget-tile',
+        onLift: () => { Home._dragActive = true; },
+        onSettle: () => {
+          Home._dragActive = false;
+          if (Home._reloadPending) {
+            Home._reloadPending = false;
+            Home._rerenderPending = false;
+            Home.load();
+          } else if (Home._rerenderPending) {
+            Home._rerenderPending = false;
+            Home.render();
+          }
+        },
         onReorder: () => { Home._saveWidgetOrder(strip); },
       });
     } else {
