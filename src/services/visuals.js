@@ -28,10 +28,19 @@ const caddy = require('./caddy');
 const prMetadata = require('./pr-metadata');
 const sessionBus = require('./session-bus');
 const appManifest = require('./app-manifest');
-const { CAPTURE_MAX_PATHS } = require('./testing-notes');
+const { CAPTURE_MAX_PATHS, normalizeStoredPath, VIEWPORT_MOBILE } = require('./testing-notes');
 const { getPool } = require('../db/pool');
 
 const CAPTURE_IMAGE = 'usernode-capture:latest';
+
+// Pixel frame for a `@mobile`-annotated capture path (#768) — an
+// iPhone-14-class portrait viewport, passed per-target to the capture
+// container. Desktop targets omit the field and get the container's
+// fixed 1280x800 default. The label→pixels mapping lives here (not in
+// capture/) so the container stays a dumb executor of resolved targets;
+// deviceScaleFactor stays governed by the app's screenshot_device_scale
+// setting for both frames.
+const MOBILE_VIEWPORT = { width: 390, height: 844 };
 
 // Dedicated capture identity (seeded by src/db/migrate.js). A non-admin
 // service account so the public artifacts (/visuals/:id is unauthenticated;
@@ -525,33 +534,42 @@ function consoleSnapshotFromTests(result) {
 
 // ── Storage ────────────────────────────────────────────────────────────
 // Client shape (#270): an ordered list of capture groups —
-//   { captures: [ { index, path, before: {png,webm,gif}, after: {...} } ] }
-// one group per captured route, ascending by capture_index. A group is
-// only kept when it has an "after" artifact (nothing to show otherwise).
+//   { captures: [ { index, path, viewport, before: {png,webm,gif}, after: {...} } ] }
+// one group per captured route, ascending by capture_index; `viewport` is
+// 'mobile' for a `@mobile`-annotated route (#768), null otherwise. A group
+// is only kept when it has an "after" artifact (nothing to show otherwise).
 // A single-route proposal yields a one-element list, so the common case is
 // unchanged in substance — just wrapped. Renderers (pr-metadata.js,
 // app-view.js) iterate `captures` and label each row with its `path`.
 
-// Assemble rows ([{kind, media, capture_index, captured_path, id}]) into
-// the ordered { captures: [...] } shape. Groups missing an "after" are
-// dropped. Shared by storeArtifacts / getForSession / shapeAgg so all
-// three surfaces emit byte-identical shapes.
+// Assemble rows ([{kind, media, capture_index, captured_path,
+// captured_viewport, id}]) into the ordered { captures: [...] } shape.
+// Groups missing an "after" are dropped. Shared by storeArtifacts /
+// getForSession / shapeAgg so all three surfaces emit byte-identical
+// shapes. Each group's `viewport` is the label it was shot at ('mobile'
+// for a `@mobile` path, #768) or null for the desktop default — pre-#768
+// rows carry no viewport and land on null.
 function groupRows(rows) {
   const byIndex = new Map();
   for (const r of rows) {
     const idx = Number.isInteger(r.index) ? r.index : (parseInt(r.capture_index, 10) || 0);
     let g = byIndex.get(idx);
-    if (!g) { g = { index: idx, path: null }; byIndex.set(idx, g); }
+    if (!g) { g = { index: idx, path: null, viewport: null }; byIndex.set(idx, g); }
     if (!g[r.kind]) g[r.kind] = {};
     g[r.kind][r.media] = r.id;
     const p = r.path || r.captured_path;
     if (p && !g.path) g.path = p;
+    const vp = r.viewport || r.captured_viewport;
+    if (vp && !g.viewport) g.viewport = vp;
   }
   const captures = [];
   for (const idx of Array.from(byIndex.keys()).sort((a, b) => a - b)) {
     const g = byIndex.get(idx);
     if (!g.after) continue; // nothing to show without an "after"
-    captures.push({ index: g.index, path: g.path || '/', before: g.before || null, after: g.after });
+    captures.push({
+      index: g.index, path: g.path || '/', viewport: g.viewport || null,
+      before: g.before || null, after: g.after,
+    });
   }
   return captures.length ? { captures } : null;
 }
@@ -565,7 +583,11 @@ function groupRows(rows) {
 // nothing usable was stored (no group has an "after").
 async function storeArtifacts(pool, sessionId, commitHash, targets, shots) {
   const pathByIndex = new Map();
-  for (const t of (Array.isArray(targets) ? targets : [])) pathByIndex.set(t.index, t.path);
+  const viewportByIndex = new Map();
+  for (const t of (Array.isArray(targets) ? targets : [])) {
+    pathByIndex.set(t.index, t.path);
+    if (t.viewport) viewportByIndex.set(t.index, t.viewport);
+  }
 
   const rows = [];
   for (const s of shots) {
@@ -580,6 +602,7 @@ async function storeArtifacts(pool, sessionId, commitHash, targets, shots) {
       id: crypto.randomBytes(16).toString('hex'),
       index,
       capturedPath: pathByIndex.has(index) ? pathByIndex.get(index) : null,
+      capturedViewport: viewportByIndex.get(index) || null,
       ...s,
     });
   }
@@ -591,9 +614,9 @@ async function storeArtifacts(pool, sessionId, commitHash, targets, shots) {
     await client.query('DELETE FROM session_visuals WHERE session_id = $1', [sessionId]);
     for (const r of rows) {
       await client.query(
-        `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-        [r.id, sessionId, commitHash || null, r.kind, r.media, CONTENT_TYPES[r.media], r.buf, r.capturedPath || null, r.index]
+        `INSERT INTO session_visuals (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [r.id, sessionId, commitHash || null, r.kind, r.media, CONTENT_TYPES[r.media], r.buf, r.capturedPath || null, r.index, r.capturedViewport]
       );
     }
     await client.query('COMMIT');
@@ -605,7 +628,8 @@ async function storeArtifacts(pool, sessionId, commitHash, targets, shots) {
   }
 
   return groupRows(rows.map((r) => ({
-    kind: r.kind, media: r.media, id: r.id, index: r.index, captured_path: r.capturedPath,
+    kind: r.kind, media: r.media, id: r.id, index: r.index,
+    captured_path: r.capturedPath, captured_viewport: r.capturedViewport,
   })));
 }
 
@@ -616,7 +640,7 @@ async function storeArtifacts(pool, sessionId, commitHash, targets, shots) {
 // they collapse into a single legacy group — back-compatible by default.
 async function getForSession(pool, sessionId) {
   const { rows } = await pool.query(
-    `SELECT id, kind, media, captured_path, capture_index FROM session_visuals WHERE session_id = $1`,
+    `SELECT id, kind, media, captured_path, capture_index, captured_viewport FROM session_visuals WHERE session_id = $1`,
     [sessionId]
   );
   if (!rows.length) return null;
@@ -831,8 +855,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // access model waitForHealthy uses, bypassing Caddy's forward-auth
     // gate. The capture routes are the validated testing_paths list
     // (#270), falling back to [testing_path || '/'] for pre-#270 rows;
-    // deduped (preserving order), capped at CAPTURE_MAX_PATHS, always
-    // non-empty (a change with nothing to point at still shoots '/').
+    // each entry normalized to { path, viewport } (#768 — pre-#768 rows
+    // hold plain strings), deduped by path+viewport (preserving order),
+    // capped at CAPTURE_MAX_PATHS, always non-empty (a change with
+    // nothing to point at still shoots '/').
     const capturePaths = (() => {
       const raw = (Array.isArray(session.testing_paths) && session.testing_paths.length)
         ? session.testing_paths
@@ -840,13 +866,15 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       const seen = new Set();
       const out = [];
       for (const p of raw) {
-        const v = (typeof p === 'string' && p) ? p : null;
-        if (!v || seen.has(v)) continue;
-        seen.add(v);
+        const v = normalizeStoredPath(p);
+        if (!v) continue;
+        const key = `${v.viewport} ${v.path}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
         out.push(v);
         if (out.length >= CAPTURE_MAX_PATHS) break;
       }
-      return out.length ? out : ['/'];
+      return out.length ? out : [normalizeStoredPath('/')];
     })();
 
     const stagingName = `usernode-staging-${app.slug}--${session.id}`;
@@ -891,7 +919,13 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // of the home feed. For a fragment target the server pathname is
     // always '/', so prod never 404s on a deep page — the '/' fallback is
     // moot and skipped (the bare-'/' and standalone-page cases keep it).
-    const targets = capturePaths.map((p, index) => {
+    //
+    // #768: a `@mobile`-annotated path carries the viewport label (stored
+    // as the group's captured_viewport) plus the resolved pixel frame the
+    // capture container applies to both sides of that target's pair.
+    const targets = capturePaths.map((entry, index) => {
+      const p = entry.path;
+      const mobile = entry.viewport === VIEWPORT_MOBILE;
       const visitPath = isSelfApp ? selfAppHashPath(p) : p;
       const isFragmentTarget = visitPath.startsWith('/#');
       const afterUrl = withToken(`http://${stagingName}:3000${visitPath}`, screenshotToken);
@@ -908,6 +942,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }
       return {
         index, path: p, afterUrl, beforeUrl, beforeFallbackUrl,
+        viewport: mobile ? VIEWPORT_MOBILE : null,
+        viewportPixels: mobile ? MOBILE_VIEWPORT : null,
         beforeCookie: (beforeUrl && isSelfApp) ? beforeCookie : '',
         // Plumbed for symmetry; unused today (the after side always
         // authenticates via the query token).
@@ -943,7 +979,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const declaredTests = await resolveDeclaredTests(repoOwner, repoName, session.branch_name);
     const tests = (declaredTests.length
       ? declaredTests
-      : capturePaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false }))
+      : capturePaths.map((e) => ({ name: `Loads ${e.path}`, path: e.path, expectSelector: '', expectText: '', allowConsoleErrors: false }))
     ).map((t, index) => {
       const visitPath = isSelfApp ? selfAppHashPath(t.path) : t.path;
       return {
@@ -960,7 +996,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     });
 
     log.info('visuals', 'Starting capture', {
-      sessionId: session.id, slug: app.slug, before: media && prodRunning, paths: capturePaths,
+      sessionId: session.id, slug: app.slug, before: media && prodRunning,
+      paths: capturePaths.map((e) => (e.viewport === VIEWPORT_MOBILE ? `${e.path} @mobile` : e.path)),
       authenticated: !!captureToken, selfApp: isSelfApp, deviceScaleFactor, media,
       tests: tests.length, declaredTests: declaredTests.length,
     });
@@ -970,7 +1007,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         image: CAPTURE_IMAGE,
         env: {
           // Multi-target protocol (#270). The container loops over these
-          // sequentially and tags each shot frame with its index=.
+          // sequentially and tags each shot frame with its index=. The
+          // optional per-target `viewport` (#768) is the resolved pixel
+          // frame ({ width, height }) for a `@mobile` path; absent →
+          // the container's desktop default. An older capture image
+          // ignores the extra field (desktop shot) — graceful rolling
+          // deploy, same stance as the scalar fallback below.
           TARGETS: JSON.stringify(targets.map((t) => ({
             index: t.index,
             beforeUrl: t.beforeUrl,
@@ -978,6 +1020,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
             beforeFallbackUrl: t.beforeFallbackUrl,
             beforeCookie: t.beforeCookie,
             afterCookie: t.afterCookie,
+            viewport: t.viewportPixels || undefined,
           }))),
           // Scalar single-target fallback (first target) so an older
           // capture image still works during a rolling platform deploy.
@@ -1211,4 +1254,5 @@ module.exports = {
   beforeContainerName,
   resolveCaptureScale,
   CAPTURE_IMAGE,
+  MOBILE_VIEWPORT,
 };

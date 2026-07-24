@@ -60,3 +60,24 @@ test('build prompt cross-references the escalation heading by name', () => {
     'sessions.js build prompt must reference the escalation section by its current heading'
   );
 });
+
+test('conventions doc carries the screenshot-state deep-link section (#768)', () => {
+  const doc = getAppConventions();
+  assert.match(doc, /^### Make the changed screen URL-reachable — screenshot-state deep links$/m);
+  // The @mobile annotation is documented alongside it — the capture
+  // pipeline parses it (testing-notes.js), so the doc must keep teaching it.
+  assert.match(doc, /@mobile/);
+  // The build prompt cross-references the section by name, so the
+  // heading's first half is load-bearing.
+  const sessions = fs.readFileSync(
+    path.join(__dirname, '..', 'src', 'routes', 'sessions.js'), 'utf8'
+  );
+  assert.ok(
+    sessions.includes('"Make the changed screen URL-reachable"'),
+    'sessions.js TESTING rules must reference the deep-link section by its current heading'
+  );
+  assert.ok(
+    sessions.includes('@mobile'),
+    'sessions.js TESTING rules must document the @mobile annotation'
+  );
+});

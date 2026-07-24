@@ -2833,6 +2833,8 @@ async function seedStagingVisuals(pool) {
   // staging, and carries a webm (+ PNG poster) per side so the comparison
   // overlay's video branch is exercised too.
   const SELF_APP_DEEP_PATH = '/app/social-vibecoding/dev/proposals/900301';
+  // Group 3 (#768) re-captures '/board' with captured_viewport 'mobile' so
+  // the "(mobile)" group label is visible/testable in staging.
   const rows = [
     { id: 'a'.repeat(32), kind: 'before', media: 'png',  idx: 0, path: '/' },
     { id: 'b'.repeat(32), kind: 'after',  media: 'png',  idx: 0, path: '/' },
@@ -2842,25 +2844,29 @@ async function seedStagingVisuals(pool) {
     { id: 'f'.repeat(32), kind: 'before', media: 'webm', idx: 2, path: SELF_APP_DEEP_PATH },
     { id: '0'.repeat(32), kind: 'after',  media: 'png',  idx: 2, path: SELF_APP_DEEP_PATH },
     { id: '1'.repeat(32), kind: 'after',  media: 'webm', idx: 2, path: SELF_APP_DEEP_PATH },
+    { id: '2'.repeat(32), kind: 'before', media: 'png',  idx: 3, path: '/board', viewport: 'mobile' },
+    { id: '3'.repeat(32), kind: 'after',  media: 'png',  idx: 3, path: '/board', viewport: 'mobile' },
   ];
 
   try {
     // Point the demo session's testing_paths at the captured routes so the
-    // persisted annotation matches the seeded capture groups.
+    // persisted annotation matches the seeded capture groups. Mixes the
+    // legacy string form with the #768 { path, viewport } object form so
+    // the stored-row back-compat path stays exercised in staging.
     await pool.query(
       `UPDATE chat_sessions SET testing_paths = $1::jsonb
          WHERE id = $2 AND testing_paths IS NULL`,
-      [JSON.stringify(['/', '/board', SELF_APP_DEEP_PATH]), DEMO_SESSION_ID]
+      [JSON.stringify(['/', '/board', SELF_APP_DEEP_PATH, { path: '/board', viewport: 'mobile' }]), DEMO_SESSION_ID]
     );
     for (const r of rows) {
       const data = r.media === 'webm' ? WEBM_PLACEHOLDER : PNG_1X1;
       await pool.query(
         `INSERT INTO session_visuals
-           (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index)
-         SELECT $1, $2, NULL, $3, $4, $5, $6, $7, $8
+           (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport)
+         SELECT $1, $2, NULL, $3, $4, $5, $6, $7, $8, $9
           WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2)
          ON CONFLICT (id) DO NOTHING`,
-        [r.id, DEMO_SESSION_ID, r.kind, r.media, CT[r.media], data, r.path, r.idx]
+        [r.id, DEMO_SESSION_ID, r.kind, r.media, CT[r.media], data, r.path, r.idx, r.viewport || null]
       );
     }
     log.info('db', 'Staging multi-path visuals fixtures seeded', { sessionId: DEMO_SESSION_ID });

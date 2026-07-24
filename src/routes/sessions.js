@@ -6265,11 +6265,28 @@ path: /another/changed/view
     this change" button) at the route where the change is visible. Each
     must be a RELATIVE path within the app (starts with "/", no scheme or
     host).
-  - REQUIRED for user-visible changes that are NOT on the app's root: you
-    MUST include at least one "path:" pointing at the view where the change
-    shows up. Otherwise the screenshots default to the home page and show a
-    screen your change never touched. Only omit "path:" when the change
-    genuinely lives on "/" (the home page is the right place to start).
+  - REQUIRED for user-visible changes: you MUST include at least one
+    "path:" pointing at a URL where the change is actually VISIBLE.
+    Otherwise the screenshots default to the home page and show a screen
+    your change never touched. Omit "path:" only when the change genuinely
+    renders on "/" as the page loads.
+  - The screenshots and the button can only NAVIGATE — they never click,
+    play, or fill anything in. If no URL reaches the changed screen
+    (in-game state, a modal/sheet, a wizard step), ADD one: a
+    screenshot-state deep link — a query/hash param the app handles at
+    boot to enter that state deterministically (e.g.
+    "/?shot=settlement-sheet" starts a demo match on a fixed seed and
+    opens the settlement panel) — per the conventions section
+    "Make the changed screen URL-reachable" above. Point "path:" at it, add a
+    dapp.json test asserting it renders, and verify it in the in-loop
+    browser before committing. A "path: /" screenshot of an
+    interaction-gated change is as good as no testing block.
+  - A "path:" line may end with the annotation "@mobile"
+    (whitespace-separated, e.g. "path: /board @mobile") to capture that
+    route in a phone-sized viewport instead of the desktop frame.
+    REQUIRED when the change only shows on narrow screens — the default
+    desktop frame can never show it. The same path may appear once per
+    frame when the change is visible on both.
   - You may give MORE THAN ONE "path:" line (one per line, up to 3,
     captured in the order written) when the change spans several views —
     e.g. a new nav item plus the page it opens. Each becomes its own
