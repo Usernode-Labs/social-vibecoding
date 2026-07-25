@@ -64,7 +64,15 @@ const DevChat = {
   // enough that the busy indicator feels live, slow enough that we
   // don't hammer the cross-app endpoint just because the user is
   // sitting on the dev-chat tab.
-  activeSessions: { sessions: [], totals: { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 } },
+  // `caps` seeds the regular-user denominators so the counter renders
+  // sanely on the very first paint, before the first poll lands; the
+  // server's per-viewer values (raised for full platform admins)
+  // replace them in loadActiveSessions.
+  activeSessions: {
+    sessions: [],
+    totals: { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 },
+    caps: { activeSessions: 3, promotedSessions: 5 },
+  },
   _activePollTimer: null,
 
   // ----- Spec viewer state -----
@@ -365,6 +373,11 @@ const DevChat = {
       DevChat.activeSessions = {
         sessions: Array.isArray(data.sessions) ? data.sessions : [],
         totals: data.totals || { active: 0, promoted: 0, paused: 0, busy: 0, total: 0 },
+        // Per-viewer cap denominators from the server (full platform
+        // admins get raised caps). Falls back to the historical
+        // regular-user numbers so a cached response from an older server
+        // renders "(N/3)" instead of "(N/undefined)".
+        caps: data.caps || { activeSessions: 3, promotedSessions: 5 },
       };
       DevChat.renderActiveSessions();
     } catch {}
@@ -395,19 +408,27 @@ const DevChat = {
     const counter = document.getElementById('dc-active-counter');
     if (!container || !counter) return;
 
-    const { sessions, totals } = DevChat.activeSessions;
+    const { sessions, totals, caps } = DevChat.activeSessions;
     // Counter shows running-vs-cap on the left and the promoted/paused
-    // backlogs on the right. The "/3" denominator is the per-user
-    // active-session cap enforced by /api/apps/:slug/sessions and
-    // /api/sessions/:id/resume — which counts only 'active' sessions
-    // (#193): promoted ones (PR in a merge vote) are un-pausable and
-    // exempt from the cap, so they're surfaced as their own " · N in
-    // vote" segment instead of inflating the numerator. Paused sessions
-    // are unlimited so they're surfaced separately too. Zero-count
-    // segments are omitted to keep the common case clean.
-    const ACTIVE_CAP = 3;
-    const segments = [`(${totals.active}/${ACTIVE_CAP})`];
-    if (totals.promoted > 0) segments.push(`${totals.promoted} in vote`);
+    // backlogs on the right. Both denominators come from the server
+    // (`caps` on /api/me/active-sessions) and are per-viewer — full
+    // platform admins get raised caps — so the display can't drift from
+    // the ceiling actually enforced by /api/apps/:slug/sessions,
+    // /api/sessions/:id/resume and /api/sessions/:id/promote. (It used to
+    // be a hardcoded "/3", which lied the moment an operator retuned
+    // MAX_USER_SESSIONS.)
+    //
+    // The numerator counts only 'active' sessions (#193): promoted ones
+    // (PR in a merge vote) are un-pausable and exempt from the
+    // active-session cap, so they're surfaced as their own
+    // " · N/M in vote" segment against their own budget instead of
+    // inflating the numerator. Paused sessions are unlimited so they're
+    // surfaced separately too. Zero-count segments are omitted to keep
+    // the common case clean.
+    const activeCap = (caps && caps.activeSessions) || 3;
+    const promotedCap = (caps && caps.promotedSessions) || 5;
+    const segments = [`(${totals.active}/${activeCap})`];
+    if (totals.promoted > 0) segments.push(`${totals.promoted}/${promotedCap} in vote`);
     if (totals.paused > 0) segments.push(`${totals.paused} paused`);
     counter.textContent = segments.join(' · ');
 
@@ -3948,8 +3969,8 @@ const DevChat = {
   },
 
   // Spin up a fresh session (new branch → new PR) for the same app and
-  // open it. Reuses createSession's per-user 3-active-session cap +
-  // error alerting. Intentionally does NOT carry over Claude's memory or
+  // open it. Reuses createSession's per-user active-session cap (whatever
+  // the server resolves for this viewer — see `caps`) + error alerting. Intentionally does NOT carry over Claude's memory or
   // the spec — a new change starts clean on its own branch.
   async startNewChange() {
     const slug = (typeof AppView !== 'undefined' && AppView.appData && AppView.appData.slug)

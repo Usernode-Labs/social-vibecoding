@@ -13,6 +13,7 @@ const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
+const { effectiveSessionCaps } = require('../services/session-caps');
 const topicAttrs = require('../services/topic-attributes');
 const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
@@ -666,20 +667,25 @@ function voteRoutes(config) {
       const session = rows[0];
 
       // Promoted-PR cap: worker-less promoted sessions don't count
-      // against maxUserSessions (see the create-session cap in
-      // routes/sessions.js), so this is the bound that keeps one user
-      // from accumulating unlimited open-for-vote PRs (each holding a
+      // against the per-user active-session cap (see the create-session
+      // cap in routes/sessions.js), so this is the bound that keeps one
+      // user from accumulating unlimited open-for-vote PRs (each holding a
       // staging preview and vote-panel attention). Checked before the
       // lazy PR creation below so an over-cap promote doesn't open a
       // PR it then refuses to put up for vote.
+      //
+      // The ceiling is per-REQUESTER: full platform admins get a raised
+      // cap (services/session-caps.js). Never compare against
+      // config.maxUserPromotedSessions directly here.
+      const caps = effectiveSessionCaps(config, req.user);
       const { rows: promotedRows } = await pool.query(
         `SELECT COUNT(*) AS cnt FROM chat_sessions
          WHERE user_id = $1 AND status IN ('promoted', 'merging') AND is_headless = FALSE`,
         [req.user.id]
       );
-      if (parseInt(promotedRows[0].cnt) >= config.maxUserPromotedSessions) {
+      if (parseInt(promotedRows[0].cnt) >= caps.promotedSessions) {
         return res.status(429).json({
-          error: `You already have ${config.maxUserPromotedSessions} PRs up for vote. Wait for one to merge, or archive one first.`,
+          error: `You already have ${caps.promotedSessions} PRs up for vote. Wait for one to merge, or archive one first.`,
         });
       }
 
