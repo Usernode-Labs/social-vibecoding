@@ -50,7 +50,7 @@ const NON_SECRET_APP_COLUMNS = [
   'manifest_snapshot', 'last_failure', 'locked', 'self_hosted',
   'collab_visibility', 'view_visibility', 'approver_policy',
   'approvals_required', 'screenshot_device_scale', 'icon_emoji',
-  'icon_image_id', 'forked_from',
+  'icon_image_id', 'forked_from', 'admin_usernames',
 ];
 
 // `NON_SECRET_APP_COLUMNS` rendered as a bare comma-joined column list

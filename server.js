@@ -2379,6 +2379,7 @@ function startStalePrSweeper(config) {
   const { checkAndMerge } = require('./src/routes/votes');
   const issuesModule = require('./src/routes/issues');
   const governance = require('./src/services/governance');
+  const appAdmins = require('./src/services/app-admins');
   stalePrSweeperHandle = setInterval(async () => {
     if (lifecycle.isShuttingDown()) return;
 
@@ -2405,12 +2406,23 @@ function startStalePrSweeper(config) {
       for (const session of rows) {
         if (worker.isInFlight(session.id)) continue;
         try {
+          // #788: backfill the explicit-approval flag for rows that
+          // predate the feature (or whose stamp never landed). Only
+          // NULL rows pay the GitHub round-trip — once classified they
+          // stay classified until the head changes, which re-stamps.
+          if (session.requires_explicit_approval == null) {
+            const refreshed = await appAdmins.refreshExplicitApproval(pool, session, session);
+            if (refreshed != null) session.requires_explicit_approval = refreshed;
+          }
           // #646: governance-aware gate — honors the app's approver
           // policy + at-least-N mode (governance/electorate lookups are
           // TTL-cached in the service, so no per-app cache needed here).
+          // #788: plus the no-timer modifier for an admins-changing
+          // proposal, so the sweeper can never auto-merge one on a clock.
           const gate = await governance.governedGate(pool, session.app_id, {
             kind: 'pr', id: session.id,
             openedAt: session.promoted_at || session.created_at,
+            explicitApproval: !!session.requires_explicit_approval,
             // #687 Slice 3: keep this pre-filter consistent with the
             // head-scoped gate checkAndMerge applies to imported rows.
             headSha: session.source === 'imported' ? (session.imported_pr_head_sha || null) : null,

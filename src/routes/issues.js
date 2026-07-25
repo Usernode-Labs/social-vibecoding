@@ -13,6 +13,7 @@ const { issueKindLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const { weekStartUtc, countWeeklyAllowanceUsed, WEEKLY_KUDOS_LIMIT } = require('./kudos');
 const appAccess = require('../services/app-access');
+const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
 const { FEEDBACK_FALLBACK_TITLE } = require('../services/llm');
 
@@ -1642,18 +1643,30 @@ function issueRoutes(config) {
   // the chat message + GitHub comment name the admin so the override
   // is never silent.
   router.post('/api/issues/:id/admin-apply', async (req, res) => {
-    if (!req.user?.canAdminWrite) {
-      return res.status(403).json({ error: 'Full admin access required' });
-    }
     try {
       const { rows: issueRows } = await pool.query(
-        `SELECT i.*, a.slug AS app_slug
+        `SELECT i.*, a.slug AS app_slug, a.created_by AS app_created_by
            FROM issues i JOIN apps a ON a.id = i.app_id
           WHERE i.id = $1`,
         [req.params.id]
       );
-      if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
+      if (!issueRows.length) {
+        if (!req.user?.canAdminWrite) {
+          return res.status(403).json({ error: 'Full admin access required' });
+        }
+        return res.status(404).json({ error: 'Issue not found' });
+      }
       const issue = issueRows[0];
+
+      // #788: the issue-side counterpart of the force-merge widening —
+      // an app's own declared admins may force-apply that app's
+      // governance proposals. Issue proposals never carry the
+      // explicit-approval flag (they don't edit dapp.json's admins
+      // block; only a PR can), so no exception applies here.
+      const appForGate = { id: issue.app_id, created_by: issue.app_created_by };
+      if (!(await appAdmins.canForceMerge(pool, appForGate, req.user))) {
+        return res.status(403).json({ error: 'Full admin access required' });
+      }
 
       if (issue.status !== 'open') {
         return res.status(409).json({ error: 'Issue is not open' });

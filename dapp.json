@@ -205,6 +205,22 @@
       "expectText": "+2 advisory"
     },
     {
+      "name": "Explicit-approval proposal renders the chip and no merge countdown (#788)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000030",
+      "expectSelector": ".gc-vote-explicit",
+      "expectText": "Explicit approval"
+    },
+    {
+      "name": "Explicit-approval proposal still shows the rejection countdown (#788)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000032",
+      "expectSelector": ".gc-reject-countdown"
+    },
+    {
+      "name": "App-admins section ships in the Members modal (#788)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#members-appadmins-section #members-appadmins-list"
+    },
+    {
       "name": "Kanban filter bar renders above the board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-search"

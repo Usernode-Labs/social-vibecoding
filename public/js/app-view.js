@@ -1988,6 +1988,11 @@ const AppView = {
         approverPolicy: promotedData.approverPolicy || 'anyone',
         approvalsRequired: promotedData.approvalsRequired != null
           ? promotedData.approvalsRequired : null,
+        // #788: is the viewer one of this app's declared admins? Drives
+        // whether the "Admin merge" button renders for a non-platform
+        // admin. The server re-checks on every force-merge, so this is
+        // purely an affordance.
+        isAppAdmin: !!promotedData.isAppAdmin,
         lockedHint: locked
           ? ' <span class="text-amber-500 font-normal">· locked: also needs an admin yes</span>'
           : '',
@@ -4159,6 +4164,17 @@ const AppView = {
       blocker = 'the app is locked, so it also needs an admin’s Yes';
     }
 
+    // #788: this proposal changes who can administer the app, so the
+    // time-based merge paths are off. The app's NORMAL rules still
+    // decide the threshold — which is why this is a suffix appended to
+    // the regime-specific wording below rather than a branch that
+    // replaces it. Every countdown branch is skipped because the server
+    // sends no merge_window_ends_at for a flagged row.
+    const noTimer = !!pr.requires_explicit_approval;
+    const noTimerNote = noTimer
+      ? ` This changes who can administer the app, so it won’t merge on a timer — it needs ${required} actual Yes vote${required === 1 ? '' : 's'}.`
+      : '';
+
     // #646: "at least N approvals" mode — clock-free, so none of the
     // countdown/contested branches below apply. Describe the configured
     // rule, the current progress, and any merge blocker.
@@ -4178,7 +4194,9 @@ const AppView = {
       if (pr.approval_policy === 'invited') {
         s += ' Everyone can still vote, but only approvers’ votes count toward the target.';
       }
-      return s;
+      // In at-least-N mode the clocks were already off, so the note just
+      // explains WHY the chip is showing — it isn't a behaviour change.
+      return s + noTimerNote;
     }
 
     // Countdown geometry, mirroring voteCountPill.
@@ -4192,7 +4210,20 @@ const AppView = {
 
     let sentence;
     let foldedBlocker = false;
-    if (!contested && inMergeWindow && (reached || lazyLead)) {
+    if (noTimer && reached) {
+      // No visibility window to sit out — it merges as soon as the
+      // normal threshold is met, subject to the usual blockers.
+      sentence = blocker
+        ? `It has enough Yes votes (${yes} of ${required}), but it can’t merge yet: ${blocker}.`
+        : `It has the votes it needs (${yes} of ${required}) — queued to merge shortly.`;
+      foldedBlocker = true;
+    } else if (noTimer && pr.rejection_armed && inReject) {
+      // Rejection is deliberately untouched by the no-timer modifier.
+      const cd = AppView._fmtCountdown(rejectEnds - now);
+      sentence = `More No than Yes, without enough support — this closes in ${cd} unless it gains support. ${tally}`;
+    } else if (noTimer) {
+      sentence = `It needs ${required} of ${active} active testers to vote Yes. ${tally}`;
+    } else if (!contested && inMergeWindow && (reached || lazyLead)) {
       const cd = AppView._fmtCountdown(mergeEnds - now);
       sentence = reached
         ? `There are enough Yes votes (${yes} of ${required}) — this merges in ${cd} unless someone objects.`
@@ -4225,7 +4256,7 @@ const AppView = {
           : ` ${advisory} advisory votes from non-approvers are recorded but don’t count.`;
       }
     }
-    return sentence;
+    return sentence + noTimerNote;
   },
 
   _closeVotingHelpPopover() {
@@ -6550,6 +6581,15 @@ const AppView = {
       ? `<span class="gc-vote-advisory" title="${advisoryYes} advisory Yes vote${advisoryYes === 1 ? '' : 's'} from non-approvers — they don't count toward merging">+${advisoryYes} advisory</span>`
       : '';
 
+    // #788: this proposal changes who can administer the app. The app's
+    // normal threshold is unchanged — only the clocks are off — so the
+    // chip sits BESIDE the ordinary tally rather than replacing it.
+    // Suppressed on settled rows (the vote is history there).
+    const explicitChip = (pr.requires_explicit_approval
+        && pr.status !== 'merged' && pr.status !== 'merging')
+      ? '<span class="gc-vote-explicit" title="This changes the app\'s admins, so it won\'t merge on a timer — it needs real Yes votes to reach the app\'s normal threshold. It can still be voted down.">Explicit approval</span>'
+      : '';
+
     // #646: "at least N" mode — a clock-free approvals-progress pill
     // ("x of N approvals"). The server never arms a merge/rejection
     // window in this mode, so the countdown branches below can't fire.
@@ -6566,7 +6606,7 @@ const AppView = {
       return `<span class="gc-vote-count gc-vote-count-${reached ? 'yes' : 'pending'}" title="${title}">`
         + fills
         + `<span class="gc-vote-count-label">${yes} of ${n} approval${n === 1 ? '' : 's'}</span>`
-        + `</span>` + advisoryChip;
+        + `</span>` + advisoryChip + explicitChip;
     }
 
     // Countdown state: a merge clock is running. Two ways one arms (both
@@ -6584,7 +6624,12 @@ const AppView = {
     const windowEndsMs = pr.merge_window_ends_at ? Date.parse(pr.merge_window_ends_at) : NaN;
     const inWindow = Number.isFinite(windowEndsMs) && windowEndsMs > Date.now();
     const lazyLead = state === 'pending' && yes >= 1 && yes > no;
-    if (isOpenRow && !pr.contested && inWindow && (state === 'yes' || lazyLead)) {
+    // #788: a flagged row never merges on a clock, so it must never
+    // render a merge countdown. The server already sends no
+    // merge_window_ends_at for one; this is the belt-and-braces guard so
+    // a stale cached row can't promise a merge that will never happen.
+    if (isOpenRow && !pr.requires_explicit_approval
+      && !pr.contested && inWindow && (state === 'yes' || lazyLead)) {
       const label = AppView._fmtCountdown(windowEndsMs - Date.now());
       const title = state === 'yes'
         ? `Enough yes votes (${yes} / ${maj}) — merges when the visibility window elapses unless opposed`
@@ -6599,7 +6644,7 @@ const AppView = {
         + ` title="${title}">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-yes"></span>`
         + `<span class="gc-vote-count-label">Merging in ${label}${suffix}</span>`
-        + `</span>` + advisoryChip;
+        + `</span>` + advisoryChip + explicitChip;
     }
 
     // Rejection (auto-takedown) countdown: the group is voting this down
@@ -6615,7 +6660,7 @@ const AppView = {
         + ` title="More No than Yes and not enough support (${yes} / ${maj}) — closes when this elapses unless support arrives">`
         + `<span class="gc-vote-fill gc-vote-fill-full gc-vote-fill-full-no"></span>`
         + `<span class="gc-vote-count-label">Rejecting in ${label}</span>`
-        + `</span>` + advisoryChip;
+        + `</span>` + advisoryChip + explicitChip;
     }
     // #58: when both at-merge figures are present, surface the historical
     // context as a hover tooltip on the pill. Only merged rows carry these.
@@ -6639,7 +6684,7 @@ const AppView = {
     return `<span class="gc-vote-count gc-vote-count-${state}"${titleAttr}>`
       + fills
       + `<span class="gc-vote-count-label">${yes} / ${maj}</span>`
-      + `</span>` + advisoryChip;
+      + `</span>` + advisoryChip + explicitChip;
   },
 
   // "Merging…" badge shown alongside (not instead of) the vote controls
@@ -7164,8 +7209,18 @@ const AppView = {
     // #621: read-only viewers keep the Preview affordance but get no
     // vote controls — the tally pill on the card already shows counts.
     if (AppView.readOnly) return preview;
-    const adminMerge = App.user?.canAdminWrite
-      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: merge this PR right now, bypassing the vote majority" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
+    // #788: force-merge is available to platform admins AND to the app's
+    // own declared admins (ctx.canManage covers creator + app admins,
+    // but only app admins / platform admins get force-merge — the
+    // server is the authority; this just decides whether to render the
+    // button). The one carve-out: a proposal that changes the admins
+    // block can't be force-merged by an app admin (self-escalation), so
+    // there the button is platform-admin-only.
+    const vbCtx = AppView._proposalsCtx || {};
+    const canForceMerge = App.user?.canAdminWrite
+      || (!!vbCtx.isAppAdmin && !pr.requires_explicit_approval);
+    const adminMerge = canForceMerge
+      ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${pr.requires_explicit_approval ? 'Admin: merge this admins-changing PR right now, bypassing the vote' : 'Admin: merge this PR right now, bypassing the vote majority'}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
@@ -8555,6 +8610,11 @@ const AppView = {
     AppView._hideInviteSuggestions();
     if (isPrivate && appData.can_collaborate) await AppView.loadCollaborators();
     if (showApprovers) await AppView.loadApprovers();
+    // #788: read-only, collab-level — everyone who can see the modal can
+    // see who administers the app. Hides itself when none are declared.
+    const appAdminsSection = document.getElementById('members-appadmins-section');
+    if (appAdminsSection) appAdminsSection.classList.add('hidden');
+    await AppView.loadAppAdmins();
   },
 
   hideMembersModal() {
@@ -9148,6 +9208,63 @@ const AppView = {
   // and the section-visibility rule in _renderApprovers. Reset on every
   // modal open so one app's roster can't leak into another's.
   _approversData: null,
+
+  // #788: per-app admins, read-only. Unlike the collaborator and
+  // approver rosters there is nothing to mutate here — the roster's only
+  // writer is the deploy-time reconcile of dapp.json's `admins` block —
+  // so this fetches and renders, and that's all. The section stays
+  // hidden when the app declares no admins: an empty roster is the
+  // normal state for almost every app, not something to nag about.
+  async loadAppAdmins() {
+    const section = document.getElementById('members-appadmins-section');
+    const list = document.getElementById('members-appadmins-list');
+    if (!section || !list || !AppView.appData) return;
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/admins${AppView._demoQuery()}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      AppView._renderAppAdmins(data);
+    } catch (err) {
+      section.classList.remove('hidden');
+      list.innerHTML = `<div class="px-3 py-2 text-sm text-red-400">Failed to load app admins: ${escapeHtml(err.message)}</div>`;
+    }
+  },
+
+  // Staging demo passthrough: the members modal has no URL of its own,
+  // so forward the page's ?demo=1 to the admins fetch. In production the
+  // server ignores it entirely.
+  _demoQuery() {
+    try {
+      return new URLSearchParams(window.location.search).get('demo') === '1' ? '?demo=1' : '';
+    } catch { return ''; }
+  },
+
+  _renderAppAdmins(data) {
+    const section = document.getElementById('members-appadmins-section');
+    const list = document.getElementById('members-appadmins-list');
+    if (!section || !list) return;
+    const admins = Array.isArray(data && data.admins) ? data.admins : [];
+    const unresolved = Array.isArray(data && data.unresolved) ? data.unresolved : [];
+    if (!admins.length && !unresolved.length) {
+      section.classList.add('hidden');
+      list.innerHTML = '';
+      return;
+    }
+    section.classList.remove('hidden');
+    const rowCls = 'flex items-center justify-between gap-2 px-3 py-2 text-sm';
+    const resolvedRows = admins.map((a) =>
+      `<div class="${rowCls}"><span class="truncate">@${escapeHtml(a.username)}</span>`
+      + '<span class="text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0">Admin</span></div>'
+    );
+    // A declared name matching no account is shown rather than silently
+    // dropped — it's almost always a typo or someone who hasn't signed
+    // up yet, and it starts working on the next deploy once they do.
+    const unresolvedRows = unresolved.map((u) =>
+      `<div class="${rowCls} opacity-60"><span class="truncate">@${escapeHtml(String(u))}</span>`
+      + '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400 shrink-0" title="Declared in dapp.json but no account with this username exists yet">not a registered user</span></div>'
+    );
+    list.innerHTML = resolvedRows.concat(unresolvedRows).join('');
+  },
 
   async loadApprovers() {
     const list = document.getElementById('members-approvers-list');

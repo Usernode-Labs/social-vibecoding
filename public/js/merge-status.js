@@ -39,6 +39,9 @@
       if (extra.glyph) d.glyph = extra.glyph;
       if (extra.title) d.title = extra.title;
       if (extra.votes) d.votes = extra.votes;
+      // #788: not a state of its own — a modifier on the state, so
+      // callers can render the "Explicit approval" chip alongside.
+      if (extra.explicitApproval) d.explicitApproval = true;
     }
     return d;
   }
@@ -203,9 +206,18 @@
         title: 'Votes passed and checks are green — this is queued to merge.',
       });
     }
-    // 10 — proposed, still collecting votes.
+    // 10 — proposed, still collecting votes. #788: a proposal that
+    // changes the app's admins keeps this ordinary state — its threshold
+    // is unchanged — but carries an explanatory tooltip and the
+    // `explicitApproval` flag so callers can render the amber chip.
     if (status === 'promoted') {
-      return descriptor('in_vote', 'In vote', 'violet', false, { votes: votes });
+      return descriptor('in_vote', 'In vote', 'violet', false, {
+        votes: votes,
+        title: p.requires_explicit_approval
+          ? 'This changes who can administer the app, so it won’t merge on a timer — it needs real Yes votes to reach the app’s normal threshold.'
+          : undefined,
+        explicitApproval: !!p.requires_explicit_approval,
+      });
     }
     // 11 — building; not yet proposed.
     if (status === 'active') {

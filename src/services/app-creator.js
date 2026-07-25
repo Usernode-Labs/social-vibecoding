@@ -222,6 +222,12 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
     await appManifest.reconcileAppGovernance(pool, { id: appId, slug }, manifest)
       .catch((err) => log.warn('app-creator', 'Governance reconcile failed', { appId, err: err.message }));
 
+    // And the manifest's `admins` block (issue #788): an imported repo
+    // declaring per-app admins gets the roster applied on this first
+    // deploy. No-op when the block is absent; an explicit [] clears it.
+    await appManifest.reconcileAppAdmins(pool, { id: appId, slug }, manifest)
+      .catch((err) => log.warn('app-creator', 'Admins reconcile failed', { appId, err: err.message }));
+
     // And the manifest's `screenshot.deviceScaleFactor` (issue #360):
     // persist the density the before/after preview shots are captured at
     // onto apps.screenshot_device_scale so the capture orchestrator can

@@ -249,6 +249,67 @@ function describeGovernance(policy, approvalsRequired) {
   return `approvals by ${who}, requiring ${howMany}`;
 }
 
+// Bounds for the optional top-level `admins` block (issue #788). The
+// cap keeps a hand-written (or generated) manifest from turning into an
+// unbounded roster; 255 mirrors the users.username column width.
+const MAX_APP_ADMINS = 20;
+const MAX_ADMIN_USERNAME_LENGTH = 255;
+
+// Normalize the optional top-level `admins` block:
+//   "admins": ["alice", "bob"]
+// A bare array of platform usernames. Semantics deliberately differ
+// from `icon` (fully authoritative including absence) and match
+// `name` / `visibility` on the ABSENCE side only:
+//   - absent key / null / non-array  -> null, i.e. "leave the platform
+//     roster untouched" (a clean no-op for every app that never
+//     declares the block);
+//   - a valid array, INCLUDING []    -> the declared list, which the
+//     reconcile treats as fully authoritative set semantics. `[]` is
+//     therefore how a roster is cleared — without that, revocation
+//     would be inexpressible.
+// Entries are trimmed, dropped when empty / over-long / not a string,
+// and deduped case-insensitively (first occurrence wins the display
+// casing, since usernames are matched case-insensitively at reconcile
+// time). Over-cap entries are dropped with a warn rather than silently
+// truncated, per readTests. Lenient like the rest of the reader; never
+// throws.
+function readAdmins(parsed) {
+  const raw = parsed?.admins;
+  if (raw == null) return null;
+  if (!Array.isArray(raw)) {
+    log.warn('app-manifest', 'Ignoring non-array admins block', { value: typeof raw });
+    return null;
+  }
+  const out = [];
+  const seen = new Set();
+  let dropped = 0;
+  for (const entry of raw) {
+    const name = typeof entry === 'string' ? entry.trim() : '';
+    if (!name || name.length > MAX_ADMIN_USERNAME_LENGTH) { dropped++; continue; }
+    const key = name.toLowerCase();
+    if (seen.has(key)) continue;
+    if (out.length >= MAX_APP_ADMINS) { dropped++; continue; }
+    seen.add(key);
+    out.push(name);
+  }
+  if (dropped > 0) {
+    log.warn('app-manifest', 'Dropped invalid/over-cap admin entries', {
+      dropped, kept: out.length, cap: MAX_APP_ADMINS,
+    });
+  }
+  return out;
+}
+
+// Human description of a declared admin roster — shared by the
+// reconcile chat message and any future admins-PR title so every
+// surface describes the same state with the same words. Sibling of
+// describeVisibility / describeGovernance.
+function describeAdmins(usernames) {
+  const list = Array.isArray(usernames) ? usernames.filter((u) => typeof u === 'string' && u.trim()) : [];
+  if (!list.length) return 'no per-app admins (only the creator and platform admins)';
+  return list.map((u) => `@${u}`).join(', ');
+}
+
 // Bound on the consent dialog's purpose line — one short sentence, not
 // a marketing paragraph.
 const MAX_LLM_PURPOSE_LENGTH = 140;
@@ -395,9 +456,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null };
   }
 
   let parsed;
@@ -405,7 +466,7 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null };
+    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null };
   }
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
@@ -450,6 +511,7 @@ function read(cloneDir) {
     screenshot: readScreenshot(parsed),
     tests: readTests(parsed),
     icon: readIcon(parsed),
+    admins: readAdmins(parsed),
   };
 }
 
@@ -790,6 +852,185 @@ async function reconcileAppGovernance(pool, app, manifest) {
 }
 
 /**
+ * Apply a per-app admin roster change (issue #788) — sibling of
+ * applyVisibilityChange / applyGovernanceChange, shared by the
+ * deploy-time reconcile below and any future caller:
+ *   - replace the app_admins rows so they match `userIds` exactly;
+ *   - persist the DECLARED name list (incl. names that resolved to no
+ *     user) into apps.admin_usernames for the settings panel;
+ *   - upsert an app_collaborators 'member' row for every resolved
+ *     admin, so an admin of a build-private app can actually reach it
+ *     (mirrors the creator auto-seed in applyGovernanceChange).
+ *     Demotion deliberately does NOT remove collaborator rows —
+ *     revoking collaboration stays a separate, explicit action;
+ *   - flush the app-admin + visibility caches;
+ *   - group-chat system message + `admins_changed` app update;
+ *   - APP_ADMINS_CHANGED analytics event.
+ * `app` must carry id, slug, admin_usernames (the CURRENT declared
+ * list — used for the event's `from`). All side effects beyond the
+ * roster writes are best-effort.
+ */
+async function applyAdminsChange(pool, app, { usernames, userIds }, { actorLabel = 'dapp.json', userId = null } = {}) {
+  const ids = Array.isArray(userIds) ? userIds : [];
+  const declared = Array.isArray(usernames) ? usernames : [];
+
+  // Set semantics: the declared list is authoritative, so anything not
+  // in it goes. `= ANY('{}')` is never true, so an empty list clears.
+  await pool.query(
+    `DELETE FROM app_admins WHERE app_id = $1 AND NOT (user_id = ANY($2::int[]))`,
+    [app.id, ids]
+  );
+  if (ids.length) {
+    await pool.query(
+      `INSERT INTO app_admins (app_id, user_id)
+         SELECT $1, uid FROM UNNEST($2::int[]) AS uid
+       ON CONFLICT (app_id, user_id) DO NOTHING`,
+      [app.id, ids]
+    );
+  }
+  await pool.query(
+    'UPDATE apps SET admin_usernames = $1::text[] WHERE id = $2',
+    [declared, app.id]
+  );
+
+  // An admin who can't see the app is a broken grant — seed membership.
+  if (ids.length) {
+    try {
+      await pool.query(
+        `INSERT INTO app_collaborators (app_id, user_id, status, accepted_at)
+           SELECT $1, uid, 'member', NOW() FROM UNNEST($2::int[]) AS uid
+         ON CONFLICT (app_id, user_id) DO UPDATE
+           SET status = 'member',
+               accepted_at = COALESCE(app_collaborators.accepted_at, NOW())`,
+        [app.id, ids]
+      );
+    } catch (err) {
+      log.warn('app-manifest', 'App-admin collaborator seed failed', { appId: app.id, err: err.message });
+    }
+  }
+
+  try {
+    require('./app-admins').invalidateAppAdmins(app.id);
+  } catch (err) {
+    log.warn('app-manifest', 'App-admin cache invalidation failed', { appId: app.id, err: err.message });
+  }
+  try {
+    require('./app-access').invalidateVisibility(app.id, app.slug);
+  } catch (err) {
+    log.warn('app-manifest', 'Visibility cache invalidation failed (admins)', { appId: app.id, err: err.message });
+  }
+
+  try {
+    const { sendSystemMessage, pushAppUpdate } = require('./ws');
+    await sendSystemMessage(pool, app.id,
+      `This app's admins changed to ${describeAdmins(declared)} (set by ${actorLabel})`,
+      'system'
+    ).catch((err) => log.warn('app-manifest', 'Admins chat msg failed', { err: err.message }));
+    pushAppUpdate({
+      action: 'admins_changed',
+      appSlug: app.slug,
+      appId: app.id,
+      admins: declared,
+    });
+  } catch (err) {
+    log.warn('app-manifest', 'Admins broadcast failed', { appId: app.id, err: err.message });
+  }
+
+  try {
+    const events = require('./events');
+    events.record(pool, {
+      type: events.EVENT_TYPES.APP_ADMINS_CHANGED,
+      userId,
+      appId: app.id,
+      metadata: {
+        from: Array.isArray(app.admin_usernames) ? app.admin_usernames : [],
+        to: declared,
+        source: 'manifest',
+      },
+    });
+  } catch (err) {
+    log.warn('app-manifest', 'Admins event record failed', { appId: app.id, err: err.message });
+  }
+
+  log.info('app-manifest', 'Applied app-admins change', {
+    appId: app.id, slug: app.slug, declared, resolved: ids.length, actorLabel,
+  });
+}
+
+/**
+ * Deploy-time per-app admins reconcile (issue #788) — sibling of
+ * reconcileAppVisibility / reconcileAppGovernance. The manifest's
+ * optional top-level `admins` array is the source of truth for the
+ * app_admins roster:
+ *   - an ABSENT (or non-array) block leaves the roster untouched — a
+ *     no-op for every app that never declares it;
+ *   - a PRESENT array is fully authoritative, so `[]` clears the
+ *     roster. That asymmetry is deliberate: without it, revocation
+ *     would be inexpressible.
+ *
+ * Usernames are resolved case-insensitively (same precedent as the
+ * collaborator invite route). A name matching no registered user is
+ * NOT an error — it is kept in apps.admin_usernames so the settings
+ * panel can show "declared, not a registered user", and it starts
+ * granting the moment that person signs up and the app next deploys.
+ *
+ * Self-hosted apps are skipped with a warn, like the visibility
+ * reconcile: the platform's own repo must never be able to mint app
+ * admins (they'd inherit force-merge on platform proposals).
+ *
+ * Best-effort like its siblings: callers fire-and-log; a failure here
+ * must never fail the deploy.
+ */
+async function reconcileAppAdmins(pool, app, manifest) {
+  const declared = manifest?.admins;
+  if (!Array.isArray(declared)) return false;
+
+  const { rows } = await pool.query(
+    `SELECT id, slug, self_hosted, created_by, admin_usernames FROM apps WHERE id = $1`,
+    [app.id]
+  );
+  if (!rows.length) return false;
+  const cur = rows[0];
+
+  if (cur.self_hosted) {
+    log.warn('app-manifest', 'Skipping admins reconcile for self-hosted app', { appId: cur.id });
+    return false;
+  }
+
+  let resolved = [];
+  if (declared.length) {
+    const { rows: userRows } = await pool.query(
+      `SELECT id, username FROM users WHERE LOWER(username) = ANY($1::text[])`,
+      [declared.map((u) => u.toLowerCase())]
+    );
+    resolved = userRows;
+  }
+  const resolvedIds = resolved.map((r) => r.id).sort((a, b) => a - b);
+  const resolvedNames = new Set(resolved.map((r) => r.username.toLowerCase()));
+  const unresolved = declared.filter((u) => !resolvedNames.has(u.toLowerCase()));
+  if (unresolved.length) {
+    log.warn('app-manifest', 'dapp.json admins name(s) match no registered user', {
+      appId: cur.id, slug: cur.slug, unresolved,
+    });
+  }
+
+  const { rows: existing } = await pool.query(
+    'SELECT user_id FROM app_admins WHERE app_id = $1', [cur.id]
+  );
+  const existingIds = existing.map((r) => r.user_id).sort((a, b) => a - b);
+  const curDeclared = Array.isArray(cur.admin_usernames) ? cur.admin_usernames : [];
+  const sameIds = existingIds.length === resolvedIds.length
+    && existingIds.every((id, i) => id === resolvedIds[i]);
+  const sameDeclared = curDeclared.length === declared.length
+    && curDeclared.every((n, i) => n === declared[i]);
+  if (sameIds && sameDeclared) return false;
+
+  await applyAdminsChange(pool, cur, { usernames: declared, userIds: resolvedIds },
+    { actorLabel: 'dapp.json', userId: null });
+  return true;
+}
+
+/**
  * Deploy-time screenshot-scale reconcile (issue #360) — sibling of
  * reconcileAppName / reconcileAppVisibility. The manifest's optional
  * top-level `screenshot.deviceScaleFactor` is the source of truth for
@@ -962,19 +1203,24 @@ module.exports = {
   readScreenshot,
   readTests,
   readIcon,
+  readAdmins,
   MAX_TESTS,
+  MAX_APP_ADMINS,
   MAX_ICON_EMOJI_LENGTH,
   MAX_ICON_IMAGE_BYTES,
   MAX_APPROVALS_REQUIRED,
   describeVisibility,
   describeGovernance,
+  describeAdmins,
   reconcileAppName,
   reconcileAppVisibility,
   reconcileAppGovernance,
   reconcileAppScreenshot,
   reconcileAppIcon,
+  reconcileAppAdmins,
   applyVisibilityChange,
   applyGovernanceChange,
+  applyAdminsChange,
   RESERVED_KEYS,
   RESERVED_KEY_PREFIXES,
   KEY_RE,
