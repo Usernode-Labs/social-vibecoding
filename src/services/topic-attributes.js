@@ -13,26 +13,61 @@
 const TARGET_TYPES = ['issue', 'proposal'];
 const FIELDS = ['priority', 'assignee', 'category'];
 const PRIORITY_VALUES = ['low', 'medium', 'high'];
-// Fixed, predefined category vocabulary — a controlled set (like priority,
-// unlike free-text assignee) so chip colours stay consistent and grouping /
-// filtering never fragments on casing ("bug" vs "Bug"). Adjust the taxonomy
-// by editing this list; no data migration needed since values are strings.
+// The BUILT-IN category vocabulary. Since #780 this is no longer the whole
+// set: an app can also register CUSTOM categories (app_topic_categories),
+// which list under these in the dropdown. These six stay hardcoded because
+// they need stable colours + labels and are mirrored on the FE
+// (ATTR_CATEGORY_VALUES in public/js/app-view.js — keep the two in sync).
 const CATEGORY_VALUES = ['feature', 'bug', 'improvement', 'design', 'docs', 'chore'];
 const MAX_ASSIGNEE_LEN = 64;
+// #780: custom categories are free text, but tighter than the assignee
+// field — they render inside a tiny chip pill and a 260px dropdown, so the
+// cap is short. The per-app cap bounds how far one spammer can grow the
+// vocabulary everybody in the app then sees.
+const MAX_CATEGORY_LEN = 24;
+const MAX_CUSTOM_CATEGORIES_PER_APP = 24;
+// Thrown by ensureCategory when the app is already at its custom cap, so
+// the route can turn it into a distinct 400 instead of a 500.
+const CATEGORY_CAP_ERROR = 'category_cap_exceeded';
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
+// #780: validate + normalize a TYPED category into the pair we persist:
+//   slug  — lowercased, the dedupe key AND the value stored on the vote
+//   label — the same string with its typed casing, for display
+// Returns null when the input can't be a category. Control characters are
+// neutralised to spaces (never a legitimate part of a label, and they'd
+// corrupt the chip), the string is trimmed, internal whitespace runs
+// collapse to a single space (so "dev  experience" and "dev experience" are
+// one option), and we require at least one letter or digit so pure
+// punctuation ("---") can't become a category.
+function normalizeCategoryInput(raw) {
+  if (typeof raw !== 'string') return null;
+  // Control chars become a SPACE (not nothing) so a tab/newline between
+  // two words can't silently glue them together, then whitespace collapses.
+  /* eslint-disable-next-line no-control-regex */
+  const cleaned = raw.replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!cleaned || cleaned.length > MAX_CATEGORY_LEN) return null;
+  if (!/[A-Za-z0-9]/.test(cleaned)) return null;
+  return { slug: cleaned.toLowerCase(), label: cleaned };
+}
 
 // Validate + normalize a submitted value for a field. Returns the string
 // to store (raw casing preserved for assignee) or null when invalid.
-// Priority + category are fixed enums; assignee is free text (trimmed,
-// length-capped) — deliberately NOT restricted to registered usernames,
-// since the requirement is "type someone's name".
+// Priority is a fixed enum; assignee and — since #780 — category are free
+// text (trimmed, length-capped). Assignee is deliberately NOT restricted to
+// registered usernames, since the requirement is "type someone's name";
+// category likewise accepts anything typeable so a new option can be
+// suggested in the same gesture as voting for it. The category slug is
+// lower-cased here because groupKey() case-folds only `assignee` — every
+// category tally relies on values already being lowercase.
 function normalizeValue(field, value) {
   if (field === 'priority') {
     const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
     return PRIORITY_VALUES.includes(v) ? v : null;
   }
   if (field === 'category') {
-    const v = typeof value === 'string' ? value.trim().toLowerCase() : '';
-    return CATEGORY_VALUES.includes(v) ? v : null;
+    const c = normalizeCategoryInput(value);
+    return c ? c.slug : null;
   }
   if (field === 'assignee') {
     const v = typeof value === 'string' ? value.trim() : '';
@@ -321,6 +356,94 @@ async function listOptions(pool, appId, targetType, ref, field, userId, linkedIs
   );
 }
 
+// #780: the app's full category vocabulary for the dropdown + filter bar:
+// the six built-ins first (custom: false), then the app's registered custom
+// categories in creation order, then a SELF-HEAL tail — any category value
+// that appears in this app's votes but has no registry row (e.g. a row
+// deleted straight in the DB), appended alphabetically. The tail guarantees
+// a chip can never display a value the picker doesn't list.
+//
+// `value` is the slug (what a vote stores); `label` is what the FE renders.
+// Built-ins return the slug as their label — the FE owns their display
+// names + colours in _categoryMeta, so echoing them here would just be a
+// second place to keep in sync.
+async function listCategories(pool, appId) {
+  const out = CATEGORY_VALUES.map((v) => ({ value: v, label: v, custom: false }));
+  const seen = new Set(CATEGORY_VALUES);
+
+  const { rows } = await pool.query(
+    `SELECT slug, label FROM app_topic_categories
+      WHERE app_id = $1
+      ORDER BY created_at ASC, id ASC`,
+    [appId]
+  );
+  for (const r of rows) {
+    if (seen.has(r.slug)) continue;
+    seen.add(r.slug);
+    out.push({ value: r.slug, label: r.label || r.slug, custom: true });
+  }
+
+  // Self-heal tail: registered-nowhere values that cards are already using.
+  const { rows: orphans } = await pool.query(
+    `SELECT DISTINCT value FROM topic_attribute_votes
+      WHERE app_id = $1 AND field = 'category'
+      ORDER BY value ASC`,
+    [appId]
+  );
+  for (const o of orphans) {
+    if (!o.value || seen.has(o.value)) continue;
+    seen.add(o.value);
+    out.push({ value: o.value, label: o.value, custom: true });
+  }
+
+  // Staging previews start from a copy of production, so app_topic_categories
+  // — created by this change — arrives EMPTY and the custom-category UI would
+  // have nothing to show. Append two obviously-fake entries so the dropdown's
+  // custom block, the chip colours and the filter option are all reviewable.
+  // Doing it here (rather than a boot seed keyed to one app id) covers
+  // whichever app's Dev tab a reviewer opens. Strictly a no-op in production.
+  if (IS_STAGING) {
+    for (const label of ['Staging demo perf', 'Staging demo onboarding']) {
+      const slug = label.toLowerCase();
+      if (seen.has(slug)) continue;
+      seen.add(slug);
+      out.push({ value: slug, label, custom: true });
+    }
+  }
+
+  return out;
+}
+
+// #780: register a typed category for this app so it becomes an option on
+// every card, then let the caller cast the vote. No-op for a built-in slug
+// (those need no row). Idempotent via UNIQUE(app_id, slug) — the FIRST typed
+// label wins, so a later "PERFORMANCE" votes for the existing "Performance"
+// without rewriting how it reads. Throws CATEGORY_CAP_ERROR when the app is
+// at its custom cap AND this slug isn't already registered, so voting for an
+// existing option keeps working at the cap.
+async function ensureCategory(pool, appId, { slug, label }, userId) {
+  if (CATEGORY_VALUES.includes(slug)) return;
+  const { rows } = await pool.query(
+    `SELECT
+       (SELECT COUNT(*)::int FROM app_topic_categories WHERE app_id = $1) AS total,
+       (SELECT COUNT(*)::int FROM app_topic_categories
+          WHERE app_id = $1 AND slug = $2) AS existing`,
+    [appId, slug]
+  );
+  const total = (rows[0] && rows[0].total) || 0;
+  const existing = (rows[0] && rows[0].existing) || 0;
+  if (!existing && total >= MAX_CUSTOM_CATEGORIES_PER_APP) {
+    throw new Error(CATEGORY_CAP_ERROR);
+  }
+  if (existing) return;
+  await pool.query(
+    `INSERT INTO app_topic_categories (app_id, slug, label, created_by)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (app_id, slug) DO NOTHING`,
+    [appId, slug, label, userId || null]
+  );
+}
+
 // Cast / move the caller's vote, then return the refreshed option list so
 // the FE can repaint chip + open dropdown in one round-trip. Upsert keyed
 // by the UNIQUE(app_id, target_type, target_ref, field, user_id). The vote
@@ -328,7 +451,15 @@ async function listOptions(pool, appId, targetType, ref, field, userId, linkedIs
 // proposal writes the proposal key, detaching the field from any inherited
 // issue votes. `linkedIssues` is forwarded to listOptions only for the
 // (rare) refresh where the proposal still has no own vote for the field.
-async function castVote(pool, appId, targetType, ref, field, value, userId, linkedIssues = []) {
+//
+// #780: for `category`, an unknown value is REGISTERED for the app first —
+// typing a new category and voting for it are one operation, exactly like
+// suggesting an assignee. `categoryLabel` carries the typed display casing
+// (the caller has it from normalizeCategoryInput); it defaults to the slug.
+async function castVote(pool, appId, targetType, ref, field, value, userId, linkedIssues = [], categoryLabel = null) {
+  if (field === 'category') {
+    await ensureCategory(pool, appId, { slug: value, label: categoryLabel || value }, userId);
+  }
   await pool.query(
     `INSERT INTO topic_attribute_votes (app_id, target_type, target_ref, field, value, user_id)
      VALUES ($1, $2, $3, $4, $5, $6)
@@ -362,7 +493,13 @@ module.exports = {
   PRIORITY_VALUES,
   CATEGORY_VALUES,
   MAX_ASSIGNEE_LEN,
+  MAX_CATEGORY_LEN,
+  MAX_CUSTOM_CATEGORIES_PER_APP,
+  CATEGORY_CAP_ERROR,
   normalizeValue,
+  normalizeCategoryInput,
+  listCategories,
+  ensureCategory,
   groupKey,
   pickTop,
   mergeBuckets,
