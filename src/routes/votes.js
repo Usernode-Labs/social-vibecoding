@@ -12,6 +12,7 @@ const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
+const appAdmins = require('../services/app-admins');
 const topicAttrs = require('../services/topic-attributes');
 const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
@@ -85,6 +86,9 @@ function stagingMockProposals(viewer) {
     // Auto-takedown (rejection) fields.
     reject_window_ends_at: gate.rejectEndsAt ?? null,
     rejection_armed: gate.rejectionArmed ?? false,
+    // #788: ordinary rows are not admins-changing; the three
+    // explicit-approval mocks below override this to true.
+    requires_explicit_approval: false,
     // #381: console-error check snapshot. Clean by default; the dedicated
     // error mock below overrides these so the warning badge + detail block
     // are reviewable on staging via ?demo=1.
@@ -220,6 +224,41 @@ function stagingMockProposals(viewer) {
     mk(9000018, 900118,
       '[Mock] Kept-alive test: add keyboard shortcuts even though some object',
       9, 7, 9, 5, { required: 11, contested: true, rejectionArmed: false }),
+    // #788: explicit-approval rows. app_admins is a table this change
+    // creates, so a staging clone has none, and no real proposal there
+    // touches dapp.json's admins block — without these three the chip,
+    // the suppressed countdown and the new help text are unreviewable in
+    // any PR preview. All carry merge_window_ends_at: null (the no-timer
+    // modifier zeroes the window), which is exactly what makes the
+    // countdown disappear.
+    //
+    // (a) Below threshold. Normally 1 Yes / 0 No with a 3-vote threshold
+    // arms lazy consensus and renders "merges in ~3d — silence counts as
+    // agreement"; flagged, it renders NO countdown at all.
+    {
+      ...mk(9000030, 900130,
+        '[Mock] Explicit-approval test: add @staging-demo-maintainer as an app admin',
+        20, 1, 0, 2, { required: 3 }),
+      requires_explicit_approval: true,
+    },
+    // (b) Threshold met. No visibility window to sit out — it goes
+    // straight to "queued to merge shortly" the moment the third Yes
+    // lands, instead of starting a multi-day countdown.
+    {
+      ...mk(9000031, 900131,
+        '[Mock] Explicit-approval test: remove an app admin (threshold reached)',
+        26, 3, 0, 4, { required: 3 }),
+      requires_explicit_approval: true,
+    },
+    // (c) Rejection still applies. The auto-takedown countdown is
+    // untouched by the modifier, so a flagged proposal the group is
+    // voting down still shows "Rejecting in ~Xh" and still auto-closes.
+    {
+      ...mk(9000032, 900132,
+        '[Mock] Explicit-approval test: admins change nobody wants (rejecting)',
+        22, 0, 3, 3, { required: 3, rejectEndsAt: hoursAhead(9), rejectionArmed: true }),
+      requires_explicit_approval: true,
+    },
     // #381: a proposal whose staging preview logged console errors, so the
     // amber "⚠ Console errors" badge and the expanded error list in the
     // detail view are reviewable on staging via ?demo=1.
@@ -787,6 +826,14 @@ function voteRoutes(config) {
         `UPDATE chat_sessions SET status = 'promoted', promoted_at = NOW(), stale_notified_at = NULL WHERE id = $1`,
         [session.id]
       );
+
+      // #788: classify the proposal now that it's up for vote — does its
+      // diff change dapp.json's `admins` block? A flagged proposal loses
+      // the time-based merge paths (no countdown, no silence-is-consent)
+      // and can't be force-merged by an app admin. Best-effort and
+      // awaited so the first vote-panel render already carries the flag;
+      // checkAndMerge re-verifies authoritatively before merging anyway.
+      await appAdmins.refreshExplicitApproval(pool, session, session);
 
       // Post to group chat. Include the PR title when we have one so
       // the feed reads like "evan promoted PR #8 — Add emoji stamp
@@ -1485,6 +1532,7 @@ function voteRoutes(config) {
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
                 cs.check_state, cs.check_error_detail,
+                cs.requires_explicit_approval,
                 a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
@@ -1531,8 +1579,12 @@ function voteRoutes(config) {
           : { yes: s.yes_count, no: s.no_count };
         // Per-row dynamic merge gate + rejection countdown, mirroring
         // /api/apps/:slug/promoted (same anchor: promoted_at || created_at).
+        // #788: the stamped flag rides on the row (added to this
+        // endpoint's SELECT), so the no-timer modifier applies here
+        // without a per-row GitHub call.
         const gate = governanceSvc.computeGate(
-          gov, electorate?.active || 1, q.yes, q.no, s.promoted_at || s.created_at
+          gov, electorate?.active || 1, q.yes, q.no, s.promoted_at || s.created_at, null,
+          { explicitApproval: !!s.requires_explicit_approval }
         );
         proposals.push({
           ...s,
@@ -1545,6 +1597,7 @@ function voteRoutes(config) {
           rejection_armed: gate.rejectionArmed,
           approval_policy: gate.policy,
           approvals_required: gate.approvalsRequired,
+          requires_explicit_approval: !!s.requires_explicit_approval,
           qualified_yes_count: gate.qualifiedYes,
           qualified_no_count: gate.qualifiedNo,
         });
@@ -1666,6 +1719,11 @@ function voteRoutes(config) {
            -- #237: captured reason when checks are 'error' (staging preview
            -- failed to boot) — drives the "Preview won't boot" badge tooltip.
            cs.check_error_detail,
+           -- #788: does this proposal change dapp.json's admins block? A
+           -- flagged row loses the time-based merge paths (the gate below
+           -- reports no merge_window_ends_at, so no countdown renders) and
+           -- shows the "Explicit approval" chip.
+           cs.requires_explicit_approval,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
            (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
            (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
@@ -1799,9 +1857,14 @@ function voteRoutes(config) {
         const q = qualifiedByRow
           ? (qualifiedByRow.get(row.id) || { yes: 0, no: 0 })
           : { yes: row.yes_count, no: row.no_count };
+        // #788: the stamped flag rides on the row (chat_sessions.* is
+        // selected here), so the no-timer modifier applies with no extra
+        // per-row work — a flagged row simply reports no
+        // merge_window_ends_at and never renders a countdown.
         const gate = governance.computeGate(
           gov, electorate.active, q.yes, q.no,
-          row.promoted_at || row.created_at
+          row.promoted_at || row.created_at, null,
+          { explicitApproval: !!row.requires_explicit_approval }
         );
         row.votes_required = gate.required;
         row.merge_window_ends_at = gate.windowEndsAt;
@@ -1810,6 +1873,7 @@ function voteRoutes(config) {
         row.rejection_armed = gate.rejectionArmed;
         row.approval_policy = gate.policy;
         row.approvals_required = gate.approvalsRequired;
+        row.requires_explicit_approval = !!row.requires_explicit_approval;
         row.qualified_yes_count = gate.qualifiedYes;
         row.qualified_no_count = gate.qualifiedNo;
       }
@@ -1828,6 +1892,10 @@ function voteRoutes(config) {
         // panel context (_proposalsCtx in public/js/app-view.js).
         approverPolicy: gov.approverPolicy,
         approvalsRequired: gov.approvalsRequired,
+        // #788: whether the viewer is one of this app's declared admins,
+        // so the vote panel can render the "Admin merge" affordance for
+        // them without a second round-trip. Server-side gates re-check.
+        isAppAdmin: await appAdmins.isAppAdmin(pool, appRows[0].id, req.user?.id),
       });
     } catch (err) {
       log.error('votes', 'Failed to list promoted', { message: err.message });
@@ -2113,13 +2181,23 @@ function voteRoutes(config) {
   // distinguishes the override so users see who did it and why a PR
   // landed without the usual tally.
   router.post('/api/sessions/:id/admin-merge', drainGuard, async (req, res) => {
-    if (!req.user?.canAdminWrite) {
-      return res.status(403).json({ error: 'Full admin access required' });
-    }
     try {
+      // Cheap pre-gate, preserving the old 403-before-404 stance: a
+      // caller who can't force-merge ANYWHERE never gets to probe
+      // whether a session id exists. #788 widens this from
+      // "platform admin" to "platform admin, or an app admin of at
+      // least one app" — the per-app check follows once we know which
+      // app the session belongs to.
+      const adminAppIds = req.user?.canAdminWrite
+        ? null
+        : await appAdmins.getAdminAppIdsForUser(pool, req.user?.id);
+      if (adminAppIds && adminAppIds.size === 0) {
+        return res.status(403).json({ error: 'Full admin access required' });
+      }
+
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.id as app_id, a.repo_url,
-                a.self_hosted as app_self_hosted
+                a.self_hosted as app_self_hosted, a.created_by as app_created_by
          FROM chat_sessions cs JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.status = 'promoted'`,
         [req.params.id]
@@ -2128,6 +2206,22 @@ function voteRoutes(config) {
         return res.status(404).json({ error: 'Promoted session not found' });
       }
       const session = rows[0];
+
+      // #788: force-merge is no longer platform-admin-only — an app's
+      // own declared admins may force-merge that app's proposals. The
+      // one exception is a proposal that changes the admins block
+      // itself: letting an app admin force-merge that would be
+      // unilateral self-escalation, so it stays platform-admin-only.
+      const explicitApproval = !!session.requires_explicit_approval;
+      const appForGate = { id: session.app_id, created_by: session.app_created_by };
+      if (!(await appAdmins.canForceMerge(pool, appForGate, req.user, { explicitApproval }))) {
+        if (explicitApproval && await appAdmins.isAppAdmin(pool, session.app_id, req.user?.id)) {
+          return res.status(403).json({
+            error: "This proposal changes the app's admins, so it needs explicit approval — only a platform admin can force-merge it",
+          });
+        }
+        return res.status(403).json({ error: 'Full admin access required' });
+      }
 
       // Respond immediately; the merge itself runs in the background
       // exactly like the regular vote-driven path. Clients refresh via
@@ -2516,8 +2610,42 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // with every clock (window / lazy / rejection) off.
   const openedAt = session.promoted_at || session.created_at || null;
   const governance = require('../services/governance');
+
+  // #788: does this proposal change dapp.json's `admins` block? This is
+  // the AUTHORITATIVE check — the stamped column can be stale (a push
+  // that raced its own stamp), so we re-diff against the live head here,
+  // right before the gate.
+  //
+  // Fail-open on a GitHub transport error: fall back to the stored
+  // column, and treat NULL as false. Failing closed would wedge EVERY
+  // merge on the platform during a GitHub outage, and the highest-risk
+  // path (a manifest PR opened by the platform itself) is stamped at
+  // creation time, so the stale-and-outage case is vanishingly narrow.
+  let explicitApproval = !!session.requires_explicit_approval;
+  let explicitApprovalSource = 'stored';
+  try {
+    const detected = await appAdmins.detectAdminsChange(session, {
+      headRef: session.source === 'imported'
+        ? (session.imported_pr_head_sha || session.branch_name || null)
+        : (session.branch_name || null),
+    });
+    // An INDETERMINATE result (no head ref / GitHub off / unparseable
+    // repo) keeps the stored flag — only a real diff may overwrite it.
+    if (detected.determinate) {
+      explicitApproval = detected.changed;
+      explicitApprovalSource = 'live';
+      if (detected.changed !== !!session.requires_explicit_approval) {
+        await appAdmins.stampExplicitApproval(pool, session.id, detected.changed);
+      }
+    }
+  } catch (err) {
+    log.warn('votes', 'Explicit-approval re-verify failed; using stored flag', {
+      sessionId: session.id, stored: explicitApproval, err: err.message,
+    });
+  }
+
   const gate = await governance.governedGate(pool, session.app_id, {
-    kind: 'pr', id: session.id, openedAt,
+    kind: 'pr', id: session.id, openedAt, explicitApproval,
     // #687 Slice 3: an imported proposal's merge gate counts only approvals
     // cast against its CURRENT head — so a head change that reset the tally
     // (and any approval that raced the reset) can't carry an old revision's
@@ -2580,6 +2708,13 @@ async function checkAndMerge(config, pool, session, options = {}) {
     }
 
     await startDebugIfNeeded();
+    if (explicitApproval) {
+      dstep({
+        phase: 'gate:explicit_approval',
+        message: `Proposal changes dapp.json's admins block (${explicitApprovalSource} check) — time-based merge paths are off: no visibility window, no lazy consensus. The app's normal threshold still applies.`,
+        detail: { explicitApproval: true, source: explicitApprovalSource, mode: gate.mode },
+      });
+    }
     dstep({
       phase: 'gate:majority',
       message: gate.mode === 'at_least'

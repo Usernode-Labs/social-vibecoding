@@ -626,6 +626,80 @@ Rules, mirroring the top-level `name`:
 - Inviting individual users to a private app is a separate, in-app
   flow — it is NOT represented in `dapp.json`.
 
+### Top-level `admins` — who can administer this app
+
+`dapp.json` may carry an optional top-level `admins` array — the
+**source of truth for the app's per-app admin roster**:
+
+```json
+{
+  "admins": ["alice", "bob"]
+}
+```
+
+Each entry is a **platform username**, matched case-insensitively
+(`"Alice"` and `"alice"` are the same person). Up to 20 entries; a
+name matching no registered user is skipped with a warning rather
+than failing the deploy, and starts granting automatically on a later
+deploy if that person signs up.
+
+An app admin is treated as a **second app creator for that one app**,
+plus the power to force-merge that app's proposals:
+
+- propose visibility / approval-settings changes;
+- invite and remove collaborators;
+- manage the invited-approver roster;
+- retry a failed build;
+- force-merge a proposal, and force-apply an environment-variable or
+  close-issue proposal.
+
+They get **nothing** on any other app and nothing platform-wide.
+Deliberately excluded, and still full-platform-admin only: reading or
+writing app secrets, deleting the app, forcing a redeploy, toggling
+the app lock, and satisfying a locked app's required admin-yes vote.
+
+Rules, mirroring `name` / `visibility`:
+
+- On every production deploy the platform reads the block and
+  reconciles the roster to it. An **absent block is a no-op** — a
+  clean pass for apps that never declare it. A **present array is
+  fully authoritative**, so `"admins": []` clears the roster (that
+  asymmetry is deliberate: without it, revoking would be
+  inexpressible).
+- Each resolved admin is also seeded as a collaborator, so an admin of
+  a build-private app can actually reach it. Removing someone from the
+  list does NOT revoke their collaborator access — that stays a
+  separate, explicit action.
+- The **self-hosted platform app ignores the block entirely**; its
+  admins are platform admins, full stop.
+- **Forking an app does not carry its admins over** — a fork starts
+  with an empty roster and the forker's own creator rights.
+
+**Changing this list is just a PR that edits the block** — and because
+it hands out privileges, such a PR gets a special merge rule:
+
+- The app's **normal approval rules are unchanged**: same threshold,
+  same electorate, same "at least N approvals" setting, same
+  invited-approver roster, same contested handling.
+- But the **time-based merge paths are switched off**. No merge
+  countdown, and no "silence is consent" lazy auto-merge. Time passing
+  alone never merges it; it merges the moment the app's normal
+  threshold is met by votes people actually cast.
+- **Rejection and expiry are unaffected** — the auto-takedown
+  countdown behaves as it does for any other proposal on that app, and
+  the stale-proposal sweep still closes one that nobody engages with.
+- An app admin **cannot force-merge** such a proposal (that would be
+  self-escalation); only a platform admin can.
+
+Note the interaction with `governance.approvals`: an app configured
+for "at least N approvals" is *already* clock-free, so this rule
+changes nothing about how an admins PR merges there — an app on
+`{ "atLeast": 1 }` effectively lets one person approve an admins
+change. Pick that setting with the admins list in mind.
+
+Reformatting the file, reordering the same names, or changing their
+capitalisation is not a change and does not trigger the rule.
+
 ### Top-level `icon` — the app's homescreen icon
 
 `dapp.json` may carry an optional top-level `icon` block — the

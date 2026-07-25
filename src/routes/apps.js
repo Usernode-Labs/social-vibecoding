@@ -16,6 +16,7 @@ const deployFailure = require('../services/deploy-failure');
 const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
 const appAccess = require('../services/app-access');
+const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
@@ -81,16 +82,25 @@ async function attachForkLineage(pool, apps) {
 
 // Per-viewer access flags appended to app payloads so the client can
 // gate tabs / render badges without extra round-trips.
-function accessFlags(app, user, isCollaborator) {
+// `adminAppIds` (issue #788) is the pre-fetched set of app ids this
+// viewer is a per-app admin of — batched once per request by the
+// callers below via appAdmins.getAdminAppIdsForUser, because this
+// helper is spread across every row of the home feed and a per-row
+// query would be N round-trips. Omitting it just means "no app-admin
+// rights", which is the correct fallback for an anonymous viewer.
+function accessFlags(app, user, isCollaborator, adminAppIds = null) {
   const isAdmin = !!user?.isAdmin;
   // `can_collaborate` is a visibility/read affordance → stays on isAdmin
   // (view-only admins keep it). `can_manage` gates mutating management
-  // controls → full-admin-or-creator (issue #311).
+  // controls → full-admin-or-creator (issue #311), plus the app's own
+  // declared admins (issue #788), who are creator-equivalent for that
+  // one app.
   const canAdminWrite = !!user?.canAdminWrite;
+  const isAppAdmin = !!(adminAppIds && adminAppIds.has(app.id));
   return {
     is_collaborator: !!isCollaborator,
     can_collaborate: isAdmin || app.collab_visibility !== 'private' || !!isCollaborator,
-    can_manage: canAdminWrite || (user?.id != null && app.created_by === user.id),
+    can_manage: canAdminWrite || (user?.id != null && app.created_by === user.id) || isAppAdmin,
   };
 }
 
@@ -329,6 +339,11 @@ function appRoutes(config) {
         ORDER BY (COALESCE(msg_counts.cnt, 0) + COALESCE(activity.total_seconds, 0)) DESC, a.created_at DESC
       `, [showSelfHosted, userId, isAdmin]);
 
+      // #788: one query for every app this viewer is a per-app admin
+      // of, so accessFlags below can resolve can_manage per row without
+      // a round-trip each.
+      const adminAppIds = await appAdmins.getAdminAppIdsForUser(pool, req.user?.id);
+
       const apps = await Promise.all(rows.map(async (a) => {
         // Per-app missing-required-secrets list. Cheap (one extra query
         // each) and lets the home tile show a "fix secrets" warning
@@ -436,7 +451,7 @@ function appRoutes(config) {
           open_prs: parseInt(a.open_prs, 10) || 0,
           active_sessions: parseInt(a.active_sessions, 10) || 0,
           open_issues: parseInt(a.open_issues, 10) || 0,
-          ...accessFlags(a, req.user, a.is_collaborator),
+          ...accessFlags(a, req.user, a.is_collaborator, adminAppIds),
         };
       }));
       // Resolve fork lineage (live source-name lookup, "<deleted>"
@@ -832,7 +847,8 @@ function appRoutes(config) {
           ? appRow.last_failure : null,
         url,
         missingSecrets,
-        ...accessFlags(appRow, req.user, isCollaborator),
+        ...accessFlags(appRow, req.user, isCollaborator,
+          await appAdmins.getAdminAppIdsForUser(pool, req.user?.id)),
       };
       await attachForkLineage(pool, appPayload);
       res.json({ app: appPayload });
@@ -1214,7 +1230,7 @@ function appRoutes(config) {
       if (!(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
         return res.status(404).json({ error: 'App not found' });
       }
-      if (!req.user?.canAdminWrite && app.created_by !== req.user?.id) {
+      if (!(await appAdmins.canManageApp(pool, app, req.user))) {
         return res.status(403).json({ error: 'Only the app creator or an admin can propose a visibility change' });
       }
       if (refuseIfSelfHosted(app, res, 'visibility')) return;
@@ -1284,6 +1300,65 @@ function appRoutes(config) {
   // accepted AND the policy lands). Ignored for 'anyone'; per-user
   // failures never fail the proposal, they come back as
   // `inviteWarnings` on the 201.
+  // ── Per-app admins (issue #788) ───────────────────────────────────
+  //
+  // Read-only. The roster's ONLY writer is the deploy-time reconcile
+  // (services/app-manifest.js reconcileAppAdmins) reading dapp.json's
+  // top-level `admins` block, so there is deliberately no PUT/POST
+  // here — changing admins means opening a PR that edits the manifest,
+  // and that PR needs explicit approval to land.
+  //
+  // Collab-level read, matching the collaborator + approver rosters.
+  // `declared` is the manifest's list verbatim (which is what the panel
+  // renders); `unresolved` calls out names that match no registered
+  // user, so a typo'd or not-yet-signed-up admin is visible rather than
+  // silently missing.
+  router.get('/api/apps/:slug/admins', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'collab',
+        appAccess.ACCESS_COLUMNS + ', admin_usernames'
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+
+      const { rows } = await pool.query(
+        `SELECT aa.user_id, u.username
+           FROM app_admins aa JOIN users u ON u.id = aa.user_id
+          WHERE aa.app_id = $1
+          ORDER BY LOWER(u.username)`,
+        [app.id]
+      );
+      const declared = Array.isArray(app.admin_usernames) ? app.admin_usernames : [];
+      const resolvedLower = new Set(rows.map((r) => r.username.toLowerCase()));
+      const payload = {
+        admins: rows.map((r) => ({ userId: r.user_id, username: r.username })),
+        declared,
+        unresolved: declared.filter((u) => !resolvedLower.has(String(u).toLowerCase())),
+        canManage: await appAdmins.canManageApp(pool, app, req.user),
+      };
+
+      // Staging-only demo state (?demo=1): app_admins is a table this
+      // change creates, so it is EMPTY in every staging clone and the
+      // Members panel's new section would render blank in every PR
+      // review. Request-time only — nothing is persisted, and this is a
+      // strict no-op in production. Only fills an otherwise-empty
+      // roster so a real one is never masked.
+      if (IS_STAGING && req.query.demo === '1' && !payload.admins.length && !declared.length) {
+        payload.admins = [
+          { userId: 900001, username: 'staging-demo-admin' },
+          { userId: 900002, username: 'staging-demo-maintainer' },
+        ];
+        payload.declared = ['staging-demo-admin', 'staging-demo-maintainer', 'staging-demo-unregistered'];
+        payload.unresolved = ['staging-demo-unregistered'];
+      }
+
+      res.json(payload);
+    } catch (err) {
+      log.error('apps', 'Failed to list app admins', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/apps/:slug/governance-pr', drainGuard, issueCreateLimiter, async (req, res) => {
     const approverPolicy = req.body?.approverPolicy;
     let approvalsRequired = req.body?.approvalsRequired;
@@ -1333,7 +1408,7 @@ function appRoutes(config) {
       if (!(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
         return res.status(404).json({ error: 'App not found' });
       }
-      if (!req.user?.canAdminWrite && app.created_by !== req.user?.id) {
+      if (!(await appAdmins.canManageApp(pool, app, req.user))) {
         return res.status(403).json({ error: 'Only the app creator or an admin can propose a governance change' });
       }
 
@@ -1512,7 +1587,7 @@ function appRoutes(config) {
 
       const appRow = rows[0];
 
-      const allowed = req.user?.canAdminWrite || appRow.created_by === req.user?.id;
+      const allowed = await appAdmins.canManageApp(pool, appRow, req.user);
       if (!allowed) {
         return res.status(403).json({ error: 'Only the app creator or an admin can retry' });
       }

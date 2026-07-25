@@ -616,6 +616,29 @@ CREATE INDEX IF NOT EXISTS chat_sessions_merged_at_idx ON chat_sessions(merged_a
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS votes_required        INTEGER;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS active_users_at_merge INTEGER;
 
+-- #788: "explicit approval" flag — this proposal's diff changes a
+-- privilege-granting block in dapp.json (today only the top-level
+-- `admins` list), so the TIME-BASED merge paths are switched off for it:
+-- no minimum visibility window, no lazy-consensus "silence is consent"
+-- auto-merge. The app's NORMAL approval rules are otherwise untouched
+-- (same threshold, same electorate, same at-least-N / invited-approver
+-- configuration, same contested handling) — the proposal merges the
+-- moment its normal threshold is met by votes actually cast. The
+-- rejection countdown and the stale-PR sweep behave exactly as they do
+-- for any other proposal on that app. Implemented as the pure
+-- applyNoTimerMerge modifier in services/governance.js.
+--   requires_explicit_approval : NULL = not computed yet (the stale-PR
+--     sweeper backfills), FALSE = ordinary proposal, TRUE = flagged.
+--   explicit_approval_reason   : which rule flagged it; only 'admins'
+--     today, a string so a second source can be added later without a
+--     schema change.
+-- Stamped at promote, at manifest-PR creation, and on every head change
+-- (native new-commit vote reset + imported-PR head sync);
+-- re-verified authoritatively in checkAndMerge just before the gate.
+-- Covered by the table-level staging:private comment.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS requires_explicit_approval BOOLEAN;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS explicit_approval_reason   VARCHAR(32);
+
 CREATE TABLE IF NOT EXISTS chat_session_specs (
   id                  SERIAL PRIMARY KEY,
   session_id          INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
@@ -1262,6 +1285,17 @@ END $$;
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approver_policy VARCHAR(10) NOT NULL DEFAULT 'anyone';
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS approvals_required SMALLINT;
 
+-- Per-app admins (#788), display side. The last reconciled *declared*
+-- username list from dapp.json's top-level `admins` block — INCLUDING
+-- names that resolved to no registered user, which is exactly why this
+-- exists alongside the resolved-id table `app_admins` below: the
+-- Members panel can say "@carol — declared, not a registered user"
+-- without a second source. Never consulted for permission checks (the
+-- `app_admins` rows are the authority); purely for display and to keep
+-- the settings endpoint a single query. Defaults to the empty array so
+-- every pre-migration app reads as "no declared admins".
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS admin_usernames TEXT[] NOT NULL DEFAULT '{}';
+
 -- Pixel density the platform captures this app's before/after preview
 -- screenshots at (issue #360). 2 = HiDPI/retina (the default, matching
 -- real laptops/phones — surfaces "only broken on retina" bugs as a
@@ -1362,6 +1396,31 @@ CREATE TABLE IF NOT EXISTS app_approvers (
   PRIMARY KEY (app_id, user_id)
 );
 CREATE INDEX IF NOT EXISTS idx_app_approvers_user ON app_approvers(user_id, status);
+
+-- Per-app admins (#788), authority side. A structurally slimmer
+-- app_approvers: deliberately NO status/invite columns, because the
+-- manifest PR IS the consent mechanism — an admins change is voted in
+-- and merged before it ever reaches this table, so there is nothing
+-- left to accept. Source of truth is dapp.json's top-level `admins`
+-- block, reconciled on every production deploy
+-- (services/app-manifest.js reconcileAppAdmins), which makes these rows
+-- match the declared list exactly (an explicit empty array clears the
+-- roster; an ABSENT block is a no-op). Self-hosted apps are skipped —
+-- the platform repo can never mint app admins.
+-- An app admin is treated as a second app creator for that ONE app
+-- (see services/app-admins.js canManageApp) and may force-merge that
+-- app's proposals — except ones flagged requires_explicit_approval,
+-- which would be self-escalation.
+-- Deliberately NOT staging:private (like app_collaborators /
+-- app_approvers): the roster carries no secrets and must survive into
+-- staging clones so the access checks keep behaving there.
+CREATE TABLE IF NOT EXISTS app_admins (
+  app_id     INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_app_admins_user ON app_admins(user_id);
 
 -- Before/after visuals on UI-affecting proposals (issue #195). Each row is
 -- one capture artifact produced by the one-shot usernode-capture container

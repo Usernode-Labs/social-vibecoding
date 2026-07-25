@@ -486,6 +486,13 @@ async function rebuildProductionInner(config, app) {
     // triggered. No-op when the block is absent; best-effort.
     await appManifest.reconcileAppGovernance(prodPool, app, manifest)
       .catch((err) => log.warn('staging', 'Governance reconcile failed', { app: app.slug, err: err.message }));
+    // And the manifest's `admins` block (issue #788): a merged PR that
+    // edits the per-app admin roster applies here, on the rebuild its
+    // merge triggered — which is why such a PR needs explicit approval
+    // to get merged in the first place. An ABSENT block is a no-op; an
+    // explicit [] clears the roster. Best-effort.
+    await appManifest.reconcileAppAdmins(prodPool, app, manifest)
+      .catch((err) => log.warn('staging', 'Admins reconcile failed', { app: app.slug, err: err.message }));
     // And the manifest's `screenshot.deviceScaleFactor` (issue #360): a
     // merged PR that toggles the capture density applies here on the
     // rebuild it triggered. readScreenshot defaults to 2×, so this keeps

@@ -42,7 +42,12 @@ function renamePrTitle(newName) {
  *   - commitMessage, prTitle, prBody;
  *   - chatText(prData, majority, activeUsers) — group-chat vote message;
  *   - eventMetadata        — extra pr_promoted metadata (prNumber is
- *                            added automatically).
+ *                            added automatically);
+ *   - explicitApproval     — true when the mutation touches a
+ *                            privilege-granting block (#788, today the
+ *                            top-level `admins` list), which switches
+ *                            off the time-based merge paths for the
+ *                            resulting proposal. Defaults to false.
  *
  * Throws on GitHub / DB failure so callers can map it to an HTTP error
  * or skip-and-continue. On success returns
@@ -100,6 +105,21 @@ async function createManifestPR(config, pool, app, actor, opts) {
     [app.id, actor.id || null, branch, prData.number, prData.html_url, prTitle]
   );
   const sessionId = sessRows[0].id;
+
+  // #788: stamp the explicit-approval flag directly. We KNOW what this
+  // PR mutates (opts.explicitApproval is set by the caller that built
+  // the mutation), so there's no need to round-trip GitHub to diff a
+  // file we just wrote — and stamping at creation is what makes the
+  // highest-risk path (a platform-opened admins PR) correct even if
+  // GitHub is unreachable at merge time.
+  await pool.query(
+    `UPDATE chat_sessions
+        SET requires_explicit_approval = $2, explicit_approval_reason = $3
+      WHERE id = $1`,
+    [sessionId, !!opts.explicitApproval, opts.explicitApproval ? 'admins' : null]
+  ).catch((err) => log.warn('rename-pr', 'Explicit-approval stamp failed', {
+    sessionId, err: err.message,
+  }));
 
   const { sendSystemMessage, pushVoteUpdate, pushNotificationToUser } = require('./ws');
   const notifications = require('./notifications');

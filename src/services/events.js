@@ -45,6 +45,8 @@ const EVENT_TYPES = Object.freeze({
   // from dapp.json, and the approver-invite lifecycle (mirrors
   // COLLAB_INVITED / COLLAB_JOINED).
   GOVERNANCE_CHANGED: 'governance_changed',
+  // Per-app admin roster applied from dapp.json (issue #788).
+  APP_ADMINS_CHANGED: 'app_admins_changed',
   APPROVER_INVITED: 'approver_invited',
   APPROVER_JOINED: 'approver_joined',
   // Sync-with-main completed (issue: make sync emit session activity).

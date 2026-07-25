@@ -30,10 +30,14 @@ const notifications = require('../services/notifications');
 const events = require('../services/events');
 const governance = require('../services/governance');
 const approverInvites = require('../services/approver-invites');
+const appAdmins = require('../services/app-admins');
 const { drainGuard } = require('../services/lifecycle');
 
-function canManageApprovers(app, user) {
-  return !!user?.canAdminWrite || (user?.id != null && app.created_by === user.id);
+// #788: the app's own declared admins manage the approver roster too —
+// they are creator-equivalent for this app. Async because the app-admin
+// lookup hits a (TTL-cached) table; every call site awaits it.
+function canManageApprovers(pool, app, user) {
+  return appAdmins.canManageApp(pool, app, user);
 }
 
 function approverRoutes(config) {
@@ -72,7 +76,7 @@ function approverRoutes(config) {
         approverPolicy: app.approver_policy,
         approvalsRequired: app.approvals_required,
         creatorId: app.created_by,
-        canManage: canManageApprovers(app, req.user),
+        canManage: await canManageApprovers(pool, app, req.user),
       });
     } catch (err) {
       log.error('approvers', 'list failed', { slug: req.params.slug, message: err.message });
@@ -93,7 +97,7 @@ function approverRoutes(config) {
         pool, req.params.slug, req.user, 'collab', appAccess.ACCESS_COLUMNS + ', name'
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
-      if (!canManageApprovers(app, req.user)) {
+      if (!(await canManageApprovers(pool, app, req.user))) {
         return res.status(403).json({ error: 'Only the app creator or an admin can invite approvers' });
       }
 
@@ -216,7 +220,8 @@ function approverRoutes(config) {
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 
-      const allowed = canManageApprovers(app, req.user) || targetId === req.user?.id;
+      const allowed = targetId === req.user?.id
+        || await canManageApprovers(pool, app, req.user);
       if (!allowed) {
         return res.status(403).json({ error: 'Only the app creator or an admin can remove approvers' });
       }

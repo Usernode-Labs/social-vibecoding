@@ -6970,6 +6970,12 @@ path: /another/changed/view
           }));
 
         if (session.status === 'promoted') {
+          // #788: the new commit may have added or removed a name in
+          // dapp.json's `admins` block, so re-classify alongside the
+          // vote reset. Best-effort (swallows GitHub failures) and
+          // re-verified authoritatively in checkAndMerge.
+          await require('../services/app-admins')
+            .refreshExplicitApproval(pool, session, session);
           const { rowCount } = await pool.query(
             `DELETE FROM pr_votes WHERE session_id = $1`,
             [session.id]

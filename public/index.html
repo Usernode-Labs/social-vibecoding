@@ -852,6 +852,15 @@
         <div id="members-approver-status" class="text-sm mt-2"></div>
       </div>
 
+      <!-- #788: per-app admins. Read-only by design — the roster's only
+           writer is the deploy-time reconcile of dapp.json's `admins`
+           block, so there is no add/remove control here. -->
+      <div id="members-appadmins-section" class="hidden mb-4">
+        <p class="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">App admins</p>
+        <div id="members-appadmins-list" class="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"></div>
+        <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Set in <code>dapp.json</code>. To change them, open a pull request that edits the <code>admins</code> list &mdash; that proposal needs real Yes votes and won&rsquo;t merge on a timer.</p>
+      </div>
+
       <div class="flex gap-3">
         <button type="button" id="members-close" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Close</button>
       </div>

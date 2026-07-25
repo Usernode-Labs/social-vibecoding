@@ -105,6 +105,11 @@ async function applyHeadChange({ config, pool, session, pr, repo, newHead, oldHe
   //    won't count against the new head; this DELETE keeps the visible pill
   //    honest and re-arms the stale-PR clock.)
   await pool.query(`DELETE FROM pr_votes WHERE session_id = $1`, [session.id]);
+  // #788: the new head may have added or removed a name in dapp.json's
+  // `admins` block — re-classify against it now that
+  // imported_pr_head_sha points at the new revision. Best-effort;
+  // checkAndMerge re-verifies authoritatively before merging.
+  await require('./app-admins').refreshExplicitApproval(pool, session, session);
   await pool.query(
     `UPDATE chat_sessions SET stale_notified_at = NULL WHERE id = $1`,
     [session.id]

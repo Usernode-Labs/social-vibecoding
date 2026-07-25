@@ -13,6 +13,7 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const appAccess = require('../services/app-access');
+const appAdmins = require('../services/app-admins');
 const notifications = require('../services/notifications');
 const events = require('../services/events');
 const { drainGuard } = require('../services/lifecycle');
@@ -297,9 +298,10 @@ function collaboratorRoutes(config) {
       );
       if (!app) return res.status(404).json({ error: 'App not found' });
 
-      const allowed = req.user?.canAdminWrite
-        || app.created_by === req.user?.id
-        || targetId === req.user?.id;
+      // #788: the app's declared admins are creator-equivalent here.
+      // (Self-removal stays allowed for everyone, as before.)
+      const allowed = targetId === req.user?.id
+        || await appAdmins.canManageApp(pool, app, req.user);
       if (!allowed) {
         return res.status(403).json({ error: 'Only the app creator or an admin can remove collaborators' });
       }

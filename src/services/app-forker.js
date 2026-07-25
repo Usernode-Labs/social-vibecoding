@@ -19,6 +19,12 @@ const { finalizeDeploy } = require('./app-creator');
 // otherwise overwrite apps.name back to the ORIGINAL's name on the
 // fork's first deploy. Everything else in the manifest (visibility,
 // icon, secrets, tests) is left untouched so it carries over verbatim.
+//
+// The one other field stripped here is the top-level `admins` block
+// (issue #788): a fork is a NEW app owned by the forker, so carrying
+// the source's per-app admin roster over would silently hand strangers
+// management + force-merge rights on someone else's app. The forker
+// keeps their own creator rights; the fork starts with no app admins.
 function rewriteDappName(dir, name) {
   const p = path.join(dir, 'dapp.json');
   let obj = null;
@@ -29,6 +35,7 @@ function rewriteDappName(dir, name) {
   }
   if (!obj || typeof obj !== 'object' || Array.isArray(obj)) obj = {};
   obj.name = name;
+  delete obj.admins;
   fs.writeFileSync(p, `${JSON.stringify(obj, null, 2)}\n`);
 }
 

@@ -1181,6 +1181,25 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   white-space: nowrap;
   vertical-align: middle;
 }
+/* #788: "Explicit approval" chip — this proposal changes who can
+   administer the app, so no timer can merge it. Amber (informational,
+   like the imported-PR badge) rather than red: nothing is wrong, the
+   rules are just stricter. Sits beside the tally pill, which still
+   shows the app's ordinary threshold — the threshold hasn't changed,
+   only the clocks are off. */
+.gc-vote-explicit {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #b45309;
+  background: rgba(245, 158, 11, 0.14);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.dark .gc-vote-explicit { color: #fbbf24; background: rgba(245, 158, 11, 0.18); }
 /* Dev-card headline cell (title + meta, left of the tally / 💬 pills).
    flex-basis:auto makes the cell's preferred width the title's natural
    single-line width, so on narrow screens the pills after it wrap to

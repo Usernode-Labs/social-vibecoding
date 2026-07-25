@@ -129,18 +129,61 @@ function atLeastGate(n, yesCount) {
   };
 }
 
+// #788 "explicit approval" modifier. A proposal whose diff changes a
+// privilege-granting dapp.json block (today: the top-level `admins`
+// list) keeps the app's NORMAL approval rules — same threshold, same
+// electorate, same at-least-N / invited-approver configuration, same
+// contested handling — but loses every TIME-BASED merge path:
+//
+//   - the minimum visibility window (a clock that DELAYS an
+//     already-approved proposal) is zeroed, so it merges the instant
+//     its normal threshold is met by votes actually cast;
+//   - lazy consensus (a clock that MERGES an under-threshold proposal
+//     because nobody objected) is disarmed outright. Silence must
+//     never hand out admin rights.
+//
+// Everything else passes through untouched — `required`, `contested`,
+// `thresholdMet`, and all four rejection fields. That last point is the
+// whole reason this is a modifier rather than a separate gate: the
+// auto-takedown countdown and the stale-PR sweep keep behaving exactly
+// as they do for any other proposal on that app, so a flagged proposal
+// nobody wants still dies on schedule.
+//
+// Note this is a no-op on the merge side under 'at_least' (atLeastGate
+// is already clock-free), and deliberately does NOT re-arm that mode's
+// rejection fields — "as before" means as that app normally behaves.
+function applyNoTimerMerge(gate) {
+  return {
+    ...gate,
+    windowMs: 0,
+    windowEndsAt: null,
+    windowElapsed: true,
+    lazyArmed: false,
+    lazyWindowMs: null,
+    mergeable: !!gate.thresholdMet,
+  };
+}
+
 // Pure mode dispatch given already-resolved governance + counts. The
 // async governedGate below resolves the electorate/counts and calls
 // this; serializers with batch-fetched counts call it directly.
-function computeGate(gov, active, yesCount, noCount, openedAt, now) {
+//
+// `opts.explicitApproval` layers the #788 no-timer modifier on top of
+// whichever regime the app configured — `mode` still reports the real
+// regime ('default' / 'at_least'), because the app's rules are what
+// still decide the threshold.
+function computeGate(gov, active, yesCount, noCount, openedAt, now, opts = {}) {
   const base = gov.approvalsRequired != null
     ? atLeastGate(gov.approvalsRequired, yesCount)
     : activeUsers().mergeGate(active, yesCount, noCount, openedAt, now);
+  const explicitApproval = !!opts.explicitApproval;
+  const gated = explicitApproval ? applyNoTimerMerge(base) : base;
   return {
-    ...base,
+    ...gated,
     policy: gov.approverPolicy,
     mode: gov.approvalsRequired != null ? 'at_least' : 'default',
     approvalsRequired: gov.approvalsRequired,
+    explicitApproval,
     qualifiedYes: Math.max(parseInt(yesCount, 10) || 0, 0),
     qualifiedNo: Math.max(parseInt(noCount, 10) || 0, 0),
     activeCount: Math.max(parseInt(active, 10) || 0, 1),
@@ -246,14 +289,16 @@ async function getElectorate(pool, appId, gov) {
 // Returns the mergeGate-shaped object from computeGate above, extended
 // with { policy, mode, approvalsRequired, qualifiedYes, qualifiedNo,
 // activeCount }.
-async function governedGate(pool, appId, { kind = 'pr', id, openedAt, now, headSha = null } = {}) {
+async function governedGate(pool, appId, { kind = 'pr', id, openedAt, now, headSha = null, explicitApproval = false } = {}) {
   const gov = await getGovernance(pool, appId);
   const electorate = await getElectorate(pool, appId, gov);
   // #687 Slice 3: for an imported proposal the caller passes the current
   // imported_pr_head_sha so only approvals cast against that revision count
   // (a head change re-opens approval). Native/issue callers pass no headSha.
   const { yes, no } = await qualifiedCounts(pool, kind, id, electorate.approverIds, headSha);
-  const gate = computeGate(gov, electorate.active, yes, no, openedAt, now);
+  // #788: the no-timer modifier rides on top of whatever regime the app
+  // configured — see applyNoTimerMerge.
+  const gate = computeGate(gov, electorate.active, yes, no, openedAt, now, { explicitApproval });
   if (electorate.adminFallback && gov.approverPolicy === 'invited') {
     log.debug('governance', 'Approver roster empty; full admins acting as approvers', { appId });
   }
@@ -266,6 +311,7 @@ module.exports = {
   getApproverSet,
   isApprover,
   atLeastGate,
+  applyNoTimerMerge,
   computeGate,
   qualifiedCounts,
   qualifiedCountsBatch,
