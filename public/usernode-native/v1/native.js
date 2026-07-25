@@ -2102,6 +2102,14 @@
   /* ────────────────────────────────────────────────────────────────────
    * Bottom sheet — spring presentation, grabber, 1:1 drag-to-dismiss with
    * momentum commit. A touch mid-spring inherits position + velocity.
+   *
+   * y is allowed to go NEGATIVE (above the rest position): the drag's
+   * elastic give, the entrance spring's overshoot, and a post-present
+   * content shrink all render a lifted sheet. That is safe to paint
+   * because `.un-sheet::after` in native.css extends the sheet surface
+   * below its bottom edge (issue #789) — without it, a lifted sheet
+   * exposes the dimmed backdrop over the page underneath. Keep the two
+   * halves together: don't clamp y here, and don't drop that rule.
    * ──────────────────────────────────────────────────────────────────── */
 
   // Watch an overlay's border-box height while it is presented (issue
