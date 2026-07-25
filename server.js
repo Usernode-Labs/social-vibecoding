@@ -44,6 +44,7 @@ const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
 const activeWorkersSvc = require('./src/services/active-workers');
 const turnWatchdog = require('./src/services/turn-watchdog');
+const recoveryPills = require('./src/services/recovery-pills');
 const sessionLifecycle = require('./src/services/session-lifecycle');
 const stagingRecovery = require('./src/services/staging-recovery');
 const limits = require('./src/services/limits');
@@ -625,9 +626,20 @@ async function start() {
       // carried forward from its persisted headless_step checkpoint;
       // unresumable rows are marked 'failed' (the pre-resume behavior).
       const { resumeHeadlessRuns } = require('./src/routes/sessions');
-      resumeHeadlessRuns(config).catch((err) => {
-        log.warn('server', 'Headless resume failed', { err: err.message });
-      });
+      resumeHeadlessRuns(config)
+        .catch((err) => {
+          log.warn('server', 'Headless resume failed', { err: err.message });
+        })
+        // #786: last of the recovery chain — repair dev-chat pill bars the
+        // restart emptied in shapes that leave NO breadcrumb of their own
+        // (a Mayor turn killed mid-stream, a phase-2 wrap-up lost while the
+        // worker was merely warm-idle, plus sessions left broken by earlier
+        // restarts). Runs after the paths above have claimed their sessions,
+        // and its busy / active_turn guards skip anything still in flight.
+        .then(() => restoreMissingQuickReplies(config))
+        .catch((err) => {
+          log.warn('server', 'Quick-reply backfill failed', { err: err.message });
+        });
     });
 
   // Idle-eviction sweeper. Warm workers cost ~256MB resident; eviction
@@ -760,6 +772,7 @@ if (require.main === module) {
 module.exports = {
   adoptOrphanWorker,
   finalizeRecoveredTurn,
+  restoreMissingQuickReplies,
   recoverStuckMerges,
   reconcileEligibleMerges,
   reconcileStuckChecks,
@@ -1307,6 +1320,136 @@ async function recoverSessions(config) {
   }
 }
 
+// Boot-time dev-chat quick-reply backfill (#786).
+//
+// The recovery paths above each drop a breadcrumb carrying pills, but two
+// restart shapes leave no breadcrumb at all and so no pills:
+//
+//   1. A Mayor-only turn (no dispatch) killed mid-stream. It isn't in
+//      activeWorkers, so the 5s drain doesn't wait for it and nothing is
+//      persisted — the session's last rows are the user's message and the
+//      "Thinking about your request..." status line, and the user has no
+//      indication their message was dropped.
+//   2. A phase-2 wrap-up lost while the worker was already warm-idle:
+//      adoptOrphanWorker's warm-idle branch adopts silently (correctly —
+//      nothing was interrupted), so the dispatch turn's pills, which only
+//      ever come from phase 2, never land.
+//
+// Both leave the newest user/assistant row without quickReplies, which is
+// exactly what the client's pill resolution reads. Repair them in place:
+// attach derived pills to an assistant row, or post the missed-reply
+// breadcrumb when the turn died before replying at all. The reap/skip
+// decision itself is the pure classifyMissingPills policy in
+// services/recovery-pills.js.
+//
+// Deliberately a one-shot boot sweep (not a sweeper pass): the shapes it
+// heals are created by a restart, so a restart is exactly when to look.
+// Bounded by LIMIT + a recency window so a large history can't make boot
+// recovery expensive. Exported for tests.
+const QR_BACKFILL_LIMIT = 200;
+const QR_BACKFILL_WINDOW_DAYS = 7;
+
+async function restoreMissingQuickReplies(config) {
+  const pool = getPool(config);
+  const { broadcastGlobal } = require('./src/services/ws');
+
+  const { rows } = await pool.query(
+    `SELECT id, pr_number, spec_md FROM chat_sessions
+     WHERE status IN ('active', 'promoted')
+       AND is_headless = FALSE
+       AND active_turn IS NULL
+       AND last_activity_at > NOW() - make_interval(days => $1::int)
+     ORDER BY last_activity_at DESC
+     LIMIT $2`,
+    [QR_BACKFILL_WINDOW_DAYS, QR_BACKFILL_LIMIT]
+  );
+  if (!rows.length) return;
+
+  let attached = 0;
+  let breadcrumbs = 0;
+  let skipped = 0;
+
+  for (const session of rows) {
+    try {
+      // A live consumer owns this session right now (a detached-turn
+      // resume started above, or a turn came in while we were sweeping) —
+      // its own wrap-up/breadcrumb will supply the pills.
+      if (activeWorkersSvc.isSessionBusy(session.id)) { skipped++; continue; }
+
+      // System rows are transparent to the client's pill resolution, so
+      // the deciding row is the newest user/assistant one.
+      const { rows: lastRows } = await pool.query(
+        `SELECT id, role, content, metadata FROM chat_session_messages
+         WHERE session_id = $1 AND role IN ('user', 'assistant')
+         ORDER BY id DESC LIMIT 1`,
+        [session.id]
+      );
+      const lastRow = lastRows[0] || null;
+      const verdict = recoveryPills.classifyMissingPills({ lastRow });
+
+      if (verdict === 'attach_assistant') {
+        const kind = recoveryPills.backfillKindForSession({
+          hasPr: session.pr_number != null,
+          hasSpec: !!(session.spec_md || '').trim(),
+        });
+        const pills = recoveryPills.buildRecoveryQuickReplies(kind);
+        if (!pills) { skipped++; continue; }
+        await pool.query(
+          `UPDATE chat_session_messages
+           SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{quickReplies}', $1::jsonb)
+           WHERE id = $2`,
+          [JSON.stringify(pills), lastRow.id]
+        );
+        attached++;
+        continue;
+      }
+
+      if (verdict === 'breadcrumb_unanswered') {
+        // Idempotence across boots: if this sweep already posted its
+        // breadcrumb (and the user hasn't sent anything since), the row is
+        // still the session's newest system row.
+        const { rows: sysRows } = await pool.query(
+          `SELECT content FROM chat_session_messages
+           WHERE session_id = $1 AND role = 'system'
+           ORDER BY id DESC LIMIT 1`,
+          [session.id]
+        );
+        if (sysRows.length && sysRows[0].content === recoveryPills.UNANSWERED_BREADCRUMB) {
+          skipped++;
+          continue;
+        }
+        const pills = recoveryPills.buildRecoveryQuickReplies('unanswered', {
+          lastUserText: lastRow.content || '',
+        });
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [session.id, recoveryPills.UNANSWERED_BREADCRUMB,
+            JSON.stringify(pills ? { quickReplies: pills } : {})]
+        );
+        broadcastGlobal({
+          type: 'session_event', sessionId: session.id, event: 'status',
+          text: recoveryPills.UNANSWERED_BREADCRUMB,
+          quickReplies: pills || undefined,
+        });
+        breadcrumbs++;
+        continue;
+      }
+
+      skipped++;
+    } catch (err) {
+      skipped++;
+      log.warn('server', 'Quick-reply backfill skipped a session', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+  }
+
+  log.info('server', 'Dev-chat quick-reply backfill done', {
+    scanned: rows.length, attached, breadcrumbs, skipped,
+  });
+}
+
 // Adopt orphan worker containers on startup.
 //
 // A worker is "orphan" if its container (usernode-worker-<sessionId>)
@@ -1443,18 +1586,24 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
       // worker.stopTurn walks /proc inside the container — the worker
       // image has no pkill (see TURN_PROC_KILL_SCRIPT in worker.js).
       await worker.stopTurn(sessionId).catch(() => {});
+      // #786: the breadcrumb carries the turn's quick-reply pills. The
+      // Mayor wrap-up that normally supplies them can't run here, and
+      // without pills the bar above the composer stays empty until the
+      // user types — so there'd be no one-tap way to retry.
+      const killedPills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata)
          VALUES ($1, 'system', $2, $3)`,
         [
           sessionId,
           'Lost connection mid-turn after restart — please retry your request.',
-          JSON.stringify({}),
+          JSON.stringify(killedPills ? { quickReplies: killedPills } : {}),
         ]
       ).catch(() => {});
       broadcastGlobal({
         type: 'session_event', sessionId, event: 'status',
         text: 'Lost connection mid-turn after restart — please retry your request.',
+        quickReplies: killedPills || undefined,
       });
       worker.adoptWarmWorker(sessionId, containerName);
       return;
@@ -1474,13 +1623,15 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // Terminal marker so the dead turn's progress card doesn't stay
     // frozen on its last in-progress line ("Pushing", "Editing …").
     await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
+    // #786: pills on the breadcrumb — see the mid-exec branch above.
+    const goneP = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', $2, $3)`,
       [
         sessionId,
         'A coding turn was interrupted by a restart and its worker is gone — please retry your request.',
-        JSON.stringify({}),
+        JSON.stringify(goneP ? { quickReplies: goneP } : {}),
       ]
     ).catch(() => {});
   }
@@ -1790,11 +1941,20 @@ async function resumeDetachedTurnInner({
     } else {
       await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
     }
+    // #786: the failed-resume breadcrumb carries retry pills — the
+    // phase-2 wrap-up that would normally supply them is gone with the
+    // dead SSE, so this is the turn's only chance to refill the bar.
+    const failedPills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', $2, $3)`,
-      [sessionId, 'A coding turn was interrupted by a restart and could not be resumed — please retry your request.', JSON.stringify({})]
+      [sessionId, 'A coding turn was interrupted by a restart and could not be resumed — please retry your request.',
+        JSON.stringify(failedPills ? { quickReplies: failedPills } : {})]
     ).catch(() => {});
+    emit('status', {
+      text: 'A coding turn was interrupted by a restart and could not be resumed — please retry your request.',
+      quickReplies: failedPills || undefined,
+    });
     return;
   }
   flushProgress();
@@ -1829,6 +1989,11 @@ async function resumeDetachedTurnInner({
   // throw anywhere below still stamps [interrupted]; the happy paths
   // overwrite it with [done] / [push_failed] before the finally runs.
   let terminalLine = '[interrupted]';
+  // #786: which pill set the generic breadcrumb below should carry. The
+  // scout branches attach their own pills to their own (more specific)
+  // row and leave this null — a pill-less system row is transparent to
+  // the client's pill resolution, so the earlier row still wins.
+  let breadcrumbPillKind = null;
   try {
     if (activeTurn.mode === 'scout') {
       // Scout turns push nothing — their product is the spec text.
@@ -1843,18 +2008,50 @@ async function resumeDetachedTurnInner({
         ).catch(() => {});
         const specVersion = await snapshotSessionSpec(pool, sessionId, ccText);
         const lineCount = ccText.split('\n').length;
+        // #786: "spec drafted" pills ride the spec row itself rather than
+        // the generic breadcrumb — it's the row that describes the state
+        // the session actually landed in.
+        const specPills = recoveryPills.buildRecoveryQuickReplies('spec_done');
         await pool.query(
           `INSERT INTO chat_session_messages (session_id, role, content, metadata)
            VALUES ($1, 'system', $2, $3)`,
           [
             sessionId,
             `Scout finished after restart — drafted a ${lineCount}-line spec.`,
-            JSON.stringify({ specLines: lineCount, scoutOutput: ccText, specVersion }),
+            JSON.stringify({
+              specLines: lineCount,
+              scoutOutput: ccText,
+              specVersion,
+              ...(specPills ? { quickReplies: specPills } : {}),
+            }),
           ]
         ).catch(() => {});
+        emit('status', {
+          text: `Scout finished after restart — drafted a ${lineCount}-line spec.`,
+          specLines: lineCount,
+          scoutOutput: ccText,
+          specVersion,
+          quickReplies: specPills || undefined,
+        });
         emit('spec_updated', { length: ccText.length, lines: lineCount, version: specVersion });
       } else {
-        emit('status', { text: 'Recovered scout turn produced no spec text.' });
+        // #786: previously emit-only, so a recovered-but-empty scout turn
+        // left no trace at all after a reload. Persist it (with retry
+        // pills) so the state is visible and actionable.
+        const noSpecPills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+           VALUES ($1, 'system', $2, $3)`,
+          [
+            sessionId,
+            recoveryPills.SCOUT_NO_SPEC_BREADCRUMB,
+            JSON.stringify(noSpecPills ? { quickReplies: noSpecPills } : {}),
+          ]
+        ).catch(() => {});
+        emit('status', {
+          text: recoveryPills.SCOUT_NO_SPEC_BREADCRUMB,
+          quickReplies: noSpecPills || undefined,
+        });
       }
       // Persist the CC session id for the next --resume.
       const newCcId = result.sessionId || result.initSessionId || null;
@@ -1873,15 +2070,27 @@ async function resumeDetachedTurnInner({
         keepWorker: true,
       });
       terminalLine = finalizeOutcome === 'push_failed' ? '[push_failed]' : '[done]';
+      // #786: the build branch has no more specific row of its own, so
+      // its pills ride the generic breadcrumb below.
+      breadcrumbPillKind = finalizeOutcome === 'push_failed' ? 'push_failed' : 'code_done';
     }
     // The dead SSE's Mayor phase-2 narration can't be resumed (matches
     // pre-existing recovery semantics) — drop a breadcrumb instead.
+    // #786: it also carries the turn's quick-reply pills (except on the
+    // scout paths, which already put them on their own row).
+    const breadcrumbPills = breadcrumbPillKind
+      ? recoveryPills.buildRecoveryQuickReplies(breadcrumbPillKind)
+      : null;
     await pool.query(
       `INSERT INTO chat_session_messages (session_id, role, content, metadata)
        VALUES ($1, 'system', $2, $3)`,
-      [sessionId, 'Coding turn recovered after a platform restart.', JSON.stringify({})]
+      [sessionId, 'Coding turn recovered after a platform restart.',
+        JSON.stringify(breadcrumbPills ? { quickReplies: breadcrumbPills } : {})]
     ).catch(() => {});
-    emit('status', { text: 'Coding turn recovered after a platform restart.' });
+    emit('status', {
+      text: 'Coding turn recovered after a platform restart.',
+      quickReplies: breadcrumbPills || undefined,
+    });
 
     // #161: the pre-restart SSE is guaranteed dead, so the owner cannot
     // have been watching this turn finish — treat recovered turns as
@@ -2127,12 +2336,18 @@ function startSessionAutoPauseSweeper(config) {
           await worker.clearActiveTurn(row.id);
           await appendTerminalProgressLine(pool, row.id, '[interrupted]');
           const msg = 'This coding turn was interrupted and could not be recovered — please retry your request.';
+          // #786: retry pills on the breadcrumb — no wrap-up will run for
+          // a reaped turn, so this row is the pill bar's only source.
+          const reapPills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, metadata)
              VALUES ($1, 'system', $2, $3)`,
-            [row.id, msg, JSON.stringify({})]
+            [row.id, msg, JSON.stringify(reapPills ? { quickReplies: reapPills } : {})]
           ).catch(() => {});
-          broadcastGlobal({ type: 'session_event', sessionId: row.id, event: 'status', text: msg });
+          broadcastGlobal({
+            type: 'session_event', sessionId: row.id, event: 'status', text: msg,
+            quickReplies: reapPills || undefined,
+          });
           // Same "the owner cannot have watched this finish" rationale as
           // the recovered-turn notify block in resumeDetachedTurn.
           try {
