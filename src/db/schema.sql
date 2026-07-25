@@ -207,13 +207,19 @@ CREATE TABLE IF NOT EXISTS chat_sessions (
   staging_url          VARCHAR(512),
   -- Lifecycle:
   --   'active'    = open, has (or can lazily spawn) a warm worker container.
-  --                 Counts against the per-user 3-session cap.
-  --   'promoted'  = PR was merged, but the chat is still alive — same
-  --                 properties as 'active' (worker, cap, etc.).
+  --                 The only status counting against the per-user
+  --                 active-session cap (MAX_USER_SESSIONS, raised for full
+  --                 platform admins by MAX_ADMIN_USER_SESSIONS — resolved
+  --                 per-requester in src/services/session-caps.js).
+  --   'promoted'  = PR is up for a merge vote and the chat is still alive.
+  --                 Un-pausable while the vote runs, so it is EXEMPT from
+  --                 the active-session cap (#193) and bounded instead by
+  --                 the promoted cap (MAX_USER_PROMOTED_SESSIONS /
+  --                 MAX_ADMIN_USER_PROMOTED_SESSIONS) at promote time.
   --   'paused'    = open but worker container has been torn down to free
   --                 the slot. CC volume + branch + PR are all preserved
-  --                 so /resume restores it cleanly. Does NOT count against
-  --                 the 3-session cap (no warm container).
+  --                 so /resume restores it cleanly. Unlimited — does NOT
+  --                 count against either cap (no warm container).
   --   'archived'  = abandoned: worker container destroyed, CC volume
   --                 destroyed, PR closed. One-way (no /unarchive route).
   status               VARCHAR(32) NOT NULL DEFAULT 'active',

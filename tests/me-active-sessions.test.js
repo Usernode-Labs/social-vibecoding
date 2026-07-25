@@ -35,10 +35,13 @@ const express = require('express');
 
 const VIEWER = { id: 7, username: 'tester' };
 
-function startServer() {
+// `viewer` / `config` are overridable so the caps tests can mount the
+// same router as a full admin, a view-only admin, and with a tuned
+// config — the payload's `caps` field is per-requester.
+function startServer({ viewer = VIEWER, config = {} } = {}) {
   const app = express();
-  app.use((req, res, next) => { req.user = VIEWER; next(); });
-  app.use(sessionRoutes({}));
+  app.use((req, res, next) => { req.user = viewer; next(); });
+  app.use(sessionRoutes(config));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
   });
@@ -159,6 +162,98 @@ test('busy flag: set via activeWorkers or worker.isInFlight; totals arithmetic c
   } finally {
     worker.isInFlight = realIsInFlight;
     activeWorkers.clear();
+    server.close();
+  }
+});
+
+// ── caps: the per-viewer "(N/M)" denominators ───────────────────────────
+//
+// The dev drawer used to hardcode "/3", which lied the moment an operator
+// retuned MAX_USER_SESSIONS and could never express the raised admin caps.
+// The server now ships the viewer's own effective ceilings, so display and
+// enforcement can't drift. Gating is on canAdminWrite (NOT isAdmin) —
+// view-only admins stay on the base caps.
+test('caps: regular viewer gets the base 3/5 tier', async () => {
+  poolQueryHandler = async () => ({ rows: [] });
+  const server = await startServer();
+  try {
+    const { body } = await fetchActiveSessions(server);
+    assert.deepStrictEqual(body.caps, { activeSessions: 3, promotedSessions: 5 });
+  } finally {
+    server.close();
+  }
+});
+
+test('caps: full platform admin gets the raised 5/8 tier', async () => {
+  poolQueryHandler = async () => ({ rows: [] });
+  const server = await startServer({
+    viewer: { id: 1, username: 'admin', isAdmin: true, canAdminWrite: true },
+  });
+  try {
+    const { body } = await fetchActiveSessions(server);
+    assert.deepStrictEqual(body.caps, { activeSessions: 5, promotedSessions: 8 });
+  } finally {
+    server.close();
+  }
+});
+
+test('caps: view-only admin stays on the base tier', async () => {
+  poolQueryHandler = async () => ({ rows: [] });
+  const server = await startServer({
+    viewer: { id: 2, username: 'viewadmin', isAdmin: true, canAdminWrite: false },
+  });
+  try {
+    const { body } = await fetchActiveSessions(server);
+    assert.deepStrictEqual(body.caps, { activeSessions: 3, promotedSessions: 5 });
+  } finally {
+    server.close();
+  }
+});
+
+test('caps: a tuned config is reflected per tier', async () => {
+  poolQueryHandler = async () => ({ rows: [] });
+  const config = {
+    maxUserSessions: 2, maxUserPromotedSessions: 4,
+    maxAdminUserSessions: 9, maxAdminUserPromotedSessions: 10,
+  };
+  const asUser = await startServer({ config });
+  try {
+    const { body } = await fetchActiveSessions(asUser);
+    assert.deepStrictEqual(body.caps, { activeSessions: 2, promotedSessions: 4 });
+  } finally {
+    asUser.close();
+  }
+  const asAdmin = await startServer({
+    config, viewer: { id: 1, username: 'admin', canAdminWrite: true },
+  });
+  try {
+    const { body } = await fetchActiveSessions(asAdmin);
+    assert.deepStrictEqual(body.caps, { activeSessions: 9, promotedSessions: 10 });
+  } finally {
+    asAdmin.close();
+  }
+});
+
+// Mounting with an empty config (what most route tests do) must still
+// yield numbers — the client renders these directly, so `undefined` here
+// would paint "(N/undefined)".
+test('caps: never undefined even with an empty config, and totals still ride along', async () => {
+  poolQueryHandler = async () => ({
+    rows: [sessionRow({ id: 31, status: 'active' }), sessionRow({ id: 32, status: 'promoted' })],
+  });
+  const realIsInFlight = worker.isInFlight;
+  worker.isInFlight = () => false;
+  activeWorkers.clear();
+  const server = await startServer();
+  try {
+    const { body } = await fetchActiveSessions(server);
+    assert.ok(body.caps, 'caps present');
+    assert.ok(Number.isInteger(body.caps.activeSessions) && body.caps.activeSessions > 0);
+    assert.ok(Number.isInteger(body.caps.promotedSessions) && body.caps.promotedSessions > 0);
+    assert.strictEqual(body.totals.active, 1);
+    assert.strictEqual(body.totals.promoted, 1);
+  } finally {
+    worker.isInFlight = realIsInFlight;
     server.close();
   }
 });

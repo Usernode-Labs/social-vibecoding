@@ -69,9 +69,19 @@ function load() {
     //     count toward maxUserSessions, so this is the bound that keeps
     //     one user from papering the vote panel (and holding N staging
     //     previews) with open PRs.
+    //   - maxAdminUserSessions / maxAdminUserPromotedSessions: the same
+    //     two per-user ceilings, RAISED for full platform admins only
+    //     (gated on canAdminWrite — view-only admins and per-app admins
+    //     stay on the base caps, matching the app-quota bypass in
+    //     routes/apps.js). A raised cap, not a bypass: admins are still
+    //     bounded, and maxGlobalSessions applies to everyone. Resolved
+    //     per-requester by services/session-caps.js — never read these
+    //     directly at a call site.
     maxGlobalSessions: parseInt(process.env.MAX_GLOBAL_SESSIONS || '25', 10),
     maxUserSessions: parseInt(process.env.MAX_USER_SESSIONS || '3', 10),
     maxUserPromotedSessions: parseInt(process.env.MAX_USER_PROMOTED_SESSIONS || '5', 10),
+    maxAdminUserSessions: parseInt(process.env.MAX_ADMIN_USER_SESSIONS || '5', 10),
+    maxAdminUserPromotedSessions: parseInt(process.env.MAX_ADMIN_USER_PROMOTED_SESSIONS || '8', 10),
     // Per-session worker container resource limits, passed to `docker run`
     // by src/services/worker.js. Defaults preserve historical behavior;
     // shrink them in prod to fit more concurrent warm workers on one box.
@@ -195,6 +205,18 @@ function load() {
   console.log(`  MAX_GLOBAL_SESSIONS=${config.maxGlobalSessions}`);
   console.log(`  MAX_USER_SESSIONS=${config.maxUserSessions}`);
   console.log(`  MAX_USER_PROMOTED_SESSIONS=${config.maxUserPromotedSessions}`);
+  console.log(`  MAX_ADMIN_USER_SESSIONS=${config.maxAdminUserSessions}`);
+  console.log(`  MAX_ADMIN_USER_PROMOTED_SESSIONS=${config.maxAdminUserPromotedSessions}`);
+  // An admin cap BELOW its base counterpart is almost certainly an
+  // operator typo (it would make full admins worse off than regular
+  // users). Honor the configured number literally — the boot log stays
+  // the single source of truth — but say so loudly.
+  if (config.maxAdminUserSessions < config.maxUserSessions) {
+    console.log(`  [warn] MAX_ADMIN_USER_SESSIONS (${config.maxAdminUserSessions}) is below MAX_USER_SESSIONS (${config.maxUserSessions}) — admins get a LOWER session cap than regular users`);
+  }
+  if (config.maxAdminUserPromotedSessions < config.maxUserPromotedSessions) {
+    console.log(`  [warn] MAX_ADMIN_USER_PROMOTED_SESSIONS (${config.maxAdminUserPromotedSessions}) is below MAX_USER_PROMOTED_SESSIONS (${config.maxUserPromotedSessions}) — admins get a LOWER proposal cap than regular users`);
+  }
   console.log(`  WORKER_MEMORY=${config.workerMemory} WORKER_CPUS=${config.workerCpus}`);
   console.log(`  DB_POOL_MAX=${config.dbPoolMax}`);
   console.log(`  SESSION_AUTOPAUSE_IDLE_MS=${config.sessionAutopauseIdleMs}${config.sessionAutopauseIdleMs === 0 ? ' (disabled)' : ''}`);

@@ -25,6 +25,7 @@ const { getAppConventions, getSelfHostedRefuseList } = require('../services/prom
 const { IN_LOOP_BROWSER_GUIDANCE } = require('../services/in-loop-browser');
 const models = require('../services/models');
 const limits = require('../services/limits');
+const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
 const modelFallback = require('../services/model-fallback');
 const { getActiveUserStats } = require('../services/active-users');
@@ -307,6 +308,14 @@ function sessionRoutes(config) {
   //     - busy     = subset of active+promoted where CC is mid-turn right now
   //     - total    = active + promoted + paused (every non-archived row
   //                  we returned)
+  //
+  //   "caps" carries the DENOMINATORS for that header — the viewer's own
+  //   effective per-user ceilings ({ activeSessions, promotedSessions }),
+  //   which are higher for full platform admins (services/session-caps.js).
+  //   The client used to hardcode "/3", which silently lied the moment an
+  //   operator retuned MAX_USER_SESSIONS; shipping the real numbers here
+  //   keeps display and enforcement from drifting. Always present, incl.
+  //   on the ?demo=1 path.
   router.get('/api/me/active-sessions', async (req, res) => {
     try {
       // last_activity_at = the newest message in the session's thread,
@@ -402,10 +411,29 @@ function sessionRoutes(config) {
             created_at: new Date(Date.now() - 3 * 3600 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // A proposal-in-vote row so the dev drawer's violet "Proposed"
+          // card state is reviewable in a demo preview. Unlike 9000001
+          // above, this id is deliberately NOT in the mock proposals list,
+          // so it renders in the session list (the "proposals fetch
+          // failed" fallback the work drawer documents) — which is exactly
+          // the card the promoted-cap copy talks about. Appended AFTER
+          // totals like every other mock, so the "(x/y)" numerator stays
+          // honest and the denominators come from `caps` below.
+          {
+            id: 990105, branch_name: 'mock/my-proposal-in-vote', pr_number: 990105,
+            pr_url: null, pr_title: '[Mock] Proposal up for vote',
+            session_title: '[Mock] Proposal up for vote',
+            status: 'promoted', linked_issues: [], shared_at: null,
+            created_at: new Date(Date.now() - 5 * 3600 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
           }
         );
       }
-      res.json({ sessions, totals });
+      // Per-viewer denominators for the "(x/y)" header — full admins get
+      // the raised caps. Cheap (pure function on req.user, no query).
+      res.json({ sessions, totals, caps: effectiveSessionCaps(config, req.user) });
     } catch (err) {
       log.error('sessions', 'Failed to list active sessions', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -590,17 +618,27 @@ function sessionRoutes(config) {
       // deliberately un-pausable — their status must stay 'promoted' so
       // the vote endpoints keep working — so counting them here would
       // leave the user no way to free a slot by pausing. The separate
-      // maxUserPromotedSessions cap (enforced at promote time) bounds
-      // how many vote-only sessions one user can accumulate.
+      // promoted cap (enforced at promote time) bounds how many
+      // vote-only sessions one user can accumulate.
+      //
+      // The ceiling itself is per-REQUESTER: full platform admins get a
+      // raised cap (services/session-caps.js). Never compare against
+      // config.maxUserSessions directly here.
+      const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
          WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
         [req.user.id]
       );
-      if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
-        return res.status(429).json({ error: `You already have ${config.maxUserSessions} running sessions. Pause or archive one first.` });
+      if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
+        return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
 
+      // The GLOBAL ceiling has no admin tier — it's a host-resource
+      // bound (warm workers + staging containers on one box), not a
+      // per-user policy budget, so full admins queue behind it exactly
+      // like everyone else. Don't "complete the pattern" by exempting
+      // them here.
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
       );
@@ -837,14 +875,17 @@ function sessionRoutes(config) {
 
       // The clone is an ordinary dev-chat session, so the usual caps apply.
       // Per-user cap counts only 'active' sessions (#193) — promoted ones
-      // are un-pausable while their PR is in a vote, so they're exempt.
+      // are un-pausable while their PR is in a vote, so they're exempt —
+      // and the ceiling is per-requester (full admins get a raised cap;
+      // see services/session-caps.js).
+      const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
          WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
         [req.user.id]
       );
-      if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
-        return res.status(429).json({ error: `You already have ${config.maxUserSessions} running sessions. Pause or archive one first.` });
+      if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
+        return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
       }
       const { rows: globalRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
@@ -1497,15 +1538,19 @@ function sessionRoutes(config) {
       // Per-user cap counts only 'active' sessions (#193) — promoted ones
       // are un-pausable while their PR is in a vote, so they're exempt.
       // This also keeps the count consistent with the LRU eviction below,
-      // which has always only considered 'active' victims.
+      // which has always only considered 'active' victims. The ceiling is
+      // per-requester (full admins get a raised cap; see
+      // services/session-caps.js) — raising it just means the LRU pause
+      // below fires less often for them.
+      const caps = effectiveSessionCaps(config, req.user);
       const { rows: countRows } = await pool.query(
         `SELECT COUNT(*) as cnt FROM chat_sessions
          WHERE user_id = $1 AND status = 'active'`,
         [req.user.id]
       );
-      if (parseInt(countRows[0].cnt) >= config.maxUserSessions) {
+      if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
         if (!config.sessionLruOnResume) {
-          return res.status(429).json({ error: `You already have ${config.maxUserSessions} active sessions. Pause one first to free a slot.` });
+          return res.status(429).json({ error: `You already have ${caps.activeSessions} active sessions. Pause one first to free a slot.` });
         }
         // LRU: pause the user's least-recently-active 'active' session
         // (not 'promoted' — those await merge votes) to free a slot.
