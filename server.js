@@ -579,9 +579,14 @@ async function start() {
     log.warn('server', 'Worker image build deferred', { err: err.message });
   });
 
+  // Module-scoped so cleanup() can close it on SIGTERM (#767) — a
+  // function-local handle left the listener accepting new connections
+  // for the entire drain, then exited from under them.
   const server = app.listen(config.port, () => {
     log.info('server', `Listening on :${config.port}`);
   });
+  httpServer = server;
+  shutdownPool = getPool(config);
 
   ws.attach(server, config);
   chainPoller.start(config);
@@ -749,8 +754,27 @@ if (require.main === module) {
 // internals, so the headless-recovery guards stay covered by node --test.
 // `recoverStuckMerges` rides along so the GitHub-reconciliation sweep stays
 // covered too, and `reconcileEligibleMerges` (#390) so the boot-time
-// auto-merge eligibility sweep is covered. Not used by any runtime caller.
-module.exports = { adoptOrphanWorker, finalizeRecoveredTurn, recoverStuckMerges, reconcileEligibleMerges, reconcileStuckChecks };
+// auto-merge eligibility sweep is covered. `cleanup` + `__setShutdownTargets`
+// (#767) let tests drive the graceful-shutdown sequence against a stubbed
+// listener and pool without booting a server. Not used by any runtime caller.
+module.exports = {
+  adoptOrphanWorker,
+  finalizeRecoveredTurn,
+  recoverStuckMerges,
+  reconcileEligibleMerges,
+  reconcileStuckChecks,
+  cleanup,
+  // Getters, not values: this module.exports literal is evaluated long
+  // before the `const`s down by cleanup(), so a direct reference would hit
+  // the temporal dead zone and crash the whole require.
+  get DRAIN_TIMEOUT_MS() { return DRAIN_TIMEOUT_MS; },
+  get POOL_CLOSE_TIMEOUT_MS() { return POOL_CLOSE_TIMEOUT_MS; },
+  __setShutdownTargets: ({ server, pool } = {}) => {
+    httpServer = server ?? null;
+    shutdownPool = pool ?? null;
+    cleanupStarted = false;
+  },
+};
 
 // Scan existing imported apps for privacy violations. Usernode workers
 // run with zero GitHub credentials and rely on unauthenticated public
@@ -2590,12 +2614,43 @@ function startStalePrSweeper(config) {
 // compose stop_grace_period (tests/caddy-deploy-grace.test.js pins the
 // relationship).
 const DRAIN_TIMEOUT_MS = 5000;
+// Budget for closing the pg pool after the handler drain (#767). Sits
+// INSIDE the same compose stop_grace_period as DRAIN_TIMEOUT_MS —
+// tests/caddy-deploy-grace.test.js pins DRAIN + POOL_CLOSE <= grace — so a
+// pool that refuses to settle can never push the exit past the SIGKILL.
+const POOL_CLOSE_TIMEOUT_MS = 1000;
 let cleanupStarted = false;
+// Set by start() once the listener is up. cleanup() runs at module scope,
+// so both need to be reachable from here.
+let httpServer = null;
+let shutdownPool = null;
 
 async function cleanup() {
   if (cleanupStarted) return;
   cleanupStarted = true;
   lifecycle.setShuttingDown();
+
+  // Stop accepting BEFORE draining. Caddy's apex proxy and the wildcard
+  // forward_auth gate both hold-and-retry a refused dial for 30s
+  // (Caddyfile, #711), so a connection refused during the drain is
+  // re-dialled into the new container — strictly better than accepting a
+  // request into a process that is about to exit. Idle keep-alives are
+  // dropped at once; connections still serving a request get until the
+  // drain deadline, then closeAllConnections cuts them so `close()` can
+  // actually complete.
+  if (httpServer) {
+    try {
+      httpServer.close(() => {});
+      httpServer.closeIdleConnections?.();
+      const cutoff = setTimeout(() => {
+        try { httpServer.closeAllConnections?.(); } catch { /* already gone */ }
+      }, DRAIN_TIMEOUT_MS);
+      cutoff.unref?.();
+      log.info('server', 'Listener closed to new connections', { timeoutMs: DRAIN_TIMEOUT_MS });
+    } catch (err) {
+      log.warn('server', 'Listener close failed', { err: err.message });
+    }
+  }
   if (sweeperHandle) {
     clearInterval(sweeperHandle);
     sweeperHandle = null;
@@ -2624,6 +2679,32 @@ async function cleanup() {
     });
   } else if (startingCount > 0) {
     log.info('server', 'All handlers drained; worker containers persist across restart');
+  }
+
+  // Close the pg pool so in-flight queries settle instead of being severed
+  // by process.exit(). Bounded: a pool that won't drain must not hold the
+  // process past the SIGKILL deadline.
+  if (shutdownPool) {
+    const poolStartedAt = Date.now();
+    // Deliberately NOT unref'd, unlike the drain cutoff above: this timer
+    // is what guarantees forward progress to process.exit(0) when end()
+    // never settles. Unref'ing it would let the loop drain empty and exit
+    // implicitly instead, skipping the exit log. Cleared the moment the
+    // race resolves so it holds the loop for at most POOL_CLOSE_TIMEOUT_MS.
+    let poolTimer = null;
+    try {
+      await Promise.race([
+        shutdownPool.end(),
+        new Promise((resolve) => { poolTimer = setTimeout(resolve, POOL_CLOSE_TIMEOUT_MS); }),
+      ]);
+      log.info('server', 'Pool closed', { durationMs: Date.now() - poolStartedAt });
+    } catch (err) {
+      log.warn('server', 'Pool close failed', {
+        err: err.message, durationMs: Date.now() - poolStartedAt,
+      });
+    } finally {
+      if (poolTimer) clearTimeout(poolTimer);
+    }
   }
 
   process.exit(0);

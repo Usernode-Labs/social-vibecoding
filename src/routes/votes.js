@@ -14,6 +14,7 @@ const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const topicAttrs = require('../services/topic-attributes');
 const { usesMockGithubForImports } = require('../config');
+const { drainGuard } = require('../services/lifecycle');
 
 // #687: pick the GitHub client the imported-PR flow talks to. Staging
 // previews use the in-memory mock (no GitHub credentials there — see
@@ -603,7 +604,12 @@ function voteRoutes(config) {
   router.use('/api/sessions/:id', appAccess.sessionCollabGuard(pool));
 
   // Promote a session's PR for voting
-  router.post('/api/sessions/:id/promote', async (req, res) => {
+  // drainGuard (#767): promote/merge kick container work (staging build,
+  // production rebuild) that must not be started by a process seconds from
+  // exiting — a half-run rebuild leaves the app down until the next heal
+  // sweep. 503 here is honest and the client retries against the new
+  // container. Read-only vote/undo paths stay ungated.
+  router.post('/api/sessions/:id/promote', drainGuard, async (req, res) => {
     try {
       // #183: headless rows are excluded — auto sessions are never
       // promotable themselves; users clone them and propose the clone.
@@ -1122,7 +1128,7 @@ function voteRoutes(config) {
 
   // POST import a PR as a proposal. Collab access. Creates a promoted
   // `source='imported'` session and kicks its SHA-pinned checks build.
-  router.post('/api/apps/:slug/pr-import', async (req, res) => {
+  router.post('/api/apps/:slug/pr-import', drainGuard, async (req, res) => {
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab', '*');
       if (!app) return res.status(404).json({ error: 'App not found' });
@@ -2103,7 +2109,7 @@ function voteRoutes(config) {
   // pass `force: true` to skip the early gates. The chat message
   // distinguishes the override so users see who did it and why a PR
   // landed without the usual tally.
-  router.post('/api/sessions/:id/admin-merge', async (req, res) => {
+  router.post('/api/sessions/:id/admin-merge', drainGuard, async (req, res) => {
     if (!req.user?.canAdminWrite) {
       return res.status(403).json({ error: 'Full admin access required' });
     }

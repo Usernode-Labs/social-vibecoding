@@ -211,9 +211,12 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const { password: stagingDbPassword } = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr);
     const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, stagingDbPassword);
 
-    // 4. Stop existing staging container if any
+    // 4. Stop existing staging container if any. Short grace: a preview
+    // being replaced has nothing worth draining (#767).
     if (session.staging_container_id) {
-      await docker.stopAndRemove(session.staging_container_id).catch(() => {});
+      await docker.stopAndRemove(session.staging_container_id, {
+        stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
+      }).catch(() => {});
     }
 
     // 5. Run staging container
@@ -287,8 +290,10 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     return { containerId, stagingUrl, hostname };
   } catch (err) {
     log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
-    // Cleanup on failure
-    await docker.stopAndRemove(containerName).catch(() => {});
+    // Cleanup on failure — short grace, this container is being discarded.
+    await docker.stopAndRemove(containerName, {
+      stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
+    }).catch(() => {});
     throw err;
   }
 }
@@ -321,8 +326,13 @@ async function warmStagingCert(session, hostname, stagingUrl) {
 async function teardownStaging(session, app) {
   log.info('staging', 'Tearing down staging', { sessionId: session.id });
 
+  // Short grace: the preview is going away for good, so there is nothing
+  // to drain. Before #767 this step alone cost a flat ~10.9s on every
+  // merge, purely waiting out a SIGTERM the container never received.
   if (session.staging_container_id) {
-    await docker.stopAndRemove(session.staging_container_id).catch(() => {});
+    await docker.stopAndRemove(session.staging_container_id, {
+      stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
+    }).catch(() => {});
   }
 
   // Drop staging database. Derive the name from the still-in-memory

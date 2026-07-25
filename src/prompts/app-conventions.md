@@ -139,6 +139,78 @@ character check used on the landing-page anchor).
 - Connect via a single `pg.Pool({ connectionString: process.env.DATABASE_URL })`.
 - Record ownership with `user_id` / `username` from `req.user`.
 
+## Graceful shutdown
+
+Every app container is stopped and replaced on each deploy — a staging
+preview rebuilds on every push, and production is rebuilt on every merge.
+The platform does this by sending **SIGTERM** and giving the process a
+few seconds to exit before Docker SIGKILLs it. An app that ignores the
+signal is killed mid-request with open transactions, and the deploy waits
+out the whole grace window for nothing.
+
+So **every app must install a shutdown handler.** The contract: stop
+accepting new connections, let in-flight requests finish under a hard
+deadline, close the Postgres pool, exit.
+
+```js
+const DRAIN_MS = 3000;
+let shuttingDown = false;
+
+// Capture the listener — you need it to stop accepting connections.
+const server = app.listen(process.env.PORT || 3000, () => {
+  console.log(`listening on ${process.env.PORT || 3000}`);
+});
+
+async function shutdown(signal) {
+  if (shuttingDown) return;   // idempotent: SIGTERM then SIGINT must not double-run
+  shuttingDown = true;
+  console.log(`[shutdown] ${signal} received, draining`);
+  server.close(() => {});             // stop accepting new connections
+  server.closeIdleConnections?.();    // drop idle keep-alives immediately
+  const t = setTimeout(() => server.closeAllConnections?.(), DRAIN_MS);
+  t.unref?.();                        // never hold the process open on this timer
+  try {
+    await pool.end();                 // finish/close DB work cleanly
+  } catch (e) {
+    console.error('[shutdown] pool.end failed', e.message);
+  }
+  process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+```
+
+Rules:
+
+- **Capture the value returned by `app.listen(...)`.** Without it there is
+  no way to stop accepting connections; `app.listen()` whose return value
+  is discarded is the single most common reason this handler can't be
+  written later.
+- **Handle both `SIGTERM` and `SIGINT`**, and make the handler
+  **idempotent** — a repeat signal during the drain must be a no-op, not a
+  second teardown.
+- **The drain deadline is a literal constant in your app, not an env var.**
+  The platform does not set one. ~3 seconds is right: long enough for a
+  normal request to finish, short enough to stay inside the platform's
+  stop grace.
+- **Don't assume you have ten seconds.** The platform's grace is a
+  *ceiling* that exists to catch pathological containers, not an
+  allowance to spend. Exit as soon as you're actually done.
+- **Serve `503` from `/health` once `shuttingDown` is true** so anything
+  polling readiness sees the container leaving rotation rather than a
+  connection reset.
+- **Use exec-form `CMD` in the Dockerfile** — `CMD ["node", "server.js"]`,
+  not `CMD node server.js`. Shell form can interpose `/bin/sh` between the
+  init process and Node, and a shell that doesn't `exec` swallows the
+  signal.
+
+Apps generated before this convention keep working — the platform runs
+containers with an init process, so they now exit promptly on SIGTERM
+instead of being force-killed — but they get no drain. **Adopt the
+handler above the next time you edit an app's `server.js`**, the same way
+the chromeless-deep-link convention is adopted.
+
 ## Staging vs production — `USERNODE_ENV`
 
 Every PR spawns a fresh **staging** container at a unique subdomain.
