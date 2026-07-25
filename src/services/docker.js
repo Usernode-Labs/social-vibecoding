@@ -38,11 +38,33 @@ const APP_MEMORY = '256m';
 const APP_CPUS = '0.5';
 const SHARED_NETWORK = process.env.DOCKER_NETWORK || 'shared-web';
 
+// SIGTERM→SIGKILL budget handed to `docker stop -t <n>` (#767).
+//
+// This is a CEILING, not a cost: a container that exits on its own returns
+// `docker stop` immediately. Before `--init` (see runContainer) it was
+// always the full cost, because the app's Node process ran as PID 1 and
+// Linux discards signals PID 1 has installed no handler for — every stop
+// measured 10.7-11.4s of grace expiring followed by a SIGKILL.
+//
+// 5s sits above the 3s drain deadline the app conventions prescribe
+// (src/prompts/app-conventions.md "Graceful shutdown"), so a well-behaved
+// app is never SIGKILLed mid-drain — the same relationship the platform
+// keeps between its own DRAIN_TIMEOUT_MS (5s) and compose's
+// stop_grace_period (10s). Throwaway staging containers pass 2 explicitly.
+const STOP_GRACE_SEC = parseInt(process.env.DOCKER_STOP_GRACE_SEC || '5', 10);
+// Staging previews / failed-build cleanup: nothing to drain, so don't wait
+// on the ceiling for a container nobody is talking to.
+const STAGING_STOP_GRACE_SEC = 2;
+// A stop is counted as force-killed when it burned (essentially) the whole
+// grace — i.e. Docker had to SIGKILL. Slack absorbs docker CLI overhead.
+const FORCE_KILL_SLACK_MS = 400;
+
 async function buildImage(contextPath, tag, buildArgs = {}) {
   const buildArgFlags = Object.entries(buildArgs).flatMap(
     ([k, v]) => ['--build-arg', `${k}=${v}`]
   );
   log.info('docker', 'Building image', { context: contextPath, tag, buildArgs });
+  const startedAt = Date.now();
   try {
     await execFileAsync(
       'docker',
@@ -61,7 +83,9 @@ async function buildImage(contextPath, tag, buildArgs = {}) {
     );
     throw err;
   }
-  log.info('docker', 'Image built', { tag });
+  const durationMs = Date.now() - startedAt;
+  log.info('docker', 'Image built', { tag, durationMs });
+  return { durationMs };
 }
 
 async function runContainer(name, { image, env = {}, port, memory = APP_MEMORY, cpus = APP_CPUS }) {
@@ -71,6 +95,22 @@ async function runContainer(name, { image, env = {}, port, memory = APP_MEMORY, 
     'run', '-d',
     '--name', name,
     '--hostname', name,
+    // #767: run Docker's bundled init (tini) as PID 1 instead of the app.
+    //
+    // Linux does NOT apply default signal dispositions to PID 1 — a signal
+    // with no installed handler is silently DISCARDED. App images are
+    // `CMD node server.js`, so the app's Node process was PID 1 and every
+    // `docker stop` SIGTERM went nowhere: the app kept serving for the
+    // whole grace window and was then SIGKILLed mid-request (measured
+    // 10.7-11.4s, every single stop, never less). With --init, tini takes
+    // PID 1 and forwards SIGTERM to the app as an ordinary child, where
+    // Node's default disposition (terminate) applies.
+    //
+    // This is the retroactive half of the fix: every app that already
+    // exists exits promptly with zero changes to its repo. Apps that adopt
+    // the shutdown handler from app-conventions.md additionally get a
+    // clean drain. tini also reaps zombies for apps that spawn children.
+    '--init',
     '--network', SHARED_NETWORK,
     '--memory', memory,
     '--cpus', cpus,
@@ -176,20 +216,37 @@ async function startContainer(nameOrId) {
 
 // `docker restart` — used by the on-demand heal path (app-heal.js
 // requestHeal) for a container whose state is 'running' but whose HTTP
-// health endpoint stopped answering (hung process). Same 10s stop grace
-// as stopAndRemove. Throws on failure.
+// health endpoint stopped answering (hung process). Deliberately keeps the
+// long 10s grace where stopAndRemove now uses STOP_GRACE_SEC: heal stops a
+// container that is (nominally) live and may be mid-request, and it is not
+// on any latency-sensitive path. Throws on failure.
 async function restartContainer(nameOrId) {
   await execFileAsync('docker', ['restart', '-t', '10', nameOrId], { timeout: 60000 });
   log.info('docker', 'Container restarted', { nameOrId });
 }
 
-async function stopAndRemove(nameOrId) {
+// Stop then force-remove a container. `stopTimeoutSec` is the SIGTERM→
+// SIGKILL grace handed to `docker stop -t` (see STOP_GRACE_SEC above).
+//
+// `forceKilled` in the log is the diagnostic that matters: true means the
+// grace expired and Docker had to SIGKILL, i.e. that container's process
+// never handled SIGTERM. It's how you find apps still lacking the
+// graceful-shutdown handler without inspecting their repos.
+async function stopAndRemove(nameOrId, { stopTimeoutSec = STOP_GRACE_SEC } = {}) {
   try {
-    await execFileAsync('docker', ['stop', '-t', '10', nameOrId], { timeout: 30000 }).catch(() => {});
+    const stopStartedAt = Date.now();
+    await execFileAsync('docker', ['stop', '-t', String(stopTimeoutSec), nameOrId], { timeout: 30000 })
+      .catch(() => {});
+    const stopMs = Date.now() - stopStartedAt;
+    const rmStartedAt = Date.now();
     await execFileAsync('docker', ['rm', '-f', nameOrId], { timeout: 10000 }).catch(() => {});
-    log.info('docker', 'Container removed', { nameOrId });
+    const rmMs = Date.now() - rmStartedAt;
+    const forceKilled = stopMs >= (stopTimeoutSec * 1000) - FORCE_KILL_SLACK_MS;
+    log.info('docker', 'Container removed', { nameOrId, stopMs, rmMs, stopTimeoutSec, forceKilled });
+    return { stopMs, rmMs, forceKilled };
   } catch (err) {
     log.warn('docker', 'Failed to remove container', { nameOrId, err: err.message });
+    return { stopMs: null, rmMs: null, forceKilled: null };
   }
 }
 
@@ -228,8 +285,26 @@ async function containerExists(nameOrId) {
   return status !== 'not_found';
 }
 
-async function waitForHealthy(name, port, healthPath, maxRetries = 30) {
+// Escalating backoff between health polls (#767). Attempt 1 essentially
+// always fails — the container has only just started — and the old flat
+// 2000ms sleep meant EVERY container start paid ~2s waiting for a process
+// that was typically ready in a few hundred ms (production consistently
+// logged `attempt: 2` at +2.96s). Starting at 250ms and escalating keeps
+// the fast path fast while preserving the same ~60s total ceiling for a
+// genuinely slow boot: 250+500+1000 = 1.75s, then 2000ms steady. 33
+// attempts keeps the total budget at 1.75 + 30x2 = 61.75s, i.e. at or above
+// the old 30x2000 = 60s — shortening the early retries must never shorten
+// how long a slow-booting app is given overall.
+const HEALTH_BACKOFF_MS = [250, 500, 1000];
+const HEALTH_BACKOFF_MAX_MS = 2000;
+
+function healthBackoffMs(attemptIndex) {
+  return HEALTH_BACKOFF_MS[attemptIndex] ?? HEALTH_BACKOFF_MAX_MS;
+}
+
+async function waitForHealthy(name, port, healthPath, maxRetries = 33) {
   log.info('docker', 'Waiting for healthcheck', { name, path: healthPath });
+  const startedAt = Date.now();
   let lastErr = null;
   for (let i = 0; i < maxRetries; i++) {
     try {
@@ -243,13 +318,15 @@ async function waitForHealthy(name, port, healthPath, maxRetries = 30) {
         'exec', name, 'wget', '-qO-', '--timeout=2',
         `http://127.0.0.1:${port}${healthPath}`,
       ], { timeout: 5000 });
-      log.info('docker', 'Healthcheck passed', { name, attempt: i + 1 });
-      return;
+      const waitedMs = Date.now() - startedAt;
+      log.info('docker', 'Healthcheck passed', { name, attempt: i + 1, waitedMs });
+      return { attempts: i + 1, waitedMs };
     } catch (err) {
       lastErr = err;
-      await sleep(2000);
+      await sleep(healthBackoffMs(i));
     }
   }
+  const waitedMs = Date.now() - startedAt;
   // Capture container logs + status before giving up. Without this the
   // platform reports "Healthcheck failed after 30 attempts" with no clue
   // whether the process crashed at startup, the port is wrong, or wget
@@ -269,6 +346,8 @@ async function waitForHealthy(name, port, healthPath, maxRetries = 30) {
   log.error('docker', 'Healthcheck never passed — collecting container state', {
     name,
     containerStatus,
+    attempts: maxRetries,
+    waitedMs,
     lastWgetErr: lastErr ? (lastErr.stderr || lastErr.message || String(lastErr)).slice(0, 500) : null,
     containerLogs: containerLogs.slice(-2000), // last 2kB is plenty for a stack trace
   });
@@ -281,6 +360,8 @@ async function waitForHealthy(name, port, healthPath, maxRetries = 30) {
   // staging-recovery.recheckSessionChecks for the persist.
   const err = new Error(`Healthcheck failed after ${maxRetries} attempts: ${name}`);
   err.healthcheckFailed = true;
+  err.attempts = maxRetries;
+  err.waitedMs = waitedMs;
   err.containerStatus = containerStatus || null;
   err.containerLogs = containerLogs ? containerLogs.slice(-2000) : '';
   throw err;
@@ -327,4 +408,8 @@ module.exports = {
   getHostPort,
   ensureVolume,
   removeVolume,
+  STOP_GRACE_SEC,
+  STAGING_STOP_GRACE_SEC,
+  HEALTH_BACKOFF_MS,
+  HEALTH_BACKOFF_MAX_MS,
 };

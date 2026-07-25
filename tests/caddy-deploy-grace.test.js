@@ -116,6 +116,40 @@ test('drain budget stays inside the compose stop_grace_period', () => {
     `DRAIN_TIMEOUT_MS (${drainMs}ms) must stay below stop_grace_period (${graceMs}ms) ` +
     'or the drain gets SIGKILLed mid-flush');
   assert.ok(drainMs >= 1000, 'drain must still give in-flight handlers a real window to flush');
+
+  // #767: closing the pg pool now happens AFTER the handler drain, inside
+  // the same grace. Both budgets have to fit or the pool close is what gets
+  // SIGKILLed — severing in-flight queries, the exact thing it was added to
+  // prevent.
+  const poolMatch = serverJs.match(/const POOL_CLOSE_TIMEOUT_MS = (\d+);/);
+  assert.ok(poolMatch, 'POOL_CLOSE_TIMEOUT_MS constant not found in server.js');
+  const poolMs = Number(poolMatch[1]);
+  assert.ok(drainMs + poolMs < graceMs,
+    `DRAIN_TIMEOUT_MS + POOL_CLOSE_TIMEOUT_MS (${drainMs + poolMs}ms) must stay below ` +
+    `stop_grace_period (${graceMs}ms)`);
+});
+
+// #767: the app-container stop grace is a separate budget from the
+// platform's own. It must sit ABOVE the drain deadline the app conventions
+// prescribe, or a correctly-draining app gets SIGKILLed mid-drain — the
+// ugly failure mode that makes the whole graceful-shutdown change
+// pointless for the apps that actually adopted it.
+test('app stop grace stays above the drain deadline the conventions prescribe', () => {
+  const dockerJs = fs.readFileSync(path.join(root, 'src', 'services', 'docker.js'), 'utf8');
+  const graceMatch = dockerJs.match(/DOCKER_STOP_GRACE_SEC \|\| '(\d+)'/);
+  assert.ok(graceMatch, 'STOP_GRACE_SEC default not found in src/services/docker.js');
+  const graceMs = Number(graceMatch[1]) * 1000;
+
+  const conventions = fs.readFileSync(
+    path.join(root, 'src', 'prompts', 'app-conventions.md'), 'utf8'
+  );
+  const drainMatch = conventions.match(/const DRAIN_MS = (\d+);/);
+  assert.ok(drainMatch, 'DRAIN_MS not found in the app-conventions shutdown example');
+  const drainMs = Number(drainMatch[1]);
+
+  assert.ok(drainMs < graceMs,
+    `the app drain deadline (${drainMs}ms) must stay below the platform's stop grace ` +
+    `(${graceMs}ms) or a draining app is force-killed`);
 });
 
 test('deploy workflow no longer rebuilds caddy on routine deploys', () => {
