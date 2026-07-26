@@ -41,6 +41,7 @@ async function migrate(config) {
   await seedStagingTopicScrollThreads(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
   await seedStagingActiveSessions(pool, config);
+  await seedStagingStartScreenSession(pool, config);
   await seedStagingSharedSession(pool, config);
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
@@ -1466,6 +1467,71 @@ async function seedStagingActiveSessions(pool, config) {
     owner: owner.username,
     total: fixtures.length,
     inserted,
+  });
+}
+
+// #785: the dev session START screen — a freshly created session with no
+// messages yet, where the starter suggestion pills (DevChat
+// STARTER_QUICK_REPLIES, incl. the open-issues question) are the only
+// content above the composer. chat_sessions is staging:private, so a
+// preview has no session to open at all, and every OTHER session fixture
+// seeds messages — which is exactly what REPLACES the starter pills. Hence
+// a dedicated message-less row, owned by the tester (first admin, same
+// selection as the fixtures above) so GET /api/sessions/:id resolves it.
+//
+// Its id is EXPLICIT so the screen has a stable URL for the dapp.json test
+// and the before/after screenshots (/#app/<self-slug>/dev/sessions/990401).
+// 99xxxx is the same fake-id range the ?demo=1 mock rows in
+// routes/sessions.js use, three orders of magnitude above the live id
+// sequence, so the SERIAL can't grow into it inside a staging clone.
+// Idempotent on the id; strict no-op in production.
+const STAGING_START_SCREEN_SESSION_ID = 990401;
+
+async function seedStagingStartScreenSession(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging start-screen session fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging start-screen session fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  // pr_number stays NULL so the header renders its "New change" state,
+  // like a real session before its first build. No chat_session_messages
+  // rows at all — that emptiness IS the fixture.
+  const { rowCount } = await pool.query(
+    `INSERT INTO chat_sessions
+       (id, app_id, user_id, branch_name, pr_title, session_title, status, created_at, last_activity_at)
+     VALUES ($1, $2, $3, 'staging-fixture/start-screen', NULL,
+             '[staging fixture] Brand-new session — start screen', 'active',
+             NOW() - INTERVAL '2 minutes', NOW() - INTERVAL '2 minutes')
+     ON CONFLICT (id) DO NOTHING`,
+    [STAGING_START_SCREEN_SESSION_ID, appId, owner.id]
+  );
+
+  log.info('db', 'Staging start-screen session fixture seeded', {
+    appId,
+    owner: owner.username,
+    sessionId: STAGING_START_SCREEN_SESSION_ID,
+    inserted: rowCount,
   });
 }
 

@@ -3114,7 +3114,14 @@ const DevChat = {
 
   // Generic starter pills for a brand-new session that has no Mayor reply
   // yet — keeps the affordance present from the first screen.
+  //
+  // #785: the open-issues question leads, because "what does this app's
+  // issue tracker already say people want?" is the most useful thing to
+  // ask BEFORE describing a change of your own — and the Mayor answers it
+  // directly with its list_github_issues data tool (no session work, no
+  // scout dispatch). The rest stay as they were.
   STARTER_QUICK_REPLIES: [
+    'What issues are open right now?',
     'Change the colors',
     'Add a new feature',
     'Fix something that\'s broken',

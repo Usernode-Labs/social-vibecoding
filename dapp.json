@@ -256,6 +256,17 @@
       "expectText": "Staging demo shared session"
     },
     {
+      "name": "Dev session start screen leads with the open-issues starter suggestion (#785)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-quick-replies .dc-quick-pill",
+      "expectText": "What issues are open right now?"
+    },
+    {
+      "name": "Dev session start screen keeps the original starter suggestions (#785)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "expectText": "Fix something that's broken"
+    },
+    {
       "name": "Own sessions pin with the visibility caption",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Only you can see your active sessions"

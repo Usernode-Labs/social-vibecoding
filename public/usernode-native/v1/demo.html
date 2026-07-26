@@ -397,7 +397,7 @@
         var sheet = unNative.presentSheet({
           content:
             '<div class="text-base font-semibold mb-2">Bottom sheet</div>' +
-            '<p class="text-sm text-zinc-500 mb-3">Slow drags track 1:1; a flick dismisses by momentum; drifting back cancels. Grab it mid-spring — it follows from where it is.</p>' +
+            '<p class="text-sm text-zinc-500 mb-3">Slow drags track 1:1; a flick dismisses by momentum; drifting back cancels. Grab it mid-spring — it follows from where it is. Pull UP past the rest position and hold: the surface continues below the sheet, so the bounce-back never uncovers the dimmed page.</p>' +
             '<label class="block text-xs font-medium text-zinc-500 mb-1" for="sheet-demo-field">Name</label>' +
             '<input id="sheet-demo-field" type="text" placeholder="Tap to type — the sheet rides above the keyboard" class="w-full mb-3 px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent">' +
             '<button type="button" id="sheet-demo-save" class="w-full px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Save</button>',
@@ -432,13 +432,23 @@
         Promise.resolve().then(function () {
           holder.innerHTML =
             '<div class="text-base font-semibold mb-2">Rendered after present</div>' +
-            '<p class="text-sm text-zinc-500 mb-2">This content was written into the sheet in a microtask AFTER presentSheet() — the sheet re-measured and still slid up through its full height.</p>' +
+            '<p class="text-sm text-zinc-500 mb-2">This content was written into the sheet in a microtask AFTER presentSheet() — the sheet re-measured and still slid up through its full height. It grows at 700ms and shrinks again at 1600ms; the shrink lifts the sheet above rest, and the surface extension below it means no dimmed page shows during the spring back.</p>' +
             rows(4, 'Loaded');
         });
         setTimeout(function () {
           if (!sheet.el.parentNode) return;
           holder.innerHTML += rows(3, 'Fetched');
         }, 700);
+        // Shrink back (issue #789): a shorter re-render renders a negative
+        // offset for a frame — the sheet lifts off the screen edge and
+        // springs back down. Watch the strip below it stay sheet-colored.
+        setTimeout(function () {
+          if (!sheet.el.parentNode) return;
+          holder.innerHTML =
+            '<div class="text-base font-semibold mb-2">Shrunk after present</div>' +
+            '<p class="text-sm text-zinc-500 mb-2">The list collapsed to one row — the sheet re-measured shorter and sprang back down without revealing the page.</p>' +
+            rows(1, 'Remaining');
+        }, 1600);
       });
       document.getElementById('action-sheet-btn').addEventListener('click', function () {
         unNative.actionSheet({
