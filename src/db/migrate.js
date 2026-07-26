@@ -5190,6 +5190,97 @@ async function seedStagingHeadlessFixtures(pool, config) {
       followUpQuickReplies ? { quickReplies: followUpQuickReplies } : {}
     );
 
+    // #647: the inherited Claude Code timeline. A real clone copies the auto
+    // session's whole conversation, so its coding-agent disclosures — two
+    // long progress logs plus the finished-run summary — used to open
+    // EXPANDED and bury the "Changes ready" card under a wall of log text.
+    // These rows reproduce that history at production scale so the
+    // collapsed-by-default behaviour is reviewable in a preview without
+    // running a real auto session.
+    //
+    // `carryMarker: false` on the legacy clone below omits
+    // metadata.inheritedFrom, exercising the client's follow-up-prefix
+    // fallback for clones that predate the marker.
+    const inheritedProgressScout = [
+      '[staging fixture]',
+      '[claude (mode scout)]',
+      '… Reading the codebase before drafting the spec',
+      ...Array.from({ length: 18 }, (_, i) => [
+        `Reading src/routes/module-${i + 1}.js`,
+        `  ⎿ Read: ${120 + i * 37} lines`,
+      ]).flat(),
+      '… The change belongs in the renderer, not the route',
+      '[done]',
+    ];
+    const inheritedProgressBuild = [
+      '[staging fixture]',
+      '[claude (mode build)]',
+      '… Planning the change before touching any files',
+      ...Array.from({ length: 40 }, (_, i) => (i % 2 === 0
+        ? [`Editing src/routes/module-${i + 1}.js`, '  ⎿ Edit: ok']
+        : [`$ node --test tests/module-${i + 1}.test.js`, `  ⎿ ${4 + i} lines`])).flat(),
+      '$ git add -A && git commit -m "[staging fixture] Apply the spec"',
+      '  ⎿ 3 lines',
+      '[commit]',
+      '[push]',
+      '[done]',
+    ];
+    const inheritedCcOutput = [
+      '[staging fixture] Implemented the spec from the auto session:',
+      '',
+      '- Reworked the renderer so the inherited blocks collapse.',
+      '- Stamped the copied rows so the client can tell them apart.',
+      '- Added tests covering both defaults.',
+      '',
+      'The change is committed and pushed on this branch.',
+    ].join('\n');
+
+    // The auto-session history every clone inherits, oldest first. Rendered
+    // BEFORE the follow-up row so the pairing pre-pass attaches each
+    // 'Claude Code progress' row to the status line preceding it.
+    const inheritedTimeline = [
+      { content: 'Scout reading the codebase...', metadata: {}, minutesAgo: 30 },
+      { content: 'Claude Code progress', metadata: { progressLog: inheritedProgressScout }, minutesAgo: 30 },
+      { content: 'Claude Code is running...', metadata: {}, minutesAgo: 26 },
+      { content: 'Claude Code progress', metadata: { progressLog: inheritedProgressBuild }, minutesAgo: 26 },
+      {
+        content: 'Claude Code finished',
+        metadata: { ccOutput: inheritedCcOutput, ccOutcome: 'success', durationMs: 264000 },
+        minutesAgo: 20,
+      },
+    ];
+
+    // A turn the HUMAN ran after cloning — never marked, so it must stay
+    // expanded. Seeded alongside the inherited rows so one session shows
+    // both defaults side by side.
+    const ownTurn = [
+      { role: 'user', content: '[staging fixture] Tweak the wording on the summary line.', metadata: {}, minutesAgo: 12 },
+      { role: 'system', content: 'Claude Code is running...', metadata: {}, minutesAgo: 11 },
+      {
+        role: 'system', content: 'Claude Code progress',
+        metadata: {
+          progressLog: [
+            '[staging fixture]',
+            '[claude (mode build)]',
+            'Editing public/js/dev-chat.js',
+            '  ⎿ Edit: ok',
+            '[commit]',
+            '[push]',
+            '[done]',
+          ],
+        },
+        minutesAgo: 11,
+      },
+      {
+        role: 'system', content: 'Claude Code finished',
+        metadata: {
+          ccOutput: '[staging fixture] Reworded the summary line as asked.',
+          ccOutcome: 'success', durationMs: 48000,
+        },
+        minutesAgo: 9,
+      },
+    ];
+
     const codeClones = [
       {
         branch: 'staging-fixture/headless-code-myclone-ok',
@@ -5199,6 +5290,11 @@ async function seedStagingHeadlessFixtures(pool, config) {
           stagingUrl: `https://staging-fixture-code-ok.${process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}`,
           prNumber: null,
         },
+        // The #647 review target: inherited history (collapsed) + the
+        // tester's own later turn (expanded).
+        inherited: true,
+        carryMarker: true,
+        ownTurn: true,
       },
       {
         branch: 'staging-fixture/headless-code-myclone-failed',
@@ -5210,6 +5306,22 @@ async function seedStagingHeadlessFixtures(pool, config) {
           stagingMissingKeys: ['EXAMPLE_KEY'],
           prNumber: null,
         },
+      },
+      {
+        // #647: a clone whose copied rows carry NO marker — what every
+        // session cloned before this shipped looks like. The client falls
+        // back to the follow-up message as the inherited/own boundary, so
+        // these blocks must collapse too.
+        branch: 'staging-fixture/headless-code-myclone-legacy',
+        statusText: 'Staging preview built',
+        metadata: {
+          changesReady: true,
+          stagingUrl: `https://staging-fixture-code-legacy.${process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org'}`,
+          prNumber: null,
+        },
+        inherited: true,
+        carryMarker: false,
+        ownTurn: false,
       },
     ];
 
@@ -5229,6 +5341,23 @@ async function seedStagingHeadlessFixtures(pool, config) {
         [appId, target.id, c.branch, codeHeadlessId]
       );
       const cloneId = cloneRows[0].id;
+      // #647: the inherited auto-session history, copied in the same order
+      // the clone route copies it — BEFORE the follow-up, which is the
+      // boundary between "what the auto session did" and "this session's
+      // own work". Rows carry metadata.inheritedFrom exactly as the route
+      // stamps them, unless the fixture is the legacy (pre-marker) one.
+      if (c.inherited) {
+        for (const m of inheritedTimeline) {
+          const meta = c.carryMarker
+            ? { ...m.metadata, inheritedFrom: codeHeadlessId }
+            : { ...m.metadata };
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+             VALUES ($1, 'system', $2, $3, NOW() - ($4::int * INTERVAL '1 minute'))`,
+            [cloneId, m.content, JSON.stringify(meta), m.minutesAgo]
+          );
+        }
+      }
       // Cloned follow-up assistant message (intro copy + quick replies).
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
@@ -5242,6 +5371,18 @@ async function seedStagingHeadlessFixtures(pool, config) {
          VALUES ($1, 'system', $2, $3, NOW() - INTERVAL '16 minutes')`,
         [cloneId, c.statusText, JSON.stringify(c.metadata)]
       );
+      // #647: an unmarked turn the tester "ran" after cloning — stays
+      // expanded, so the contrast with the collapsed inherited rows above
+      // is visible in a single session.
+      if (c.ownTurn) {
+        for (const m of ownTurn) {
+          await pool.query(
+            `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+             VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))`,
+            [cloneId, m.role, m.content, JSON.stringify(m.metadata), m.minutesAgo]
+          );
+        }
+      }
       cloneInserted++;
     }
   }
