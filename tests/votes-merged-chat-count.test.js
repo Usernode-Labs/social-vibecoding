@@ -65,6 +65,10 @@ function loadVotes({ mergedRows }) {
     getPool: () => ({
       async query(sql) {
         captured.sql.push(sql);
+        // The Completed stream now also queries applied close-issue
+        // proposals (and their count) — answer those with nothing so the
+        // suite keeps exercising the PR rows in isolation.
+        if (/close_issue/.test(sql)) return { rows: [] };
         return { rows: mergedRows };
       },
     }),

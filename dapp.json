@@ -518,6 +518,11 @@
       "name": "Staging demo tiles are tagged drag-inert (#746)",
       "path": "/?demo=1",
       "expectSelector": ".app-card[data-demo='true']"
+    },
+    {
+      "name": "Applied close-issue proposal renders as an Issue close card in Completed/Done",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "closed by vote"
     }
   ],
   "governance": {

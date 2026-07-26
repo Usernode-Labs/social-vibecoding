@@ -972,7 +972,13 @@ const AppView = {
         || (AppView._mySessions || []).find((s) => s.id === t.id)
         || null;
     }
-    return (AppView._govProposals || []).find((i) => i.id === t.id) || null;
+    // Open governance proposals first; APPLIED close-issue proposals live
+    // on in the Completed stream (row_type='close_issue' rows in _merged)
+    // with a still-postable discussion thread, so resolve them too.
+    return (AppView._govProposals || []).find((i) => i.id === t.id)
+      || (AppView._merged || []).find(
+        (r) => r.row_type === 'close_issue' && r.id === t.id)
+      || null;
   },
 
   // Single-item cache for a proposal opened from beyond the cached
@@ -1087,8 +1093,13 @@ const AppView = {
       bodyHtml = `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">Live dev session by ${owner} — the discussion below is visible to everyone and carries over if this becomes a proposal.</div>`;
     } else {
       cardHtml = AppView._renderGovCard(item, { noNav: true });
-      bodyHtml = item.description
-        ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">${escapeHtml(item.description)}</div>`
+      // Close-issue proposals store the proposer's reason in the payload;
+      // fall back to it when the description is empty so a completed
+      // close-issue topic still shows why the close was proposed.
+      const govBody = item.description
+        || (item.payload && item.payload.reason) || '';
+      bodyHtml = govBody
+        ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">${escapeHtml(govBody)}</div>`
         : '';
     }
 
@@ -1213,7 +1224,8 @@ const AppView = {
     const pid = parseInt(id, 10);
     if (!pid || typeof ProposalDiscuss === 'undefined') return;
     const pr = (AppView._proposals || []).find((p) => p.id === pid)
-      || (AppView._merged || []).find((p) => p.id === pid);
+      // Skip close-issue rows: issues.id can collide with a session id.
+      || (AppView._merged || []).find((p) => p.id === pid && p.row_type !== 'close_issue');
     if (pr) ProposalDiscuss.open('proposal', pid, pr);
   },
 
@@ -1963,7 +1975,12 @@ const AppView = {
 
       // Shared inline-vote snapshot (same shape loadVoteState builds) so
       // the chat view's activity rows stay in sync without a refetch.
-      const voteRows = [...(merged || []), ...promoted];
+      // Close-issue rows stay OUT of voteState: it's a PR concept keyed by
+      // chat_sessions ids, and issues.id can collide with those numerically.
+      const voteRows = [
+        ...(merged || []).filter((r) => (r.row_type || 'pr') === 'pr'),
+        ...promoted,
+      ];
       AppView.voteState = {
         bySession: Object.fromEntries(voteRows.map((pr) => [String(pr.id), pr])),
         byPrNumber: Object.fromEntries(
@@ -2004,7 +2021,13 @@ const AppView = {
       // last loaded row, used by loadMoreMerged() for keyset paging.
       AppView._mergedHasMore = !!mergedData.hasMore;
       AppView._mergedCursor = merged.length
-        ? { created_at: merged[merged.length - 1].created_at, id: merged[merged.length - 1].id }
+        ? {
+          created_at: merged[merged.length - 1].created_at,
+          id: merged[merged.length - 1].id,
+          // The stream mixes PR + close-issue rows from independent id
+          // sequences, so the cursor carries the last row's type too.
+          row_type: merged[merged.length - 1].row_type || 'pr',
+        }
         : null;
       // #433: the true count of merged tasks for this app, used by the
       // Kanban "Done" column header (which renders only the first page of
@@ -2506,6 +2529,12 @@ const AppView = {
           ? it.payload.newName : (it.title || '');
         author = it.created_by_username || '';
         num = it.github_issue_number;
+      } else if (kind === 'merged' && it.row_type === 'close_issue') {
+        // Applied close-issue rows in the Done column — mirror
+        // _renderCompletedCloseIssueCard's title/meta sources.
+        title = (it.payload && it.payload.issueTitle) || it.title || '';
+        author = it.created_by_username || '';
+        num = it.payload && it.payload.issueNumber;
       } else {
         // proposal | merged — mirror the card renderers' title fallback.
         title = it.pr_title || `Change by ${it.username || ''}`;
@@ -3133,7 +3162,7 @@ const AppView = {
       { title: 'In progress', items: kInProgress, cardsHtml: AppView._inProgressCardsHtml(kInProgress, filtering) },
       { title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)),
         orderCol: 'review', orderKey: (x) => AppView._cardOrderKey('review', x) },
-      { title: 'Done', items: kDone, render: (m) => AppView._renderMergedCard(m), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
+      { title: 'Done', items: kDone, render: (m) => (m.row_type === 'close_issue' ? AppView._renderCompletedCloseIssueCard(m) : AppView._renderMergedCard(m)), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
     ];
 
     let html = '<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2">';
@@ -4617,29 +4646,50 @@ const AppView = {
       : isCloseIssue
         ? `Close issue #${(issue.payload && issue.payload.issueNumber) || '?'}: "${(issue.payload && issue.payload.issueTitle) || issue.title}"`
         : issue.title;
+    // A settled (applied/closed) governance row — a close-issue proposal
+    // opened from the Completed list. The vote is history: no Yes/No/
+    // admin/withdraw controls, no countdown; the tally renders as a
+    // snapshot like a merged PR's pill.
+    const settled = !!issue.status && issue.status !== 'open';
+    const applied = !!(issue.payload && issue.payload.appliedAt);
     const metaParts = ['Governance proposal'];
     if (issue.created_by_username) metaParts.push(escapeHtml(issue.created_by_username));
     if (issue.created_at) metaParts.push(escapeHtml(relTime(issue.created_at)));
+    if (settled && applied) {
+      const how = String(issue.payload.appliedBy || '').startsWith('admin:')
+        ? 'closed by admin' : 'closed by vote';
+      metaParts.push(escapeHtml(`${how} ${relTime(issue.payload.appliedAt)}`));
+    }
     // Pass the per-row gate fields through so governance proposals get the
     // same dynamic denominator + "Merging in ~X" countdown as PRs. status
-    // 'open' marks it as a live row eligible for the countdown state.
-    const tallyPill = AppView.voteCountPill({
-      yes_count: upCount,
-      no_count: downCount,
-      votes_required: issue.votes_required,
-      merge_window_ends_at: issue.merge_window_ends_at,
-      contested: issue.contested,
-      // #695: qualifying (approver-only) tallies + policy so invited apps
-      // get the approver-only headline and the "+N advisory" chip.
-      qualified_yes_count: issue.qualified_yes_count,
-      qualified_no_count: issue.qualified_no_count,
-      approval_policy: issue.approval_policy,
-      approvals_required: issue.approvals_required,
-      status: 'open',
-    }, majority);
+    // 'open' marks it as a live row eligible for the countdown state;
+    // settled rows pass 'merged' (clock-free snapshot) with the threshold
+    // captured at apply time.
+    const tallyPill = settled
+      ? AppView.voteCountPill({
+        yes_count: upCount,
+        no_count: downCount,
+        votes_required: (issue.payload && issue.payload.required != null)
+          ? issue.payload.required : issue.votes_required,
+        status: 'merged',
+      }, majority)
+      : AppView.voteCountPill({
+        yes_count: upCount,
+        no_count: downCount,
+        votes_required: issue.votes_required,
+        merge_window_ends_at: issue.merge_window_ends_at,
+        contested: issue.contested,
+        // #695: qualifying (approver-only) tallies + policy so invited apps
+        // get the approver-only headline and the "+N advisory" chip.
+        qualified_yes_count: issue.qualified_yes_count,
+        qualified_no_count: issue.qualified_no_count,
+        approval_policy: issue.approval_policy,
+        approvals_required: issue.approvals_required,
+        status: 'open',
+      }, majority);
     // #621: read-only viewers see the tally pill only — no vote /
-    // admin / withdraw controls.
-    const ro = AppView.readOnly;
+    // admin / withdraw controls. Settled rows show none for anyone.
+    const ro = AppView.readOnly || settled;
     const upT = AppView._voteBtnTally(issue.qualified_yes_count, upCount, issue.approval_policy, 'Yes');
     const downT = AppView._voteBtnTally(issue.qualified_no_count, downCount, issue.approval_policy, 'No');
     const yesBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}"${upT.title} onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upT.label})</button>`;
@@ -5483,7 +5533,11 @@ const AppView = {
       if (pr) pr.chat_count = (parseInt(pr.chat_count) || 0) + 1;
       sel = `[data-proposal-row="${ref}"] .dev-chat-badge`;
     } else if (type === 'governance') {
-      const g = (AppView._govProposals || []).find((i) => i.id === ref);
+      // Open proposals live in _govProposals; applied close-issue rows
+      // live on in the Completed stream (_merged, row_type='close_issue').
+      const g = (AppView._govProposals || []).find((i) => i.id === ref)
+        || (AppView._merged || []).find(
+          (r) => r.row_type === 'close_issue' && r.id === ref);
       if (g) g.chat_count = (parseInt(g.chat_count) || 0) + 1;
       sel = `[data-gov-row="${ref}"] .dev-chat-badge`;
     }
@@ -5953,7 +6007,9 @@ const AppView = {
 
     let html = `<div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-1">Completed</div><div class="space-y-2">`;
     for (let i = 0; i < shown; i++) {
-      html += AppView._renderMergedCard(merged[i], majority);
+      html += merged[i].row_type === 'close_issue'
+        ? AppView._renderCompletedCloseIssueCard(merged[i])
+        : AppView._renderMergedCard(merged[i], majority);
     }
     html += '</div>';
 
@@ -6006,23 +6062,28 @@ const AppView = {
       const cur = AppView._mergedCursor;
       const qs = AppView._demoQS();
       const sep = qs ? '&' : '?';
-      const url = `/api/apps/${slug}/merged${qs}${sep}before=${encodeURIComponent(cur.created_at)}&before_id=${encodeURIComponent(cur.id)}`;
+      const url = `/api/apps/${slug}/merged${qs}${sep}before=${encodeURIComponent(cur.created_at)}&before_id=${encodeURIComponent(cur.id)}&before_type=${encodeURIComponent(cur.row_type || 'pr')}`;
       const res = await fetch(url);
       const data = res.ok ? await res.json() : { merged: [], hasMore: false };
       const more = data.merged || [];
       // De-dup defensively in case the cursor straddled equal timestamps.
-      const have = new Set((AppView._merged || []).map((r) => r.id));
-      const fresh = more.filter((r) => !have.has(r.id));
+      // Keyed by (type, id): PR and close-issue rows draw ids from
+      // independent sequences, so a bare id isn't unique in the stream.
+      const rowKey = (r) => `${r.row_type || 'pr'}:${r.id}`;
+      const have = new Set((AppView._merged || []).map(rowKey));
+      const fresh = more.filter((r) => !have.has(rowKey(r)));
       AppView._merged = (AppView._merged || []).concat(fresh);
       AppView._mergedHasMore = !!data.hasMore;
       if (AppView._merged.length) {
         const last = AppView._merged[AppView._merged.length - 1];
-        AppView._mergedCursor = { created_at: last.created_at, id: last.id };
+        AppView._mergedCursor = { created_at: last.created_at, id: last.id, row_type: last.row_type || 'pr' };
       }
       // Keep inline vote/kudos state in sync so the newly loaded merged
-      // rows get their group-chat activity controls too.
+      // rows get their group-chat activity controls too. Close-issue rows
+      // stay out (voteState is PR-keyed — see _loadDevData).
       if (AppView.voteState && AppView.voteState.bySession) {
         for (const pr of fresh) {
+          if ((pr.row_type || 'pr') === 'close_issue') continue;
           AppView.voteState.bySession[String(pr.id)] = pr;
           if (pr.pr_number != null) AppView.voteState.byPrNumber[String(pr.pr_number)] = pr;
         }
@@ -6122,6 +6183,61 @@ const AppView = {
               ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
             ${AppView._cardActionsHtml([AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, askAiBtn])}
+          </div>
+          ${AppView.DEV_CARD_CHEVRON}
+        </div>`;
+  },
+
+  // One APPLIED close-issue proposal ("Issue close") card in the Completed
+  // list / kanban Done column (row_type='close_issue' rows from /merged).
+  // Same green check icon as merged PRs so the column reads uniformly, but
+  // the meta line says "Issue close" where a code proposal shows its PR
+  // number, and there are deliberately NO code-proposal actions (Undo,
+  // kudos, Ask AI, priority/assignee chips). The settled tally pill mirrors
+  // the merged-PR treatment: payload.required is the threshold snapshotted
+  // at apply time; status 'merged' keeps voteCountPill clock-free. Clicking
+  // opens the governance discussion via the delegated [data-gov-row]
+  // handler (openTopic('gov', id)).
+  _renderCompletedCloseIssueCard(row) {
+    const p = row.payload || {};
+    const issueN = p.issueNumber || null;
+    const titleText = issueN
+      ? `Close issue #${issueN}: "${p.issueTitle || row.title}"`
+      : (row.title || 'Close issue');
+    const who = row.created_by_username
+      ? ` <span class="text-zinc-500">· ${escapeHtml(row.created_by_username)}</span>`
+      : '';
+    const how = String(p.appliedBy || '').startsWith('admin:')
+      ? 'closed by admin' : 'closed by vote';
+    const when = p.appliedAt || row.created_at;
+    const date = when ? new Date(when).toLocaleDateString() : '';
+    // GitHub link for the closed target, normalized like the kanban Issues
+    // footer's repo link.
+    const repo = (AppView.appData && AppView.appData.repo_url) || '';
+    const base = repo ? repo.replace(/\.git$/, '').replace(/\/$/, '') : '';
+    const issueRef = issueN
+      ? (base
+        ? `<a href="${base}/issues/${issueN}" target="_blank" rel="noopener" class="font-mono text-emerald-400 hover:underline">#${issueN}</a> · `
+        : `<span class="font-mono">#${issueN}</span> · `)
+      : '';
+    const tallyPill = AppView.voteCountPill({
+      yes_count: parseInt(row.up_count) || 0,
+      no_count: parseInt(row.down_count) || 0,
+      votes_required: p.required != null ? p.required : null,
+      status: 'merged',
+    }, parseInt(p.required) || 1);
+    return `
+        <div class="gc-vote-item ${AppView.DEV_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}" data-gov-row="${row.id}"${issueN ? ` data-ref-issue="${issueN}"` : ''} title="Open this proposal's discussion">
+          ${AppView._devCardIcon('done')}
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <div class="dev-card-headline">
+                <div class="text-sm text-zinc-800 dark:text-zinc-200 break-words" title="${escapeHtml(titleText)}">${escapeHtml(titleText)}${who}</div>
+                <div class="text-xs text-zinc-500 dark:text-zinc-400 truncate dev-card-headline-meta">Issue close · ${issueRef}${how}${date ? ` · ${date}` : ''}</div>
+              </div>
+              ${tallyPill}
+              ${AppView._devChatBadge(parseInt(row.chat_count) || 0)}
+            </div>
           </div>
           ${AppView.DEV_CARD_CHEVRON}
         </div>`;
