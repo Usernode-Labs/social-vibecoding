@@ -220,6 +220,28 @@ test('Done holds merged rows, most-recent-activity first', () => {
   assert.deepEqual(idsOf(b.done), [2, 3, 1]);
 });
 
+test('Done interleaves applied close-issue rows with merged PRs by activity', () => {
+  // The /merged stream now mixes row_type 'pr' and 'close_issue'; the done
+  // bucket sorts them together on the same created_at/last_message_at key.
+  const AppView = makeAppView();
+  const b = AppView._bucketDevItems({
+    issues: [],
+    proposals: [],
+    gov: [],
+    merged: [
+      { id: 1, row_type: 'pr', created_at: at(2), last_message_at: at(2) },
+      {
+        id: 9, row_type: 'close_issue', created_at: at(6), last_message_at: at(6),
+        kind: 'close_issue', status: 'closed',
+        payload: { issueNumber: 12, issueTitle: 'Broken thing', appliedAt: at(6), appliedBy: 'group-vote' },
+      },
+      { id: 2, row_type: 'pr', created_at: at(7), last_message_at: at(7) },
+    ],
+  });
+  assert.deepEqual(idsOf(b.done), [2, 9, 1]);
+  assert.equal(b.done[1].row_type, 'close_issue');
+});
+
 test('issue columns sort newest-activity first', () => {
   const AppView = makeAppView();
   const b = AppView._bucketDevItems({

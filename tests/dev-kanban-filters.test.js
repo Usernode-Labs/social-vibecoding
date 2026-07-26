@@ -143,6 +143,31 @@ test('text search matches issue/PR numbers, with or without a leading #', () => 
   assert.equal(AppView._devCardMatches('merged', merged({}), { ...none, q: '800101' }), true);
 });
 
+// Applied close-issue rows in the Done column (row_type='close_issue'):
+// text search reads the target issue's title/number and the proposer,
+// mirroring _renderCompletedCloseIssueCard; attribute filters exclude them
+// (they carry no priority/assignee/category), and needs-vote never matches
+// a settled row.
+const closedIssue = (over) => ({
+  id: 77, row_type: 'close_issue', kind: 'close_issue', status: 'closed',
+  title: 'Close issue #12: "Dark mode toggle resets"',
+  payload: { issueNumber: 12, issueTitle: 'Dark mode toggle resets', appliedAt: '2026-01-15T00:00:00.000Z', appliedBy: 'group-vote' },
+  created_by_username: 'casey',
+  ...over,
+});
+
+test('merged close-issue rows match by target issue title, proposer, and number', () => {
+  const AppView = makeAppView();
+  assert.equal(AppView._devCardMatches('merged', closedIssue({}), none), true);
+  assert.equal(AppView._devCardMatches('merged', closedIssue({}), { ...none, q: 'dark mode' }), true);
+  assert.equal(AppView._devCardMatches('merged', closedIssue({}), { ...none, q: 'casey' }), true);
+  assert.equal(AppView._devCardMatches('merged', closedIssue({}), { ...none, q: '#12' }), true);
+  assert.equal(AppView._devCardMatches('merged', closedIssue({}), { ...none, q: 'leaderboard' }), false);
+  // Attribute filters exclude them (no chips), like any card lacking the value.
+  assert.equal(AppView._devCardMatches('merged', closedIssue({}), { ...none, priority: 'high' }), false);
+  assert.equal(AppView._devCardMatches('merged', closedIssue({}), { ...none, needsVote: true }), false);
+});
+
 test('priority filter matches the top-voted value; unset and gov cards fail', () => {
   const AppView = makeAppView();
   const f = { ...none, priority: 'high' };

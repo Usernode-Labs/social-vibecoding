@@ -804,6 +804,13 @@ CREATE TABLE IF NOT EXISTS issues (
 );
 ALTER TABLE issues ADD COLUMN IF NOT EXISTS kind VARCHAR(32) NOT NULL DEFAULT 'general';
 ALTER TABLE issues ADD COLUMN IF NOT EXISTS payload JSONB NOT NULL DEFAULT '{}'::jsonb;
+-- Applied close-issue proposals surface in the Completed stream
+-- (GET /api/apps/:slug/merged interleaves them with merged PRs); this
+-- partial index keeps that keyset scan cheap without widening the table's
+-- general indexing.
+CREATE INDEX IF NOT EXISTS idx_issues_close_completed
+  ON issues (app_id, created_at DESC, id DESC)
+  WHERE kind = 'close_issue' AND status = 'closed';
 
 CREATE TABLE IF NOT EXISTS issue_votes (
   id         SERIAL PRIMARY KEY,

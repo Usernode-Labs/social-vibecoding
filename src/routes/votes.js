@@ -568,6 +568,64 @@ function stagingMockMerged() {
   )));
 }
 
+// Staging demo rows for APPLIED close-issue proposals in the Completed
+// stream (row_type='close_issue'), so a ?demo=1 preview shows the new
+// "Issue close" card interleaved among the merged mocks. One group-vote
+// apply and one admin force-apply, exercising both "closed by vote" and
+// "closed by admin" meta lines. Ids live outside the merged-mock range so
+// the type-scoped de-dup never collides. The payload mirrors what
+// maybeApplyCloseIssueProposal stamps (appliedAt/appliedBy + tally
+// snapshot); the target is mock issue 900003 from stagingMockIssues.
+function stagingMockCompletedCloseIssues() {
+  const daysAgo = (d) => new Date(Date.now() - d * 86400 * 1000).toISOString();
+  const mk = (id, appliedBy, appliedDays, createdDays, chat) => ({
+    row_type: 'close_issue',
+    id,
+    kind: 'close_issue',
+    status: 'closed',
+    title: '[Mock] Close issue #900003: "Topic cards overflow on narrow phones"',
+    description: '[Mock] Fixed by the responsive rework — the buttons wrap now.',
+    payload: {
+      issueNumber: 900003,
+      issueTitle: '[Mock] Topic cards overflow on narrow phones',
+      reason: '[Mock] Fixed by the responsive rework — the buttons wrap now.',
+      appliedAt: daysAgo(appliedDays),
+      appliedBy,
+      upCount: 2,
+      required: 2,
+      active: 3,
+    },
+    github_issue_number: null,
+    created_by: 0,
+    created_by_username: 'staging-tester',
+    created_at: daysAgo(createdDays),
+    up_count: 2,
+    down_count: 0,
+    chat_count: chat,
+    last_message_at: null,
+  });
+  return [
+    mk(9100060, 'group-vote', 1, 2, 3),
+    mk(9100061, 'admin:staging-admin', 4, 5, 0),
+  ];
+}
+
+// Global ordering for the unified Completed stream: newest created_at
+// first; on a timestamp tie PR rows rank before close-issue rows (rank
+// pr=1 > close_issue=0 — the same constant ranks the SQL keyset
+// predicates encode), then id DESC. Deterministic even across the two
+// id sequences (chat_sessions vs issues), which can collide numerically.
+const COMPLETED_TYPE_RANK = { pr: 1, close_issue: 0 };
+function completedRowCompare(a, b) {
+  const ta = Date.parse(a.created_at) || 0;
+  const tb = Date.parse(b.created_at) || 0;
+  if (tb !== ta) return tb - ta;
+  const ra = COMPLETED_TYPE_RANK[a.row_type || 'pr'] ?? 1;
+  const rb = COMPLETED_TYPE_RANK[b.row_type || 'pr'] ?? 1;
+  if (rb !== ra) return rb - ra;
+  return b.id - a.id;
+}
+
 // Shared SELECT column list + FROM/JOIN block for a "merged-shaped"
 // proposal row. Used by BOTH `GET /api/apps/:slug/merged` (the paginated
 // Completed list) and `GET /api/apps/:slug/proposals/:id` (single-row
@@ -1935,6 +1993,14 @@ function voteRoutes(config) {
       // already has — and we page strictly older than it. Keyset (not
       // OFFSET) because new merges insert at the top and would otherwise
       // drift the offset. created_at isn't unique, so id is the tiebreaker.
+      //
+      // The stream now interleaves TWO row types (merged PR sessions and
+      // applied close-issue proposals — see below), whose ids come from
+      // independent sequences, so the cursor carries a third part:
+      // `before_type` ('pr' | 'close_issue', defaulting to 'pr' so older
+      // clients keep paging PRs exactly as before). Global order is
+      // (created_at DESC, type-rank DESC, id DESC) with rank pr=1 >
+      // close_issue=0 — see completedRowCompare.
       let limit = parseInt(req.query.limit, 10);
       if (!Number.isFinite(limit) || limit < 1) limit = 20;
       if (limit > 50) limit = 50;
@@ -1947,6 +2013,7 @@ function voteRoutes(config) {
       const hasCursor = beforeRaw != null && !Number.isNaN(before.getTime())
         && Number.isFinite(beforeIdRaw);
       const isFirstPage = !hasCursor;
+      const beforeType = req.query.before_type === 'close_issue' ? 'close_issue' : 'pr';
 
       // Same kudos subqueries as /promoted so the merged card can show
       // its count + per-viewer "you gave kudos" state without a second
@@ -1959,24 +2026,81 @@ function voteRoutes(config) {
       // "Revert in vote (PR #N)" labels without a per-row round-trip.
       // (Undo is now a single direct action that opens a revert PR, so
       // there are no separate undo-vote tallies to surface.)
-      const { rows } = await pool.query(
+      //
+      // Per-source keyset predicates against the mixed-type cursor:
+      // a cursor sitting on a PR row (rank 1) keeps the historical tuple
+      // comparison for PRs; when it sits on a close-issue row (rank 0),
+      // every PR at that same timestamp already sorted BEFORE it, so PRs
+      // page strictly older (<). The close-issue query mirrors this: at a
+      // PR cursor, close rows at the same timestamp sort AFTER it, so
+      // they page <= ; at a close cursor they use their own tuple.
+      const prCursorSql = !hasCursor ? ''
+        : beforeType === 'pr'
+          ? 'AND (cs.created_at, cs.id) < ($3, $4)'
+          : 'AND cs.created_at < $3';
+      const prParams = !hasCursor
+        ? [appRows[0].id, userId, limit + 1]
+        : beforeType === 'pr'
+          ? [appRows[0].id, userId, before.toISOString(), beforeIdRaw, limit + 1]
+          : [appRows[0].id, userId, before.toISOString(), limit + 1];
+      const { rows: prRows } = await pool.query(
         `${mergedRowSelect()}
          WHERE cs.app_id = $1 AND cs.status = 'merged'
-           ${hasCursor ? 'AND (cs.created_at, cs.id) < ($3, $4)' : ''}
+           ${prCursorSql}
          ORDER BY cs.created_at DESC, cs.id DESC
-         LIMIT $${hasCursor ? 5 : 3}`,
+         LIMIT $${prParams.length}`,
         // Fetch limit+1 so an extra row signals there's another page.
-        hasCursor
-          ? [appRows[0].id, userId, before.toISOString(), beforeIdRaw, limit + 1]
-          : [appRows[0].id, userId, limit + 1]
+        prParams
       );
 
-      // #429: trim the look-ahead row and report whether more pages exist.
-      let hasMore = false;
-      if (rows.length > limit) {
-        hasMore = true;
-        rows.length = limit;
-      }
+      // Applied close-issue proposals join the Completed stream: a
+      // kind='close_issue' governance row whose vote (or an admin
+      // force-apply) actually closed the target carries payload.appliedAt
+      // (see maybeApplyCloseIssueProposal). Withdrawn (withdrawnAt) and
+      // superseded (supersededAt) rows never carry it, so they stay out.
+      // chat_count / last_message_at mirror the open-issues endpoint's
+      // governance-thread subqueries so the 💬 badge and activity sort
+      // behave identically.
+      const closeCursorSql = !hasCursor ? ''
+        : beforeType === 'close_issue'
+          ? 'AND (i.created_at, i.id) < ($2, $3)'
+          : 'AND i.created_at <= $2';
+      const closeParams = !hasCursor
+        ? [appRows[0].id, limit + 1]
+        : beforeType === 'close_issue'
+          ? [appRows[0].id, before.toISOString(), beforeIdRaw, limit + 1]
+          : [appRows[0].id, before.toISOString(), limit + 1];
+      const { rows: closeRows } = await pool.query(
+        `SELECT i.id, i.kind, i.title, i.description, i.payload, i.status,
+                i.github_issue_number, i.created_by, i.created_at,
+                u.username AS created_by_username,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up') AS up_count,
+                (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count,
+                (SELECT COUNT(*)::int FROM chat_messages cm
+                  WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id
+                    AND cm.msg_type = 'message') AS chat_count,
+                (SELECT MAX(cm.created_at) FROM chat_messages cm
+                  WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id) AS last_message_at
+           FROM issues i
+           LEFT JOIN users u ON i.created_by = u.id
+          WHERE i.app_id = $1 AND i.kind = 'close_issue' AND i.status = 'closed'
+            AND i.payload ? 'appliedAt'
+            ${closeCursorSql}
+          ORDER BY i.created_at DESC, i.id DESC
+          LIMIT $${closeParams.length}`,
+        closeParams
+      );
+
+      // Merge-sort the two already-sorted sources into one page. Each
+      // source fetched limit+1, so the page can never need a row beyond
+      // what was fetched; anything left over means another page exists.
+      // With a single populated source, keep the DB's ordering verbatim
+      // (byte-identical to the pre-close-issue behaviour for PR-only apps).
+      const combined = prRows.map((r) => ({ ...r, row_type: 'pr' }))
+        .concat(closeRows.map((r) => ({ ...r, row_type: 'close_issue' })));
+      if (prRows.length && closeRows.length) combined.sort(completedRowCompare);
+      let hasMore = combined.length > limit;
+      const rows = combined.slice(0, limit);
 
       // #433: the Kanban "Done" column header counts merged tasks, but the
       // board only loads the first page (default 20), so its count was
@@ -1992,15 +2116,27 @@ function voteRoutes(config) {
           WHERE app_id = $1 AND status = 'merged'`,
         [appRows[0].id]
       );
-      let total = totalRows[0]?.total || 0;
+      // Applied close-issue proposals count toward the same Done total —
+      // they render in the column. Distinct alias (close_total) so test
+      // stubs keyed on the PR count's SQL never double-answer.
+      const { rows: closeTotalRows } = await pool.query(
+        `SELECT COUNT(*)::int AS close_total
+           FROM issues
+          WHERE app_id = $1 AND kind = 'close_issue' AND status = 'closed'
+            AND payload ? 'appliedAt'`,
+        [appRows[0].id]
+      );
+      let total = (totalRows[0]?.total || 0) + (closeTotalRows[0]?.close_total || 0);
 
       // Same priority + assigned-person summary on completed proposals, so
-      // the read-only chips stay visible after a PR merges.
+      // the read-only chips stay visible after a PR merges. PR rows only —
+      // close-issue rows deliberately carry no priority/assignee chips.
+      const prPageRows = rows.filter((r) => r.row_type !== 'close_issue');
       const mergedAttrs = await topicAttrs.summarizeForProposals(
         pool, appRows[0].id,
-        rows.map((r) => ({ id: r.id, linked_issues: r.linked_issues })), userId
+        prPageRows.map((r) => ({ id: r.id, linked_issues: r.linked_issues })), userId
       );
-      for (const row of rows) {
+      for (const row of prPageRows) {
         const s = mergedAttrs.get(row.id) || topicAttrs.emptySummary();
         row.priority = s.priority;
         row.assignee = s.assignee;
@@ -2015,9 +2151,17 @@ function voteRoutes(config) {
       // tester can exercise "Load more" without depending on real merged
       // history. See stagingMockMerged above.
       if (IS_STAGING && req.query.demo === '1' && isFirstPage) {
-        const have = new Set(rows.map((r) => r.id));
-        const injected = stagingMockMerged().filter((m) => !have.has(m.id));
+        // De-dup by (type, id) — the two row types draw ids from
+        // independent sequences, so a bare id isn't unique in the stream.
+        const key = (r) => `${r.row_type || 'pr'}:${r.id}`;
+        const have = new Set(rows.map(key));
+        const injected = stagingMockMerged().map((m) => ({ ...m, row_type: 'pr' }))
+          .concat(stagingMockCompletedCloseIssues())
+          .filter((m) => !have.has(key(m)));
         rows.unshift(...injected);
+        // Re-sort so the mock close-issue rows interleave among the mock
+        // merged PRs by date instead of clumping at the top.
+        rows.sort(completedRowCompare);
         if (rows.length > limit) {
           hasMore = true;
           rows.length = limit;
