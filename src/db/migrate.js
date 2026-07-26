@@ -3831,6 +3831,18 @@ async function seedStagingCloneSpecPills(pool, config) {
 //      persisted any reply: the boot-time backfill sweep posts the
 //      missed-reply breadcrumb, whose first pill is the user's own message
 //      handed back for one-tap resending.
+//
+// Both rows are seeded SHARED (shared_at set), unlike seedStagingCloneSpecPills.
+// The Dev board's own-session block comes from GET /api/me/active-sessions,
+// which is strictly `cs.user_id = req.user.id` — so a fixture owned by the
+// first admin is invisible to every other viewer, including the view-only
+// `usernode-capture-admin` identity that signs the proposal-checks
+// navigations (services/visuals.js selectCaptureTokens). The dapp.json
+// checks asserting these two titles failed for exactly that reason. Shared
+// rows also come back from GET /api/apps/:slug/shared-sessions, which is
+// app-scoped, so the cards render for anyone opening the Dev board while
+// the owner still gets the full dev chat (those endpoints stay
+// owner-scoped by design). Same posture as seedStagingSharedSession.
 async function seedStagingRestartRecoveredPills(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -3871,9 +3883,11 @@ async function seedStagingRestartRecoveredPills(pool, config) {
       + '## Technical implementation\n\nStaging demo: no real change — fixture for the pill bar.';
     const { rows: sessionRows } = await pool.query(
       `INSERT INTO chat_sessions
-         (app_id, user_id, branch_name, pr_number, pr_title, status, spec_md, is_headless, created_at)
+         (app_id, user_id, branch_name, pr_number, pr_title, status, spec_md, is_headless,
+          shared_at, created_at)
        VALUES
-         ($1, $2, $3, 12, $4, 'active', $5, FALSE, NOW() - INTERVAL '25 minutes')
+         ($1, $2, $3, 12, $4, 'active', $5, FALSE,
+          NOW() - INTERVAL '24 minutes', NOW() - INTERVAL '25 minutes')
        RETURNING id`,
       [appId, owner.id, recoveredBranch, '[staging fixture] Staging demo: pills after a recovered build turn', specMd]
     );
@@ -3925,9 +3939,10 @@ async function seedStagingRestartRecoveredPills(pool, config) {
   if (!existingUnanswered.length) {
     const { rows: sessionRows } = await pool.query(
       `INSERT INTO chat_sessions
-         (app_id, user_id, branch_name, pr_title, status, is_headless, created_at)
+         (app_id, user_id, branch_name, pr_title, status, is_headless, shared_at, created_at)
        VALUES
-         ($1, $2, $3, $4, 'active', FALSE, NOW() - INTERVAL '15 minutes')
+         ($1, $2, $3, $4, 'active', FALSE,
+          NOW() - INTERVAL '14 minutes', NOW() - INTERVAL '15 minutes')
        RETURNING id`,
       [appId, owner.id, unansweredBranch,
         '[staging fixture] Staging demo: pills after an interrupted reply']
