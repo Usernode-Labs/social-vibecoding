@@ -24,10 +24,13 @@
 // models.js / dev-chat.js / app-view.js / tests. The copy describes the
 // KIND of work each model suits, not a size ladder:
 //   - Sonnet is the cheap option for one small, self-contained thing.
-//   - Opus and Fable are PEERS on coding strength. Opus is the pick for
-//     heavy coding (multi-file features, refactors, real debugging);
-//     Fable is the pick when the hard part is judgment about how
-//     something should look, read, or feel rather than the code itself.
+//   - Opus and Fable are PEERS on coding strength. Opus is the
+//     general-purpose coding pick — the default for coding work of any
+//     size, from a one-line fix to a multi-file feature or a refactor
+//     (#809: it is deliberately NOT framed as reserved for big or
+//     tricky changes); Fable is the pick when the hard part is judgment
+//     about how something should look, read, or feel rather than the
+//     code itself.
 // `short` goes in the dropdown option text, `long` in the caption under
 // the selector. It is EDITORIAL — a product opinion, not a measurement.
 // Nothing measured feeds the picker: per-change cost is only now
@@ -49,8 +52,8 @@ const MODELS = {
     tier: 'opus',
     outputCostPerMTok: 25,
     changeSize: {
-      short: 'big or tricky coding',
-      long: 'Multi-file features, refactors, and debugging that needs real digging.',
+      short: 'general coding work',
+      long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
     },
   },
   'claude-fable-5': {

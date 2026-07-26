@@ -147,8 +147,8 @@ const DevChat = {
     'claude-opus-5': {
       label: 'Opus 5',
       changeSize: {
-        short: 'big or tricky coding',
-        long: 'Multi-file features, refactors, and debugging that needs real digging.',
+        short: 'general coding work',
+        long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
       },
     },
     'claude-fable-5': {
@@ -235,7 +235,8 @@ const DevChat = {
   // Replaced the old "$X/MTok" option text. One fact per model: editorial
   // guidance on the KIND of work it suits (not a size ladder — Opus and
   // Fable are peers on coding strength and differ in whether taste and
-  // design judgment are the hard part). Both helpers take a
+  // design judgment are the hard part; Opus is the general coding pick
+  // at any size, #809). Both helpers take a
   // `{ label, changeSize }` meta object and are shared with the
   // Generate-proposal popup in app-view.js, so the two pickers can't
   // drift. Nothing measured feeds either one.

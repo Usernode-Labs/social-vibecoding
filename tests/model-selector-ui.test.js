@@ -191,8 +191,8 @@ function guidanceMap() {
     'claude-opus-5': {
       label: 'Opus 5',
       changeSize: {
-        short: 'big or tricky coding',
-        long: 'Multi-file features, refactors, and debugging that needs real digging.',
+        short: 'general coding work',
+        long: 'Anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.',
       },
     },
     'claude-fable-5': {
@@ -239,7 +239,7 @@ test('each option reads "<label> — <what it is for>"', () => {
   const { html } = render();
   for (const expected of [
     'Sonnet 5 — small, simple changes',
-    'Opus 5 — big or tricky coding',
+    'Opus 5 — general coding work',
     'Fable 5 — design and taste',
   ]) {
     assert.ok(
@@ -252,10 +252,16 @@ test('each option reads "<label> — <what it is for>"', () => {
 test('no option implies a size ladder between Opus and Fable', () => {
   const { html } = render();
   // The superseded copy positioned Fable as the "bigger" model. Opus is
-  // now the heavy-coding pick and Fable the taste pick, so this exact
+  // now the general coding pick and Fable the taste pick, so this exact
   // string must not come back.
   assert.ok(!html.includes('Fable 5 — big or tricky work'));
   assert.ok(!html.includes('a few files'));
+  // #809: Opus is the general-purpose coding model, not one reserved for
+  // big or tricky changes — the old restrictive wording must not return.
+  assert.ok(
+    !html.includes('Opus 5 — big or tricky coding'),
+    'Opus option reverted to the superseded "big or tricky" framing'
+  );
 });
 
 test('modelOptionText degrades to the bare label without guidance', () => {
@@ -271,10 +277,10 @@ test('the caption describes the selected model in a full sentence', () => {
   const { getEl } = render({ selected: 'claude-opus-5' });
   const note = getEl('dc-model-note');
   // Locks modelNoteText's first-character lower-casing against the new
-  // strings: "Multi-file …" has to read as "best for multi-file …".
+  // strings: "Anything from …" has to read as "best for anything from …".
   assert.equal(
     note.textContent,
-    'Opus 5 — best for multi-file features, refactors, and debugging that needs real digging.'
+    'Opus 5 — best for anything from a quick fix to a multi-file feature, a refactor, or debugging that needs real digging.'
   );
   assert.equal(note.classList.contains('hidden'), false);
 });
