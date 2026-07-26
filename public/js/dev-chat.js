@@ -127,13 +127,37 @@ const DevChat = {
   // wouldn't accept (server-side allowlist lives in src/services/models.js).
   // Kept seeded with the current set so the dropdown renders correctly
   // before the fetch resolves on a slow connection. Each value carries
-  // the display label plus output cost ($/MTok) so the selector can
-  // surface cost; loadModels() refreshes this from the server.
+  // the display label plus `changeSize` (#800) — the picker's editorial
+  // "what kind of work is this for" copy; loadModels() refreshes it from
+  // the server. NOTE: no $/MTok and no measured figures anywhere — the
+  // composer's budget badge is where spend lives.
+  //
+  // This map DUPLICATES the `changeSize` copy in src/services/models.js
+  // (it exists only for first paint before /api/models resolves), so the
+  // two must be edited together. tests/model-selector-ui.test.js has a
+  // copy-drift guard that fails if they diverge.
   MODELS: {
-    'claude-haiku-4-5': { label: 'Haiku 4.5', outputCostPerMTok: 5 },
-    'claude-sonnet-5': { label: 'Sonnet 5', outputCostPerMTok: 15 },
-    'claude-opus-5': { label: 'Opus 5', outputCostPerMTok: 25 },
-    'claude-fable-5': { label: 'Fable 5', outputCostPerMTok: 50 },
+    'claude-sonnet-5': {
+      label: 'Sonnet 5',
+      changeSize: {
+        short: 'small, simple changes',
+        long: 'One small thing at a time: a text tweak, a colour, a single file.',
+      },
+    },
+    'claude-opus-5': {
+      label: 'Opus 5',
+      changeSize: {
+        short: 'big or tricky coding',
+        long: 'Multi-file features, refactors, and debugging that needs real digging.',
+      },
+    },
+    'claude-fable-5': {
+      label: 'Fable 5',
+      changeSize: {
+        short: 'design and taste',
+        long: 'Work where how it looks and feels matters: layout, wording, and judgment calls about the feel of a screen.',
+      },
+    },
   },
 
   // Default model id used when sanitization rejects a stale storage
@@ -156,10 +180,12 @@ const DevChat = {
         for (const m of data.models) {
           if (m && typeof m.id === 'string') {
             const label = (typeof m.label === 'string' && m.label) ? m.label : m.id;
-            const outputCostPerMTok = typeof m.outputCostPerMTok === 'number'
-              ? m.outputCostPerMTok
-              : undefined;
-            next[m.id] = { label, outputCostPerMTok };
+            // #800: carry changeSize through. Optional — a server that
+            // omits it leaves the selector rendering plain labels.
+            const changeSize = (m.changeSize && typeof m.changeSize === 'object')
+              ? m.changeSize
+              : null;
+            next[m.id] = { label, changeSize };
           }
         }
         DevChat.MODELS = next;
@@ -168,7 +194,29 @@ const DevChat = {
         DevChat._defaultModel = data.default;
       }
       DevChat._sanitizeStoredModel();
+      // #800: if a session view is already mounted, patch the dropdown in
+      // place so a server-side allowlist change (a model added or
+      // removed) reaches an open composer instead of waiting for the next
+      // renderChatView.
+      DevChat._refreshModelSelect();
     } catch {}
+  },
+
+  // Rewrite the mounted model dropdown's options + caption from the
+  // current MODELS map, preserving the selection. No-op when no session
+  // view is mounted.
+  _refreshModelSelect() {
+    const sel = document.getElementById('dc-model-select');
+    if (!sel) return;
+    const options = Object.entries(DevChat.MODELS)
+      .map(([id, meta]) => {
+        const text = DevChat.modelOptionText(meta);
+        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
+      })
+      .join('');
+    sel.innerHTML = options;
+    sel.value = DevChat.selectedModel;
+    DevChat._renderModelNote();
   },
 
   // Guard against a persisted model id that's no longer in MODELS
@@ -180,6 +228,54 @@ const DevChat = {
   _sanitizeStoredModel() {
     if (!DevChat.MODELS[DevChat.selectedModel]) {
       DevChat.selectedModel = DevChat._defaultModel;
+    }
+  },
+
+  // ── Model selector copy (#800) ────────────────────────────────
+  // Replaced the old "$X/MTok" option text. One fact per model: editorial
+  // guidance on the KIND of work it suits (not a size ladder — Opus and
+  // Fable are peers on coding strength and differ in whether taste and
+  // design judgment are the hard part). Both helpers take a
+  // `{ label, changeSize }` meta object and are shared with the
+  // Generate-proposal popup in app-view.js, so the two pickers can't
+  // drift. Nothing measured feeds either one.
+
+  MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule — any model can attempt any change. Opus and Fable are equally strong at straight coding; reach for Fable when taste and design judgment are the hard part. Both cost more per change than Sonnet.',
+
+  // Plain text for one <option>. Degrades to the bare label when the
+  // server sent no guidance (e.g. an older payload) — a picker that
+  // shows only names still works perfectly.
+  modelOptionText(meta) {
+    if (!meta || typeof meta !== 'object') return String(meta || '');
+    const label = meta.label || '';
+    const hint = meta.changeSize && meta.changeSize.short;
+    if (!hint) return label;
+    return `${label} — ${hint}`;
+  },
+
+  // Full-sentence caption for the currently selected model. Returns ''
+  // when there's no guidance to show, and the caller hides the line.
+  modelNoteText(meta) {
+    if (!meta || typeof meta !== 'object') return '';
+    const label = meta.label || '';
+    const long = meta.changeSize && meta.changeSize.long;
+    if (!long) return '';
+    // "One small thing at a time: …" reads as "best for one small thing
+    // at a time: …" once it follows the label.
+    const guidance = long.charAt(0).toLowerCase() + long.slice(1);
+    return `${label} — best for ${guidance}`;
+  },
+
+  // Fill/hide the caption under the composer's model dropdown. Called on
+  // render and from the select's change handler.
+  _renderModelNote() {
+    const el = document.getElementById('dc-model-note');
+    if (!el) return;
+    const text = DevChat.modelNoteText(DevChat.MODELS[DevChat.selectedModel]);
+    el.textContent = text;
+    el.title = text ? DevChat.MODEL_GUIDANCE_TOOLTIP : '';
+    if (typeof el.classList?.toggle === 'function') {
+      el.classList.toggle('hidden', !text);
     }
   },
 
@@ -4248,10 +4344,8 @@ const DevChat = {
 
     const modelOptions = Object.entries(DevChat.MODELS)
       .map(([id, meta]) => {
-        const label = (meta && typeof meta === 'object') ? meta.label : meta;
-        const cost = (meta && typeof meta === 'object') ? meta.outputCostPerMTok : undefined;
-        const text = typeof cost === 'number' ? `${label} — $${cost}/MTok` : label;
-        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${text}</option>`;
+        const text = DevChat.modelOptionText(meta);
+        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
       })
       .join('');
 
@@ -4301,6 +4395,12 @@ const DevChat = {
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
             </div>
+            <!-- #800: one-line plain-language description of the SELECTED
+                 model — what kind of work it suits. Filled by
+                 _renderModelNote(); hidden when the payload carries no
+                 guidance copy. Clamped to two lines in CSS: Fable's
+                 sentence wraps on a phone and must not crowd the box. -->
+            <span id="dc-model-note" class="dc-model-note hidden"></span>
             <div id="dc-drafts" class="dc-drafts"></div>
             <div id="dc-quick-replies" class="dc-quick-replies"></div>
             <div id="dc-attachments" class="dc-attach-strip"></div>
@@ -4369,12 +4469,16 @@ const DevChat = {
     // — isStreaming stays false, so nothing can be sent or stopped.
     else if (DevChat._wantsBusyShot()) DevChat._setStreamingUI(true, 'claude');
 
+    // #800: caption describing the selected model, kept in sync below.
+    DevChat._renderModelNote();
+
     document.getElementById('dc-model-select').addEventListener('change', (e) => {
       DevChat.selectedModel = e.target.value;
       // Persist across refreshes + new sessions (fixes #31). Wrapped
       // in try/catch so private-mode browsers or quota errors don't
       // break the selector.
       try { localStorage.setItem(MODEL_STORAGE_KEY, e.target.value); } catch {}
+      DevChat._renderModelNote();
     });
 
     const prHeaderLink = document.getElementById('dc-pr-header-link');

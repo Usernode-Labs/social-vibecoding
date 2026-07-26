@@ -685,6 +685,31 @@ html, body {
 }
 .dc-quick-pill:hover { background: var(--bg-tertiary); border-color: var(--accent); }
 
+/* ── Model selector caption (#800) ─────────────────────── */
+
+/* One-line plain-language description of the selected model — its
+   measured solve-rate range plus the change size it suits — sitting
+   between the model row and the composer. Deliberately quiet (muted,
+   10px) so it reads as a footnote to the dropdown rather than competing
+   with the message box, and `.hidden` when the server sent no stats so
+   the composer reclaims the height. */
+.dc-model-note {
+  /* Capped at two lines: the sentence fits on one at desktop widths but
+     wraps to three on a 390px phone, and a footnote must never crowd out
+     the text box (same rule as the draft list's max-height below). The
+     full text stays available in the element's title. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: -2px 0 6px;
+  padding: 0 2px;
+  font-size: 10px;
+  line-height: 1.35;
+  color: var(--text-muted);
+}
+.dc-model-note.hidden { display: none; }
+
 /* ── Saved draft messages above the composer (#798) ────── */
 
 /* Hidden until at least one draft exists, so an empty list adds no

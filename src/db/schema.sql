@@ -243,6 +243,14 @@ CREATE TABLE IF NOT EXISTS chat_session_messages (
   created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- #800: until this landed, the pkey was this table's ONLY index — while
+-- every session open reads it by session_id (routes/sessions.js history
+-- loads), i.e. a sequential scan over the whole message table each time.
+-- The leading column serves those lookups; `model` rides along so a
+-- future per-model cost aggregate can read it index-only.
+CREATE INDEX IF NOT EXISTS idx_csm_session_model
+  ON chat_session_messages(session_id, model);
+
 -- Migrations (idempotent)
 ALTER TABLE chat_session_messages ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS cc_session_id VARCHAR(64);
@@ -623,6 +631,39 @@ CREATE INDEX IF NOT EXISTS chat_sessions_archived_idx ON chat_sessions(status, a
 -- is scrubbed from staging clones with the rest of the row.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS merged_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS chat_sessions_merged_at_idx ON chat_sessions(merged_at);
+
+-- #800: per-change CODING-AGENT spend, in cents at Anthropic list price.
+-- The platform's first per-change cost figure.
+--
+-- Why it has to exist: chat_session_messages.cost_cents already records
+-- every MAYOR turn's cost, but Claude Code in the worker bills through
+-- routes/anthropic-proxy.js, which only ever folded its spend into the
+-- per-user *daily* llm_usage ledger — so the agent's share (the large
+-- majority: measured at ~4.3x the Mayor's on single-session user-days)
+-- was never attributable to the change it was building. Total cost of a
+-- change is therefore SUM(chat_session_messages.cost_cents) for the
+-- session PLUS this column.
+--
+-- Written by the anthropic-proxy settle path as a best-effort
+-- accumulating increment (one narrow single-row UPDATE per agent call;
+-- a session's agent calls are serial so there is no contention).
+-- Deliberately EXCLUDES platform-driven sync/merge-conflict turns —
+-- those bill system_token_usage, run on a fixed model, and are not a
+-- consequence of the user's model choice.
+--
+-- READING IT LATER — IMPORTANT: every session that predates this column
+-- has 0 here despite really having spent money, and the history cannot
+-- be backfilled (llm_usage has no session or model dimension). So any
+-- aggregate MUST filter `agent_cost_cents > 0`, which is exactly the set
+-- of sessions whose agent ran after the ledger existed and self-heals as
+-- history accumulates. Without that filter the low end of any cost
+-- distribution collapses toward zero.
+--
+-- This is a list-price cost record, NOT a billing record: it is written
+-- identically for BYOK and platform-key turns (llm_usage remains the
+-- source of truth for spend against allowances). Covered by the
+-- table-level staging:private comment.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS agent_cost_cents NUMERIC(12,4) NOT NULL DEFAULT 0;
 
 -- #58: snapshot the vote threshold that was in effect at the moment a PR
 -- merged. The "majority" needed to merge is computed live from the active-

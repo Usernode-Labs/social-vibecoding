@@ -16,6 +16,16 @@ function chatRoutes(config) {
   // Models the UI may offer in its dropdown. Backed by the same
   // allowlist src/routes/sessions.js validates inbound `model`
   // against, so the dropdown and server enforcement can never drift.
+  //
+  // #800: each entry also carries `changeSize` — the picker's editorial
+  // "what kind of work is this model for" copy, which rides along inside
+  // models.list() with no work needed here. Deliberately NO measured
+  // figures in this payload: nothing readable exists yet (see the
+  // agent_cost_cents ledger in routes/anthropic-proxy.js), so the
+  // handler stays synchronous and touches no tables. The legacy
+  // `outputCostPerMTok` field stays in the payload — it no longer
+  // appears in any picker, but removing it would be a needless
+  // breaking change for anything else reading this endpoint.
   router.get('/api/models', (_req, res) => {
     res.json({ models: models.list(), default: models.DEFAULT_MODEL });
   });
