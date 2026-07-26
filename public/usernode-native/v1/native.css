@@ -144,8 +144,18 @@ textarea:active,
   filter: none;
 }
 
-/* ≥44px hit area for small icon buttons without changing layout. */
-.un-touch-target {
+/* ≥44px hit area for small icon buttons without changing layout.
+ *
+ * The ::after pseudo-element only needs SOME containing block, so the
+ * `position: relative` fallback ships at ZERO specificity via :where().
+ * That means the helper never overrides the element's own positioning —
+ * an app-side `absolute` / `fixed` / `sticky` (Tailwind's `.absolute`,
+ * an inline style, anything) wins automatically and supplies the
+ * containing block itself, regardless of stylesheet insertion order.
+ * Static elements behave exactly as before. So the helper is safe on an
+ * overlay control (clear-search "✕" inside a field, a close button
+ * pinned to a card corner) with no wrapper element. */
+:where(.un-touch-target) {
   position: relative;
 }
 .un-touch-target::after {

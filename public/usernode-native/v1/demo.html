@@ -41,6 +41,26 @@
         <p class="text-xs text-zinc-500 mt-2">No tap flash; press engages instantly, release springs back.</p>
       </section>
 
+      <!-- Hit areas — .un-touch-target on a positioned overlay control -->
+      <section id="hit-area-demo">
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Hit areas — <code>.un-touch-target</code></h2>
+        <div class="relative">
+          <input id="hit-area-input" type="text" value="socks" aria-label="Search"
+                 class="w-full pl-3 pr-12 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent">
+          <!-- The overlay case: the button owns its own `absolute` AND the
+               helper. No wrapper element — the helper's position:relative
+               fallback ships at zero specificity, so `absolute` wins. -->
+          <button id="hit-area-clear"
+                  class="un-touch-target un-pressable absolute right-1.5 top-1/2 -translate-y-1/2 w-[34px] h-[34px] flex items-center justify-center rounded-full text-sm text-zinc-500 bg-zinc-100 dark:bg-zinc-800"
+                  aria-label="Clear search">✕</button>
+        </div>
+        <p class="text-xs text-zinc-500 mt-2">
+          A 34px clear button pinned inside the field with <code>absolute</code>, carrying
+          <code>.un-touch-target</code> directly — no wrapper. Taps land up to ~5px outside the
+          visible circle. <span id="hit-area-readout" class="font-mono"></span>
+        </p>
+      </section>
+
       <!-- Switches -->
       <section>
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Switches</h2>
@@ -272,6 +292,29 @@
 
       document.getElementById('theme-toggle').addEventListener('click', function () {
         document.documentElement.classList.toggle('dark');
+      });
+
+      // ── Hit areas — prove .un-touch-target keeps `absolute` ────────
+      // Reads back the clear button's *effective* position plus the size
+      // of the ::after hit box, so a regression (the helper clobbering
+      // `absolute` again) shows up on the page instead of silently
+      // dropping the control back into normal flow.
+      var hitBtn = document.getElementById('hit-area-clear');
+      var hitReadout = document.getElementById('hit-area-readout');
+      function reportHitArea() {
+        var pos = getComputedStyle(hitBtn).position;
+        var after = getComputedStyle(hitBtn, '::after');
+        var box = hitBtn.getBoundingClientRect();
+        hitReadout.textContent =
+          'position: ' + pos +
+          ' · visible ' + Math.round(box.width) + '×' + Math.round(box.height) +
+          ' · hit ' + after.width + '×' + after.height;
+      }
+      reportHitArea();
+      addEventListener('resize', reportHitArea);
+      hitBtn.addEventListener('click', function () {
+        document.getElementById('hit-area-input').value = '';
+        unNative.toast('Cleared');
       });
 
       // ── Swipeable list (static in-memory rows) ─────────────────────

@@ -807,6 +807,11 @@ html, body {
   background: var(--bg-tertiary);
 }
 .dc-save-draft-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* #801: the icon only exists while the chat is STOPPED. Needed explicitly —
+   the shared `.dc-draft-btn, .dc-save-draft-btn { display: inline-flex }`
+   rule above has the same specificity as the UA `[hidden]` rule and, being
+   an author sheet, would otherwise keep the button visible. */
+.dc-save-draft-btn[hidden] { display: none; }
 
 /* ── File attachments (#450) ───────────────────────────── */
 
