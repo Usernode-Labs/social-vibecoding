@@ -6311,10 +6311,14 @@ path: /another/changed/view
     must be a RELATIVE path within the app (starts with "/", no scheme or
     host).
   - REQUIRED for user-visible changes: you MUST include at least one
-    "path:" pointing at a URL where the change is actually VISIBLE.
-    Otherwise the screenshots default to the home page and show a screen
-    your change never touched. Omit "path:" only when the change genuinely
-    renders on "/" as the page loads.
+    "path:" line pointing at the SPECIFIC screen where the change is
+    actually VISIBLE — a deep route (with whatever query/hash params it
+    takes), not a reflexive "path: /". Omitting it makes the screenshots
+    default to the home page and show a screen your change never touched;
+    the platform records that default as a capture defect on the
+    proposal, so treat a missing "path:" as a bug in your reply, not a
+    shortcut. Omit "path:" only when the change genuinely renders on "/"
+    as the page loads.
   - The screenshots and the button can only NAVIGATE — they never click,
     play, or fill anything in. If no URL reaches the changed screen
     (in-game state, a modal/sheet, a wizard step), ADD one: a
@@ -6326,12 +6330,13 @@ path: /another/changed/view
     dapp.json test asserting it renders, and verify it in the in-loop
     browser before committing. A "path: /" screenshot of an
     interaction-gated change is as good as no testing block.
-  - A "path:" line may end with the annotation "@mobile"
-    (whitespace-separated, e.g. "path: /board @mobile") to capture that
-    route in a phone-sized viewport instead of the desktop frame.
-    REQUIRED when the change only shows on narrow screens — the default
-    desktop frame can never show it. The same path may appear once per
-    frame when the change is visible on both.
+  - Every "path:" is captured in BOTH frames automatically: the desktop
+    viewport (1280x800, still + animated recording) and a phone-sized
+    viewport (390x844, still image only). Mobile-only changes are
+    therefore covered without any annotation — just point "path:" at the
+    right route. The legacy "@mobile" annotation is still accepted but
+    is redundant now; never rely on the desktop frame alone for a
+    narrow-screen change.
   - You may give MORE THAN ONE "path:" line (one per line, up to 3,
     captured in the order written) when the change spans several views —
     e.g. a new nav item plus the page it opens. Each becomes its own

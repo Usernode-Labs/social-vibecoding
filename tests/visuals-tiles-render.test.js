@@ -134,3 +134,104 @@ test('a lone mobile ROOT group is still labelled (desktop root stays unlabelled)
   assert.doesNotMatch(desktopHtml, /Before \/ after —/, 'single desktop root group renders unlabelled');
   assert.doesNotMatch(desktopHtml, /data-viewport=/);
 });
+
+// ── Honest-pair captions (screenshot-reliability spec) ─────────────────
+
+test('an after-only group renders the "new page" caption', () => {
+  const AppView = makeAppView();
+  const html = AppView.visualsTilesHtml({
+    captures: [{ index: 0, path: '/settings', after: { png: ID('b') } }],
+  });
+  assert.match(html, /New page — no production version to compare/);
+});
+
+test('a fell-back before renders the home-page caption', () => {
+  const AppView = makeAppView();
+  const html = AppView.visualsTilesHtml({
+    captures: [{
+      index: 0, path: '/board', beforeFellBack: true,
+      before: { png: ID('a') }, after: { png: ID('b') },
+    }],
+  });
+  assert.match(html, /shows the home page — this page didn’t exist in production yet/);
+});
+
+test('a complete pair renders no caption', () => {
+  const AppView = makeAppView();
+  const html = AppView.visualsTilesHtml({
+    captures: [{
+      index: 0, path: '/board',
+      before: { png: ID('a') }, after: { png: ID('b') },
+    }],
+  });
+  assert.doesNotMatch(html, /New page —/);
+  assert.doesNotMatch(html, /shows the home page/);
+});
+
+// ── gallery mode options (admin /gallery reuses this renderer) ──────────
+
+test('default output is byte-identical to calling with no options', () => {
+  const AppView = makeAppView();
+  const visuals = {
+    captures: [{
+      index: 0, path: '/board',
+      before: { png: ID('a'), webm: ID('c') },
+      after: { png: ID('b'), webm: ID('d') },
+    }],
+  };
+  // The proposal-card / dev-chat call sites pass nothing — that path must not
+  // shift when the gallery's options are added.
+  assert.equal(AppView.visualsTilesHtml(visuals), AppView.visualsTilesHtml(visuals, {}));
+  assert.match(AppView.visualsTilesHtml(visuals), /muted loop autoplay playsinline/);
+});
+
+test('gallery mode makes recordings click-to-play instead of autoplaying', () => {
+  const AppView = makeAppView();
+  const html = AppView.visualsTilesHtml({
+    captures: [{ index: 0, path: '/board', before: { png: ID('a') }, after: { png: ID('b'), webm: ID('d') } }],
+  }, { preload: 'none', overlay: false });
+  assert.match(html, /preload="none"/);
+  assert.match(html, /controls/);
+  assert.doesNotMatch(html, /autoplay/, '20 autoplaying clips per page is not acceptable');
+});
+
+test('gallery mode drops the SPA comparison-overlay wiring', () => {
+  const AppView = makeAppView();
+  const html = AppView.visualsTilesHtml({
+    captures: [{ index: 0, path: '/board', before: { png: ID('a') }, after: { png: ID('b') } }],
+  }, { preload: 'none', overlay: false });
+  // openVisualComparison depends on SPA state the standalone page lacks, so
+  // tiles must be inert figures rather than buttons that do nothing.
+  assert.doesNotMatch(html, /openVisualComparison/);
+  assert.doesNotMatch(html, /<button/);
+  assert.match(html, /<figure/);
+  // The path/viewport data attributes still ride along for debugging.
+  assert.match(html, /data-visual-tile="before"/);
+});
+
+test('gallery mode marks a still-only tile "no recording"', () => {
+  const AppView = makeAppView();
+  const withRec = AppView.visualsTilesHtml({
+    captures: [{ index: 0, path: '/board', after: { png: ID('b'), webm: ID('d') } }],
+  }, { preload: 'none', overlay: false });
+  const stillOnly = AppView.visualsTilesHtml({
+    captures: [{ index: 0, path: '/board', after: { png: ID('b') } }],
+  }, { preload: 'none', overlay: false });
+  assert.match(stillOnly, /no recording/);
+  assert.doesNotMatch(withRec, /no recording/);
+  // The marker is gallery-only — proposal cards stay unchanged.
+  assert.doesNotMatch(AppView.visualsTilesHtml({
+    captures: [{ index: 0, path: '/board', after: { png: ID('b') } }],
+  }), /no recording/);
+});
+
+test('gallery mode still renders the honest captions', () => {
+  const AppView = makeAppView();
+  const html = AppView.visualsTilesHtml({
+    captures: [{
+      index: 0, path: '/board', beforeFellBack: true,
+      before: { png: ID('a') }, after: { png: ID('b') },
+    }],
+  }, { preload: 'none', overlay: false });
+  assert.match(html, /shows the home page/);
+});

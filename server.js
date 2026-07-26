@@ -39,6 +39,7 @@ const { topicAttributeRoutes } = require('./src/routes/topic-attributes');
 const { boardOrderRoutes } = require('./src/routes/board-order');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
+const { galleryRoutes } = require('./src/routes/gallery');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
@@ -434,6 +435,7 @@ app.use(topicAttributeRoutes(config));
 app.use(boardOrderRoutes(config));
 app.use(pmOrderRoutes(config));
 app.use(debugRoutes(config));
+app.use(galleryRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
@@ -512,6 +514,15 @@ app.get('/dashboard', (req, res) => {
 // Must be registered before the app.get('*') SPA fallback below.
 app.get('/debug', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'debug.html'));
+});
+
+// Admin before/after screenshot gallery. Like /admin, /dashboard and /debug
+// the static shell is served to anyone; gallery.js checks /api/auth/me and
+// shows an "Admins only" message, while the /api/gallery/* endpoints it
+// calls are independently enforced in src/routes/gallery.js. Must be
+// registered before the app.get('*') SPA fallback below.
+app.get('/gallery', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'gallery.html'));
 });
 
 app.get('*', (req, res) => {

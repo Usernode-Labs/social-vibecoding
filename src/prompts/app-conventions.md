@@ -371,14 +371,13 @@ Two related notes on `path:` form:
   routes off the URL fragment, write the fragment into the path —
   `path: /#/settings` — so the shot lands on the right screen. (The
   self-app has its own special handling; see the next section.)
-- **Mobile-only changes.** A `path:` line may end with the annotation
-  `@mobile` (whitespace-separated, e.g. `path: /board @mobile`) to shoot
-  that route in a phone-sized viewport (390×844) instead of the default
-  1280×800 desktop frame. Use it whenever the change only shows on
-  narrow screens — a desktop screenshot of a mobile-only change shows
-  nothing — and the before/after row is labelled "(mobile)" so reviewers
-  know what frame they're looking at. The same path may appear twice,
-  once per frame, when a change is visible on both.
+- **Both frames, automatically.** Every `path:` is captured in BOTH the
+  default 1280×800 desktop frame (still + animated recording) and a
+  phone-sized 390×844 frame (still image only), so mobile-only changes
+  show up without any annotation — the phone row is labelled "(mobile)"
+  so reviewers know what frame they're looking at. The legacy `@mobile`
+  annotation (`path: /board @mobile`) is still accepted but redundant
+  now; just point `path:` at the route where the change is visible.
 
 ### Testing `path:` for a hash-routed SPA (the self-app)
 
@@ -1946,9 +1945,10 @@ locally inside the worker the same way a staging container does:
 - **EXPECTED when you added a screenshot-state deep link this turn**
   (see "Make the changed screen URL-reachable"): load the exact `path:`
   URL and confirm the changed UI is actually visible before committing —
-  for a `@mobile` path, resize the browser to a phone-sized frame
-  (390×844) first. A state link that renders the home screen means the
-  before/after screenshots will too.
+  for a mobile-only change, resize the browser to a phone-sized frame
+  (390×844) first (every path is captured in both frames automatically).
+  A state link that renders the home screen means the before/after
+  screenshots will too.
 - A **blank or empty page usually means missing seed data, not a bug** —
   the local DB starts empty. Add the `IS_STAGING` seed (or a `?demo=1`
   route) per "Staging mock data" and re-check, rather than "fixing"

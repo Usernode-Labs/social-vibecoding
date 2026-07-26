@@ -6816,8 +6816,19 @@ const AppView = {
   // a single root-only group renders unlabelled, exactly as before.
   // Deliberately dedicated DOM — the markdown sanitizer's whitelist stays
   // untouched (<img>/<video> remain stripped from chat markdown).
-  visualsTilesHtml(visuals) {
+  // `opts` (added for the admin /gallery page) tunes two things without
+  // forking this renderer, so the proposal-card and dev-chat call sites stay
+  // byte-identical when it's omitted:
+  //   preload — 'none' makes recordings click-to-play instead of autoplaying
+  //             looped. The gallery renders up to 20 proposals per page, and
+  //             that many autoplaying clips is not acceptable.
+  //   overlay — false drops the openVisualComparison click wiring, which
+  //             depends on SPA state the standalone gallery page doesn't have
+  //             (tiles then render as plain, non-interactive figures).
+  visualsTilesHtml(visuals, opts = {}) {
     if (!visuals) return '';
+    const clickToPlay = opts.preload === 'none';
+    const overlay = opts.overlay !== false;
     const groups = Array.isArray(visuals.captures)
       ? visuals.captures
       : ((visuals.before || visuals.after)
@@ -6848,9 +6859,28 @@ const AppView = {
       const v = side === 'before' ? b : a;
       if (!v) return '';
       const mediaStyle = 'display:block;width:100%;max-height:160px;object-fit:contain;object-position:top;background:rgba(0,0,0,0.25);border:1px solid rgba(127,127,127,0.25);border-radius:6px';
+      // Gallery mode (preload:'none') makes the clip click-to-play with the
+      // still as its poster; the default stays the autoplaying silent loop.
       const media = v.webm
-        ? `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop autoplay playsinline style="${mediaStyle}"></video>`
+        ? (clickToPlay
+          ? `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop playsinline controls preload="none" style="${mediaStyle}"></video>`
+          : `<video src="/visuals/${v.webm}"${v.png ? ` poster="/visuals/${v.png}"` : ''} muted loop autoplay playsinline style="${mediaStyle}"></video>`)
         : `<img src="/visuals/${v.png || v.gif}" alt="${label}" loading="lazy" style="${mediaStyle}">`;
+      // Gallery mode makes a missing recording visible rather than invisible
+      // (the whole point of the reliability work) — a still-only tile is
+      // marked "no recording" beside its label.
+      const marker = (clickToPlay && !v.webm)
+        ? ' <span class="text-zinc-400 dark:text-zinc-500" style="text-transform:none;letter-spacing:0">· no recording</span>'
+        : '';
+      const labelHtml = `<div class="text-[0.65rem] font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400" style="margin-bottom:2px">${label}${marker}</div>`;
+      // Without the overlay there's nothing to click — render an inert
+      // figure so the tile isn't a button that does nothing.
+      if (!overlay) {
+        return `<figure ${mobile ? 'data-viewport="mobile"' : ''} data-visual-tile="${side}" data-path="${esc(path)}" style="flex:1 1 0;min-width:0;display:block;margin:0">
+          ${labelHtml}
+          ${media}
+        </figure>`;
+      }
       const dataAttrs = [
         `data-visual-tile="${side}"`,
         `data-path="${esc(path)}"`,
@@ -6885,7 +6915,20 @@ const AppView = {
       const label = (single && (path === '/' || !path) && !mobile)
         ? ''
         : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`;
-      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`);
+      // Honest-pair captions: explain a missing "before" (route is new —
+      // there's no production version to compare) and a fell-back "before"
+      // (the deep route 404'd on production, so the tile shows the home
+      // page) so a mismatched-looking comparison isn't read as a bug.
+      let note = '';
+      if (a && !b) {
+        note = 'New page — no production version to compare';
+      } else if (b && g.beforeFellBack) {
+        note = '"Before" shows the home page — this page didn’t exist in production yet';
+      }
+      const noteHtml = note
+        ? `<div class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" style="margin:2px 0 0">${esc(note)}</div>`
+        : '';
+      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>${noteHtml}`);
     }
     return rows.join('');
   },
