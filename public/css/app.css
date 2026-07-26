@@ -685,6 +685,104 @@ html, body {
 }
 .dc-quick-pill:hover { background: var(--bg-tertiary); border-color: var(--accent); }
 
+/* ── Saved draft messages above the composer (#798) ────── */
+
+/* Hidden until at least one draft exists, so an empty list adds no
+   height to the composer block (same pattern as the pills / attach
+   strip above). Capped in height with its own scroller: a long list of
+   parked notes must never crowd out the text box on a phone. */
+.dc-drafts { display: none; }
+.dc-drafts.dc-drafts-active {
+  display: block;
+  margin-bottom: 6px;
+  max-height: 132px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  padding: 4px;
+}
+
+.dc-drafts-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 4px 4px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.dc-drafts-hint {
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: 400;
+  font-size: 10px;
+}
+
+.dc-draft-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 6px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+}
+.dc-draft-row + .dc-draft-row { margin-top: 4px; }
+
+.dc-draft-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dc-draft-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.dc-draft-btn,
+.dc-save-draft-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  transition: color 150ms, border-color 150ms, background 150ms;
+}
+.dc-draft-btn:hover:not(:disabled) { background: var(--bg-tertiary); border-color: var(--accent); }
+.dc-draft-send:hover:not(:disabled) { color: #10b981; border-color: #10b981; }
+.dc-draft-edit:hover:not(:disabled) { color: var(--accent); }
+.dc-draft-trash:hover:not(:disabled) { color: #ef4444; border-color: #ef4444; }
+.dc-draft-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Save icon in the composer, sized to sit level with the Send button. */
+.dc-save-draft-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 8px;
+}
+.dc-save-draft-btn:not(:disabled) { color: var(--text-secondary); }
+.dc-save-draft-btn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--bg-tertiary);
+}
+.dc-save-draft-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* ── File attachments (#450) ───────────────────────────── */
 
 /* Pending strip above the composer. Hidden when empty. */
