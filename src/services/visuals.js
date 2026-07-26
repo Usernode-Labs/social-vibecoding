@@ -756,8 +756,19 @@ async function patchPrBody(pool, session, repoOwner, repoName, block) {
 }
 
 // One capture in flight per session — a fast follow-up turn that rebuilds
-// staging while the previous capture is still shooting just skips.
+// staging while the previous capture is still shooting can't run
+// concurrently (they'd race on the latest-set-per-session delete/insert).
+//
+// It used to just SKIP, which silently dropped the newer commit's
+// screenshots: the stored set stayed the older run's, and nothing ever
+// re-ran (screenshot-reliability spec, improvement 5). Now the skip
+// RE-QUEUES: the session id is parked in _queued with the newer run's
+// arguments, and the in-flight run re-drives it exactly once from its
+// finally block. Depth is capped at one per session (a later request
+// overwrites the parked args — the freshest commit is the one worth
+// shooting), so a burst of rebuilds can never fan out into a queue.
 const _inFlight = new Set();
+const _queued = new Map();
 
 // Main entry point. Fire-and-forget from the staging-success sites
 // (routes/sessions.js interactive + headless tails, routes/votes.js
@@ -812,7 +823,15 @@ function maybeAutoMergeAfterChecks(config, pool, session, state) {
 
 async function captureForSession(config, session, app, commitHash, stagingResult, { send } = {}) {
   if (_inFlight.has(session.id)) {
-    log.info('visuals', 'Capture already in flight — skipping', { sessionId: session.id });
+    // Re-queue instead of dropping: park the NEWER run's arguments (latest
+    // wins, depth 1) for the in-flight run's finally block to re-drive.
+    // `send` is deliberately NOT carried over — by the time the queued run
+    // fires, the requesting turn's SSE stream is long closed, so the queued
+    // run publishes via the session bus + global WS instead.
+    _queued.set(session.id, { config, session, app, commitHash, stagingResult });
+    log.info('visuals', 'Capture already in flight — re-queued for after it finishes', {
+      sessionId: session.id, commitHash: commitHash || null,
+    });
     return;
   }
   _inFlight.add(session.id);
@@ -1075,8 +1094,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       tests: tests.length, declaredTests: declaredTests.length,
     });
     let stdout;
+    let runPartial = false;
+    let runPartialReason = '';
     try {
-      ({ stdout } = await docker.runOneShot(`usernode-capture-${session.id}`, {
+      let res;
+      ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
         image: CAPTURE_IMAGE,
         env: {
           // Multi-target protocol (#270). The container loops over these
@@ -1119,7 +1141,19 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         },
         timeoutMs: RUN_TIMEOUT_MS,
         maxBuffer: RUN_MAX_BUFFER,
+        // Improvement 5: the output protocol is a stream of independently
+        // parseable frames, so a run killed at RUN_TIMEOUT_MS still carries
+        // every frame it already emitted. Salvage them instead of losing the
+        // whole proposal's screenshots to one slow page.
+        salvagePartial: true,
       }));
+      runPartial = !!res.partial;
+      runPartialReason = res.partialReason || '';
+      if (runPartial) {
+        log.warn('visuals', 'Capture run cut short — parsing partial output', {
+          sessionId: session.id, reason: runPartialReason,
+        });
+      }
     } finally {
       if (beforeSessionToken) {
         await pool.query('DELETE FROM sessions WHERE token = $1', [beforeSessionToken])
@@ -1174,7 +1208,9 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // instead of from short-lived container logs. Best-effort.
     const captureState = !media
       ? 'console_only'
-      : (!stored ? 'failed' : ((failures.length || dropped.length) ? 'partial' : 'captured'));
+      : (!stored
+        ? 'failed'
+        : ((failures.length || dropped.length || runPartial) ? 'partial' : 'captured'));
     const captureDetail = {
       media,
       pathDefaulted,
@@ -1185,9 +1221,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       beforeFellBack: Array.from(new Set(
         shots.filter((s) => s.kind === 'before' && s.fellBack).map((s) => s.index)
       )),
+      // A run killed at the timeout / buffer cap whose already-emitted
+      // frames were salvaged (improvement 5) — the stored set is real but
+      // knowingly incomplete.
+      runCutShort: runPartial ? (runPartialReason || true) : false,
     };
     if (!media) captureDetail.reason = 'No frontend files in commit range — console/tests-only run';
     else if (!stored) captureDetail.reason = 'No usable "after" artifact was produced';
+    else if (runPartial) captureDetail.reason = `Capture run cut short (${runPartialReason || 'unknown'}) — partial set stored`;
     await storeCaptureOutcome(pool, session.id, captureState, captureDetail).catch((err) => {
       log.warn('visuals', 'Capture-outcome store failed (non-fatal)', {
         sessionId: session.id, err: err.message,
@@ -1236,6 +1277,25 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     } catch { /* nothing more we can do */ }
   } finally {
     _inFlight.delete(session.id);
+    // Improvement 5: drain a re-queued capture (a rebuild that arrived while
+    // this run was shooting). Dispatched detached — awaiting it here would
+    // hold this call open for the queued run's whole duration, and every
+    // caller is fire-and-forget. The recursive call re-enters the _inFlight
+    // guard normally, so a request that lands during the queued run parks
+    // itself in turn (still depth 1 — latest wins).
+    const next = _queued.get(session.id);
+    if (next) {
+      _queued.delete(session.id);
+      log.info('visuals', 'Draining re-queued capture', {
+        sessionId: session.id, commitHash: next.commitHash || null,
+      });
+      setImmediate(() => {
+        captureForSession(next.config, next.session, next.app, next.commitHash, next.stagingResult)
+          .catch((err) => log.warn('visuals', 'Re-queued capture failed (non-fatal)', {
+            sessionId: session.id, err: err.message,
+          }));
+      });
+    }
   }
 }
 
@@ -1341,6 +1401,10 @@ module.exports = {
   shapeAgg,
   storeCaptureOutcome,
   expandCapturePaths,
+  // Exported so the admin /gallery endpoint groups artifacts through the
+  // SAME implementation the proposal cards and PR bodies use, instead of a
+  // third copy that would drift (routes/gallery.js).
+  groupRows,
   parseConsole,
   classifyConsole,
   storeConsoleCheck,

@@ -200,3 +200,36 @@ test('storeCaptureOutcome writes state + detail + timestamp', async () => {
   assert.deepEqual(JSON.parse(calls[0].params[1]), { pathDefaulted: true });
   assert.equal(calls[0].params[2], 42);
 });
+
+// ── groupRows: before-only session must not produce a phantom card ──────
+
+test('groupRows drops a group that has only a before side', () => {
+  // The gallery lists proposals by their grouped captures; a session whose
+  // rows are all "before" (prod shot fine, staging shot failed) has nothing
+  // to show and must not render an empty card.
+  assert.equal(visuals.groupRows([
+    { kind: 'before', media: 'png', id: ID_A, index: 0, captured_path: '/board' },
+    { kind: 'before', media: 'webm', id: ID_B, index: 0, captured_path: '/board' },
+  ]), null);
+});
+
+test('groupRows keeps the groups that DO have an after alongside before-only ones', () => {
+  const grouped = visuals.groupRows([
+    { kind: 'before', media: 'png', id: ID_A, index: 0, captured_path: '/a' },
+    { kind: 'before', media: 'png', id: ID_B, index: 1, captured_path: '/b' },
+    { kind: 'after', media: 'png', id: ID_A, index: 1, captured_path: '/b' },
+  ]);
+  assert.equal(grouped.captures.length, 1);
+  assert.equal(grouped.captures[0].index, 1);
+  assert.equal(grouped.captures[0].path, '/b');
+});
+
+test('groupRows reads the DB column name before_fell_back as well as fellBack', () => {
+  // The gallery endpoint aggregates raw column names; storeArtifacts passes
+  // the camelCase form. Both must land on the same output flag.
+  const fromDb = visuals.groupRows([
+    { kind: 'before', media: 'png', id: ID_A, index: 0, before_fell_back: true },
+    { kind: 'after', media: 'png', id: ID_B, index: 0 },
+  ]);
+  assert.equal(fromDb.captures[0].beforeFellBack, true);
+});

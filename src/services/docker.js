@@ -157,9 +157,22 @@ async function runContainer(name, { image, env = {}, port, memory = APP_MEMORY, 
 // (including the exec timeout, which kills the docker CLIENT but can
 // leave the container running) we force-remove the named container so a
 // hung capture never leaks.
+//
+// `salvagePartial` (opt-in) changes ONLY the timeout/maxBuffer outcome: a
+// run that produced usable stdout before being killed resolves with that
+// partial stdout plus `{ partial: true, partialReason }` instead of
+// throwing. The capture pipeline wants this — its output protocol is a
+// stream of independently-parseable frames, so a 240s timeout that killed
+// the run mid-target still carries every frame already emitted, and
+// discarding them loses a whole proposal's screenshots for one slow page
+// (screenshot-reliability spec, improvement 5). Every other caller keeps
+// the throwing contract: a truncated `docker build` log is not a usable
+// result. Non-timeout failures (image missing, OOM-kill, name clash after
+// the retry) still throw regardless of the flag.
 async function runOneShot(name, {
   image, env = {}, memory = '1g', cpus = '1',
   timeoutMs = 240000, maxBuffer = 128 * 1024 * 1024,
+  salvagePartial = false,
 }) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
   const args = [
@@ -184,12 +197,41 @@ async function runOneShot(name, {
         return await execFileAsync('docker', args, opts);
       } catch (err2) {
         await execFileAsync('docker', ['rm', '-f', name], { timeout: 10000 }).catch(() => {});
+        const salvaged2 = salvagePartial ? salvageStdout(err2) : null;
+        if (salvaged2) return salvaged2;
         throw err2;
       }
     }
     await execFileAsync('docker', ['rm', '-f', name], { timeout: 10000 }).catch(() => {});
+    const salvaged = salvagePartial ? salvageStdout(err) : null;
+    if (salvaged) return salvaged;
     throw err;
   }
+}
+
+// Recover the partial stdout from a timed-out / buffer-exceeded execFile
+// rejection. Node attaches whatever was read to err.stdout in both cases
+// (`err.killed` + SIGTERM for the timeout, ERR_CHILD_PROCESS_STDIO_MAXBUFFER
+// for the cap). Returns null when there's nothing usable to salvage or the
+// failure was something else entirely (a non-zero exit with no output, a
+// missing image), so the caller rethrows.
+function salvageStdout(err) {
+  if (!err) return null;
+  const stdout = typeof err.stdout === 'string' ? err.stdout : '';
+  if (!stdout.length) return null;
+  const timedOut = err.killed === true || err.signal === 'SIGTERM' || err.signal === 'SIGKILL';
+  const overBuffer = err.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+    || /maxBuffer/i.test(String(err.message || ''));
+  if (!timedOut && !overBuffer) return null;
+  log.warn('docker', 'One-shot run cut short — salvaging partial stdout', {
+    reason: overBuffer ? 'maxBuffer' : 'timeout', bytes: stdout.length,
+  });
+  return {
+    stdout,
+    stderr: typeof err.stderr === 'string' ? err.stderr : '',
+    partial: true,
+    partialReason: overBuffer ? 'output over maxBuffer' : 'run timed out',
+  };
 }
 
 async function getHostPort(nameOrId, containerPort) {

@@ -2940,9 +2940,222 @@ async function seedStagingVisuals(pool) {
         [r.id, DEMO_SESSION_ID, r.kind, r.media, CT[r.media], data, r.path, r.idx, r.viewport || null, !!r.fellBack]
       );
     }
+    // Give the promoted demo session a 'partial' capture outcome so the
+    // proposal card's capture-state surfaces render against it (its group 1
+    // before row is a fell-back shot and group 4 is after-only).
+    await pool.query(
+      `UPDATE chat_sessions
+          SET capture_state = 'partial',
+              capture_detail = $1::jsonb,
+              captured_at = NOW()
+        WHERE id = $2 AND capture_state IS NULL`,
+      [JSON.stringify({
+        media: true,
+        pathDefaulted: false,
+        prodRunning: true,
+        paths: ['/', '/board', SELF_APP_DEEP_PATH],
+        failures: [{ kind: 'after', media: 'webm', reason: 'Staging demo — screencast failed' }],
+        droppedOverCap: [],
+        beforeFellBack: [1],
+        reason: 'Staging demo — one recording failed, stills stored',
+      }), DEMO_SESSION_ID]
+    );
     log.info('db', 'Staging multi-path visuals fixtures seeded', { sessionId: DEMO_SESSION_ID });
   } catch (err) {
     log.warn('db', 'Staging visuals seeding failed', { message: err.message });
+  }
+
+  await seedStagingGalleryProposals(pool);
+}
+
+// Fixtures for the admin before/after gallery (/gallery). The gallery lists
+// MERGED proposals with a non-null merged_at, so the promoted demo session
+// above never appears there — and session_visuals is staging:private (always
+// empty in staging), so without this the page renders "no merged proposals"
+// in every preview.
+//
+// Seeds four merged demo proposals across TWO OWN apps (so the app filter has
+// something to switch between), spread over several days of merged_at so the
+// newest-first ordering and the keyset cursor are both genuinely exercised,
+// and between them covering every problem filter and every capture-state
+// chip the page renders:
+//   900101  complete desktop + mobile pair set        → 'captured'
+//   900102  stills only, no recording                 → 'partial'  (missing_recording)
+//   900103  after-only at the root, before fell back  → 'partial'  (missing_before + root_only + before_fell_back)
+//   900104  no artifacts at all                       → 'console_only' (failed_or_skipped)
+// Idempotent via fixed ids + ON CONFLICT DO NOTHING, obviously fake, and a
+// strict no-op outside staging.
+//
+// Owner resolution: the canonical fake user 'staging-demo-user' is created
+// earlier with a SERIAL id, so its id is NOT predictable — the older fixtures
+// that assume it lands on 900001 silently lose their INSERT to the username
+// unique index and then fail their apps FK. This seed therefore resolves the
+// owner by USERNAME in the insert itself and creates its own apps, so it
+// stands up regardless of what id that user got.
+async function seedStagingGalleryProposals(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const PNG_1X1 = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
+    'base64'
+  );
+  const WEBM_PLACEHOLDER = Buffer.from(
+    'GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQRChYECGFOAZwEAAAAAAAAR',
+    'base64'
+  );
+  const CT = { png: 'image/png', webm: 'video/webm', gif: 'image/gif' };
+  // Own apps (ids outside every existing fixture's range) so the gallery
+  // stands up independently of the older demo-app fixtures.
+  const DEMO_APP_ID = 900106;
+  const DEMO_APP_2_ID = 900107;
+  const OWNER_USERNAME = 'staging-demo-user';
+
+  // id, day offset (older = larger), title, capture_state, detail, artifacts
+  const proposals = [
+    {
+      id: 900101, appId: DEMO_APP_ID, pr: 900101, days: 1,
+      title: 'Staging demo — complete before/after set',
+      state: 'captured',
+      detail: { media: true, pathDefaulted: false, prodRunning: true, paths: ['/board'], failures: [], droppedOverCap: [], beforeFellBack: [] },
+      paths: [{ path: '/board', viewport: null }, { path: '/board', viewport: 'mobile' }],
+      artifacts: [
+        { kind: 'before', media: 'png', idx: 0, path: '/board' },
+        { kind: 'before', media: 'webm', idx: 0, path: '/board' },
+        { kind: 'after', media: 'png', idx: 0, path: '/board' },
+        { kind: 'after', media: 'webm', idx: 0, path: '/board' },
+        { kind: 'before', media: 'png', idx: 1, path: '/board', viewport: 'mobile' },
+        { kind: 'after', media: 'png', idx: 1, path: '/board', viewport: 'mobile' },
+      ],
+    },
+    {
+      id: 900102, appId: DEMO_APP_ID, pr: 900102, days: 3,
+      title: 'Staging demo — stills only, recording failed',
+      state: 'partial',
+      detail: {
+        media: true, pathDefaulted: false, prodRunning: true, paths: ['/settings'],
+        failures: [{ kind: 'after', media: 'webm', reason: 'Staging demo — over-cap 9000000 bytes' }],
+        droppedOverCap: [{ kind: 'after', media: 'webm', index: 0, bytes: 9000000 }],
+        beforeFellBack: [],
+        reason: 'Staging demo — recording exceeded the size cap',
+      },
+      paths: [{ path: '/settings', viewport: null }],
+      artifacts: [
+        { kind: 'before', media: 'png', idx: 0, path: '/settings' },
+        { kind: 'after', media: 'png', idx: 0, path: '/settings' },
+      ],
+    },
+    {
+      id: 900103, appId: DEMO_APP_2_ID, pr: 900103, days: 5,
+      title: 'Staging demo — new page, before fell back to home',
+      state: 'partial',
+      detail: {
+        media: true, pathDefaulted: true, prodRunning: true, paths: ['/'],
+        failures: [], droppedOverCap: [], beforeFellBack: [0],
+        reason: 'Staging demo — no testing path emitted, shot the front page',
+      },
+      paths: [{ path: '/', viewport: null }],
+      artifacts: [
+        // A fell-back before on group 0, and an after-only group 1 so both
+        // honest captions render on one card.
+        { kind: 'before', media: 'png', idx: 0, path: '/', fellBack: true },
+        { kind: 'after', media: 'png', idx: 0, path: '/' },
+        { kind: 'after', media: 'png', idx: 1, path: '/' },
+      ],
+    },
+    {
+      // No "before" rows AT ALL — the missing_before filter is session-level,
+      // so a proposal that merely has one after-only GROUP doesn't match it.
+      id: 900105, appId: DEMO_APP_2_ID, pr: 900105, days: 6,
+      title: 'Staging demo — brand new page, no production version',
+      state: 'partial',
+      detail: {
+        media: true, pathDefaulted: false, prodRunning: false, paths: ['/whats-new'],
+        failures: [], droppedOverCap: [], beforeFellBack: [],
+        reason: 'Staging demo — production container was not running, no "before" leg',
+      },
+      paths: [{ path: '/whats-new', viewport: null }],
+      artifacts: [
+        { kind: 'after', media: 'png', idx: 0, path: '/whats-new' },
+        { kind: 'after', media: 'png', idx: 1, path: '/whats-new', viewport: 'mobile' },
+      ],
+    },
+    {
+      id: 900104, appId: DEMO_APP_2_ID, pr: 900104, days: 7,
+      title: 'Staging demo — backend-only change, no screenshots',
+      state: 'console_only',
+      detail: {
+        media: false, pathDefaulted: false, prodRunning: true, paths: ['/'],
+        failures: [], droppedOverCap: [], beforeFellBack: [],
+        reason: 'No frontend files in commit range — console/tests-only run',
+      },
+      paths: [{ path: '/', viewport: null }],
+      artifacts: [],
+    },
+  ];
+
+  try {
+    // Two own apps so the gallery's app filter has something to switch
+    // between. created_by resolves the fake owner by USERNAME (see above) —
+    // the SELECT yields no row if that user somehow doesn't exist, which
+    // makes this a clean no-op instead of an FK error.
+    for (const [id, name, slug] of [
+      [DEMO_APP_ID, 'Staging demo gallery app', 'staging-demo-gallery-app'],
+      [DEMO_APP_2_ID, 'Staging demo gallery app two', 'staging-demo-gallery-app-two'],
+    ]) {
+      // status 'awaiting_secrets', NOT 'running': these apps have no
+      // container, and services/app-heal.js sweeps every status='running'
+      // app every 60s — leaving them 'running' makes it log a heal ERROR
+      // per app per minute for the life of the staging preview. The gallery
+      // only needs the row to exist for its JOIN, so an inert status is
+      // strictly better here.
+      await pool.query(
+        `INSERT INTO apps (id, name, slug, status, view_visibility, created_by)
+         SELECT $1, $2, $3, 'awaiting_secrets', 'public', u.id
+           FROM users u WHERE u.username = $4
+         ON CONFLICT DO NOTHING`,
+        [id, name, slug, OWNER_USERNAME]
+      );
+    }
+
+    for (const p of proposals) {
+      await pool.query(
+        `INSERT INTO chat_sessions
+           (id, app_id, user_id, branch_name, pr_number, pr_title, status,
+            promoted_at, merged_at, testing_paths, capture_state, capture_detail, captured_at)
+         SELECT $1, $2, u.id, $3, $4, $5, 'merged',
+                NOW() - ($6 || ' days')::interval - interval '1 hour',
+                NOW() - ($6 || ' days')::interval,
+                $7::jsonb, $8, $9::jsonb, NOW() - ($6 || ' days')::interval
+           FROM users u
+          WHERE u.username = $10
+            AND EXISTS (SELECT 1 FROM apps WHERE id = $2)
+         ON CONFLICT (id) DO NOTHING`,
+        [p.id, p.appId, `staging-demo/gallery-${p.id}`, p.pr, p.title,
+          String(p.days), JSON.stringify(p.paths), p.state, JSON.stringify(p.detail),
+          OWNER_USERNAME]
+      );
+
+      for (let i = 0; i < p.artifacts.length; i++) {
+        const a = p.artifacts[i];
+        // Deterministic 32-hex id per (session, artifact) so the seed is
+        // idempotent across container rebuilds.
+        const id = (`${p.id}`.padStart(8, '0') + `${i}`.padStart(2, '0')).padEnd(32, 'a');
+        await pool.query(
+          `INSERT INTO session_visuals
+             (id, session_id, commit_hash, kind, media, content_type, data,
+              captured_path, capture_index, captured_viewport, shot_status, before_fell_back)
+           SELECT $1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, 200, $10
+            WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2)
+           ON CONFLICT (id) DO NOTHING`,
+          [id, p.id, a.kind, a.media, CT[a.media],
+            a.media === 'webm' ? WEBM_PLACEHOLDER : PNG_1X1,
+            a.path, a.idx, a.viewport || null, !!a.fellBack]
+        );
+      }
+    }
+    log.info('db', 'Staging gallery fixtures seeded', { proposals: proposals.length });
+  } catch (err) {
+    log.warn('db', 'Staging gallery seeding failed', { message: err.message });
   }
 }
 
