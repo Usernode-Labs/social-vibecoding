@@ -43,6 +43,19 @@ const DevChat = {
   // from the dev-chat-tab scoping, and STAYS until the user actually
   // comes back (visibilitychange / window focus — listeners at the
   // bottom of this file) or the triggering notification is read.
+  // ----- Composer copy (#798) -----
+  // The idle placeholder lives here (not only in the template) because
+  // _setStreamingUI swaps it for the busy variant while a turn runs and
+  // has to put the original back afterwards.
+  COMPOSER_PLACEHOLDER:
+    'Describe a change in plain English — e.g. "add a dark mode toggle". No coding needed.',
+  COMPOSER_PLACEHOLDER_BUSY:
+    'Claude is working — type your next note and tap 💾 to save it for later.',
+  SAVE_DRAFT_TITLE: 'Save this text as a draft — it stays here until you send it',
+  // Floppy-disk glyph, same inline-SVG style as the attach button.
+  _SAVE_ICON_SVG:
+    '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
+
   _titleStatus: null, // null | 'thinking'
   // null | 'sessionDone' | 'autoSolveDone' | 'autoSolveFailed' (#161).
   // Single slot, last-write-wins — the badge count carries multiplicity.
@@ -1931,9 +1944,12 @@ const DevChat = {
     if (streaming) DevChat.setTitleStatus('thinking');
     else if (DevChat._titleStatus === 'thinking') DevChat.setTitleStatus(null);
 
+    // Guarded rather than an early `return` (#798): everything below —
+    // the composer placeholder, the saved-drafts list, the sync banner —
+    // must still resync on a streaming transition even in the rare case
+    // where the send button isn't mounted.
     const btn = document.getElementById('dc-send-btn');
-    if (!btn) return;
-    if (streaming) {
+    if (btn && streaming) {
       const isWrapUp = phase === 'mayor2';
       if (isWrapUp) {
         btn.disabled = true;
@@ -1950,7 +1966,7 @@ const DevChat = {
         btn.title = 'Stop';
         btn.innerHTML = '<span class="dc-stop-icon" aria-hidden="true"></span>';
       }
-    } else {
+    } else if (btn) {
       btn.disabled = false;
       btn.classList.remove('dc-btn-streaming');
       btn.classList.remove('dc-btn-stop');
@@ -1959,8 +1975,23 @@ const DevChat = {
       btn.textContent = 'Send';
     }
 
+    // #798: the box stays TYPABLE while the agent works — the user can
+    // write the next instruction and park it as a draft (the save icon)
+    // instead of holding it in their head. It used to be `disabled` here.
+    // Sending is still impossible mid-turn: the submit handler routes to
+    // Stop while streaming and _submitFromInput bails on isStreaming, so
+    // nothing typed here can leak into the running turn.
     const input = document.getElementById('dc-input');
-    if (input) input.disabled = streaming;
+    if (input) {
+      input.disabled = false;
+      input.placeholder = streaming
+        ? DevChat.COMPOSER_PLACEHOLDER_BUSY
+        : DevChat.COMPOSER_PLACEHOLDER;
+    }
+    DevChat._syncSaveDraftBtn();
+    // Re-render the saved-drafts list so each row's Send button picks up
+    // the new busy state (disabled while thinking, live once idle).
+    DevChat._renderSavedDrafts();
 
     // #252: the sync banner's button disables (with a hint) while a
     // chat turn holds the worker — keep it in step with every
@@ -3219,6 +3250,7 @@ const DevChat = {
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 120) + 'px';
     if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, text);
+    DevChat._syncSaveDraftBtn();
   },
 
   // ── <details> open/closed persistence ─────────────────────
@@ -4266,6 +4298,7 @@ const DevChat = {
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
             </div>
+            <div id="dc-drafts" class="dc-drafts"></div>
             <div id="dc-quick-replies" class="dc-quick-replies"></div>
             <div id="dc-attachments" class="dc-attach-strip"></div>
             <div id="dc-attach-error" class="dc-attach-error hidden"></div>
@@ -4273,10 +4306,14 @@ const DevChat = {
               <textarea
                 id="dc-input"
                 rows="1"
-                placeholder="Describe a change in plain English — e.g. &quot;add a dark mode toggle&quot;. No coding needed."
+                placeholder="${escapeHtml(DevChat.COMPOSER_PLACEHOLDER)}"
                 autocomplete="off"
                 class="dc-textarea flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none"
               ></textarea>
+              <button type="button" id="dc-save-draft-btn" class="dc-save-draft-btn shrink-0" disabled
+                title="${escapeHtml(DevChat.SAVE_DRAFT_TITLE)}" aria-label="Save as draft">
+                ${DevChat._SAVE_ICON_SVG}
+              </button>
               <button type="submit" id="dc-send-btn" class="dc-send-btn rounded-lg bg-emerald-600 hover:bg-emerald-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">
                 Send
               </button>
@@ -4318,6 +4355,11 @@ const DevChat = {
     );
     DevChat._setupAttachments();
     DevChat._restoreDraft();
+    // #798: saved drafts render above the composer and survive re-renders
+    // (they live in localStorage, keyed by session id).
+    DevChat._renderSavedDrafts();
+    DevChat._wireSavedDrafts();
+    DevChat._syncSaveDraftBtn();
     if (DevChat.isStreaming) DevChat._setStreamingUI(true);
 
     document.getElementById('dc-model-select').addEventListener('change', (e) => {
@@ -4413,6 +4455,7 @@ const DevChat = {
     input.value = '';
     input.style.height = 'auto';
     if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, '');
+    DevChat._syncSaveDraftBtn();
     DevChat.sendMessage(msg, atts);
   },
 
@@ -4676,7 +4719,254 @@ const DevChat = {
       // Persist the draft per-session so it survives both tab switches
       // (which rebuild the textarea DOM) and full page refreshes.
       if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, textarea.value);
+      // #798: the save icon only lights up when there is text to save.
+      DevChat._syncSaveDraftBtn();
     });
+  },
+
+  // ── Saved draft messages (#798) ────────────────────────────
+  //
+  // The problem: a turn can run for many minutes, and everything the user
+  // thinks of meanwhile ("also make the header sticky") either gets lost
+  // or gets fired off the moment the turn ends, un-reviewed. So the box
+  // stays typable while the agent works (see _setStreamingUI) and the
+  // save icon parks the text as a DRAFT.
+  //
+  // Drafts render as a list ABOVE the composer, newest LAST (reading
+  // order = the order you thought of them = the order you'll likely send
+  // them), each with send / edit / trash. They are NEVER auto-sent —
+  // sending is always a deliberate tap, and the tap is refused while a
+  // turn is streaming (the row's Send button renders disabled).
+  //
+  // Storage is deliberately client-side only — no schema, no endpoints:
+  // one localStorage key per session id, same shape and lifetime as the
+  // single-composer draft above (`_draftKey`), so drafts survive reloads,
+  // tab switches and session hops but never leave the browser.
+  MAX_SAVED_DRAFTS: 20,
+
+  _savedDraftsKey(sessionId) {
+    return `usernode:dc-saved-drafts:${sessionId}`;
+  },
+
+  // Screenshot-state deep link (`?shot=drafts`): with no stored list yet,
+  // hand back a fixed demo pair so the before/after captures and the
+  // dapp.json test see a populated list. Pure UI state — nothing is
+  // written to localStorage or the DB, and any real save/trash in the
+  // session writes a real list which then takes over (the key EXISTING
+  // is what suppresses the demo, so trashing them all sticks).
+  _DEMO_SAVED_DRAFTS: [
+    { id: 'demo-draft-1', text: 'Staging demo draft: also make the header sticky when scrolling.', savedAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'demo-draft-2', text: 'Staging demo draft: rename the "Submit" button to "Publish".', savedAt: '2026-01-01T00:01:00.000Z' },
+  ],
+  _wantsDemoDrafts() {
+    try { return new URLSearchParams(location.search).get('shot') === 'drafts'; }
+    catch { return false; }
+  },
+
+  _getSavedDrafts(sessionId) {
+    if (!sessionId) return [];
+    let raw = null;
+    try { raw = localStorage.getItem(DevChat._savedDraftsKey(sessionId)); }
+    catch { return []; }
+    if (raw == null) {
+      return DevChat._wantsDemoDrafts()
+        ? DevChat._DEMO_SAVED_DRAFTS.map((d) => ({ ...d }))
+        : [];
+    }
+    try {
+      const list = JSON.parse(raw);
+      if (!Array.isArray(list)) return [];
+      return list
+        .filter((d) => d && typeof d.text === 'string' && d.text.trim())
+        .map((d) => ({ id: String(d.id || ''), text: d.text, savedAt: d.savedAt || null }))
+        .filter((d) => d.id);
+    } catch { return []; }
+  },
+
+  _setSavedDrafts(sessionId, list) {
+    if (!sessionId) return;
+    // Always WRITE the key, even for an empty list — its presence is how
+    // an emptied list stays empty (see _getSavedDrafts / demo seed).
+    try {
+      localStorage.setItem(
+        DevChat._savedDraftsKey(sessionId),
+        JSON.stringify((list || []).slice(0, DevChat.MAX_SAVED_DRAFTS)),
+      );
+    } catch {}
+  },
+
+  _newDraftId() {
+    return `d${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`;
+  },
+
+  _toast(msg) {
+    if (window.PlatformUI && typeof PlatformUI.toast === 'function') PlatformUI.toast(msg);
+  },
+
+  // Enable the save icon only when there is non-whitespace text to save.
+  // Cheap and idempotent — called from the input handler, every streaming
+  // transition, and each session re-render.
+  _syncSaveDraftBtn() {
+    const btn = document.getElementById('dc-save-draft-btn');
+    if (!btn) return;
+    const input = document.getElementById('dc-input');
+    const hasText = !!(input && input.value.trim());
+    btn.disabled = !hasText;
+    btn.title = hasText
+      ? DevChat.SAVE_DRAFT_TITLE
+      : 'Type something first, then save it as a draft for later';
+  },
+
+  _renderSavedDrafts() {
+    const box = document.getElementById('dc-drafts');
+    if (!box) return;
+    const session = DevChat.currentSession;
+    const drafts = session ? DevChat._getSavedDrafts(session.id) : [];
+    if (!drafts.length) {
+      box.innerHTML = '';
+      box.classList.remove('dc-drafts-active');
+      return;
+    }
+    const busy = !!DevChat.isStreaming;
+    const sendAttrs = busy
+      ? ' disabled title="Claude is still working — you can send this when the turn finishes"'
+      : ' title="Send this draft now"';
+    box.innerHTML = `
+      <div class="dc-drafts-head">
+        <span>Saved drafts (${drafts.length})</span>
+        ${busy ? '<span class="dc-drafts-hint">sending unlocks when Claude finishes</span>' : ''}
+      </div>
+      ${drafts.map((d) => `
+        <div class="dc-draft-row" data-draft-id="${escapeHtml(d.id)}">
+          <span class="dc-draft-text" title="${escapeHtml(d.text)}">${escapeHtml(d.text)}</span>
+          <span class="dc-draft-actions">
+            <button type="button" class="dc-draft-btn dc-draft-send" data-draft-action="send" aria-label="Send this draft"${sendAttrs}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 2 11 13"/><path d="M22 2 15 22l-4-9-9-4z"/></svg>
+            </button>
+            <button type="button" class="dc-draft-btn dc-draft-edit" data-draft-action="edit" aria-label="Edit this draft" title="Put this draft back in the box to edit">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>
+            </button>
+            <button type="button" class="dc-draft-btn dc-draft-trash" data-draft-action="trash" aria-label="Delete this draft" title="Delete this draft">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            </button>
+          </span>
+        </div>`).join('')}`;
+    box.classList.add('dc-drafts-active');
+  },
+
+  // Click delegation, bound once per renderChatView (the container node is
+  // recreated on every session re-render, like #dc-quick-replies).
+  _wireSavedDrafts() {
+    const saveBtn = document.getElementById('dc-save-draft-btn');
+    if (saveBtn && !saveBtn._sdWired) {
+      saveBtn._sdWired = true;
+      saveBtn.addEventListener('click', () => DevChat._saveComposerDraft());
+    }
+    const box = document.getElementById('dc-drafts');
+    if (!box || box._sdWired) return;
+    box._sdWired = true;
+    box.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-draft-action]');
+      if (!btn || btn.disabled) return;
+      const row = btn.closest('[data-draft-id]');
+      if (!row) return;
+      const id = row.dataset.draftId;
+      const action = btn.dataset.draftAction;
+      if (action === 'send') DevChat._sendSavedDraft(id);
+      else if (action === 'edit') DevChat._editSavedDraft(id);
+      else if (action === 'trash') DevChat._deleteSavedDraft(id);
+    });
+  },
+
+  // Save icon: move the composer's text into the drafts list and clear the
+  // box, so the user can immediately type the next thought. Works whether
+  // or not a turn is running (it's just as useful for stashing an idea
+  // while idle). Attachments are NOT captured — a draft is plain text; any
+  // pending files stay parked in the composer strip for the real send.
+  _saveComposerDraft() {
+    const session = DevChat.currentSession;
+    const input = document.getElementById('dc-input');
+    if (!session || !input) return;
+    const text = input.value.trim();
+    if (!text) return;
+    const drafts = DevChat._getSavedDrafts(session.id);
+    if (drafts.length >= DevChat.MAX_SAVED_DRAFTS) {
+      DevChat._toast(`That's ${DevChat.MAX_SAVED_DRAFTS} saved drafts — send or delete one first`);
+      return;
+    }
+    drafts.push({ id: DevChat._newDraftId(), text, savedAt: new Date().toISOString() });
+    DevChat._setSavedDrafts(session.id, drafts);
+    input.value = '';
+    input.style.height = 'auto';
+    DevChat._setDraft(session.id, '');
+    DevChat._syncSaveDraftBtn();
+    DevChat._renderSavedDrafts();
+    DevChat._toast('Draft saved — send it whenever you\'re ready');
+    if (!DevChat._isCoarsePointer()) { try { input.focus(); } catch {} }
+  },
+
+  // Send: always an explicit tap, never automatic. Refused mid-turn (the
+  // button also renders disabled) so a draft can't join a running turn.
+  // The draft leaves the list only once the send is actually issued.
+  _sendSavedDraft(id) {
+    const session = DevChat.currentSession;
+    if (!session) return;
+    if (DevChat.isStreaming) {
+      DevChat._toast('Claude is still working — this will send once the turn finishes');
+      return;
+    }
+    const drafts = DevChat._getSavedDrafts(session.id);
+    const draft = drafts.find((d) => d.id === id);
+    if (!draft) return;
+    if (DevChat.pendingAttachments.some((a) => a.uploading)) {
+      DevChat._toast('Still uploading a file — one moment…');
+      return;
+    }
+    DevChat._setSavedDrafts(session.id, drafts.filter((d) => d.id !== id));
+    DevChat._renderSavedDrafts();
+    DevChat.sendMessage(draft.text);
+  },
+
+  // Edit: put the draft back in the composer (where it can be reworded and
+  // re-saved, or sent once the turn ends) and drop it from the list. If the
+  // box already held text, that text is parked as a draft first so nothing
+  // the user typed is ever thrown away.
+  _editSavedDraft(id) {
+    const session = DevChat.currentSession;
+    const input = document.getElementById('dc-input');
+    if (!session || !input) return;
+    const drafts = DevChat._getSavedDrafts(session.id);
+    const draft = drafts.find((d) => d.id === id);
+    if (!draft) return;
+    let next = drafts.filter((d) => d.id !== id);
+    const parked = input.value.trim();
+    if (parked && next.length < DevChat.MAX_SAVED_DRAFTS) {
+      next.push({ id: DevChat._newDraftId(), text: parked, savedAt: new Date().toISOString() });
+    }
+    DevChat._setSavedDrafts(session.id, next);
+    input.value = draft.text;
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+    DevChat._setDraft(session.id, draft.text);
+    if (!DevChat._isCoarsePointer()) {
+      try {
+        input.focus();
+        input.setSelectionRange(draft.text.length, draft.text.length);
+      } catch {}
+    }
+    DevChat._syncSaveDraftBtn();
+    DevChat._renderSavedDrafts();
+    if (parked) DevChat._toast('Kept what you had typed as another draft');
+  },
+
+  _deleteSavedDraft(id) {
+    const session = DevChat.currentSession;
+    if (!session) return;
+    const drafts = DevChat._getSavedDrafts(session.id);
+    if (!drafts.some((d) => d.id === id)) return;
+    DevChat._setSavedDrafts(session.id, drafts.filter((d) => d.id !== id));
+    DevChat._renderSavedDrafts();
+    DevChat._toast('Draft deleted');
   },
 
   // Per-session draft helpers, backed by localStorage.
@@ -4730,6 +5020,7 @@ const DevChat = {
       if (dropOptimisticUser) { try { input.focus(); } catch {} }
     }
     if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, message);
+    DevChat._syncSaveDraftBtn();
   },
 
   _restoreDraft() {
@@ -4743,6 +5034,7 @@ const DevChat = {
     // size instead of collapsed.
     textarea.style.height = 'auto';
     textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+    DevChat._syncSaveDraftBtn();
   },
 
   _setupKeyboardShortcuts() {

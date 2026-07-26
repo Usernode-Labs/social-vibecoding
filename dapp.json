@@ -231,6 +231,21 @@
       "expectSelector": "#members-appadmins-section #members-appadmins-list"
     },
     {
+      "name": "App-admins editor ships its add input + Propose button",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#members-appadmins-section #members-appadmins-propose"
+    },
+    {
+      "name": "App-admins typeahead suggestions box ships",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#members-appadmins-suggestions"
+    },
+    {
+      "name": "Seeded admin roster app renders its Dev tab",
+      "path": "/app/staging-demo-admins/dev",
+      "expectText": "Staging demo admin roster"
+    },
+    {
       "name": "Kanban filter bar renders above the board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-search"
@@ -260,6 +275,17 @@
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-quick-replies .dc-quick-pill",
       "expectText": "What issues are open right now?"
+    },
+    {
+      "name": "Composer ships the save-as-draft icon (#798)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form #dc-save-draft-btn"
+    },
+    {
+      "name": "Saved drafts render above the composer with send/edit/trash (#798)",
+      "path": "/?shot=drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",
+      "expectText": "Staging demo draft: also make the header sticky when scrolling."
     },
     {
       "name": "Dev session start screen keeps the original starter suggestions (#785)",

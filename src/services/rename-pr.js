@@ -7,7 +7,7 @@
  * pr_promoted analytics event, pr_proposed voter-nudge notifications,
  * group-chat vote message).
  *
- * Two flavors share the createManifestPR core so they can never drift:
+ * The flavors share the createManifestPR core so they can never drift:
  *   - rename PRs (top-level `name`) — used by the interactive route
  *     (POST /api/apps/:slug/rename in routes/apps.js) and the one-time
  *     boot migration that drains the legacy rename-issue backlog
@@ -15,7 +15,15 @@
  *   - visibility PRs (top-level `visibility` block, issue #124) — used
  *     by POST /api/apps/:slug/visibility-pr in routes/apps.js. The
  *     change applies when the merged PR's production rebuild runs
- *     appManifest.reconcileAppVisibility.
+ *     appManifest.reconcileAppVisibility;
+ *   - governance PRs (top-level `governance` block, issue #646) — used
+ *     by POST /api/apps/:slug/governance-pr; applied by
+ *     reconcileAppGovernance (or seedSelfApp for the self-app);
+ *   - admins PRs (top-level `admins` array, issue #788) — used by
+ *     POST /api/apps/:slug/admins-pr; applied by reconcileAppAdmins.
+ *     These carry explicitApproval: true, so the resulting proposal
+ *     never merges on a timer and can't be force-merged by an app
+ *     admin (see services/app-admins.js).
  */
 
 const log = require('./logger');
@@ -274,6 +282,67 @@ async function createGovernancePR(config, pool, app, { policy, approvalsRequired
   });
 }
 
+function adminsPrTitle(usernames) {
+  return `Change app admins: ${appManifest.describeAdmins(usernames)}`;
+}
+
+/**
+ * Open an app-admins change PR for `app` (issue #788) — a manifest PR
+ * that sets dapp.json's top-level `admins` array to `usernames`
+ * (display-cased, deduped; an empty array is how the roster is
+ * cleared). Caller owns validation (entry shape, cap, normalized
+ * differs-from-current, creator/app-admin gate, NOT self-hosted,
+ * GitHub-enabled) and dedupe (findAdminsPr below). The change applies
+ * when the merged PR's production rebuild runs reconcileAppAdmins.
+ *
+ * Passes explicitApproval: true — the resulting proposal grants
+ * app-level power, so the time-based merge paths are off and only a
+ * platform admin can force-merge it (services/governance.js
+ * applyNoTimerMerge + services/app-admins.js canForceMerge).
+ */
+async function createAdminsPR(config, pool, app, { usernames }, actor) {
+  const desc = appManifest.describeAdmins(usernames);
+  return createManifestPR(config, pool, app, actor, {
+    mutate: (m) => { m.admins = usernames; },
+    branchPrefix: 'admins',
+    commitMessage: adminsPrTitle(usernames),
+    prTitle: adminsPrTitle(usernames),
+    prBody:
+      `${actor.username} (via Usernode) proposed changing "${app.name}"'s app admins ` +
+      `to ${desc}.\n\n` +
+      `This PR updates the \`admins\` array in \`dapp.json\` — the platform users who can ` +
+      `administer this app (creator-level settings plus force-merging its proposals). ` +
+      `Because it grants app-level power, the time-based merge paths are switched off for ` +
+      `this proposal: it merges only when the app's normal vote threshold is met by Yes ` +
+      `votes people actually cast, and only a platform admin (never an app admin) can ` +
+      `force-merge it. The new roster applies automatically once the PR merges and the ` +
+      `app redeploys.`,
+    chatText: (prData, majority, activeUsers) =>
+      `${actor.username} proposed changing this app's admins to ${desc}. Opened PR ` +
+      `#${prData.number} — it needs real Yes votes (${majority}/${activeUsers}) and won't ` +
+      `merge on a timer.`,
+    eventMetadata: { admins: true },
+    explicitApproval: true,
+  });
+}
+
+// Returns the open admins-change PR session for an app, if any — the
+// dedupe check for POST /api/apps/:slug/admins-pr (one admins proposal
+// in flight per app, like visibility/governance), and the
+// `openProposal` pointer GET /api/apps/:slug/admins returns so the
+// Members panel can show the "already up for vote" state.
+async function findAdminsPr(pool, appId) {
+  const { rows } = await pool.query(
+    `SELECT id, pr_number, pr_url, pr_title FROM chat_sessions
+      WHERE app_id = $1 AND status IN ('promoted', 'merging')
+        AND branch_name LIKE 'admins/%'
+      ORDER BY id DESC
+      LIMIT 1`,
+    [appId]
+  );
+  return rows[0] || null;
+}
+
 // Returns the open governance-change PR session for an app, if any —
 // the dedupe check for POST /api/apps/:slug/governance-pr (one
 // governance proposal in flight per app, like visibility).
@@ -464,8 +533,10 @@ module.exports = {
   createRenamePR,
   createVisibilityPR,
   createGovernancePR,
+  createAdminsPR,
   findVisibilityPr,
   findGovernancePr,
+  findAdminsPr,
   migrateOpenRenameIssues,
   findRenamePrForName,
   restoreIssueVotesToPr,

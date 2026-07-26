@@ -51,6 +51,7 @@ async function migrate(config) {
   await seedStagingForkLineage(pool);
   await seedStagingMembersPanel(pool);
   await seedStagingApproverPanel(pool);
+  await seedStagingAppAdminsPanel(pool);
   await seedStagingReadonlyDevTab(pool);
   await seedStagingYourApps(pool, config);
   await seedStagingAppQuotaUsers(pool);
@@ -2550,6 +2551,73 @@ async function seedStagingApproverPanel(pool) {
     log.info('db', 'Staging approver-panel fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging approver-panel seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the Members modal's App-admins editor (#788 follow-up:
+// propose-a-PR editing). app_admins + apps.admin_usernames are empty in
+// every staging clone (prod declares no per-app admins yet), so without
+// these the new editor renders a blank roster in every PR review. Two
+// demo apps:
+//   - 'staging-demo-admins': a populated roster exercising resolved
+//     rows AND a declared-but-unregistered name in one screen, with a
+//     plausible repo_url so the editor renders enabled;
+//   - 'staging-demo-admins-pending': a roster plus an OPEN admins
+//     proposal (requires_explicit_approval stamped) so the
+//     "already up for vote" state and the Explicit-approval chip are
+//     reviewable without opening a real PR.
+// Owned by the seed's own staging-demo-admin (900090) — deliberately
+// NOT the shared staging-demo-user/900001, whose fixed-id row is
+// skipped on a fresh clone when an earlier seed already took the
+// username with a serial id (seedStagingSharedSession), which then
+// FK-fails every app insert pointing at 900001 on a first boot. The
+// logged-in admin tester's canAdminWrite grants the manager view
+// regardless of creator. Idempotent (fixed 9000xx ids + ON CONFLICT DO
+// NOTHING), obviously fake, strictly a no-op outside staging.
+async function seedStagingAppAdminsPanel(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES
+         (900090, 'staging-demo-admin',      'staging-demo-not-a-login'),
+         (900091, 'staging-demo-maintainer', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO apps (id, name, slug, status, collab_visibility, view_visibility,
+                         created_by, repo_url, admin_usernames)
+       VALUES
+         (900090, 'Staging demo admin roster', 'staging-demo-admins', 'running',
+          'public', 'public', 900090, 'https://github.com/staging-demo/staging-demo-admins',
+          ARRAY['staging-demo-admin','staging-demo-maintainer','staging-demo-unregistered']),
+         (900091, 'Staging demo admins pending', 'staging-demo-admins-pending', 'running',
+          'public', 'public', 900090, 'https://github.com/staging-demo/staging-demo-admins-pending',
+          ARRAY['staging-demo-admin'])
+       ON CONFLICT DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO app_admins (app_id, user_id)
+       VALUES (900090, 900090), (900090, 900091), (900091, 900090)
+       ON CONFLICT (app_id, user_id) DO NOTHING`
+    );
+    // The open admins proposal on the pending app — branch prefix
+    // 'admins/' is what findAdminsPr keys on, and the explicit-approval
+    // stamp is what renders the amber chip + disables the timers.
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_url, pr_title, status,
+          promoted_at, created_at, requires_explicit_approval, explicit_approval_reason)
+       VALUES (900091, 900091, 900090, 'admins/staging-demo-admins-pending-1', 900091,
+               'https://github.com/staging-demo/staging-demo-admins-pending/pull/900091',
+               'Staging demo: change app admins', 'promoted',
+               NOW() - INTERVAL '1 hour', NOW() - INTERVAL '2 hours', TRUE, 'admins')
+       ON CONFLICT DO NOTHING`
+    );
+    log.info('db', 'Staging app-admins panel fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging app-admins panel seeding failed', { message: err.message });
   }
 }
 
