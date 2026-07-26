@@ -523,6 +523,34 @@ html.un-android .un-switch:checked:active::before {
   -webkit-user-select: none;
   will-change: transform;
 }
+/* Overscroll surface extension (issue #789). The sheet's translateY goes
+   NEGATIVE on three paths — the elastic give above rest during a drag
+   (rubberband(raw, 32) in native.js), the entrance spring's ~1px
+   overshoot past rest, and a post-present content SHRINK (remeasuredSheetY
+   renders newHeight - oldHeight, which can be hundreds of px) — and each
+   one lifts the sheet's bottom edge off the screen edge, exposing the
+   dimmed backdrop over the page below it. This pseudo-element continues
+   the sheet surface downward so whatever the bounce uncovers is more
+   sheet. It is ABSOLUTELY POSITIONED on purpose: out of flow, so it can
+   never perturb sheet.offsetHeight — the value that seeds the entrance
+   spring, the backdrop opacity denominator, the dismissal travel and the
+   release decision, and that watchHeight's ResizeObserver watches. Which
+   is also why `.un-sheet` must never gain `overflow: hidden`.
+   pointer-events: none keeps a tap in the strip below the sheet (present
+   whenever the keyboard inset lifts it) landing on the backdrop, i.e.
+   still dismissing, exactly as before. */
+.un-sheet::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  background: var(--un-sheet-bg);
+  border-radius: 0;
+  box-shadow: none;
+  pointer-events: none;
+}
 /* Keyboard up: the home-indicator safe area sits behind the keyboard —
    don't stack its padding on top of the inset. */
 html.un-kb .un-sheet {

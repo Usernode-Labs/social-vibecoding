@@ -9,6 +9,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { physics } = require('../public/usernode-native/v1/native.js');
 
@@ -232,6 +234,79 @@ test('remeasuredSheetY: shrink at rest lands in the rubber-band zone above rest'
 
 test('remeasuredSheetY: equal heights is a no-op', () => {
   assert.equal(remeasuredSheetY({ y: 42, oldHeight: 313, newHeight: 313 }), 42);
+});
+
+// ── Overscroll surface extension (issue #789) ──────────────────────────
+// The sheet paints only inside its own border box, so ANY negative y lifts
+// its bottom edge off the screen edge and (before #789) exposed the dimmed
+// backdrop over the page. The fix is the `.un-sheet::after` filler in
+// native.css; these tests pin the three code paths that produce a negative
+// y, so a future preset/limit change can't quietly start assuming y >= 0
+// and leave the CSS looking like dead weight.
+
+test('sheet overscroll: an upward drag lifts the sheet above rest, bounded by the 32px limit', () => {
+  // The drag path renders rubberband(raw, 32) for raw < 0 — a hard pull
+  // lifts the sheet ~29px off the screen edge and holds there.
+  const hard = rubberband(-500, 32);
+  assert.ok(hard < 0, `hard upward pull must lift the sheet (got ${hard})`);
+  assert.ok(hard > -32, `elastic give must stay inside the 32px limit (got ${hard})`);
+  // Monotonic in between, so every pull depth exposes some strip.
+  assert.ok(rubberband(-60, 32) < 0 && rubberband(-60, 32) > rubberband(-200, 32));
+});
+
+test('sheet overscroll: the entrance spring overshoots above rest on every open', () => {
+  // The `sheet` preset is underdamped, so the slide-up crosses y=0 before
+  // settling — a hairline lift on EVERY open, not just on a drag.
+  const r = simulateSpring(400, 0, 0, PRESETS.sheet);
+  const min = Math.min(...r.samples.map((s) => s.x));
+  assert.ok(min < 0, `entrance spring must overshoot past rest (min y ${min})`);
+});
+
+test('sheet overscroll: a post-present shrink lifts the sheet off the screen edge', () => {
+  // Same math as the #742 shrink test, asserted here for its #789
+  // consequence: the lift is the full shrink delta (hundreds of px, far
+  // past the 32px drag limit), which is why the CSS filler is viewport-tall
+  // rather than sized for the drag case.
+  assert.equal(remeasuredSheetY({ y: 0, oldHeight: 500, newHeight: 200 }), -300);
+});
+
+// ── Shipped stylesheet contract (issue #789) ───────────────────────────
+// The overscroll fix lives in CSS, so the regression guard has to read the
+// shipped stylesheet. (Same stance as tests/platform-ui.test.js pinning
+// index.html's kit includes.)
+
+const NATIVE_CSS = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.css'),
+  'utf8'
+);
+
+// The declaration block for one selector, verbatim.
+function cssBlock(selector) {
+  const at = NATIVE_CSS.indexOf(selector + ' {');
+  assert.ok(at !== -1, `native.css lost the ${selector} rule`);
+  const open = NATIVE_CSS.indexOf('{', at);
+  const close = NATIVE_CSS.indexOf('}', open);
+  return NATIVE_CSS.slice(open + 1, close);
+}
+
+test('native.css: .un-sheet::after extends the sheet surface below its bottom edge', () => {
+  const block = cssBlock('.un-sheet::after');
+  assert.match(block, /content:/, 'a pseudo-element without content never renders');
+  assert.match(block, /position:\s*absolute/,
+    'must be out of flow — in-flow would change sheet.offsetHeight, which seeds the spring, the backdrop denominator and the dismissal travel');
+  assert.match(block, /top:\s*100%/, 'the filler starts at the sheet bottom edge');
+  assert.match(block, /background:\s*var\(--un-sheet-bg\)/,
+    'the filler must be theme-aware — a literal color breaks dark mode');
+  assert.match(block, /height:\s*\d+(vh|dvh|lvh)/,
+    'the filler must be viewport-tall: a shrink re-measure can lift the sheet hundreds of px, far past the 32px drag limit');
+  assert.match(block, /pointer-events:\s*none/,
+    'taps in the strip below the sheet must keep reaching the backdrop (which dismisses)');
+});
+
+test('native.css: .un-sheet does not clip its overscroll filler', () => {
+  const block = cssBlock('.un-sheet');
+  assert.ok(!/overflow:\s*hidden/.test(block),
+    'overflow:hidden on .un-sheet would clip the overscroll filler away (issue #789)');
 });
 
 // ── Keyboard occlusion (issue #719) ────────────────────────────────────
