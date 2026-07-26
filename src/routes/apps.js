@@ -1330,11 +1330,17 @@ function appRoutes(config) {
       );
       const declared = Array.isArray(app.admin_usernames) ? app.admin_usernames : [];
       const resolvedLower = new Set(rows.map((r) => r.username.toLowerCase()));
+      // `openProposal` lets the panel render the "already up for vote"
+      // state on open instead of discovering it via the POST's 409.
+      const openPr = await renamePr.findAdminsPr(pool, app.id);
       const payload = {
         admins: rows.map((r) => ({ userId: r.user_id, username: r.username })),
         declared,
         unresolved: declared.filter((u) => !resolvedLower.has(String(u).toLowerCase())),
         canManage: await appAdmins.canManageApp(pool, app, req.user),
+        openProposal: openPr
+          ? { sessionId: openPr.id, prNumber: openPr.pr_number, prUrl: openPr.pr_url }
+          : null,
       };
 
       // Staging-only demo state (?demo=1): app_admins is a table this
@@ -1350,12 +1356,120 @@ function appRoutes(config) {
         ];
         payload.declared = ['staging-demo-admin', 'staging-demo-maintainer', 'staging-demo-unregistered'];
         payload.unresolved = ['staging-demo-unregistered'];
+        payload.canManage = true;
+        payload.openProposal = null;
       }
 
       res.json(payload);
     } catch (err) {
       log.error('apps', 'Failed to list app admins', { slug: req.params.slug, message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Propose an app-admins change (issue #788). The roster lives in
+  // dapp.json's top-level `admins` array, so changing it is a
+  // manifest-editing PR — same lifecycle as a visibility change: the PR
+  // drops into the vote panel, and when it merges, the production
+  // rebuild's reconcileAppAdmins applies the change. Because it grants
+  // app-level power, createAdminsPR stamps the session
+  // requires_explicit_approval: no time-based merge path, and app
+  // admins can't force-merge it (only a platform admin can).
+  // Body: { admins: string[] } — the FULL declared list ([] clears the
+  // roster; that's how revocation is expressed).
+  router.post('/api/apps/:slug/admins-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+    const raw = req.body?.admins;
+    if (!Array.isArray(raw) || raw.some((u) => typeof u !== 'string')) {
+      return res.status(400).json({ error: 'admins must be an array of usernames' });
+    }
+    // Same normalization as appManifest.readAdmins: strip a leading @,
+    // trim, drop empties, dedupe case-insensitively keeping the first
+    // occurrence's display casing — so what we write is exactly what
+    // the deploy reader will read back.
+    const usernames = [];
+    const seen = new Set();
+    for (const entry of raw) {
+      const name = entry.replace(/^@/, '').trim();
+      if (!name) continue;
+      if (name.length > appManifest.MAX_ADMIN_USERNAME_LENGTH) {
+        return res.status(400).json({
+          error: `Admin usernames are capped at ${appManifest.MAX_ADMIN_USERNAME_LENGTH} characters`,
+        });
+      }
+      const key = name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      usernames.push(name);
+    }
+    if (usernames.length > appManifest.MAX_APP_ADMINS) {
+      return res.status(400).json({
+        error: `An app can declare at most ${appManifest.MAX_APP_ADMINS} admins`,
+      });
+    }
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+      // Non-viewers get the existence-hiding 404, mirroring visibility-pr.
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'view'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (!(await appAdmins.canManageApp(pool, app, req.user))) {
+        return res.status(403).json({ error: 'Only the app creator or an app admin can propose an admins change' });
+      }
+      // Unlike governance-pr (whose reconcile runs on the post-deploy
+      // boot's seedSelfApp), the self-app is REFUSED here like
+      // visibility-pr: reconcileAppAdmins skips self_hosted apps —
+      // per-app admins would inherit force-merge on platform proposals —
+      // so a merged self-app admins PR would silently do nothing.
+      if (refuseIfSelfHosted(app, res, 'admins')) return;
+
+      // Normalized compare (trim/lowercase/dedupe/sort), so re-ordering
+      // or re-casing the same names is correctly a non-change.
+      const curNorm = appAdmins.normalizeAdmins(app.admin_usernames);
+      const nextNorm = appAdmins.normalizeAdmins(usernames);
+      if (curNorm.length === nextNorm.length && curNorm.every((v, i) => v === nextNorm[i])) {
+        return res.status(400).json({ error: 'The app already declares those admins' });
+      }
+
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Admin changes need GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+
+      // One admins proposal in flight per app.
+      const existing = await renamePr.findAdminsPr(pool, app.id);
+      if (existing) {
+        return res.status(409).json({
+          error: 'An app-admins change is already up for vote',
+          sessionId: existing.id,
+          prNumber: existing.pr_number,
+          prUrl: existing.pr_url,
+        });
+      }
+
+      const result = await renamePr.createAdminsPR(
+        config, pool, app,
+        { usernames },
+        { id: req.user.id, username: req.user.username }
+      );
+
+      res.status(201).json({
+        ok: true,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+      });
+    } catch (err) {
+      log.error('apps', 'Admins PR failed', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: err.message || 'Internal server error' });
     }
   });
 

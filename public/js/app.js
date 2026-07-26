@@ -1342,6 +1342,23 @@ const App = {
           AppView.refreshDevData('governance');
         }
       }
+    } else if (data.action === 'admins_changed') {
+      // Per-app admin roster applied (a merged admins PR's deploy-time
+      // reconcile — issue #788, or a hand-edited dapp.json). Patch the
+      // open app's in-memory row and refetch the Members modal's
+      // App-admins section if it's open right now.
+      if (App.currentApp === data.appSlug
+          && typeof AppView !== 'undefined' && AppView.appData) {
+        AppView.appData.admin_usernames = Array.isArray(data.admins) ? data.admins : [];
+        const membersModal = document.getElementById('members-modal');
+        if (membersModal && !membersModal.classList.contains('hidden')
+            && AppView.loadAppAdmins) {
+          // The applied roster supersedes any in-progress draft — a
+          // stale draft would misreport what the app now declares.
+          AppView._appAdminsDraft = null;
+          AppView.loadAppAdmins();
+        }
+      }
     }
   },
 

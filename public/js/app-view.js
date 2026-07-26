@@ -8610,10 +8610,17 @@ const AppView = {
     AppView._hideInviteSuggestions();
     if (isPrivate && appData.can_collaborate) await AppView.loadCollaborators();
     if (showApprovers) await AppView.loadApprovers();
-    // #788: read-only, collab-level — everyone who can see the modal can
-    // see who administers the app. Hides itself when none are declared.
+    // #788: collab-level — everyone who can see the modal can see who
+    // administers the app; managers get the propose-a-PR editor (see
+    // _renderAppAdmins). Reset the previous open's draft/status first so
+    // one app's roster can't leak into another's.
     const appAdminsSection = document.getElementById('members-appadmins-section');
     if (appAdminsSection) appAdminsSection.classList.add('hidden');
+    AppView._appAdminsData = null;
+    AppView._appAdminsDraft = null;
+    AppView._appAdminsKnown = null;
+    AppView._hideAppAdminSuggestions();
+    AppView._setAppAdminsStatus('', false);
     await AppView.loadAppAdmins();
   },
 
@@ -8775,6 +8782,46 @@ const AppView = {
       // Abandon the draft: repaint from the app's real settings (which
       // also collapses the block — see _renderMembersGovPills).
       freshIaC.addEventListener('click', () => AppView._renderMembersGovPills());
+    }
+
+    // App-admins editor (issue #788): typeahead + propose/cancel.
+    const aaInput = document.getElementById('members-appadmins-input');
+    if (aaInput) {
+      const freshAa = aaInput.cloneNode(true);
+      aaInput.parentNode.replaceChild(freshAa, aaInput);
+      freshAa.addEventListener('input', () => {
+        clearTimeout(AppView._appAdminsDebounce);
+        AppView._appAdminsDebounce = setTimeout(
+          () => AppView._searchAppAdminUsers(freshAa.value.trim()), 200
+        );
+      });
+      freshAa.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const name = freshAa.value.trim();
+          if (name) AppView._addAppAdmin(name);
+        }
+        if (e.key === 'Escape') AppView._hideAppAdminSuggestions();
+      });
+    }
+    const aaPropose = document.getElementById('members-appadmins-propose');
+    if (aaPropose) {
+      const freshAaP = aaPropose.cloneNode(true);
+      aaPropose.parentNode.replaceChild(freshAaP, aaPropose);
+      freshAaP.addEventListener('click', () => AppView._proposeAppAdmins());
+    }
+    const aaCancel = document.getElementById('members-appadmins-cancel');
+    if (aaCancel) {
+      const freshAaC = aaCancel.cloneNode(true);
+      aaCancel.parentNode.replaceChild(freshAaC, aaCancel);
+      // Abandon the draft: repaint from the app's real declared list.
+      freshAaC.addEventListener('click', () => {
+        const declared = AppView._appAdminsData && Array.isArray(AppView._appAdminsData.declared)
+          ? AppView._appAdminsData.declared : [];
+        AppView._appAdminsDraft = [...declared];
+        AppView._hideAppAdminSuggestions();
+        AppView._renderAppAdmins(AppView._appAdminsData);
+      });
     }
   },
 
@@ -9209,12 +9256,26 @@ const AppView = {
   // modal open so one app's roster can't leak into another's.
   _approversData: null,
 
-  // #788: per-app admins, read-only. Unlike the collaborator and
-  // approver rosters there is nothing to mutate here — the roster's only
-  // writer is the deploy-time reconcile of dapp.json's `admins` block —
-  // so this fetches and renders, and that's all. The section stays
-  // hidden when the app declares no admins: an empty roster is the
-  // normal state for almost every app, not something to nag about.
+  // #788: per-app admins. The roster's only writer is the deploy-time
+  // reconcile of dapp.json's `admins` block, so the editor here never
+  // mutates the roster directly: managers stage a draft (add / remove
+  // rows locally) and Propose opens a PR editing that block
+  // (POST .../admins-pr) — an explicit-approval proposal that won't
+  // merge on a timer. Non-managers keep the read-only roster, hidden
+  // when the app declares no admins (the normal state for almost every
+  // app, not something to nag about).
+
+  // Last-fetched /admins payload (admins + declared + unresolved +
+  // canManage + openProposal). Reset on every modal open.
+  _appAdminsData: null,
+  // Working list of declared usernames being edited (display casing).
+  // null = not initialized; re-seeded from `declared` on each load.
+  _appAdminsDraft: null,
+  // Lowercased usernames the typeahead has confirmed exist — added
+  // names outside this set (and outside the resolved roster) get the
+  // "no account with this username yet" note.
+  _appAdminsKnown: null,
+
   async loadAppAdmins() {
     const section = document.getElementById('members-appadmins-section');
     const list = document.getElementById('members-appadmins-list');
@@ -9223,6 +9284,7 @@ const AppView = {
       const res = await fetch(`/api/apps/${AppView.appData.slug}/admins${AppView._demoQuery()}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
+      AppView._appAdminsDraft = [...(Array.isArray(data.declared) ? data.declared : [])];
       AppView._renderAppAdmins(data);
     } catch (err) {
       section.classList.remove('hidden');
@@ -9239,31 +9301,269 @@ const AppView = {
     } catch { return ''; }
   },
 
+  _setAppAdminsStatus(msg, isError) {
+    const el = document.getElementById('members-appadmins-status');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = `text-sm mt-2 ${isError ? 'text-red-400' : 'text-zinc-500 dark:text-zinc-400'}`;
+    el.classList.toggle('hidden', !msg);
+  },
+
+  // Canonical form for the dirty check, mirroring the server's
+  // normalizeAdmins (services/app-admins.js): trimmed, lowercased,
+  // deduped, sorted — so re-ordering or re-casing the same names never
+  // reads as a change.
+  _normAppAdmins(list) {
+    const seen = new Set();
+    for (const entry of Array.isArray(list) ? list : []) {
+      if (typeof entry !== 'string') continue;
+      const name = entry.trim().toLowerCase();
+      if (name) seen.add(name);
+    }
+    return [...seen].sort();
+  },
+
+  _appAdminsDirty() {
+    const d = AppView._appAdminsData || {};
+    const a = AppView._normAppAdmins(d.declared);
+    const b = AppView._normAppAdmins(AppView._appAdminsDraft);
+    return a.length !== b.length || a.some((v, i) => v !== b[i]);
+  },
+
   _renderAppAdmins(data) {
     const section = document.getElementById('members-appadmins-section');
     const list = document.getElementById('members-appadmins-list');
     if (!section || !list) return;
-    const admins = Array.isArray(data && data.admins) ? data.admins : [];
-    const unresolved = Array.isArray(data && data.unresolved) ? data.unresolved : [];
-    if (!admins.length && !unresolved.length) {
+    if (data) AppView._appAdminsData = data;
+    const d = AppView._appAdminsData || {};
+    const admins = Array.isArray(d.admins) ? d.admins : [];
+    const unresolved = Array.isArray(d.unresolved) ? d.unresolved : [];
+    const declared = Array.isArray(d.declared) ? d.declared : [];
+    const appData = AppView.appData || {};
+    // Managers get the editor — except on the self-app, where per-app
+    // admins are deliberately not grantable (the deploy reconcile skips
+    // self_hosted apps), so it keeps the read-only view.
+    const editable = !!d.canManage && !appData.self_hosted;
+    // With a proposal already up for vote the rows go read-only too —
+    // one admins proposal in flight per app.
+    const canEdit = editable && !d.openProposal;
+    if (!Array.isArray(AppView._appAdminsDraft)) AppView._appAdminsDraft = [...declared];
+    const draft = AppView._appAdminsDraft;
+
+    // Section visibility: managers (outside the self-app) always see it
+    // — an empty roster is the entry point for adding the first admin —
+    // everyone else keeps the hide-when-empty rule.
+    if (!editable && !admins.length && !unresolved.length) {
       section.classList.add('hidden');
       list.innerHTML = '';
       return;
     }
     section.classList.remove('hidden');
+
+    const resolvedLower = new Set(admins.map((a) => a.username.toLowerCase()));
+    const draftLower = new Set(draft.map((u) => u.toLowerCase()));
+    const declaredLower = new Set(declared.map((u) => u.toLowerCase()));
     const rowCls = 'flex items-center justify-between gap-2 px-3 py-2 text-sm';
-    const resolvedRows = admins.map((a) =>
-      `<div class="${rowCls}"><span class="truncate">@${escapeHtml(a.username)}</span>`
-      + '<span class="text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400 shrink-0">Admin</span></div>'
-    );
-    // A declared name matching no account is shown rather than silently
-    // dropped — it's almost always a typo or someone who hasn't signed
-    // up yet, and it starts working on the next deploy once they do.
-    const unresolvedRows = unresolved.map((u) =>
-      `<div class="${rowCls} opacity-60"><span class="truncate">@${escapeHtml(String(u))}</span>`
-      + '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400 shrink-0" title="Declared in dapp.json but no account with this username exists yet">not a registered user</span></div>'
-    );
-    list.innerHTML = resolvedRows.concat(unresolvedRows).join('');
+    const removeBtn = (u) => (canEdit
+      ? `<button type="button" data-remove-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-400 hover:text-red-500 px-2 py-1 shrink-0">Remove</button>`
+      : '');
+    const undoBtn = (u) =>
+      `<button type="button" data-restore-appadmin="${escapeAttr(u)}" class="text-xs text-zinc-400 hover:text-violet-500 px-2 py-1 shrink-0">Undo</button>`;
+
+    const rows = [];
+    for (const name of declared) {
+      const lower = name.toLowerCase();
+      // A declared name matching no account is shown rather than
+      // silently dropped — it's almost always a typo or someone who
+      // hasn't signed up yet, and it starts working on the next deploy
+      // once they do.
+      const tag = resolvedLower.has(lower)
+        ? '<span class="text-[0.65rem] font-semibold uppercase tracking-wide text-violet-600 dark:text-violet-400">Admin</span>'
+        : '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="Declared in dapp.json but no account with this username exists yet">not a registered user</span>';
+      if (draftLower.has(lower)) {
+        rows.push(
+          `<div class="${rowCls}${resolvedLower.has(lower) ? '' : ' opacity-60'}"><span class="truncate">@${escapeHtml(name)}</span>`
+          + `<span class="flex items-center gap-1 shrink-0">${tag}${removeBtn(name)}</span></div>`
+        );
+      } else {
+        // Staged removal: struck through, nothing has happened yet.
+        rows.push(
+          `<div class="${rowCls} opacity-60"><span class="truncate line-through">@${escapeHtml(name)}</span>`
+          + '<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-red-500 font-medium">will be removed</span>'
+          + `${canEdit ? undoBtn(name) : ''}</span></div>`
+        );
+      }
+    }
+    for (const name of draft) {
+      const lower = name.toLowerCase();
+      if (declaredLower.has(lower)) continue;
+      // Staged addition. Unregistered names are allowed by design — the
+      // roster starts granting once that person signs up and the app
+      // next deploys — but flag them so a typo is visible before the
+      // proposal opens.
+      const known = resolvedLower.has(lower)
+        || (AppView._appAdminsKnown && AppView._appAdminsKnown.has(lower));
+      const note = known ? ''
+        : '<span class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" title="No account with this username yet — they\'ll become an admin once they sign up and the app next deploys">no account yet</span>';
+      rows.push(
+        `<div class="${rowCls}"><span class="truncate">@${escapeHtml(name)}</span>`
+        + `<span class="flex items-center gap-1 shrink-0"><span class="text-[0.65rem] text-amber-500 font-medium">will be added</span>${note}${removeBtn(name)}</span></div>`
+      );
+    }
+    if (!rows.length) {
+      rows.push('<div class="px-3 py-2 text-sm text-zinc-500 dark:text-zinc-400">No app admins yet. App admins can manage this app\'s settings and force-merge its proposals.</div>');
+    }
+    list.innerHTML = rows.join('');
+    list.querySelectorAll('[data-remove-appadmin]').forEach((btn) => {
+      btn.addEventListener('click', () => AppView._removeAppAdmin(btn.dataset.removeAppadmin));
+    });
+    list.querySelectorAll('[data-restore-appadmin]').forEach((btn) => {
+      btn.addEventListener('click', () => AppView._addAppAdmin(btn.dataset.restoreAppadmin));
+    });
+
+    // Editor controls. Set (not conditionally add) the disabled state:
+    // the input/buttons are cloned on every wire, so a `disabled` left
+    // over from a repo-less app's modal would survive into this one.
+    const editEl = document.getElementById('members-appadmins-edit');
+    if (editEl) editEl.classList.toggle('hidden', !canEdit);
+    const noRepo = !appData.repo_url;
+    const input = document.getElementById('members-appadmins-input');
+    if (input) input.disabled = noRepo;
+    const proposeBtn = document.getElementById('members-appadmins-propose');
+    if (proposeBtn) proposeBtn.disabled = noRepo;
+    const actions = document.getElementById('members-appadmins-actions');
+    if (actions) actions.classList.toggle('hidden', !canEdit || !AppView._appAdminsDirty());
+
+    // Managers get the shorter action-oriented explainer; read-only
+    // viewers (incl. the self-app) keep the original static note.
+    const note = document.getElementById('members-appadmins-note');
+    if (note) {
+      note.innerHTML = editable
+        ? 'Changes are proposed as a pull request editing <code>dapp.json</code>&rsquo;s <code>admins</code> list &mdash; it needs real Yes votes and won&rsquo;t merge on a timer.'
+        : 'Set in <code>dapp.json</code>. To change them, open a pull request that edits the <code>admins</code> list &mdash; that proposal needs real Yes votes and won&rsquo;t merge on a timer.';
+    }
+
+    // Default status: the open-proposal pointer or the no-repo hint.
+    // Callers wanting a custom message (Propose result) overwrite after
+    // rendering.
+    if (editable && d.openProposal) {
+      AppView._setAppAdminsStatus('An app-admins change is already up for vote — see the proposal in the Dev tab.', false);
+    } else if (editable && noRepo) {
+      AppView._setAppAdminsStatus('Admin changes are proposed as a dapp.json pull request — this app has no GitHub repository, so they\'re unavailable.', false);
+    } else {
+      AppView._setAppAdminsStatus('', false);
+    }
+  },
+
+  _addAppAdmin(username, { known = false } = {}) {
+    const name = String(username || '').replace(/^@/, '').trim();
+    if (!name) return;
+    if (!Array.isArray(AppView._appAdminsDraft)) AppView._appAdminsDraft = [];
+    const draft = AppView._appAdminsDraft;
+    const lower = name.toLowerCase();
+    if (!draft.some((u) => u.toLowerCase() === lower)) {
+      // Mirrors the server-side MAX_APP_ADMINS cap (app-manifest.js).
+      if (draft.length >= 20) {
+        AppView._renderAppAdmins();
+        AppView._setAppAdminsStatus('An app can declare at most 20 admins.', true);
+        return;
+      }
+      draft.push(name);
+    }
+    if (known) {
+      if (!AppView._appAdminsKnown) AppView._appAdminsKnown = new Set();
+      AppView._appAdminsKnown.add(lower);
+    }
+    const input = document.getElementById('members-appadmins-input');
+    if (input) input.value = '';
+    AppView._hideAppAdminSuggestions();
+    AppView._renderAppAdmins();
+  },
+
+  _removeAppAdmin(username) {
+    const lower = String(username || '').toLowerCase();
+    AppView._appAdminsDraft = (AppView._appAdminsDraft || [])
+      .filter((u) => u.toLowerCase() !== lower);
+    AppView._renderAppAdmins();
+  },
+
+  async _searchAppAdminUsers(q) {
+    const box = document.getElementById('members-appadmins-suggestions');
+    if (!box || !AppView.appData) return;
+    if (!q) { AppView._hideAppAdminSuggestions(); return; }
+    try {
+      const params = new URLSearchParams({ q });
+      const res = await fetch(`/api/users/search?${params.toString()}`);
+      if (!res.ok) return;
+      const { users } = await res.json();
+      if (!users || !users.length) { AppView._hideAppAdminSuggestions(); return; }
+      box.innerHTML = users.map((u) =>
+        `<button type="button" data-appadmin-user="${escapeAttr(u.username)}" class="w-full text-left px-3 py-2 text-sm text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800">@${escapeHtml(u.username)}</button>`
+      ).join('');
+      box.classList.remove('hidden');
+      box.querySelectorAll('[data-appadmin-user]').forEach((btn) => {
+        btn.addEventListener('click', () => AppView._addAppAdmin(btn.dataset.appadminUser, { known: true }));
+      });
+    } catch { /* typeahead is best-effort */ }
+  },
+
+  _hideAppAdminSuggestions() {
+    const box = document.getElementById('members-appadmins-suggestions');
+    if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+  },
+
+  // Draft → confirm → open an admins-change proposal (a PR editing
+  // dapp.json's `admins` array). NOT optimistic: the roster only
+  // changes when the merged PR's redeploy runs reconcileAppAdmins, so
+  // on success the list repaints from the CURRENT declared names with
+  // the open-proposal pointer.
+  async _proposeAppAdmins() {
+    if (!AppView.appData) return;
+    const d = AppView._appAdminsData || {};
+    const declared = Array.isArray(d.declared) ? d.declared : [];
+    const draft = Array.isArray(AppView._appAdminsDraft) ? [...AppView._appAdminsDraft] : [];
+    if (!AppView._appAdminsDirty()) return;
+
+    const emptying = !draft.length && declared.length > 0;
+    const message = emptying
+      ? 'This removes every app admin — only the creator and platform admins will be able to manage the app. The change opens a proposal that needs real Yes votes and won\'t merge on a timer.'
+      : 'Changing who administers this app opens a proposal. Because it grants app-level power, it will not merge on a timer — it needs real Yes votes to reach the app\'s normal threshold, and only a platform admin can force-merge it.';
+    if (!await PlatformUI.confirm({
+      title: 'Open an app-admins proposal?',
+      message,
+      confirmLabel: 'Open proposal',
+    })) return;
+
+    try {
+      const res = await fetch(`/api/apps/${AppView.appData.slug}/admins-pr`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ admins: draft }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        if (AppView._appAdminsData) {
+          AppView._appAdminsData.openProposal = {
+            sessionId: data.sessionId, prNumber: data.prNumber, prUrl: data.prUrl,
+          };
+        }
+        AppView._appAdminsDraft = [...declared];
+        AppView._renderAppAdmins();
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (AppView._appAdminsData) {
+        AppView._appAdminsData.openProposal = {
+          sessionId: data.sessionId, prNumber: data.prNumber, prUrl: data.prUrl,
+        };
+      }
+      AppView._appAdminsDraft = [...declared];
+      AppView._renderAppAdmins();
+      AppView._setAppAdminsStatus(`Proposal opened (PR #${data.prNumber}) — it needs the group's vote in the Dev tab before the new admins apply.`, false);
+    } catch (err) {
+      // No proposal opened — keep the draft so nothing typed is lost.
+      AppView._setAppAdminsStatus(`Could not open the admins proposal: ${err.message}`, true);
+    }
   },
 
   async loadApprovers() {

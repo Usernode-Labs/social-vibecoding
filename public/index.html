@@ -852,13 +852,34 @@
         <div id="members-approver-status" class="text-sm mt-2"></div>
       </div>
 
-      <!-- #788: per-app admins. Read-only by design — the roster's only
-           writer is the deploy-time reconcile of dapp.json's `admins`
-           block, so there is no add/remove control here. -->
+      <!-- #788: per-app admins. The roster's only writer is the
+           deploy-time reconcile of dapp.json's `admins` block; managers
+           (creator / app admin / platform admin) get an editor whose
+           Propose opens a PR editing that block (POST .../admins-pr) —
+           everyone else keeps the read-only roster, hidden when empty.
+           The self-app stays read-only: reconcileAppAdmins skips
+           self_hosted apps. -->
       <div id="members-appadmins-section" class="hidden mb-4">
         <p class="text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">App admins</p>
         <div id="members-appadmins-list" class="max-h-56 overflow-y-auto divide-y divide-zinc-100 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800"></div>
-        <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Set in <code>dapp.json</code>. To change them, open a pull request that edits the <code>admins</code> list &mdash; that proposal needs real Yes votes and won&rsquo;t merge on a timer.</p>
+        <div id="members-appadmins-edit" class="hidden mt-2">
+          <div class="relative">
+            <input id="members-appadmins-input" type="text" autocomplete="off" spellcheck="false"
+              class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
+              placeholder="add an admin by username">
+            <div id="members-appadmins-suggestions" class="hidden absolute left-0 right-0 top-full mt-1 z-10 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-xl overflow-hidden"></div>
+          </div>
+          <div id="members-appadmins-actions" class="hidden mt-2">
+            <div class="flex gap-2">
+              <button type="button" id="members-appadmins-propose"
+                class="flex-1 rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed">Propose</button>
+              <button type="button" id="members-appadmins-cancel"
+                class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+            </div>
+          </div>
+        </div>
+        <p id="members-appadmins-status" class="text-sm mt-2 hidden"></p>
+        <p id="members-appadmins-note" class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Set in <code>dapp.json</code>. To change them, open a pull request that edits the <code>admins</code> list &mdash; that proposal needs real Yes votes and won&rsquo;t merge on a timer.</p>
       </div>
 
       <div class="flex gap-3">
