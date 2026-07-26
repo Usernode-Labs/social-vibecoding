@@ -20,6 +20,22 @@
  * Platform skins hang off html.un-ios / html.un-android / html.un-desktop
  * (set by native.js). Dark mode follows the platform idiom: a `.dark`
  * class on <html> (same as app.css / the Tailwind config).
+ *
+ * SKIN SCOPING RULE (issue #803) — a platform skin block must NEVER
+ * declare --un-* custom properties. `html.un-android` (0,2,1 with a
+ * descendant type, 0,1,1 alone) out-specifies BOTH `:root` (0,1,0) and
+ * `.dark` (0,1,0), so a variable declared in a skin block would silently
+ * beat every documented app override (see public/css/app.css, which
+ * re-themes the kit exactly that way) and break dark mode on that
+ * platform. New variables go in the :root / .dark blocks below; skin
+ * selectors only ever CONSUME them. Element-scoped internal properties a
+ * component sets on its OWN rule (--un-enter-scale, on the alert and the
+ * modal) are fine — they are not part of the theming contract. Both
+ * halves of this rule are pinned by tests/native-kit.test.js.
+ *
+ * Skin GEOMETRY (radii, sizes, paddings) stays hard-coded per skin — the
+ * 51×31 iOS switch, the 52×32 Material switch, the 14px iOS sheet radius
+ * and the 28px Material one are what make each platform look like itself.
  */
 
 :root {
@@ -64,6 +80,27 @@
   --un-radius-full: 9999px;
   --un-radius-card: 12px;
 
+  /* Android (Material 3) skin tokens — consumed only by html.un-android
+     rules, declared here so app overrides on :root / .dark / a wrapper
+     keep winning (see the SKIN SCOPING RULE above).
+
+     --un-navbar-solid: the M3 top app bar is opaque; --un-navbar-bg is
+     translucent by design (the iOS blurred bar) and can't be flattened
+     in CSS, so the solid variant is its own token. */
+  --un-navbar-solid: #f9f9fb;
+
+  /* Material state-layer / ripple color. currentColor is substituted at
+     the USING element, so the ripple picks up each control's own text
+     color — accent on dialog buttons, foreground on menu rows. The plain
+     rgba() ships first as the fallback for engines without color-mix. */
+  --un-ripple: rgba(120, 120, 150, 0.22);
+
+  /* Material elevation levels (1: sheets, 2: menus/puck/scrolled bar,
+     3: dialogs/snackbar) */
+  --un-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.28), 0 1px 3px 1px rgba(0, 0, 0, 0.13);
+  --un-elevation-2: 0 1px 2px rgba(0, 0, 0, 0.28), 0 2px 6px 2px rgba(0, 0, 0, 0.14);
+  --un-elevation-3: 0 1px 3px rgba(0, 0, 0, 0.28), 0 4px 8px 3px rgba(0, 0, 0, 0.15);
+
   /* Motion — linear() spring curves pre-computed from the SAME integrator
      parameters native.js uses (mass/tension/friction: default 1/170/26,
      stiff 1/250/30, gentle 1/120/24), so CSS and JS motion are one family.
@@ -102,6 +139,24 @@
   --un-toast-bg: rgba(58, 58, 82, 0.94);
   --un-toast-text: #f4f4f8;
   --un-toast-action: #c4b5fd;
+  --un-navbar-solid: #14142a;
+  --un-ripple: rgba(235, 235, 245, 0.2);
+  --un-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.45), 0 1px 3px 1px rgba(0, 0, 0, 0.3);
+  --un-elevation-2: 0 1px 2px rgba(0, 0, 0, 0.45), 0 2px 6px 2px rgba(0, 0, 0, 0.32);
+  --un-elevation-3: 0 1px 3px rgba(0, 0, 0, 0.45), 0 4px 8px 3px rgba(0, 0, 0, 0.34);
+}
+
+/* Ripple, contextual variant: substituted at the using element, so the
+   state layer takes that control's own text color (M3's onSurface /
+   onPrimary state layers). Declared AFTER .dark so both modes upgrade;
+   engines without color-mix keep the plain rgba() above. */
+@supports (color: color-mix(in srgb, red 50%, transparent)) {
+  :root {
+    --un-ripple: color-mix(in srgb, currentColor 16%, transparent);
+  }
+  .dark {
+    --un-ripple: color-mix(in srgb, currentColor 20%, transparent);
+  }
 }
 
 /* ── Touch polish ──────────────────────────────────────────────────────
@@ -134,6 +189,23 @@ button:active,
   filter: brightness(1.15);
 }
 
+/* Material press: no scale (Android surfaces don't shrink), just a state
+   tint while held — the real state layer is the JS ripple below, which is
+   confined to kit-drawn controls. Written with `html` in the selector so
+   it out-specifies the `.dark …:active` rule above (0,2,2 vs 0,2,1); the
+   dark variant therefore needs its own `html.un-android.dark` rule. */
+html.un-android button:active,
+html.un-android [role="button"]:active,
+html.un-android .un-pressable:active {
+  transform: none;
+  filter: brightness(0.94);
+}
+html.un-android.dark button:active,
+html.un-android.dark [role="button"]:active,
+html.un-android.dark .un-pressable:active {
+  filter: brightness(1.12);
+}
+
 /* Never squash a row mid-swipe or a form field. */
 input:active,
 select:active,
@@ -142,6 +214,44 @@ textarea:active,
 .un-swipe:active {
   transform: none;
   filter: none;
+}
+
+/* ── Material ripple (Android skin) ────────────────────────────────────
+   Injected by native.js on pointerdown over a kit-drawn control (see the
+   RIPPLE_SELECTOR list there) — never over arbitrary app buttons, which
+   would need overflow:hidden and could collide with app pseudo-elements.
+   Hosts opt in structurally below; apps can opt a control in with
+   .un-ripple-host. */
+
+html.un-android .un-ripple {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--un-ripple);
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: un-ripple-in 380ms ease-out forwards;
+}
+
+@keyframes un-ripple-in {
+  from { transform: scale(0); opacity: 1; }
+  to { transform: scale(1); opacity: 0; }
+}
+
+html.un-android .un-action-btn,
+html.un-android .un-alert-btn,
+html.un-android .un-popover-item,
+html.un-android .un-toast-action,
+html.un-android .un-navbar-back,
+html.un-android .un-swipe-action,
+html.un-android .un-ripple-host {
+  position: relative;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.un-android .un-ripple {
+    animation: none;
+  }
 }
 
 /* ≥44px hit area for small icon buttons without changing layout.
@@ -255,13 +365,21 @@ html.un-android .un-switch:checked::before {
   margin-top: -12px;
   background: var(--un-accent-contrast);
 }
-/* The iOS press-stretch doesn't apply to the Material skin. */
+/* M3 pressed thumb: the thumb GROWS while held (rather than the iOS
+   press-stretch, whose leading edge holds still). translateX and the
+   negative margin-top are re-derived per state so the enlarged thumb
+   keeps its center and stays inside the 2px track outline. */
 html.un-android .un-switch:active::before {
-  width: 16px;
+  width: 20px;
+  height: 20px;
+  margin-top: -10px;
+  transform: translateX(-2px);
 }
 html.un-android .un-switch:checked:active::before {
-  width: 24px;
-  transform: translateX(18px);
+  width: 28px;
+  height: 28px;
+  margin-top: -14px;
+  transform: translateX(16px);
 }
 
 /* ── Swipe-to-act rows ─────────────────────────────────────────────────
@@ -328,6 +446,14 @@ html.un-android .un-switch:checked:active::before {
   pointer-events: none;
 }
 
+/* Material skin: label typography only. Tray width, the 80px minimum and
+   every commit threshold are gesture geometry — identical on both skins. */
+html.un-android .un-swipe-action {
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
 /* ── Pull-to-refresh ───────────────────────────────────────────────────
    Puck injected by unNative.attachPullToRefresh(); scale/opacity/rotation
    are driven per-frame by pull progress (never popping at a threshold). */
@@ -367,6 +493,19 @@ html.un-android .un-switch:checked:active::before {
 }
 @keyframes un-ptr-spin {
   to { transform: rotate(360deg); }
+}
+
+/* Material skin: the SwipeRefreshLayout indicator is a larger, elevated
+   circle. The per-frame scale/opacity/rotation math (and every pull
+   threshold) lives in native.js and is skin-independent. */
+html.un-android .un-ptr-puck {
+  width: 40px;
+  height: 40px;
+  box-shadow: var(--un-elevation-2);
+}
+html.un-android .un-ptr-puck svg {
+  width: 20px;
+  height: 20px;
 }
 
 /* ── Drag-to-reorder ───────────────────────────────────────────────────
@@ -493,6 +632,25 @@ html.un-android .un-switch:checked:active::before {
   pointer-events: none;
 }
 
+/* Material skin: section headers are normal-case and tinted (not the iOS
+   uppercase caption), and M3 dividers span the full container width
+   instead of being inset to the text column. Card radius / background are
+   left alone on purpose — changing them would relayout app content. */
+html.un-android .un-group-header {
+  padding: 0 16px 8px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--un-accent);
+}
+html.un-android .un-group-row + .un-group-row::after,
+html.un-android .un-group > .un-swipe + .un-swipe::after,
+html.un-android .un-group > .un-swipe + .un-group-row::after,
+html.un-android .un-group > .un-group-row + .un-swipe::after {
+  left: 0;
+}
+
 /* ── Overlay backdrop (sheets, action sheets, alerts) ──────────────────
    Opacity is JS-driven for gesture-coupled surfaces (rides the sheet's
    position 1:1); the alert uses the fade modifier instead. */
@@ -577,6 +735,19 @@ html.un-kb .un-sheet {
   padding: 4px 16px 20px;
 }
 
+/* Material skin: the M3 bottom-sheet shape (28dp top corners), a wider /
+   thinner drag handle and elevation instead of the iOS drop shadow.
+   translateY stays JS-owned — no transition is added here. */
+html.un-android .un-sheet {
+  border-radius: 28px 28px 0 0;
+  box-shadow: var(--un-elevation-1);
+}
+html.un-android .un-sheet-grabber {
+  width: 32px;
+  height: 4px;
+  margin: 16px auto 8px;
+}
+
 /* ── Action sheet ──────────────────────────────────────────────────────
    unNative.actionSheet(): main card of hairline-separated actions plus a
    separate Cancel card. translateY is JS-owned (spring up/down). */
@@ -632,6 +803,83 @@ html.un-kb .un-action-sheet {
 }
 .un-action-btn.un-action-cancel {
   font-weight: 600;
+}
+
+/* Material skin: M3 has no iOS action sheet — the equivalent is ONE
+   bottom sheet holding a list. So the WRAP carries the surface (edge to
+   edge, 28dp top corners, drag handle drawn by ::before) and the two
+   cards go transparent, merging into a single continuous sheet with one
+   divider before the Cancel row. Cancel stays visible on purpose: unlike
+   .un-sheet the action sheet has no drag-to-dismiss, so the scrim tap
+   would be the only way out. */
+html.un-android .un-action-sheet {
+  padding: 0 0 env(safe-area-inset-bottom, 0px);
+  background: var(--un-sheet-bg);
+  border-radius: 28px 28px 0 0;
+  box-shadow: var(--un-elevation-1);
+}
+html.un-android.un-kb .un-action-sheet {
+  padding-bottom: 0;
+}
+/* The drag handle. In flow on purpose — it is part of the measured
+   height that seeds the entrance spring. */
+html.un-android .un-action-sheet::before {
+  content: "";
+  display: block;
+  width: 32px;
+  height: 4px;
+  margin: 16px auto 4px;
+  border-radius: var(--un-radius-full);
+  background: var(--un-hairline);
+}
+/* Overscroll surface extension, the .un-sheet::after story (issue #789)
+   applied to the now edge-to-edge action sheet: the `sheet` preset is
+   underdamped, so the entrance spring crosses y=0 on EVERY open (pinned
+   by a test in tests/native-kit.test.js) and lifts the bar's bottom edge
+   off the screen edge. ABSOLUTELY POSITIONED so it stays out of flow and
+   can never perturb wrap.offsetHeight — the value that seeds the spring,
+   the backdrop opacity denominator and the dismissal travel. */
+html.un-android .un-action-sheet::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  background: var(--un-sheet-bg);
+  pointer-events: none;
+}
+html.un-android .un-action-card {
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 0;
+}
+html.un-android .un-action-card + .un-action-card {
+  margin-top: 0;
+  border-top: 1px solid var(--un-hairline);
+}
+html.un-android .un-action-title {
+  padding: 8px 24px 12px;
+  text-align: left;
+  font-size: 0.875rem;
+}
+html.un-android .un-action-btn {
+  padding: 14px 24px;
+  min-height: 48px;
+  text-align: left;
+  font-size: 1rem;
+  color: inherit;
+}
+html.un-android .un-action-title + .un-action-btn,
+html.un-android .un-action-btn + .un-action-btn {
+  border-top: none;
+}
+html.un-android .un-action-btn.un-destructive {
+  color: var(--un-action-danger);
+}
+html.un-android .un-action-btn.un-action-cancel {
+  font-weight: 400;
 }
 
 /* ── Anchored popover / dropdown menu ──────────────────────────────────
@@ -690,12 +938,33 @@ html.un-kb .un-action-sheet {
   color: var(--un-action-danger);
 }
 
+/* Material skin: M3 menu — extra-small shape, no outline, elevation, and
+   48dp rows. Still no entrance animation (menus are high-frequency UI). */
+html.un-android .un-popover {
+  padding: 8px 0;
+  border: none;
+  border-radius: 4px;
+  box-shadow: var(--un-elevation-2);
+}
+html.un-android .un-popover-item {
+  padding: 12px 16px;
+  min-height: 48px;
+  font-size: 0.875rem;
+}
+
 /* ── Alert dialog ──────────────────────────────────────────────────────
    unNative.alert(): 270px centered card, centered title, optional inset
    field, hairline Cancel|OK row. Fade + scale-down entrance (alerts
    don't spring from an edge — this transition is intentional). */
 
 .un-alert {
+  /* Entrance scale, element-scoped (NOT a theming variable — see the skin
+     scoping rule in the header): iOS alerts settle DOWN onto the screen
+     from 1.12, Material dialogs grow UP into it. Overriding the property
+     rather than the whole `transform` keeps `.un-alert.un-in`'s scale(1)
+     winning — a bare Android transform override would out-specify it and
+     freeze the card mid-entrance. */
+  --un-enter-scale: 1.12;
   position: fixed;
   left: 50%;
   /* Centered in the strip above the on-screen keyboard (the field
@@ -709,7 +978,7 @@ html.un-kb .un-action-sheet {
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   text-align: center;
-  transform: translate(-50%, -50%) scale(1.12);
+  transform: translate(-50%, -50%) scale(var(--un-enter-scale));
   opacity: 0;
   transition: transform 260ms var(--un-ease-spring), opacity 180ms ease, top 250ms ease-out;
   will-change: transform, opacity;
@@ -772,6 +1041,66 @@ html.un-kb .un-action-sheet {
   color: var(--un-action-danger);
 }
 
+/* Material skin: the M3 basic dialog — 28dp shape, 24dp padding,
+   start-aligned text, and compact right-aligned TEXT buttons instead of
+   the iOS hairline-split full-width row. */
+html.un-android .un-alert {
+  --un-enter-scale: 0.88;
+  width: min(360px, calc(100vw - 48px));
+  border-radius: 28px;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: var(--un-elevation-3);
+  text-align: left;
+}
+html.un-android .un-alert-title {
+  padding: 24px 24px 0;
+  font-size: 1.5rem;
+  font-weight: 400;
+  line-height: 1.3;
+}
+html.un-android .un-alert-message {
+  padding: 16px 24px 0;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+html.un-android .un-alert-field {
+  width: calc(100% - 48px);
+  margin: 16px 24px 0;
+  padding: 10px 12px;
+  border-radius: 4px;
+}
+html.un-android .un-alert-buttons {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+  padding: 0 12px 12px;
+  border-top: none;
+}
+html.un-android .un-alert-buttons.un-stacked {
+  align-items: flex-end;
+}
+html.un-android .un-alert-btn {
+  flex: 0 0 auto;
+  min-width: 64px;
+  padding: 10px 12px;
+  border-radius: var(--un-radius-full);
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+html.un-android .un-alert-btn + .un-alert-btn,
+html.un-android .un-alert-buttons.un-stacked .un-alert-btn + .un-alert-btn {
+  border-left: none;
+  border-top: none;
+}
+/* M3 button ordering: the dismissive action sits to the LEFT of the
+   confirming one. Visual order only — DOM/tab order is unchanged, and
+   this is a no-op for the usual [cancel, confirm] call order. */
+html.un-android .un-alert-btn.un-cancel {
+  order: -1;
+  font-weight: 500;
+}
+
 /* ── Centered modal ────────────────────────────────────────────────────
    unNative.presentModal(): arbitrary content in a centered card over the
    shared .un-backdrop.un-backdrop-fade. Fade + subtle scale-settle
@@ -779,6 +1108,8 @@ html.un-kb .un-action-sheet {
    surface); tall content scrolls inside the card. */
 
 .un-modal {
+  /* Element-scoped entrance scale, per .un-alert above. */
+  --un-enter-scale: 1.04;
   position: fixed;
   left: 50%;
   /* Centered in the strip above the on-screen keyboard; on iOS 100dvh
@@ -796,7 +1127,7 @@ html.un-kb .un-action-sheet {
   border-radius: 14px;
   background: var(--un-sheet-bg);
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.3);
-  transform: translate(-50%, -50%) scale(1.04);
+  transform: translate(-50%, -50%) scale(var(--un-enter-scale));
   opacity: 0;
   transition: transform 260ms var(--un-ease-spring), opacity 180ms ease, top 250ms ease-out;
   will-change: transform, opacity;
@@ -805,6 +1136,16 @@ html.un-kb .un-action-sheet {
 .un-modal.un-in {
   transform: translate(-50%, -50%) scale(1);
   opacity: 1;
+}
+
+/* Material skin: the M3 dialog container — 28dp shape, 24dp padding,
+   wider max width, elevation 3, and a grow-in entrance. */
+html.un-android .un-modal {
+  --un-enter-scale: 0.92;
+  width: min(560px, calc(100vw - 48px));
+  padding: 24px;
+  border-radius: 28px;
+  box-shadow: var(--un-elevation-3);
 }
 
 /* ── Keyboard avoidance for content scrollers ──────────────────────────
@@ -877,17 +1218,35 @@ html.un-kb .un-kb-avoid {
   cursor: pointer;
 }
 
-/* Material snackbar skin: near-full-width rectangle, left-aligned. */
+/* Material snackbar skin: near-full-width rectangle, left-aligned, opaque
+   (M3 containers don't blur), 4dp shape, elevation 3, 48dp min height.
+   The literal transform override needs its own .un-in counterpart — the
+   base `.un-toast.un-in` rule (0,2,0) loses to this one (0,2,1). */
 html.un-android .un-toast {
   left: 16px;
   right: 16px;
-  max-width: none;
+  max-width: 600px;
+  min-height: 48px;
+  padding: 14px 16px;
   justify-content: space-between;
-  border-radius: var(--un-radius);
+  border-radius: 4px;
+  box-shadow: var(--un-elevation-3);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
   transform: translateY(12px);
 }
 html.un-android .un-toast.un-in {
   transform: translateY(0);
+}
+/* M3 snackbar action: 8dp from the label, pill-shaped so the ripple the
+   kit injects (see native.js) is clipped to a button shape. */
+html.un-android .un-toast.un-has-action {
+  padding-right: 8px;
+}
+html.un-android .un-toast-action {
+  margin: -6px 0 -6px 8px;
+  padding: 8px 12px;
+  border-radius: var(--un-radius-full);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -973,6 +1332,50 @@ html.un-android .un-toast.un-in {
   will-change: transform, opacity;
 }
 
+/* Material skin: the M3 top app bar — opaque (never translucent/blurred),
+   56dp tall, start-aligned title, and elevation on scroll instead of the
+   iOS hairline. attachNavBar's collapse math is untouched. */
+html.un-android .un-navbar {
+  min-height: 56px;
+  padding: env(safe-area-inset-top, 0px) 4px 0;
+  background: var(--un-navbar-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transition: box-shadow 200ms ease;
+}
+html.un-android .un-navbar.un-scrolled {
+  border-bottom-color: transparent;
+  box-shadow: var(--un-elevation-2);
+}
+html.un-android .un-navbar-title {
+  padding-left: 4px;
+  text-align: left;
+  font-size: 1.375rem;
+  font-weight: 400;
+}
+/* M3 back affordance is an arrow with no label. The button's own text
+   stays in the DOM (so the accessible name is preserved) but isn't drawn;
+   an app-supplied icon child keeps a usable font-size. */
+html.un-android .un-navbar-back {
+  padding: 8px;
+  font-size: 0;
+  color: inherit;
+}
+html.un-android .un-navbar-back > * {
+  font-size: 1rem;
+}
+html.un-android .un-navbar-back::before {
+  content: "←";
+  font-size: 1.5rem;
+  margin-top: 0;
+}
+html.un-android .un-navbar-large {
+  padding: 4px 16px 12px;
+  font-size: 1.75rem;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
 /* ── Page transitions ──────────────────────────────────────────────────
    Driven by unNative.transition(fn, {type:'push'|'pop'}) which sets
    data-un-vt on <html> for the duration. iOS: slide + parallax + dim.
@@ -1023,29 +1426,58 @@ html.un-ios[data-un-vt="pop"]::view-transition-new(root) {
   to { transform: translateX(0); filter: brightness(1); }
 }
 
-/* Android (and desktop fallback): Material shared-axis fade-through —
-   quicker, no slide theatrics. */
+/* Android and desktop both get Material shared-axis fade-through —
+   quicker, no slide theatrics — but on different axes: Android navigation
+   is lateral (shared X axis, the M3 forward/back pattern), while the
+   desktop fallback keeps the Y-axis fade it has always had. */
 html.un-android[data-un-vt]::view-transition-old(root),
 html.un-android[data-un-vt]::view-transition-new(root),
 html.un-desktop[data-un-vt]::view-transition-old(root),
 html.un-desktop[data-un-vt]::view-transition-new(root) {
   animation-duration: 240ms;
 }
-html.un-android[data-un-vt="push"]::view-transition-old(root),
 html.un-desktop[data-un-vt="push"]::view-transition-old(root) {
   animation-name: un-vt-fade-out;
 }
-html.un-android[data-un-vt="push"]::view-transition-new(root),
 html.un-desktop[data-un-vt="push"]::view-transition-new(root) {
   animation-name: un-vt-fade-up-in;
 }
-html.un-android[data-un-vt="pop"]::view-transition-old(root),
 html.un-desktop[data-un-vt="pop"]::view-transition-old(root) {
   animation-name: un-vt-fade-down-out;
 }
-html.un-android[data-un-vt="pop"]::view-transition-new(root),
 html.un-desktop[data-un-vt="pop"]::view-transition-new(root) {
   animation-name: un-vt-fade-in;
+}
+
+/* Android: M3 shared X axis. Forward travels leftward, back rightward. */
+html.un-android[data-un-vt="push"]::view-transition-old(root) {
+  animation-name: un-vt-fade-x-out-left;
+}
+html.un-android[data-un-vt="push"]::view-transition-new(root) {
+  animation-name: un-vt-fade-x-in-right;
+}
+html.un-android[data-un-vt="pop"]::view-transition-old(root) {
+  animation-name: un-vt-fade-x-out-right;
+}
+html.un-android[data-un-vt="pop"]::view-transition-new(root) {
+  animation-name: un-vt-fade-x-in-left;
+}
+
+@keyframes un-vt-fade-x-out-left {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(-30px); }
+}
+@keyframes un-vt-fade-x-in-right {
+  from { opacity: 0; transform: translateX(30px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes un-vt-fade-x-out-right {
+  from { opacity: 1; transform: translateX(0); }
+  to { opacity: 0; transform: translateX(30px); }
+}
+@keyframes un-vt-fade-x-in-left {
+  from { opacity: 0; transform: translateX(-30px); }
+  to { opacity: 1; transform: translateX(0); }
 }
 
 @keyframes un-vt-fade-out {

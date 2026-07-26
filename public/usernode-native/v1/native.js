@@ -67,7 +67,15 @@
  *                                        reveal, settled pin
  *   unNative.gestures                 — the shared gesture arbiter
  *                                        { claim, owner, release }
- *   unNative.physics                  — the pure math (also the node export)
+ *   unNative.physics                  — the pure math (also the node
+ *                                        export), incl. rippleGeometry
+ *
+ * Platform skins: native.css paints the Cupertino idiom on html.un-ios /
+ * html.un-desktop and the Material 3 idiom on html.un-android (issue
+ * #803). The only behavioral half of the Android skin lives here: a
+ * delegated pointerdown listener that injects the Material ripple state
+ * layer into KIT-DRAWN controls (see RIPPLE_SELECTOR). Physics,
+ * thresholds and gesture geometry are identical across skins.
  *
  * On mobile the kit also maintains `--un-kb-inset` on <html> (the
  * on-screen-keyboard occlusion, tracked via visualViewport) plus class
@@ -521,6 +529,25 @@
     };
   }
 
+  // Material ripple geometry (Android skin, issue #803): the state-layer
+  // circle for a press at (x, y) INSIDE a width×height box, in the box's
+  // own coordinate space. The circle is centered on the touch point and
+  // sized to cover the whole box from there — diameter = twice the
+  // distance to the farthest corner — which is what makes the ripple
+  // finish edge-to-edge no matter where the finger lands. `size` is the
+  // diameter; `left`/`top` place the circle's top-left corner. Always
+  // returns finite numbers (a degenerate 0×0 host yields size 0).
+  function rippleGeometry(input) {
+    var w = input && input.width > 0 ? input.width : 0;
+    var h = input && input.height > 0 ? input.height : 0;
+    var x = input && isFinite(input.x) ? input.x : w / 2;
+    var y = input && isFinite(input.y) ? input.y : h / 2;
+    var dx = Math.max(Math.abs(x), Math.abs(w - x));
+    var dy = Math.max(Math.abs(y), Math.abs(h - y));
+    var size = 2 * Math.sqrt(dx * dx + dy * dy);
+    return { size: size, left: x - size / 2, top: y - size / 2 };
+  }
+
   var physics = {
     PRESETS: PRESETS,
     DECEL_RATE: DECEL_RATE,
@@ -553,6 +580,7 @@
     createToastSlot: createToastSlot,
     zoomPose: zoomPose,
     zoomRectUsable: zoomRectUsable,
+    rippleGeometry: rippleGeometry,
   };
 
   // Node (unit tests): export the math and stop — no DOM below this line.
@@ -595,6 +623,70 @@
     try {
       if (navigator.vibrate) navigator.vibrate(ms == null ? 10 : ms);
     } catch (e) { /* ignore */ }
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   * Material ripple (Android skin, issue #803) — the press state layer
+   * the Material skin uses instead of the iOS press-scale. One delegated
+   * pointerdown listener, installed only on Android.
+   *
+   * Deliberately confined to KIT-DRAWN controls (plus the opt-in
+   * .un-ripple-host): the ripple needs position:relative + overflow:hidden
+   * on its host and injects a child element, neither of which is safe to
+   * impose on arbitrary app buttons — clipped content and collisions with
+   * app pseudo-elements. Apps get the uniform press tint from native.css
+   * and can opt a control in explicitly.
+   *
+   * This is paint, not physics: no threshold, spring or gesture geometry
+   * is involved, and a ripple is never painted for a finger that is
+   * mid-gesture on a swipe row.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  var RIPPLE_SELECTOR = '.un-action-btn, .un-alert-btn, .un-popover-item:not(:disabled), ' +
+    '.un-toast-action, .un-navbar-back, .un-swipe-action, .un-ripple-host';
+  var RIPPLE_MS = 380; // must match the un-ripple-in animation in native.css
+
+  function spawnRipple(host, clientX, clientY) {
+    var rect = host.getBoundingClientRect();
+    if (!(rect.width > 0) || !(rect.height > 0)) return;
+    var geo = rippleGeometry({
+      width: rect.width,
+      height: rect.height,
+      x: clientX - rect.left,
+      y: clientY - rect.top,
+    });
+    if (!(geo.size > 0)) return;
+    var el = document.createElement('span');
+    el.className = 'un-ripple';
+    el.style.width = geo.size + 'px';
+    el.style.height = geo.size + 'px';
+    el.style.left = geo.left + 'px';
+    el.style.top = geo.top + 'px';
+    host.appendChild(el);
+    // Belt and braces (the presentModal teardown pattern): animationend
+    // normally removes it, the timer covers an interrupted animation.
+    var removed = false;
+    function remove() {
+      if (removed) return;
+      removed = true;
+      if (el.parentNode) el.parentNode.removeChild(el);
+    }
+    el.addEventListener('animationend', remove, { once: true });
+    setTimeout(remove, RIPPLE_MS + 120);
+  }
+
+  if (platform === 'android' && !prefersReducedMotion) {
+    window.addEventListener('pointerdown', function (e) {
+      if (e.button > 0) return;
+      var target = e.target;
+      if (!target || typeof target.closest !== 'function') return;
+      var host;
+      try { host = target.closest(RIPPLE_SELECTOR); } catch (err) { return; }
+      if (!host || host.disabled) return;
+      // A finger already committed to a swipe gesture isn't a tap.
+      if (host.closest('.un-swipe.un-dragging, .un-swipe.un-committing')) return;
+      spawnRipple(host, e.clientX, e.clientY);
+    }, true);
   }
 
   /* ────────────────────────────────────────────────────────────────────

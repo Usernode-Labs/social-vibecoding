@@ -1403,8 +1403,51 @@ same rules as the bridge apply: fixes ship platform-side and propagate
 on the next page load; `/v1/` is a frozen API surface (additive changes
 in place, breaking changes bump to `/v2/`). A live demo of every
 component is served beside the kit at `/usernode-native/v1/demo.html`
-(`?un-platform=ios|android` forces a skin, `?un-tune=1` shows the
-spring tuner).
+(`?un-platform=ios|android|desktop` forces a skin — the demo header also
+has one-tap links — and `?un-tune=1` shows the spring tuner).
+
+### Platform skins — Cupertino on iOS, Material 3 on Android
+
+The kit paints **two idioms** off the classes `native.js` sets on
+`<html>`: the Cupertino look on `un-ios` / `un-desktop`, and the
+Material 3 look on `un-android`. Detection is automatic (UA-based, with
+`?un-platform=` as an override), so **apps get the right skin with no
+code and no `unNative.platform` branching**. Per-surface differences:
+
+| Surface | iOS / desktop | Android |
+|---|---|---|
+| Press feedback | control scales down + dims | state tint, plus a **ripple** on kit-drawn controls |
+| Switch | 51×31 pill, thumb stretches while held | 52×32 M3 track, thumb grows while held |
+| Bottom sheet | 14px top corners, drop shadow | 28px top corners, elevation |
+| Action sheet | floating inset cards + separate Cancel card | ONE edge-to-edge bottom sheet: drag handle, start-aligned rows, single divider before Cancel |
+| Alert / modal | centered text, hairline-split full-width buttons, settles down from 1.12 | 28px corners, 24px padding, start-aligned text, compact right-aligned text buttons (dismissive on the left), grows in |
+| Popover / menu | 12px card with a hairline border | 4px M3 menu, no border, elevation, 48px rows |
+| Nav bar | translucent blurred, centered title, `‹ Back` | opaque, start-aligned title, `←` arrow (label not drawn), elevation on scroll |
+| Grouped list | UPPERCASE headers, inset separators | normal-case tinted headers, full-width dividers |
+| Toast | dark capsule HUD | Material snackbar (opaque, 4px, elevated) |
+| Pull-to-refresh | 34px puck | 40px elevated indicator |
+| Push / pop | slide + parallax | shared-X-axis fade |
+
+Two rules this rests on:
+
+- **Gesture physics are identical across skins** — 1:1 tracking, spring
+  presets, momentum thresholds, pull distances, long-press timing. Only
+  paint (color, shape, spacing, typography, elevation, press feedback)
+  is platform-specific, per the fidelity rules below.
+- **Skins never declare `--un-*` variables** (`html.un-android`
+  out-specifies both `:root` and `.dark`, so it would defeat app
+  theming). Every skin color routes through the same variables you
+  already override — re-theme once and both skins follow.
+
+The Material ripple is confined to kit-drawn controls (dialog buttons,
+menu rows, action-sheet rows, the toast action, the nav-bar back
+button, swipe actions). To opt one of your OWN controls in, add class
+**`un-ripple-host`** — the kit then needs `position: relative` and
+`overflow: hidden` on it, so don't use it on a control whose content
+must overflow.
+
+Note that non-iOS touch-mobile browsers also resolve to the Android
+skin (the sensible default for "a phone that isn't an iPhone").
 
 ### What the kit provides
 
@@ -1663,10 +1706,19 @@ out-specificity-ing kit selectors or copying the stylesheet:
 - `--un-toast-bg`, `--un-toast-text`, `--un-toast-action` — the toast
   surface (dark in BOTH modes, the iOS HUD idiom) and its action label
 - `--un-radius`, `--un-radius-full`, `--un-radius-card`
+- `--un-navbar-solid` — the Android skin's opaque top-app-bar container
+  (`--un-navbar-bg` is translucent by design and can't be flattened in
+  CSS, so the solid variant is its own token)
+- `--un-ripple` — the Material state-layer / ripple color; defaults to a
+  `color-mix` of the pressed control's own text color
+- `--un-elevation-1` / `-2` / `-3` — Material elevation shadows (sheets;
+  menus / PTR puck / scrolled app bar; dialogs / snackbar)
 
 Physics, thresholds and gesture geometry are deliberately **not**
 themeable — the native feel stays uniform across differently-branded
-apps.
+apps. Nor is per-skin *geometry* (the 51×31 iOS switch, the 28px
+Material dialog corner): those literals are what make each platform look
+like itself.
 
 ### Adoption steps (what "switch this app to the kit" means)
 

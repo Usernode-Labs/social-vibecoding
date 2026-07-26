@@ -39,6 +39,7 @@ const {
   createToastSlot,
   zoomPose,
   zoomRectUsable,
+  rippleGeometry,
 } = physics;
 
 // ── Spring integrator ──────────────────────────────────────────────────
@@ -973,4 +974,240 @@ test('zoomRectUsable accepts partially visible rects and rejects off-screen ones
   // bottom is derived from top+height when absent (plain-object rects).
   assert.equal(zoomRectUsable({ left: 0, top: -50, width: 10, height: 100 }, vh), true);
   assert.equal(zoomRectUsable({ left: 0, top: -200, width: 10, height: 100 }, vh), false);
+});
+
+// ── Material ripple geometry (Android skin, issue #803) ────────────────
+// The state layer must always finish edge-to-edge, wherever the finger
+// lands — that's the whole reason the diameter is derived from the
+// farthest corner rather than from the box size.
+
+test('rippleGeometry covers the whole host from a corner press', () => {
+  const box = { width: 200, height: 100 };
+  const diagonal = Math.sqrt(box.width * box.width + box.height * box.height);
+  for (const [x, y] of [[0, 0], [200, 0], [0, 100], [200, 100]]) {
+    const geo = rippleGeometry({ ...box, x, y });
+    assert.ok(
+      geo.size >= diagonal - 1e-9,
+      `press at (${x},${y}): diameter ${geo.size} must reach the far corner (${diagonal})`
+    );
+    // Centered on the touch point.
+    assert.ok(Math.abs(geo.left + geo.size / 2 - x) < 1e-9);
+    assert.ok(Math.abs(geo.top + geo.size / 2 - y) < 1e-9);
+  }
+});
+
+test('rippleGeometry from the center is twice the half-diagonal', () => {
+  const geo = rippleGeometry({ width: 200, height: 100, x: 100, y: 50 });
+  const halfDiagonal = Math.sqrt(100 * 100 + 50 * 50);
+  assert.ok(Math.abs(geo.size - 2 * halfDiagonal) < 1e-9);
+  assert.ok(Math.abs(geo.left - (100 - geo.size / 2)) < 1e-9);
+  assert.ok(Math.abs(geo.top - (50 - geo.size / 2)) < 1e-9);
+});
+
+test('rippleGeometry returns finite numbers for degenerate hosts', () => {
+  for (const input of [
+    { width: 0, height: 0, x: 0, y: 0 },
+    { width: 100, height: 40 }, // no coords — falls back to the center
+    {},
+    null,
+  ]) {
+    const geo = rippleGeometry(input);
+    assert.ok(Number.isFinite(geo.size), `size not finite for ${JSON.stringify(input)}`);
+    assert.ok(Number.isFinite(geo.left) && Number.isFinite(geo.top));
+    assert.ok(geo.size >= 0);
+  }
+  assert.equal(rippleGeometry({ width: 0, height: 0, x: 0, y: 0 }).size, 0);
+});
+
+// ── Android (Material 3) skin — shipped stylesheet contract (#803) ──────
+// The skin is pure CSS scoped to html.un-android, so its regression guards
+// read the shipped stylesheet (same stance as the #789 tests above).
+
+// Innermost declaration blocks as [selector, body] pairs, comments
+// stripped first (the file's own header comment contains braces and a
+// --un-* example, which would otherwise parse as a rule).
+function cssRules() {
+  const src = NATIVE_CSS.replace(/\/\*[\s\S]*?\*\//g, '');
+  const out = [];
+  const re = /([^{}]+)\{([^{}]*)\}/g;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    out.push([m[1].trim().replace(/\s+/g, ' '), m[2]]);
+  }
+  return out;
+}
+
+// Custom properties a component rule may set on ITSELF (internal motion
+// plumbing, not part of the documented theming contract).
+const ELEMENT_SCOPED_VARS = new Set(['--un-enter-scale']);
+
+test('native.css: no platform-skin block declares --un-* variables', () => {
+  // html.un-android out-specifies BOTH :root and .dark, so a variable
+  // declared in a skin block would silently beat every documented app
+  // override (public/css/app.css re-themes the kit exactly that way) and
+  // break dark mode on that platform.
+  assert.ok(
+    !/html\.un-android\s*\{/.test(NATIVE_CSS),
+    'native.css must not contain an `html.un-android { … }` variable block — declare skin tokens in :root / .dark and consume them from skin selectors'
+  );
+  assert.ok(!/html\.un-ios\s*\{/.test(NATIVE_CSS), 'same rule for the iOS skin');
+  assert.ok(!/html\.un-desktop\s*\{/.test(NATIVE_CSS), 'same rule for the desktop skin');
+
+  for (const [selector, body] of cssRules()) {
+    const declared = [...body.matchAll(/(--un-[a-z0-9-]+)\s*:/g)].map((d) => d[1]);
+    const contractVars = declared.filter((v) => !ELEMENT_SCOPED_VARS.has(v));
+    if (!contractVars.length) continue;
+    assert.ok(
+      selector === ':root' || selector === '.dark',
+      `theming variables (${contractVars.join(', ')}) must only be declared on :root / .dark, found on "${selector}"`
+    );
+  }
+});
+
+test('native.css: the Android skin never animates a JS-owned transform', () => {
+  // Fidelity rule: translateY/translateX on sheets, swipe rows, the PTR
+  // puck and reorder overlays is written per-frame by native.js. A CSS
+  // transition on it would fight the spring integrator.
+  for (const [selector, body] of cssRules()) {
+    if (!selector.startsWith('html.un-android')) continue;
+    for (const decl of body.split(';')) {
+      const [prop, ...rest] = decl.split(':');
+      if (!/^\s*(transition|animation)\s*$/.test(prop || '')) continue;
+      assert.ok(
+        !/transform/.test(rest.join(':')),
+        `"${selector}" must not transition/animate transform (JS owns it): ${decl.trim()}`
+      );
+    }
+  }
+});
+
+test('native.css: the Android skin tokens are declared in both modes', () => {
+  const root = cssBlock(':root');
+  const dark = cssBlock('.dark');
+  for (const name of [
+    '--un-navbar-solid', '--un-ripple',
+    '--un-elevation-1', '--un-elevation-2', '--un-elevation-3',
+  ]) {
+    assert.ok(root.includes(name + ':'), `:root is missing ${name}`);
+    assert.ok(dark.includes(name + ':'), `.dark is missing ${name} — dark mode would inherit the light value`);
+  }
+});
+
+test('native.css: Android dialogs use M3 button layout and ordering', () => {
+  const row = cssBlock('html.un-android .un-alert-buttons');
+  assert.match(row, /justify-content:\s*flex-end/, 'M3 dialog buttons are right-aligned');
+  assert.match(row, /border-top:\s*none/, 'the iOS hairline above the button row must be dropped');
+  const cancel = cssBlock('html.un-android .un-alert-btn.un-cancel');
+  assert.match(cancel, /order:\s*-1/,
+    'the dismissive action sits left of the confirming one on Android');
+  const alert = cssBlock('html.un-android .un-alert');
+  assert.match(alert, /--un-enter-scale:\s*0?\.\d+/,
+    'Material dialogs grow into view (scale < 1); a bare transform override would out-specify .un-in');
+  assert.match(alert, /text-align:\s*left/, 'M3 dialog text is start-aligned');
+});
+
+test('native.css: the Android nav bar is opaque and start-aligned', () => {
+  const bar = cssBlock('html.un-android .un-navbar');
+  assert.match(bar, /background:\s*var\(--un-navbar-solid\)/,
+    'the M3 top app bar is opaque — and must stay themeable');
+  assert.match(bar, /backdrop-filter:\s*none/, 'the iOS blur must be switched off');
+  const title = cssBlock('html.un-android .un-navbar-title');
+  assert.match(title, /text-align:\s*left/);
+  const back = cssBlock('html.un-android .un-navbar-back::before');
+  assert.match(back, /content:\s*"←"/, 'Android uses an arrow, not the iOS chevron');
+});
+
+test('native.css: the Android action sheet is one Material bottom sheet', () => {
+  const wrap = cssBlock('html.un-android .un-action-sheet');
+  assert.match(wrap, /background:\s*var\(--un-sheet-bg\)/,
+    'the wrap carries the surface so both cards merge into one sheet');
+  assert.match(wrap, /border-radius:\s*28px 28px 0 0/, 'M3 bottom-sheet shape');
+  const handle = cssBlock('html.un-android .un-action-sheet::before');
+  assert.match(handle, /content:/, 'the drag handle is drawn by ::before');
+  const rows = cssBlock('html.un-android .un-action-btn');
+  assert.match(rows, /text-align:\s*left/, 'M3 list rows are start-aligned');
+});
+
+test('native.css: the Android action sheet extends its surface on overscroll', () => {
+  // Same story as `.un-sheet::after` (#789), now load-bearing for the
+  // action sheet too: the `sheet` preset is underdamped, so the entrance
+  // spring crosses y=0 on EVERY open (see the overshoot test above) — and
+  // once the bar is edge-to-edge that lift exposes the dimmed backdrop.
+  const block = cssBlock('html.un-android .un-action-sheet::after');
+  assert.match(block, /content:/, 'a pseudo-element without content never renders');
+  assert.match(block, /position:\s*absolute/,
+    'must be out of flow — in-flow would change wrap.offsetHeight, which seeds the spring, the backdrop denominator and the dismissal travel');
+  assert.match(block, /top:\s*100%/, 'the filler starts at the sheet bottom edge');
+  assert.match(block, /background:\s*var\(--un-sheet-bg\)/,
+    'the filler must be theme-aware — a literal color breaks dark mode');
+  assert.match(block, /height:\s*\d+(vh|dvh|lvh)/, 'the filler must be viewport-tall');
+  assert.match(block, /pointer-events:\s*none/,
+    'taps in the strip below must keep reaching the backdrop (which cancels)');
+});
+
+test('native.css: Android grouped lists drop the iOS caption idiom', () => {
+  const header = cssBlock('html.un-android .un-group-header');
+  assert.match(header, /text-transform:\s*none/, 'M3 section headers are not uppercase');
+  assert.match(header, /color:\s*var\(--un-accent\)/, 'and are tinted — themeably');
+  // M3 dividers span the container instead of being inset to the text.
+  // (One comma-joined rule covers all four separator selectors, so match
+  // on the parsed rule list rather than a single-selector block.)
+  const divider = cssRules().find(([selector]) =>
+    selector.startsWith('html.un-android') && selector.includes('.un-group-row + .un-group-row::after'));
+  assert.ok(divider, 'native.css lost the Android group-separator rule');
+  assert.match(divider[1], /left:\s*0/, 'M3 dividers span the full container width');
+});
+
+test('native.css: the Android PTR puck is the larger elevated indicator', () => {
+  const puck = cssBlock('html.un-android .un-ptr-puck');
+  assert.match(puck, /width:\s*40px/);
+  assert.match(puck, /height:\s*40px/);
+  assert.match(puck, /box-shadow:\s*var\(--un-elevation-2\)/);
+});
+
+test('native.css: the ripple is Android-only, themeable and click-through', () => {
+  const ripple = cssBlock('html.un-android .un-ripple');
+  assert.match(ripple, /background:\s*var\(--un-ripple\)/);
+  assert.match(ripple, /pointer-events:\s*none/, 'the ripple must never eat the tap');
+  assert.match(ripple, /animation:\s*un-ripple-in/);
+  assert.ok(NATIVE_CSS.includes('@keyframes un-ripple-in'), 'the ripple keyframes went missing');
+  // Reduced motion still gets the press tint, just no expanding circle.
+  assert.match(NATIVE_CSS, /prefers-reduced-motion[\s\S]*?html\.un-android \.un-ripple\s*\{\s*animation:\s*none/);
+});
+
+test('native.css: push/pop uses shared-X on Android and keeps Y on desktop', () => {
+  for (const name of [
+    'un-vt-fade-x-out-left', 'un-vt-fade-x-in-right',
+    'un-vt-fade-x-out-right', 'un-vt-fade-x-in-left',
+  ]) {
+    assert.ok(NATIVE_CSS.includes('@keyframes ' + name), `missing @keyframes ${name}`);
+  }
+  assert.match(
+    cssBlock('html.un-android[data-un-vt="push"]::view-transition-new(root)'),
+    /animation-name:\s*un-vt-fade-x-in-right/
+  );
+  assert.match(
+    cssBlock('html.un-android[data-un-vt="pop"]::view-transition-new(root)'),
+    /animation-name:\s*un-vt-fade-x-in-left/
+  );
+  // Desktop keeps the Y-axis fade it has always had.
+  assert.match(
+    cssBlock('html.un-desktop[data-un-vt="push"]::view-transition-new(root)'),
+    /animation-name:\s*un-vt-fade-up-in/
+  );
+  assert.match(
+    cssBlock('html.un-desktop[data-un-vt="pop"]::view-transition-old(root)'),
+    /animation-name:\s*un-vt-fade-down-out/
+  );
+});
+
+test('native.css: the iOS skin keeps its own idiom (no Android leakage)', () => {
+  // The base (iOS) rules must survive untouched — the skin is additive.
+  assert.match(cssBlock('.un-sheet'), /border-radius:\s*14px 14px 0 0/);
+  assert.match(cssBlock('.un-navbar-back::before'), /content:\s*"‹"/);
+  assert.match(cssBlock('.un-navbar-title'), /text-align:\s*center/);
+  assert.match(cssBlock('.un-group-header'), /text-transform:\s*uppercase/);
+  assert.match(cssBlock('.un-alert'), /--un-enter-scale:\s*1\.12/);
+  assert.match(cssBlock('html.un-ios[data-un-vt="push"]::view-transition-new(root)'),
+    /animation-name:\s*un-vt-slide-in-right/);
 });

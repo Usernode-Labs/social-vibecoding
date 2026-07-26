@@ -160,6 +160,23 @@
       "expectText": "hit 44px×44px"
     },
     {
+      "name": "Native kit Android skin renders (#803)",
+      "path": "/usernode-native/v1/demo.html?un-platform=android",
+      "expectSelector": "html.un-android body[data-un-skin=\"android\"] .un-switch",
+      "expectText": "Android (Material 3) skin active"
+    },
+    {
+      "name": "Native kit Android grouped list + swipe tray render (#803)",
+      "path": "/usernode-native/v1/demo.html?un-platform=android",
+      "expectSelector": "html.un-android #grouped-swipe .un-swipe-tray"
+    },
+    {
+      "name": "Native kit iOS skin still renders under the platform override (#803)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios",
+      "expectSelector": "html.un-ios body[data-un-skin=\"ios\"] .un-navbar",
+      "expectText": "iOS (Cupertino) skin active"
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"

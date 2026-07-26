@@ -19,6 +19,7 @@
   <div id="screen-a">
     <header class="un-safe-top-extend sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800">
       <h1 class="text-base font-semibold flex-1">usernode-native v1</h1>
+      <nav id="skin-links" class="flex items-center gap-1 text-xs" aria-label="Force a platform skin"></nav>
       <span id="platform-pill" class="text-xs px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300"></span>
       <button id="theme-toggle" class="un-touch-target text-sm text-zinc-500" aria-label="Toggle dark mode">◐</button>
     </header>
@@ -26,9 +27,20 @@
     <main class="max-w-md mx-auto px-4 pb-16 space-y-8">
 
       <p class="text-xs text-zinc-500 pt-4">
-        Kit demo &amp; tuning page. Add <code>?un-platform=ios|android</code> to force a skin,
-        <code>?un-tune=1</code> for the spring tuner. Best judged on a real phone.
+        Kit demo &amp; tuning page. Add <code>?un-platform=ios|android|desktop</code> to force a skin
+        (or tap the links in the header), <code>?un-tune=1</code> for the spring tuner.
+        Best judged on a real phone.
       </p>
+
+      <!-- Platform skin panel — names the active skin and what it changes,
+           so a reviewer flipping ?un-platform= knows what to look at. -->
+      <section id="skin-panel">
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Platform skin</h2>
+        <div class="un-group shadow-sm p-4">
+          <p id="skin-panel-name" class="text-sm font-medium"></p>
+          <p id="skin-panel-detail" class="text-xs text-zinc-500 mt-2"></p>
+        </div>
+      </section>
 
       <!-- Buttons -->
       <section>
@@ -134,7 +146,7 @@
           <button id="alert-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Alert</button>
           <button id="modal-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Modal</button>
         </div>
-        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. On a phone, tap the sheet's text field: the sheet (and the modal/alert) rides above the on-screen keyboard. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses.</p>
+        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. On a phone, tap the sheet's text field: the sheet (and the modal/alert) rides above the on-screen keyboard. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses. On the Android skin (<code>?un-platform=android</code>) the action sheet becomes ONE edge-to-edge Material bottom sheet with a drag handle and a single divider before Cancel, and the alert/modal become M3 dialogs — 28px corners, start-aligned text, compact right-aligned text buttons with Cancel on the left.</p>
       </section>
 
       <!-- Popover / dropdown menu -->
@@ -145,7 +157,7 @@
           <button id="adaptive-menu-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700" aria-haspopup="menu">Adaptive menu</button>
           <button id="popover-edge-btn" class="ml-auto px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700" aria-haspopup="menu">Edge clamp/flip</button>
         </div>
-        <p id="popover-result" class="text-xs text-zinc-500 mt-2">The desktop menu idiom: opens attached to its button, flipped/clamped to stay in the viewport, dismissed by outside-click / Escape / scroll — click the button again to toggle it closed. Arrow keys walk the entries. "Edge clamp/flip" sits at the right edge (and flips above when there's no room below — scroll it near the bottom). "Adaptive menu" is ONE <code>unNative.menu()</code> call: a bottom action sheet on touch (<code>?un-platform=ios</code>), this popover on desktop.</p>
+        <p id="popover-result" class="text-xs text-zinc-500 mt-2">The desktop menu idiom: opens attached to its button, flipped/clamped to stay in the viewport, dismissed by outside-click / Escape / scroll — click the button again to toggle it closed. Arrow keys walk the entries. "Edge clamp/flip" sits at the right edge (and flips above when there's no room below — scroll it near the bottom). "Adaptive menu" is ONE <code>unNative.menu()</code> call: a bottom action sheet on touch (<code>?un-platform=ios</code> for the iOS stack, <code>?un-platform=android</code> for the Material bottom sheet), this popover on desktop. On the Android skin the popover itself takes the M3 menu shape: 4px corners, no outline, elevation, 48px rows, ripple on press.</p>
       </section>
 
       <!-- Toasts -->
@@ -156,7 +168,7 @@
           <button id="toast-action-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Toast with action</button>
           <button id="toast-undo-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Undo flow (priority)</button>
         </div>
-        <p id="toast-result" class="text-xs text-zinc-500 mt-2">iOS/desktop: bottom capsule. Android: snackbar. Tap "Toast" repeatedly — a new toast replaces the old one (last-writer-wins). A <em>priority</em> toast holds the slot: fire "Undo flow", then tap "Toast" while the Undo is up — it waits its turn and appears after the undo window resolves instead of eating the Undo button.</p>
+        <p id="toast-result" class="text-xs text-zinc-500 mt-2">iOS/desktop: bottom capsule HUD. Android: an opaque Material snackbar — near-full-width, 4px corners, elevation, pill-shaped action button. Tap "Toast" repeatedly — a new toast replaces the old one (last-writer-wins). A <em>priority</em> toast holds the slot: fire "Undo flow", then tap "Toast" while the Undo is up — it waits its turn and appears after the undo window resolves instead of eating the Undo button.</p>
       </section>
 
       <!-- Pull to refresh -->
@@ -172,7 +184,7 @@
       <section>
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Page transitions &amp; nav bar</h2>
         <button id="push-btn" class="px-5 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Push screen B →</button>
-        <p class="text-xs text-zinc-500 mt-2">iOS: slide + parallax. Android: shared-axis fade. Old browsers: instant cut. Screen B shows the blurred nav bar with a collapsing large title.</p>
+        <p class="text-xs text-zinc-500 mt-2">iOS: slide + parallax. Android: Material shared-axis X fade (forward travels leftward, Back rightward). Desktop: the quicker Y-axis fade. Old browsers: instant cut. Screen B shows the nav bar with a collapsing large title — blurred and centered on iOS, opaque and start-aligned with a ← arrow on Android.</p>
       </section>
 
       <!-- Zoom from element (iOS homescreen expand) -->
@@ -293,6 +305,56 @@
       document.getElementById('theme-toggle').addEventListener('click', function () {
         document.documentElement.classList.toggle('dark');
       });
+
+      // ── Platform skin: switcher links + the panel ──────────────────
+      // The skin is whatever native.js resolved (?un-platform= override,
+      // else UA detection), mirrored onto <body> so the page — and the
+      // declared dapp.json checks — can assert which skin is live.
+      var SKINS = {
+        ios: {
+          label: 'iOS (Cupertino) skin active',
+          detail: 'Centered nav-bar titles with a ‹ Back chevron, 14px sheet / dialog corners, ' +
+            'iOS action sheet (floating cards + a separate Cancel card), hairline-split ' +
+            'full-width dialog buttons, uppercase group headers, capsule toast HUD, ' +
+            'press = the whole control scales down, push/pop = slide + parallax.',
+        },
+        android: {
+          label: 'Android (Material 3) skin active',
+          detail: 'Opaque start-aligned top app bar with a ← arrow, 28px sheet / dialog ' +
+            'corners, one Material bottom sheet for action sheets, right-aligned text ' +
+            'buttons in dialogs (dismissive on the left), normal-case tinted group headers ' +
+            'with full-width dividers, Material snackbar, press = state tint + ripple, ' +
+            'push/pop = shared-X-axis fade. Gesture physics are identical to iOS.',
+        },
+        desktop: {
+          label: 'Desktop skin active',
+          detail: 'The Cupertino paint with pointer affordances: anchored popovers instead of ' +
+            'action sheets, no pull-to-refresh, and a quick Y-axis fade for push/pop.',
+        },
+      };
+      var skin = SKINS[unNative.platform] ? unNative.platform : 'desktop';
+      document.body.dataset.unSkin = unNative.platform;
+      document.getElementById('skin-panel-name').textContent = SKINS[skin].label;
+      document.getElementById('skin-panel-detail').textContent = SKINS[skin].detail;
+
+      (function () {
+        var nav = document.getElementById('skin-links');
+        ['ios', 'android', 'desktop'].forEach(function (name) {
+          // Preserve every other param (?un-tune=1 in particular).
+          var params = new URLSearchParams(window.location.search);
+          params.set('un-platform', name);
+          var a = document.createElement('a');
+          a.href = window.location.pathname + '?' + params.toString();
+          a.textContent = name;
+          a.dataset.skinLink = name;
+          a.className = 'un-touch-target px-2 py-0.5 rounded-full ' + (
+            unNative.platform === name
+              ? 'bg-violet-600 text-white'
+              : 'text-zinc-500 border border-zinc-300 dark:border-zinc-700'
+          );
+          nav.appendChild(a);
+        });
+      })();
 
       // ── Hit areas — prove .un-touch-target keeps `absolute` ────────
       // Reads back the clear button's *effective* position plus the size
