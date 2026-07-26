@@ -943,9 +943,20 @@ function sessionRoutes(config) {
       // Copy the conversation so the Mayor (and the new owner) see the full
       // auto-session context. Costs are zeroed — the cloner didn't pay for
       // the original run and the per-message figures would double-count.
+      //
+      // #647: every copied row is stamped with `inheritedFrom` (the auto
+      // session's id). The clone loses created_at (not copied — the rows get
+      // clone-time timestamps) and the new ids are contiguous with the
+      // human's own later turns, so this marker is the only durable signal
+      // separating "history the auto session produced" from "work this
+      // session did for me". The dev-chat renderer keys the collapsed-by-
+      // default state of the Claude Code disclosures off it. The follow-up
+      // row appended below deliberately does NOT carry it — that message
+      // belongs to the human session.
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, model, metadata)
-         SELECT $1, role, content, model, metadata
+         SELECT $1, role, content, model,
+                COALESCE(metadata, '{}'::jsonb) || jsonb_build_object('inheritedFrom', $2::int)
          FROM chat_session_messages WHERE session_id = $2 ORDER BY id ASC`,
         [session.id, src.id]
       );

@@ -222,3 +222,37 @@ test('question clone carries chips but no pills', async () => {
     server.close();
   }
 });
+
+// #647: every row the clone copies is stamped with metadata.inheritedFrom
+// (the auto session's id) so the dev-chat renderer can collapse the
+// inherited Claude Code disclosures by default. The appended follow-up row
+// must NOT carry it — that message belongs to the human session.
+test('the conversation copy stamps inheritedFrom on every copied row', async () => {
+  captured = [];
+  handler = makeHandler({ outcome: 'code', suggestionsRow: null });
+  const server = await startServer();
+  try {
+    const { res } = await clone(server);
+    assert.strictEqual(res.status, 201);
+
+    const copy = captured.find((c) =>
+      /INSERT INTO chat_session_messages[\s\S]*SELECT/.test(c.sql));
+    assert.ok(copy, 'the conversation copy was issued');
+    assert.match(copy.sql, /jsonb_build_object\('inheritedFrom', \$2::int\)/,
+      'the source session id is stamped onto each copied row');
+    // Pre-existing metadata must survive the stamp (the copied rows carry
+    // progressLog / ccOutput / suggestions the renderer still needs), and a
+    // NULL metadata column must not swallow the whole object.
+    assert.match(copy.sql, /COALESCE\(metadata, '\{\}'::jsonb\) \|\|/,
+      'existing metadata is preserved and NULL is coalesced');
+    // $2 is the source session id in this query (session_id = $2).
+    assert.strictEqual(copy.params[1], 1, 'stamped with the source session id');
+
+    const ins = followUpInsert();
+    assert.ok(ins, 'follow-up INSERT was issued');
+    assert.strictEqual(JSON.parse(ins.params[2]).inheritedFrom, undefined,
+      'the appended follow-up is not marked as inherited');
+  } finally {
+    server.close();
+  }
+});

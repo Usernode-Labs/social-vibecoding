@@ -1018,6 +1018,9 @@ const DevChat = {
         }
         return m;
       });
+      // #647: flag the rows this session inherited from an auto session so
+      // their Claude Code disclosures render collapsed by default.
+      DevChat._markInheritedMessages(DevChat.messages, session);
 
       // #252: sync state is keyed per session — drop a stale indicator
       // (in-flight or terminal feedback) when switching to a different
@@ -2888,7 +2891,7 @@ const DevChat = {
           const ts = msg.created_at ? new Date(msg.created_at).getTime() : '';
           const id = msg.id || msg._slug || '';
           const icon = '<span class="dc-status-icon dc-status-check" aria-hidden="true">&#10003;</span>';
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="dc-status-line dc-cc-attached-summary">${icon} Claude Code output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="dc-status-line dc-cc-attached-summary">${icon} Claude Code output<span class="dc-cc-attached-chevron" aria-hidden="true"></span><span style="font-size:9px;opacity:0.4;margin-left:auto">${id} ${ts}</span></summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
         // #361: the "Changes ready" card renders whenever the turn produced
         // a reviewable commit — i.e. either a preview built (msg.stagingUrl)
@@ -3040,7 +3043,11 @@ const DevChat = {
           // (data-countdown-to) the shared ticker decrements; the phrase stays
           // plain escaped text. Empty when there's no numeric guess.
           const estimateSpan = `<span class="dc-cc-estimate" title="Experimental: a small AI model's rough guess from the progress log. May be wrong.">${msg._estimate ? `· ✦ AI guess: ${escapeHtml(msg._estimate)}${DevChat._countdownSpanHtml(msg._countdownTo)}` : ''}</span>`;
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${estimateSpan}${elapsedHtml}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+          // #647: the open default follows the STATUS row (the one whose id
+          // supplies the ccrun persist-id), not the attached progress row.
+          // After the clone marker both carry the flag; keying off `msg`
+          // keeps the default aligned with the persisted state's key.
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${estimateSpan}${elapsedHtml}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
 
         // Post-turn ccOutput (the markdown summary that the worker
@@ -3053,7 +3060,7 @@ const DevChat = {
         // and indentation than .dc-cc-attached-log.
         if (msg.ccOutput) {
           const outerPid = DevChat._detailsId(msg, 'ccout');
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" data-default-open="1" open><summary class="${sumClass}">${iconHtml} ${msg.content}${elapsedHtml}${chevron}${tsSpan}</summary><div class="dc-cc-attached-md">${DevChat.renderMarkdown(msg.ccOutput)}</div></details>`;
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${elapsedHtml}${chevron}${tsSpan}</summary><div class="dc-cc-attached-md">${DevChat.renderMarkdown(msg.ccOutput)}</div></details>`;
         }
 
         // #664: mid-turn payer switch onto the user's own API key. A
@@ -3350,6 +3357,69 @@ const DevChat = {
     input.style.height = Math.min(input.scrollHeight, 120) + 'px';
     if (DevChat.currentSession) DevChat._setDraft(DevChat.currentSession.id, text);
     DevChat._syncSaveDraftBtn();
+  },
+
+  // ── Inherited (cloned auto-session) history (#647) ────────
+  //
+  // A session started from an issue's generated proposal
+  // (POST /api/sessions/:id/clone-headless) copies the auto session's whole
+  // conversation into itself. Those inherited Claude Code blocks used to
+  // open expanded — in practice two 60-215 line logs plus a ~2kB summary —
+  // burying the spec card, the "Changes ready" card and the follow-up
+  // message under a wall of log output on first entry. They now default to
+  // collapsed; anything the session produces for the human afterwards
+  // (live or finished) keeps the expanded default.
+  //
+  // The server marks each copied row with metadata.inheritedFrom (the
+  // source session id) — the only durable signal, since the copy doesn't
+  // carry created_at over and the ids are contiguous with the human's own
+  // later turns.
+
+  // The deterministic opening of the follow-up message the clone appends
+  // (buildHeadlessFollowUpMessage in src/routes/sessions.js). Used only by
+  // the legacy fallback below.
+  _CLONE_FOLLOWUP_PREFIX: 'This session was cloned from an auto session',
+
+  // Flag inherited rows in place. Marker-driven for sessions cloned after
+  // #647 shipped; for older clones (no marker on any row) fall back to the
+  // follow-up message as the boundary — everything BEFORE it was copied,
+  // the follow-up itself and everything after belong to the human session.
+  // When neither signal is present nothing is flagged and the session keeps
+  // today's all-expanded behaviour.
+  _markInheritedMessages(messages, session) {
+    if (!Array.isArray(messages) || !messages.length) return messages;
+    let sawMarker = false;
+    for (const m of messages) {
+      if (m && m.metadata && m.metadata.inheritedFrom) {
+        m.inherited = true;
+        sawMarker = true;
+      }
+    }
+    if (sawMarker) return messages;
+    if (!session || !session.cloned_from_session_id) return messages;
+    const boundary = messages.findIndex((m) => m
+      && m.role === 'assistant'
+      && String(m.content || '').startsWith(DevChat._CLONE_FOLLOWUP_PREFIX));
+    if (boundary < 0) return messages;
+    for (let i = 0; i < boundary; i++) messages[i].inherited = true;
+    return messages;
+  },
+
+  // Should a Claude Code disclosure (dc-cc-attached) start expanded?
+  // Everything defaults open — the live-run log is meant to be watched —
+  // except rows inherited from a cloned auto session.
+  _ccDefaultOpen(msg) {
+    return !(msg && msg.inherited);
+  },
+
+  // Attribute pair for a dc-cc-attached <details>. The bare `open` is
+  // emitted only when the block should start expanded: relying on
+  // _applyDetailsPersistence to close it after paint would flash the full
+  // log for a frame and fire a spurious toggle.
+  _ccOpenAttrs(msg) {
+    return DevChat._ccDefaultOpen(msg)
+      ? 'data-default-open="1" open'
+      : 'data-default-open="0"';
   },
 
   // ── <details> open/closed persistence ─────────────────────
