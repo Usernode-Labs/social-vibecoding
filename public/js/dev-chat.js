@@ -49,11 +49,10 @@ const DevChat = {
   // has to put the original back afterwards.
   COMPOSER_PLACEHOLDER:
     'Describe a change in plain English — e.g. "add a dark mode toggle". No coding needed.',
-  // #801: the save icon is hidden while a turn runs, so the busy copy no
-  // longer points at it — the box itself is the parking spot (its text is
-  // persisted per session on every keystroke, see _setupTextareaResize).
+  // #810: the save icon exists ONLY while a turn runs (that's the state
+  // where sending is impossible), so the busy copy points at it again.
   COMPOSER_PLACEHOLDER_BUSY:
-    'Claude is working — jot your next note here; it stays in the box until the turn ends.',
+    'Claude is working — type your next note and tap 💾 to save it for later.',
   SAVE_DRAFT_TITLE: 'Save this text as a draft — it stays here until you send it',
   // Floppy-disk glyph, same inline-SVG style as the attach button.
   _SAVE_ICON_SVG:
@@ -4483,7 +4482,11 @@ const DevChat = {
                 autocomplete="off"
                 class="dc-textarea flex-1 rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent resize-none"
               ></textarea>
-              <button type="button" id="dc-save-draft-btn" class="dc-save-draft-btn shrink-0" disabled
+              <!-- #810: starts hidden — the icon only exists while a turn
+                   runs, which is the rarer state, so painting it hidden and
+                   letting _syncSaveDraftBtn reveal it avoids a flash of the
+                   icon on every fresh render of a stopped chat. -->
+              <button type="button" id="dc-save-draft-btn" class="dc-save-draft-btn shrink-0" hidden disabled
                 title="${escapeHtml(DevChat.SAVE_DRAFT_TITLE)}" aria-label="Save as draft">
                 ${DevChat._SAVE_ICON_SVG}
               </button>
@@ -4905,7 +4908,7 @@ const DevChat = {
     });
   },
 
-  // ── Saved draft messages (#798, #801) ──────────────────────
+  // ── Saved draft messages (#798, #810) ──────────────────────
   //
   // The problem: a turn can run for many minutes, and everything the user
   // thinks of meanwhile ("also make the header sticky") either gets lost
@@ -4913,11 +4916,12 @@ const DevChat = {
   // stays typable while the agent works (see _setStreamingUI), and the
   // save icon parks the text as a DRAFT.
   //
-  // #801 scoped the ICON to the stopped chat: it is hidden for the
-  // duration of a turn (and saving is refused then), so mid-turn the box
-  // holds ONE note — auto-persisted per session, never lost — and the
-  // drafts pile up between turns instead. Existing drafts stay listed
-  // throughout; only saving a NEW one waits for the turn to finish.
+  // #810 scoped the ICON to the RUNNING chat — the inverse of the #801
+  // rule it replaces: it shows for exactly as long as the send button
+  // shows Stop, and is hidden (and saving refused) while the chat is
+  // stopped, because then the user can simply SEND what they typed and a
+  // second "keep this for later" control is just noise. Existing drafts
+  // stay listed in both states; only the save affordance moves.
   //
   // Drafts render as a list ABOVE the composer, newest LAST (reading
   // order = the order you thought of them = the order you'll likely send
@@ -4952,10 +4956,11 @@ const DevChat = {
     } catch { return false; }
   },
 
-  // Screenshot-state deep link (`?shot=busy-drafts`, #801): paints the
-  // composer as it looks mid-turn — save icon hidden, drafts listed with
-  // their Send disabled — so the "hidden while working" half of the
-  // feature has a URL the captures and the dapp.json check can reach.
+  // Screenshot-state deep link (`?shot=busy-drafts`, #801/#810): paints the
+  // composer as it looks mid-turn — Stop button, save icon SHOWN beside it,
+  // drafts listed with their Send disabled — so the "save while working"
+  // half of the feature has a URL the captures and the dapp.json check can
+  // reach (the stopped default route covers the hidden half).
   // Deliberately NEVER touches DevChat.isStreaming: the real guards
   // (sendMessage / _submitFromInput / _sendSavedDraft / _stopCurrentTurn)
   // keep reading the honest flag, and nothing here starts or stops a turn.
@@ -5011,15 +5016,19 @@ const DevChat = {
     if (window.PlatformUI && typeof PlatformUI.toast === 'function') PlatformUI.toast(msg);
   },
 
-  // Show the save icon only when the chat is STOPPED (#801), and — when
-  // shown — enable it only if there is non-whitespace text to save.
+  // Show the save icon only while a TURN IS RUNNING (#810 — the inverse of
+  // the #801 rule it replaces), and — when shown — enable it only if there
+  // is non-whitespace text to save.
   //
-  // "Stopped" is `!isStreaming`: no chat turn in flight for the open
-  // session. That's the same flag that decides Send-vs-Stop, refuses
-  // _submitFromInput and disables the draft rows' Send, so the icon
-  // vanishes for exactly as long as sending is impossible. Every
-  // streaming transition funnels through _setStreamingUI, which already
-  // calls this — no extra listeners needed.
+  // The rule follows the send button: while the chat is stopped the user can
+  // just SEND what they typed, so a "save it for later" control is noise;
+  // the moment the button flips to Stop, sending is impossible and parking
+  // the text as a draft is the only thing to do with it. So the icon is
+  // present for exactly as long as the stop sign is — `isStreaming` is the
+  // same flag that decides Send-vs-Stop, refuses `_submitFromInput` and
+  // disables the draft rows' Send. Every streaming transition funnels
+  // through _setStreamingUI, which already calls this — no extra listeners
+  // needed.
   //
   // Hidden via the `hidden` PROPERTY (paired with `.dc-save-draft-btn
   // [hidden]` in app.css, which the shared inline-flex rule would
@@ -5031,7 +5040,7 @@ const DevChat = {
     const btn = document.getElementById('dc-save-draft-btn');
     if (!btn) return;
     const busy = DevChat._chatBusyForPaint();
-    if (busy) {
+    if (!busy) {
       btn.hidden = true;
       btn.disabled = true;
       return;
@@ -5113,16 +5122,17 @@ const DevChat = {
   // NOT captured — a draft is plain text; any pending files stay parked in
   // the composer strip for the real send.
   //
-  // #801: refused while a turn streams, so the rule holds in BEHAVIOUR and
-  // not only in paint — a click landing exactly as a turn starts, or any
-  // programmatic call, can't park a draft mid-turn. Silent no-op (the icon
-  // is hidden, so there's no affordance to explain away) and the text is
-  // left in the box, where it's already persisted per session.
+  // #810: refused while the chat is STOPPED, so the rule holds in BEHAVIOUR
+  // and not only in paint — a click landing exactly as a turn ends, or any
+  // programmatic call, can't park a draft the user could simply send. Silent
+  // no-op (the icon is hidden then, so there's no affordance to explain
+  // away) and the text is left in the box, where it's already persisted per
+  // session. Inverse of the #801 guard it replaces.
   _saveComposerDraft() {
     const session = DevChat.currentSession;
     const input = document.getElementById('dc-input');
     if (!session || !input) return;
-    if (DevChat.isStreaming) return;
+    if (!DevChat.isStreaming) return;
     const text = input.value.trim();
     if (!text) return;
     const drafts = DevChat._getSavedDrafts(session.id);
