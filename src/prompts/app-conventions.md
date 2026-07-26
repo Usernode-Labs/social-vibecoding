@@ -1416,7 +1416,11 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   highlight and gives every `button` / `[role="button"]` /
   `.un-pressable` an instant pressed state (scale + dim, engages with
   zero latency, springs back on release). `.un-touch-target` expands a
-  small icon button's hit area to ≥44px without changing layout.
+  small icon button's hit area to ≥44px without changing layout — it
+  does **not** override the element's own positioning, so it is safe
+  directly on an overlay control (a clear-search "✕" inside a field, a
+  close button pinned to a card corner) that carries its own
+  `absolute` / `fixed` / `sticky`; no wrapper element needed.
 - **Switches.** Add class `un-switch` to an existing
   `<input type="checkbox">` — nothing else. iOS pill on iPhones,
   Material 3 track/thumb on Android, pure CSS.
