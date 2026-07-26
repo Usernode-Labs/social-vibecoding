@@ -44,8 +44,9 @@ const TESTING_MD_MAX = 4000;
 const TESTING_PATH_MAX = 512;
 
 // Max before/after capture routes per proposal. RUN_TIMEOUT_MS (240s) in
-// services/visuals.js budgets ~35-40s per path (before+after, settle +
-// scroll pass + GIF transcode), so 3 paths (~120s worst case) stays well
+// services/visuals.js budgets ~35-40s per path for the desktop pair
+// (before+after, settle + scroll pass + GIF transcode) plus ~10-15s for
+// the automatic phone-frame PNG pair, so 3 paths (~160s worst case) stays
 // inside it. Extras are dropped and logged — never silently truncated.
 const CAPTURE_MAX_PATHS = 3;
 

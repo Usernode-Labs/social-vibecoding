@@ -2902,10 +2902,13 @@ async function seedStagingVisuals(pool) {
   const SELF_APP_DEEP_PATH = '/app/social-vibecoding/dev/proposals/900301';
   // Group 3 (#768) re-captures '/board' with captured_viewport 'mobile' so
   // the "(mobile)" group label is visible/testable in staging.
+  // Group 1's before row carries before_fell_back so the '"Before" shows
+  // the home page' caption is visible/testable; group 4 is after-only so
+  // the 'New page — no production version to compare' caption renders.
   const rows = [
     { id: 'a'.repeat(32), kind: 'before', media: 'png',  idx: 0, path: '/' },
     { id: 'b'.repeat(32), kind: 'after',  media: 'png',  idx: 0, path: '/' },
-    { id: 'c'.repeat(32), kind: 'before', media: 'png',  idx: 1, path: '/board' },
+    { id: 'c'.repeat(32), kind: 'before', media: 'png',  idx: 1, path: '/board', fellBack: true },
     { id: 'd'.repeat(32), kind: 'after',  media: 'png',  idx: 1, path: '/board' },
     { id: 'e'.repeat(32), kind: 'before', media: 'png',  idx: 2, path: SELF_APP_DEEP_PATH },
     { id: 'f'.repeat(32), kind: 'before', media: 'webm', idx: 2, path: SELF_APP_DEEP_PATH },
@@ -2913,6 +2916,7 @@ async function seedStagingVisuals(pool) {
     { id: '1'.repeat(32), kind: 'after',  media: 'webm', idx: 2, path: SELF_APP_DEEP_PATH },
     { id: '2'.repeat(32), kind: 'before', media: 'png',  idx: 3, path: '/board', viewport: 'mobile' },
     { id: '3'.repeat(32), kind: 'after',  media: 'png',  idx: 3, path: '/board', viewport: 'mobile' },
+    { id: '4'.repeat(32), kind: 'after',  media: 'png',  idx: 4, path: '/settings' },
   ];
 
   try {
@@ -2929,11 +2933,11 @@ async function seedStagingVisuals(pool) {
       const data = r.media === 'webm' ? WEBM_PLACEHOLDER : PNG_1X1;
       await pool.query(
         `INSERT INTO session_visuals
-           (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport)
-         SELECT $1, $2, NULL, $3, $4, $5, $6, $7, $8, $9
+           (id, session_id, commit_hash, kind, media, content_type, data, captured_path, capture_index, captured_viewport, before_fell_back)
+         SELECT $1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10
           WHERE EXISTS (SELECT 1 FROM chat_sessions WHERE id = $2)
          ON CONFLICT (id) DO NOTHING`,
-        [r.id, DEMO_SESSION_ID, r.kind, r.media, CT[r.media], data, r.path, r.idx, r.viewport || null]
+        [r.id, DEMO_SESSION_ID, r.kind, r.media, CT[r.media], data, r.path, r.idx, r.viewport || null, !!r.fellBack]
       );
     }
     log.info('db', 'Staging multi-path visuals fixtures seeded', { sessionId: DEMO_SESSION_ID });

@@ -6885,7 +6885,20 @@ const AppView = {
       const label = (single && (path === '/' || !path) && !mobile)
         ? ''
         : `<div class="text-[0.7rem] font-medium text-zinc-500 dark:text-zinc-400" style="margin:6px 0 2px">Before / after — <code>${esc(path)}</code>${mobile ? ' (mobile)' : ''}</div>`;
-      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>`);
+      // Honest-pair captions: explain a missing "before" (route is new —
+      // there's no production version to compare) and a fell-back "before"
+      // (the deep route 404'd on production, so the tile shows the home
+      // page) so a mismatched-looking comparison isn't read as a bug.
+      let note = '';
+      if (a && !b) {
+        note = 'New page — no production version to compare';
+      } else if (b && g.beforeFellBack) {
+        note = '"Before" shows the home page — this page didn’t exist in production yet';
+      }
+      const noteHtml = note
+        ? `<div class="text-[0.65rem] text-zinc-500 dark:text-zinc-400" style="margin:2px 0 0">${esc(note)}</div>`
+        : '';
+      rows.push(`${label}<div class="usn-visual-tiles" style="display:flex;gap:8px;align-items:flex-start;margin:4px 0 2px">${before}${after}</div>${noteHtml}`);
     }
     return rows.join('');
   },

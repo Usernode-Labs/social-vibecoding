@@ -134,3 +134,36 @@ test('a lone mobile ROOT group is still labelled (desktop root stays unlabelled)
   assert.doesNotMatch(desktopHtml, /Before \/ after —/, 'single desktop root group renders unlabelled');
   assert.doesNotMatch(desktopHtml, /data-viewport=/);
 });
+
+// ── Honest-pair captions (screenshot-reliability spec) ─────────────────
+
+test('an after-only group renders the "new page" caption', () => {
+  const AppView = makeAppView();
+  const html = AppView.visualsTilesHtml({
+    captures: [{ index: 0, path: '/settings', after: { png: ID('b') } }],
+  });
+  assert.match(html, /New page — no production version to compare/);
+});
+
+test('a fell-back before renders the home-page caption', () => {
+  const AppView = makeAppView();
+  const html = AppView.visualsTilesHtml({
+    captures: [{
+      index: 0, path: '/board', beforeFellBack: true,
+      before: { png: ID('a') }, after: { png: ID('b') },
+    }],
+  });
+  assert.match(html, /shows the home page — this page didn’t exist in production yet/);
+});
+
+test('a complete pair renders no caption', () => {
+  const AppView = makeAppView();
+  const html = AppView.visualsTilesHtml({
+    captures: [{
+      index: 0, path: '/board',
+      before: { png: ID('a') }, after: { png: ID('b') },
+    }],
+  });
+  assert.doesNotMatch(html, /New page —/);
+  assert.doesNotMatch(html, /shows the home page/);
+});

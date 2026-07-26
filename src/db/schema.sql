@@ -337,6 +337,30 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_state TEXT;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS test_results JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_commit_sha VARCHAR(40);
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS checks_checked_at TIMESTAMPTZ;
+-- Capture-outcome snapshot (screenshot-reliability spec). Before these,
+-- "this proposal has no screenshots" was unattributable: an intentional
+-- console-only run (no frontend files in the commit range) and a genuinely
+-- failed capture looked identical, and per-artifact failure reasons (a
+-- dropped over-cap webm, a screencast/ffmpeg error) lived only in
+-- short-lived container logs. Written by services/visuals.js
+-- (captureForSession → storeCaptureOutcome), latest run only.
+--   capture_state  : 'captured'     — media run, everything usable stored
+--                    'partial'      — media run stored, but some artifact
+--                                     failed or was dropped over-cap
+--                    'console_only' — non-UI-affecting commit range; media
+--                                     intentionally skipped (NOT a failure)
+--                    'failed'       — media run produced no usable "after",
+--                                     or the capture run itself broke
+--                    (NULL until the first outcome-aware run)
+--   capture_detail : jsonb diagnostics — { media, pathDefaulted (the agent
+--                    emitted no testing path so capture defaulted to '/'),
+--                    prodRunning, paths, failures:[{kind,media,index,
+--                    reason}], droppedOverCap:[{kind,media,index,bytes}],
+--                    beforeFellBack:[capture indexes], reason? }
+--   captured_at    : when the outcome was recorded.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS capture_state VARCHAR(16);
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS capture_detail JSONB;
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS captured_at TIMESTAMPTZ;
 -- Deadlock-diagnosis columns. Before these, a staging build that crashed on
 -- boot threw before any verdict was written, leaving check_state NULL — the
 -- merge gate fail-closes on NULL with no signal, and the stuck-checks sweeper
@@ -1434,7 +1458,9 @@ CREATE INDEX IF NOT EXISTS idx_app_admins_user ON app_admins(user_id);
 -- after (staging), media = png (still) / webm (in-app <video> clip) /
 -- gif (PR-body inline embed). Retention is latest-set-per-session only —
 -- src/services/visuals.js deletes the session's prior rows before
--- inserting a fresh capture, so growth is bounded at <= 6 rows/session.
+-- inserting a fresh capture, so growth is bounded per session (<= 8
+-- artifacts per captured path — a full-media desktop group plus a
+-- PNG-only mobile group — times CAPTURE_MAX_PATHS routes).
 -- The id is a random 32-hex token generated in Node: GET /visuals/:id is
 -- a public (pre-auth) route so GitHub's camo proxy can fetch embeds
 -- anonymously, and unguessable ids are the only privacy layer.
@@ -1464,6 +1490,16 @@ CREATE TABLE IF NOT EXISTS session_visuals (
 );
 ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS capture_index SMALLINT NOT NULL DEFAULT 0;
 ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS captured_viewport VARCHAR(16);
+-- Capture-outcome columns (screenshot-reliability spec):
+--   shot_status      : HTTP status the shot's navigation answered with
+--                      (NULL on pre-outcome rows).
+--   before_fell_back : TRUE when this "before" artifact was actually shot
+--                      at '/' because the deep testing path 404'd / failed
+--                      on production (the page didn't exist there yet).
+--                      Renderers caption the pair so reviewers aren't
+--                      confused by a mismatched comparison.
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS shot_status SMALLINT;
+ALTER TABLE session_visuals ADD COLUMN IF NOT EXISTS before_fell_back BOOLEAN NOT NULL DEFAULT FALSE;
 CREATE INDEX IF NOT EXISTS idx_session_visuals_session ON session_visuals(session_id);
 
 -- Private like its parent chat_sessions (public-FK-to-private is the

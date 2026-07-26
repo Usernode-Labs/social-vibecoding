@@ -1,0 +1,202 @@
+// Tests for the capture-outcome reliability slice (screenshot-reliability
+// spec): persisted capture outcomes (capture_state / capture_detail on
+// chat_sessions, shot_status / before_fell_back on session_visuals), the
+// automatic desktop+mobile frame expansion (expandCapturePaths + the
+// container's still-only targets), the over-cap webm → GIF-still-transcodes
+// container behaviour surface (resolveTargets `still`), and the
+// before-fell-back captions in the PR block and grouped shapes.
+//
+// Run with: node --test tests/capture-outcomes.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const visuals = require('../src/services/visuals');
+const { resolveTargets } = require('../capture/capture');
+const { buildVisualsBlock } = require('../src/services/pr-metadata');
+
+const ID_A = 'a'.repeat(32);
+const ID_B = 'b'.repeat(32);
+const DOMAIN = 'example.test';
+
+// ── parseShots: fellback attribute ─────────────────────────────────────
+
+test('parseShots reads fellback=1 into fellBack, defaulting to false', () => {
+  const b64 = Buffer.from('PNG1').toString('base64');
+  const withFlag = `__USERNODE_SHOT__ kind=before media=png status=200 bytes=4 index=0 fellback=1\n${b64}\n__USERNODE_SHOT_END__\n`;
+  const without = `__USERNODE_SHOT__ kind=before media=png status=200 bytes=4 index=0\n${b64}\n__USERNODE_SHOT_END__\n`;
+  assert.equal(visuals.parseShots(withFlag).shots[0].fellBack, true);
+  assert.equal(visuals.parseShots(without).shots[0].fellBack, false);
+});
+
+// ── expandCapturePaths: both frames per path ───────────────────────────
+
+test('expandCapturePaths emits a desktop + mobile pair per path on adjacent indexes', () => {
+  const t = visuals.expandCapturePaths(['/', '/board']);
+  assert.equal(t.length, 4);
+  assert.deepEqual(t[0], { index: 0, path: '/', viewport: null, still: false });
+  assert.deepEqual(t[1], { index: 1, path: '/', viewport: 'mobile', still: true });
+  assert.deepEqual(t[2], { index: 2, path: '/board', viewport: null, still: false });
+  assert.deepEqual(t[3], { index: 3, path: '/board', viewport: 'mobile', still: true });
+});
+
+test('expandCapturePaths tolerates a non-array', () => {
+  assert.deepEqual(visuals.expandCapturePaths(null), []);
+});
+
+// ── capture.js resolveTargets: the still-only flag ─────────────────────
+
+test('resolveTargets carries still through, defaulting to false', () => {
+  const env = {
+    TARGETS: JSON.stringify([
+      { index: 0, afterUrl: 'http://a/' },
+      { index: 1, afterUrl: 'http://a/m', still: true, viewport: { width: 390, height: 844 } },
+    ]),
+  };
+  const t = resolveTargets(env);
+  assert.equal(t[0].still, false);
+  assert.equal(t[1].still, true);
+  assert.deepEqual(t[1].viewport, { width: 390, height: 844 });
+});
+
+test('the legacy scalar-env fallback is never still-only', () => {
+  const t = resolveTargets({ AFTER_URL: 'http://a/' });
+  assert.equal(t[0].still, false);
+});
+
+// ── storeArtifacts: shot_status, before_fell_back, over-cap collector ──
+
+function fakePool() {
+  const inserted = [];
+  const client = {
+    query: async (sql, params) => {
+      if (/^INSERT INTO session_visuals/.test(sql)) inserted.push(params);
+      return { rows: [] };
+    },
+    release: () => {},
+  };
+  return { inserted, connect: async () => client };
+}
+
+test('storeArtifacts persists shot_status and before_fell_back per row', async () => {
+  const pool = fakePool();
+  const buf = Buffer.from('x');
+  const targets = [{ index: 0, path: '/board' }];
+  const shots = [
+    { kind: 'before', media: 'png', status: 200, index: 0, fellBack: true, buf },
+    { kind: 'after', media: 'png', status: 404, index: 0, buf },
+  ];
+  const stored = await visuals.storeArtifacts(pool, 7, 'abc', targets, shots);
+  // $11 = shot_status, $12 = before_fell_back (0-indexed 10 / 11).
+  assert.equal(pool.inserted[0][10], 200);
+  assert.equal(pool.inserted[0][11], true);
+  assert.equal(pool.inserted[1][10], 404);
+  assert.equal(pool.inserted[1][11], false); // fellBack only sticks to "before" rows
+  // The grouped shape carries the flag so renderers can caption the pair.
+  assert.equal(stored.captures[0].beforeFellBack, true);
+});
+
+test('storeArtifacts leaves beforeFellBack absent when no before fell back', async () => {
+  const pool = fakePool();
+  const buf = Buffer.from('x');
+  const stored = await visuals.storeArtifacts(
+    pool, 7, null, [{ index: 0, path: '/' }],
+    [
+      { kind: 'before', media: 'png', status: 200, index: 0, fellBack: false, buf },
+      { kind: 'after', media: 'png', status: 200, index: 0, buf },
+    ]
+  );
+  assert.ok(!('beforeFellBack' in stored.captures[0]));
+});
+
+test('storeArtifacts collects over-cap drops into the dropped array', async () => {
+  const pool = fakePool();
+  const big = Buffer.alloc(9 * 1024 * 1024); // over the 8MB webm cap
+  const small = Buffer.from('x');
+  const dropped = [];
+  const stored = await visuals.storeArtifacts(
+    pool, 7, null, [{ index: 0, path: '/' }],
+    [
+      { kind: 'after', media: 'png', status: 200, index: 0, buf: small },
+      { kind: 'after', media: 'webm', status: 200, index: 0, buf: big },
+    ],
+    dropped
+  );
+  assert.ok(stored);
+  assert.equal(dropped.length, 1);
+  assert.deepEqual(dropped[0], { kind: 'after', media: 'webm', index: 0, bytes: big.length });
+  assert.equal(pool.inserted.length, 1); // only the png was stored
+});
+
+test('storeArtifacts stores a null shot_status when the frame carried none', async () => {
+  const pool = fakePool();
+  const buf = Buffer.from('x');
+  await visuals.storeArtifacts(
+    pool, 7, null, [{ index: 0, path: '/' }],
+    [{ kind: 'after', media: 'png', status: 0, index: 0, buf }]
+  );
+  assert.equal(pool.inserted[0][10], null);
+});
+
+// ── shapeAgg: object values (id + path + viewport + fellBack) ──────────
+
+test('shapeAgg reads the object value form into labelled groups', () => {
+  const shaped = visuals.shapeAgg({
+    before_0_png: { id: ID_A, path: '/board', viewport: null, fellBack: true },
+    after_0_png: { id: ID_B, path: '/board', viewport: null, fellBack: false },
+  });
+  assert.equal(shaped.captures.length, 1);
+  assert.equal(shaped.captures[0].path, '/board');
+  assert.equal(shaped.captures[0].beforeFellBack, true);
+  assert.deepEqual(shaped.captures[0].before, { png: ID_A });
+});
+
+test('shapeAgg still accepts bare-id string values (legacy query)', () => {
+  const shaped = visuals.shapeAgg({ before_0_png: ID_A, after_0_png: ID_B });
+  assert.equal(shaped.captures[0].path, '/');
+  assert.ok(!('beforeFellBack' in shaped.captures[0]));
+});
+
+test('shapeAgg ignores object values without a usable id', () => {
+  assert.equal(visuals.shapeAgg({ after_0_png: { path: '/x' } }), null);
+});
+
+test('shapeAgg carries the mobile viewport label through the object form', () => {
+  const shaped = visuals.shapeAgg({
+    after_1_png: { id: ID_B, path: '/board', viewport: 'mobile', fellBack: false },
+  });
+  assert.equal(shaped.captures[0].viewport, 'mobile');
+});
+
+// ── buildVisualsBlock: before-fell-back caption ────────────────────────
+
+test('buildVisualsBlock captions a fell-back before pair', () => {
+  const block = buildVisualsBlock({
+    captures: [{
+      index: 0, path: '/board', beforeFellBack: true,
+      before: { png: ID_A }, after: { png: ID_B },
+    }],
+  }, DOMAIN);
+  assert.ok(block.includes('| Before | After |'));
+  assert.ok(block.includes('"Before" shows the production home page'));
+});
+
+test('buildVisualsBlock stays byte-identical without the flag', () => {
+  const plain = buildVisualsBlock({
+    captures: [{ index: 0, path: '/board', before: { png: ID_A }, after: { png: ID_B } }],
+  }, DOMAIN);
+  assert.ok(!plain.includes('shows the production home page'));
+});
+
+// ── storeCaptureOutcome ────────────────────────────────────────────────
+
+test('storeCaptureOutcome writes state + detail + timestamp', async () => {
+  const calls = [];
+  const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; } };
+  await visuals.storeCaptureOutcome(pool, 42, 'partial', { pathDefaulted: true });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /capture_state = \$1/);
+  assert.match(calls[0].sql, /captured_at = NOW\(\)/);
+  assert.equal(calls[0].params[0], 'partial');
+  assert.deepEqual(JSON.parse(calls[0].params[1]), { pathDefaulted: true });
+  assert.equal(calls[0].params[2], 42);
+});

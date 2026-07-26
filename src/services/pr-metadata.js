@@ -130,6 +130,10 @@ function buildVisualsBlock(visuals, domain) {
       viewport: g.viewport === 'mobile' ? 'mobile' : null,
       before: embed(g.before),
       after,
+      // The "before" side was actually shot at '/' because this route
+      // didn't exist on production yet — captioned below so the pair
+      // doesn't read as a mismatched comparison.
+      beforeFellBack: g.beforeFellBack === true,
     });
   }
   if (!usable.length) return '';
@@ -157,6 +161,12 @@ function buildVisualsBlock(visuals, domain) {
         '| --- | --- |',
         `| ![Before](${g.before}) | ![After](${g.after}) |`
       );
+      if (g.beforeFellBack) {
+        lines.push(
+          '',
+          '_"Before" shows the production home page — this route didn\'t exist in production yet._'
+        );
+      }
     } else {
       lines.push(
         '| After |',
@@ -376,7 +386,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
         // buildVisualsBlock consumes, using captured_path as each group's
         // label. Pre-#270 rows all carry capture_index 0 → a single group.
         const { rows: visRows } = await pool.query(
-          `SELECT id, kind, media, captured_path, capture_index, captured_viewport
+          `SELECT id, kind, media, captured_path, capture_index, captured_viewport, before_fell_back
              FROM session_visuals WHERE session_id = $1`,
           [sessionId]
         );
@@ -390,6 +400,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
             g[v.kind][v.media] = v.id;
             if (v.captured_path && !g.path) g.path = v.captured_path;
             if (v.captured_viewport && !g.viewport) g.viewport = v.captured_viewport;
+            if (v.kind === 'before' && v.before_fell_back) g.beforeFellBack = true;
           }
           const captures = Array.from(byIndex.keys())
             .sort((a, b) => a - b)
@@ -398,6 +409,7 @@ async function gatherSessionContext(pool, sessionId, currentCcSummary) {
               return {
                 index: g.index, path: g.path || '/', viewport: g.viewport || null,
                 before: g.before || null, after: g.after || null,
+                ...(g.beforeFellBack ? { beforeFellBack: true } : {}),
               };
             });
           ctx.visuals = { captures };

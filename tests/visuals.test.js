@@ -151,7 +151,7 @@ test('parseShots decodes well-formed frames and failures independently', () => {
     + frame('after', 'gif', 'GIF1');
   const { shots, failures } = visuals.parseShots(stdout);
   assert.equal(shots.length, 2);
-  assert.deepEqual(shots[0], { kind: 'before', media: 'png', status: 200, index: 0, buf: Buffer.from('PNG1') });
+  assert.deepEqual(shots[0], { kind: 'before', media: 'png', status: 200, index: 0, fellBack: false, buf: Buffer.from('PNG1') });
   assert.equal(shots[1].kind, 'after');
   assert.equal(shots[1].media, 'gif');
   assert.equal(failures.length, 1);

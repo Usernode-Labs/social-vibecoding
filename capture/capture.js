@@ -120,6 +120,22 @@ const SHORT_PAGE_HOLD_MS = 4000;
 const GIF_WIDTH = 640;
 const GIF_FPS = 10;
 
+// Recording-size bounds (screenshot-reliability spec). Screencast bitrate
+// is the artifact-size driver, and the platform silently dropped any webm
+// over its 8 MB storage cap — production showed ~40% of capture groups
+// with a PNG but no recording. Two fixes at the source:
+//   - the scroll pass is DISTANCE-bounded (MAX_SCROLL_VIEWPORTS viewport
+//     heights) so a very tall / infinite-scroll page can't produce a
+//     minutes-long, tens-of-MB recording;
+//   - an over-cap webm is reported as a failure frame (reason "over-cap")
+//     instead of being shipped to certain platform-side death — but the
+//     GIF is STILL transcoded from it (640px @ 10fps is far smaller and is
+//     what PR bodies embed), so one oversized recording no longer loses
+//     both moving artifacts.
+// WEBM_MAX_BYTES mirrors MAX_BYTES.webm in src/services/visuals.js.
+const WEBM_MAX_BYTES = 8 * 1024 * 1024;
+const MAX_SCROLL_VIEWPORTS = 3;
+
 // #381: console-error check. Listeners on the staging "after" page collect
 // console.error output, uncaught exceptions, unhandled rejections and
 // failed loads so the platform can flag a proposal that "may break the
@@ -158,9 +174,12 @@ function parseCookie(raw) {
   return { name, value };
 }
 
-function emit(kind, media, status, buf, index) {
+// `fellback=1` tags a frame whose page was actually the FALLBACK url
+// (a deep "before" path that 404'd on prod and was re-shot at '/') so the
+// platform can persist before_fell_back and caption the pair honestly.
+function emit(kind, media, status, buf, index, fellback) {
   process.stdout.write(
-    `__USERNODE_SHOT__ kind=${kind} media=${media} status=${status} bytes=${buf.length} index=${index || 0}\n`
+    `__USERNODE_SHOT__ kind=${kind} media=${media} status=${status} bytes=${buf.length} index=${index || 0}${fellback ? ' fellback=1' : ''}\n`
   );
   process.stdout.write(buf.toString('base64'));
   process.stdout.write('\n__USERNODE_SHOT_END__\n');
@@ -225,15 +244,19 @@ async function webmToGif(webmPath, gifPath, palettePath) {
 
 // Scripted load + scroll: hold, smooth-scroll to the bottom (~4s), hold,
 // scroll back up (~2s). Pages shorter than the viewport just hold so the
-// clip is effectively a still. Time-bounded, not bottom-bounded — an
-// infinite-scroll page scrolls as far as it gets and stops.
+// clip is effectively a still. Time-bounded AND distance-bounded — an
+// infinite-scroll / very tall page scrolls at most MAX_SCROLL_VIEWPORTS
+// viewport heights so the recording stays inside the webm size cap.
 async function scrollPass(page) {
-  await page.evaluate(async (shortHoldMs) => {
+  await page.evaluate(async (shortHoldMs, maxViewports) => {
     const total = Math.max(
       document.body ? document.body.scrollHeight : 0,
       document.documentElement ? document.documentElement.scrollHeight : 0
     );
-    const distance = Math.max(0, total - window.innerHeight);
+    const distance = Math.max(0, Math.min(
+      total - window.innerHeight,
+      window.innerHeight * maxViewports
+    ));
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     if (distance < 8) {
       await wait(shortHoldMs);
@@ -250,7 +273,7 @@ async function scrollPass(page) {
       window.scrollTo(0, (distance * i) / upSteps);
       await wait(50);
     }
-  }, SHORT_PAGE_HOLD_MS);
+  }, SHORT_PAGE_HOLD_MS, MAX_SCROLL_VIEWPORTS);
 }
 
 async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opts = {}) {
@@ -258,6 +281,11 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   // console check only judges the staging build, so error collection is
   // wired for the "after" target regardless of media.
   const media = opts.media !== false;
+  // Still-only target (the automatic phone-frame companion shot): PNG
+  // only, no screencast/GIF — keeps the doubled target list inside the
+  // run's 240s budget. Missing webm/gif frames on these are BY DESIGN,
+  // so no failure frames are emitted for them.
+  const stillOnly = !!opts.stillOnly;
   // #47: when a TESTS suite runs, it owns console-error collection on the
   // staging build — the orchestrator sets collectConsole:false here so the
   // legacy __USERNODE_CONSOLE__ frame isn't double-counted against the
@@ -301,6 +329,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
 
   let navigated = false;
   let status = 200;
+  let usedFallback = false;
   try {
     // Per-target viewport override (#768): a `@mobile` route shoots in a
     // phone-sized frame; the run's global pixel density applies either way.
@@ -326,6 +355,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
       const resp = await page.goto(fallbackUrl, { waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
       status = resp ? resp.status() : 200;
       navigated = true;
+      usedFallback = true;
     }
     if (!navigated) throw new Error('navigation failed');
   } catch (err) {
@@ -337,8 +367,10 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     }
     if (media) {
       emitFail(kind, 'png', err.message, index);
-      emitFail(kind, 'webm', err.message, index);
-      emitFail(kind, 'gif', err.message, index);
+      if (!stillOnly) {
+        emitFail(kind, 'webm', err.message, index);
+        emitFail(kind, 'gif', err.message, index);
+      }
     }
     await page.close().catch(() => {});
     return;
@@ -364,16 +396,41 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   // 1. Still: viewport-only PNG of the loaded page.
   try {
     const png = await page.screenshot({ type: 'png' });
-    emit(kind, 'png', status, Buffer.from(png), index);
+    emit(kind, 'png', status, Buffer.from(png), index, usedFallback);
   } catch (err) {
     emitFail(kind, 'png', err.message, index);
+  }
+
+  // Still-only target: the PNG is the whole deliverable — report console
+  // errors (if wired) and stop before the expensive recording steps.
+  if (stillOnly) {
+    if (collectConsole) {
+      emitConsole(index, consoleErrors, status);
+    }
+    await page.close().catch(() => {});
+    return;
   }
 
   // 2. Recording: load + scroll, encoded to webm by Chromium's screencast
   //    frames piped through ffmpeg (puppeteer handles the plumbing). Temp
   //    paths are per-(kind,index) so sequential targets don't clobber.
+  //
+  //    Recorded at 1x density regardless of the run's DEVICE_SCALE_FACTOR:
+  //    the still above keeps HiDPI, but screencast bitrate scales with
+  //    pixel area and 2x recordings were the main driver of over-cap webm
+  //    drops. The GIF is downscaled to 640px anyway, and the in-app
+  //    <video> tile renders small — 1x loses nothing visible.
+  const frame = opts.viewport
+    ? { width: opts.viewport.width, height: opts.viewport.height }
+    : { width: VIEWPORT.width, height: VIEWPORT.height };
+  if (VIEWPORT.deviceScaleFactor !== 1) {
+    try {
+      await page.setViewport({ ...frame, deviceScaleFactor: 1 });
+      await sleep(300); // let the reflow/repaint settle before recording
+    } catch { /* keep the current viewport — a 2x recording still works */ }
+  }
   const webmPath = `/tmp/usernode-${kind}-${index}.webm`;
-  let haveWebm = false;
+  let haveWebmFile = false;
   try {
     const recorder = await page.screencast({ path: webmPath });
     await sleep(PRE_SCROLL_HOLD_MS);
@@ -382,21 +439,29 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     await recorder.stop();
     const webm = fs.readFileSync(webmPath);
     if (!webm.length) throw new Error('empty webm');
-    emit(kind, 'webm', status, webm, index);
-    haveWebm = true;
+    haveWebmFile = true;
+    if (webm.length > WEBM_MAX_BYTES) {
+      // The platform would drop this over-cap webm anyway — report WHY
+      // instead of shipping ~11MB of doomed base64. The GIF transcode
+      // below still runs from the file, so the moving artifact survives.
+      emitFail(kind, 'webm', `over-cap ${webm.length} bytes`, index);
+    } else {
+      emit(kind, 'webm', status, webm, index, usedFallback);
+    }
   } catch (err) {
     emitFail(kind, 'webm', err.message, index);
   }
 
-  // 3. GIF transcode of the recording for the PR-body inline embed.
-  if (haveWebm) {
+  // 3. GIF transcode of the recording for the PR-body inline embed. Runs
+  //    whenever the webm FILE exists — including the over-cap case above.
+  if (haveWebmFile) {
     const gifPath = `/tmp/usernode-${kind}-${index}.gif`;
     const palettePath = `/tmp/usernode-${kind}-${index}-palette.png`;
     try {
       await webmToGif(webmPath, gifPath, palettePath);
       const gif = fs.readFileSync(gifPath);
       if (!gif.length) throw new Error('empty gif');
-      emit(kind, 'gif', status, gif, index);
+      emit(kind, 'gif', status, gif, index, usedFallback);
     } catch (err) {
       emitFail(kind, 'gif', err.message, index);
     }
@@ -455,6 +520,9 @@ function resolveTargets(env) {
       // #768: per-target frame override; null (legacy scalar fallback,
       // absent/garbage field) → the desktop default at capture time.
       viewport: parseTargetViewport(t.viewport),
+      // Still-only target (the automatic phone-frame companion): PNG only,
+      // no recording. Absent on legacy orchestrators → full media.
+      still: !!t.still,
     });
   }
   return out;
@@ -630,11 +698,11 @@ async function main() {
     for (const t of targets) {
       if (media && t.beforeUrl) {
         await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index,
-          { media, viewport: t.viewport });
+          { media, viewport: t.viewport, stillOnly: t.still });
       }
       if (t.afterUrl && (media || !haveTests)) {
         await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index,
-          { media, collectConsole: !haveTests, viewport: t.viewport });
+          { media, collectConsole: !haveTests, viewport: t.viewport, stillOnly: t.still });
       }
     }
     // #47: run the declared test suite (assertions + per-test console
