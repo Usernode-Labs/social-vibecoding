@@ -231,6 +231,21 @@
       "expectSelector": "#members-appadmins-section #members-appadmins-list"
     },
     {
+      "name": "App-admins editor ships its add input + Propose button",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#members-appadmins-section #members-appadmins-propose"
+    },
+    {
+      "name": "App-admins typeahead suggestions box ships",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#members-appadmins-suggestions"
+    },
+    {
+      "name": "Seeded admin roster app renders its Dev tab",
+      "path": "/app/staging-demo-admins/dev",
+      "expectText": "Staging demo admin roster"
+    },
+    {
       "name": "Kanban filter bar renders above the board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-search"
