@@ -6381,8 +6381,17 @@ const AppView = {
     root = document.createElement('div');
     root.id = 'auto-session-modal';
     root.className = 'fixed inset-0 z-[60] overflow-y-auto overscroll-contain bg-black/60';
+    // #800: same option text as the dev-chat composer (solve-rate range +
+    // recommended change size), built by the shared DevChat helpers so
+    // the two pickers can't drift. Falls back to the bare label when
+    // dev-chat.js isn't loaded on this page (e.g. the gallery shell).
+    const optionText = (m) => (
+      (typeof DevChat !== 'undefined' && DevChat.modelOptionText)
+        ? DevChat.modelOptionText(m)
+        : (m.label || m.id)
+    );
     const options = models.map((m) =>
-      `<option value="${escapeAttr(m.id)}"${m.id === preselect ? ' selected' : ''}>${escapeHtml(m.label || m.id)}</option>`
+      `<option value="${escapeAttr(m.id)}"${m.id === preselect ? ' selected' : ''}>${escapeHtml(optionText(m) || m.id)}</option>`
     ).join('');
     root.innerHTML = `
       <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
@@ -6403,9 +6412,11 @@ const AppView = {
           </p>
           <label class="block text-xs font-medium text-zinc-500 mb-1" for="auto-session-model">Model</label>
           <select id="auto-session-model"
-            class="w-full mb-5 rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
+            class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100">
             ${options}
           </select>
+          <!-- #800: caption for the selected model, kept in sync below. -->
+          <p id="auto-session-model-note" class="mt-1 mb-5 text-[11px] leading-snug text-zinc-500 dark:text-zinc-400"></p>
           <div class="flex justify-end gap-2">
             <button data-role="cancel" type="button"
               class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
@@ -6415,6 +6426,21 @@ const AppView = {
         </div>
       </div>`;
     document.body.appendChild(root);
+
+    // #800: describe whichever model is selected, updating on change.
+    const modelSel = root.querySelector('#auto-session-model');
+    const noteEl = root.querySelector('#auto-session-model-note');
+    const paintNote = () => {
+      if (!noteEl) return;
+      const chosen = models.find((m) => m.id === (modelSel && modelSel.value));
+      const text = (typeof DevChat !== 'undefined' && DevChat.modelNoteText)
+        ? DevChat.modelNoteText(chosen)
+        : '';
+      noteEl.textContent = text;
+      noteEl.title = text && DevChat.MODEL_STATS_TOOLTIP ? DevChat.MODEL_STATS_TOOLTIP : '';
+    };
+    paintNote();
+    if (modelSel) modelSel.addEventListener('change', paintNote);
 
     return new Promise((resolve) => {
       let settled = false;

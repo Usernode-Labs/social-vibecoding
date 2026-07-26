@@ -282,6 +282,12 @@
       "expectSelector": "#dc-form #dc-save-draft-btn"
     },
     {
+      "name": "Model selector caption shows the solve-rate range, not $/MTok (#800)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-model-note:not(.hidden)",
+      "expectText": "of the issues it was pointed at"
+    },
+    {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",
       "path": "/?shot=drafts#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",

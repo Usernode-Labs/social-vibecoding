@@ -243,6 +243,14 @@ CREATE TABLE IF NOT EXISTS chat_session_messages (
   created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- #800: the model-selector stats aggregate (services/model-stats.js)
+-- joins every assistant row to its session and reads only session_id +
+-- model, so this covering index turns what was a full sequential scan of
+-- the whole message table (the pkey was its ONLY index) into an
+-- index-only scan.
+CREATE INDEX IF NOT EXISTS idx_csm_session_model
+  ON chat_session_messages(session_id, model);
+
 -- Migrations (idempotent)
 ALTER TABLE chat_session_messages ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS cc_session_id VARCHAR(64);

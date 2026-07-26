@@ -124,13 +124,37 @@ const DevChat = {
   // wouldn't accept (server-side allowlist lives in src/services/models.js).
   // Kept seeded with the current set so the dropdown renders correctly
   // before the fetch resolves on a slow connection. Each value carries
-  // the display label plus output cost ($/MTok) so the selector can
-  // surface cost; loadModels() refreshes this from the server.
+  // the display label plus the selector's two decision aids (#800):
+  // `changeSize` (editorial size guidance) and `stats` (the measured
+  // solve-rate band — null in the seed because only the server can
+  // compute it). loadModels() refreshes all of it from the server.
+  // NOTE: no $/MTok anywhere — the composer's budget badge is where
+  // spend lives now.
   MODELS: {
-    'claude-haiku-4-5': { label: 'Haiku 4.5', outputCostPerMTok: 5 },
-    'claude-sonnet-5': { label: 'Sonnet 5', outputCostPerMTok: 15 },
-    'claude-opus-5': { label: 'Opus 5', outputCostPerMTok: 25 },
-    'claude-fable-5': { label: 'Fable 5', outputCostPerMTok: 50 },
+    'claude-sonnet-5': {
+      label: 'Sonnet 5',
+      changeSize: {
+        short: 'small changes',
+        long: 'One small thing at a time: a text tweak, a colour, a single file.',
+      },
+      stats: null,
+    },
+    'claude-opus-5': {
+      label: 'Opus 5',
+      changeSize: {
+        short: 'a few files',
+        long: 'A normal fix or feature: a few files, one screen.',
+      },
+      stats: null,
+    },
+    'claude-fable-5': {
+      label: 'Fable 5',
+      changeSize: {
+        short: 'big or tricky work',
+        long: 'Multi-file features, refactors, and debugging that needs real digging.',
+      },
+      stats: null,
+    },
   },
 
   // Default model id used when sanitization rejects a stale storage
@@ -153,10 +177,14 @@ const DevChat = {
         for (const m of data.models) {
           if (m && typeof m.id === 'string') {
             const label = (typeof m.label === 'string' && m.label) ? m.label : m.id;
-            const outputCostPerMTok = typeof m.outputCostPerMTok === 'number'
-              ? m.outputCostPerMTok
-              : undefined;
-            next[m.id] = { label, outputCostPerMTok };
+            // #800: carry changeSize + stats through. Both are optional —
+            // a server that couldn't compute the aggregate sends
+            // stats:null, and the selector then renders plain labels.
+            const changeSize = (m.changeSize && typeof m.changeSize === 'object')
+              ? m.changeSize
+              : null;
+            const stats = (m.stats && typeof m.stats === 'object') ? m.stats : null;
+            next[m.id] = { label, changeSize, stats };
           }
         }
         DevChat.MODELS = next;
@@ -165,7 +193,28 @@ const DevChat = {
         DevChat._defaultModel = data.default;
       }
       DevChat._sanitizeStoredModel();
+      // #800: if a session view is already mounted, patch the dropdown in
+      // place. Without this the composer would keep showing bare labels
+      // (the seed map carries no stats) until the next renderChatView.
+      DevChat._refreshModelSelect();
     } catch {}
+  },
+
+  // Rewrite the mounted model dropdown's options + caption from the
+  // current MODELS map, preserving the selection. No-op when no session
+  // view is mounted.
+  _refreshModelSelect() {
+    const sel = document.getElementById('dc-model-select');
+    if (!sel) return;
+    const options = Object.entries(DevChat.MODELS)
+      .map(([id, meta]) => {
+        const text = DevChat.modelOptionText(meta);
+        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
+      })
+      .join('');
+    sel.innerHTML = options;
+    sel.value = DevChat.selectedModel;
+    DevChat._renderModelNote();
   },
 
   // Guard against a persisted model id that's no longer in MODELS
@@ -177,6 +226,68 @@ const DevChat = {
   _sanitizeStoredModel() {
     if (!DevChat.MODELS[DevChat.selectedModel]) {
       DevChat.selectedModel = DevChat._defaultModel;
+    }
+  },
+
+  // ── Model selector copy (#800) ────────────────────────────────
+  // Replaced the old "$X/MTok" option text. Two facts per model: the
+  // measured share of issues it solved (a range, because the sample is
+  // finite) and editorial guidance on the change size it suits. Both
+  // helpers take a `{ label, changeSize, stats }` meta object and are
+  // shared with the Generate-proposal popup in app-view.js, so the two
+  // pickers can't drift.
+
+  MODEL_STATS_TOOLTIP: "Out of the sessions where someone pointed this model at a GitHub issue, this is the share that ended with the change actually merged. Shown as a range because we have a limited number of attempts — the fewer the attempts, the wider the range. It counts all versions of this model family, including earlier ones, and it is real usage rather than a controlled comparison: harder issues tend to be given to the stronger models.",
+
+  // Plain text for one <option>. Degrades to the bare label when the
+  // server sent no guidance or no stats at all (e.g. the aggregate
+  // query failed, or the pre-fetch seed map) — a picker that shows only
+  // names still works perfectly.
+  modelOptionText(meta) {
+    if (!meta || typeof meta !== 'object') return String(meta || '');
+    const label = meta.label || '';
+    const size = meta.changeSize && meta.changeSize.short;
+    const stats = meta.stats;
+    if (!size || !stats) return label;
+    const outcome = stats.hasEnoughData
+      ? `solves ${stats.lowPct}–${stats.highPct}%`
+      : 'new';
+    return `${label} — ${outcome} · ${size}`;
+  },
+
+  // Full-sentence caption for the currently selected model. Returns ''
+  // when there's nothing honest to say, and the caller hides the line.
+  modelNoteText(meta) {
+    if (!meta || typeof meta !== 'object') return '';
+    const label = meta.label || '';
+    const long = meta.changeSize && meta.changeSize.long;
+    const stats = meta.stats;
+    if (!long || !stats) return '';
+
+    const attempts = Number(stats.attempts) || 0;
+    const outcome = stats.hasEnoughData
+      ? `merged ${stats.lowPct}–${stats.highPct}% of the issues it was pointed at (${attempts} attempts in the last 90 days)`
+      : `not enough finished attempts yet to show a solve rate (${attempts} so far)`;
+    // "One small thing at a time: …" reads as "Best for one small thing
+    // at a time: …" once it follows the outcome clause.
+    const guidance = long.charAt(0).toLowerCase() + long.slice(1);
+    // Staging previews compute these from fixed demo counts (both
+    // session tables are staging:private and therefore empty in a
+    // clone), so label them so nobody mistakes them for real history.
+    const demo = stats.demo ? ' · staging demo data' : '';
+    return `${label} — ${outcome}. Best for ${guidance}${demo}`;
+  },
+
+  // Fill/hide the caption under the composer's model dropdown. Called on
+  // render and from the select's change handler.
+  _renderModelNote() {
+    const el = document.getElementById('dc-model-note');
+    if (!el) return;
+    const text = DevChat.modelNoteText(DevChat.MODELS[DevChat.selectedModel]);
+    el.textContent = text;
+    el.title = text ? DevChat.MODEL_STATS_TOOLTIP : '';
+    if (typeof el.classList?.toggle === 'function') {
+      el.classList.toggle('hidden', !text);
     }
   },
 
@@ -4245,10 +4356,8 @@ const DevChat = {
 
     const modelOptions = Object.entries(DevChat.MODELS)
       .map(([id, meta]) => {
-        const label = (meta && typeof meta === 'object') ? meta.label : meta;
-        const cost = (meta && typeof meta === 'object') ? meta.outputCostPerMTok : undefined;
-        const text = typeof cost === 'number' ? `${label} — $${cost}/MTok` : label;
-        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${text}</option>`;
+        const text = DevChat.modelOptionText(meta);
+        return `<option value="${id}" ${id === DevChat.selectedModel ? 'selected' : ''}>${escapeHtml(text)}</option>`;
       })
       .join('');
 
@@ -4298,6 +4407,11 @@ const DevChat = {
               <span class="flex-1"></span>
               <span id="dc-budget" class="text-xs font-mono"></span>
             </div>
+            <!-- #800: one-line plain-language description of the SELECTED
+                 model (solve-rate range + recommended change size).
+                 Filled by _renderModelNote(); hidden when the server
+                 couldn't supply stats. -->
+            <span id="dc-model-note" class="dc-model-note hidden"></span>
             <div id="dc-drafts" class="dc-drafts"></div>
             <div id="dc-quick-replies" class="dc-quick-replies"></div>
             <div id="dc-attachments" class="dc-attach-strip"></div>
@@ -4362,12 +4476,16 @@ const DevChat = {
     DevChat._syncSaveDraftBtn();
     if (DevChat.isStreaming) DevChat._setStreamingUI(true);
 
+    // #800: caption describing the selected model, kept in sync below.
+    DevChat._renderModelNote();
+
     document.getElementById('dc-model-select').addEventListener('change', (e) => {
       DevChat.selectedModel = e.target.value;
       // Persist across refreshes + new sessions (fixes #31). Wrapped
       // in try/catch so private-mode browsers or quota errors don't
       // break the selector.
       try { localStorage.setItem(MODEL_STORAGE_KEY, e.target.value); } catch {}
+      DevChat._renderModelNote();
     });
 
     const prHeaderLink = document.getElementById('dc-pr-header-link');
