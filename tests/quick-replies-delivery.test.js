@@ -132,3 +132,165 @@ test("fallback-channel 'done' reconciles the timeline from the server", () => {
   assert.match(helper, /isStreaming/,
     'the reconcile helper must bail when a newer turn is already streaming');
 });
+
+// ── #786: restart-recovery pills ride the `status` event, and the pill
+// resolution reads them off a `system` breadcrumb ────────────────────────
+//
+// After a restart the coding work is recovered but the Mayor's phase-2
+// wrap-up (the only thing that carries pills on a dispatch turn) never
+// runs, so the recovery paths persist their pills on the recovery
+// breadcrumb — a `system` row. Two wiring invariants follow: the three
+// parallel status handlers must carry the field onto the pushed row, and
+// _currentQuickReplies must be willing to read pills off a system row.
+
+// Extract _currentQuickReplies and evaluate it for real against fake
+// message timelines — the resolution rule is subtle enough (skip pill-less
+// system rows, stop at the first user/assistant row) that regex assertions
+// wouldn't catch a wrong stopping condition.
+function loadCurrentQuickReplies() {
+  const src = sliceBetween(
+    DEVCHAT_SRC, '_currentQuickReplies() {', '_renderQuickReplies() {',
+    'DevChat._currentQuickReplies'
+  );
+  const body = src.slice(src.indexOf('{') + 1, src.lastIndexOf('}'));
+  // eslint-disable-next-line no-new-func
+  const compiled = new Function('DevChat', body);
+  return (messages, opts = {}) => compiled({
+    currentSession: opts.session === undefined ? { id: 1, status: 'active' } : opts.session,
+    isStreaming: !!opts.isStreaming,
+    messages,
+    STARTER_QUICK_REPLIES: ['Change the colors', 'Add a new feature', "Fix something that's broken"],
+  });
+}
+
+const currentQuickReplies = loadCurrentQuickReplies();
+
+test('#786 pills resolve from a system recovery breadcrumb', () => {
+  const pills = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
+  const out = currentQuickReplies([
+    { role: 'user', content: 'Sort by score' },
+    // The dispatch preamble has no pills (resolveQuickReplies drops a
+    // phase-1 call when a dispatch co-occurs).
+    { role: 'assistant', content: "I'll have the agent do that." },
+    { role: 'system', content: 'Claude Code is running...' },
+    { role: 'system', content: 'PR #12 created' },
+    { role: 'system', content: 'Staging deployed (recovered after restart)' },
+    { role: 'system', content: 'Coding turn recovered after a platform restart.', quickReplies: pills },
+  ]);
+  assert.deepEqual(out, pills,
+    'a recovery breadcrumb must be able to supply the pill bar — otherwise a restart leaves it empty forever');
+});
+
+test('#786 pill-less system rows are skipped, not treated as a stop', () => {
+  const pills = ['Build it', 'Revise the spec'];
+  const out = currentQuickReplies([
+    { role: 'user', content: 'Plan it' },
+    { role: 'assistant', content: 'Scouting.' },
+    { role: 'system', content: 'Scout finished after restart — drafted a 40-line spec.', quickReplies: pills },
+    // A later staging heal lands ABOVE the pill-carrying breadcrumb.
+    { role: 'system', content: 'Staging recovered after restart' },
+  ]);
+  assert.deepEqual(out, pills);
+});
+
+test('#786 a sent user row still clears the bar', () => {
+  const out = currentQuickReplies([
+    { role: 'system', content: 'Coding turn recovered after a platform restart.', quickReplies: ['Make a tweak'] },
+    { role: 'user', content: 'Actually, change the header' },
+  ]);
+  assert.equal(out, null, 'pills must clear the moment the user sends');
+});
+
+test('#786 a user row plus its "Thinking..." status still clears the bar', () => {
+  // The in-flight shape: the status row carries no pills, and the scan must
+  // stop at the user row rather than walking back to an older turn's pills.
+  const out = currentQuickReplies([
+    { role: 'assistant', content: 'Done.', quickReplies: ['Make a tweak'] },
+    { role: 'user', content: 'Now make it blue' },
+    { role: 'system', content: 'Thinking about your request...' },
+  ]);
+  assert.equal(out, null);
+});
+
+test('#786 stale pills from an earlier turn are never resurrected', () => {
+  const out = currentQuickReplies([
+    { role: 'assistant', content: 'Built it.', quickReplies: ['Propose it to the group'] },
+    { role: 'user', content: 'And a dark mode?' },
+    { role: 'system', content: 'Thinking about your request...' },
+    // Newest assistant reply carries no pills → empty bar, NOT the older set.
+    { role: 'assistant', content: 'Here is what I found.' },
+  ]);
+  assert.equal(out, null);
+});
+
+test('#786 an assistant reply with pills still wins (unchanged behaviour)', () => {
+  const out = currentQuickReplies([
+    { role: 'user', content: 'hi' },
+    { role: 'assistant', content: 'hello', quickReplies: ['Add a new feature'] },
+  ]);
+  assert.deepEqual(out, ['Add a new feature']);
+});
+
+test('#786 starters, streaming and non-interactive gates are unchanged', () => {
+  // Fresh session (nothing but a status row, or nothing at all) → starters.
+  assert.deepEqual(currentQuickReplies([]).length, 3);
+  assert.deepEqual(currentQuickReplies([{ role: 'system', content: 'Thinking about your request...' }]).length, 3);
+  // Streaming hides the bar even when a breadcrumb carries pills.
+  assert.equal(currentQuickReplies(
+    [{ role: 'system', content: 'recovered', quickReplies: ['Make a tweak'] }],
+    { isStreaming: true }
+  ), null);
+  // Non-interactive statuses hide it too.
+  assert.equal(currentQuickReplies(
+    [{ role: 'system', content: 'recovered', quickReplies: ['Make a tweak'] }],
+    { session: { id: 1, status: 'paused' } }
+  ), null);
+  assert.equal(currentQuickReplies(
+    [{ role: 'system', content: 'recovered', quickReplies: ['Make a tweak'] }],
+    { session: null }
+  ), null);
+  // 'promoted' stays interactive.
+  assert.deepEqual(currentQuickReplies(
+    [{ role: 'system', content: 'recovered', quickReplies: ['Make a tweak'] }],
+    { session: { id: 1, status: 'promoted' } }
+  ), ['Make a tweak']);
+});
+
+test('#786 all three status handlers carry quickReplies onto the pushed row', () => {
+  // The recovery breadcrumb's pills ride the 'status' event (the
+  // 'quick_replies' handlers attach to the last ASSISTANT row, which a
+  // recovered turn doesn't have). Each channel pushes its own system row,
+  // so all three must copy the field or the bar only fills after a reload.
+  const postSse = sliceBetween(
+    DEVCHAT_SRC, "case 'status':\n                DevChat._flushStreamingFinal();",
+    "case 'platform_issue_draft':", 'POST-SSE status handler'
+  );
+  assert.match(postSse, /quickReplies: data\.quickReplies/,
+    'POST-SSE status handler must carry quickReplies');
+
+  const resumed = sliceBetween(
+    handleResumedEventBody, "case 'status': {", "case 'platform_issue_draft':",
+    'resumable status handler'
+  );
+  assert.match(resumed, /quickReplies: data\.quickReplies/,
+    'resumable status handler must carry quickReplies');
+
+  const wsStatus = sliceBetween(
+    handleSessionEventBody, "case 'status': {", "case 'platform_issue_draft':",
+    'WS status handler'
+  );
+  assert.match(wsStatus, /quickReplies: data\.quickReplies/,
+    'WS status handler must carry quickReplies');
+});
+
+test('#786 loadMessages rehydrates metadata.quickReplies for any role', () => {
+  // The role-agnostic rehydrate is what makes a breadcrumb's pills survive
+  // a reload; a role gate here would silently break the whole feature.
+  const mapper = sliceBetween(
+    DEVCHAT_SRC, 'DevChat.messages = messages.map((m) => {', '// #252: sync state is keyed per session',
+    'loadMessages metadata rehydrate'
+  );
+  assert.match(mapper, /if \(m\.metadata\.quickReplies\) m\.quickReplies = m\.metadata\.quickReplies;/);
+  assert.doesNotMatch(mapper, /quickReplies[\s\S]{0,80}role === 'assistant'/,
+    'the quickReplies rehydrate must not be gated on role');
+});

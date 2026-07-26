@@ -102,6 +102,16 @@
       "expectText": "Staging demo perf"
     },
     {
+      "name": "Restart-recovery pill fixtures are seeded (#786)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Staging demo: pills after a recovered build turn"
+    },
+    {
+      "name": "Interrupted-reply pill fixture is seeded (#786)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Staging demo: pills after an interrupted reply"
+    },
+    {
       "name": "Native-feel UI kit demo renders",
       "path": "/usernode-native/v1/demo.html",
       "expectSelector": ".un-switch",

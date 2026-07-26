@@ -1030,7 +1030,12 @@ const App = {
         // renders live when the scout's final status arrives via the WS after
         // a POST-SSE drop — parity with the POST-SSE (sessions.js) and
         // resumable (_handleResumedEvent) status handlers.
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, scoutOutput: data.scoutOutput, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+        // #786: carry quickReplies so a restart-recovery breadcrumb
+        // delivered over the WS repaints the pill bar live — the recovery
+        // paths broadcast pills on the status event, not 'quick_replies'
+        // (that handler attaches to the last ASSISTANT row, which a
+        // recovered turn doesn't have).
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;

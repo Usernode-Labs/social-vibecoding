@@ -62,6 +62,7 @@ async function migrate(config) {
   await seedStagingQaSession(pool, config);
   await seedStagingCloneQuestionSuggestions(pool, config);
   await seedStagingCloneSpecPills(pool, config);
+  await seedStagingRestartRecoveredPills(pool, config);
   await seedStagingChatAttachments(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
   await seedStagingAppFiles(pool);
@@ -3877,6 +3878,164 @@ async function seedStagingCloneSpecPills(pool, config) {
     owner: owner.username,
     sessionId,
   });
+}
+
+
+// #786: the two restart-recovery shapes whose pill bar used to come back
+// empty. Both fixtures end on a `system` breadcrumb carrying
+// metadata.quickReplies — the thing #786 adds — with pill-less system rows
+// in between, so they also exercise the client's backward scan skipping
+// those. chat_sessions / chat_session_messages are staging:private
+// (schema-only in staging), hence the seed. Sibling of
+// seedStagingCloneSpecPills; idempotent via the branch-name checks.
+//
+//   1. restart-recovered-pills  — a build turn recovered after a restart:
+//      commit pushed, PR opened, staging rebuilt, but no Mayor wrap-up
+//      (it can't be resumed), so the breadcrumb carries the 'code_done'
+//      pills.
+//   2. restart-unanswered-pills — a Mayor turn killed mid-stream before it
+//      persisted any reply: the boot-time backfill sweep posts the
+//      missed-reply breadcrumb, whose first pill is the user's own message
+//      handed back for one-tap resending.
+//
+// Both rows are seeded SHARED (shared_at set), unlike seedStagingCloneSpecPills.
+// The Dev board's own-session block comes from GET /api/me/active-sessions,
+// which is strictly `cs.user_id = req.user.id` — so a fixture owned by the
+// first admin is invisible to every other viewer, including the view-only
+// `usernode-capture-admin` identity that signs the proposal-checks
+// navigations (services/visuals.js selectCaptureTokens). The dapp.json
+// checks asserting these two titles failed for exactly that reason. Shared
+// rows also come back from GET /api/apps/:slug/shared-sessions, which is
+// app-scoped, so the cards render for anyone opening the Dev board while
+// the owner still gets the full dev chat (those endpoints stay
+// owner-scoped by design). Same posture as seedStagingSharedSession.
+async function seedStagingRestartRecoveredPills(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging restart-recovered-pills fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging restart-recovered-pills fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const userAsk = 'Make the leaderboard sort by score';
+
+  // ── Fixture 1: recovered build turn ─────────────────────────────────
+  const recoveredBranch = 'staging-fixture/restart-recovered-pills';
+  const { rows: existingRecovered } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, recoveredBranch]
+  );
+  if (!existingRecovered.length) {
+    const specMd = '## User-facing changes\n\nStaging demo spec for the recovered build turn.\n\n'
+      + '## Technical implementation\n\nStaging demo: no real change — fixture for the pill bar.';
+    const { rows: sessionRows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_number, pr_title, status, spec_md, is_headless,
+          shared_at, created_at)
+       VALUES
+         ($1, $2, $3, 12, $4, 'active', $5, FALSE,
+          NOW() - INTERVAL '24 minutes', NOW() - INTERVAL '25 minutes')
+       RETURNING id`,
+      [appId, owner.id, recoveredBranch, '[staging fixture] Staging demo: pills after a recovered build turn', specMd]
+    );
+    const sessionId = sessionRows[0].id;
+
+    const rows = [
+      // The ask, then the Mayor's dispatch preamble. The preamble
+      // deliberately has NO pills: resolveQuickReplies drops a phase-1
+      // suggest_replies call whenever a dispatch co-occurs.
+      ['user', userAsk, {}, '24 minutes'],
+      ['assistant', "I'll have the coding agent sort the leaderboard by score.", {}, '24 minutes'],
+      ['system', 'Claude Code is running...', {
+        progressLog: [
+          '[claude (mode build)]',
+          'Reading public/js/leaderboard.js',
+          '  ⎿ Read: 210 lines',
+          'Editing public/js/leaderboard.js',
+          '  ⎿ Edit: ok',
+          '[commit]',
+          '[push]',
+          '[done]',
+        ],
+      }, '23 minutes'],
+      ['system', 'PR #12 created', { prNumber: 12 }, '22 minutes'],
+      ['system', 'Staging deployed (recovered after restart)', {}, '21 minutes'],
+      // The breadcrumb the recovery path writes — and the pill source.
+      ['system', 'Coding turn recovered after a platform restart.', {
+        quickReplies: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
+      }, '20 minutes'],
+    ];
+    for (const [role, content, metadata, ago] of rows) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - make_interval(mins => $5::int))`,
+        [sessionId, role, content, JSON.stringify(metadata), parseInt(ago, 10)]
+      );
+    }
+    log.info('db', 'Staging restart-recovered-pills fixture seeded', {
+      appId, owner: owner.username, sessionId,
+    });
+  }
+
+  // ── Fixture 2: Mayor turn killed before it replied ──────────────────
+  const unansweredBranch = 'staging-fixture/restart-unanswered-pills';
+  const { rows: existingUnanswered } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, unansweredBranch]
+  );
+  if (!existingUnanswered.length) {
+    const { rows: sessionRows } = await pool.query(
+      `INSERT INTO chat_sessions
+         (app_id, user_id, branch_name, pr_title, status, is_headless, shared_at, created_at)
+       VALUES
+         ($1, $2, $3, $4, 'active', FALSE,
+          NOW() - INTERVAL '14 minutes', NOW() - INTERVAL '15 minutes')
+       RETURNING id`,
+      [appId, owner.id, unansweredBranch,
+        '[staging fixture] Staging demo: pills after an interrupted reply']
+    );
+    const sessionId = sessionRows[0].id;
+
+    const rows = [
+      ['user', userAsk, {}, '14 minutes'],
+      // The status row the killed turn left behind.
+      ['system', 'Thinking about your request...', {}, '14 minutes'],
+      // What the boot-time backfill sweep posts: the honest note plus the
+      // user's own message as a resend pill.
+      ['system', 'The platform restarted before I could reply — send your message again.', {
+        quickReplies: [userAsk, "What's the current state?"],
+      }, '13 minutes'],
+    ];
+    for (const [role, content, metadata, ago] of rows) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - make_interval(mins => $5::int))`,
+        [sessionId, role, content, JSON.stringify(metadata), parseInt(ago, 10)]
+      );
+    }
+    log.info('db', 'Staging restart-unanswered-pills fixture seeded', {
+      appId, owner: owner.username, sessionId,
+    });
+  }
 }
 
 

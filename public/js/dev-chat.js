@@ -1219,7 +1219,10 @@ const DevChat = {
                 if (assistantMsg) assistantMsg._finalized = true;
                 assistantPushed = false;
                 assistantMsg = { role: 'assistant', content: '', created_at: new Date().toISOString() };
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                // #786: quickReplies ride the status event so a
+                // restart-recovery breadcrumb repaints the pill bar live
+                // (the server persists them on the same system row).
+                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -1671,7 +1674,8 @@ const DevChat = {
         // matching the primary POST-SSE path's seal-on-status.
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        // #786: carry quickReplies (see the POST-SSE status handler).
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -3123,25 +3127,34 @@ const DevChat = {
     'Fix something that\'s broken',
   ],
 
-  // Resolve the pills to show: the latest non-system message's quickReplies
-  // when it's an interactive assistant turn, the starter set on a fresh
-  // session, or null (hide the bar) otherwise. Hidden entirely while a turn
-  // is streaming so the user never taps a stale suggestion.
+  // Resolve the pills to show: the newest message carrying quickReplies,
+  // the starter set on a fresh session, or null (hide the bar) otherwise.
+  // Hidden entirely while a turn is streaming so the user never taps a
+  // stale suggestion.
+  //
+  // #786: the scan walks backwards and stops at the first user/assistant
+  // row, but SKIPS pill-less system rows on the way. That keeps every
+  // pre-existing behaviour (pills clear the moment a sent user row lands
+  // last; an assistant reply without pills means an empty bar; pills from
+  // an earlier turn are never resurrected, because the scan stops at the
+  // first user/assistant row) while letting a restart-recovery breadcrumb
+  // — which is a `system` row, since no Mayor wrap-up runs after a
+  // recovery — be the pill source.
   _currentQuickReplies() {
     const session = DevChat.currentSession;
     if (!session) return null;
     if (DevChat.isStreaming) return null;
     const interactive = session.status === 'active' || session.status === 'promoted';
     if (!interactive) return null;
-    // Latest non-system message.
-    let last = null;
+    let sawNonSystem = false;
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
-      if (DevChat.messages[i].role !== 'system') { last = DevChat.messages[i]; break; }
+      const m = DevChat.messages[i];
+      if (Array.isArray(m.quickReplies) && m.quickReplies.length) return m.quickReplies;
+      if (m.role === 'user' || m.role === 'assistant') { sawNonSystem = true; break; }
     }
-    if (!last) return DevChat.STARTER_QUICK_REPLIES;
-    if (last.role === 'assistant' && Array.isArray(last.quickReplies) && last.quickReplies.length) {
-      return last.quickReplies;
-    }
+    // A brand-new session (nothing but status rows, if anything) keeps the
+    // generic starters so the affordance is present from the first screen.
+    if (!sawNonSystem) return DevChat.STARTER_QUICK_REPLIES;
     return null;
   },
 
