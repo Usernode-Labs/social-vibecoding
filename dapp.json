@@ -282,10 +282,10 @@
       "expectSelector": "#dc-form #dc-save-draft-btn"
     },
     {
-      "name": "Model selector caption shows the solve-rate range, not $/MTok (#800)",
+      "name": "Model selector caption shows what the model is for, not $/MTok (#800)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-model-note:not(.hidden)",
-      "expectText": "of the issues it was pointed at"
+      "expectText": "best for"
     },
     {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",

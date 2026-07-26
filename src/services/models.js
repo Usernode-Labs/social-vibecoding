@@ -11,19 +11,28 @@
 // to DEFAULT_MODEL on the very next turn.
 //
 // #800: Haiku 4.5 was removed from this allowlist — it is the weakest
-// tier for multi-step coding work and had the thinnest issue-attempt
-// history of any tier. The platform still uses `claude-haiku-4-5`
-// DIRECTLY (not via this map) for cheap housekeeping calls — session /
-// PR / issue titling and progress estimates in src/services/llm.js,
-// plus src/routes/auth.js — so those are unaffected. Anyone who had it
-// selected is coerced to DEFAULT_MODEL by resolve() server-side and by
-// DevChat._sanitizeStoredModel() client-side.
+// tier for multi-step coding work. The platform still uses
+// `claude-haiku-4-5` DIRECTLY (not via this map) for cheap housekeeping
+// calls — session / PR / issue titling and progress estimates in
+// src/services/llm.js, plus src/routes/auth.js — so those are
+// unaffected. Anyone who had it selected is coerced to DEFAULT_MODEL by
+// resolve() server-side and by DevChat._sanitizeStoredModel()
+// client-side.
 //
-// `changeSize` (#800) is EDITORIAL guidance, not a measured figure —
-// nothing in the schema records PR diff size today. `short` goes in the
-// dropdown option text, `long` in the caption under the selector.
-// The measured half of the selector (a Wilson band over issues solved)
-// is computed separately in src/services/model-stats.js.
+// `changeSize` (#800) — read it as "picker guidance"; the key name is
+// narrower than what it holds and was kept only to avoid churn across
+// models.js / dev-chat.js / app-view.js / tests. The copy describes the
+// KIND of work each model suits, not a size ladder:
+//   - Sonnet is the cheap option for one small, self-contained thing.
+//   - Opus and Fable are PEERS on coding strength. Opus is the pick for
+//     heavy coding (multi-file features, refactors, real debugging);
+//     Fable is the pick when the hard part is judgment about how
+//     something should look, read, or feel rather than the code itself.
+// `short` goes in the dropdown option text, `long` in the caption under
+// the selector. It is EDITORIAL — a product opinion, not a measurement.
+// Nothing measured feeds the picker: per-change cost is only now
+// starting to be recorded (chat_sessions.agent_cost_cents, written by
+// routes/anthropic-proxy.js) and has no reader yet.
 
 const MODELS = {
   'claude-sonnet-5': {
@@ -31,7 +40,7 @@ const MODELS = {
     tier: 'sonnet',
     outputCostPerMTok: 15,
     changeSize: {
-      short: 'small changes',
+      short: 'small, simple changes',
       long: 'One small thing at a time: a text tweak, a colour, a single file.',
     },
   },
@@ -40,8 +49,8 @@ const MODELS = {
     tier: 'opus',
     outputCostPerMTok: 25,
     changeSize: {
-      short: 'a few files',
-      long: 'A normal fix or feature: a few files, one screen.',
+      short: 'big or tricky coding',
+      long: 'Multi-file features, refactors, and debugging that needs real digging.',
     },
   },
   'claude-fable-5': {
@@ -49,8 +58,8 @@ const MODELS = {
     tier: 'fable',
     outputCostPerMTok: 50,
     changeSize: {
-      short: 'big or tricky work',
-      long: 'Multi-file features, refactors, and debugging that needs real digging.',
+      short: 'design and taste',
+      long: 'Work where how it looks and feels matters: layout, wording, and judgment calls about the feel of a screen.',
     },
   },
 };

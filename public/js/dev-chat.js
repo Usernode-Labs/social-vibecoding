@@ -124,36 +124,36 @@ const DevChat = {
   // wouldn't accept (server-side allowlist lives in src/services/models.js).
   // Kept seeded with the current set so the dropdown renders correctly
   // before the fetch resolves on a slow connection. Each value carries
-  // the display label plus the selector's two decision aids (#800):
-  // `changeSize` (editorial size guidance) and `stats` (the measured
-  // solve-rate band — null in the seed because only the server can
-  // compute it). loadModels() refreshes all of it from the server.
-  // NOTE: no $/MTok anywhere — the composer's budget badge is where
-  // spend lives now.
+  // the display label plus `changeSize` (#800) — the picker's editorial
+  // "what kind of work is this for" copy; loadModels() refreshes it from
+  // the server. NOTE: no $/MTok and no measured figures anywhere — the
+  // composer's budget badge is where spend lives.
+  //
+  // This map DUPLICATES the `changeSize` copy in src/services/models.js
+  // (it exists only for first paint before /api/models resolves), so the
+  // two must be edited together. tests/model-selector-ui.test.js has a
+  // copy-drift guard that fails if they diverge.
   MODELS: {
     'claude-sonnet-5': {
       label: 'Sonnet 5',
       changeSize: {
-        short: 'small changes',
+        short: 'small, simple changes',
         long: 'One small thing at a time: a text tweak, a colour, a single file.',
       },
-      stats: null,
     },
     'claude-opus-5': {
       label: 'Opus 5',
       changeSize: {
-        short: 'a few files',
-        long: 'A normal fix or feature: a few files, one screen.',
+        short: 'big or tricky coding',
+        long: 'Multi-file features, refactors, and debugging that needs real digging.',
       },
-      stats: null,
     },
     'claude-fable-5': {
       label: 'Fable 5',
       changeSize: {
-        short: 'big or tricky work',
-        long: 'Multi-file features, refactors, and debugging that needs real digging.',
+        short: 'design and taste',
+        long: 'Work where how it looks and feels matters: layout, wording, and judgment calls about the feel of a screen.',
       },
-      stats: null,
     },
   },
 
@@ -177,14 +177,12 @@ const DevChat = {
         for (const m of data.models) {
           if (m && typeof m.id === 'string') {
             const label = (typeof m.label === 'string' && m.label) ? m.label : m.id;
-            // #800: carry changeSize + stats through. Both are optional —
-            // a server that couldn't compute the aggregate sends
-            // stats:null, and the selector then renders plain labels.
+            // #800: carry changeSize through. Optional — a server that
+            // omits it leaves the selector rendering plain labels.
             const changeSize = (m.changeSize && typeof m.changeSize === 'object')
               ? m.changeSize
               : null;
-            const stats = (m.stats && typeof m.stats === 'object') ? m.stats : null;
-            next[m.id] = { label, changeSize, stats };
+            next[m.id] = { label, changeSize };
           }
         }
         DevChat.MODELS = next;
@@ -194,8 +192,9 @@ const DevChat = {
       }
       DevChat._sanitizeStoredModel();
       // #800: if a session view is already mounted, patch the dropdown in
-      // place. Without this the composer would keep showing bare labels
-      // (the seed map carries no stats) until the next renderChatView.
+      // place so a server-side allowlist change (a model added or
+      // removed) reaches an open composer instead of waiting for the next
+      // renderChatView.
       DevChat._refreshModelSelect();
     } catch {}
   },
@@ -230,52 +229,38 @@ const DevChat = {
   },
 
   // ── Model selector copy (#800) ────────────────────────────────
-  // Replaced the old "$X/MTok" option text. Two facts per model: the
-  // measured share of issues it solved (a range, because the sample is
-  // finite) and editorial guidance on the change size it suits. Both
-  // helpers take a `{ label, changeSize, stats }` meta object and are
-  // shared with the Generate-proposal popup in app-view.js, so the two
-  // pickers can't drift.
+  // Replaced the old "$X/MTok" option text. One fact per model: editorial
+  // guidance on the KIND of work it suits (not a size ladder — Opus and
+  // Fable are peers on coding strength and differ in whether taste and
+  // design judgment are the hard part). Both helpers take a
+  // `{ label, changeSize }` meta object and are shared with the
+  // Generate-proposal popup in app-view.js, so the two pickers can't
+  // drift. Nothing measured feeds either one.
 
-  MODEL_STATS_TOOLTIP: "Out of the sessions where someone pointed this model at a GitHub issue, this is the share that ended with the change actually merged. Shown as a range because we have a limited number of attempts — the fewer the attempts, the wider the range. It counts all versions of this model family, including earlier ones, and it is real usage rather than a controlled comparison: harder issues tend to be given to the stronger models.",
+  MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule — any model can attempt any change. Opus and Fable are equally strong at straight coding; reach for Fable when taste and design judgment are the hard part. Both cost more per change than Sonnet.',
 
   // Plain text for one <option>. Degrades to the bare label when the
-  // server sent no guidance or no stats at all (e.g. the aggregate
-  // query failed, or the pre-fetch seed map) — a picker that shows only
-  // names still works perfectly.
+  // server sent no guidance (e.g. an older payload) — a picker that
+  // shows only names still works perfectly.
   modelOptionText(meta) {
     if (!meta || typeof meta !== 'object') return String(meta || '');
     const label = meta.label || '';
-    const size = meta.changeSize && meta.changeSize.short;
-    const stats = meta.stats;
-    if (!size || !stats) return label;
-    const outcome = stats.hasEnoughData
-      ? `solves ${stats.lowPct}–${stats.highPct}%`
-      : 'new';
-    return `${label} — ${outcome} · ${size}`;
+    const hint = meta.changeSize && meta.changeSize.short;
+    if (!hint) return label;
+    return `${label} — ${hint}`;
   },
 
   // Full-sentence caption for the currently selected model. Returns ''
-  // when there's nothing honest to say, and the caller hides the line.
+  // when there's no guidance to show, and the caller hides the line.
   modelNoteText(meta) {
     if (!meta || typeof meta !== 'object') return '';
     const label = meta.label || '';
     const long = meta.changeSize && meta.changeSize.long;
-    const stats = meta.stats;
-    if (!long || !stats) return '';
-
-    const attempts = Number(stats.attempts) || 0;
-    const outcome = stats.hasEnoughData
-      ? `merged ${stats.lowPct}–${stats.highPct}% of the issues it was pointed at (${attempts} attempts in the last 90 days)`
-      : `not enough finished attempts yet to show a solve rate (${attempts} so far)`;
-    // "One small thing at a time: …" reads as "Best for one small thing
-    // at a time: …" once it follows the outcome clause.
+    if (!long) return '';
+    // "One small thing at a time: …" reads as "best for one small thing
+    // at a time: …" once it follows the label.
     const guidance = long.charAt(0).toLowerCase() + long.slice(1);
-    // Staging previews compute these from fixed demo counts (both
-    // session tables are staging:private and therefore empty in a
-    // clone), so label them so nobody mistakes them for real history.
-    const demo = stats.demo ? ' · staging demo data' : '';
-    return `${label} — ${outcome}. Best for ${guidance}${demo}`;
+    return `${label} — best for ${guidance}`;
   },
 
   // Fill/hide the caption under the composer's model dropdown. Called on
@@ -285,7 +270,7 @@ const DevChat = {
     if (!el) return;
     const text = DevChat.modelNoteText(DevChat.MODELS[DevChat.selectedModel]);
     el.textContent = text;
-    el.title = text ? DevChat.MODEL_STATS_TOOLTIP : '';
+    el.title = text ? DevChat.MODEL_GUIDANCE_TOOLTIP : '';
     if (typeof el.classList?.toggle === 'function') {
       el.classList.toggle('hidden', !text);
     }
@@ -4408,9 +4393,10 @@ const DevChat = {
               <span id="dc-budget" class="text-xs font-mono"></span>
             </div>
             <!-- #800: one-line plain-language description of the SELECTED
-                 model (solve-rate range + recommended change size).
-                 Filled by _renderModelNote(); hidden when the server
-                 couldn't supply stats. -->
+                 model — what kind of work it suits. Filled by
+                 _renderModelNote(); hidden when the payload carries no
+                 guidance copy. Clamped to two lines in CSS: Fable's
+                 sentence wraps on a phone and must not crowd the box. -->
             <span id="dc-model-note" class="dc-model-note hidden"></span>
             <div id="dc-drafts" class="dc-drafts"></div>
             <div id="dc-quick-replies" class="dc-quick-replies"></div>

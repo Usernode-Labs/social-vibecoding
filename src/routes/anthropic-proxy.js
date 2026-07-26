@@ -246,6 +246,46 @@ async function emitSwitchNotice(pool, sessionId, userId) {
   log.info('anthropic-proxy', 'Turn switched to BYOK key mid-turn', { sessionId, userId });
 }
 
+// #800: accumulate this call's cost onto the session's coding-agent
+// spend ledger (chat_sessions.agent_cost_cents) — the platform's only
+// per-change cost record. Everything else the proxy does with
+// result.costCents is in-memory (budget trackers) or per-user-per-day
+// (llm_usage), so without this the agent's spend — the large majority of
+// what a change costs — is unattributable to the change forever.
+//
+// Called from BOTH settle points (BYOK and platform key) so payer choice
+// doesn't change what gets recorded: this is a list-price cost record,
+// not a billing record.
+//
+// Three gates, all "don't record it":
+//   - `isSyncTurn`: platform-driven merge-conflict / sync-with-main
+//     turns bill system_token_usage and run on a fixed model. They are
+//     housekeeping, not a consequence of the user's model choice.
+//   - zero cost: a killed or empty call shouldn't churn the row.
+//   - no sessionId: the id comes from a signed JWT claim
+//     (middleware/anthropic-proxy-auth.js) and is read with optional
+//     chaining, so never build `WHERE id = undefined`.
+//
+// FIRE-AND-FORGET by contract: never awaited into the response path, and
+// a failure is a log.warn and nothing more. Bookkeeping must not be able
+// to fail or delay a turn — same posture as emitSwitchNotice above.
+function noteAgentSpend(pool, { sessionId, costCents, isSyncTurn }) {
+  if (isSyncTurn) return;
+  if (!sessionId) return;
+  const cents = Number(costCents);
+  if (!Number.isFinite(cents) || cents <= 0) return;
+  Promise.resolve()
+    .then(() => pool.query(
+      `UPDATE chat_sessions SET agent_cost_cents = agent_cost_cents + $1 WHERE id = $2`,
+      [cents, sessionId]
+    ))
+    .catch((err) => {
+      log.warn('anthropic-proxy', 'Failed to record agent spend on session', {
+        sessionId, costCents: cents, err: err.message,
+      });
+    });
+}
+
 function anthropicProxyRoutes(config) {
   const router = Router();
   const pool = getPool(config);
@@ -356,6 +396,11 @@ function anthropicProxyRoutes(config) {
           if (workerMod && result.costCents > 0) {
             workerMod.noteTurnByokSpend(sessionId, result.costCents);
           }
+          // #800: BYOK-paid work still costs the change the same at list
+          // price, so it lands on the ledger identically.
+          noteAgentSpend(pool, {
+            sessionId, costCents: result.costCents, isSyncTurn,
+          });
           if (result.status === 401 || result.status === 403) {
             log.warn('anthropic-proxy', 'BYOK key rejected by Anthropic upstream', {
               sessionId, userId, status: result.status,
@@ -453,6 +498,10 @@ function anthropicProxyRoutes(config) {
         globalBudgetCache.liveDeltaCents += result.costCents;
       }
     }
+    // #800: same cost, recorded durably against the change rather than
+    // only in the in-memory trackers above. Counted on kills too, for the
+    // same reason the trackers count them — the tokens were consumed.
+    noteAgentSpend(pool, { sessionId, costCents: result.costCents, isSyncTurn });
     if (result.killed) {
       log.info('anthropic-proxy', 'Killed call settled', {
         sessionId, userId,
@@ -466,3 +515,9 @@ function anthropicProxyRoutes(config) {
 }
 
 module.exports = anthropicProxyRoutes;
+// #800: exposed for tests/anthropic-proxy-agent-spend.test.js. The ledger
+// has no UI, so its gates (sync turn / zero cost / missing session) and
+// its swallow-on-failure contract are only observable through a direct
+// unit test. Attached as a property so `require(...)(config)` — how
+// server.js mounts the router — keeps working unchanged.
+module.exports.noteAgentSpend = noteAgentSpend;

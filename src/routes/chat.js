@@ -4,7 +4,6 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const models = require('../services/models');
-const modelStats = require('../services/model-stats');
 const { listActiveUserIds } = require('../services/active-users');
 const appAccess = require('../services/app-access');
 const attachmentsSvc = require('../services/attachments');
@@ -18,32 +17,17 @@ function chatRoutes(config) {
   // allowlist src/routes/sessions.js validates inbound `model`
   // against, so the dropdown and server enforcement can never drift.
   //
-  // #800: each entry also carries the selector's two decision aids —
-  // `changeSize` (editorial guidance from the allowlist) and `stats`
-  // (the measured Wilson band over issues solved, from
-  // services/model-stats.js; null when the aggregate couldn't be
-  // computed, in which case the UI renders plain labels). The legacy
+  // #800: each entry also carries `changeSize` — the picker's editorial
+  // "what kind of work is this model for" copy, which rides along inside
+  // models.list() with no work needed here. Deliberately NO measured
+  // figures in this payload: nothing readable exists yet (see the
+  // agent_cost_cents ledger in routes/anthropic-proxy.js), so the
+  // handler stays synchronous and touches no tables. The legacy
   // `outputCostPerMTok` field stays in the payload — it no longer
   // appears in any picker, but removing it would be a needless
   // breaking change for anything else reading this endpoint.
-  router.get('/api/models', async (_req, res) => {
-    // statsForModels already swallows query failures into null, but this
-    // route is hit on every page load and Express 4 does not catch async
-    // rejections — so an unexpected throw here would hang the request and
-    // leave the dropdown empty. Belt and braces: fall back to no stats.
-    let stats = null;
-    try {
-      stats = await modelStats.statsForModels(pool);
-    } catch (err) {
-      log.warn('models', 'per-model stats unavailable', { error: err.message });
-    }
-    res.json({
-      models: models.list().map((m) => ({
-        ...m,
-        stats: (stats && stats[m.id]) || null,
-      })),
-      default: models.DEFAULT_MODEL,
-    });
+  router.get('/api/models', (_req, res) => {
+    res.json({ models: models.list(), default: models.DEFAULT_MODEL });
   });
 
   router.get('/api/apps/:slug/messages', async (req, res) => {

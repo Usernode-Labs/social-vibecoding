@@ -6437,7 +6437,7 @@ const AppView = {
         ? DevChat.modelNoteText(chosen)
         : '';
       noteEl.textContent = text;
-      noteEl.title = text && DevChat.MODEL_STATS_TOOLTIP ? DevChat.MODEL_STATS_TOOLTIP : '';
+      noteEl.title = text && DevChat.MODEL_GUIDANCE_TOOLTIP ? DevChat.MODEL_GUIDANCE_TOOLTIP : '';
     };
     paintNote();
     if (modelSel) modelSel.addEventListener('change', paintNote);

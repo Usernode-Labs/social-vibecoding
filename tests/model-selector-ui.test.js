@@ -8,14 +8,17 @@
 //
 // What must hold:
 //   1. No price text ($ / MTok) survives anywhere in the picker — that
-//      was the whole point of the issue.
-//   2. A model with enough data reads "<label> — solves <lo>–<hi>% ·
-//      <size hint>"; one below the threshold reads "new" instead of a
-//      fake-precise number.
-//   3. The caption under the dropdown describes the SELECTED model and
-//      follows the selection when it changes.
-//   4. stats:null (aggregate failed, or the pre-fetch seed map) degrades
-//      to bare labels with the caption hidden — never a crash.
+//      was the whole point of the issue. Nor any measured figure: the
+//      picker is entirely static editorial copy now.
+//   2. Each option reads "<label> — <what kind of work it is for>", and
+//      the copy positions Opus and Fable as peers (heavy coding vs.
+//      design/taste) rather than a size ladder.
+//   3. The caption under the dropdown describes the SELECTED model in a
+//      full sentence and follows the selection when it changes.
+//   4. Missing guidance degrades to bare labels with the caption hidden
+//      — never a crash.
+//   5. The guidance copy in dev-chat.js's seed map has not drifted from
+//      src/services/models.js, which is authoritative.
 //
 // Run with: node --test tests/model-selector-ui.test.js
 
@@ -173,38 +176,30 @@ function makeHarness() {
   return { DevChat, getEl };
 }
 
-// Three-model map mirroring what GET /api/models sends: one with a band,
-// one below the threshold, one more with a band.
-function statsMap() {
+// The three-model map GET /api/models sends: label + guidance copy, and
+// nothing measured. Mirrors src/services/models.js — the copy-drift guard
+// at the bottom of this file is what keeps that true.
+function guidanceMap() {
   return {
     'claude-sonnet-5': {
       label: 'Sonnet 5',
       changeSize: {
-        short: 'small changes',
+        short: 'small, simple changes',
         long: 'One small thing at a time: a text tweak, a colour, a single file.',
-      },
-      stats: {
-        attempts: 19, solved: 10, lowPct: null, highPct: null, hasEnoughData: false,
       },
     },
     'claude-opus-5': {
       label: 'Opus 5',
       changeSize: {
-        short: 'a few files',
-        long: 'A normal fix or feature: a few files, one screen.',
-      },
-      stats: {
-        attempts: 312, solved: 149, lowPct: 43, highPct: 52, hasEnoughData: true,
+        short: 'big or tricky coding',
+        long: 'Multi-file features, refactors, and debugging that needs real digging.',
       },
     },
     'claude-fable-5': {
       label: 'Fable 5',
       changeSize: {
-        short: 'big or tricky work',
-        long: 'Multi-file features, refactors, and debugging that needs real digging.',
-      },
-      stats: {
-        attempts: 401, solved: 221, lowPct: 51, highPct: 59, hasEnoughData: true,
+        short: 'design and taste',
+        long: 'Work where how it looks and feels matters: layout, wording, and judgment calls about the feel of a screen.',
       },
     },
   };
@@ -212,7 +207,7 @@ function statsMap() {
 
 function render(overrides) {
   const h = makeHarness();
-  h.DevChat.MODELS = (overrides && overrides.models) || statsMap();
+  h.DevChat.MODELS = (overrides && overrides.models) || guidanceMap();
   h.DevChat.selectedModel = (overrides && overrides.selected) || 'claude-opus-5';
   h.DevChat.renderChatView();
   return { ...h, html: h.getEl('dc-view').innerHTML };
@@ -220,69 +215,78 @@ function render(overrides) {
 
 // ── 1. no price text anywhere ───────────────────────────────────────
 
-test('the composer no longer renders any $/MTok price text (#800)', () => {
+test('the composer renders no price text at all (#800)', () => {
   const { html } = render();
   assert.ok(!html.includes('MTok'), 'found "MTok" in the composer markup');
+  // Valid again now that the picker shows no measured cost figure either.
   assert.ok(!html.includes('$'), 'found a "$" in the composer markup');
 });
 
-test('the seed MODELS map carries no price field at all', () => {
+test('the seed MODELS map carries no price and no measured figures', () => {
   const { DevChat } = makeHarness();
   for (const [id, meta] of Object.entries(DevChat.MODELS)) {
     assert.equal(meta.outputCostPerMTok, undefined, `${id} still seeds a price`);
+    assert.equal(meta.stats, undefined, `${id} still seeds a stats block`);
   }
   // And Haiku is gone from the seed set too, so the dropdown never offers
   // it even before /api/models resolves.
   assert.ok(!('claude-haiku-4-5' in DevChat.MODELS));
 });
 
-// ── 2. option text ──────────────────────────────────────────────────
+// ── 2. option text: what kind of work, not how big ──────────────────
 
-test('a model with enough data shows its solve range and size hint', () => {
+test('each option reads "<label> — <what it is for>"', () => {
   const { html } = render();
-  assert.ok(
-    html.includes('Opus 5 — solves 43–52% · a few files'),
-    `option text missing; got: ${html.match(/<option[^>]*>[^<]*<\/option>/g)}`
-  );
-  assert.ok(html.includes('Fable 5 — solves 51–59% · big or tricky work'));
+  for (const expected of [
+    'Sonnet 5 — small, simple changes',
+    'Opus 5 — big or tricky coding',
+    'Fable 5 — design and taste',
+  ]) {
+    assert.ok(
+      html.includes(expected),
+      `missing option "${expected}"; got: ${html.match(/<option[^>]*>[^<]*<\/option>/g)}`
+    );
+  }
 });
 
-test('a model below the attempts threshold reads "new", not a percentage', () => {
+test('no option implies a size ladder between Opus and Fable', () => {
   const { html } = render();
-  assert.ok(html.includes('Sonnet 5 — new · small changes'));
-  assert.ok(!html.includes('Sonnet 5 — solves'));
+  // The superseded copy positioned Fable as the "bigger" model. Opus is
+  // now the heavy-coding pick and Fable the taste pick, so this exact
+  // string must not come back.
+  assert.ok(!html.includes('Fable 5 — big or tricky work'));
+  assert.ok(!html.includes('a few files'));
 });
 
 test('modelOptionText degrades to the bare label without guidance', () => {
   const { DevChat } = makeHarness();
-  assert.equal(
-    DevChat.modelOptionText({ label: 'Opus 5', stats: { hasEnoughData: true, lowPct: 1, highPct: 2 } }),
-    'Opus 5'
-  );
+  assert.equal(DevChat.modelOptionText({ label: 'Opus 5' }), 'Opus 5');
+  assert.equal(DevChat.modelOptionText({ label: 'Opus 5', changeSize: {} }), 'Opus 5');
   assert.equal(DevChat.modelOptionText(null), '');
 });
 
 // ── 3. the caption ──────────────────────────────────────────────────
 
-test('the caption describes the selected model in full sentences', () => {
+test('the caption describes the selected model in a full sentence', () => {
   const { getEl } = render({ selected: 'claude-opus-5' });
   const note = getEl('dc-model-note');
+  // Locks modelNoteText's first-character lower-casing against the new
+  // strings: "Multi-file …" has to read as "best for multi-file …".
   assert.equal(
     note.textContent,
-    'Opus 5 — merged 43–52% of the issues it was pointed at (312 attempts in the last 90 days). '
-      + 'Best for a normal fix or feature: a few files, one screen.'
+    'Opus 5 — best for multi-file features, refactors, and debugging that needs real digging.'
   );
-  assert.match(note.title, /share that ended with the change actually merged/);
   assert.equal(note.classList.contains('hidden'), false);
 });
 
-test('the below-threshold caption says so instead of quoting a rate', () => {
-  const { getEl } = render({ selected: 'claude-sonnet-5' });
+test('the caption carries the guidance tooltip, not the old size-ladder wording', () => {
+  const { getEl } = render();
   const note = getEl('dc-model-note');
-  assert.equal(
-    note.textContent,
-    'Sonnet 5 — not enough finished attempts yet to show a solve rate (19 so far). '
-      + 'Best for one small thing at a time: a text tweak, a colour, a single file.'
+  assert.match(note.title, /equally strong at straight coding/);
+  assert.match(note.title, /A suggestion, not a rule/);
+  assert.ok(
+    !/Bigger models/i.test(note.title),
+    'tooltip reverted to the superseded "bigger models cost more" framing'
   );
 });
 
@@ -294,31 +298,29 @@ test('the caption follows the selection when the dropdown changes', () => {
   getEl('dc-model-select')._fire('change', { target: { value: 'claude-fable-5' } });
 
   assert.equal(DevChat.selectedModel, 'claude-fable-5');
-  assert.match(note.textContent, /^Fable 5 — merged 51–59% of the issues/);
-  assert.match(note.textContent, /Best for multi-file features/);
+  assert.equal(
+    note.textContent,
+    'Fable 5 — best for work where how it looks and feels matters: layout, wording, '
+      + 'and judgment calls about the feel of a screen.'
+  );
 });
 
-test('staging demo numbers are labelled as such in the caption', () => {
-  const { DevChat } = makeHarness();
-  const text = DevChat.modelNoteText({
-    label: 'Opus 5',
-    changeSize: { short: 'a few files', long: 'A normal fix or feature: a few files, one screen.' },
-    stats: { attempts: 312, solved: 149, lowPct: 43, highPct: 52, hasEnoughData: true, demo: true },
-  });
-  assert.ok(text.endsWith('· staging demo data'), text);
+test('the Sonnet caption stays the small-change pick', () => {
+  const { getEl } = render({ selected: 'claude-sonnet-5' });
+  assert.equal(
+    getEl('dc-model-note').textContent,
+    'Sonnet 5 — best for one small thing at a time: a text tweak, a colour, a single file.'
+  );
 });
 
-// ── 4. missing stats degrade, never crash ───────────────────────────
+// ── 4. missing guidance degrades, never crashes ─────────────────────
 
-test('stats:null renders bare labels with the caption hidden', () => {
-  const models = statsMap();
-  for (const meta of Object.values(models)) meta.stats = null;
-
+test('a model with no guidance renders a bare label with the caption hidden', () => {
+  const models = { 'claude-opus-5': { label: 'Opus 5' } };
   const { html, getEl } = render({ models });
 
   assert.ok(html.includes('>Opus 5</option>'), 'expected a bare label option');
-  assert.ok(!html.includes('solves'));
-  assert.ok(!html.includes('new ·'));
+  assert.ok(!html.includes('best for'));
 
   const note = getEl('dc-model-note');
   assert.equal(note.textContent, '');
@@ -327,6 +329,38 @@ test('stats:null renders bare labels with the caption hidden', () => {
 
 test('a garbage MODELS entry does not throw the whole chat view', () => {
   assert.doesNotThrow(() => {
-    render({ models: { 'claude-opus-5': { label: 'Opus 5' } } });
+    render({ models: { 'claude-opus-5': { label: 'Opus 5', changeSize: null } } });
   });
+});
+
+// ── 5. copy-drift guard ─────────────────────────────────────────────
+// The guidance copy lives in TWO places by design: src/services/models.js
+// is authoritative, and dev-chat.js seeds a duplicate purely so the
+// dropdown paints correctly before /api/models resolves. Nothing else in
+// the suite would notice them diverging, and a drift would show users one
+// string then silently swap it for another mid-load.
+
+test('the dev-chat seed map matches src/services/models.js exactly', () => {
+  const server = require('../src/services/models');
+  const { DevChat } = makeHarness();
+
+  assert.deepEqual(
+    Object.keys(DevChat.MODELS).sort(),
+    Object.keys(server.MODELS).sort(),
+    'seed map and allowlist offer different models'
+  );
+
+  for (const [id, serverMeta] of Object.entries(server.MODELS)) {
+    const seedMeta = DevChat.MODELS[id];
+    assert.ok(seedMeta, `${id} missing from the dev-chat seed map`);
+    assert.equal(seedMeta.label, serverMeta.label, `${id} label drifted`);
+    assert.equal(
+      seedMeta.changeSize.short, serverMeta.changeSize.short,
+      `${id} changeSize.short drifted between models.js and dev-chat.js`
+    );
+    assert.equal(
+      seedMeta.changeSize.long, serverMeta.changeSize.long,
+      `${id} changeSize.long drifted between models.js and dev-chat.js`
+    );
+  }
 });
