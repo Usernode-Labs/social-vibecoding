@@ -154,6 +154,12 @@
       "expectText": "Grid reorder (homescreen displacement)"
     },
     {
+      "name": "Kit demo hit-area section keeps the overlay button absolute (#781)",
+      "path": "/usernode-native/v1/demo.html",
+      "expectSelector": "#hit-area-demo #hit-area-clear.absolute.un-touch-target",
+      "expectText": "hit 44px×44px"
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"
