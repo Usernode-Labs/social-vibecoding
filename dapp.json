@@ -283,9 +283,15 @@
       "expectText": "What issues are open right now?"
     },
     {
-      "name": "Composer ships the save-as-draft icon (#798)",
+      "name": "Composer ships the save-as-draft icon while the chat is stopped (#798, #801)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
-      "expectSelector": "#dc-form #dc-save-draft-btn"
+      "expectSelector": "#dc-form #dc-save-draft-btn:not([hidden])"
+    },
+    {
+      "name": "Mid-turn composer hides the save icon and locks draft sending (#801)",
+      "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-form #dc-save-draft-btn[hidden]",
+      "expectText": "sending unlocks when Claude finishes"
     },
     {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",

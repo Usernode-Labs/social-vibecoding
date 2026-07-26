@@ -19,6 +19,10 @@
 //   6. Trash removes just that draft, and an emptied list STAYS empty.
 //   7. The composer is not disabled while streaming (that's what made
 //      typing-while-thinking impossible before).
+//   8. #801: the save ICON itself is only present while the chat is
+//      STOPPED — it hides for the duration of a turn (and saving is
+//      refused then, not just un-clickable), and comes back when the turn
+//      ends. The drafts list and the typed text are untouched by that.
 //
 // Same harness style as devchat-composer-restore.test.js: dev-chat.js is a
 // plain browser script, so we load its source into a vm context, expose
@@ -44,6 +48,10 @@ function makeElement(id) {
     style: {},
     dataset: {},
     disabled: false,
+    // #801: _syncSaveDraftBtn toggles the `hidden` property, so the stub
+    // must start with a real boolean (not undefined) for the
+    // visible-when-stopped assertions to be meaningful.
+    hidden: false,
     title: '',
     placeholder: '',
     innerHTML: '',
@@ -230,11 +238,15 @@ test('send (once idle) removes the draft and sends exactly its text', () => {
 
 test('edit loads the draft back into the composer and parks the typed text', () => {
   const { DevChat, document } = makeHarness();
-  open(DevChat, { streaming: true });
+  open(DevChat);
   const input = document.getElementById('dc-input');
 
+  // Park the draft while the chat is stopped (#801: saving is refused
+  // mid-turn), then start a turn — edit must still work throughout, since
+  // its job is to not throw away text, not to offer the save affordance.
   input.value = 'reword me';
   DevChat._saveComposerDraft();
+  DevChat.isStreaming = true;
   input.value = 'a half-typed follow-up';
 
   const [draft] = DevChat._getSavedDrafts(SESSION_ID);
@@ -246,7 +258,8 @@ test('edit loads the draft back into the composer and parks the typed text', () 
   assert.equal(DevChat._getDraft(SESSION_ID), 'reword me',
     'composer draft persisted so the edit survives a tab switch');
 
-  // Re-saving puts it back at the end of the list.
+  // Re-saving puts it back at the end of the list — once the turn ends.
+  DevChat.isStreaming = false;
   DevChat._saveComposerDraft();
   assert.deepEqual(texts(DevChat), ['a half-typed follow-up', 'reword me']);
 });
@@ -303,7 +316,7 @@ test('the composer stays typable while a turn streams', () => {
   DevChat._setStreamingUI(true, 'claude');
   assert.equal(input.disabled, false, 'typing while the agent thinks is the point');
   assert.equal(input.placeholder, DevChat.COMPOSER_PLACEHOLDER_BUSY,
-    'the placeholder explains that text can be saved for later');
+    'the placeholder explains that the text stays in the box');
 
   DevChat._setStreamingUI(false);
   assert.equal(input.disabled, false);
@@ -324,4 +337,88 @@ test('typed-but-unsent text still cannot be submitted mid-turn', () => {
   assert.deepEqual(sent, [], 'Ctrl+Enter mid-turn sends nothing');
   assert.equal(input.value, 'this must not join the running turn',
     'and the text is left alone');
+});
+
+// ── #801: the icon is present only while the chat is stopped ──────────
+
+test('the save icon is hidden while a turn streams and returns when it stops', () => {
+  const { DevChat, document } = makeHarness();
+  open(DevChat);
+  const input = document.getElementById('dc-input');
+  const btn = document.getElementById('dc-save-draft-btn');
+  input.value = 'something worth saving';
+
+  DevChat.isStreaming = true;
+  DevChat._syncSaveDraftBtn();
+  assert.equal(btn.hidden, true, 'no save affordance while Claude is working');
+  assert.equal(btn.disabled, true,
+    'hidden implies inert — a stray activation cannot save mid-turn');
+
+  DevChat.isStreaming = false;
+  DevChat._syncSaveDraftBtn();
+  assert.equal(btn.hidden, false, 'the icon comes back once the chat is stopped');
+  assert.equal(btn.disabled, false, 'and is live again because there is text');
+});
+
+test('every streaming transition toggles the icon (incl. the mayor2 wrap-up)', () => {
+  const { DevChat, document } = makeHarness();
+  open(DevChat);
+  const btn = document.getElementById('dc-save-draft-btn');
+  document.getElementById('dc-input').value = 'a note';
+
+  // _setStreamingUI is the single choke point every transition funnels
+  // through (send, reconnect, phase change, finish, stop).
+  DevChat.isStreaming = true;
+  DevChat._setStreamingUI(true, 'claude');
+  assert.equal(btn.hidden, true, 'hidden as soon as the turn starts');
+
+  DevChat._setStreamingUI(true, 'mayor2');
+  assert.equal(btn.hidden, true, 'still hidden through the un-stoppable wrap-up');
+
+  DevChat.isStreaming = false;
+  DevChat._setStreamingUI(false);
+  assert.equal(btn.hidden, false, 'and restored the moment the turn settles');
+  assert.equal(btn.disabled, false);
+});
+
+test('when stopped, the icon is visible whether or not there is text', () => {
+  const { DevChat, document } = makeHarness();
+  open(DevChat);
+  const input = document.getElementById('dc-input');
+  const btn = document.getElementById('dc-save-draft-btn');
+
+  DevChat._syncSaveDraftBtn();
+  assert.equal(btn.hidden, false, 'an empty box still shows the icon…');
+  assert.equal(btn.disabled, true, '…just greyed out');
+
+  input.value = 'now there is something';
+  DevChat._syncSaveDraftBtn();
+  assert.equal(btn.hidden, false);
+  assert.equal(btn.disabled, false);
+});
+
+test('saving is refused mid-turn, not merely un-clickable', () => {
+  const { DevChat, document } = makeHarness();
+  open(DevChat);
+  const input = document.getElementById('dc-input');
+  input.value = 'parked before the turn';
+  DevChat._saveComposerDraft();
+
+  // A click landing exactly as a turn starts, or any programmatic call.
+  DevChat.isStreaming = true;
+  input.value = 'must not become a draft mid-turn';
+  DevChat._saveComposerDraft();
+
+  assert.deepEqual(texts(DevChat), ['parked before the turn'],
+    'the list is unchanged while the chat is running');
+  assert.equal(input.value, 'must not become a draft mid-turn',
+    'and the typed text is left in the box rather than swallowed');
+
+  // Once the turn ends the same call works normally again.
+  DevChat.isStreaming = false;
+  DevChat._saveComposerDraft();
+  assert.deepEqual(texts(DevChat),
+    ['parked before the turn', 'must not become a draft mid-turn'],
+    'saving resumes as soon as the chat is stopped');
+  assert.equal(input.value, '', 'and the box is cleared for the next thought');
 });

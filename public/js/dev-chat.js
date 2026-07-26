@@ -49,8 +49,11 @@ const DevChat = {
   // has to put the original back afterwards.
   COMPOSER_PLACEHOLDER:
     'Describe a change in plain English — e.g. "add a dark mode toggle". No coding needed.',
+  // #801: the save icon is hidden while a turn runs, so the busy copy no
+  // longer points at it — the box itself is the parking spot (its text is
+  // persisted per session on every keystroke, see _setupTextareaResize).
   COMPOSER_PLACEHOLDER_BUSY:
-    'Claude is working — type your next note and tap 💾 to save it for later.',
+    'Claude is working — jot your next note here; it stays in the box until the turn ends.',
   SAVE_DRAFT_TITLE: 'Save this text as a draft — it stays here until you send it',
   // Floppy-disk glyph, same inline-SVG style as the attach button.
   _SAVE_ICON_SVG:
@@ -4361,6 +4364,10 @@ const DevChat = {
     DevChat._wireSavedDrafts();
     DevChat._syncSaveDraftBtn();
     if (DevChat.isStreaming) DevChat._setStreamingUI(true);
+    // #801 screenshot state: paint the mid-turn composer (Stop button, busy
+    // placeholder, no save icon) without any turn actually running. Pure UI
+    // — isStreaming stays false, so nothing can be sent or stopped.
+    else if (DevChat._wantsBusyShot()) DevChat._setStreamingUI(true, 'claude');
 
     document.getElementById('dc-model-select').addEventListener('change', (e) => {
       DevChat.selectedModel = e.target.value;
@@ -4724,13 +4731,19 @@ const DevChat = {
     });
   },
 
-  // ── Saved draft messages (#798) ────────────────────────────
+  // ── Saved draft messages (#798, #801) ──────────────────────
   //
   // The problem: a turn can run for many minutes, and everything the user
   // thinks of meanwhile ("also make the header sticky") either gets lost
   // or gets fired off the moment the turn ends, un-reviewed. So the box
-  // stays typable while the agent works (see _setStreamingUI) and the
+  // stays typable while the agent works (see _setStreamingUI), and the
   // save icon parks the text as a DRAFT.
+  //
+  // #801 scoped the ICON to the stopped chat: it is hidden for the
+  // duration of a turn (and saving is refused then), so mid-turn the box
+  // holds ONE note — auto-persisted per session, never lost — and the
+  // drafts pile up between turns instead. Existing drafts stay listed
+  // throughout; only saving a NEW one waits for the turn to finish.
   //
   // Drafts render as a list ABOVE the composer, newest LAST (reading
   // order = the order you thought of them = the order you'll likely send
@@ -4759,8 +4772,29 @@ const DevChat = {
     { id: 'demo-draft-2', text: 'Staging demo draft: rename the "Submit" button to "Publish".', savedAt: '2026-01-01T00:01:00.000Z' },
   ],
   _wantsDemoDrafts() {
-    try { return new URLSearchParams(location.search).get('shot') === 'drafts'; }
+    try {
+      const shot = new URLSearchParams(location.search).get('shot');
+      return shot === 'drafts' || shot === 'busy-drafts';
+    } catch { return false; }
+  },
+
+  // Screenshot-state deep link (`?shot=busy-drafts`, #801): paints the
+  // composer as it looks mid-turn — save icon hidden, drafts listed with
+  // their Send disabled — so the "hidden while working" half of the
+  // feature has a URL the captures and the dapp.json check can reach.
+  // Deliberately NEVER touches DevChat.isStreaming: the real guards
+  // (sendMessage / _submitFromInput / _sendSavedDraft / _stopCurrentTurn)
+  // keep reading the honest flag, and nothing here starts or stops a turn.
+  _wantsBusyShot() {
+    try { return new URLSearchParams(location.search).get('shot') === 'busy-drafts'; }
     catch { return false; }
+  },
+
+  // Paint-only "is a turn running" predicate. Real behaviour must keep
+  // reading DevChat.isStreaming directly — this exists so the shot state
+  // above renders the busy composer.
+  _chatBusyForPaint() {
+    return !!DevChat.isStreaming || DevChat._wantsBusyShot();
   },
 
   _getSavedDrafts(sessionId) {
@@ -4803,12 +4837,32 @@ const DevChat = {
     if (window.PlatformUI && typeof PlatformUI.toast === 'function') PlatformUI.toast(msg);
   },
 
-  // Enable the save icon only when there is non-whitespace text to save.
-  // Cheap and idempotent — called from the input handler, every streaming
-  // transition, and each session re-render.
+  // Show the save icon only when the chat is STOPPED (#801), and — when
+  // shown — enable it only if there is non-whitespace text to save.
+  //
+  // "Stopped" is `!isStreaming`: no chat turn in flight for the open
+  // session. That's the same flag that decides Send-vs-Stop, refuses
+  // _submitFromInput and disables the draft rows' Send, so the icon
+  // vanishes for exactly as long as sending is impossible. Every
+  // streaming transition funnels through _setStreamingUI, which already
+  // calls this — no extra listeners needed.
+  //
+  // Hidden via the `hidden` PROPERTY (paired with `.dc-save-draft-btn
+  // [hidden]` in app.css, which the shared inline-flex rule would
+  // otherwise beat) rather than a class, so the control also leaves the
+  // tab order and the accessibility tree. The node itself stays mounted:
+  // its click listener is bound once per render behind `_sdWired`, so a
+  // removed-and-recreated button would come back unwired.
   _syncSaveDraftBtn() {
     const btn = document.getElementById('dc-save-draft-btn');
     if (!btn) return;
+    const busy = DevChat._chatBusyForPaint();
+    if (busy) {
+      btn.hidden = true;
+      btn.disabled = true;
+      return;
+    }
+    btn.hidden = false;
     const input = document.getElementById('dc-input');
     const hasText = !!(input && input.value.trim());
     btn.disabled = !hasText;
@@ -4827,7 +4881,9 @@ const DevChat = {
       box.classList.remove('dc-drafts-active');
       return;
     }
-    const busy = !!DevChat.isStreaming;
+    // Paint-only predicate so `?shot=busy-drafts` renders the mid-turn
+    // rows; _sendSavedDraft still refuses on the real isStreaming flag.
+    const busy = DevChat._chatBusyForPaint();
     const sendAttrs = busy
       ? ' disabled title="Claude is still working — you can send this when the turn finishes"'
       : ' title="Send this draft now"';
@@ -4879,14 +4935,20 @@ const DevChat = {
   },
 
   // Save icon: move the composer's text into the drafts list and clear the
-  // box, so the user can immediately type the next thought. Works whether
-  // or not a turn is running (it's just as useful for stashing an idea
-  // while idle). Attachments are NOT captured — a draft is plain text; any
-  // pending files stay parked in the composer strip for the real send.
+  // box, so the user can immediately type the next thought. Attachments are
+  // NOT captured — a draft is plain text; any pending files stay parked in
+  // the composer strip for the real send.
+  //
+  // #801: refused while a turn streams, so the rule holds in BEHAVIOUR and
+  // not only in paint — a click landing exactly as a turn starts, or any
+  // programmatic call, can't park a draft mid-turn. Silent no-op (the icon
+  // is hidden, so there's no affordance to explain away) and the text is
+  // left in the box, where it's already persisted per session.
   _saveComposerDraft() {
     const session = DevChat.currentSession;
     const input = document.getElementById('dc-input');
     if (!session || !input) return;
+    if (DevChat.isStreaming) return;
     const text = input.value.trim();
     if (!text) return;
     const drafts = DevChat._getSavedDrafts(session.id);
