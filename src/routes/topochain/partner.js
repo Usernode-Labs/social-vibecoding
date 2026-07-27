@@ -150,9 +150,16 @@ function topochainPartnerRoutes(config) {
         }
       }
 
-      const activityAt = body.activity_at == null ? NaN : new Date(body.activity_at);
-      if (body.activity_at === undefined || body.activity_at === null || Number.isNaN(activityAt.getTime())) {
+      let activityAt = null;
+      if (body.activity_at === undefined || body.activity_at === null || body.activity_at === '') {
         details.activity_at = ['The activity_at field is required and must be a valid date.'];
+      } else {
+        const parsed = new Date(body.activity_at);
+        if (Number.isNaN(parsed.getTime())) {
+          details.activity_at = ['The activity_at field is required and must be a valid date.'];
+        } else {
+          activityAt = parsed;
+        }
       }
 
       // `challenge_id` (renamed from v1's `phase_available_activity_id` —
