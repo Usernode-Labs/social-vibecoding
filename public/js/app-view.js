@@ -162,8 +162,29 @@ const AppView = {
   // mid-flight between the paired _getViewMode() reads inside async
   // flows like loadMoreMerged if the window is resized across 1024px.
   _viewModeAutoDefault: null,
+  // #814: `?view=list|kanban|pm` — a one-shot URL override that wins over
+  // BOTH the stored preference and the width default, resolved once per
+  // page load (undefined = not parsed yet, null = nothing usable in the
+  // URL). It exists so a fresh browser can be pointed straight at a given
+  // view: the capture container boots with empty localStorage at the
+  // 390x844 phone frame, where the width default below resolves to 'list',
+  // so without this no mobile screenshot could ever show the board.
+  // Cleared by _setViewMode so an explicit toggle click always wins.
+  _viewModeUrlOverride: undefined,
+  _readViewModeOverride() {
+    if (AppView._viewModeUrlOverride !== undefined) return AppView._viewModeUrlOverride;
+    let v = null;
+    try {
+      const raw = new URLSearchParams(window.location.search).get('view');
+      if (raw === 'list' || raw === 'kanban' || raw === 'pm') v = raw;
+    } catch { v = null; }
+    AppView._viewModeUrlOverride = v;
+    return v;
+  },
   _getViewMode() {
     try {
+      const override = AppView._readViewModeOverride();
+      if (override) return override;
       const stored = window.localStorage.getItem(AppView.VIEW_MODE_KEY);
       if (stored === 'kanban' || stored === 'list' || stored === 'pm') return stored;
       if (AppView._viewModeAutoDefault === null) {
@@ -177,6 +198,9 @@ const AppView = {
   },
   _setViewMode(mode) {
     const next = (mode === 'kanban' || mode === 'pm') ? mode : 'list';
+    // An explicit choice retires the URL override (#814) — otherwise
+    // ?view= would keep winning over every later toggle click.
+    AppView._viewModeUrlOverride = null;
     try { window.localStorage.setItem(AppView.VIEW_MODE_KEY, next); } catch {}
   },
   // #482: kanban filter-bar state. The active object always reflects the
@@ -223,6 +247,65 @@ const AppView = {
         window.sessionStorage.removeItem(key);
       }
     } catch {}
+  },
+  // #814: mobile kanban tabs. Below 1024px the board shows ONE column at a
+  // time behind a tab strip instead of scrolling sideways; which column is
+  // showing is this key. Same storage shape and lifetime as the filters
+  // above — per-app sessionStorage, so the tab survives in-app navigation
+  // and a reload but resets when the browser tab closes. Purely a display
+  // preference: the markup always carries all four columns and CSS decides
+  // what's visible, so desktop never reads this beyond marking the column.
+  KANBAN_TAB_KEY: 'devKanbanTab',
+  // Column identities, in board order. Shared by the render, the tab strip,
+  // the stored value and the ?col= override. NOTE: distinct from the
+  // drag-order column keys ('issues' / 'review', see routes/board-order.js)
+  // — same words in places, different namespace.
+  KANBAN_TABS: ['issues', 'inprogress', 'inreview', 'done'],
+  _kanbanTab: 'issues',
+  // `?col=<key>` — one-shot URL override for the active tab, mirroring
+  // ?view= above: it seeds the tab on mount, wins over the stored value,
+  // and is retired the moment the user taps a tab.
+  _kanbanTabUrlOverride: undefined,
+  _readKanbanTabOverride() {
+    if (AppView._kanbanTabUrlOverride !== undefined) return AppView._kanbanTabUrlOverride;
+    let v = null;
+    try {
+      const raw = new URLSearchParams(window.location.search).get('col');
+      if (AppView.KANBAN_TABS.includes(raw)) v = raw;
+    } catch { v = null; }
+    AppView._kanbanTabUrlOverride = v;
+    return v;
+  },
+  // Resolve the tab for an app slug: URL override first, then the stored
+  // per-app value, then the leftmost column. Anything unrecognized (a stale
+  // key from a future/older column set, a storage failure) degrades to
+  // 'issues' rather than leaving the board with no visible column.
+  _loadKanbanTab(slug) {
+    const override = AppView._readKanbanTabOverride();
+    if (override) return override;
+    if (!slug) return 'issues';
+    try {
+      const raw = window.sessionStorage.getItem(`${AppView.KANBAN_TAB_KEY}:${slug}`);
+      return AppView.KANBAN_TABS.includes(raw) ? raw : 'issues';
+    } catch { return 'issues'; }
+  },
+  // Persist the active tab under the app slug. The default column leaves no
+  // residue, matching _saveKanbanFilters' "clean state stores nothing" rule.
+  _saveKanbanTab(slug) {
+    if (!slug) return;
+    try {
+      const key = `${AppView.KANBAN_TAB_KEY}:${slug}`;
+      if (AppView._kanbanTab && AppView._kanbanTab !== 'issues') {
+        window.sessionStorage.setItem(key, AppView._kanbanTab);
+      } else {
+        window.sessionStorage.removeItem(key);
+      }
+    } catch {}
+  },
+  // Active tab as used by the render — never trusts the field blindly, so a
+  // bad assignment can't produce a board with every column hidden.
+  _activeKanbanTab() {
+    return AppView.KANBAN_TABS.includes(AppView._kanbanTab) ? AppView._kanbanTab : 'issues';
   },
   // Refresh timer for the session cards' busy indicators (see
   // _syncSessionPolling); self-clears when #dev-body leaves the DOM.
@@ -2078,6 +2161,9 @@ const AppView = {
         // them across navigation / reload. Keyed per slug, so switching apps
         // shows that app's own filters (or a clean board).
         AppView._kanbanFilters = AppView._loadKanbanFilters(App.currentApp);
+        // #814: restore this app's active mobile tab alongside its filters,
+        // so switching apps shows that app's own column (or Issues).
+        AppView._kanbanTab = AppView._loadKanbanTab(App.currentApp);
         body.innerHTML = '<div id="dev-kanban-filterbar" class="mb-2"></div><div id="dev-kanban-board"></div>';
         AppView._renderKanbanFilterBar();
       }
@@ -2765,6 +2851,7 @@ const AppView = {
     AppView._applyAskAiCardAvailability(board);
     AppView._updateKanbanFilterBarUI();
     AppView._initKanbanDrag(board);
+    AppView._initKanbanTabs(board);
   },
 
   // ── Drag-to-reorder within a column (#613) ───────────────────────────
@@ -3154,23 +3241,31 @@ const AppView = {
       // stored column_key; `orderKey(item)` yields the card identity the
       // overlay + drag handler share. Filtering disables dragging (the saved
       // order applies to the full column, not a filtered subset).
-      { title: 'Issues', items: kIssues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter,
+      { key: 'issues', title: 'Issues', items: kIssues, render: (i) => AppView._renderIssueRow(i), footer: issuesFooter,
         orderCol: 'issues', orderKey: (i) => AppView._cardOrderKey('issues', i) },
       // In progress renders through a dedicated builder: pinned own
       // sessions (+ the visibility caption and the archived toggle),
       // then issue cards, then other users' shared sessions.
-      { title: 'In progress', items: kInProgress, cardsHtml: AppView._inProgressCardsHtml(kInProgress, filtering) },
-      { title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)),
+      { key: 'inprogress', title: 'In progress', items: kInProgress, cardsHtml: AppView._inProgressCardsHtml(kInProgress, filtering) },
+      { key: 'inreview', title: 'In review', items: kInReview, render: (x) => (x.kind === 'proposal' ? AppView._renderProposalCard(x.item) : AppView._renderGovCard(x.item)),
         orderCol: 'review', orderKey: (x) => AppView._cardOrderKey('review', x) },
-      { title: 'Done', items: kDone, render: (m) => (m.row_type === 'close_issue' ? AppView._renderCompletedCloseIssueCard(m) : AppView._renderMergedCard(m)), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
+      { key: 'done', title: 'Done', items: kDone, render: (m) => (m.row_type === 'close_issue' ? AppView._renderCompletedCloseIssueCard(m) : AppView._renderMergedCard(m)), count: filtering ? kDone.length : doneTotal, footer: doneFooter },
     ];
 
-    let html = '<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2">';
-    for (const col of cols) {
+    // #814: the counts are computed ONCE per column and consumed by both the
+    // column header and its tab, so the two can never drift (Done's is the
+    // server total unfiltered, the matching-card count while filtering).
+    const counts = cols.map((col) => (typeof col.count === 'number') ? col.count : col.items.length);
+    const activeTab = AppView._activeKanbanTab();
+
+    let html = AppView._renderKanbanTabs(cols, counts, activeTab);
+    html += `<div id="dev-kanban" class="flex gap-3 overflow-x-auto pb-2" data-kanban-active="${escapeAttr(activeTab)}">`;
+    for (let ci = 0; ci < cols.length; ci++) {
+      const col = cols[ci];
       // Cards render from the in-memory (paged) items; the header count can
       // be overridden (Done uses the server total) and falls back to the
       // loaded length for every other column.
-      const count = (typeof col.count === 'number') ? col.count : col.items.length;
+      const count = counts[ci];
       // Reorder is offered only on a reorderable column that isn't being
       // filtered (a filtered view hides cards the saved order still covers).
       const reorder = !!col.orderCol && !filtering;
@@ -3187,9 +3282,15 @@ const AppView = {
         cards = `<div class="space-y-2">${col.items.map(col.render).join('')}</div>`;
       }
       const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
+      // #814: every column is always in the DOM; `dev-kanban-col-active`
+      // marks the one the tab strip is showing and CSS acts on it only
+      // below 1024px, so the desktop four-column board is byte-identical
+      // to the pre-#814 markup apart from the ids/keys.
+      const activeCls = col.key === activeTab ? ' dev-kanban-col-active' : '';
       html += `
-        <div class="dev-kanban-col flex-1 basis-0 min-w-[16rem]">
-          <div class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5">
+        <div id="dev-kanban-col-${escapeAttr(col.key)}" data-kanban-col="${escapeAttr(col.key)}"
+          class="dev-kanban-col${activeCls} flex-1 basis-0 min-w-[16rem]">
+          <div class="dev-kanban-col-head text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5">
             ${escapeHtml(col.title)} <span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${count}</span>
           </div>
           ${cards}
@@ -3198,6 +3299,81 @@ const AppView = {
     }
     html += '</div>';
     return html;
+  },
+
+  // #814: the mobile tab strip — one tab per kanban column, hidden at
+  // ≥1024px (`lg:hidden`) where all four columns show side by side. Each
+  // tab carries the column name plus the same count its header shows, on
+  // two lines so all four fit a 390px phone without the strip itself
+  // needing to scroll (the whole point of the change). An empty column
+  // keeps its tab, dimmed and showing 0, so the strip never reflows.
+  _renderKanbanTabs(cols, counts, activeTab) {
+    const tabs = cols.map((col, i) => {
+      const active = col.key === activeTab;
+      const count = counts[i];
+      const cls = 'dev-kanban-tab flex-1 basis-0 min-w-0 min-h-[44px] px-1 py-1.5 flex flex-col items-center justify-center '
+        + 'border-b-2 transition-colors '
+        + (active
+          ? 'border-violet-500 text-violet-500 font-semibold'
+          : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200');
+      const countCls = 'font-mono text-[11px] leading-tight '
+        + (active ? 'text-violet-400' : (count ? 'text-zinc-400 dark:text-zinc-500' : 'text-zinc-300 dark:text-zinc-600'));
+      return `<button type="button" role="tab" id="dev-kanban-tab-${escapeAttr(col.key)}"
+          data-kanban-tab="${escapeAttr(col.key)}" aria-selected="${active ? 'true' : 'false'}"
+          aria-controls="dev-kanban-col-${escapeAttr(col.key)}" class="${cls}">
+          <span class="text-xs leading-tight truncate max-w-full">${escapeHtml(col.title)}</span>
+          <span class="${countCls}">${count}</span>
+        </button>`;
+    }).join('');
+    return `<div id="dev-kanban-tabs" role="tablist" aria-label="Board columns"
+      class="lg:hidden flex items-stretch gap-1 mb-2 border-b border-zinc-200 dark:border-zinc-800">${tabs}</div>`;
+  },
+
+  // #814: one delegated click listener on the STABLE #dev-kanban-board node
+  // (same `_dragBound` guard style as _initKanbanDrag) so it survives every
+  // innerHTML rewrite. Switching tabs deliberately does NOT repaint the
+  // board: all four columns are already rendered, so moving the active
+  // marker is enough — no scroll jump, no re-binding, and no interaction
+  // with the mid-drag repaint guard.
+  _initKanbanTabs(board) {
+    if (!board || board._tabsBound) return;
+    board._tabsBound = true;
+    board.addEventListener('click', (e) => {
+      const btn = e.target.closest && e.target.closest('[data-kanban-tab]');
+      if (!btn || !board.contains(btn)) return;
+      const key = btn.dataset.kanbanTab;
+      if (!AppView.KANBAN_TABS.includes(key)) return;
+      // An explicit tap retires the ?col= override, mirroring _setViewMode.
+      AppView._kanbanTabUrlOverride = null;
+      if (key === AppView._activeKanbanTab()) return;
+      AppView._kanbanTab = key;
+      AppView._saveKanbanTab(App.currentApp);
+      AppView._applyKanbanTab(board);
+    });
+  },
+
+  // Move the active-column marker + tab styling to AppView._kanbanTab
+  // in place. Keeps the classes in sync with what _renderKanbanTabs would
+  // have produced, so a later repaint is a no-op visually.
+  _applyKanbanTab(board) {
+    const scope = board || document.getElementById('dev-kanban-board');
+    if (!scope) return;
+    const active = AppView._activeKanbanTab();
+    const kanban = scope.querySelector('#dev-kanban');
+    if (kanban) kanban.setAttribute('data-kanban-active', active);
+    scope.querySelectorAll('[data-kanban-col]').forEach((col) => {
+      col.classList.toggle('dev-kanban-col-active', col.dataset.kanbanCol === active);
+    });
+    scope.querySelectorAll('[data-kanban-tab]').forEach((btn) => {
+      const on = btn.dataset.kanbanTab === active;
+      btn.setAttribute('aria-selected', on ? 'true' : 'false');
+      btn.classList.toggle('border-violet-500', on);
+      btn.classList.toggle('text-violet-500', on);
+      btn.classList.toggle('font-semibold', on);
+      btn.classList.toggle('border-transparent', !on);
+      btn.classList.toggle('text-zinc-500', !on);
+      btn.classList.toggle('dark:text-zinc-400', !on);
+    });
   },
 
   // #613: wrap one rendered card in a drag shell — a grip handle in a left

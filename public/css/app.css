@@ -3562,3 +3562,28 @@ button.attr-chip { cursor: pointer; }
 .vh-rules { font-size: 12px; color: var(--text-secondary); }
 .voting-help-rules { list-style: disc; padding-left: 16px; margin: 0; display: flex; flex-direction: column; gap: 5px; line-height: 1.4; }
 .voting-help-rules strong { color: var(--text-primary); font-weight: 600; }
+
+/* ── Mobile kanban tabs (#814) ─────────────────────────────────────
+   Below 1024px the Dev board shows ONE column at a time behind the
+   #dev-kanban-tabs strip instead of scrolling sideways — four
+   min-w-[16rem] columns can't fit a phone, which is exactly why
+   _getViewMode()'s width default (min-width: 1024px) draws the line
+   here too. Presentation only: the markup always carries all four
+   columns, and JS only ever moves the `dev-kanban-col-active` class.
+   At >=1024px none of this applies and the board is unchanged. */
+@media (max-width: 1023px) {
+  /* No sideways scroll left to do — one column fills the width. */
+  #dev-kanban { overflow-x: hidden; }
+
+  /* min-width beats the inline min-w-[16rem] so the single visible
+     column still fits a 320px-wide phone. */
+  .dev-kanban-col {
+    display: none;
+    min-width: 0;
+  }
+
+  .dev-kanban-col.dev-kanban-col-active { display: block; }
+
+  /* The active tab already names the column and shows its count. */
+  .dev-kanban-col-head { display: none; }
+}

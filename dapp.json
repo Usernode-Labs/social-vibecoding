@@ -257,6 +257,26 @@
       "expectSelector": "#dev-kanban-search"
     },
     {
+      "name": "Mobile kanban tab strip ships one tab per column (#814)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"inreview\"]"
+    },
+    {
+      "name": "Kanban board marks exactly one active column for the tabs (#814)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban[data-kanban-active=\"issues\"] .dev-kanban-col-active"
+    },
+    {
+      "name": "?col= deep link selects that kanban tab (#814)",
+      "path": "/?demo=1&col=done#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban[data-kanban-active=\"done\"] #dev-kanban-col-done.dev-kanban-col-active"
+    },
+    {
+      "name": "?view=kanban forces the board regardless of stored preference (#814)",
+      "path": "/?demo=1&view=kanban#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-kanban-tabs [data-kanban-tab=\"done\"]"
+    },
+    {
       "name": "PM view toggle button renders in the dev view switcher",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-view-pm"
