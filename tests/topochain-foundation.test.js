@@ -505,7 +505,12 @@ test('unmounted /api/v4/* paths fall through to authMiddleware (401 for anonymou
     const mobilePingRes = await fetch(`${base}/api/v4/mobile/__ping`);
     assert.equal(mobilePingRes.status, 200);
 
-    const unmatchedRes = await fetch(`${base}/api/v4/season-events`);
+    // Task 3 originally probed `/api/v4/season-events` here as a stand-in
+    // for "any path none of the pre-auth routers have mounted yet". Task 5
+    // implements that exact endpoint (SPEC §4.2), so it's no longer an
+    // unmounted path — swapped for a path no task mounts, to keep testing
+    // the same mount-order behavior rather than one specific endpoint.
+    const unmatchedRes = await fetch(`${base}/api/v4/this-path-is-never-mounted`);
     assert.equal(unmatchedRes.status, 401, 'unmounted v4 path must 401 for an anonymous caller, not fall to the 404 handler');
     assert.deepEqual(await unmatchedRes.json(), { error: 'Not authenticated' });
   } finally {
