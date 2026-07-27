@@ -9,11 +9,17 @@
 // public/admin/mobile screen built in later tasks has nothing to render
 // in a staging preview.
 //
-// Static, no-database assertions over the SQL text appended to
-// src/db/migrate.js — mirrors the style of
-// tests/dashboard-spend-distribution.test.js (source-guard section) and
-// tests/topochain-schema.test.js (block-isolation via indexOf/slice).
-// No live Postgres is required or used.
+// Two layers, mirroring tests/dashboard-spend-distribution.test.js:
+//   1. Behavioural — invoke the real `seedStagingTopochain` (exported from
+//      migrate.js for this purpose) against a mock pool that records every
+//      `query(sql, params)` call. Catches runtime failures a source-text
+//      regex can't: throws, wrong param flow, mismatched placeholder
+//      counts, and the case where the staging gate doesn't actually
+//      short-circuit before issuing any query.
+//   2. Static — no-database assertions over the SQL text appended to
+//      src/db/migrate.js, same style as tests/topochain-schema.test.js
+//      (block-isolation via indexOf/slice).
+// No live Postgres is required or used in either layer.
 //
 // Run with: node --test tests/topochain-staging-seed.test.js
 
@@ -22,7 +28,72 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
+const { seedStagingTopochain } = require('../src/db/migrate');
+
 const src = fs.readFileSync(path.join(__dirname, '..', 'src/db/migrate.js'), 'utf8');
+
+// ─── 1. Behavioural: mock pool records every query(sql, params) call ────
+
+function mockPool() {
+  const calls = [];
+  return {
+    calls,
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [] };
+    },
+  };
+}
+
+// Restored in test.after() so this file never leaks its override into any
+// test run after it in the same process.
+const ORIGINAL_USERNODE_ENV = process.env.USERNODE_ENV;
+test.after(() => {
+  if (ORIGINAL_USERNODE_ENV === undefined) delete process.env.USERNODE_ENV;
+  else process.env.USERNODE_ENV = ORIGINAL_USERNODE_ENV;
+});
+
+test('outside staging: the seeder issues zero queries', async () => {
+  process.env.USERNODE_ENV = 'production';
+  const pool = mockPool();
+  await seedStagingTopochain(pool, {});
+  assert.equal(pool.calls.length, 0, 'no query() call should happen when USERNODE_ENV !== staging');
+});
+
+test('in staging: every INSERT the seeder issues contains an ON CONFLICT guard', async () => {
+  process.env.USERNODE_ENV = 'staging';
+  const pool = mockPool();
+  await seedStagingTopochain(pool, {});
+  assert.ok(pool.calls.length >= 15, `expected a substantial number of queries, got ${pool.calls.length}`);
+  const inserts = pool.calls.filter((c) => /INSERT INTO/.test(c.sql));
+  assert.ok(inserts.length >= 15, 'most/all calls should be INSERT statements');
+  for (const call of inserts) {
+    assert.match(call.sql, /ON CONFLICT \(id\) DO NOTHING/,
+      `INSERT without ON CONFLICT: ${call.sql.slice(0, 80)}`);
+  }
+});
+
+test('in staging: every query\'s params array length matches its highest $N placeholder', async () => {
+  process.env.USERNODE_ENV = 'staging';
+  const pool = mockPool();
+  await seedStagingTopochain(pool, {});
+  assert.ok(pool.calls.length > 0);
+  for (const call of pool.calls) {
+    const placeholderNums = [...call.sql.matchAll(/\$(\d+)/g)].map((m) => Number(m[1]));
+    const maxPlaceholder = placeholderNums.length ? Math.max(...placeholderNums) : 0;
+    const paramsLen = call.params ? call.params.length : 0;
+    assert.equal(paramsLen, maxPlaceholder,
+      `params length (${paramsLen}) must equal the highest placeholder ($${maxPlaceholder}) for: ${call.sql.slice(0, 80)}`);
+  }
+});
+
+test('in staging: the seeder runs to completion without throwing against a permissive mock pool', async () => {
+  process.env.USERNODE_ENV = 'staging';
+  const pool = mockPool();
+  await assert.doesNotReject(seedStagingTopochain(pool, {}));
+});
+
+// ─── 2. Static: source-text assertions over migrate.js ──────────────────
 
 // Isolate the function body: from its declaration to the next top-level
 // `async function`, same slicing idiom as

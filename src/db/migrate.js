@@ -7010,4 +7010,9 @@ async function migrateAppDbsToPerRole(pool, config) {
   }
 }
 
-module.exports = { migrate };
+// seedStagingTopochain is exported alongside migrate() solely so
+// tests/topochain-staging-seed.test.js can invoke it directly against a
+// mock pool (idempotency/param-flow behaviour, not just a source-text
+// regex) without running the entire migrate() boot sequence. It is not
+// meant to be called from anywhere else in the app.
+module.exports = { migrate, seedStagingTopochain };
