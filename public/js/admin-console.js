@@ -1237,9 +1237,10 @@ const AdminConsole = {
 
   // ── Database export ────────────────────────────────────────────────────
   //
-  // Downloads a full, unredacted pg_dump of the platform database. The file
-  // is a live credential bundle — every password hash, every valid session
-  // token, every app credential — so this section is deliberately sober:
+  // Downloads a full, unredacted pg_dump of the platform database as a
+  // gzip-compressed plain-SQL file (`.sql.gz`, restored with gunzip + psql).
+  // The file is a live credential bundle — every password hash, every valid
+  // session token, every app credential — so this section is deliberately sober:
   // a permanent red warning panel, a typed confirmation plus password
   // re-entry on every run, and an append-only history nobody can clear.
   //
@@ -1255,7 +1256,8 @@ const AdminConsole = {
   // confirmation, then NAVIGATE to the returned single-use URL. A Blob
   // (the pattern downloadFeaturesCsv uses above) would hold a
   // multi-hundred-megabyte dump in page memory; navigating gives a real
-  // streamed download with the browser's own progress UI.
+  // streamed download with the browser's own progress UI — and lets the
+  // browser save the gzip bytes verbatim instead of trying to decode them.
 
   DB_EXPORT_REASONS: {
     staging: 'Database export is disabled in staging previews.',
@@ -1355,7 +1357,7 @@ const AdminConsole = {
             <div class="flex items-center gap-2 mt-3">
               <button id="admin-db-export-go"
                 class="rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors">
-                Download the dump</button>
+                Download the .sql.gz</button>
               <button id="admin-db-export-cancel"
                 class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                 Cancel</button>
@@ -1363,8 +1365,10 @@ const AdminConsole = {
           </div>
 
           <p class="text-xs text-zinc-500 mt-4">
-            The file is a PostgreSQL custom-format dump. Restore it with:
-            <code class="font-mono text-zinc-600 dark:text-zinc-300 break-all">pg_restore --no-owner --no-privileges -d &lt;target-db&gt; &lt;file&gt;.dump</code>
+            The file is a gzip-compressed plain-SQL dump (<code class="font-mono">.sql.gz</code>),
+            taken with <code class="font-mono">--no-owner --no-privileges</code>. Restore it with:<br>
+            <code class="font-mono text-zinc-600 dark:text-zinc-300 break-all">gunzip -c &lt;file&gt;.sql.gz | psql -v ON_ERROR_STOP=1 -d &lt;target-db&gt;</code><br>
+            Read it without unpacking with <code class="font-mono">zless</code> / <code class="font-mono">zgrep</code>.
           </p>
         </div>
 
@@ -1372,7 +1376,7 @@ const AdminConsole = {
           <summary class="text-sm font-semibold text-amber-800 dark:text-amber-200 cursor-pointer">After you download it — and what to do if it leaks</summary>
           <ul class="text-sm text-amber-800 dark:text-amber-200 mt-3 list-disc pl-5 space-y-1">
             <li>Treat the file as a live credential: keep it encrypted, never on shared storage, and delete it when you're done.</li>
-            <li>It is unencrypted in your Downloads folder — desktop search will index it and cloud backup may sync it.</li>
+            <li>It is unencrypted in your Downloads folder — gzip is compression, not protection; cloud backup may sync it and anyone can read it with <code class="font-mono">zless</code>.</li>
             <li>If it may have been exposed, deletion is not enough — rotate:</li>
             <li class="list-none pl-4">— the platform JWT secret (invalidates every session; stored API keys and app secrets must be re-entered afterwards)</li>
             <li class="list-none pl-4">— the platform database password</li>
@@ -1453,6 +1457,7 @@ const AdminConsole = {
     const esc = AdminConsole.esc;
     target.innerHTML = `Target database <code class="font-mono text-zinc-700 dark:text-zinc-200">${esc(data.dbName || 'unknown')}</code>`
       + ` · current size <span class="font-medium">${esc(AdminConsole._fmtBytes(data.dbSizeBytes))}</span>`
+      + ` <span class="text-zinc-500">(the .sql.gz download is smaller)</span>`
       + ` · <span class="text-zinc-500">${esc(data.remainingToday)} of ${esc(data.maxPerDay)} exports left today</span>`;
 
     if (btn) {
@@ -1541,7 +1546,7 @@ const AdminConsole = {
           <div class="text-xs text-zinc-500 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>${esc(AdminConsole._fmtTime(r.requested_at))}</span>
             <span class="font-mono">${esc(r.db_name)}</span>
-            <span>${esc(AdminConsole._fmtBytes(r.bytes_sent))}</span>
+            <span title="compressed size downloaded">${esc(AdminConsole._fmtBytes(r.bytes_sent))}</span>
             <span>${esc(AdminConsole._fmtDuration(r.started_at, r.finished_at))}</span>
             <span>from ${esc(r.ip || '—')}</span>
             ${denied}

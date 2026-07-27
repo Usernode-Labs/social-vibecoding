@@ -476,6 +476,11 @@
       "expectText": "handle as a credential"
     },
     {
+      "name": "Database export documents the gunzip + psql restore",
+      "path": "/#admin/db-export",
+      "expectText": "gunzip -c"
+    },
+    {
       "name": "Home 'Your apps' section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
