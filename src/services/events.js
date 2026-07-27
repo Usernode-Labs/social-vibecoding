@@ -62,6 +62,12 @@ const EVENT_TYPES = Object.freeze({
   // Whole-chain refusal: the requested model AND its fallback declined
   // (or the fallback couldn't run and the direct retry declined too).
   MODEL_REFUSAL: 'model_refusal',
+  // A full platform database export was streamed to an admin's browser
+  // (src/routes/admin.js /api/admin/db-export). Emitted only on the
+  // completed path — the authoritative record of every attempt, including
+  // denials and failures, is the append-only `db_exports` table. No
+  // backfill: the capability didn't exist before this shipped.
+  DB_EXPORTED: 'db_exported',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

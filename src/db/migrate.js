@@ -83,6 +83,8 @@ async function migrate(config) {
   await seedStagingAnalyticsCharts(pool);
   await seedStagingTopicAttributes(pool, config);
   await seedStagingSubmittedFeatures(pool, config);
+  await seedStagingDbExports(pool);
+  await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
   // Must run BEFORE backfillOrphanedSpecDrafts: unwrapping spec_md after that
@@ -829,6 +831,85 @@ async function seedStagingAdminConsoleData(pool) {
     log.info('db', 'Admin-console staging fixtures seeded');
   } catch (err) {
     log.warn('db', 'Admin-console staging fixtures failed', { message: err.message });
+  }
+}
+
+// Boot sweep for the database-export audit log. A row is written BEFORE
+// the dump is spawned and only reaches a terminal status when the stream
+// resolves — so a process killed mid-export (deploy cutover: the usernode
+// service has stop_grace_period: 10s; OOM; hard crash) leaves the row
+// stuck in `requested` or `streaming` forever. Nothing else can ever
+// resolve those rows: the in-memory single-flight guard and the child
+// process both died with the old process. Flip them to `interrupted` at
+// boot so the admin console's history never shows a phantom in-flight
+// export. NOT staging-gated — this is a production correctness sweep.
+async function sweepInterruptedDbExports(pool) {
+  try {
+    const { rowCount } = await pool.query(
+      `UPDATE db_exports
+          SET status = 'interrupted',
+              finished_at = COALESCE(finished_at, NOW()),
+              error = COALESCE(error, 'platform restarted while the export was in flight')
+        WHERE status IN ('requested', 'streaming')`
+    );
+    if (rowCount) {
+      log.warn('db', 'Marked stale database exports interrupted', { count: rowCount });
+    }
+  } catch (err) {
+    log.warn('db', 'Database-export sweep failed', { message: err.message });
+  }
+}
+
+// `db_exports` is BOTH brand new and tagged staging:private, so a staging
+// clone starts with an empty table and the export-history UI would render
+// as a bare "no exports yet" line — untestable in a preview, especially
+// since the export button itself is (deliberately) disabled there. Seed
+// one obviously-fake row per visual state. Fake IPs come from 203.0.113.0/24
+// (RFC 5737 documentation range) so no row can be mistaken for a real one.
+async function seedStagingDbExports(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows: existing } = await pool.query(
+      `SELECT 1 FROM db_exports WHERE username LIKE 'Staging demo%' LIMIT 1`
+    );
+    if (existing.length) return;
+
+    const { rows: userRows } = await pool.query(
+      'SELECT id FROM users ORDER BY is_admin DESC, id ASC LIMIT 1'
+    );
+    if (!userRows.length) {
+      log.warn('db', 'Database-export staging fixtures skipped: no users');
+      return;
+    }
+    const adminId = userRows[0].id;
+    const dbName = 'staging_demo_platform_db';
+
+    await pool.query(
+      `INSERT INTO db_exports
+         (user_id, username, db_name, status, denied_reason, ip, user_agent,
+          bytes_sent, requested_at, started_at, finished_at, error)
+       VALUES
+         ($1, 'Staging demo admin', $2, 'completed', NULL, '203.0.113.10',
+          'Staging demo browser', 188743680,
+          NOW() - INTERVAL '2 days', NOW() - INTERVAL '2 days',
+          NOW() - INTERVAL '2 days' + INTERVAL '40 seconds', NULL),
+         ($1, 'Staging demo admin', $2, 'failed', NULL, '203.0.113.10',
+          'Staging demo browser', 0,
+          NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day',
+          NOW() - INTERVAL '1 day' + INTERVAL '3 seconds',
+          'Staging demo failure — pg_dump exited 1'),
+         ($1, 'Staging demo admin', $2, 'denied', 'bad_password', '203.0.113.22',
+          'Staging demo browser', 0,
+          NOW() - INTERVAL '5 hours', NULL, NOW() - INTERVAL '5 hours', NULL),
+         ($1, 'Staging demo admin', $2, 'cancelled', NULL, '203.0.113.10',
+          'Staging demo browser', 4194304,
+          NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour',
+          NOW() - INTERVAL '1 hour' + INTERVAL '12 seconds', NULL)`,
+      [adminId, dbName]
+    );
+    log.info('db', 'Database-export staging fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Database-export staging fixtures failed', { message: err.message });
   }
 }
 

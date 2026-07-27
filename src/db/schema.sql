@@ -1947,3 +1947,52 @@ COMMENT ON TABLE app_files IS 'staging:private';
 -- prod-debug-access test cross-checks the two).
 ALTER TABLE apps ADD COLUMN IF NOT EXISTS storage_api_token VARCHAR(64);
 COMMENT ON COLUMN apps.storage_api_token IS 'staging:private';
+
+-- ── Database-export audit log ────────────────────────────────────────
+--
+-- Append-only record of every attempt to download a full pg_dump of this
+-- platform database from the admin console (/api/admin/db-export, see
+-- src/services/db-export.js). Written BEFORE the dump is spawned, so an
+-- export killed mid-stream — a deploy cutover, a crash — still leaves a
+-- record; a boot sweep in migrate.js flips any row left `requested` /
+-- `streaming` by a dead process to `interrupted`.
+--
+-- Nothing in the product ever UPDATEs a terminal row or DELETEs from this
+-- table, and no admin UI exposes a way to clear it. That is the point:
+-- the export hands out every credential in the platform, so the fact that
+-- it happened must not be erasable from inside the app.
+--
+--   status        requested | streaming | completed | failed
+--                 | cancelled | interrupted | denied
+--   denied_reason bad_password | rate_limited | staging | view_only
+--                 | in_progress | unavailable   (NULL unless denied)
+--
+-- user_id is ON DELETE SET NULL (mirroring `events`) so deleting a user
+-- can never erase the history of what they exported; `username` is a
+-- snapshot kept for exactly that case.
+CREATE TABLE IF NOT EXISTS db_exports (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  username      VARCHAR(255) NOT NULL,
+  db_name       VARCHAR(255) NOT NULL,
+  status        VARCHAR(32)  NOT NULL,
+  denied_reason VARCHAR(64),
+  ip            VARCHAR(64),
+  user_agent    TEXT,
+  bytes_sent    BIGINT       NOT NULL DEFAULT 0,
+  requested_at  TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+  started_at    TIMESTAMPTZ,
+  finished_at   TIMESTAMPTZ,
+  error         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_db_exports_requested ON db_exports (requested_at DESC);
+CREATE INDEX IF NOT EXISTS idx_db_exports_user ON db_exports (user_id, requested_at DESC);
+
+-- Private for the same reason `events` is: an activity log carrying admin
+-- usernames, source IPs and user agents that a staging preview has no
+-- business carrying. NOT added to debug-access.js's DENIED_TABLES, and
+-- that asymmetry is intentional — the deny lists exist for CREDENTIAL-
+-- bearing data, and this table holds none (it records that an export
+-- happened, never any exported content). A prod-debug session should be
+-- able to read the export log; that's an audit trail, not a secret.
+COMMENT ON TABLE db_exports IS 'staging:private';
