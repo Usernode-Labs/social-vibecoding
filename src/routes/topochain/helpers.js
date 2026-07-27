@@ -108,7 +108,16 @@ const MAX_PER_PAGE = 100;
 // the fix for the source's `per_page=0` division-by-zero 500 (SPEC §4.8
 // item 6), so an out-of-range or non-numeric value throws a
 // ValidationError (422) rather than being silently clamped.
-function paginate(req) {
+//
+// `defaultPerPage` lets one call site override the "no per_page given"
+// default without changing it for every other v4 endpoint sharing this
+// helper: most endpoints don't specify a per-source default (this repo's
+// own DEFAULT_PER_PAGE = 25 applies), but a handful of SPEC endpoints DO
+// pin an explicit source default (e.g. GET /leaderboard and
+// /leaderboard/global both say "default 50", SPEC 912/975) — those call
+// sites pass `{ defaultPerPage: 50 }` rather than relitigating the shared
+// constant for every route.
+function paginate(req, { defaultPerPage = DEFAULT_PER_PAGE } = {}) {
   const rawPage = req?.query?.page;
   const rawPerPage = req?.query?.per_page;
 
@@ -118,7 +127,7 @@ function paginate(req) {
     page = Number.isInteger(n) && n >= 1 ? n : DEFAULT_PAGE;
   }
 
-  let perPage = DEFAULT_PER_PAGE;
+  let perPage = defaultPerPage;
   if (rawPerPage !== undefined && rawPerPage !== '') {
     const n = parseInt(rawPerPage, 10);
     if (!Number.isInteger(n) || String(n) !== String(rawPerPage).trim() || n < MIN_PER_PAGE || n > MAX_PER_PAGE) {

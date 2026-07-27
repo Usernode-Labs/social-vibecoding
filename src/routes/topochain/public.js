@@ -76,6 +76,20 @@ function pct(numerator, denominator) {
   return Math.round((n / d) * 10000) / 100;
 }
 
+// Same ratio, but null (not 0) when the denominator is zero — SPEC 1286
+// is explicit that `client_success_rate`/`canonical_success_rate` on the
+// NEW GET /users/{user}/profile endpoint are "null when the denominator
+// is zero". That endpoint has no source (v1) behavior to carry a "real
+// zero" delta over from, so its own explicit contract wins over the
+// general judgment call #4 rule above, which applies everywhere else
+// (event_success_rate/epoch_success_rate, epoch-breakdown's success_rate,
+// challenge-breakdown's rate all stay real-zero).
+function pctOrNull(numerator, denominator) {
+  const d = Number(denominator) || 0;
+  if (d <= 0) return null;
+  return Math.round((Number(numerator) / d) * 10000) / 100;
+}
+
 // starts_at/ends_at -> the {has_started, has_ended, status} triple every
 // event object in this file carries (SPEC 902's `event` shape).
 function eventStatus(startsAt, endsAt, now = new Date()) {
@@ -343,7 +357,10 @@ function topochainPublicRoutes(config) {
   // ── GET /leaderboard (SPEC 902-965) ────────────────────────────────
   router.get('/api/v4/leaderboard', async (req, res) => {
     try {
-      const { page, perPage } = paginate(req); // may throw ValidationError (422)
+      // SPEC 912: default per_page is 50 for this endpoint (not this
+      // repo's shared 25 default — see the `defaultPerPage` doc comment
+      // on `paginate()`).
+      const { page, perPage } = paginate(req, { defaultPerPage: 50 }); // may throw ValidationError (422)
 
       const requestedId = toIntId(req.query.season_event_id);
       let event;
@@ -412,7 +429,8 @@ function topochainPublicRoutes(config) {
   // ── GET /leaderboard/global (SPEC 966-1002; §4.10 kept, standings query) ─
   router.get('/api/v4/leaderboard/global', async (req, res) => {
     try {
-      const { page, perPage } = paginate(req);
+      // SPEC 975: default per_page is 50 here too.
+      const { page, perPage } = paginate(req, { defaultPerPage: 50 });
       const standings = await computeStandings(pool, { seasonId: null });
       const total = standings.length;
       const start = (page - 1) * perPage;
@@ -463,7 +481,7 @@ function topochainPublicRoutes(config) {
       if (!event || event.internal) return fail(res, 404, 'Event not found.');
 
       const { rows: acctRows } = await pool.query(
-        `SELECT 1 FROM onchain_accounts
+        `SELECT address FROM onchain_accounts
           WHERE (public_key = $1 OR address = $1)
             AND (season_event_id = $2 OR (season_event_id IS NULL AND season_id = $3))
           LIMIT 1`,
@@ -471,8 +489,18 @@ function topochainPublicRoutes(config) {
       );
       if (!acctRows.length) return fail(res, 404, 'No onchain account found for this wallet in this event.');
 
+      // `epoch_stats.wallet_address` stores only the canonical bech32m
+      // `address` form (SPEC: "keyed by ... wallet_address"), never the
+      // `public_key` form — but the existence check just above matches
+      // EITHER form (SPEC 1017: "matched against the user's account
+      // public_key OR address"), since callers may reasonably pass either.
+      // A caller who passed the public_key form must not silently get an
+      // empty breakdown: resolve to the matched account's own `address`
+      // and query epoch_stats with THAT, never the raw request param.
+      const canonicalAddress = acctRows[0].address;
+
       // SPEC 1049: the epoch filter applies only when BOTH bounds are set.
-      const params = [event.chain_id, walletAddress];
+      const params = [event.chain_id, canonicalAddress];
       let epochFilter = '';
       if (event.start_epoch != null && event.end_epoch != null) {
         epochFilter = ' AND epoch BETWEEN $3 AND $4';
@@ -856,9 +884,11 @@ function topochainPublicRoutes(config) {
           [userId, seasonEventId]
         );
 
-        const clientSuccessRate = snap ? pct(snap.event_total_produced_blocks, snap.vrf_total_won_slots) : 0;
+        // SPEC 1286: null (not real-zero) when the denominator is zero —
+        // see pctOrNull's doc comment.
+        const clientSuccessRate = snap ? pctOrNull(snap.event_total_produced_blocks, snap.vrf_total_won_slots) : null;
         const canonicalSuccessRate = snap
-          ? pct(snap.canonical_total_produced_blocks, snap.canonical_total_won_slots) : 0;
+          ? pctOrNull(snap.canonical_total_produced_blocks, snap.canonical_total_won_slots) : null;
 
         return ok(res, {
           data: {
@@ -947,8 +977,9 @@ function topochainPublicRoutes(config) {
           canonical_won_slots: canonicalWonSlots,
           produced_blocks: producedBlocks,
           canonical_produced_blocks: canonicalProducedBlocks,
-          client_success_rate: pct(producedBlocks, vrfWonSlots),
-          canonical_success_rate: pct(canonicalProducedBlocks, canonicalWonSlots),
+          // SPEC 1286: null (not real-zero) when the denominator is zero.
+          client_success_rate: pctOrNull(producedBlocks, vrfWonSlots),
+          canonical_success_rate: pctOrNull(canonicalProducedBlocks, canonicalWonSlots),
           success_rate: meanSuccessRate,
           challenge_details: {},
           activities: activityRows2.map((a) => ({

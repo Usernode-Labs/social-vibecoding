@@ -158,10 +158,14 @@ const USER_ACTIVITIES = [
   { id: 4, user_id: 5, season_event_id: 100, activity_type: 'bug_report', points: '75.50', description: 'Erin filed a bug', activity_at: T(-1), metadata: { note: 'x' }, challenge_id: 10 },
 ];
 
+// Keyed by the CANONICAL `address` (bech32m) form only — real epoch_stats
+// never carries the public_key form — so a request that passes the
+// public_key form must be resolved to this address before querying (the
+// review-fix regression this fixture exists to catch).
 const EPOCH_STATS = [
-  { chain_id: 'chain-1', wallet_address: 'pk-dave-100', epoch: 1, epoch_won_slots: 2, epoch_produced_blocks: 1 },
-  { chain_id: 'chain-1', wallet_address: 'pk-dave-100', epoch: 2, epoch_won_slots: 3, epoch_produced_blocks: 2 },
-  { chain_id: 'chain-1', wallet_address: 'pk-dave-100', epoch: 3, epoch_won_slots: 0, epoch_produced_blocks: 0 },
+  { chain_id: 'chain-1', wallet_address: 'addr-dave-100', epoch: 1, epoch_won_slots: 2, epoch_produced_blocks: 1 },
+  { chain_id: 'chain-1', wallet_address: 'addr-dave-100', epoch: 2, epoch_won_slots: 3, epoch_produced_blocks: 2 },
+  { chain_id: 'chain-1', wallet_address: 'addr-dave-100', epoch: 3, epoch_won_slots: 0, epoch_produced_blocks: 0 },
 ];
 
 const APP_VERSION_CONFIGS = [
@@ -283,12 +287,13 @@ function makeMockPool() {
       const event = SEASON_EVENTS.find((e) => e.id === params[0]);
       return { rows: event ? [event] : [] };
     }
-    // GET /leaderboard/epoch-breakdown: onchain account existence check.
-    if (sql.includes('SELECT 1 FROM onchain_accounts')) {
+    // GET /leaderboard/epoch-breakdown: onchain account lookup (returns the
+    // canonical `address`, matched by either public_key or address form).
+    if (sql.includes('SELECT address FROM onchain_accounts')) {
       const [wallet, eventId, seasonId] = params;
-      const found = ONCHAIN_ACCOUNTS.some((a) => (a.public_key === wallet || a.address === wallet)
+      const acct = ONCHAIN_ACCOUNTS.find((a) => (a.public_key === wallet || a.address === wallet)
         && (a.season_event_id === eventId || (a.season_event_id == null && a.season_id === seasonId)));
-      return { rows: found ? [{ '?column?': 1 }] : [] };
+      return { rows: acct ? [{ address: acct.address }] : [] };
     }
     // GET /leaderboard/epoch-breakdown: epoch_stats rows.
     if (sql.includes('FROM epoch_stats')) {
@@ -572,7 +577,9 @@ test('GET /leaderboard: happy path envelope keys + masking + shared identity fal
     has_started: true, has_ended: false, status: 'active',
   });
   assert.match(body.data.event.starts_at, /\+00:00$/);
-  assert.deepEqual(body.meta, { page: 1, per_page: 25, total: 4, total_pages: 1 });
+  // SPEC 912: default per_page is 50 for this endpoint (not the shared
+  // 25 default other v4 endpoints use).
+  assert.deepEqual(body.meta, { page: 1, per_page: 50, total: 4, total_pages: 1 });
 
   const rows = body.data.leaderboard;
   assert.equal(rows.length, 4);
@@ -695,7 +702,12 @@ test('GET /leaderboard/global: shared-rank rule — podium-excluded user shares 
 
 // ─── GET /leaderboard/epoch-breakdown ────────────────────────────────
 
-test('GET /leaderboard/epoch-breakdown: happy path, one row per epoch, real-zero success_rate', async () => {
+test('GET /leaderboard/epoch-breakdown: public_key input form still resolves data (review fix — canonical address, not the raw param, feeds epoch_stats)', async () => {
+  // wallet_address is the PUBLIC_KEY form here; epoch_stats is keyed by the
+  // canonical `address` form only. Before the fix this returned 200 with
+  // an empty breakdown (the raw public_key param never matches
+  // epoch_stats.wallet_address); the handler must resolve the matched
+  // onchain_accounts row's `address` first and query epoch_stats with that.
   const res = await get('/api/v4/leaderboard/epoch-breakdown?wallet_address=pk-dave-100&season_event_id=100');
   assert.equal(res.status, 200);
   const body = await res.json();
@@ -707,6 +719,13 @@ test('GET /leaderboard/epoch-breakdown: happy path, one row per epoch, real-zero
   assert.equal(epoch3.success_rate, 0); // won=0 -> real zero, not null
   const epoch2 = body.data.breakdown.find((r) => r.epoch === 2);
   assert.equal(epoch2.success_rate, Math.round((2 / 3) * 10000) / 100);
+});
+
+test('GET /leaderboard/epoch-breakdown: address (canonical) input form returns the identical breakdown', async () => {
+  const res = await get('/api/v4/leaderboard/epoch-breakdown?wallet_address=addr-dave-100&season_event_id=100');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.data.breakdown.length, 3);
 });
 
 test('GET /leaderboard/epoch-breakdown: missing wallet_address -> 400', async () => {
@@ -874,6 +893,21 @@ test('GET /users/:id/profile (event scope): figures come from that event\'s late
   assert.equal(body.data.rank, 1);
   assert.equal(body.data.wallet_address, 'pk-dave-100');
   assert.ok(Array.isArray(body.data.activities));
+  // dave's snapshot has non-zero vrf/canonical won-slot denominators.
+  assert.equal(body.data.client_success_rate, Math.round((40 / 12) * 10000) / 100);
+  assert.equal(body.data.canonical_success_rate, Math.round((9 / 10) * 10000) / 100);
+});
+
+test('GET /users/:id/profile (event scope): client_success_rate/canonical_success_rate are null (not 0) when the denominator is zero (SPEC 1286)', async () => {
+  // alice (user 1) has vrf_total_won_slots=0 and canonical_total_won_slots=0
+  // in her event-100 snapshot.
+  const res = await get('/api/v4/users/1/profile?season_event_id=100');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.data.client_success_rate, null);
+  assert.equal(body.data.canonical_success_rate, null);
+  // event_success_rate-derived `success_rate` keeps the real-zero rule.
+  assert.equal(body.data.success_rate, 0);
 });
 
 test('GET /users/:id/profile (all-time scope): aggregated via the shared standings query', async () => {
