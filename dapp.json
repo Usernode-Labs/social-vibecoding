@@ -456,6 +456,16 @@
       "expectSelector": "#notifications-btn + #admin-dashboard-btn:not(.hidden)"
     },
     {
+      "name": "Admin & moderation console page renders at #admin (#818)",
+      "path": "/#admin",
+      "expectSelector": "#admin-screen:not(.hidden) #admin-section-content"
+    },
+    {
+      "name": "Admin console deep-links the Activation codes section (#818)",
+      "path": "/#admin/codes",
+      "expectSelector": "#admin-code-list"
+    },
+    {
       "name": "Home 'Your apps' section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"

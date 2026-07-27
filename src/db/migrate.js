@@ -31,6 +31,7 @@ async function migrate(config) {
   await seedCaptureAdminUser(pool);
   await seedSelfApp(pool, config);
   await seedStagingNotifications(pool, config);
+  await seedStagingAdminConsoleData(pool);
   await seedStagingEnvProposal(pool, config);
   await seedStagingMergedPrs(pool, config);
   await seedStagingMyOpenPr(pool, config);
@@ -770,6 +771,65 @@ async function seedSelfApp(pool, config) {
     sha: sha ? sha.slice(0, 7) : '(none)',
     secretsDeclared: manifest.secrets.length,
   });
+}
+
+// Admin & moderation console fixtures (#818). The SPA admin page's
+// Activation-codes section and the Overview LLM-spend card read tables
+// that are table-level `staging:private` (activation_codes, llm_usage) and
+// therefore arrive EMPTY in staging clones — without seeds both surfaces
+// render only their empty states in every PR preview. Seed a tiny,
+// obviously-fake set: one available + one used code (both row states plus
+// the delete affordance), and a couple of small llm_usage rows for today
+// so the spend card shows a non-zero total. Users are the existing staging
+// rows (same "first users" convention as seedStagingNotifications).
+// Idempotent: codes key on the UNIQUE code value, usage rows on
+// UNIQUE(user_id, date). Strictly a no-op outside staging.
+async function seedStagingAdminConsoleData(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  try {
+    const { rows: userRows } = await pool.query(
+      'SELECT id FROM users ORDER BY is_admin DESC, id ASC LIMIT 2'
+    );
+    if (!userRows.length) {
+      log.warn('db', 'Admin-console staging fixtures skipped: no users');
+      return;
+    }
+    const first = userRows[0];
+    const second = userRows[1] || null;
+
+    await pool.query(
+      `INSERT INTO activation_codes (code)
+       VALUES ('STAGING-DEMO-UNUSED')
+       ON CONFLICT (code) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO activation_codes (code, used_by, used_at)
+       VALUES ('STAGING-DEMO-USED', $1, NOW() - INTERVAL '1 day')
+       ON CONFLICT (code) DO NOTHING`,
+      [first.id]
+    );
+
+    // ON CONFLICT DO NOTHING keeps any spend already recorded today (e.g.
+    // by an earlier boot) intact. Separate statements so a single-user
+    // staging DB can't hit the same conflict target twice in one insert.
+    await pool.query(
+      `INSERT INTO llm_usage (user_id, date, total_cost_cents)
+       VALUES ($1, CURRENT_DATE, 123)
+       ON CONFLICT (user_id, date) DO NOTHING`,
+      [first.id]
+    );
+    if (second) {
+      await pool.query(
+        `INSERT INTO llm_usage (user_id, date, total_cost_cents)
+         VALUES ($1, CURRENT_DATE, 42)
+         ON CONFLICT (user_id, date) DO NOTHING`,
+        [second.id]
+      );
+    }
+    log.info('db', 'Admin-console staging fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Admin-console staging fixtures failed', { message: err.message });
+  }
 }
 
 // Staging clones intentionally TRUNCATE table-level `staging:private`

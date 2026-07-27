@@ -48,6 +48,7 @@ const SHELL_ASSETS = [
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',
+  '/js/admin-console.js',
   '/js/app-secrets.js',
   '/js/platform-ui.js',
   '/js/app-view.js',
