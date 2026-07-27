@@ -138,14 +138,28 @@ function adminsFromManifestSource(raw) {
   return normalizeAdmins(appManifest.readAdmins(parsed) || []);
 }
 
-// Does this proposal's head change the declared admins list relative to
-// main? Returns { changed, from, to, determinate }.
+// Does this proposal's OWN diff change the declared admins list?
+// Returns { changed, from, to, determinate, mergeBaseSha }.
+//
+// Three-dot semantics: the head is compared against the MERGE BASE of
+// main and the head (the point the branch was cut from), not main's
+// current tip. Comparing against a moving main tip mis-flagged any
+// proposal whose branch simply predated an admins change that landed
+// on main afterwards (the 2648 regression): main gained a name, the
+// old branch had none, and the diff read as "removes the admins list".
+// Against the merge base, only edits the branch itself made count —
+// which still catches every self-escalation (adding a name → differs
+// from base; removing a base name → differs from base), while main
+// moving underneath is a non-change (a three-way merge keeps main's
+// version; if both sides edited the block the merge conflicts and
+// never reaches the gate anyway).
 //
 // `determinate: false` means we could not look at all (no head ref, no
-// GitHub, no parseable repo) — which is NOT the same as "unchanged".
-// Callers must not overwrite a stored `true` with an indeterminate
-// `false`, or a thin session row would silently un-flag a proposal and
-// hand back both the merge timers and the app-admin force-merge.
+// GitHub, no parseable repo, no merge base) — which is NOT the same as
+// "unchanged". Callers must not overwrite a stored `true` with an
+// indeterminate `false`, or a thin session row would silently un-flag
+// a proposal and hand back both the merge timers and the app-admin
+// force-merge.
 //
 // A GitHub TRANSPORT failure throws instead, so the caller can pick its
 // own fallback explicitly (checkAndMerge keeps the stored column).
@@ -154,19 +168,32 @@ async function detectAdminsChange(app, { headRef } = {}) {
   const github = require('./github');
   // eslint-disable-next-line global-require
   const appManifest = require('./app-manifest');
-  const unknown = { changed: false, from: [], to: [], determinate: false };
+  const unknown = { changed: false, from: [], to: [], determinate: false, mergeBaseSha: null };
   if (!headRef) return unknown;
   if (!github.isEnabled()) return unknown;
   const [, owner, repo] = (app?.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   if (!owner || !repo) return unknown;
 
+  const { mergeBaseSha, files, filesComplete } =
+    await github.compareRefs(owner, repo, `main...${headRef}`);
+  // No merge base (unrelated histories, vanished ref) — can't attribute
+  // a diff to the branch, so keep the stored flag.
+  if (!mergeBaseSha) return unknown;
+  // Common case, one API call total: the proposal doesn't touch the
+  // manifest at all. Only trust the file list when it's exhaustive —
+  // the compare endpoint caps it, and a capped list missing dapp.json
+  // proves nothing.
+  if (filesComplete && !files.includes(appManifest.MANIFEST_FILENAME)) {
+    return { changed: false, from: [], to: [], determinate: true, mergeBaseSha };
+  }
+
   const [baseRaw, headRaw] = await Promise.all([
-    github.getFileContent(owner, repo, appManifest.MANIFEST_FILENAME, 'main'),
+    github.getFileContent(owner, repo, appManifest.MANIFEST_FILENAME, mergeBaseSha),
     github.getFileContent(owner, repo, appManifest.MANIFEST_FILENAME, headRef),
   ]);
   const from = adminsFromManifestSource(baseRaw);
   const to = adminsFromManifestSource(headRaw);
-  return { changed: !sameAdmins(from, to), from, to, determinate: true };
+  return { changed: !sameAdmins(from, to), from, to, determinate: true, mergeBaseSha };
 }
 
 // Persist the flag on a session row. Best-effort at every stamping
@@ -186,14 +213,23 @@ async function stampExplicitApproval(pool, sessionId, changed) {
   }
 }
 
-// Resolve + persist in one call, swallowing GitHub failures: used by
-// the promote / head-change / sweeper-backfill paths, none of which
-// should fail because GitHub hiccupped. Returns the boolean actually
-// stamped, or null when it could not be determined (left untouched).
-async function refreshExplicitApproval(pool, app, session) {
-  const headRef = session?.source === 'imported'
+// The ref detectAdminsChange should diff for a given session row: the
+// imported-PR head sha for imported proposals, the branch name for
+// native ones. Shared by refreshExplicitApproval, checkAndMerge's live
+// re-verify, and the sweeper's stale-flag re-check.
+function headRefForSession(session) {
+  return session?.source === 'imported'
     ? (session.imported_pr_head_sha || session.branch_name || null)
     : (session?.branch_name || null);
+}
+
+// Resolve + persist in one call, swallowing GitHub failures: used by
+// the promote / head-change / sync-push / sweeper-backfill paths, none
+// of which should fail because GitHub hiccupped. Returns the boolean
+// actually stamped, or null when it could not be determined (left
+// untouched).
+async function refreshExplicitApproval(pool, app, session) {
+  const headRef = headRefForSession(session);
   try {
     const { changed, determinate } = await detectAdminsChange(app, { headRef });
     if (!determinate) return null;
@@ -207,6 +243,44 @@ async function refreshExplicitApproval(pool, app, session) {
   }
 }
 
+// The stale-PR sweeper's re-verify (server.js Pass 0). Re-detects rows
+// whose stored flag is NULL (never classified — the original backfill)
+// or TRUE (may have gone stale: main moved, a sync rewrote the branch —
+// a below-threshold flagged row never reaches checkAndMerge's live
+// re-check, so without this it stays flagged forever). FALSE rows are
+// skipped with no GitHub call: they're the bulk of a sweep page, and a
+// head change re-stamps them on its own paths — this keeps the
+// per-sweep GitHub call count bounded.
+//
+// Returns the row's effective flag after the sweep (the fresh verdict,
+// or the stored value when detection was indeterminate / threw).
+// Clearing a stored TRUE is logged with the rosters so a flag flip is
+// traceable in the platform logs.
+async function sweepExplicitApproval(pool, session) {
+  const stored = session?.requires_explicit_approval;
+  if (stored === false) return false;
+  const wasFlagged = stored === true;
+  try {
+    const detected = await detectAdminsChange(session, {
+      headRef: headRefForSession(session),
+    });
+    if (!detected.determinate) return stored ?? null;
+    await stampExplicitApproval(pool, session.id, detected.changed);
+    if (wasFlagged && !detected.changed) {
+      log.info('app-admins', 'Stale explicit-approval flag cleared by sweeper', {
+        sessionId: session.id, appId: session.app_id,
+        from: detected.from, to: detected.to, mergeBaseSha: detected.mergeBaseSha,
+      });
+    }
+    return detected.changed;
+  } catch (err) {
+    log.warn('app-admins', 'Explicit-approval re-verify failed (keeping stored flag)', {
+      sessionId: session?.id, err: err.message,
+    });
+    return stored ?? null;
+  }
+}
+
 module.exports = {
   invalidateAppAdmins,
   getAppAdminIds,
@@ -217,6 +291,8 @@ module.exports = {
   normalizeAdmins,
   adminsFromManifestSource,
   detectAdminsChange,
+  headRefForSession,
   stampExplicitApproval,
   refreshExplicitApproval,
+  sweepExplicitApproval,
 };

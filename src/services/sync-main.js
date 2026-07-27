@@ -346,6 +346,20 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
       dstep({ phase: 'sync_result', message: `Worker sync ${syncResult}${result.sha ? ` — pushed ${String(result.sha).slice(0, 9)}` : ''}.`, detail: { syncResult, sha: result.sha || null, behind: result.behind || 0, conflictFiles: result.conflictFiles || [], costUsd: result.costUsd || 0, pushOk: !!result.pushOk } });
     }
 
+    // #788 follow-up: a sync that pushed changed the branch's contents,
+    // so the explicit-approval classification may no longer hold (e.g. a
+    // merge commit that brings the branch's dapp.json in line with
+    // main's). Re-stamp on promoted rows so a stale flag clears (or a
+    // fresh one lands) without waiting for the next vote or sweeper
+    // pass. Best-effort: refreshExplicitApproval swallows GitHub
+    // failures and leaves the column untouched when indeterminate.
+    // Deliberately does NOT reset votes — a sync commit never has.
+    if ((syncResult === 'clean' || syncResult === 'resolved')
+        && result.pushOk && session.status === 'promoted') {
+      // eslint-disable-next-line global-require
+      await require('./app-admins').refreshExplicitApproval(pool, session, session);
+    }
+
     // Close the activity with a terminal status. Routing through
     // sendStatus both persists the breadcrumb row (so it survives reload)
     // AND broadcasts a live status event (so open viewers see the outcome
