@@ -757,7 +757,8 @@ function adminRoutes(config) {
 
   // ── Database export ────────────────────────────────────────
   //
-  // A full, unredacted pg_dump of the platform database, streamed straight
+  // A full, unredacted pg_dump of the platform database — plain SQL, gzip
+  // compressed on the way out (`<db>-<stamp>.sql.gz`) — streamed straight
   // to a full admin's browser as a file download. The dumped file contains
   // every bcrypt hash in `users`, every live row of `sessions`, every
   // activation code, every app's db_password / llm_proxy_token /
@@ -774,7 +775,10 @@ function adminRoutes(config) {
   // `db_exports` row for every attempt — written BEFORE anything runs.
   //
   // Mechanics live in src/services/db-export.js (spawn + docker exec +
-  // ticket store + single-flight guard); this file owns auth and audit.
+  // in-process gzip + ticket store + single-flight guard); this file owns
+  // auth and audit. NOTE: the audited/reported byte count is the COMPRESSED
+  // size — what actually left the server — so history rows are comparable
+  // with the file on the admin's disk, not with pg_database_size().
 
   const DB_EXPORT_HISTORY_MAX = 200;
 
@@ -1010,7 +1014,7 @@ function adminRoutes(config) {
     });
 
   // Step 2 of 2. Browser-navigated GET: consumes the ticket and streams
-  // the dump with Content-Disposition: attachment. requireAdminWrite is
+  // the gzipped SQL dump with Content-Disposition: attachment. requireAdminWrite is
   // re-applied here rather than trusted from step 1 — the ticket narrows
   // who may use this URL, it is not the authorization.
   router.get('/api/admin/db-export', requireAdminWrite, async (req, res) => {
@@ -1094,7 +1098,7 @@ function adminRoutes(config) {
 
       log[result.status === 'completed' ? 'warn' : 'error']('admin', 'Database export finished', {
         by: req.user.username, dbName: target.dbName, auditId,
-        status: result.status, bytesSent: result.bytesSent,
+        status: result.status, bytesSent: result.bytesSent, rawBytes: result.rawBytes,
       });
 
       if (result.status === 'completed') {

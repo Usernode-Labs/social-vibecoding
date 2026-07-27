@@ -111,10 +111,10 @@ test.before(async () => {
   realRunExport = dbExport.runExport;
   dbExport.runExport = async ({ res, filename, onStart }) => {
     if (typeof onStart === 'function') onStart();
-    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Type', dbExport.EXPORT_CONTENT_TYPE);
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-    res.end('PGDMP-fake');
-    return { status: 'completed', bytesSent: 10, error: null, headersSent: true };
+    res.end(require('node:zlib').gzipSync('-- fake SQL dump\n'));
+    return { status: 'completed', bytesSent: 10, rawBytes: 17, error: null, headersSent: true };
   };
 });
 
@@ -245,7 +245,7 @@ test('a valid confirmation returns a single-use ticket URL and audits BEFORE iss
   assert.equal(status, 200);
   assert.match(body.token, /^[0-9a-f]{64}$/);
   assert.equal(body.url, `/api/admin/db-export?t=${body.token}`);
-  assert.match(body.filename, /^usernode-platform-usernode-\d{8}T\d{6}Z\.dump$/);
+  assert.match(body.filename, /^usernode-platform-usernode-\d{8}T\d{6}Z\.sql\.gz$/);
   assert.equal(body.expiresInSeconds, 60);
 
   const row = audit.at(-1);
@@ -294,14 +294,18 @@ test('a ticket cannot be redeemed by a different admin', async () => {
   assert.equal(stolen.body.code, 'ticket_invalid');
 });
 
-test('a valid ticket streams the dump as an attachment, once', async () => {
+test('a valid ticket streams the gzipped SQL as an attachment, once', async () => {
   const me = freshAdmin();
   reset(me);
   const { body } = await ticket();
   const res = await req(`/api/admin/db-export?t=${body.token}`);
   assert.equal(res.status, 200);
-  assert.equal(res.headers.get('content-type'), 'application/octet-stream');
-  assert.match(res.headers.get('content-disposition'), /^attachment; filename="usernode-platform-/);
+  assert.equal(res.headers.get('content-type'), 'application/gzip');
+  assert.match(res.headers.get('content-disposition'),
+    /^attachment; filename="usernode-platform-.*\.sql\.gz"$/,
+    'the browser saves it as .sql.gz');
+  assert.equal(res.headers.get('content-encoding'), null,
+    'Content-Encoding: gzip would make the browser silently unpack the file');
   await res.text();
 
   const row = audit.find((r) => r.status === 'completed');

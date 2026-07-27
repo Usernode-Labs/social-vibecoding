@@ -160,6 +160,22 @@ test('the export section warns before it offers, and never uses a native prompt'
   assert.ok(!/\bprompt\(/.test(consoleJs), 'no native prompt() — the platform renders its own dialogs');
 });
 
+test('the restore instructions match the file the server actually sends', () => {
+  // The download is a gzip-compressed plain-SQL dump, so the panel must
+  // document gunzip + psql. A stale `pg_restore … .dump` line here is worse
+  // than no line at all: an admin follows it during an incident and the
+  // restore fails on a file pg_restore cannot read.
+  const fn = consoleJs.slice(
+    consoleJs.indexOf('  renderDbExportSection(host) {'),
+    consoleJs.indexOf('  _resetDbExportConfirm()')
+  );
+  assert.match(fn, /\.sql\.gz/, 'names the extension the browser will save');
+  assert.match(fn, /gunzip -c/, 'the restore starts by decompressing');
+  assert.match(fn, /\|\s*psql/, 'and replays the SQL with psql, not pg_restore');
+  assert.ok(!/pg_restore/.test(consoleJs), 'no leftover custom-format restore command');
+  assert.ok(!/&lt;file&gt;\.dump/.test(consoleJs), 'no leftover .dump filename');
+});
+
 test('the export button is enabled by the server, not by the client', () => {
   const fn = consoleJs.slice(
     consoleJs.indexOf('  async loadDbExportStatus()'),

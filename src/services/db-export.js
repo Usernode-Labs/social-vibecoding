@@ -1,5 +1,14 @@
 // Platform database export — the full, unredacted `pg_dump` an admin can
-// download from the admin console (#admin/db-export).
+// download from the admin console (#admin/db-export), as a gzip-compressed
+// plain-SQL file (`.sql.gz`).
+//
+// WHY PLAIN SQL + GZIP: a custom-format (`-Fc`) dump can only be read by
+// `pg_restore` of a compatible version, which makes the one artifact an
+// admin is most likely to need in an emergency dependent on having the
+// right Postgres toolchain to hand. Plain SQL is readable with `less`,
+// greppable, diffable, and restores with nothing but `psql` — and gzip
+// gets the size back (SQL text compresses hard; `-Fc`'s own zlib pass is
+// what we're replacing, not adding to).
 //
 // WHY IT SHELLS OUT: the platform image (Dockerfile) is node:22-alpine +
 // `docker-cli git` — there is NO postgresql-client inside this container,
@@ -17,13 +26,17 @@
 //      string because it needs a pipe (`pg_dump | pg_restore`). We don't,
 //      and this path is *user-triggerable*, so nothing here may ever be
 //      spliced into a shell. The database name is additionally validated
-//      against SAFE_IDENT before it reaches the argv.
+//      against SAFE_IDENT before it reaches the argv. NOTE: the gzip step
+//      is therefore NOT `pg_dump | gzip` in a shell — it is an in-process
+//      zlib Gzip transform between the child's stdout and the response.
+//      Same bytes, no shell, and no dependency on gzip existing inside
+//      the postgres image.
 //   2. spawn(), NEVER execFile(). execFile buffers stdout in memory; the
 //      platform DB carries bytea payloads (chat_session_attachments.data
 //      is up to 20 MB each, plus issue_screenshots / session_visuals), so
 //      a buffered dump is an OOM against the container's 3 GB cap. The
-//      child's stdout is piped chunk-by-chunk into the response with
-//      backpressure.
+//      child's stdout is piped chunk-by-chunk through gzip into the
+//      response with backpressure at BOTH joins (compressor and socket).
 //
 // The HTTP surface (auth, password re-entry, the audit rows) lives in
 // src/routes/admin.js. This module owns process management, the
@@ -31,6 +44,7 @@
 
 const { spawn } = require('child_process');
 const crypto = require('crypto');
+const zlib = require('zlib');
 const log = require('./logger');
 
 // Same defaults db-manager.js uses. Compose sets DB_CONTAINER=usernode-db;
@@ -48,6 +62,21 @@ const DB_EXPORT_TIMEOUT_MS = Number(process.env.DB_EXPORT_TIMEOUT_MS) || 15 * 60
 
 // Grace between SIGTERM and SIGKILL when we abandon a dump.
 const KILL_GRACE_MS = 5000;
+
+// Compression level for the .sql.gz. zlib runs on libuv's threadpool, so
+// this does not block the event loop, but it IS platform-container CPU
+// spent per exported byte. 6 (zlib's default) is the right trade for SQL
+// text; lower it on a CPU-starved fork rather than editing this file.
+const GZIP_LEVEL = (() => {
+  const n = Number(process.env.DB_EXPORT_GZIP_LEVEL);
+  return Number.isInteger(n) && n >= 1 && n <= 9 ? n : 6;
+})();
+
+// MIME type for the download. Deliberately NOT paired with
+// `Content-Encoding: gzip` — that would tell the browser to transparently
+// decompress, and the admin would end up with a `.sql.gz` file holding
+// plain SQL. The gzip container IS the payload here.
+const EXPORT_CONTENT_TYPE = 'application/gzip';
 
 // Download tickets are single-use and very short-lived; the browser
 // navigates to the URL immediately after the POST resolves.
@@ -120,11 +149,11 @@ function resolveTargetDb(config) {
   return { ...base, dbName: parsed };
 }
 
-// usernode-platform-<db>-20260727T121314Z.dump
+// usernode-platform-<db>-20260727T121314Z.sql.gz
 function exportFilename(dbName, now) {
   const d = now instanceof Date ? now : new Date();
   const stamp = d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-  return `usernode-platform-${dbName}-${stamp}.dump`;
+  return `usernode-platform-${dbName}-${stamp}.sql.gz`;
 }
 
 // ── Single-flight guard ───────────────────────────────────────────────
@@ -190,47 +219,91 @@ function _resetTickets() { _tickets.clear(); }
 
 // ── The dump itself ───────────────────────────────────────────────────
 
-// Stream `docker exec <container> pg_dump -U <user> -Fc --no-password <db>`
-// into `res`. Always resolves (never rejects) with
-// { status, bytesSent, error }, where status is one of
-// 'completed' | 'failed' | 'cancelled'.
+// Stream
+// `docker exec <container> pg_dump -U <user> -Fp --no-owner --no-privileges
+//  --no-password <db>`
+// through an in-process gzip into `res`. Always resolves (never rejects)
+// with { status, bytesSent, rawBytes, error }, where status is one of
+// 'completed' | 'failed' | 'cancelled'. `bytesSent` is COMPRESSED bytes
+// (what the browser actually downloaded); `rawBytes` is the SQL before
+// compression, for the log line.
 //
-// Headers are written lazily, on the FIRST stdout byte: if the child dies
-// immediately (bad container name, missing database) nothing has been
-// committed yet and we can still answer with a JSON error.
+// WHY --no-owner --no-privileges: the documented restore is a plain
+// `psql` replay, and unlike pg_restore, psql has no restore-time flag to
+// skip `ALTER … OWNER TO` / `GRANT` statements — so they have to be left
+// out at dump time or a restore into any database whose roles differ from
+// production fails on the first one.
+//
+// Headers are written lazily, on the FIRST COMPRESSED byte: if the child
+// dies immediately (bad container name, missing database) nothing has been
+// committed yet and we can still answer with a JSON error. Note that zlib
+// emits its 10-byte gzip header as soon as the first chunk is written, so
+// that window closes on pg_dump's first byte — exactly as it did for the
+// raw `-Fc` stream. A failure after it still destroys the socket rather
+// than handing the browser a truncated file that looks complete.
 function runExport({ dbName, res, filename, onStart, spawnFn }) {
   return new Promise((resolve) => {
     if (!SAFE_IDENT.test(String(dbName || ''))) {
-      resolve({ status: 'failed', bytesSent: 0, error: 'unsafe database name' });
+      resolve({ status: 'failed', bytesSent: 0, rawBytes: 0, error: 'unsafe database name' });
       return;
     }
 
-    // Argv form. No shell, no interpolation, nothing splice-able.
-    const args = ['exec', DB_CONTAINER, 'pg_dump', '-U', DB_USER, '-Fc', '--no-password', dbName];
+    // Argv form. No shell, no interpolation, nothing splice-able. `-Fp` is
+    // pg_dump's default, but it is spelled out so the file format this
+    // route promises is visible at the call site.
+    const args = [
+      'exec', DB_CONTAINER, 'pg_dump', '-U', DB_USER,
+      '-Fp', '--no-owner', '--no-privileges', '--no-password', dbName,
+    ];
 
     let child;
     try {
       child = (spawnFn || spawn)('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     } catch (err) {
-      resolve({ status: 'failed', bytesSent: 0, error: err.message });
+      resolve({ status: 'failed', bytesSent: 0, rawBytes: 0, error: err.message });
       return;
     }
 
+    // The compressor sits between pg_dump and the socket. Errors from it
+    // are handled like any other mid-stream failure.
+    const gzip = zlib.createGzip({ level: GZIP_LEVEL });
+
     let headersSent = false;
-    let bytesSent = 0;
+    let bytesSent = 0;     // compressed, on the wire
+    let rawBytes = 0;      // plain SQL out of pg_dump
     let stderr = '';
     let clientGone = false;
     let timedOut = false;
     let settled = false;
     let killTimer = null;
+    let gzipFlushed = false;
+    let paused = false;
 
     const finish = (status, error) => {
       if (settled) return;
       settled = true;
       clearTimeout(timeoutTimer);
       if (killTimer) clearTimeout(killTimer);
-      resolve({ status, bytesSent, error: error || null, headersSent });
+      if (!gzipFlushed) { try { gzip.destroy(); } catch { /* already gone */ } }
+      resolve({ status, bytesSent, rawBytes, error: error || null, headersSent });
     };
+
+    // TWO independent backpressure sources now sit downstream of pg_dump:
+    // the compressor's input buffer and the socket. They are tracked
+    // separately and pg_dump only resumes once BOTH have drained — a
+    // single shared flag would let the compressor's drain un-pause the
+    // child while the browser is still behind, which is how you end up
+    // buffering the dump in memory after all.
+    let gzipFull = false;
+    let resFull = false;
+
+    const applyFlow = () => {
+      const shouldPause = gzipFull || resFull;
+      if (shouldPause === paused) return;
+      paused = shouldPause;
+      try { paused ? child.stdout.pause() : child.stdout.resume(); } catch { /* already gone */ }
+    };
+    const resumeChild = () => { gzipFull = false; resFull = false; applyFlow(); };
 
     const killChild = () => {
       if (child.exitCode !== null || child.signalCode) return;
@@ -251,10 +324,12 @@ function runExport({ dbName, res, filename, onStart, spawnFn }) {
 
     const sendHeaders = () => {
       headersSent = true;
-      res.setHeader('Content-Type', 'application/octet-stream');
+      // gzip container, NOT Content-Encoding — see EXPORT_CONTENT_TYPE.
+      res.setHeader('Content-Type', EXPORT_CONTENT_TYPE);
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-      // No Content-Length: the size isn't known up front, so this is a
-      // chunked response and the browser shows an indeterminate progress.
+      // No Content-Length: the compressed size isn't known up front, so
+      // this is a chunked response and the browser shows an indeterminate
+      // progress.
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('X-Content-Type-Options', 'nosniff');
       if (typeof onStart === 'function') {
@@ -266,15 +341,52 @@ function runExport({ dbName, res, filename, onStart, spawnFn }) {
       if (stderr.length < STDERR_CAP) stderr += chunk.toString('utf8');
     });
 
+    // pg_dump → gzip. Written by hand rather than .pipe() so the child's
+    // exit (not its stdout EOF) is what flushes the compressor: `docker
+    // exec` can leave the pipe open a beat past the process it ran.
     child.stdout.on('data', (chunk) => {
-      if (clientGone) return;
+      if (clientGone || settled) return;
+      rawBytes += chunk.length;
+      if (gzip.write(chunk) === false) {
+        gzipFull = true;
+        applyFlow();
+        gzip.once('drain', () => { gzipFull = false; applyFlow(); });
+      }
+    });
+
+    // gzip → socket. This is where the response is actually committed.
+    gzip.on('data', (chunk) => {
+      if (clientGone || settled) return;
       if (!headersSent) sendHeaders();
       bytesSent += chunk.length;
       // Backpressure: a slow browser must not make us buffer the dump.
       if (res.write(chunk) === false) {
-        child.stdout.pause();
-        res.once('drain', () => { try { child.stdout.resume(); } catch {} });
+        resFull = true;
+        applyFlow();
+        res.once('drain', () => { resFull = false; applyFlow(); });
       }
+    });
+
+    gzip.on('error', (err) => {
+      log.error('db-export', 'gzip stream failed', { dbName, message: err.message });
+      gzipFlushed = true; // nothing left to flush; don't re-destroy in finish()
+      killChild();
+      if (headersSent) { try { res.destroy(); } catch { /* socket already gone */ } }
+      else if (!res.headersSent) {
+        try { res.status(500).json({ error: 'Export failed', code: 'export_failed' }); } catch {}
+      }
+      finish('failed', `gzip failed: ${err.message}`);
+    });
+
+    // The compressor has flushed its final block. Only now is the file
+    // complete, so this — not the child's exit — is what ends the response
+    // on the success path.
+    gzip.on('end', () => {
+      gzipFlushed = true;
+      if (settled || clientGone) return;
+      if (!headersSent) sendHeaders(); // an empty database still gets a valid .gz
+      try { res.end(); } catch { /* socket already gone */ }
+      finish('completed', null);
     });
 
     child.on('error', (err) => {
@@ -310,8 +422,10 @@ function runExport({ dbName, res, filename, onStart, spawnFn }) {
         return;
       }
       if (code === 0) {
-        try { res.end(); } catch {}
-        finish('completed', null);
+        // Flush the compressor and let its 'end' finish the response —
+        // ending the socket here would truncate the gzip trailer.
+        resumeChild();
+        try { gzip.end(); } catch (err) { finish('failed', `gzip flush failed: ${err.message}`); }
         return;
       }
       // Non-zero exit. If bytes are already on the wire we CANNOT send an
@@ -334,6 +448,8 @@ module.exports = {
   DB_CONTAINER,
   DB_USER,
   DB_EXPORT_TIMEOUT_MS,
+  EXPORT_CONTENT_TYPE,
+  GZIP_LEVEL,
   TICKET_TTL_MS,
   MAX_PER_DAY,
   SAFE_IDENT,
