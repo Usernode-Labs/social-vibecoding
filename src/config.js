@@ -193,6 +193,13 @@ function load() {
     // protection, 2i Mayor refuse-list, 2k import block) stay in
     // place; this flag is purely about audience.
     selfAppPublicVoting: process.env.SELF_APP_PUBLIC_VOTING !== 'false',
+    // Topochain partner API (plan Task 3; architecture decision #5): the
+    // shared secret compared against the partner group's X-API-Key header
+    // (src/middleware/topochain-auth.js#partnerApiKey). Deliberately
+    // OPTIONAL and NOT in REQUIRED — an unset key doesn't block boot, it
+    // makes every partner-group request 500 with "API key authentication
+    // not configured." until an operator sets TOPOCHAIN_PARTNER_API_KEY.
+    topochainPartnerApiKey: process.env.TOPOCHAIN_PARTNER_API_KEY || '',
   };
 
   console.log('[config] Loaded:');
@@ -233,6 +240,7 @@ function load() {
   console.log(`  SELF_APP_SLUG=${config.selfAppSlug} (db=${config.selfAppDbName})`);
   console.log(`  SELF_APP_CONTAINER=${config.selfAppContainer}`);
   console.log(`  SELF_APP_PUBLIC_VOTING=${config.selfAppPublicVoting} (Phase 4: ${config.selfAppPublicVoting ? 'enabled — all users can see + vote on self-app PRs' : 'disabled — self-app is admin-only'})`);
+  console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
 
   return config;
 }

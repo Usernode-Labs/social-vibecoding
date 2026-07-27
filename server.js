@@ -40,6 +40,15 @@ const { boardOrderRoutes } = require('./src/routes/board-order');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
+// Topochain v4 (plan Task 3): public/partner/ingest/mobile carry their own
+// auth and mount BEFORE authMiddleware; admin reuses the platform's own
+// admin auth and mounts AFTER it (architecture decision #2 — see the mount
+// sites below for the full rationale).
+const { topochainPublicRoutes } = require('./src/routes/topochain/public');
+const { topochainPartnerRoutes } = require('./src/routes/topochain/partner');
+const { topochainIngestRoutes } = require('./src/routes/topochain/ingest');
+const { topochainMobileRoutes } = require('./src/routes/topochain/mobile');
+const { topochainAdminRoutes } = require('./src/routes/topochain/admin');
 const github = require('./src/services/github');
 const llm = require('./src/services/llm');
 const worker = require('./src/services/worker');
@@ -213,7 +222,11 @@ app.use((req, res, next) => {
 app.use(cookieParser());
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok' });
+  // `topochain: true` (plan Task 3; SPEC 815-818 "merge into the platform's
+  // existing health check") — a static presence flag confirming this
+  // deployment carries the /api/v4 topochain surface, not a live subsystem
+  // probe (there's no separate topochain process to be unhealthy).
+  res.json({ status: 'ok', topochain: true });
 });
 
 // The platform is never a dapp in "mock mode". The shared usernode-bridge
@@ -406,6 +419,32 @@ app.use(appFileServeRoutes(config));
 // gate already passed before the proxy attempt failed).
 app.use(appErrorRoutes(config));
 
+// Topochain v4 (plan Task 3; architecture decision #2). Public/partner/
+// ingest/mobile each carry their OWN auth (optionalSessionAuth /
+// partnerApiKey / mobileTokenAuth, applied per-route inside these
+// routers — never a platform session), so they mount BEFORE
+// authMiddleware like the pre-auth routers above. A request that matches
+// one of these routers' paths is answered here and never reaches
+// authMiddleware at all.
+//
+// NOTE on unmatched /api/v4/* paths: these four routers currently only
+// expose their Task-3 __ping stubs (real endpoints land in Tasks 5-10), so
+// most /api/v4/* paths are NOT yet matched here and fall through to
+// authMiddleware below. /api/v4 is deliberately NOT added to
+// authMiddleware's PUBLIC_PATHS: an anonymous request for an unmounted v4
+// path therefore gets authMiddleware's standard 401 JSON (`{"error": "Not
+// authenticated"}`), not a 404. This is intentional — unmounted API
+// surface fails closed (requires auth) rather than being anonymously
+// reachable by default; it also means every REAL public v4 endpoint (Task
+// 5 onward) must be mounted in one of these pre-auth routers itself (as
+// this file already does), never rely on falling through past
+// authMiddleware. See tests/topochain-foundation.test.js for the exercised
+// behavior.
+app.use(topochainPublicRoutes(config));
+app.use(topochainPartnerRoutes(config));
+app.use(topochainIngestRoutes(config));
+app.use(topochainMobileRoutes(config));
+
 app.use(authMiddleware(config));
 app.use(authRoutes(config));
 app.use(appRoutes(config));
@@ -436,6 +475,10 @@ app.use(boardOrderRoutes(config));
 app.use(pmOrderRoutes(config));
 app.use(debugRoutes(config));
 app.use(galleryRoutes(config));
+// Topochain v4 admin (plan Task 3; architecture decision #2): mounted
+// AFTER authMiddleware — req.user is already resolved by the time this
+// router's own adminMiddleware runs, exactly like src/routes/admin.js.
+app.use(topochainAdminRoutes(config));
 
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
