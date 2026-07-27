@@ -2781,18 +2781,29 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // creation time, so the stale-and-outage case is vanishingly narrow.
   let explicitApproval = !!session.requires_explicit_approval;
   let explicitApprovalSource = 'stored';
+  let explicitApprovalDetail = null;
   try {
     const detected = await appAdmins.detectAdminsChange(session, {
-      headRef: session.source === 'imported'
-        ? (session.imported_pr_head_sha || session.branch_name || null)
-        : (session.branch_name || null),
+      headRef: appAdmins.headRefForSession(session),
     });
     // An INDETERMINATE result (no head ref / GitHub off / unparseable
-    // repo) keeps the stored flag — only a real diff may overwrite it.
+    // repo / no merge base) keeps the stored flag — only a real diff
+    // may overwrite it.
     if (detected.determinate) {
       explicitApproval = detected.changed;
       explicitApprovalSource = 'live';
+      explicitApprovalDetail = {
+        from: detected.from, to: detected.to, mergeBaseSha: detected.mergeBaseSha,
+      };
       if (detected.changed !== !!session.requires_explicit_approval) {
+        // The flip itself is worth a trace: a below-threshold clear
+        // returns before any merge_debug_run opens, so without this
+        // line a disappearing chip has no server-side explanation.
+        log.info('votes', 'Explicit-approval flag overwritten by live check', {
+          sessionId: session.id, stored: !!session.requires_explicit_approval,
+          live: detected.changed, from: detected.from, to: detected.to,
+          mergeBaseSha: detected.mergeBaseSha,
+        });
         await appAdmins.stampExplicitApproval(pool, session.id, detected.changed);
       }
     }
@@ -2870,7 +2881,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
       dstep({
         phase: 'gate:explicit_approval',
         message: `Proposal changes dapp.json's admins block (${explicitApprovalSource} check) — time-based merge paths are off: no visibility window, no lazy consensus. The app's normal threshold still applies.`,
-        detail: { explicitApproval: true, source: explicitApprovalSource, mode: gate.mode },
+        detail: {
+          explicitApproval: true, source: explicitApprovalSource, mode: gate.mode,
+          ...(explicitApprovalDetail || {}),
+        },
       });
     }
     dstep({

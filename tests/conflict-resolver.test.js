@@ -946,6 +946,43 @@ test('checkAndResolveConflicts: an elapsed lazy-consensus sibling is eligible', 
   }
 });
 
+test('checkAndResolveConflicts: a flagged below-threshold sibling is NOT drained (#788 no-timer)', async () => {
+  const { subject, pool, loadedIds, restore } = loadResolverForSweep({
+    majority: 2,
+    siblings: [
+      // Same lazy-consensus shape as the eligible test above — but the row
+      // is flagged requires_explicit_approval, so every time-based merge
+      // path is off and a paid resolution turn could only end in "still
+      // can't merge". The drain must skip it.
+      { id: 61, yes_count: 1, promoted_at: 100, created_at: 100, requires_explicit_approval: true },
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    const candidate = pool.calls.find((c) => /SELECT cs\.id, cs\.promoted_at[\s\S]*yes_count/.test(c.sql));
+    assert.match(candidate.sql, /requires_explicit_approval/,
+      'the candidate query fetches the flag the gate needs');
+    assert.deepEqual(loadedIds(), [], 'no resolution turn for a clock-disabled proposal');
+  } finally {
+    restore();
+  }
+});
+
+test('checkAndResolveConflicts: a flagged AT-threshold sibling still drains (votes, not clocks, decide)', async () => {
+  const { subject, loadedIds, restore } = loadResolverForSweep({
+    majority: 2,
+    siblings: [
+      { id: 62, yes_count: 3, promoted_at: 100, created_at: 100, requires_explicit_approval: true },
+    ],
+  });
+  try {
+    await subject.checkAndResolveConflicts({ jwtSecret: 's' }, { app_id: 5, id: 9 });
+    assert.deepEqual(loadedIds(), [62], 'the normal threshold met by real votes is still eligible');
+  } finally {
+    restore();
+  }
+});
+
 test('checkAndResolveConflicts: drains eligible PRs highest-voted first, one at a time', async () => {
   const { subject, loadedIds, restore } = loadResolverForSweep({
     majority: 2,

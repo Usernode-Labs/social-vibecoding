@@ -242,7 +242,7 @@ async function drainApp(config, appId, excludeId) {
     // are JS, so candidates are fetched and the gate is applied here;
     // checkAndMerge re-validates the same gate before actually merging.
     const { rows: candidates } = await pool.query(
-      `SELECT cs.id, cs.promoted_at, cs.created_at,
+      `SELECT cs.id, cs.promoted_at, cs.created_at, cs.requires_explicit_approval,
               ((cs.behind_main IS NULL OR cs.behind_main = 0)
                 AND COALESCE(cs.merge_conflict_state, 'clean') NOT IN ('conflict', 'failed', 'resolving')
                 AND COALESCE(cs.check_state, '') IN ('passing', 'skipped')) AS unblocked,
@@ -270,8 +270,13 @@ async function drainApp(config, appId, excludeId) {
         const q = qualifiedByRow
           ? (qualifiedByRow.get(r.id) || { yes: 0, no: 0 })
           : { yes: r.yes_count, no: r.no_count };
+        // #788: apply the no-timer modifier for flagged rows, matching
+        // checkAndMerge and the sweeper — otherwise a below-threshold
+        // flagged proposal whose lazy clock "elapsed" would be queued
+        // for a paid resolution turn that checkAndMerge then refuses.
         return governance.computeGate(
-          gov, electorate.active, q.yes, q.no, r.promoted_at || r.created_at
+          gov, electorate.active, q.yes, q.no, r.promoted_at || r.created_at, null,
+          { explicitApproval: !!r.requires_explicit_approval }
         ).mergeable;
       })
       .sort((a, b) => {

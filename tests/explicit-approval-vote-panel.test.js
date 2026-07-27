@@ -246,3 +246,59 @@ test('voteButtonsHtml: an ordinary user never gets Admin merge', () => {
   const AppView = makeAppView({ user: { id: 3 } });
   assert.doesNotMatch(AppView.voteButtonsHtml({ id: 1, status: 'promoted' }), /Admin merge/);
 });
+
+// ── The inline details-block note ─────────────────────────────────────
+
+test('_proposalDetailsHtml: a flagged row below threshold renders the amber note with M of N', () => {
+  const AppView = makeAppView();
+  const html = AppView._proposalDetailsHtml({
+    id: 1, status: 'promoted', yes_count: 1, no_count: 0, votes_required: 3,
+    check_state: 'passing', requires_explicit_approval: true,
+  });
+  assert.match(html, /edits the app&#39;s admins list|edits the app's admins list/);
+  assert.match(html, /won't merge on a timer/);
+  assert.match(html, /needs 3 real Yes votes and has 1 so far/);
+  assert.match(html, /can still be voted down/);
+  assert.match(html, /text-amber-600/, 'amber styling, matching the locked note family');
+});
+
+test('_proposalDetailsHtml: a flagged row at threshold says it will merge once gates clear', () => {
+  const AppView = makeAppView();
+  const html = AppView._proposalDetailsHtml({
+    id: 1, status: 'promoted', yes_count: 3, no_count: 0, votes_required: 3,
+    check_state: 'passing', requires_explicit_approval: true,
+  });
+  assert.match(html, /has the Yes votes it needs \(3 of 3\)/);
+  assert.match(html, /checks and conflict gates clear/);
+});
+
+test('_proposalDetailsHtml: qualified tallies and the ctx majority fallback drive the numbers', () => {
+  const AppView = makeAppView({ ctx: { majority: 4 } });
+  const html = AppView._proposalDetailsHtml({
+    id: 1, status: 'promoted', yes_count: 5, qualified_yes_count: 2, no_count: 0,
+    votes_required: null, check_state: 'passing', requires_explicit_approval: true,
+  });
+  assert.match(html, /needs 4 real Yes votes and has 2 so far/,
+    'qualified count beats the raw tally; ctx.majority backs a missing snapshot');
+});
+
+test('_proposalDetailsHtml: the note is absent on settled rows', () => {
+  const AppView = makeAppView();
+  for (const status of ['merged', 'merging']) {
+    const html = AppView._proposalDetailsHtml({
+      id: 1, status, yes_count: 3, no_count: 0, votes_required: 3,
+      requires_explicit_approval: true,
+    });
+    assert.doesNotMatch(html, /won't merge on a timer/, `${status} rows are history`);
+  }
+});
+
+test('_proposalDetailsHtml: the note is absent on unflagged rows', () => {
+  const AppView = makeAppView();
+  const html = AppView._proposalDetailsHtml({
+    id: 1, status: 'promoted', yes_count: 1, no_count: 0, votes_required: 3,
+    check_state: 'passing',
+  });
+  assert.doesNotMatch(html, /won't merge on a timer/);
+  assert.doesNotMatch(html, /admins list/);
+});

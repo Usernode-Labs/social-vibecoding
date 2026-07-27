@@ -4093,6 +4093,22 @@ const AppView = {
     const lockedNote = (ctx.locked && pr.status !== 'merged')
       ? '<div class="text-xs text-amber-500 mt-1">App is locked — this also needs at least one admin yes before it merges.</div>'
       : '';
+    // #788 follow-up: a flagged proposal explains itself inline instead
+    // of only via the chip tooltip / help popover. Numbers derive
+    // exactly as _votingHelpText's (qualified tally first, votes_required
+    // snapshot first) so the note can never contradict the pill.
+    let explicitNote = '';
+    if (pr.requires_explicit_approval && pr.status !== 'merged' && pr.status !== 'merging') {
+      const eYes = pr.qualified_yes_count != null
+        ? (parseInt(pr.qualified_yes_count) || 0) : (parseInt(pr.yes_count) || 0);
+      const eSnap = parseInt(pr.votes_required);
+      const eReq = (Number.isFinite(eSnap) && eSnap > 0)
+        ? eSnap : (parseInt(ctx.majority) || 1);
+      const eBody = eYes >= eReq
+        ? `It has the Yes votes it needs (${eYes} of ${eReq}) and will merge as soon as the usual checks and conflict gates clear.`
+        : `It needs ${eReq} real Yes vote${eReq === 1 ? '' : 's'} and has ${eYes} so far.`;
+      explicitNote = `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">This proposal edits the app's admins list, so it won't merge on a timer. ${eBody} It can still be voted down, and it still closes on the usual schedule if nobody engages.</div>`;
+    }
     const roster = pr.status !== 'merged'
       ? `<div id="dev-vote-roster-${pr.id}" class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">Loading votes…</div>`
       : '';
@@ -4118,6 +4134,7 @@ const AppView = {
         ${AppView._checksDetailHtml(pr)}
         ${roster}
         ${helpHint}
+        ${explicitNote}
         ${lockedNote}
       </div>`;
   },

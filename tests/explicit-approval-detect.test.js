@@ -2,10 +2,15 @@
 // adminsFromManifestSource / detectAdminsChange in
 // src/services/app-admins.js.
 //
-// The load-bearing property: a proposal is flagged only when the admins
-// SET actually moves. Reformatting the manifest, reordering the names,
-// or recasing them must not flag — otherwise every routine dapp.json
-// edit would silently switch off the app's merge timers.
+// Two load-bearing properties:
+//   1. A proposal is flagged only when the admins SET actually moves.
+//      Reformatting the manifest, reordering the names, or recasing
+//      them must not flag — otherwise every routine dapp.json edit
+//      would silently switch off the app's merge timers.
+//   2. The comparison is THREE-DOT (head vs the merge base of main and
+//      head), not head vs main's moving tip — a branch that simply
+//      predates an admins change on main must NOT read as reverting it
+//      (the 2648 regression).
 //
 // Run with: node --test tests/explicit-approval-detect.test.js
 
@@ -13,10 +18,16 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const APP = { id: 5, slug: 'chess', repo_url: 'https://github.com/bot/chess' };
+const BASE_SHA = 'basebasebasebasebasebasebasebasebasebase';
 
-// Swap services/github for a stub returning scripted file contents per
-// ref. Restored after each call so tests stay independent.
-function withGithub({ main, head, enabled = true, throws = false }, fn) {
+// Swap services/github for a stub scripting the compare + per-ref file
+// contents. `base` is the manifest at the merge base, `head` at the
+// proposal's head. `compare` overrides the compareRefs result (default:
+// a complete file list containing dapp.json). Restored after each call
+// so tests stay independent.
+function withGithub({
+  base, head, enabled = true, throws = false, compare, onFetch,
+}, fn) {
   const key = require.resolve('../src/services/github');
   const original = require.cache[key];
   require.cache[key] = {
@@ -25,9 +36,15 @@ function withGithub({ main, head, enabled = true, throws = false }, fn) {
     loaded: true,
     exports: {
       isEnabled: () => enabled,
+      compareRefs: async (owner, repo, basehead) => {
+        if (throws) throw new Error('GitHub is down');
+        assert.match(basehead, /^main\.\.\./, 'always a three-dot compare from main');
+        return compare || { mergeBaseSha: BASE_SHA, files: ['dapp.json'], filesComplete: true };
+      },
       getFileContent: async (owner, repo, file, ref) => {
         if (throws) throw new Error('GitHub is down');
-        return ref === 'main' ? main : head;
+        if (onFetch) onFetch(ref);
+        return ref === BASE_SHA ? base : head;
       },
     },
   };
@@ -68,10 +85,61 @@ test('adminsFromManifestSource normalizes a real block', () => {
   );
 });
 
+// ── detectAdminsChange: three-dot semantics (the 2648 regression) ─────
+
+test('a branch that predates an admins change on main is NOT a change', () => withGithub({
+  // Merge base (where the branch was cut): no admins block. Head: also
+  // no admins block — the branch never touched it. Main's TIP has since
+  // gained {"admins":["evan"]}, but the tip is irrelevant to the diff.
+  base: json({ name: 'Game Corner' }),
+  head: json({ name: 'Game Corner', tests: [] }),
+  compare: { mergeBaseSha: BASE_SHA, files: ['dapp.json', 'server.js'], filesComplete: true },
+}, async () => {
+  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'dev/old-branch' });
+  assert.equal(r.changed, false, 'main moving underneath must not flag the branch');
+  assert.equal(r.determinate, true);
+  assert.equal(r.mergeBaseSha, BASE_SHA);
+}));
+
+test('manifest absent from a COMPLETE file list short-circuits with zero fetches', () => withGithub({
+  base: json({ admins: ['should-not-be-read'] }),
+  head: json({ admins: [] }),
+  compare: { mergeBaseSha: BASE_SHA, files: ['server.js', 'public/app.js'], filesComplete: true },
+  onFetch: () => { throw new Error('getFileContent must not be called'); },
+}, async () => {
+  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  assert.equal(r.changed, false);
+  assert.equal(r.determinate, true);
+  assert.equal(r.mergeBaseSha, BASE_SHA);
+}));
+
+test('a CAPPED file list falls back to comparing the manifest even when dapp.json is absent from it', () => withGithub({
+  base: json({ admins: ['alice'] }),
+  head: json({ admins: ['alice', 'mallory'] }),
+  compare: {
+    mergeBaseSha: BASE_SHA,
+    files: Array.from({ length: 300 }, (_, i) => `src/file-${i}.js`),
+    filesComplete: false,
+  },
+}, async () => {
+  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  assert.equal(r.changed, true, 'an incomplete list missing dapp.json proves nothing');
+}));
+
+test('no merge_base_commit is INDETERMINATE, not "unchanged"', () => withGithub({
+  base: json({ admins: ['a'] }),
+  head: json({ admins: ['b'] }),
+  compare: { mergeBaseSha: null, files: [], filesComplete: true },
+}, async () => {
+  const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
+  assert.equal(r.determinate, false);
+  assert.equal(r.changed, false);
+}));
+
 // ── detectAdminsChange: non-changes ───────────────────────────────────
 
 test('reordering the same names is NOT a change', () => withGithub({
-  main: json({ admins: ['alice', 'bob'] }),
+  base: json({ admins: ['alice', 'bob'] }),
   head: json({ admins: ['bob', 'alice'] }),
 }, async () => {
   const r = await appAdmins.detectAdminsChange(APP, { headRef: 'feat/x' });
@@ -81,21 +149,21 @@ test('reordering the same names is NOT a change', () => withGithub({
 }));
 
 test('recasing the same names is NOT a change', () => withGithub({
-  main: json({ admins: ['alice'] }),
+  base: json({ admins: ['alice'] }),
   head: json({ admins: ['ALICE'] }),
 }, async () => {
   assert.equal((await appAdmins.detectAdminsChange(APP, { headRef: 'x' })).changed, false);
 }));
 
 test('reformatting the file (whitespace, key order, other blocks) is NOT a change', () => withGithub({
-  main: '{"admins":["alice"],"name":"Chess"}',
+  base: '{"admins":["alice"],"name":"Chess"}',
   head: json({ name: 'Chess', visibility: { build: 'public' }, admins: ['  alice  '] }),
 }, async () => {
   assert.equal((await appAdmins.detectAdminsChange(APP, { headRef: 'x' })).changed, false);
 }));
 
 test('no admins block on either side is NOT a change', () => withGithub({
-  main: json({ name: 'Chess' }),
+  base: json({ name: 'Chess' }),
   head: json({ name: 'Chess Club' }),
 }, async () => {
   const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
@@ -104,10 +172,10 @@ test('no admins block on either side is NOT a change', () => withGithub({
   assert.deepEqual(r.to, []);
 }));
 
-// ── detectAdminsChange: real changes ──────────────────────────────────
+// ── detectAdminsChange: real changes (relative to the merge base) ─────
 
-test('adding a name IS a change', () => withGithub({
-  main: json({ admins: ['alice'] }),
+test('adding a name on the branch IS a change', () => withGithub({
+  base: json({ admins: ['alice'] }),
   head: json({ admins: ['alice', 'bob'] }),
 }, async () => {
   const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
@@ -116,15 +184,15 @@ test('adding a name IS a change', () => withGithub({
   assert.deepEqual(r.to, ['alice', 'bob']);
 }));
 
-test('removing a name IS a change', () => withGithub({
-  main: json({ admins: ['alice', 'bob'] }),
+test('removing a name the merge base had IS a change', () => withGithub({
+  base: json({ admins: ['alice', 'bob'] }),
   head: json({ admins: ['alice'] }),
 }, async () => {
   assert.equal((await appAdmins.detectAdminsChange(APP, { headRef: 'x' })).changed, true);
 }));
 
 test('adding the block for the first time IS a change', () => withGithub({
-  main: json({ name: 'Chess' }),
+  base: json({ name: 'Chess' }),
   head: json({ name: 'Chess', admins: ['alice'] }),
 }, async () => {
   const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
@@ -133,7 +201,7 @@ test('adding the block for the first time IS a change', () => withGithub({
 }));
 
 test('deleting the block IS a change', () => withGithub({
-  main: json({ admins: ['alice'] }),
+  base: json({ admins: ['alice'] }),
   head: json({ name: 'Chess' }),
 }, async () => {
   const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
@@ -142,14 +210,14 @@ test('deleting the block IS a change', () => withGithub({
 }));
 
 test('emptying the block to [] IS a change (that is how a roster is cleared)', () => withGithub({
-  main: json({ admins: ['alice'] }),
+  base: json({ admins: ['alice'] }),
   head: json({ admins: [] }),
 }, async () => {
   assert.equal((await appAdmins.detectAdminsChange(APP, { headRef: 'x' })).changed, true);
 }));
 
 test('swapping one name for another IS a change', () => withGithub({
-  main: json({ admins: ['alice'] }),
+  base: json({ admins: ['alice'] }),
   head: json({ admins: ['mallory'] }),
 }, async () => {
   const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
@@ -164,7 +232,7 @@ test('no headRef / GitHub disabled / unparseable repo_url are INDETERMINATE, not
   // The distinction matters: an indeterminate result must never be
   // allowed to overwrite a stored `true`, or a thin session row would
   // silently un-flag a proposal and hand back the merge timers.
-  await withGithub({ main: json({ admins: ['a'] }), head: json({ admins: ['b'] }) }, async () => {
+  await withGithub({ base: json({ admins: ['a'] }), head: json({ admins: ['b'] }) }, async () => {
     const noRef = await appAdmins.detectAdminsChange(APP, {});
     assert.equal(noRef.determinate, false);
     assert.equal(noRef.changed, false);
@@ -172,14 +240,14 @@ test('no headRef / GitHub disabled / unparseable repo_url are INDETERMINATE, not
     const noRepo = await appAdmins.detectAdminsChange({ ...APP, repo_url: null }, { headRef: 'x' });
     assert.equal(noRepo.determinate, false);
   });
-  await withGithub({ main: null, head: null, enabled: false }, async () => {
+  await withGithub({ base: null, head: null, enabled: false }, async () => {
     const off = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
     assert.equal(off.determinate, false);
   });
 });
 
 test('a real comparison is marked determinate', () => withGithub({
-  main: json({ admins: ['alice'] }),
+  base: json({ admins: ['alice'] }),
   head: json({ admins: ['alice'] }),
 }, async () => {
   const r = await appAdmins.detectAdminsChange(APP, { headRef: 'x' });
@@ -188,7 +256,7 @@ test('a real comparison is marked determinate', () => withGithub({
 }));
 
 test('refreshExplicitApproval does not stamp an INDETERMINATE result', () => withGithub({
-  main: null, head: null, enabled: false,
+  base: null, head: null, enabled: false,
 }, async () => {
   const calls = [];
   const pool = { query: async (sql, params) => { calls.push({ sql, params }); return { rows: [] }; } };
@@ -206,10 +274,23 @@ test('a transport error PROPAGATES so callers pick their own fallback', () => wi
   );
 }));
 
+// ── headRefForSession ─────────────────────────────────────────────────
+
+test('headRefForSession picks the imported head sha, else the branch name', () => {
+  assert.equal(appAdmins.headRefForSession({ branch_name: 'dev/x' }), 'dev/x');
+  assert.equal(appAdmins.headRefForSession({
+    source: 'imported', imported_pr_head_sha: 'deadbeef', branch_name: 'ignored',
+  }), 'deadbeef');
+  assert.equal(appAdmins.headRefForSession({
+    source: 'imported', imported_pr_head_sha: null, branch_name: 'fallback',
+  }), 'fallback');
+  assert.equal(appAdmins.headRefForSession(null), null);
+});
+
 // ── refreshExplicitApproval ───────────────────────────────────────────
 
 test('refreshExplicitApproval stamps the resolved verdict', () => withGithub({
-  main: json({ admins: [] }),
+  base: json({ admins: [] }),
   head: json({ admins: ['alice'] }),
 }, async () => {
   const calls = [];
@@ -222,7 +303,7 @@ test('refreshExplicitApproval stamps the resolved verdict', () => withGithub({
 }));
 
 test('refreshExplicitApproval clears the reason when not flagged', () => withGithub({
-  main: json({ admins: ['alice'] }),
+  base: json({ admins: ['alice'] }),
   head: json({ admins: ['alice'] }),
 }, async () => {
   const calls = [];
@@ -243,12 +324,17 @@ test('refreshExplicitApproval swallows a GitHub failure and leaves the flag alon
 
 test('an imported proposal is diffed against its head SHA, not its branch', () => {
   const seen = [];
+  const compares = [];
   const key = require.resolve('../src/services/github');
   const original = require.cache[key];
   require.cache[key] = {
     id: key, filename: key, loaded: true,
     exports: {
       isEnabled: () => true,
+      compareRefs: async (o, r, basehead) => {
+        compares.push(basehead);
+        return { mergeBaseSha: BASE_SHA, files: ['dapp.json'], filesComplete: true };
+      },
       getFileContent: async (o, r, f, ref) => { seen.push(ref); return '{}'; },
     },
   };
@@ -256,6 +342,7 @@ test('an imported proposal is diffed against its head SHA, not its branch', () =
   return appAdmins.refreshExplicitApproval(pool, APP, {
     id: 7, source: 'imported', imported_pr_head_sha: 'deadbeef', branch_name: 'ignored',
   }).then(() => {
+    assert.deepEqual(compares, ['main...deadbeef']);
     assert.ok(seen.includes('deadbeef'), `expected the head sha to be fetched, saw ${seen}`);
     assert.ok(!seen.includes('ignored'));
   }).finally(() => {

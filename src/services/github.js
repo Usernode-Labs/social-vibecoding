@@ -690,6 +690,31 @@ async function listChangedFiles(owner, repo, basehead) {
   return (data.files || []).map((f) => f.filename);
 }
 
+// #788 follow-up: merge-base compare between two refs ("main...branch").
+// Returns { mergeBaseSha, files, filesComplete } — the merge-base commit
+// sha (the point the branch was cut from, i.e. what a three-dot diff is
+// relative to), the changed file paths, and whether that list is
+// exhaustive. The compare endpoint caps the files array at 300 entries,
+// so a list that hits the cap must not be trusted as complete
+// (filesComplete: false); callers fall back to fetching the file they
+// care about instead. mergeBaseSha is null when GitHub reports no
+// merge_base_commit (unrelated histories). Throws on transport errors,
+// matching listChangedFiles / getProposalDiff.
+const COMPARE_FILES_CAP = 300;
+
+async function compareRefs(owner, repo, basehead) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner, repo, basehead, per_page: 100,
+  });
+  const files = (data.files || []).map((f) => f.filename);
+  return {
+    mergeBaseSha: data.merge_base_commit?.sha || null,
+    files,
+    filesComplete: files.length < COMPARE_FILES_CAP,
+  };
+}
+
 // #297: a size-capped unified diff for the proposal-advisor context.
 // Concatenates the per-file `patch` hunks from the compare endpoint
 // (`main...<branch>`) into one unified-diff string, truncated to a hard
@@ -1476,6 +1501,7 @@ module.exports = {
   _setOctokitFactoryForTests,
   getPR,
   listChangedFiles,
+  compareRefs,
   getProposalDiff,
   getIssue,
   createIssue,
