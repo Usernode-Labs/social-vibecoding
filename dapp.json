@@ -451,6 +451,11 @@
       "expectSelector": "#work-drawer-btn #notifications-badge-ai"
     },
     {
+      "name": "Admin/moderation icon renders right after the bell for admins (#588)",
+      "path": "/",
+      "expectSelector": "#notifications-btn + #admin-dashboard-btn:not(.hidden)"
+    },
+    {
       "name": "Home 'Your apps' section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"
