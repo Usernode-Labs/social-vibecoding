@@ -105,6 +105,10 @@ const App = {
     }
 
     App.bindEvents();
+    // Header admin/moderation icon — revealed for admins (full or
+    // view-only) once App.user is resolved. Called after bindEvents so
+    // the click handler is attached before the button can be seen.
+    App.renderAdminButton();
     App.connectEvents();
     App.loadVersion();
     // Header kudos budget badge polls /api/me/kudos-budget once at
@@ -125,6 +129,48 @@ const App = {
     // interval is the steady-state baseline and remains scheduled
     // unconditionally.
     setInterval(App.loadVersion, 10_000);
+  },
+
+  // Admin / moderation console (#588). First slice ships the header
+  // entry point only — the icon after the bell plus a "Coming soon"
+  // placeholder — so the affordance and its permission gate land before
+  // any dashboard content does.
+  //
+  // Gate: `App.user.isAdmin`, which is true for BOTH full platform
+  // admins and view-only admins (`admin_readonly`); see
+  // middleware/auth.js, where `isAdmin` is the read/visibility flag and
+  // `canAdminWrite` is the narrower full-admin mutation gate. A
+  // moderation console is a *viewing* surface, so `isAdmin` is the right
+  // flag and `canAdminWrite` would wrongly exclude view-only admins.
+  // Regular users never see the icon. Nothing here consults
+  // USERNODE_ENV — the button exists identically in staging and prod.
+  //
+  // The "View as non-admin" preview reloads the page after masking
+  // `App.user.isAdmin` (see settings.js), so this boot-time read is all
+  // that's needed to make the icon disappear in preview mode too.
+  renderAdminButton() {
+    const btn = document.getElementById('admin-dashboard-btn');
+    if (!btn) return;
+    btn.classList.toggle('hidden', !App.user?.isAdmin);
+  },
+
+  // Placeholder until the dashboard exists. Uses the app's shared
+  // PlatformUI dialog wrapper (native-kit alert underneath, with its own
+  // window.alert fallback when the kit is missing) rather than a
+  // hand-rolled modal.
+  openAdminConsole() {
+    if (!App.user?.isAdmin) return;
+    if (window.PlatformUI?.alert) {
+      PlatformUI.alert({
+        title: 'Admin & moderation',
+        message: 'Coming soon — the admin and moderation console is being built.',
+        okLabel: 'Got it',
+      });
+      return;
+    }
+    // PlatformUI failed to load (shouldn't happen — it ships in the same
+    // shell); still say something rather than swallowing the click.
+    try { window.alert('Admin & moderation\n\nComing soon.'); } catch {}
   },
 
   // The SHA the currently-loaded client JS was shipped with. Captured on
@@ -2160,6 +2206,11 @@ const App = {
       feedbackText.focus();
     };
     document.getElementById('feedback-btn').addEventListener('click', () => App.openFeedbackModal());
+    // Admin/moderation console (#588). The button is hidden for
+    // non-admins (see renderAdminButton), and openAdminConsole re-checks
+    // the flag so a stray programmatic click can't open it either.
+    document.getElementById('admin-dashboard-btn')
+      ?.addEventListener('click', () => App.openAdminConsole());
     document.getElementById('feedback-cancel').addEventListener('click', () => {
       document.getElementById('feedback-modal').classList.add('hidden');
       feedbackText.value = '';
