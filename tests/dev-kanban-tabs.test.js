@@ -1,7 +1,7 @@
-// #814: mobile kanban tabs. Below 1024px the Dev board renders ONE column at
+// #814: mobile kanban tabs. Below 640px the Dev board renders ONE column at
 // a time behind a tab strip instead of scrolling sideways. The switch is
 // presentation-only — every column stays in the markup and CSS (app.css,
-// @media max-width: 1023px) decides what's visible — so these tests assert
+// @media max-width: 639px) decides what's visible — so these tests assert
 // the STRING _renderKanbanInner() produces:
 //
 //   - one tab per column, in board order, labelled with the same count the
@@ -117,14 +117,14 @@ const activeAttr = (html) => (html.match(/data-kanban-active="([^"]+)"/) || [])[
 
 // ── Tab strip shape ────────────────────────────────────────────────────────
 
-test('renders one tab per column, in board order, inside a hidden-at-lg tablist', () => {
+test('renders one tab per column, in board order, inside a hidden-at-sm tablist', () => {
   const AppView = makeAppView();
   seedBoard(AppView);
   const html = AppView._renderKanbanInner();
   assert.deepEqual(tabKeys(html), ['issues', 'inprogress', 'inreview', 'done']);
   assert.match(html, /id="dev-kanban-tabs"[^>]*role="tablist"/);
   // Desktop keeps every column: the strip is the only thing hidden there.
-  assert.match(html, /id="dev-kanban-tabs"[^>]*class="lg:hidden/);
+  assert.match(html, /id="dev-kanban-tabs"[^>]*class="sm:hidden/);
 });
 
 test('the tab strip is emitted before the board, which keeps its #dev-kanban id', () => {
@@ -333,6 +333,53 @@ test('no ?view= at all keeps the #462 width default', () => {
   assert.equal(wide._getViewMode(), 'kanban');
   const narrow = makeAppView({ search: '', matchMedia: () => ({ matches: false }) });
   assert.equal(narrow._getViewMode(), 'list');
+});
+
+// ── The single-column ↔ multi-column breakpoint ─────────────────────────────
+// One number lives in three places (the JS width default, the tab-strip CSS
+// block, the Tailwind class that hides the strip). It was lowered from 1024px
+// to 640px, so pin all three together — a future edit to one of them alone
+// would silently split the board's layout from its tab strip.
+
+test('the 640px breakpoint agrees across the JS default, app.css and sm:hidden', () => {
+  const AppView = makeAppView();
+  assert.equal(AppView.KANBAN_MULTICOL_MEDIA, '(min-width: 640px)');
+
+  const css = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'), 'utf8'
+  );
+  // Single column (tab strip) strictly below 640px …
+  assert.match(css, /@media \(max-width: 639px\) \{[^}]*#dev-kanban \{ overflow-x: hidden; \}/);
+  // … and from 640px up the columns are side by side. In the band the
+  // breakpoint reclaimed they stay in ONE row at the readable 16rem width
+  // and the board scrolls sideways — it must never wrap, and it must never
+  // lift the floor (that would squeeze four columns into ~150px each).
+  const band = css.match(
+    /@media \(min-width: 640px\) and \(max-width: 1023px\) \{([\s\S]*?)\n\}/
+  );
+  assert.ok(band, 'the 640-1023px band has its own block');
+  assert.match(band[1], /flex-wrap: nowrap;/);
+  assert.match(band[1], /overflow-x: auto;/);
+  assert.doesNotMatch(band[1], /flex-wrap: wrap/);
+  assert.doesNotMatch(band[1], /min-width: 0/);
+  // The floor and the flex sizing must live in app.css, not as Tailwind
+  // utilities in the markup — those land later in the cascade and would
+  // beat every media query above.
+  assert.match(css, /\.dev-kanban-col \{\s*flex: 1 1 0;\s*min-width: 16rem;\s*\}/);
+  // From 1024px up the four columns fit in one row with NO sideways scroll,
+  // which needs a floor low enough for the bottom of that range: four 16rem
+  // columns plus three gap-3 gaps overflow a 1024px window's ~1000px of
+  // content width, four 14rem ones don't.
+  const wide = css.match(/@media \(min-width: 1024px\) \{\s*\.dev-kanban-col \{ min-width: (\d+(?:\.\d+)?)rem; \}/);
+  assert.ok(wide, 'the >=1024px range sets its own column floor');
+  const floorPx = parseFloat(wide[1]) * 16;
+  assert.ok(floorPx * 4 + 12 * 3 <= 1000,
+    `four ${floorPx}px columns + gaps must fit a 1024px window without scrolling`);
+  assert.doesNotMatch(css, /@media \(max-width: 1023px\) \{\s*\/\* No sideways scroll/);
+
+  seedBoard(AppView);
+  // Tailwind's sm: is min-width 640px, i.e. the same line.
+  assert.match(AppView._renderKanbanInner(), /id="dev-kanban-tabs"[^>]*class="sm:hidden/);
 });
 
 // ── Environment tolerance ──────────────────────────────────────────────────
