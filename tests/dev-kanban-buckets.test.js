@@ -387,7 +387,8 @@ test('loadMoreMerged updates #gc-merged (not the board) in list mode', async () 
 
 // ── _getViewMode default: explicit preference, else width-based (#462) ─────
 
-// A matchMedia stub that answers `wide` for the 1024px query and counts how
+// A matchMedia stub that answers `wide` for the 640px multi-column query and
+// counts how
 // many times it is evaluated (for the once-per-page-load memoization test).
 const mediaStub = (wide, counter) => (query) => {
   if (counter) counter.n += 1;

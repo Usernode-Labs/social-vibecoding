@@ -150,17 +150,23 @@ const AppView = {
   // across every app's Dev view (same pattern as DevConsole's MODE_KEY
   // and the "view as non-admin" toggle). An explicitly saved choice
   // always wins; with nothing saved the default is width-based (#462):
-  // 'kanban' on viewports ≥1024px — Tailwind's lg breakpoint, and the
-  // width at which the board's four min-w-[16rem] columns first fit
-  // without horizontal scrolling — and 'list' (the historical default)
+  // 'kanban' on viewports ≥640px — Tailwind's sm breakpoint, lowered
+  // from 1024px (lg) because the columns read fine on a narrow window
+  // once they may wrap 2-up instead of insisting on one row (see the
+  // 640-1023px block in app.css) — and 'list' (the historical default)
   // below it. Read/written only through the two helpers below so the
   // localStorage access stays guarded in one place.
   VIEW_MODE_KEY: 'devViewMode',
+  // The single source of truth in JS for where the board goes
+  // side-by-side. Must stay in step with the two kanban media queries in
+  // app.css (`max-width: 639px` for the tab strip, `min-width: 640px`
+  // for the multi-column band) and with `sm:hidden` on #dev-kanban-tabs.
+  KANBAN_MULTICOL_MEDIA: '(min-width: 640px)',
   // Width-based default, resolved lazily ONCE per page load and never
   // written to localStorage — so an undecided user keeps getting the
   // responsive default on future visits, and the mode can't flip
   // mid-flight between the paired _getViewMode() reads inside async
-  // flows like loadMoreMerged if the window is resized across 1024px.
+  // flows like loadMoreMerged if the window is resized across 640px.
   _viewModeAutoDefault: null,
   // #814: `?view=list|kanban|pm` — a one-shot URL override that wins over
   // BOTH the stored preference and the width default, resolved once per
@@ -190,7 +196,7 @@ const AppView = {
       if (AppView._viewModeAutoDefault === null) {
         AppView._viewModeAutoDefault =
           (typeof window.matchMedia === 'function'
-            && window.matchMedia('(min-width: 1024px)').matches)
+            && window.matchMedia(AppView.KANBAN_MULTICOL_MEDIA).matches)
             ? 'kanban' : 'list';
       }
       return AppView._viewModeAutoDefault;
@@ -248,7 +254,7 @@ const AppView = {
       }
     } catch {}
   },
-  // #814: mobile kanban tabs. Below 1024px the board shows ONE column at a
+  // #814: mobile kanban tabs. Below 640px the board shows ONE column at a
   // time behind a tab strip instead of scrolling sideways; which column is
   // showing is this key. Same storage shape and lifetime as the filters
   // above — per-app sessionStorage, so the tab survives in-app navigation
@@ -3284,12 +3290,13 @@ const AppView = {
       const footer = col.footer ? `<div class="mt-2">${col.footer}</div>` : '';
       // #814: every column is always in the DOM; `dev-kanban-col-active`
       // marks the one the tab strip is showing and CSS acts on it only
-      // below 1024px, so the desktop four-column board is byte-identical
-      // to the pre-#814 markup apart from the ids/keys.
+      // below 640px, so the desktop board is unchanged. The column's flex
+      // sizing is `.dev-kanban-col` in app.css rather than Tailwind
+      // utilities here — utilities would outrank the media queries.
       const activeCls = col.key === activeTab ? ' dev-kanban-col-active' : '';
       html += `
         <div id="dev-kanban-col-${escapeAttr(col.key)}" data-kanban-col="${escapeAttr(col.key)}"
-          class="dev-kanban-col${activeCls} flex-1 basis-0 min-w-[16rem]">
+          class="dev-kanban-col${activeCls}">
           <div class="dev-kanban-col-head text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider mb-2 px-0.5">
             ${escapeHtml(col.title)} <span class="text-zinc-400 dark:text-zinc-500 font-mono">· ${count}</span>
           </div>
@@ -3302,7 +3309,7 @@ const AppView = {
   },
 
   // #814: the mobile tab strip — one tab per kanban column, hidden at
-  // ≥1024px (`lg:hidden`) where all four columns show side by side. Each
+  // ≥640px (`sm:hidden`) where all four columns show side by side. Each
   // tab carries the column name plus the same count its header shows, on
   // two lines so all four fit a 390px phone without the strip itself
   // needing to scroll (the whole point of the change). An empty column
@@ -3326,7 +3333,7 @@ const AppView = {
         </button>`;
     }).join('');
     return `<div id="dev-kanban-tabs" role="tablist" aria-label="Board columns"
-      class="lg:hidden flex items-stretch gap-1 mb-2 border-b border-zinc-200 dark:border-zinc-800">${tabs}</div>`;
+      class="sm:hidden flex items-stretch gap-1 mb-2 border-b border-zinc-200 dark:border-zinc-800">${tabs}</div>`;
   },
 
   // #814: one delegated click listener on the STABLE #dev-kanban-board node
