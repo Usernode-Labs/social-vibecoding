@@ -1184,7 +1184,9 @@ async function seedStagingChatEditFixtures(pool, config) {
 // the section would render empty on every preview. Seed one synthetic
 // open proposal for the self-app — payload shaped exactly like the
 // create path in routes/issues.js, including a real `valueEnc`
-// ciphertext (encrypted with this environment's own JWT_SECRET) so
+// ciphertext (encrypted with this environment's own data-encryption key
+// — in staging that's the committed non-secret constant, so this
+// fixture is never confusable with prod ciphertext) so
 // vote-through-majority / admin-apply work end-to-end against the
 // staging app_secrets table. github_issue_number stays NULL: the
 // fixture has no GitHub twin, which also means the kudos button is
@@ -1193,8 +1195,8 @@ async function seedStagingChatEditFixtures(pool, config) {
 // doesn't resurrect on the next boot.
 async function seedStagingEnvProposal(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
-  if (!config.jwtSecret) {
-    log.warn('db', 'Staging env-proposal fixture skipped: no JWT_SECRET to encrypt with');
+  if (!config.dataEncryptionKey) {
+    log.warn('db', 'Staging env-proposal fixture skipped: no data-encryption key to encrypt with');
     return;
   }
 
@@ -1239,7 +1241,7 @@ async function seedStagingEnvProposal(pool, config) {
     const payload = {
       key: 'STAGING_DEMO_KEY',
       action: 'set',
-      valueEnc: encrypt(demoValue, config.jwtSecret),
+      valueEnc: encrypt(demoValue, config.dataEncryptionKey),
       valueLast4: demoValue.slice(-4),
       private: false,
       sensitive: false,

@@ -180,7 +180,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     //    unmark private.
     const stagingManifest = appManifest.read(cloneDir);
     const stagingPool = getPool(config);
-    const stagingStored = await appSecrets.getRawValues(stagingPool, app.id, config.jwtSecret);
+    const stagingStored = await appSecrets.getRawValues(stagingPool, app.id, config.dataEncryptionKey);
     const stagingMerge = appSecrets.mergeForDeploy(
       stagingManifest, stagingStored, appSecrets.platformDefaultsFromEnv(),
       { forStaging: true }
@@ -506,7 +506,7 @@ async function rebuildProductionInner(config, app) {
     // the letter tile. Best-effort; needs cloneDir for the image bytes.
     await appManifest.reconcileAppIcon(prodPool, app, manifest, cloneDir)
       .catch((err) => log.warn('staging', 'Icon reconcile failed', { app: app.slug, err: err.message }));
-    const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
+    const stored = await appSecrets.getRawValues(prodPool, app.id, config.dataEncryptionKey);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()
     );

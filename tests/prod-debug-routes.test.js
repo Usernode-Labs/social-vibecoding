@@ -11,6 +11,10 @@ const http = require('node:http');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 
+// Worker tokens are their own authority now (WORKER_JWT_SECRET); the
+// legacy shared secret is kept set only to prove it grants nothing.
+const WORKER_SECRET = 'prod-debug-routes-test-worker-secret';
+process.env.WORKER_JWT_SECRET = WORKER_SECRET;
 const JWT_SECRET = 'prod-debug-routes-test-secret';
 process.env.JWT_SECRET = JWT_SECRET;
 
@@ -99,11 +103,16 @@ test.before(async () => {
 
 test.after(() => new Promise((resolve) => server.close(resolve)));
 
-function mint(sessionId, { prodDebug = true } = {}) {
+function mint(sessionId, { prodDebug = true, secret = WORKER_SECRET } = {}) {
   return jwt.sign(
-    { session_id: sessionId, scope: 'worker:session', ...(prodDebug ? { prod_debug: true } : {}) },
-    JWT_SECRET,
-    { expiresIn: '10m' }
+    {
+      session_id: sessionId,
+      scope: 'worker:session',
+      pur: 'worker:session',
+      ...(prodDebug ? { prod_debug: true } : {}),
+    },
+    secret,
+    { algorithm: 'HS256', issuer: 'usernode', audience: 'usernode:worker', expiresIn: '10m' }
   );
 }
 
@@ -139,6 +148,38 @@ test('no auth header → 401', async () => {
     body: { query: 'SELECT 1' },
   });
   assert.equal(r.status, 401);
+});
+
+// Key separation: the retired shared secret is still present in the env
+// (child containers hold it for the iframe path), so a token minted with
+// it must buy nothing on the internal API.
+test('token signed with the legacy shared secret → 401 bad_token', async () => {
+  const r = await call({
+    method: 'POST',
+    path: `/api/internal/sessions/${ELIGIBLE_ID}/prod-debug/sql`,
+    token: mint(ELIGIBLE_ID, { secret: JWT_SECRET }),
+    body: { query: 'SELECT 1' },
+  });
+  assert.equal(r.status, 401);
+  assert.equal(r.json.code, 'bad_token');
+});
+
+// Same key, wrong job: an edge-shaped token must not pass as a worker
+// token even if an operator ever reused one secret for both.
+test('worker-secret token with the wrong purpose → 401 bad_token', async () => {
+  const wrongPurpose = jwt.sign(
+    { session_id: ELIGIBLE_ID, scope: 'worker:session', pur: 'edge:grant', prod_debug: true },
+    WORKER_SECRET,
+    { algorithm: 'HS256', issuer: 'usernode', audience: 'usernode:worker', expiresIn: '10m' }
+  );
+  const r = await call({
+    method: 'POST',
+    path: `/api/internal/sessions/${ELIGIBLE_ID}/prod-debug/sql`,
+    token: wrongPurpose,
+    body: { query: 'SELECT 1' },
+  });
+  assert.equal(r.status, 401);
+  assert.equal(r.json.code, 'bad_token');
 });
 
 test('valid worker JWT WITHOUT the prod_debug claim → 403 not_prod_debug', async () => {

@@ -8,9 +8,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const config = require('../src/config');
+const { setPlatformKeys } = require('./platform-keys');
 
 // load() exits the process when a required env var is missing, so give it
-// dummy values for all five before every load. Returns the loaded config.
+// dummy values for everything in REQUIRED + REQUIRED_PROD before every
+// load. Returns the loaded config.
 function loadWith(maxAppsEnv) {
   const prevMaxApps = process.env.MAX_APPS;
   process.env.DATABASE_URL = 'postgres://localhost/test';
@@ -18,6 +20,7 @@ function loadWith(maxAppsEnv) {
   process.env.ADMIN_USERNAME = 'admin';
   process.env.ADMIN_PASSWORD = 'admin-pass';
   process.env.JWT_SECRET = 'test-jwt-secret';
+  setPlatformKeys();
   if (maxAppsEnv === undefined) {
     delete process.env.MAX_APPS;
   } else {

@@ -4,10 +4,9 @@
  * DAO + helpers for per-app secrets stored in the `app_secrets` table.
  *
  * Values are encrypted with the existing AES-256-GCM helper in
- * `services/secrets.js` (keyed off `config.jwtSecret`). No additional
- * operator config required — losing the JWT secret already invalidates
- * every session, so reusing it adds no new "this is the kingdom keys"
- * concern.
+ * `services/secrets.js`, keyed off `config.dataEncryptionKey` — the
+ * at-rest key, which is deliberately not any token-signing key and is
+ * never placed in a container.
  *
  * Three reading shapes:
  *   - list(pool, appId)          → metadata only ({ key, hasValue, ... })
@@ -43,14 +42,14 @@ async function list(pool, appId) {
   }));
 }
 
-async function getRawValues(pool, appId, jwtSecret) {
+async function getRawValues(pool, appId, dataKey) {
   const { rows } = await pool.query(
     `SELECT key, value_enc FROM app_secrets WHERE app_id = $1`,
     [appId]
   );
   const out = {};
   for (const r of rows) {
-    const v = decrypt(r.value_enc, jwtSecret);
+    const v = decrypt(r.value_enc, dataKey);
     if (v != null) out[r.key] = v;
     else log.warn('app-secrets', 'Decrypt returned null (skipping)', { key: r.key });
   }
@@ -130,11 +129,11 @@ function computeLast4(value, sensitive) {
  * render a preview, and isn't for private keys, so the last 4 chars
  * never leak via the secrets API.
  */
-async function setValue(pool, appId, key, value, { sensitive = false, userId = null, jwtSecret }) {
+async function setValue(pool, appId, key, value, { sensitive = false, userId = null, dataKey }) {
   if (typeof value !== 'string' || !value.length) {
     throw new Error('app-secrets.setValue: non-empty string value required');
   }
-  const valueEnc = encrypt(value, jwtSecret);
+  const valueEnc = encrypt(value, dataKey);
   const last4 = computeLast4(value, sensitive);
   await pool.query(
     `INSERT INTO app_secrets (app_id, key, value_enc, value_last4, updated_by)

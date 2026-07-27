@@ -26,6 +26,8 @@ process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-session';
 process.env.ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt';
+// config.load() requires the four separated platform keys (REQUIRED_PROD).
+require('./platform-keys').setPlatformKeys();
 
 // Capture log lines by swapping the logger's sinks in place — server.js's
 // require graph binds `log` deep in the route tree, so replacing the module

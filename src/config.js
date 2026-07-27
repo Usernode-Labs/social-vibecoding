@@ -1,10 +1,58 @@
+const crypto = require('crypto');
+const platformJwt = require('./services/platform-jwt');
+
 const REQUIRED = [
   'DATABASE_URL',
   'SESSION_SECRET',
   'ADMIN_USERNAME',
   'ADMIN_PASSWORD',
-  'JWT_SECRET',
 ];
+
+// Key separation (retiring the shared JWT_SECRET). The platform now
+// holds four independent keys instead of one secret doing five jobs:
+//
+//   DATA_ENCRYPTION_KEY     KDF input for AES-256-GCM at rest (BYOK keys,
+//                           app secrets). Set to the EXACT value the old
+//                           JWT_SECRET had — it is not a rotation, so no
+//                           stored ciphertext has to be re-encrypted.
+//   IFRAME_JWT_PRIVATE_KEY  RSA-2048 PKCS#8 PEM. Signs app-scoped user
+//   IFRAME_JWT_PUBLIC_KEY   identities; only the PUBLIC half is ever put
+//                           in a child container.
+//   WORKER_JWT_SECRET       HMAC key for worker → internal-API tokens.
+//   EDGE_JWT_SECRET         HMAC key for private-app edge grants and the
+//                           scoped __usernode_access cookie.
+//
+// Required in production only. The platform also runs inside its own
+// staging clone (self-hosted app row), where none of these are injected
+// — see stagingDataKey() below.
+const REQUIRED_PROD = [
+  'DATA_ENCRYPTION_KEY',
+  'IFRAME_JWT_PRIVATE_KEY',
+  'IFRAME_JWT_PUBLIC_KEY',
+  'WORKER_JWT_SECRET',
+  'EDGE_JWT_SECRET',
+];
+
+// HMAC keys below this are a self-hosting footgun, not a boot failure —
+// say so loudly and honor the configured value.
+const MIN_HMAC_BYTES = 32;
+
+const IS_STAGING = () => process.env.USERNODE_ENV === 'staging';
+
+// The platform's own staging clone runs platform code with no platform
+// keys. It still needs A data key: migrate.js seeds an encrypted fixture
+// so the self-app preview's "Environment variables" vote panel renders.
+//
+// This constant is deliberately committed, deterministic (stable across
+// container restarts, so the fixture survives a rebuild) and visibly not
+// a credential. Because it differs from production's key, prod
+// ciphertext is structurally undecryptable in a preview — and the real
+// DATA_ENCRYPTION_KEY is never placed in any child environment.
+function stagingDataKey() {
+  return crypto.createHash('sha256')
+    .update('usernode-staging-data-key-not-for-prod')
+    .digest('hex');
+}
 
 // The platform appears as one row in `apps` with self_hosted=TRUE
 // (Phase 2f boot seed). These two values pin the row's identity:
@@ -32,7 +80,20 @@ function mask(val) {
 }
 
 function load() {
-  const missing = REQUIRED.filter((k) => !process.env[k]);
+  const staging = IS_STAGING();
+
+  // Migration shim: a .env written before key separation carries only
+  // JWT_SECRET. Accept it as the data key (it IS the same value) rather
+  // than refusing to boot, but name the successor loudly. This is a
+  // rename of one env var, NOT a verification fallback — no token
+  // authority reads it.
+  if (!process.env.DATA_ENCRYPTION_KEY && process.env.JWT_SECRET && !staging) {
+    console.log('[config] [warn] DATA_ENCRYPTION_KEY is unset — falling back to the legacy JWT_SECRET value. Rename it in .env; JWT_SECRET is no longer a signing key.');
+    process.env.DATA_ENCRYPTION_KEY = process.env.JWT_SECRET;
+  }
+
+  const required = staging ? REQUIRED : REQUIRED.concat(REQUIRED_PROD);
+  const missing = required.filter((k) => !process.env[k]);
   if (missing.length) {
     console.error(`[config] Missing required env vars: ${missing.join(', ')}`);
     process.exit(1);
@@ -44,7 +105,21 @@ function load() {
     sessionSecret: process.env.SESSION_SECRET,
     adminUsername: process.env.ADMIN_USERNAME,
     adminPassword: process.env.ADMIN_PASSWORD,
-    jwtSecret: process.env.JWT_SECRET,
+    // KDF input for services/secrets.js (AES-256-GCM at rest). Never
+    // injected into a child container, never used to sign anything.
+    dataEncryptionKey: staging ? stagingDataKey() : process.env.DATA_ENCRYPTION_KEY,
+    // Signing keys. Read straight from env by services/platform-jwt.js
+    // at call time; mirrored here for the boot log and for the container
+    // env builders that need the PUBLIC half.
+    iframeJwtPublicKey: (process.env.IFRAME_JWT_PUBLIC_KEY || '').replace(/\\n/g, '\n'),
+    workerJwtSecret: process.env.WORKER_JWT_SECRET || '',
+    edgeJwtSecret: process.env.EDGE_JWT_SECRET || '',
+    // TRANSITIONAL (removed in the iframe cutover): the former shared
+    // secret, still the signing key for iframe/capture identity tokens
+    // and still injected into child containers as JWT_SECRET. Worker and
+    // edge authorities no longer read it. Do NOT add new call sites —
+    // use services/platform-jwt.js.
+    jwtSecret: process.env.JWT_SECRET || process.env.DATA_ENCRYPTION_KEY,
     githubAppId: process.env.GITHUB_APP_ID || '',
     githubPrivateKey: (process.env.GITHUB_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
@@ -197,7 +272,29 @@ function load() {
 
   console.log('[config] Loaded:');
   console.log(`  DATABASE_URL=${mask(config.databaseUrl)}`);
-  console.log(`  JWT_SECRET=${mask(config.jwtSecret)}`);
+  console.log(`  DATA_ENCRYPTION_KEY=${mask(config.dataEncryptionKey)}${staging ? ' (staging constant — cannot decrypt production ciphertext)' : ''}`);
+  console.log(`  WORKER_JWT_SECRET=${mask(config.workerJwtSecret)}`);
+  console.log(`  EDGE_JWT_SECRET=${mask(config.edgeJwtSecret)}`);
+  console.log(`  IFRAME_JWT_PUBLIC_KEY=${config.iframeJwtPublicKey ? `(set, ${config.iframeJwtPublicKey.length} bytes)` : '(not set)'}`);
+  // Short HMAC keys stay a warning, not an exit — a fork running a
+  // 24-byte key should get a loud line, not a platform that won't start.
+  for (const name of ['WORKER_JWT_SECRET', 'EDGE_JWT_SECRET']) {
+    const val = process.env[name] || '';
+    if (val && Buffer.byteLength(val) < MIN_HMAC_BYTES) {
+      console.log(`  [warn] ${name} is ${Buffer.byteLength(val)} bytes — ${MIN_HMAC_BYTES} or more recommended (openssl rand -hex 32)`);
+    }
+  }
+  // A mismatched RSA pair mints tokens no container can verify, and the
+  // symptom is "every app login silently fails". Fail at boot instead.
+  if (process.env.IFRAME_JWT_PRIVATE_KEY && process.env.IFRAME_JWT_PUBLIC_KEY) {
+    try {
+      const { bits } = platformJwt.assertIframeKeyPair();
+      console.log(`  IFRAME_JWT key pair=ok (RSA-${bits}, RS256)`);
+    } catch (err) {
+      console.error(`[config] IFRAME_JWT key pair is unusable: ${err.message}`);
+      process.exit(1);
+    }
+  }
   console.log(`  GITHUB_APP_ID=${config.githubAppId || '(not set)'}`);
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
   console.log(`  LOG_LEVEL=${config.logLevel}`);

@@ -134,7 +134,30 @@ jobs:
             ADMIN_USERNAME=${{ secrets.USERNODE_ADMIN_USERNAME }}
             ADMIN_PASSWORD=${{ secrets.USERNODE_ADMIN_PASSWORD }}
             SESSION_SECRET=${{ secrets.USERNODE_SESSION_SECRET }}
-            JWT_SECRET=${{ secrets.USERNODE_JWT_SECRET }}
+            # Platform key separation. The old single USERNODE_JWT_SECRET
+            # signed every token type and was also handed to every child
+            # container; it is now four keys with one job each.
+            #
+            # DATA_ENCRYPTION_KEY deliberately still reads
+            # USERNODE_JWT_SECRET: it is the AES KDF input for every BYOK
+            # key and app secret already at rest, so the VALUE MUST NOT
+            # CHANGE. Renaming the env var is safe; rotating the secret
+            # makes every stored ciphertext undecryptable. Never point
+            # this at a freshly generated secret.
+            DATA_ENCRYPTION_KEY=${{ secrets.USERNODE_JWT_SECRET }}
+            # The three new authorities. These are free to rotate:
+            # rotating the iframe pair or the edge secret just re-auths
+            # users; rotating the worker secret evicts warm workers,
+            # which re-bootstrap on their next turn. Add them under
+            # Settings -> Secrets and variables -> Actions BEFORE the
+            # first deploy of this change — boot refuses to start
+            # without them (see src/config.js REQUIRED_PROD).
+            # Single-quoted like GITHUB_PRIVATE_KEY: single-line PEMs
+            # with literal \n escapes.
+            IFRAME_JWT_PRIVATE_KEY='${{ secrets.USERNODE_IFRAME_JWT_PRIVATE_KEY }}'
+            IFRAME_JWT_PUBLIC_KEY='${{ secrets.USERNODE_IFRAME_JWT_PUBLIC_KEY }}'
+            WORKER_JWT_SECRET=${{ secrets.USERNODE_WORKER_JWT_SECRET }}
+            EDGE_JWT_SECRET=${{ secrets.USERNODE_EDGE_JWT_SECRET }}
             USERNODE_DB_PASSWORD=${{ secrets.USERNODE_DB_PASSWORD }}
             GITHUB_APP_ID=${{ secrets.USERNODE_GITHUB_APP_ID }}
             GITHUB_PRIVATE_KEY='${{ secrets.USERNODE_GITHUB_PRIVATE_KEY }}'

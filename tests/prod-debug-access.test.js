@@ -10,11 +10,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const jwt = require('jsonwebtoken');
 
-// worker.js mints JWTs off process.env.JWT_SECRET (read lazily).
+// worker.js mints worker tokens through platform-jwt, which reads
+// WORKER_JWT_SECRET from the env at call time (not at import).
+process.env.WORKER_JWT_SECRET = 'prod-debug-access-test-worker-secret';
 process.env.JWT_SECRET = 'prod-debug-access-test-secret';
 
 const debugAccess = require('../src/services/debug-access');
 const worker = require('../src/services/worker');
+const platformJwt = require('../src/services/platform-jwt');
 
 // ── buildGrantStatements ───────────────────────────────────────────────
 
@@ -262,12 +265,28 @@ test('secret env: pre-existing shape is preserved (scout has no WORKER_JWT)', ()
 // ── JWT claims ─────────────────────────────────────────────────────────
 
 test('mintProdDebugJwt carries the prod_debug claim; mintWorkerJwt does not', () => {
-  const dbg = jwt.verify(worker.mintProdDebugJwt(7), process.env.JWT_SECRET);
+  const dbg = platformJwt.verifyWorkerToken(worker.mintProdDebugJwt(7));
   assert.equal(dbg.scope, 'worker:session');
   assert.equal(dbg.session_id, 7);
   assert.equal(dbg.prod_debug, true);
 
-  const plain = jwt.verify(worker.mintWorkerJwt(7), process.env.JWT_SECRET);
+  const plain = platformJwt.verifyWorkerToken(worker.mintWorkerJwt(7));
   assert.equal(plain.scope, 'worker:session');
   assert.ok(!('prod_debug' in plain));
+});
+
+// The whole point of the split: the retired shared secret can no longer
+// mint anything the internal API accepts.
+test('worker tokens do NOT verify under the legacy shared secret', () => {
+  const token = worker.mintWorkerJwt(7);
+  assert.throws(() => jwt.verify(token, process.env.JWT_SECRET), /invalid signature/);
+});
+
+test('a token minted with the legacy shared secret is not a valid worker token', () => {
+  const forged = jwt.sign(
+    { session_id: 7, scope: 'worker:session', pur: 'worker:session' },
+    process.env.JWT_SECRET,
+    { algorithm: 'HS256', issuer: 'usernode', audience: 'usernode:worker', expiresIn: '1h' }
+  );
+  assert.throws(() => platformJwt.verifyWorkerToken(forged), /invalid signature/);
 });

@@ -76,7 +76,16 @@ In the repo's Settings → Secrets and variables → Actions:
 - `DEPLOY_HOST` — VPS IP or hostname
 - `DEPLOY_SSH_KEY` — the *private* half of the keypair above
 - `USERNODE_ADMIN_USERNAME`, `USERNODE_ADMIN_PASSWORD`
-- `USERNODE_SESSION_SECRET`, `USERNODE_JWT_SECRET`
+- `USERNODE_SESSION_SECRET`
+- `USERNODE_JWT_SECRET` — despite the name this is now only the
+  data-at-rest encryption key (deployed as `DATA_ENCRYPTION_KEY`).
+  **Never rotate it:** it's the AES KDF input for every stored BYOK
+  key and app secret.
+- `USERNODE_WORKER_JWT_SECRET`, `USERNODE_EDGE_JWT_SECRET`
+  (`openssl rand -hex 32` each — safe to rotate)
+- `USERNODE_IFRAME_JWT_PRIVATE_KEY`, `USERNODE_IFRAME_JWT_PUBLIC_KEY`
+  — RSA-2048 pair for app identity tokens, single line with literal
+  `\n` (see `.env.example` for the `openssl`/`awk` recipe)
 - `USERNODE_DB_PASSWORD`
 - `USERNODE_GITHUB_APP_ID`, `USERNODE_GITHUB_PRIVATE_KEY`
   (single line with literal `\n`), `USERNODE_GITHUB_BOT_TOKEN`

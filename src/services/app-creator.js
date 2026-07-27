@@ -242,7 +242,7 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
     await appManifest.reconcileAppIcon(pool, { id: appId, slug }, manifest, tempDir)
       .catch((err) => log.warn('app-creator', 'Icon reconcile failed', { appId, err: err.message }));
 
-    const storedValues = await appSecrets.getRawValues(pool, appId, config.jwtSecret);
+    const storedValues = await appSecrets.getRawValues(pool, appId, config.dataEncryptionKey);
     const merge = appSecrets.mergeForDeploy(
       manifest, storedValues, appSecrets.platformDefaultsFromEnv()
     );

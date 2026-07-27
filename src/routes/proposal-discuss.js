@@ -195,7 +195,7 @@ function proposalDiscussRoutes(config) {
       // Who pays for this turn (limit-first, BYOK spillover) — same path
       // the Mayor turn uses. Budget gone and no key → 429 tagged with a
       // code so clients can distinguish it from rate limiting (#463).
-      const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
+      const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
       if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
 

@@ -133,14 +133,14 @@ async function copyNonPrivateSecrets(pool, config, sourceAppId, forkAppId, manif
     const declaredByKey = new Map(
       (manifest.secrets || []).map((s) => [s.key, s])
     );
-    const sourceValues = await appSecrets.getRawValues(pool, sourceAppId, config.jwtSecret);
+    const sourceValues = await appSecrets.getRawValues(pool, sourceAppId, config.dataEncryptionKey);
     for (const [key, value] of Object.entries(sourceValues)) {
       const declared = declaredByKey.get(key);
       // Skip orphans (no longer declared → treat as private) and any
       // entry marked private.
       if (!declared || declared.private) continue;
       await appSecrets.setValue(pool, forkAppId, key, value, {
-        sensitive: false, userId: null, jwtSecret: config.jwtSecret,
+        sensitive: false, userId: null, dataKey: config.dataEncryptionKey,
       });
     }
   } catch (err) {

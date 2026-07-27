@@ -999,7 +999,7 @@ function appRoutes(config) {
       await appSecrets.setValue(pool, app.id, req.params.key, value, {
         sensitive: !!declared?.private,
         userId: req.user.id,
-        jwtSecret: config.jwtSecret,
+        dataKey: config.dataEncryptionKey,
       });
       log.info('apps', 'Secret set (admin direct)', {
         slug: req.params.slug, key: req.params.key, userId: req.user.id,
@@ -1619,7 +1619,7 @@ function appRoutes(config) {
       );
       if (!app) return res.status(404).send('Not found');
 
-      const grant = appAccess.mintAccessGrant(config.jwtSecret, {
+      const grant = appAccess.mintAccessGrant({
         uid: req.user.id,
         appId: app.id,
         host: parsed.host,

@@ -19,9 +19,12 @@ const assert = require('node:assert/strict');
 const limits = require('../src/services/limits');
 const secrets = require('../src/services/secrets');
 
-const JWT_SECRET = 'test-jwt-secret';
+// At-rest encryption key (services/secrets.js KDF input) — not a
+// signing key. Same value the old shared JWT_SECRET held; the split was
+// a rename, so existing ciphertext keeps decrypting.
+const DATA_KEY = 'test-jwt-secret';
 const USER_KEY = 'sk-ant-test-123';
-const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, JWT_SECRET);
+const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, DATA_KEY);
 
 // ── Mock pool ───────────────────────────────────────────────────────────
 // Answers the SQL shapes checkBudget + the key lookup issue. The user's
@@ -67,7 +70,7 @@ test.beforeEach(() => limits.invalidate());
 
 test('budget headroom → platform path; the key is never looked up', async () => {
   const pool = makePool({ userSpent: 100, keyEnc: GOOD_KEY_ENC });
-  const r = await limits.resolveBillingPath(pool, JWT_SECRET, 7);
+  const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
   assert.deepEqual(r, { apiKey: null, byok: false });
   assert.equal(pool.issued(/anthropic_key_enc/), false,
     'no key lookup while the allowance has headroom');
@@ -75,13 +78,13 @@ test('budget headroom → platform path; the key is never looked up', async () =
 
 test('user cap hit + key on file → BYOK path with the decrypted key', async () => {
   const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC });
-  const r = await limits.resolveBillingPath(pool, JWT_SECRET, 7);
+  const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
   assert.deepEqual(r, { apiKey: USER_KEY, byok: true });
 });
 
 test('user cap hit + no key → the daily-limit error message with the BYOK hint (#463)', async () => {
   const pool = makePool({ userSpent: 2500 });
-  const r = await limits.resolveBillingPath(pool, JWT_SECRET, 7);
+  const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
   assert.equal(r.apiKey, undefined);
   assert.match(r.error, /Daily limit reached/);
   assert.match(r.error, /Add your own Anthropic API key in Settings to keep going\.$/,
@@ -90,13 +93,13 @@ test('user cap hit + no key → the daily-limit error message with the BYOK hint
 
 test('global cap hit + key on file → BYOK path', async () => {
   const pool = makePool({ userSpent: 0, globalSpent: 20000, keyEnc: GOOD_KEY_ENC });
-  const r = await limits.resolveBillingPath(pool, JWT_SECRET, 7);
+  const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
   assert.deepEqual(r, { apiKey: USER_KEY, byok: true });
 });
 
 test('global cap hit + no key → the global-limit error message with the BYOK hint (#463)', async () => {
   const pool = makePool({ userSpent: 0, globalSpent: 20000 });
-  const r = await limits.resolveBillingPath(pool, JWT_SECRET, 7);
+  const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
   assert.match(r.error, /Global daily limit reached/);
   assert.match(r.error, /Add your own Anthropic API key in Settings to keep going\.$/,
     'the global-cap error carries the same hint — BYOK bypasses the global cap too');
@@ -107,6 +110,6 @@ test('key-decrypt failure is treated as no key → error at the cap', async () =
   // null (auth-tag mismatch), which must degrade to the no-key path.
   const wrongSecretEnc = secrets.encrypt(USER_KEY, 'some-other-secret');
   const pool = makePool({ userSpent: 2500, keyEnc: wrongSecretEnc });
-  const r = await limits.resolveBillingPath(pool, JWT_SECRET, 7);
+  const r = await limits.resolveBillingPath(pool, DATA_KEY, 7);
   assert.match(r.error, /Daily limit reached/);
 });

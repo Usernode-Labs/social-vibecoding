@@ -11,7 +11,11 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 
+// The iframe token (step 5 of the gate) still rides the legacy shared
+// secret; the grant and the scoped cookie moved to EDGE_JWT_SECRET.
 const JWT_SECRET = 'edge-gate-test-secret';
+const EDGE_SECRET = 'edge-gate-test-edge-secret';
+process.env.EDGE_JWT_SECRET = EDGE_SECRET;
 // USERNODE_DOMAIN env is unset in tests → services/caddy.js default.
 const DOMAIN = 'social-vibecoding.usernodelabs.org';
 const PUB_HOST = `pubapp.${DOMAIN}`;
@@ -101,10 +105,21 @@ function gate({ host, uri = '/', method = 'GET', cookie, usernodeToken, secFetch
 }
 
 const iframeToken = (id) => jwt.sign({ id, username: `u${id}` }, JWT_SECRET, { expiresIn: '1h' });
-const accessCookie = (uid, host, appId = PRIV_APP_ID) =>
-  `__usernode_access=${jwt.sign({ t: 'app-access', uid, appId, host }, JWT_SECRET, { expiresIn: '1h' })}`;
-const grantToken = (uid, host, appId = PRIV_APP_ID) =>
-  jwt.sign({ t: 'app-access-grant', uid, appId, host }, JWT_SECRET, { expiresIn: '2m' });
+
+// Edge credentials as platform-jwt mints them: HS256 on EDGE_JWT_SECRET,
+// `usernode` issuer, `usernode:edge` audience, distinguished by `pur`.
+function edgeToken(pur, { uid, appId, host }, opts = {}) {
+  return jwt.sign({ uid, appId, host, pur }, opts.secret || EDGE_SECRET, {
+    algorithm: 'HS256',
+    issuer: opts.issuer || 'usernode',
+    audience: opts.audience || 'usernode:edge',
+    expiresIn: opts.expiresIn || '1h',
+  });
+}
+const accessCookie = (uid, host, appId = PRIV_APP_ID, opts) =>
+  `__usernode_access=${edgeToken('edge:cookie', { uid, appId, host }, opts)}`;
+const grantToken = (uid, host, appId = PRIV_APP_ID, opts) =>
+  edgeToken('edge:grant', { uid, appId, host }, { expiresIn: '2m', ...opts });
 
 // ── tests ──────────────────────────────────────────────────────────────
 
@@ -262,4 +277,85 @@ test('iframe token signed with the wrong secret is rejected', async () => {
   const r = await gate({ host: PRIV_HOST, uri: `/?token=${bad}` });
   assert.equal(r.status, 302);
   assert.ok(r.headers.location.startsWith(`https://${DOMAIN}/__access/authorize?`));
+});
+
+// ── key separation ─────────────────────────────────────────────────────
+//
+// The edge authority is EDGE_JWT_SECRET. The legacy shared secret is
+// still live for the iframe path (and is inside every child container),
+// so anything minted with it must not buy an edge credential.
+
+test('scoped cookie signed with the legacy shared secret is rejected', async () => {
+  const r = await gate({
+    host: PRIV_HOST,
+    cookie: accessCookie(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { secret: JWT_SECRET }),
+  });
+  assert.equal(r.status, 302);
+});
+
+test('grant signed with the legacy shared secret restarts the authorize dance', async () => {
+  const grant = grantToken(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { secret: JWT_SECRET });
+  const r = await gate({
+    host: PRIV_HOST,
+    uri: `/__usernode_access?grant=${encodeURIComponent(grant)}&next=%2F`,
+  });
+  assert.equal(r.status, 302);
+  assert.ok(r.headers.location.startsWith(`https://${DOMAIN}/__access/authorize?`));
+});
+
+// Both edge purposes share one key, so `pur` is the only thing stopping a
+// 120s grant from being pasted in as a 12h cookie (and vice versa).
+test('a grant presented as the scoped cookie is rejected', async () => {
+  const r = await gate({
+    host: PRIV_HOST,
+    cookie: `__usernode_access=${grantToken(MEMBER_ID, PRIV_HOST)}`,
+  });
+  assert.equal(r.status, 302);
+});
+
+test('a scoped cookie presented as the grant is rejected', async () => {
+  const cookieTok = edgeToken('edge:cookie', {
+    uid: MEMBER_ID, appId: PRIV_APP_ID, host: PRIV_HOST,
+  });
+  const r = await gate({
+    host: PRIV_HOST,
+    uri: `/__usernode_access?grant=${encodeURIComponent(cookieTok)}&next=%2F`,
+  });
+  assert.equal(r.status, 302);
+  assert.ok(r.headers.location.startsWith(`https://${DOMAIN}/__access/authorize?`));
+});
+
+test('edge token with the wrong audience is rejected', async () => {
+  const r = await gate({
+    host: PRIV_HOST,
+    cookie: accessCookie(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { audience: 'usernode:worker' }),
+  });
+  assert.equal(r.status, 302);
+});
+
+test('edge token with the wrong issuer is rejected', async () => {
+  const r = await gate({
+    host: PRIV_HOST,
+    cookie: accessCookie(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { issuer: 'somebody-else' }),
+  });
+  assert.equal(r.status, 302);
+});
+
+test('the cookie the gate mints is a real edge:cookie token, not a grant', async () => {
+  const grant = grantToken(MEMBER_ID, PRIV_HOST);
+  const r = await gate({
+    host: PRIV_HOST,
+    uri: `/__usernode_access?grant=${encodeURIComponent(grant)}&next=%2F`,
+  });
+  const setCookie = (r.headers['set-cookie'] || []).join(';');
+  const minted = /__usernode_access=([^;]+)/.exec(setCookie)[1];
+  const claims = jwt.verify(minted, EDGE_SECRET, {
+    algorithms: ['HS256'], issuer: 'usernode', audience: 'usernode:edge',
+  });
+  assert.equal(claims.pur, 'edge:cookie');
+  assert.equal(claims.uid, MEMBER_ID);
+  assert.equal(claims.appId, PRIV_APP_ID);
+  assert.equal(claims.host, PRIV_HOST);
+  // 12h, not the grant's 2m.
+  assert.equal(claims.exp - claims.iat, 12 * 60 * 60);
 });
