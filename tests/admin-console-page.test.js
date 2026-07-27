@@ -103,7 +103,7 @@ test('the console is not gated on the environment', () => {
 });
 
 test('the menu carries every section and the standalone tools', () => {
-  for (const key of ['overview', 'users', 'codes', 'limits', 'features']) {
+  for (const key of ['overview', 'users', 'codes', 'limits', 'features', 'db-export']) {
     assert.ok(new RegExp(`key: '${key}'`).test(consoleJs), `section '${key}' registered`);
   }
   for (const href of ['/dashboard', '/debug', '/gallery', '/status']) {
@@ -134,4 +134,71 @@ test('dapp.json locks the rendered page in with checks', () => {
     'asserts the screen is actually revealed, not just present');
   const section = tests.find((t) => t.path === '/#admin/codes');
   assert.ok(section, 'a dapp.json test renders a deep-linked section');
+  const dbExport = tests.find((t) => t.path === '/#admin/db-export');
+  assert.ok(dbExport, 'a dapp.json test renders the database-export section');
+  assert.match(dbExport.expectSelector, /#admin-db-export-panel/,
+    'asserts the export panel actually rendered, not just the shell');
+});
+
+// ─── Database export section ──────────────────────────────────────
+//
+// The console's most dangerous control. The client-side contract:
+// availability comes from the server's capability probe (never an env
+// check of its own — see the "not gated on the environment" test above),
+// the download is a NAVIGATION rather than a Blob, and every string that
+// reaches the DOM from the history API is escaped.
+
+test('the export section warns before it offers, and never uses a native prompt', () => {
+  const fn = consoleJs.slice(
+    consoleJs.indexOf('  renderDbExportSection(host) {'),
+    consoleJs.indexOf('  _resetDbExportConfirm()')
+  );
+  assert.ok(fn.length > 0, 'renderDbExportSection located');
+  assert.match(fn, /password hash/, 'spells out what the file contains');
+  assert.match(fn, /admin-db-export-phrase/, 'the typed EXPORT confirmation is an in-page field');
+  assert.match(fn, /admin-db-export-password/, 'password re-entry is an in-page field');
+  assert.ok(!/\bprompt\(/.test(consoleJs), 'no native prompt() — the platform renders its own dialogs');
+});
+
+test('the export button is enabled by the server, not by the client', () => {
+  const fn = consoleJs.slice(
+    consoleJs.indexOf('  async loadDbExportStatus()'),
+    consoleJs.indexOf('  async startDbExport()')
+  );
+  assert.match(fn, /btn\.disabled = !data\.available/,
+    'the probe decides; the client only renders the decision');
+  assert.match(fn, /DB_EXPORT_REASONS\[data\.reason\]/,
+    'the refusal copy is keyed off the server reason code');
+  for (const reason of ['staging', 'unavailable', 'in_progress', 'rate_limited']) {
+    assert.ok(new RegExp(`${reason}:`).test(consoleJs), `reason '${reason}' has copy`);
+  }
+});
+
+test('the download is navigated, not fetched into memory', () => {
+  const fn = consoleJs.slice(
+    consoleJs.indexOf('  async startDbExport()'),
+    consoleJs.indexOf('  _dbExportRow(r)')
+  );
+  assert.match(fn, /\/api\/admin\/db-export\/ticket/, 'step 1 posts the confirmation');
+  assert.match(fn, /window\.location\.href = data\.url/, 'step 2 navigates to the ticket URL');
+  assert.ok(!/createObjectURL/.test(fn),
+    'a multi-hundred-MB dump must never be held in page memory as a Blob');
+  assert.match(fn, /pw\.value = ''/, 'the password field is cleared as soon as it is spent');
+});
+
+test('history rows are escaped — they carry admin-controlled strings', () => {
+  const fn = consoleJs.slice(
+    consoleJs.indexOf('  _dbExportRow(r)'),
+    consoleJs.indexOf('  async loadDbExportHistory()')
+  );
+  for (const field of ['r.username', 'r.db_name', 'r.ip', 'r.error']) {
+    assert.ok(new RegExp(`esc\\(${field.replace('.', '\\.')}`).test(fn)
+      || new RegExp(`esc\\([^)]*${field.replace('.', '\\.')}`).test(fn),
+      `${field} passes through esc()`);
+  }
+});
+
+test('the section spells out post-export rotation guidance', () => {
+  assert.match(consoleJs, /rotate/i, 'the console tells the admin what to rotate if the file leaks');
+  assert.match(consoleJs, /JWT secret/i, 'naming the one rotation that invalidates every session');
 });

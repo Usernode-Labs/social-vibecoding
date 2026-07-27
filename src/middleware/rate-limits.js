@@ -245,4 +245,28 @@ const boardOrderLimiter = makeLimiter({
   message: 'Too many reorder updates — slow down for a minute.',
 });
 
-module.exports = { authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter };
+// Platform database export tickets: 3 / 24h / full admin. Each ticket
+// authorizes ONE full, unredacted pg_dump of the platform database — every
+// password hash, every live session token, every app credential — so the
+// budget is deliberately tiny and the window is a whole day.
+//
+// exemptAdmins IS DELIBERATELY OMITTED AND MUST STAY OMITTED. The option
+// skips the limiter for anyone with canAdminWrite (see makeLimiter above),
+// which is EXACTLY the population this limiter exists to bound — the route
+// is already full-admin-only, so setting it would disable the limit
+// entirely. Do not "make it consistent" with its neighbours.
+//
+// skipFailedRequests refunds anything ≥ 400, so a mistyped confirmation
+// password doesn't burn one of the three slots (the denied attempt is
+// still written to the db_exports audit table either way). Per-user keyed:
+// the budget belongs to the admin, not to their IP.
+const dbExportLimiter = makeLimiter({
+  windowMs: 24 * 60 * 60 * 1000,
+  max: 3,
+  name: 'db-export',
+  keyByUser: true,
+  skipFailedRequests: true,
+  message: (s) => `Rate limit reached: up to 3 database exports per day. You can try again ${retryPhrase(s)}.`,
+});
+
+module.exports = { dbExportLimiter, authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter };

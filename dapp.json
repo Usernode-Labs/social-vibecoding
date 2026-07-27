@@ -466,6 +466,16 @@
       "expectSelector": "#admin-code-list"
     },
     {
+      "name": "Admin console renders the Database export section",
+      "path": "/#admin/db-export",
+      "expectSelector": "#admin-db-export-panel #admin-db-export-history"
+    },
+    {
+      "name": "Database export warns before it offers",
+      "path": "/#admin/db-export",
+      "expectText": "handle as a credential"
+    },
+    {
       "name": "Home 'Your apps' section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"

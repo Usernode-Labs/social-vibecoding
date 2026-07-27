@@ -3,8 +3,11 @@ const crypto = require('crypto');
 const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
+const { dbExportLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
 const limits = require('../services/limits');
+const dbExport = require('../services/db-export');
+const events = require('../services/events');
 
 // Fixed app-wide key for pg_advisory_xact_lock, dedicated to admin-status
 // mutations (revoke-admin and delete-user). Any code path that could drop
@@ -749,6 +752,363 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'Submitted-features list failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Database export ────────────────────────────────────────
+  //
+  // A full, unredacted pg_dump of the platform database, streamed straight
+  // to a full admin's browser as a file download. The dumped file contains
+  // every bcrypt hash in `users`, every live row of `sessions`, every
+  // activation code, every app's db_password / llm_proxy_token /
+  // storage_api_token, and the AES-GCM ciphertext of every BYOK key and
+  // app secret. It deliberately bypasses BOTH containment mechanisms the
+  // platform otherwise relies on — the `staging:private` scrub in
+  // db-manager.js and the grant-level deny lists in debug-access.js.
+  //
+  // So the gate is: full platform admins only (requireAdminWrite — never
+  // adminMiddleware alone, which admits view-only admins, and never any
+  // per-app admin notion), password re-entry on every single export, an
+  // explicit typed confirmation, 3 per admin per day, one at a time
+  // platform-wide, blocked outright in staging, and an append-only
+  // `db_exports` row for every attempt — written BEFORE anything runs.
+  //
+  // Mechanics live in src/services/db-export.js (spawn + docker exec +
+  // ticket store + single-flight guard); this file owns auth and audit.
+
+  const DB_EXPORT_HISTORY_MAX = 200;
+
+  function clientIp(req) {
+    return String(req.ip || req.socket?.remoteAddress || '').slice(0, 64) || null;
+  }
+
+  // Insert the audit row. Deliberately NOT fire-and-forget: callers await
+  // this before doing the thing it records, so a dump can never run
+  // without a row already committed for it. Returns the row id, or null
+  // if the insert itself failed (in which case the caller logs and, for
+  // the export path, refuses to proceed).
+  async function recordExportAudit(req, { status, deniedReason = null, dbName = null }) {
+    try {
+      const { rows } = await pool.query(
+        `INSERT INTO db_exports (user_id, username, db_name, status, denied_reason, ip, user_agent)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id`,
+        [
+          req.user?.id ?? null,
+          req.user?.username || 'unknown',
+          dbName || '(unresolved)',
+          status,
+          deniedReason,
+          clientIp(req),
+          String(req.get('user-agent') || '').slice(0, 512) || null,
+        ]
+      );
+      return rows[0] ? rows[0].id : null;
+    } catch (err) {
+      log.error('admin', 'db-export audit insert failed', { message: err.message, status, deniedReason });
+      return null;
+    }
+  }
+
+  async function finishExportAudit(id, { status, bytesSent = 0, error = null, started = false }) {
+    if (!id) return;
+    try {
+      await pool.query(
+        `UPDATE db_exports
+            SET status = $2,
+                bytes_sent = $3,
+                error = $4,
+                started_at = COALESCE(started_at, CASE WHEN $5 THEN NOW() ELSE NULL END),
+                finished_at = NOW()
+          WHERE id = $1`,
+        [id, status, bytesSent, error ? log.redactString(String(error)).slice(0, 4000) : null, started]
+      );
+    } catch (err) {
+      log.error('admin', 'db-export audit update failed', { message: err.message, id });
+    }
+  }
+
+  // Capability probe for the console. Readable by ANY admin (view-only
+  // included) — it exposes no data, only whether the button should work
+  // and, when it shouldn't, a machine-readable reason the client renders.
+  // That indirection is what keeps public/js/admin-console.js free of any
+  // USERNODE_ENV literal (pinned by tests/admin-console-page.test.js)
+  // while the staging block itself stays server-side and absolute.
+  router.get('/api/admin/db-export/status', async (req, res) => {
+    try {
+      const target = dbExport.resolveTargetDb(config);
+      const inProgress = dbExport.isExportInProgress();
+
+      let dbSizeBytes = null;
+      try {
+        const { rows } = await pool.query('SELECT pg_database_size(current_database())::bigint AS size');
+        if (rows[0]) dbSizeBytes = Number(rows[0].size);
+      } catch (err) {
+        log.warn('admin', 'db-export size probe failed', { message: err.message });
+      }
+
+      // Advisory only — the enforced budget is the rolling in-memory
+      // window in dbExportLimiter. This is the DB's view of the same
+      // thing, for display; the two can disagree across a restart.
+      let remainingToday = dbExport.MAX_PER_DAY;
+      try {
+        const { rows } = await pool.query(
+          `SELECT COUNT(*)::int AS n FROM db_exports
+            WHERE user_id = $1
+              AND status <> 'denied'
+              AND requested_at > NOW() - INTERVAL '24 hours'`,
+          [req.user.id]
+        );
+        remainingToday = Math.max(0, dbExport.MAX_PER_DAY - (rows[0] ? rows[0].n : 0));
+      } catch { /* display-only */ }
+
+      let available = true;
+      let reason = 'ok';
+      if (dbExport.isStaging()) { available = false; reason = 'staging'; }
+      else if (!target.dbName) { available = false; reason = 'unavailable'; }
+      else if (inProgress) { available = false; reason = 'in_progress'; }
+      else if (remainingToday <= 0) { available = false; reason = 'rate_limited'; }
+
+      res.json({
+        available,
+        reason,
+        dbName: target.dbName,
+        dbSizeBytes,
+        inProgress,
+        remainingToday,
+        maxPerDay: dbExport.MAX_PER_DAY,
+        canWrite: !!req.user?.canAdminWrite,
+      });
+    } catch (err) {
+      log.error('admin', 'db-export status failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Append-only history, readable by any admin. There is no delete or
+  // edit counterpart, by design.
+  router.get('/api/admin/db-export/history', async (req, res) => {
+    try {
+      const limit = Math.min(DB_EXPORT_HISTORY_MAX, Math.max(1, parseInt(req.query.limit, 10) || 25));
+      const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
+      const { rows: countRows } = await pool.query('SELECT COUNT(*)::int AS total FROM db_exports');
+      const { rows } = await pool.query(
+        `SELECT id, user_id, username, db_name, status, denied_reason, ip,
+                bytes_sent, requested_at, started_at, finished_at, error
+           FROM db_exports
+          ORDER BY requested_at DESC, id DESC
+          LIMIT ${limit} OFFSET ${offset}`
+      );
+      res.json({ exports: rows, total: countRows[0] ? countRows[0].total : 0, limit, offset });
+    } catch (err) {
+      log.error('admin', 'db-export history failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Audit the two denials that never reach the ticket handler: a view-only
+  // admin bounced by requireAdminWrite, and a full admin bounced by the
+  // rate limiter. Both are attempts on a credential-dump endpoint, so both
+  // belong on the record.
+  async function noteDbExportPreDenials(req, res, next) {
+    res.on('finish', () => {
+      if (res.statusCode === 429) {
+        recordExportAudit(req, { status: 'denied', deniedReason: 'rate_limited' }).catch(() => {});
+      }
+    });
+    if (!req.user?.canAdminWrite) {
+      log.warn('admin', 'db-export refused: view-only admin', {
+        by: req.user?.username, ip: clientIp(req),
+      });
+      await recordExportAudit(req, { status: 'denied', deniedReason: 'view_only' });
+    }
+    next();
+  }
+
+  // Step 1 of 2. Verifies the typed confirmation and the admin's own
+  // password, then hands back a single-use 60s ticket. The browser
+  // navigates to the ticket URL, which is what makes this a real
+  // streamed file download rather than a Blob held in page memory.
+  router.post('/api/admin/db-export/ticket',
+    noteDbExportPreDenials, requireAdminWrite, dbExportLimiter,
+    async (req, res) => {
+      try {
+        // Layer 2 of the staging block (layer 1 is structural: staging
+        // containers never receive /var/run/docker.sock, so docker exec
+        // cannot work there at all; layer 3 is the disabled button).
+        if (dbExport.isStaging()) {
+          await recordExportAudit(req, { status: 'denied', deniedReason: 'staging' });
+          return res.status(403).json({
+            error: 'Database export is disabled in staging previews.',
+            code: 'staging',
+          });
+        }
+
+        const { password, confirm } = req.body || {};
+        if (confirm !== 'EXPORT') {
+          return res.status(400).json({ error: 'Type EXPORT to confirm.', code: 'confirm_required' });
+        }
+        if (!password || typeof password !== 'string') {
+          return res.status(400).json({ error: 'Your password is required.', code: 'password_required' });
+        }
+
+        const { rows } = await pool.query('SELECT password FROM users WHERE id = $1', [req.user.id]);
+        const hash = rows[0] ? rows[0].password : null;
+        const ok = hash ? await bcrypt.compare(password, hash) : false;
+        if (!ok) {
+          await recordExportAudit(req, { status: 'denied', deniedReason: 'bad_password' });
+          log.warn('admin', 'db-export refused: password verification failed', {
+            by: req.user.username, ip: clientIp(req),
+          });
+          // Deliberately undifferentiated from any other verification
+          // failure in the client-visible message.
+          return res.status(401).json({ error: 'Password verification failed.', code: 'bad_password' });
+        }
+
+        const target = dbExport.resolveTargetDb(config);
+        if (!target.dbName) {
+          await recordExportAudit(req, { status: 'denied', deniedReason: 'unavailable' });
+          return res.status(503).json({
+            error: 'Database export is unavailable on this deployment.',
+            code: 'unavailable',
+          });
+        }
+        if (dbExport.isExportInProgress()) {
+          await recordExportAudit(req, { status: 'denied', deniedReason: 'in_progress', dbName: target.dbName });
+          return res.status(409).json({
+            error: 'An export is already in progress — try again shortly.',
+            code: 'in_progress',
+          });
+        }
+
+        // AUDIT BEFORE ANYTHING RUNS. Mirrors the prod-debug idiom in
+        // routes/internal.js: the record is committed first, so even an
+        // export that dies before producing a byte is on the books.
+        const auditId = await recordExportAudit(req, { status: 'requested', dbName: target.dbName });
+        if (!auditId) {
+          return res.status(500).json({ error: 'Could not record the export — refusing to run it.' });
+        }
+
+        const { token, expiresInSeconds } = dbExport.issueTicket({
+          userId: req.user.id, ip: clientIp(req), auditId, dbName: target.dbName,
+        });
+        log.warn('admin', 'Database export authorized', {
+          by: req.user.username, id: req.user.id, dbName: target.dbName,
+          auditId, ip: clientIp(req), ticket: `${token.slice(0, 8)}…`,
+        });
+
+        res.json({
+          token,
+          url: `/api/admin/db-export?t=${encodeURIComponent(token)}`,
+          filename: dbExport.exportFilename(target.dbName),
+          expiresInSeconds,
+        });
+      } catch (err) {
+        log.error('admin', 'db-export ticket failed', { message: err.message });
+        res.status(500).json({ error: 'Internal server error' });
+      }
+    });
+
+  // Step 2 of 2. Browser-navigated GET: consumes the ticket and streams
+  // the dump with Content-Disposition: attachment. requireAdminWrite is
+  // re-applied here rather than trusted from step 1 — the ticket narrows
+  // who may use this URL, it is not the authorization.
+  router.get('/api/admin/db-export', requireAdminWrite, async (req, res) => {
+    let auditId = null;
+    let started = false;
+    try {
+      if (dbExport.isStaging()) {
+        return res.status(403).json({
+          error: 'Database export is disabled in staging previews.',
+          code: 'staging',
+        });
+      }
+
+      const ticket = dbExport.consumeTicket(String(req.query.t || ''), req.user.id);
+      if (!ticket) {
+        log.warn('admin', 'db-export refused: invalid or expired ticket', {
+          by: req.user.username, ip: clientIp(req),
+        });
+        return res.status(403).json({
+          error: 'This export link has expired — start the export again.',
+          code: 'ticket_invalid',
+        });
+      }
+      auditId = ticket.auditId;
+
+      // A mobile client can legitimately change IP between the POST and
+      // the navigation, so this is a warning, not a block.
+      const ip = clientIp(req);
+      if (ticket.ip && ip && ticket.ip !== ip) {
+        log.warn('admin', 'db-export ticket redeemed from a different IP', {
+          by: req.user.username, issuedTo: ticket.ip, redeemedFrom: ip, auditId,
+        });
+      }
+
+      const target = dbExport.resolveTargetDb(config);
+      if (!target.dbName) {
+        await finishExportAudit(auditId, { status: 'failed', error: 'export target unavailable' });
+        return res.status(503).json({
+          error: 'Database export is unavailable on this deployment.',
+          code: 'unavailable',
+        });
+      }
+
+      if (!dbExport.beginExport({ userId: req.user.id, username: req.user.username })) {
+        await finishExportAudit(auditId, { status: 'denied', error: 'another export was already running' });
+        return res.status(409).json({
+          error: 'An export is already in progress — try again shortly.',
+          code: 'in_progress',
+        });
+      }
+
+      const filename = dbExport.exportFilename(target.dbName);
+      log.warn('admin', 'Database export started', {
+        by: req.user.username, dbName: target.dbName, auditId, filename,
+      });
+
+      let result;
+      try {
+        result = await dbExport.runExport({
+          dbName: target.dbName,
+          res,
+          filename,
+          onStart: () => {
+            started = true;
+            pool.query(
+              `UPDATE db_exports SET status = 'streaming', started_at = NOW() WHERE id = $1`,
+              [auditId]
+            ).catch((err) => log.error('admin', 'db-export streaming mark failed', { message: err.message }));
+          },
+        });
+      } finally {
+        dbExport.endExport();
+      }
+
+      await finishExportAudit(auditId, {
+        status: result.status,
+        bytesSent: result.bytesSent,
+        error: result.error,
+        started,
+      });
+
+      log[result.status === 'completed' ? 'warn' : 'error']('admin', 'Database export finished', {
+        by: req.user.username, dbName: target.dbName, auditId,
+        status: result.status, bytesSent: result.bytesSent,
+      });
+
+      if (result.status === 'completed') {
+        events.record(pool, {
+          type: events.EVENT_TYPES.DB_EXPORTED,
+          userId: req.user.id,
+          metadata: { dbName: target.dbName, bytesSent: result.bytesSent, auditId },
+        });
+      }
+    } catch (err) {
+      log.error('admin', 'db-export stream failed', { message: err.message });
+      await finishExportAudit(auditId, { status: 'failed', error: err.message, started });
+      if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
+      else try { res.destroy(); } catch { /* socket already gone */ }
     }
   });
 
