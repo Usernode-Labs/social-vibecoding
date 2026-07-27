@@ -27,6 +27,9 @@ const App = {
   // Same for the #profile screen (profile-and-settings-to-web migration)
   // — set by navigateToProfile() / _exitProfile() / navigateHome().
   _inProfile: false,
+  // Same for the #admin screen (admin & moderation console, #818) — set
+  // by navigateToAdminConsole() / _exitAdminConsole() / navigateHome().
+  _inAdmin: false,
 
   // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -154,23 +157,14 @@ const App = {
     btn.classList.toggle('hidden', !App.user?.isAdmin);
   },
 
-  // Placeholder until the dashboard exists. Uses the app's shared
-  // PlatformUI dialog wrapper (native-kit alert underneath, with its own
-  // window.alert fallback when the kit is missing) rather than a
-  // hand-rolled modal.
+  // Navigate to the full-page admin console (#818): the #admin hash route
+  // drives everything — restoreFromHash lands on navigateToAdminConsole,
+  // which mounts #admin-screen and hands rendering to AdminConsole
+  // (public/js/admin-console.js). The isAdmin re-check keeps a
+  // programmatic click on the (hidden) button from navigating.
   openAdminConsole() {
     if (!App.user?.isAdmin) return;
-    if (window.PlatformUI?.alert) {
-      PlatformUI.alert({
-        title: 'Admin & moderation',
-        message: 'Coming soon — the admin and moderation console is being built.',
-        okLabel: 'Got it',
-      });
-      return;
-    }
-    // PlatformUI failed to load (shouldn't happen — it ships in the same
-    // shell); still say something rather than swallowing the click.
-    try { window.alert('Admin & moderation\n\nComing soon.'); } catch {}
+    location.hash = '#admin';
   },
 
   // The SHA the currently-loaded client JS was shipped with. Captured on
@@ -2294,6 +2288,7 @@ const App = {
         else if (App._inLeaderboard) App.navigateHome();
         else if (App._inChallenges) App.navigateHome();
         else if (App._inProfile) App.navigateHome();
+        else if (App._inAdmin) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -2347,6 +2342,14 @@ const App = {
       if (parts[0] === 'profile') {
         App.setChromeless(false);
         App.navigateToProfile();
+        return;
+      }
+      if (parts[0] === 'admin') {
+        // Admin & moderation console (#818). Optional section segment
+        // (#admin/users etc.) deep-links a menu section; the gate on
+        // App.user.isAdmin lives inside navigateToAdminConsole.
+        App.setChromeless(false);
+        App.navigateToAdminConsole(parts[1] || null);
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
@@ -2420,6 +2423,7 @@ const App = {
         if (App._inLeaderboard) App._exitLeaderboard();
         if (App._inChallenges) App._exitChallenges();
         if (App._inProfile) App._exitProfile();
+        if (App._inAdmin) App._exitAdminConsole();
         App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -2451,6 +2455,7 @@ const App = {
         if (App._inLeaderboard) App._exitLeaderboard();
         if (App._inChallenges) App._exitChallenges();
         if (App._inProfile) App._exitProfile();
+        if (App._inAdmin) App._exitAdminConsole();
         App.setHeaderTitle('dApps');
         Home.load();
       }
@@ -2556,6 +2561,7 @@ const App = {
     }
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
     const screen = document.getElementById('leaderboard-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -2602,6 +2608,7 @@ const App = {
     }
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
     const screen = document.getElementById('challenges-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -2639,6 +2646,7 @@ const App = {
     }
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inChallenges) App._exitChallenges();
+    if (App._inAdmin) App._exitAdminConsole();
     const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -2664,6 +2672,57 @@ const App = {
     const screen = document.getElementById('profile-screen');
     if (screen) screen.classList.add('hidden');
     if (window.Profile?.close) Profile.close();
+  },
+
+  // Show the admin & moderation console (#818). Sibling to
+  // navigateToProfile — hides home + app, reveals the dedicated
+  // #admin-screen, lets the AdminConsole module render itself into
+  // #admin-root. Gate: App.user.isAdmin, which covers BOTH full and
+  // view-only admins (see renderAdminButton above) — a hand-typed #admin
+  // from a non-admin bails to home. The "View as non-admin" preview masks
+  // App.user.isAdmin at boot, so preview mode is covered by the same
+  // check. Every /api/admin/* endpoint the page calls is independently
+  // enforced server-side.
+  navigateToAdminConsole(section) {
+    if (!App.user?.isAdmin) {
+      App.navigateHome();
+      return;
+    }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inChallenges) App._exitChallenges();
+    if (App._inProfile) App._exitProfile();
+    const screen = document.getElementById('admin-screen');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.add('hidden');
+      const lb = document.getElementById('leaderboard-screen');
+      if (lb) lb.classList.add('hidden');
+      const ch = document.getElementById('challenges-screen');
+      if (ch) ch.classList.add('hidden');
+      const pf = document.getElementById('profile-screen');
+      if (pf) pf.classList.add('hidden');
+      if (screen) screen.classList.remove('hidden');
+    }, { type: fromIframe ? 'none' : 'push' });
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    App.setHeaderTitle('Admin & moderation');
+    App._inAdmin = true;
+    if (window.AdminConsole?.open) AdminConsole.open(section);
+  },
+
+  _exitAdminConsole() {
+    App._inAdmin = false;
+    const screen = document.getElementById('admin-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.AdminConsole?.close) AdminConsole.close();
   },
 
   // Push a new history entry on real screen transitions (entering an
@@ -2999,6 +3058,7 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
     // Real screen navigation. From the home feed the app view expands
     // out of the clicked tile (kit 'zoom-in'); from anywhere else (deep
     // link, history restore, tile off-screen, reduced motion) the kit
@@ -3087,6 +3147,7 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
     // hides the app view and clears its content — exactly once on

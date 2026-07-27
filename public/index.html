@@ -383,6 +383,17 @@
     <div id="profile-root" class="max-w-3xl mx-auto p-4"></div>
   </main>
 
+  <!-- Admin & moderation console screen (#818): the full-page console
+       behind the header shield icon (#588 shipped the icon), rendered by
+       public/js/admin-console.js. Hash route #admin[/section]; mounted by
+       App.navigateToAdminConsole, which gates on App.user.isAdmin (both
+       full and view-only admins) — every /api/admin/* endpoint the page
+       calls is independently enforced server-side. Ships hidden like its
+       sibling screens. -->
+  <main id="admin-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+    <div id="admin-root" class="max-w-5xl mx-auto p-4 w-full"></div>
+  </main>
+
   <!-- App view (hidden by default) -->
   <div id="app-view" class="hidden flex flex-col" style="flex:1;min-height:0;height:0">
     <div id="app-content" class="flex-1" style="min-height:0;overflow:hidden">
@@ -1423,6 +1434,10 @@
        migration). Loaded before app.js, whose restoreFromHash calls
        App.navigateToProfile → Profile.open(). -->
   <script src="/js/profile.js"></script>
+  <!-- Admin & moderation console (#admin hash route, #818). Loaded before
+       app.js, whose restoreFromHash calls App.navigateToAdminConsole →
+       AdminConsole.open(). -->
+  <script src="/js/admin-console.js"></script>
   <script src="/js/proposal-discuss.js"></script>
   <!-- Build-failure log panel (#416). Loaded before app-view.js/home.js
        so both surfaces can reference window.BuildLog. -->
