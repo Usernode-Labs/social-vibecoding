@@ -135,8 +135,21 @@ test('challenge_templates and challenges both FK `kind` to challenge_kinds', () 
   assert.match(templates, /kind\s+VARCHAR\(100\) REFERENCES challenge_kinds\(id\)/);
   assert.match(challenges, /kind\s+VARCHAR\(100\) REFERENCES challenge_kinds\(id\)/);
   assert.match(challenges, /season_event_id\s+BIGINT NOT NULL REFERENCES season_events\(id\) ON DELETE CASCADE/);
-  assert.match(challenges, /challenge_template_id\s+BIGINT NOT NULL REFERENCES challenge_templates\(id\)/);
   assert.match(templates, /metric_target\s+NUMERIC\(20,4\)/);
+});
+
+test('challenges.challenge_template_id has no ON DELETE action (RESTRICT/NO ACTION), per SPEC §D4', () => {
+  // SPEC §D4 calls the source's cascading template delete "destructive
+  // with no guard" (silently wipes every challenge using the template,
+  // then their scored user_activities) and requires v4 to REFUSE
+  // deletion while challenges still reference it. The FK must therefore
+  // default to NO ACTION/RESTRICT, never CASCADE, so a direct DB delete
+  // fails closed even if a future API-level guard is bypassed.
+  const t = tableText('challenges');
+  assert.match(t, /challenge_template_id\s+BIGINT NOT NULL REFERENCES challenge_templates\(id\),/,
+    'no ON DELETE clause at all — defaults to NO ACTION');
+  assert.ok(!/challenge_template_id[^,]*ON DELETE CASCADE/.test(t),
+    'must never cascade: that would silently wipe challenges and their scored history');
 });
 
 test('user_activities required columns and the soft (no-FK) added_by column', () => {

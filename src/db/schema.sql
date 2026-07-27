@@ -2163,10 +2163,19 @@ CREATE INDEX IF NOT EXISTS idx_challenge_templates_category ON challenge_templat
 -- separate table (the source's completion tables are excluded) — every
 -- completion is a `user_activities` row instead (see the two replay-
 -- protection indexes on that table below).
+-- `challenge_template_id` deliberately has NO ON DELETE action (defaults
+-- to NO ACTION/RESTRICT): SPEC §D4 calls the source's cascading template
+-- delete "destructive with no guard" (it silently wipes every challenge
+-- using the type, and transitively their scored user_activities history)
+-- and says v4 must REFUSE deletion while challenges still reference the
+-- template. Unlike season_events → challenges (a real CASCADE further
+-- up this table), this FK is the database backstop for that refusal —
+-- the admin API's own guard (a later task) is the primary UX, but a
+-- direct DB delete must still fail closed, not cascade.
 CREATE TABLE IF NOT EXISTS challenges (
   id                     BIGSERIAL PRIMARY KEY,
   season_event_id        BIGINT NOT NULL REFERENCES season_events(id) ON DELETE CASCADE,
-  challenge_template_id  BIGINT NOT NULL REFERENCES challenge_templates(id) ON DELETE CASCADE,
+  challenge_template_id  BIGINT NOT NULL REFERENCES challenge_templates(id),
   goal                   VARCHAR(255),
   task                   TEXT,
   reward                 VARCHAR(255),
