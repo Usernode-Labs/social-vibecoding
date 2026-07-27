@@ -300,6 +300,18 @@
       "expectText": "best for"
     },
     {
+      "name": "Opus 5 reads as the general coding pick, not big-or-tricky-only (#809)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-model-select option[value=\"claude-opus-5\"]",
+      "expectText": "general coding work"
+    },
+    {
+      "name": "Fable 5 reads as design, taste, and difficult coding",
+      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-model-select option[value=\"claude-fable-5\"]",
+      "expectText": "design, taste, and difficult coding"
+    },
+    {
       "name": "Saved drafts render above the composer with send/edit/trash (#798)",
       "path": "/?shot=drafts#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-drafts.dc-drafts-active .dc-draft-row .dc-draft-send",
