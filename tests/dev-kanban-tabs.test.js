@@ -350,19 +350,31 @@ test('the 640px breakpoint agrees across the JS default, app.css and sm:hidden',
   );
   // Single column (tab strip) strictly below 640px …
   assert.match(css, /@media \(max-width: 639px\) \{[^}]*#dev-kanban \{ overflow-x: hidden; \}/);
-  // … and from 640px up the columns are side by side: in the band the
-  // breakpoint reclaimed they wrap 2-up with the 16rem floor lifted, which
-  // is what keeps the horizontal scroll #814 removed from coming back.
+  // … and from 640px up the columns are side by side. In the band the
+  // breakpoint reclaimed they stay in ONE row at the readable 16rem width
+  // and the board scrolls sideways — it must never wrap, and it must never
+  // lift the floor (that would squeeze four columns into ~150px each).
   const band = css.match(
     /@media \(min-width: 640px\) and \(max-width: 1023px\) \{([\s\S]*?)\n\}/
   );
   assert.ok(band, 'the 640-1023px band has its own block');
-  assert.match(band[1], /flex-wrap: wrap;/);
-  assert.match(band[1], /min-width: 0;/);
+  assert.match(band[1], /flex-wrap: nowrap;/);
+  assert.match(band[1], /overflow-x: auto;/);
+  assert.doesNotMatch(band[1], /flex-wrap: wrap/);
+  assert.doesNotMatch(band[1], /min-width: 0/);
   // The floor and the flex sizing must live in app.css, not as Tailwind
   // utilities in the markup — those land later in the cascade and would
   // beat every media query above.
   assert.match(css, /\.dev-kanban-col \{\s*flex: 1 1 0;\s*min-width: 16rem;\s*\}/);
+  // From 1024px up the four columns fit in one row with NO sideways scroll,
+  // which needs a floor low enough for the bottom of that range: four 16rem
+  // columns plus three gap-3 gaps overflow a 1024px window's ~1000px of
+  // content width, four 14rem ones don't.
+  const wide = css.match(/@media \(min-width: 1024px\) \{\s*\.dev-kanban-col \{ min-width: (\d+(?:\.\d+)?)rem; \}/);
+  assert.ok(wide, 'the >=1024px range sets its own column floor');
+  const floorPx = parseFloat(wide[1]) * 16;
+  assert.ok(floorPx * 4 + 12 * 3 <= 1000,
+    `four ${floorPx}px columns + gaps must fit a 1024px window without scrolling`);
   assert.doesNotMatch(css, /@media \(max-width: 1023px\) \{\s*\/\* No sideways scroll/);
 
   seedBoard(AppView);

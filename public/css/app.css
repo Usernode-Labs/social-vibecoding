@@ -3575,9 +3575,10 @@ button.attr-chip { cursor: pointer; }
    The single-column line was 1024px (Tailwind's lg) until it was
    lowered to 640px (Tailwind's sm): the board is useful well below a
    laptop, so the tab strip now only takes over on genuinely
-   phone-sized windows. In the band that changed hands (640-1023px) the
-   columns sit side by side 2-up — see the wrap block below; a fixed
-   16rem floor per column would put the sideways scroll right back. */
+   phone-sized windows. In the band that changed hands (640-1023px) all
+   four columns sit in ONE row at their readable 16rem width and the
+   board scrolls sideways to reach the last of them — see the block
+   below. */
 
 /* The columns' flex sizing lives here rather than as inline
    `flex-1 basis-0 min-w-[16rem]` utilities so the media queries below
@@ -3608,21 +3609,28 @@ button.attr-chip { cursor: pointer; }
 }
 
 /* The band the 640px line reclaimed from the tab strip (640-1023px):
-   side by side, but 2-up in two rows rather than four columns squeezed
-   into one. Four columns across 640px works out at ~150px each, which
-   breaks card titles to one word per line — the columns wrap instead,
-   so every card gets ~310px and the board still never scrolls
-   sideways. The `basis` is 50% minus half of the `gap-3` (0.75rem)
-   between the pair, which is what pins it to exactly two per row. */
+   one row of four columns that the board scrolls sideways to cover.
+   The 16rem floor from the base rule is what makes the scroll
+   necessary — squeezing four columns into 640px would give each ~150px
+   and break card titles to one word per line — so the floor stays and
+   the overflow moves horizontally instead. Explicit rather than
+   inherited from the markup's `overflow-x-auto`, so a future edit to
+   this block can't quietly turn the band into a wrap. */
 @media (min-width: 640px) and (max-width: 1023px) {
   #dev-kanban {
-    flex-wrap: wrap;
-    overflow-x: hidden;
-    align-items: flex-start;
+    flex-wrap: nowrap;
+    overflow-x: auto;
   }
+}
 
-  .dev-kanban-col {
-    min-width: 0;
-    flex: 1 1 calc(50% - 0.375rem);
-  }
+/* From 1024px the four columns must fit side by side with NO sideways
+   scroll. The 16rem floor above doesn't quite allow that at the bottom
+   of the range — four 256px columns plus three 12px gaps is 1060px,
+   past the ~1000px of content width a 1024px window has — so the floor
+   drops here. It stays a floor, not a width: `flex: 1 1 0` still
+   divides the row evenly, giving ~241px columns at 1024px and ~305px at
+   1280px. (Without this the board scrolled between 1024px and ~1084px,
+   which it did before the breakpoint moved too.) */
+@media (min-width: 1024px) {
+  .dev-kanban-col { min-width: 14rem; }
 }

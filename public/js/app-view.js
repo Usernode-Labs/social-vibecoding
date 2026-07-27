@@ -151,10 +151,11 @@ const AppView = {
   // and the "view as non-admin" toggle). An explicitly saved choice
   // always wins; with nothing saved the default is width-based (#462):
   // 'kanban' on viewports ≥640px — Tailwind's sm breakpoint, lowered
-  // from 1024px (lg) because the columns read fine on a narrow window
-  // once they may wrap 2-up instead of insisting on one row (see the
-  // 640-1023px block in app.css) — and 'list' (the historical default)
-  // below it. Read/written only through the two helpers below so the
+  // from 1024px (lg) because the board is worth having on a narrow
+  // window even though the four columns only fit at their readable
+  // width by scrolling sideways there (see the 640-1023px block in
+  // app.css) — and 'list' (the historical default) below it.
+  // Read/written only through the two helpers below so the
   // localStorage access stays guarded in one place.
   VIEW_MODE_KEY: 'devViewMode',
   // The single source of truth in JS for where the board goes
