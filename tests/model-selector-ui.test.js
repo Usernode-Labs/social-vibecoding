@@ -184,7 +184,7 @@ function guidanceMap() {
     'claude-sonnet-5': {
       label: 'Sonnet 5',
       changeSize: {
-        short: 'small, simple changes',
+        short: 'simple, small changes',
         long: 'One small thing at a time: a text tweak, a colour, a single file.',
       },
     },
@@ -198,8 +198,8 @@ function guidanceMap() {
     'claude-fable-5': {
       label: 'Fable 5',
       changeSize: {
-        short: 'design and taste',
-        long: 'Work where how it looks and feels matters: layout, wording, and judgment calls about the feel of a screen.',
+        short: 'design, taste, and difficult coding',
+        long: 'Design and taste — how a screen looks, reads, and feels — plus the most difficult coding work.',
       },
     },
   };
@@ -238,9 +238,9 @@ test('the seed MODELS map carries no price and no measured figures', () => {
 test('each option reads "<label> — <what it is for>"', () => {
   const { html } = render();
   for (const expected of [
-    'Sonnet 5 — small, simple changes',
+    'Sonnet 5 — simple, small changes',
     'Opus 5 — general coding work',
-    'Fable 5 — design and taste',
+    'Fable 5 — design, taste, and difficult coding',
   ]) {
     assert.ok(
       html.includes(expected),
@@ -288,7 +288,8 @@ test('the caption describes the selected model in a full sentence', () => {
 test('the caption carries the guidance tooltip, not the old size-ladder wording', () => {
   const { getEl } = render();
   const note = getEl('dc-model-note');
-  assert.match(note.title, /equally strong at straight coding/);
+  assert.match(note.title, /general coding pick/);
+  assert.match(note.title, /genuinely difficult/);
   assert.match(note.title, /A suggestion, not a rule/);
   assert.ok(
     !/Bigger models/i.test(note.title),
@@ -306,9 +307,20 @@ test('the caption follows the selection when the dropdown changes', () => {
   assert.equal(DevChat.selectedModel, 'claude-fable-5');
   assert.equal(
     note.textContent,
-    'Fable 5 — best for work where how it looks and feels matters: layout, wording, '
-      + 'and judgment calls about the feel of a screen.'
+    'Fable 5 — best for design and taste — how a screen looks, reads, and feels — '
+      + 'plus the most difficult coding work.'
   );
+});
+
+test('the Fable option owns difficult coding without displacing Opus as the general pick', () => {
+  const { html } = render();
+  // The trio's positioning: Sonnet = simple/small, Opus = general
+  // coding, Fable = design/taste plus the MOST difficult coding. Fable
+  // gaining "difficult coding" must not revert Opus to a
+  // big-or-tricky-only framing.
+  assert.ok(html.includes('Fable 5 — design, taste, and difficult coding'));
+  assert.ok(!html.includes('Opus 5 — big or tricky coding'));
+  assert.ok(html.includes('Opus 5 — general coding work'));
 });
 
 test('the Sonnet caption stays the small-change pick', () => {

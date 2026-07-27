@@ -140,7 +140,7 @@ const DevChat = {
     'claude-sonnet-5': {
       label: 'Sonnet 5',
       changeSize: {
-        short: 'small, simple changes',
+        short: 'simple, small changes',
         long: 'One small thing at a time: a text tweak, a colour, a single file.',
       },
     },
@@ -154,8 +154,8 @@ const DevChat = {
     'claude-fable-5': {
       label: 'Fable 5',
       changeSize: {
-        short: 'design and taste',
-        long: 'Work where how it looks and feels matters: layout, wording, and judgment calls about the feel of a screen.',
+        short: 'design, taste, and difficult coding',
+        long: 'Design and taste — how a screen looks, reads, and feels — plus the most difficult coding work.',
       },
     },
   },
@@ -233,15 +233,15 @@ const DevChat = {
 
   // ── Model selector copy (#800) ────────────────────────────────
   // Replaced the old "$X/MTok" option text. One fact per model: editorial
-  // guidance on the KIND of work it suits (not a size ladder — Opus and
-  // Fable are peers on coding strength and differ in whether taste and
-  // design judgment are the hard part; Opus is the general coding pick
-  // at any size, #809). Both helpers take a
+  // guidance on the KIND of work it suits (not a size ladder — Opus is
+  // the general coding pick at any size, #809; Fable is for design and
+  // taste judgment plus the most difficult coding work). Both helpers
+  // take a
   // `{ label, changeSize }` meta object and are shared with the
   // Generate-proposal popup in app-view.js, so the two pickers can't
   // drift. Nothing measured feeds either one.
 
-  MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule — any model can attempt any change. Opus and Fable are equally strong at straight coding; reach for Fable when taste and design judgment are the hard part. Both cost more per change than Sonnet.',
+  MODEL_GUIDANCE_TOOLTIP: 'A suggestion, not a rule — any model can attempt any change. Opus is the general coding pick; reach for Fable when design judgment matters or the coding is genuinely difficult. Both cost more per change than Sonnet.',
 
   // Plain text for one <option>. Degrades to the bare label when the
   // server sent no guidance (e.g. an older payload) — a picker that

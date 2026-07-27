@@ -24,13 +24,13 @@
 // models.js / dev-chat.js / app-view.js / tests. The copy describes the
 // KIND of work each model suits, not a size ladder:
 //   - Sonnet is the cheap option for one small, self-contained thing.
-//   - Opus and Fable are PEERS on coding strength. Opus is the
-//     general-purpose coding pick — the default for coding work of any
-//     size, from a one-line fix to a multi-file feature or a refactor
-//     (#809: it is deliberately NOT framed as reserved for big or
-//     tricky changes); Fable is the pick when the hard part is judgment
-//     about how something should look, read, or feel rather than the
-//     code itself.
+//   - Opus is the general-purpose coding pick — the default for coding
+//     work of any size, from a one-line fix to a multi-file feature or
+//     a refactor (#809: it is deliberately NOT framed as reserved for
+//     big or tricky changes).
+//   - Fable is the pick for design and taste — judgment about how
+//     something should look, read, or feel — AND for the most
+//     difficult coding work, where it has the edge over Opus.
 // `short` goes in the dropdown option text, `long` in the caption under
 // the selector. It is EDITORIAL — a product opinion, not a measurement.
 // Nothing measured feeds the picker: per-change cost is only now
@@ -43,7 +43,7 @@ const MODELS = {
     tier: 'sonnet',
     outputCostPerMTok: 15,
     changeSize: {
-      short: 'small, simple changes',
+      short: 'simple, small changes',
       long: 'One small thing at a time: a text tweak, a colour, a single file.',
     },
   },
@@ -61,8 +61,8 @@ const MODELS = {
     tier: 'fable',
     outputCostPerMTok: 50,
     changeSize: {
-      short: 'design and taste',
-      long: 'Work where how it looks and feels matters: layout, wording, and judgment calls about the feel of a screen.',
+      short: 'design, taste, and difficult coding',
+      long: 'Design and taste — how a screen looks, reads, and feels — plus the most difficult coding work.',
     },
   },
 };
