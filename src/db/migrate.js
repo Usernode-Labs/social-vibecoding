@@ -84,6 +84,7 @@ async function migrate(config) {
   await seedStagingTopicAttributes(pool, config);
   await seedStagingSubmittedFeatures(pool, config);
   await seedStagingDbExports(pool);
+  await seedStagingTopochain(pool, config);
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -6476,6 +6477,419 @@ async function seedStagingArchiveProposalFixtures(pool, config) {
     owner: owner.username,
     coldSessionId,
   });
+}
+
+// Topochain (testnet competition) staging fixtures (plan Task 4; SPEC §6
+// staging privacy 3080-3088).
+//
+// The topochain block of schema.sql (Task 1) is brand new — its 22
+// tables never carry a row outside a real topochain data load (Task
+// 16's §8 load script), and several of them (`token_allocation`,
+// `user_terms_consents`, and the mobile_* tables) are additionally
+// `staging:private` at the TABLE level, so a staging clone truncates
+// them entirely (schema.sql:2743-2756). Without a seed, every /api/v4
+// public/admin/mobile screen built in later tasks has nothing to render
+// in a staging preview. This seeds one deterministic, self-contained
+// fixture set — a season, two season_events, a challenge taxonomy, six
+// users, onchain accounts, a points ledger, two leaderboard snapshots,
+// and the supporting settings/terms/version-gate/token rows — so the
+// whole surface is exercisable end to end.
+//
+// Idempotent via fixed ids in the 900500+ range (this platform's
+// "obviously fake, staging-demo" numbering convention — see
+// seedStagingWalletUsers, seedStagingLeaderboardProfile above) plus
+// `ON CONFLICT (id) DO NOTHING` (or the table's own natural unique,
+// e.g. app_version_configs.os) on every insert, so a reboot never
+// duplicates rows. Strict no-op outside staging; best-effort (try/catch
+// + log.warn) so a fixture bug never blocks boot, matching
+// seedStagingDbExports/seedStagingWalletUsers above.
+//
+// Scope invariants (app/ETL-enforced per the schema.sql comments on
+// user_enrollments/onchain_accounts — no cross-table DB CHECK exists):
+// every row that carries a season_event_id must carry THAT event's
+// season_id. Enforced below by construction: every event-scoped row
+// literally reuses SEASON_ID alongside its season_event_id.
+async function seedStagingTopochain(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // ─── IDs (one constant block per table; see header comment) ──────
+    const SEASON_ID = 900500;
+    const EVENT_REGULAR_ID = 900500; // season_events — type 'regular'
+    const EVENT_SEASON_ID = 900501;  // season_events — type 'season'
+
+    const USERS = {
+      seasonWide1: 900500, // exclude_podium = TRUE
+      seasonWide2: 900501,
+      eventA1: 900502,
+      eventA2: 900503,
+      eventB1: 900504,
+      mixed: 900505, // event-scoped AND season-wide enrollment; real password
+    };
+
+    // ─── Users (6) ─────────────────────────────────────────────────────
+    // Sentinel password for five of the six (never-login fixtures, same
+    // idiom as seedStagingWalletUsers); the sixth gets a real bcrypt hash
+    // so the "one with password set" requirement is exercisable.
+    const realHash = await bcrypt.hash('staging-demo-topochain-password', 12);
+    await pool.query(
+      `INSERT INTO users (id, username, password, email, exclude_podium)
+       VALUES
+         ($1, 'staging-demo-topochain-participant-1', '!staging-fixture-no-login!',
+          'staging-demo-topochain-1@example.invalid', TRUE),
+         ($2, 'staging-demo-topochain-participant-2', '!staging-fixture-no-login!',
+          'staging-demo-topochain-2@example.invalid', FALSE),
+         ($3, 'staging-demo-topochain-participant-3', '!staging-fixture-no-login!',
+          'staging-demo-topochain-3@example.invalid', FALSE),
+         ($4, 'staging-demo-topochain-participant-4', '!staging-fixture-no-login!',
+          'staging-demo-topochain-4@example.invalid', FALSE),
+         ($5, 'staging-demo-topochain-participant-5', '!staging-fixture-no-login!',
+          'staging-demo-topochain-5@example.invalid', FALSE),
+         ($6, 'staging-demo-topochain-participant-6', $7,
+          'staging-demo-topochain-6@example.invalid', FALSE)
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.seasonWide1, USERS.seasonWide2, USERS.eventA1, USERS.eventA2,
+       USERS.eventB1, USERS.mixed, realHash]
+    );
+
+    // ─── Season (1) ─────────────────────────────────────────────────────
+    await pool.query(
+      `INSERT INTO seasons
+         (id, name, description, starts_at, ends_at, is_active, internal,
+          display_order, pool_info, created_at, updated_at)
+       VALUES
+         ($1, 'Staging Demo Season — Topochain',
+          'Fixture season for exercising the topochain staging surface end to end.',
+          NOW() - INTERVAL '60 days', NOW() + INTERVAL '30 days', TRUE, FALSE, 0,
+          'Staging demo token pool', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [SEASON_ID]
+    );
+
+    // ─── Season events (2): one 'regular' with epochs + scoring_formula,
+    // one type='season' ─────────────────────────────────────────────────
+    await pool.query(
+      `INSERT INTO season_events
+         (id, season_id, name, description, starts_at, ends_at, is_active,
+          scoring_formula, start_epoch, end_epoch, internal, display_leaderboard,
+          score_start_time, score_end_time, display_disclaimer, chain_id,
+          display_activities, type, created_at, updated_at)
+       VALUES
+         ($1, $3, 'Staging Demo Event — Block Production Sprint',
+          'Regular event fixture with an epoch range and a scoring formula.',
+          NOW() - INTERVAL '45 days', NOW() + INTERVAL '15 days', TRUE,
+          '{"metrics": [], "offchain_weight": 1}'::jsonb, 100, 130, FALSE, TRUE,
+          NOW() - INTERVAL '45 days', NOW() + INTERVAL '15 days', FALSE,
+          'staging-demo-chain-1', TRUE, 'regular', NOW(), NOW()),
+         ($2, $3, 'Staging Demo Event — Season Wrap-up',
+          'type=''season'' event fixture (season-level wrap-up, not epoch-scored).',
+          NOW() + INTERVAL '15 days', NOW() + INTERVAL '30 days', TRUE,
+          '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, TRUE,
+          NULL, NULL, FALSE, NULL, FALSE, 'season', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID]
+    );
+
+    // ─── Challenge kinds (4) ────────────────────────────────────────────
+    await pool.query(
+      `INSERT INTO challenge_kinds (id, name, description, created_at, updated_at)
+       VALUES
+         ('REPORT_BUG_CHALLENGE', 'Report a bug',
+          'Find and report a reproducible bug.', NOW(), NOW()),
+         ('SEND_TRANSACTION_CHALLENGE', 'Send a testnet transaction',
+          'Send a transaction on the testnet (or produce a block).', NOW(), NOW()),
+         ('SOCIAL_SHARE_CHALLENGE', 'Share on social media',
+          'Share the season announcement on social media.', NOW(), NOW()),
+         ('INVITE_PARTICIPANT_CHALLENGE', 'Invite a participant',
+          'Invite a new participant into the competition.', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+
+    // ─── Challenge templates (5; one kind is reused across two templates) ──
+    await pool.query(
+      `INSERT INTO challenge_templates
+         (id, category, goal, task, reward, description, kind,
+          metric_type, metric_target, metric_label, created_at, updated_at)
+       VALUES
+         (900500, 'bug', 'Report a reproducible bug',
+          'Find and file a reproducible bug report against the testnet client.',
+          '250 points', 'Bug-report challenge template.', 'REPORT_BUG_CHALLENGE',
+          NULL, NULL, NULL, NOW(), NOW()),
+         (900501, 'onchain', 'Send your first testnet transaction',
+          'Send a transaction on the testnet within the event window.',
+          '100 points', 'Send-transaction challenge template.',
+          'SEND_TRANSACTION_CHALLENGE', 'transactions_sent', 1, 'transactions',
+          NOW(), NOW()),
+         (900502, 'social', 'Share the season announcement',
+          'Share the season announcement post on social media.',
+          '50 points', 'Social-share challenge template.', 'SOCIAL_SHARE_CHALLENGE',
+          NULL, NULL, NULL, NOW(), NOW()),
+         (900503, 'growth', 'Invite a new participant',
+          'Invite a new participant who successfully enrolls in the season.',
+          '150 points', 'Invite challenge template.', 'INVITE_PARTICIPANT_CHALLENGE',
+          NULL, NULL, NULL, NOW(), NOW()),
+         (900504, 'onchain', 'Produce your first block',
+          'Produce at least one block during the event window.',
+          '250 points', 'Block-production challenge template.',
+          'SEND_TRANSACTION_CHALLENGE', 'blocks_produced', 1, 'blocks',
+          NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+
+    // ─── Challenges (8): 5 on the regular event, 3 on the season-type event ──
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, goal, task, reward,
+          description, kind, enabled, display_order, completed, featured,
+          featured_order, created_at, updated_at)
+       VALUES
+         (900500, $1, 900500, 'Report a reproducible bug',
+          'Find and file a reproducible bug report against the testnet client.',
+          '250 points', 'Bug-report challenge.', 'REPORT_BUG_CHALLENGE',
+          TRUE, 1, TRUE, FALSE, NULL, NOW(), NOW()),
+         (900501, $1, 900501, 'Send your first testnet transaction',
+          'Send a transaction on the testnet within the event window.',
+          '100 points', 'Send-transaction challenge.', 'SEND_TRANSACTION_CHALLENGE',
+          TRUE, 2, TRUE, FALSE, NULL, NOW(), NOW()),
+         (900502, $1, 900502, 'Share the season announcement',
+          'Share the season announcement post on social media.',
+          '50 points', 'Social-share challenge.', 'SOCIAL_SHARE_CHALLENGE',
+          TRUE, 3, TRUE, FALSE, NULL, NOW(), NOW()),
+         (900503, $1, 900504, 'Produce your first block',
+          'Produce at least one block during the event window.',
+          '250 points', 'Block-production challenge.', 'SEND_TRANSACTION_CHALLENGE',
+          TRUE, 4, TRUE, TRUE, 1, NOW(), NOW()),
+         (900504, $1, 900503, 'Invite a new participant',
+          'Invite a new participant who successfully enrolls in the season.',
+          '150 points', 'Invite challenge.', 'INVITE_PARTICIPANT_CHALLENGE',
+          TRUE, 5, TRUE, FALSE, NULL, NOW(), NOW()),
+         (900505, $2, 900500, 'Report a reproducible bug',
+          'Find and file a reproducible bug report against the testnet client.',
+          '250 points', 'Bug-report challenge (season event).', 'REPORT_BUG_CHALLENGE',
+          TRUE, 1, TRUE, FALSE, NULL, NOW(), NOW()),
+         (900506, $2, 900501, 'Send your first testnet transaction',
+          'Send a transaction on the testnet within the event window.',
+          '100 points', 'Send-transaction challenge (season event).',
+          'SEND_TRANSACTION_CHALLENGE', TRUE, 2, TRUE, FALSE, NULL, NOW(), NOW()),
+         (900507, $2, 900502, 'Share the season announcement',
+          'Share the season announcement post on social media.',
+          '50 points', 'Social-share challenge (season event).', 'SOCIAL_SHARE_CHALLENGE',
+          TRUE, 3, FALSE, FALSE, NULL, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [EVENT_REGULAR_ID, EVENT_SEASON_ID]
+    );
+
+    // ─── User enrollments (mix of season-wide and event-scoped; the
+    // "mixed" user gets both, proving they can coexist under the two
+    // partial uniques). Every row's season_id is SEASON_ID — the scope
+    // invariant satisfied by construction. ────────────────────────────
+    await pool.query(
+      `INSERT INTO user_enrollments (id, season_event_id, user_id, season_id, registered_at)
+       VALUES
+         (900500, NULL, $1, $7, NOW() - INTERVAL '55 days'),
+         (900501, NULL, $2, $7, NOW() - INTERVAL '50 days'),
+         (900502, $5, $3, $7, NOW() - INTERVAL '40 days'),
+         (900503, $5, $4, $7, NOW() - INTERVAL '38 days'),
+         (900504, $6, $8, $7, NOW() - INTERVAL '10 days'),
+         (900505, $5, $9, $7, NOW() - INTERVAL '35 days'),
+         (900506, NULL, $9, $7, NOW() - INTERVAL '35 days')
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.seasonWide1, USERS.seasonWide2, USERS.eventA1, USERS.eventA2,
+       EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID, USERS.eventB1, USERS.mixed]
+    );
+
+    // ─── Onchain accounts (6): mix of season-wide/event-scoped and
+    // assigned/unassigned, used/unused; secret_key is a fake testnet
+    // credential (scrubbed in staging clones — schema.sql:2766). ───────
+    await pool.query(
+      `INSERT INTO onchain_accounts
+         (id, amount, identity_uid, address, public_key, secret_key, tier,
+          registration_code, season_event_id, season_id, user_id, is_used, used_at,
+          created_at, updated_at)
+       VALUES
+         (900500, 500, 'staging-demo-identity-0001', 'ut1stagingdemotopochainacct000001',
+          'utpk1stagingdemotopochainacct000001', 'sk_staging_demo_fake_0000000000001',
+          'standard', 'STAGING-DEMO-TOPOCHAIN-0001', NULL, $6, $1, TRUE,
+          NOW() - INTERVAL '5 days', NOW(), NOW()),
+         (900501, 500, 'staging-demo-identity-0002', 'ut1stagingdemotopochainacct000002',
+          'utpk1stagingdemotopochainacct000002', 'sk_staging_demo_fake_0000000000002',
+          'standard', 'STAGING-DEMO-TOPOCHAIN-0002', NULL, $6, $2, FALSE, NULL,
+          NOW(), NOW()),
+         (900502, 1000, 'staging-demo-identity-0003', 'ut1stagingdemotopochainacct000003',
+          'utpk1stagingdemotopochainacct000003', 'sk_staging_demo_fake_0000000000003',
+          'premium', 'STAGING-DEMO-TOPOCHAIN-0003', $5, $6, $3, TRUE,
+          NOW() - INTERVAL '4 days', NOW(), NOW()),
+         (900503, 500, 'staging-demo-identity-0004', 'ut1stagingdemotopochainacct000004',
+          'utpk1stagingdemotopochainacct000004', 'sk_staging_demo_fake_0000000000004',
+          'standard', 'STAGING-DEMO-TOPOCHAIN-0004', $5, $6, NULL, FALSE, NULL,
+          NOW(), NOW()),
+         (900504, 1000, 'staging-demo-identity-0005', 'ut1stagingdemotopochainacct000005',
+          'utpk1stagingdemotopochainacct000005', 'sk_staging_demo_fake_0000000000005',
+          'premium', 'STAGING-DEMO-TOPOCHAIN-0005', $7, $6, $4, TRUE,
+          NOW() - INTERVAL '3 days', NOW(), NOW()),
+         (900505, 500, 'staging-demo-identity-0006', 'ut1stagingdemotopochainacct000006',
+          'utpk1stagingdemotopochainacct000006', 'sk_staging_demo_fake_0000000000006',
+          'standard', 'STAGING-DEMO-TOPOCHAIN-0006', $7, $6, NULL, FALSE, NULL,
+          NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.seasonWide1, USERS.seasonWide2, USERS.eventA1, USERS.eventB1,
+       EVENT_REGULAR_ID, SEASON_ID, EVENT_SEASON_ID]
+    );
+
+    // ─── User activities (8): challenge completions + one block-production
+    // credit, spread across both events and four of the six users. Each
+    // row's metadata.kind = 'challenge_completion' so the anti-replay
+    // partial unique (user_id, challenge_id) is exercised. ─────────────
+    await pool.query(
+      `INSERT INTO user_activities
+         (id, user_id, season_event_id, activity_type, points, description,
+          metadata, activity_at, challenge_id)
+       VALUES
+         (900500, $1, $5, 'challenge_completion', 250, 'Reported a reproducible bug.',
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '6 days', 900500),
+         (900501, $1, $5, 'challenge_completion', 100, 'Sent a testnet transaction.',
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '5 days', 900501),
+         (900502, $2, $5, 'challenge_completion', 250, 'Reported a reproducible bug.',
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '6 days', 900500),
+         (900503, $2, $5, 'block_produced', 250, 'Produced a testnet block.',
+          '{"kind": "block_production"}'::jsonb, NOW() - INTERVAL '4 days', 900503),
+         (900504, $3, $5, 'challenge_completion', 50, 'Shared the season announcement.',
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '3 days', 900502),
+         (900505, $3, $5, 'challenge_completion', 150, 'Invited a new participant.',
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '2 days', 900504),
+         (900506, $4, $6, 'challenge_completion', 250, 'Reported a reproducible bug.',
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '3 days', 900505),
+         (900507, $4, $6, 'challenge_completion', 100, 'Sent a testnet transaction.',
+          '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '2 days', 900506)
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.eventA1, USERS.eventA2, USERS.mixed, USERS.eventB1,
+       EVENT_REGULAR_ID, EVENT_SEASON_ID]
+    );
+
+    // ─── Leaderboard snapshots (2 snapshot times x 6 users, all against
+    // the regular/display_leaderboard event). Points roughly track the
+    // activities above: eventA1 and eventA2 accumulate between the two
+    // snapshots, mixed shows up only in the later one, the rest sit at 0.
+    // Unique (season_event_id, user_id, snapshot_at) is respected since
+    // every row differs by user_id or snapshot_at. ─────────────────────
+    // 130 hours (~5.4 days) ago: after both users' first challenge
+    // (6 days ago) but before their second (5/4/3/2 days ago) — so the
+    // earlier snapshot's totals below genuinely predate the later ones.
+    const EARLIER_SNAPSHOT = `NOW() - INTERVAL '130 hours'`;
+    const LATER_SNAPSHOT = 'NOW()';
+    await pool.query(
+      `INSERT INTO leaderboard_snapshots
+         (id, season_event_id, user_id, rank, total_points, extra_points,
+          snapshot_at, season_id, created_at, updated_at)
+       VALUES
+         (900500, $7, $3, 1, 250, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900501, $7, $4, 2, 250, 0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900502, $7, $5, 3, 0,   0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900503, $7, $1, 4, 0,   0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900504, $7, $2, 5, 0,   0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900505, $7, $6, 6, 0,   0, ${EARLIER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900506, $7, $4, 1, 500, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900507, $7, $3, 2, 350, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900508, $7, $6, 3, 200, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900509, $7, $1, 4, 0,   0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900510, $7, $2, 5, 0,   0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         (900511, $7, $5, 6, 0,   0, ${LATER_SNAPSHOT}, $8, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.seasonWide1, USERS.seasonWide2, USERS.eventA1, USERS.eventA2,
+       USERS.eventB1, USERS.mixed, EVENT_REGULAR_ID, SEASON_ID]
+    );
+
+    // ─── Epoch stats (3 epochs x 3 wallets = 9 rows) — one wallet per
+    // linked user (eventA1, eventB1), plus one wallet-only row (user_id
+    // NULL, matching the unassigned account 900503's address) proving the
+    // nullable/SET NULL column works. ──────────────────────────────────
+    const CHAIN_ID = 'staging-demo-chain-1';
+    const W1 = 'ut1stagingdemotopochainacct000003'; // eventA1's account
+    const W2 = 'ut1stagingdemotopochainacct000005'; // eventB1's account
+    const W3 = 'ut1stagingdemotopochainacct000004'; // unassigned account
+    await pool.query(
+      `INSERT INTO epoch_stats
+         (id, chain_id, wallet_address, user_id, epoch, epoch_won_slots,
+          epoch_produced_blocks, epoch_canonical_blocks, epoch_orphaned_blocks,
+          epoch_failed_blocks, created_at, updated_at)
+       VALUES
+         (900500, $4, $1, $5, 100, 2, 1, 1, 0, 0, NOW(), NOW()),
+         (900501, $4, $1, $5, 101, 3, 2, 2, 0, 0, NOW(), NOW()),
+         (900502, $4, $1, $5, 102, 1, 1, 1, 0, 0, NOW(), NOW()),
+         (900503, $4, $2, $6, 100, 1, 0, 0, 0, 1, NOW(), NOW()),
+         (900504, $4, $2, $6, 101, 2, 1, 1, 0, 0, NOW(), NOW()),
+         (900505, $4, $2, $6, 102, 2, 2, 2, 0, 0, NOW(), NOW()),
+         (900506, $4, $3, NULL, 100, 1, 1, 1, 0, 0, NOW(), NOW()),
+         (900507, $4, $3, NULL, 101, 0, 0, 0, 0, 1, NOW(), NOW()),
+         (900508, $4, $3, NULL, 102, 1, 1, 1, 0, 0, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [W1, W2, W3, CHAIN_ID, USERS.eventA1, USERS.eventB1]
+    );
+
+    // ─── Terms version (1) + consents (2) ──────────────────────────────
+    await pool.query(
+      `INSERT INTO terms_versions
+         (id, version, title, body_markdown, terms_link, published_at, created_at, updated_at)
+       VALUES
+         (900500, 'staging-demo-v1', 'Staging Demo Terms of Service',
+          '# Staging Demo Terms' || chr(10) || chr(10) ||
+          'Fixture terms document for staging previews.',
+          'https://staging-demo.example.invalid/terms',
+          NOW() - INTERVAL '10 days', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+    await pool.query(
+      `INSERT INTO user_terms_consents
+         (id, user_id, terms_version_id, status, responded_at, app_version, created_at, updated_at)
+       VALUES
+         (900500, $1, 900500, 'accepted', NOW() - INTERVAL '9 days', '1.4.0', NOW(), NOW()),
+         (900501, $2, 900500, 'accepted', NOW() - INTERVAL '8 days', '1.3.0', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.seasonWide1, USERS.eventA1]
+    );
+
+    // ─── App version config (1 per OS) ─────────────────────────────────
+    await pool.query(
+      `INSERT INTO app_version_configs
+         (id, os, min_build_number, recommended_build_number, current_version,
+          is_active, should_update_message, update_url, created_at, updated_at)
+       VALUES
+         (900500, 'ios', 100, 110, '1.4.0', TRUE,
+          'A new version is available.', 'https://staging-demo.example.invalid/ios',
+          NOW(), NOW()),
+         (900501, 'android', 90, 95, '1.4.0', TRUE,
+          'A new version is available.', 'https://staging-demo.example.invalid/android',
+          NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+
+    // ─── Account delegation period (1) — delegation of the season-wide,
+    // assigned account (900500) ─────────────────────────────────────────
+    await pool.query(
+      `INSERT INTO account_delegation_periods (id, account, started_at, ended_at, created_at, updated_at)
+       VALUES
+         (900500, 'ut1stagingdemotopochainacct000001', NOW() - INTERVAL '20 days',
+          NULL, NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+
+    // ─── Token allocation (3 users, matching the later leaderboard totals) ──
+    await pool.query(
+      `INSERT INTO token_allocation
+         (id, user_id, season_id, total_points, total_season_tokens, allocated_tokens,
+          description, created_at, updated_at)
+       VALUES
+         (900500, $1, $4, 350, 3500, 35.00000000, 'Staging demo allocation', NOW(), NOW()),
+         (900501, $2, $4, 500, 5000, 50.00000000, 'Staging demo allocation', NOW(), NOW()),
+         (900502, $3, $4, 200, 2000, 20.00000000, 'Staging demo allocation', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [USERS.eventA1, USERS.eventA2, USERS.mixed, SEASON_ID]
+    );
+
+    log.info('db', 'Topochain staging fixtures seeded', { seasonId: SEASON_ID });
+  } catch (err) {
+    log.warn('db', 'Topochain staging fixtures seeding failed', { message: err.message });
+  }
 }
 
 // Per-app postgres role migration. Pre-migration model: every per-app
