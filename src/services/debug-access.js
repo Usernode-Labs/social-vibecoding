@@ -50,6 +50,8 @@ const DENIED_TABLES = new Set([
   'activation_codes',   // invite/activation secrets
   'app_secrets',        // per-app env secrets (AES blobs, still deny)
   'user_agent_files',   // personal instruction files (private user text)
+  'mobile_otp_codes',   // topochain: one-time login codes (SPEC §6)
+  'mobile_auth_tokens', // topochain: bearer session/set-password tokens (plan Global Constraints #4)
 ]);
 
 const DENIED_COLUMNS = {
@@ -59,6 +61,8 @@ const DENIED_COLUMNS = {
     'anthropic_key_last4',
     'wallet_link_token',
     'wallet_link_expires_at',
+    'email_confirmation_token', // topochain (SPEC §6)
+    'waitlist_ip',              // topochain (SPEC §6)
   ],
   apps: [
     'db_password',
@@ -67,6 +71,10 @@ const DENIED_COLUMNS = {
   ],
   chat_session_attachments: [
     'data', // raw upload bytes — large and potentially private
+  ],
+  onchain_accounts: [
+    'secret_key',        // topochain: on-chain account private key (SPEC §6)
+    'registration_code', // topochain: single-use account claim code (SPEC §6)
   ],
 };
 

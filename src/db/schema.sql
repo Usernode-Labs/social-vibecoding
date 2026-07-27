@@ -2659,3 +2659,109 @@ CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (user_id);
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Topochain Task 2 — `users` columns, `platform_settings` seed, staging
+-- privacy (plan Task 2; SPEC §8.5 users columns 3283-3294, §3.5 settings
+-- 801-804, §6 staging privacy 3080-3088).
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Columns the topochain merge adds to the platform's existing `users`
+-- table — SPEC §8.5 says plainly "the platform users table IS the users
+-- table"; there is no separate topochain users table. Every new column
+-- is nullable or safely defaulted so this whole block is a no-op for
+-- every pre-existing platform account. `email` gets a PARTIAL unique
+-- index below (WHERE email IS NOT NULL) because existing platform users
+-- have none. `users.password` is already tagged staging:private near
+-- schema.sql:1148 — not re-tagged here.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email                      VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmed            BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmation_token   VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmation_sent_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmed_at         TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name               VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram                   VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS discord                    VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS github                     VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS x                          VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_in_waitlist             BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS waitlist_submitted_at      TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS waitlist_ip                VARCHAR(45);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS waitlist_answers           JSONB;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer                   VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_handle            VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS country                    VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS city                       VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS device_info                JSONB;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS exclude_podium             BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS accept_logs                BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at                 TIMESTAMPTZ;
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email) WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_is_in_waitlist ON users(is_in_waitlist);
+CREATE INDEX IF NOT EXISTS idx_users_exclude_podium ON users(exclude_podium);
+CREATE INDEX IF NOT EXISTS idx_users_email_confirmation_token ON users(email_confirmation_token);
+CREATE INDEX IF NOT EXISTS idx_users_telegram ON users(telegram);
+CREATE INDEX IF NOT EXISTS idx_users_discord ON users(discord);
+CREATE INDEX IF NOT EXISTS idx_users_country ON users(country);
+
+-- `platform_settings` gains a `description` column (SPEC §3.5) and the
+-- topochain point-values as `topochain_`-prefixed keys, so the prefix can
+-- never collide with a platform key. Seeded with ON CONFLICT (key) DO
+-- NOTHING so an operator's later edit (admin settings screen) survives
+-- every reboot.
+--
+-- NOTE on key count (task-2 brief resolution of a SPEC ambiguity): SPEC
+-- §3.5's prose says "the seven topochain values", but the reset-defaults
+-- table it points readers at (§4.9 POST /point-settings/reset, SPEC
+-- 2825-2840) lists only SIX keys (first_block, produced_half_blocks,
+-- top_1, top_2, top_3, success_50_percent). The task-2 brief resolves
+-- the count by naming seven keys explicitly — those six plus
+-- `inviting_new_participant_points` — and that concrete list is what's
+-- seeded below verbatim. `bug_report_points` and
+-- `community_contribution_points` are NOT settings keys: they are
+-- per-row columns already on `leaderboard_snapshots` (Task 1), scored
+-- per activity rather than configured as a flat point value.
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS description TEXT;
+INSERT INTO platform_settings (key, value, description) VALUES
+  ('topochain_first_block_points',              '250',
+    'Points awarded for producing a season event''s first block.'),
+  ('topochain_produced_half_blocks_points',     '0',
+    'Points awarded for producing at least half of the expected blocks.'),
+  ('topochain_top_1_points',                    '1500',
+    'Points awarded for finishing rank 1 on the leaderboard.'),
+  ('topochain_top_2_points',                    '1000',
+    'Points awarded for finishing rank 2 on the leaderboard.'),
+  ('topochain_top_3_points',                    '500',
+    'Points awarded for finishing rank 3 on the leaderboard.'),
+  ('topochain_success_50_percent_points',       '1000',
+    'Points awarded for a block-production success rate of at least 50%.'),
+  ('topochain_inviting_new_participant_points', '0',
+    'Points awarded for inviting a new participant into the competition.')
+ON CONFLICT (key) DO NOTHING;
+
+-- Staging privacy (SPEC §6), table-level: every row of these tables is
+-- sensitive in its entirety in a staging clone (truncated by
+-- db-manager.js's truncatePrivateTables — discovered dynamically via
+-- these COMMENTs, no code change needed there). `mobile_otp_codes` and
+-- `mobile_auth_tokens` are additionally hidden from the prod-debug role
+-- entirely (see DENIED_TABLES in src/services/debug-access.js).
+COMMENT ON TABLE token_allocation     IS 'staging:private';
+COMMENT ON TABLE chains               IS 'staging:private';
+COMMENT ON TABLE vrf_obligations      IS 'staging:private';
+COMMENT ON TABLE slot_outcome_reports IS 'staging:private';
+COMMENT ON TABLE mobile_logs          IS 'staging:private';
+COMMENT ON TABLE mobile_otp_codes     IS 'staging:private';
+COMMENT ON TABLE mobile_auth_tokens   IS 'staging:private';
+COMMENT ON TABLE user_terms_consents  IS 'staging:private'; -- contains consent IPs, SPEC 781-799
+
+-- Staging privacy (SPEC §6), column-level: the row survives cloning (FK-
+-- targeted attribution keeps working) but the credential/PII-bearing
+-- value is scrubbed. All four are additionally hidden from the
+-- prod-debug role by column (DENIED_COLUMNS in
+-- src/services/debug-access.js) so a future secret column on either
+-- table fails closed rather than leaking.
+COMMENT ON COLUMN users.email_confirmation_token    IS 'staging:private';
+COMMENT ON COLUMN users.waitlist_ip                 IS 'staging:private';
+COMMENT ON COLUMN onchain_accounts.secret_key        IS 'staging:private';
+COMMENT ON COLUMN onchain_accounts.registration_code IS 'staging:private';
