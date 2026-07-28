@@ -31,6 +31,7 @@ const { onchainAccountsAdminRoutes } = require('./admin/onchain-accounts');
 const { challengesAdminRoutes } = require('./admin/challenges');
 const { appVersionConfigsAdminRoutes } = require('./admin/app-version-configs');
 const { settingsAdminRoutes } = require('./admin/settings');
+const { dbToolsAdminRoutes } = require('./admin/db-tools');
 
 function topochainAdminRoutes(config) {
   const router = Router();
@@ -96,6 +97,11 @@ function topochainAdminRoutes(config) {
   router.use(challengesAdminRoutes(config));
   router.use(appVersionConfigsAdminRoutes(config));
   router.use(settingsAdminRoutes(config));
+
+  // Task 13: D10 admin DB tooling (export, sql-query execute/schema/
+  // templates) — no path collision with anything above (its own
+  // `/database/...` and `/sql-query/...` prefixes are unused elsewhere).
+  router.use(dbToolsAdminRoutes(config));
 
   return router;
 }
