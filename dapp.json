@@ -732,6 +732,16 @@
       "name": "Applied close-issue proposal renders as an Issue close card in Completed/Done",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "closed by vote"
+    },
+    {
+      "name": "Topochain leaderboard screen renders at #topochain/leaderboard (Task 14)",
+      "path": "/#topochain/leaderboard",
+      "expectSelector": "#topochain-leaderboard-screen:not(.hidden) #tc-lb-body"
+    },
+    {
+      "name": "Topochain seasons screen renders at #topochain/seasons (Task 14)",
+      "path": "/#topochain/seasons",
+      "expectSelector": "#topochain-seasons-screen:not(.hidden) #tc-se-grid"
     }
   ],
   "governance": {

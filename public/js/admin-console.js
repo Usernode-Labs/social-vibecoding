@@ -38,6 +38,13 @@ const AdminConsole = {
     { key: 'features', label: 'Submitted features' },
     { key: 'platform-env', label: 'Platform variables' },
     { key: 'db-export', label: 'Database export' },
+    // Topochain (Task 15, migration plan Global Constraint #8): ONE
+    // section, its own sub-nav under #admin/topochain/<sub> — see
+    // renderTopochainSection below and public/js/admin-topochain.js,
+    // which owns that second hash level entirely on its own (mirrors
+    // leaderboard.js's _setSub/_syncHash pattern) rather than teaching
+    // this file general multi-level routing.
+    { key: 'topochain', label: 'Topochain' },
   ],
 
   // Heavier admin surfaces that stay standalone full-browser pages for
@@ -256,8 +263,25 @@ const AdminConsole = {
       case 'features': return AdminConsole.renderFeaturesSection(host);
       case 'platform-env': return AdminConsole.renderPlatformEnvSection(host);
       case 'db-export': return AdminConsole.renderDbExportSection(host);
+      case 'topochain': return AdminConsole.renderTopochainSection(host);
       default: return AdminConsole.renderOverviewSection(host);
     }
+  },
+
+  // ── Topochain (Task 15) ─────────────────────────────────────────────
+  //
+  // Delegates entirely to AdminTopochain (public/js/admin-topochain.js).
+  // That module owns its own sub-nav under #admin/topochain/<sub> — it
+  // reads location.hash directly for the deep-linked sub-key and writes
+  // it back itself (replaceState, guarded on '#admin/topochain'), the
+  // same pattern leaderboard.js uses for its own tab state. Nothing here
+  // needs to know the sub-nav's keys or track them across re-renders.
+  renderTopochainSection(host) {
+    if (!window.AdminTopochain || typeof AdminTopochain.render !== 'function') {
+      host.innerHTML = '<p class="p-4 text-sm text-zinc-500">Topochain console module failed to load.</p>';
+      return;
+    }
+    AdminTopochain.render(host);
   },
 
   // ── Overview (operations snapshot) ─────────────────────────────────────

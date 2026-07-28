@@ -11,3 +11,4 @@ data/
 # Local hackathon data dump (sensitive community PII — do not commit)
 hackathon-data/
 .playwright-mcp/
+.superpowers/

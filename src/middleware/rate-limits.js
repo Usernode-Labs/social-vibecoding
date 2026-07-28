@@ -257,4 +257,29 @@ const dbExportLimiter = makeLimiter({
   message: (s) => `Rate limit reached: up to 3 database exports per day. You can try again ${retryPhrase(s)}.`,
 });
 
-module.exports = { dbExportLimiter, authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter };
+// Topochain mobile auth (plan Task 3; SPEC 1588-1599): the four PUBLIC
+// mobile-auth endpoints (`check-email`, `login`, `otp/request`,
+// `otp/verify`) share ONE bucket, 10 requests / minute / client IP — the
+// route path is not part of the key, matching SPEC 1597 exactly ("the
+// four public auth endpoints share one bucket of 10 requests per minute
+// per client IP"). Route modules apply this same limiter instance to all
+// four paths rather than building four separate limiters.
+//
+// DEVIATION from SPEC 1597/1599: the source throttle responds with
+// `429` + `Retry-After`/`X-RateLimit-*` headers and no particular JSON
+// body; the v4 contract otherwise unifies every error into the single
+// `{success, error, ...}` envelope (SPEC §4.8). This limiter is built on
+// `makeLimiter`, whose `handler` (above) owns the 429 response shape for
+// EVERY limiter in this file — it replies with the platform's standard
+// `{error, retryAfterSeconds}` body, not the v4 envelope. Reimplementing
+// just this one limiter's handler to match §4.8 would fork the shared
+// wrapper for one route group; left as-is and documented rather than
+// special-cased.
+const topochainMobileAuthLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 10,
+  name: 'topochain-mobile-auth',
+  message: 'Too many requests — slow down for a minute.',
+});
+
+module.exports = { dbExportLimiter, authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter };
