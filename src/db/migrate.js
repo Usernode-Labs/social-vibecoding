@@ -83,6 +83,9 @@ async function migrate(config) {
   await seedStagingTopicAttributes(pool, config);
   await seedStagingSubmittedFeatures(pool, config);
   await seedStagingDbExports(pool);
+  // After the proposal seeds above: the platform-env fixture stamps a
+  // failing verdict onto an existing staging proposal.
+  await seedStagingPlatformEnv(pool, config);
   await sweepInterruptedDbExports(pool);
   await backfillEvents(pool);
   await backfillVotesRequired(pool);
@@ -765,12 +768,20 @@ async function seedSelfApp(pool, config) {
     // proposal-approval settings actually apply.
     await appManifest.reconcileAppGovernance(pool, selfRows[0], manifest)
       .catch((err) => log.warn('db', 'Self-app governance reconcile failed', { err: err.message }));
+    // And the `platform_env` block: the declarations cache that backs the
+    // admin console's Platform variables section and the pre-merge check.
+    // Only the self-app has one — a child dapp's manifest may carry the
+    // block but nothing reads it, because a child's env comes from
+    // app_secrets. Values are never touched here, only declarations.
+    await appManifest.reconcilePlatformEnv(pool, selfRows[0].id, manifest.platform_env)
+      .catch((err) => log.warn('db', 'Self-app platform_env reconcile failed', { err: err.message }));
   }
 
   log.info('db', 'Self-app row seeded', {
     slug: config.selfAppSlug,
     sha: sha ? sha.slice(0, 7) : '(none)',
     secretsDeclared: manifest.secrets.length,
+    platformEnvDeclared: (manifest.platform_env || []).length,
   });
 }
 
@@ -830,6 +841,122 @@ async function seedStagingAdminConsoleData(pool) {
     log.info('db', 'Admin-console staging fixtures seeded');
   } catch (err) {
     log.warn('db', 'Admin-console staging fixtures failed', { message: err.message });
+  }
+}
+
+// Platform-variables fixtures. `platform_env_values` is table-level
+// `staging:private`, so a staging clone arrives with ZERO values — the
+// admin console's Platform variables section would render nothing but its
+// empty state in every PR preview, and the "set / unset / private /
+// orphaned" row states (the whole point of the screen) would be
+// unreviewable. Declarations DO survive the clone (they're a copy of a
+// public committed file), so only values need seeding — plus one extra
+// declaration that is deliberately required-and-unset, because that state
+// is what the pre-merge check blocks on and it can't otherwise be
+// demonstrated without breaking the real manifest.
+//
+// Four rows covering every state the UI renders:
+//   STAGING_DEMO_PUBLIC_URL   — set, non-private (value shown in full)
+//   STAGING_DEMO_SECRET_TOKEN — set, private (masked to last-4)
+//   STAGING_DEMO_REQUIRED     — declared required, NO value (blocks merge)
+//   STAGING_DEMO_ORPHAN       — value with no declaration (removed from
+//                               dapp.json but deliberately kept)
+// Plus one proposal stamped platform_env_state='failing' so the Checks
+// card's platform-env row has something to show.
+//
+// The two seeded declarations are transient by design: the next boot's
+// reconcilePlatformEnv() deletes anything absent from dapp.json, and this
+// seed (which runs after it) puts them straight back. Strictly a no-op
+// outside staging.
+async function seedStagingPlatformEnv(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+  if (!config.jwtSecret) {
+    log.warn('db', 'Platform-env staging fixtures skipped: no JWT_SECRET to encrypt with');
+    return;
+  }
+  try {
+    const { rows: appRows } = await pool.query(
+      'SELECT id FROM apps WHERE slug = $1',
+      [config.selfAppSlug]
+    );
+    const appId = appRows[0]?.id;
+    if (!appId) {
+      log.warn('db', 'Platform-env staging fixtures skipped: self-app row missing', {
+        slug: config.selfAppSlug,
+      });
+      return;
+    }
+    const { rows: userRows } = await pool.query(
+      'SELECT id FROM users ORDER BY is_admin DESC, id ASC LIMIT 1'
+    );
+    const updatedBy = userRows[0]?.id || null;
+
+    // Declarations: the required-but-unset one, and the two that carry
+    // values. STAGING_DEMO_ORPHAN gets no declaration — that IS its state.
+    const decls = [
+      ['STAGING_DEMO_PUBLIC_URL', 'Demo: a non-private platform variable. Safe to display in full.', false, false, 'Staging demo'],
+      ['STAGING_DEMO_SECRET_TOKEN', 'Demo: a private platform variable. Only the last 4 characters are ever returned.', false, true, 'Staging demo'],
+      ['STAGING_DEMO_REQUIRED', 'Demo: declared required with no value set — this is the state that blocks a merge.', true, false, 'Staging demo'],
+    ];
+    for (const [key, description, required, isPrivate, grouping] of decls) {
+      await pool.query(
+        `INSERT INTO platform_env_declarations
+           (app_id, key, description, required, private, grouping, unwritable)
+         VALUES ($1, $2, $3, $4, $5, $6, FALSE)
+         ON CONFLICT (app_id, key) DO NOTHING`,
+        [appId, key, description, required, isPrivate, grouping]
+      );
+    }
+
+    const values = [
+      ['STAGING_DEMO_PUBLIC_URL', 'https://demo.staging.invalid/hook', false],
+      ['STAGING_DEMO_SECRET_TOKEN', 'sk-staging-demo-0000-9f3a', true],
+      ['STAGING_DEMO_ORPHAN', 'left-behind-after-removal', false],
+    ];
+    for (const [key, value, isPrivate] of values) {
+      await pool.query(
+        `INSERT INTO platform_env_values
+           (app_id, key, value_enc, value_last4, private, updated_by, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NOW() - INTERVAL '2 days')
+         ON CONFLICT (app_id, key) DO NOTHING`,
+        [appId, key, encrypt(value, config.jwtSecret),
+          isPrivate ? null : value.slice(-4), isPrivate, updatedBy]
+      );
+    }
+
+    // Give the Checks card a failing platform-env verdict to render. Any
+    // open/promoted self-app proposal will do; only stamp one that has no
+    // verdict yet so a real evaluation in the preview isn't overwritten.
+    await pool.query(
+      `UPDATE chat_sessions
+          SET platform_env_state = 'failing',
+              platform_env_detail = $1::jsonb
+        WHERE id = (
+          SELECT id FROM chat_sessions
+           WHERE app_id = $2
+             AND status IN ('open', 'promoted')
+             AND platform_env_state IS NULL
+           ORDER BY id DESC
+           LIMIT 1
+        )`,
+      [
+        JSON.stringify({
+          missing: [{
+            key: 'STAGING_DEMO_REQUIRED',
+            required: true,
+            description: 'Demo: declared required with no value set — this is the state that blocks a merge.',
+          }],
+          added: ['STAGING_DEMO_REQUIRED'],
+          removed: [],
+          reason: 'This proposal adds 1 required platform variable that has no value set.',
+        }),
+        appId,
+      ]
+    );
+
+    log.info('db', 'Platform-env staging fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Platform-env staging fixtures failed', { message: err.message });
   }
 }
 
