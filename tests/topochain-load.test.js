@@ -32,6 +32,7 @@ const {
   buildBackfillMetadata,
   mapBackfillRow,
   findAwardBackfillCollisions,
+  BACKFILL_CHALLENGE_FK,
 } = require('../scripts/topochain-load');
 
 const loadSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts/topochain-load.js'), 'utf8');
@@ -190,7 +191,7 @@ test('deriveScopeColumns: throws on an event id the map does not know about', ()
 // ═════════════════════════════════════════════════════════════════════
 
 test('mapBackfillRow: flash_challenge_completions with no existing activity inserts a zero-point completion', () => {
-  const row = { offchain_activity_id: null, created_at: '2026-02-01T00:00:00Z' };
+  const row = { offchain_activity_id: null, wallet_address: 'ut1flash', created_at: '2026-02-01T00:00:00Z' };
   const result = mapBackfillRow('flash_challenge_completions', row, { userId: 10, challengeId: 20, seasonEventId: 30 });
   assert.equal(result.mode, 'insert');
   assert.equal(result.row.user_id, 10);
@@ -198,7 +199,11 @@ test('mapBackfillRow: flash_challenge_completions with no existing activity inse
   assert.equal(result.row.challenge_id, 20);
   assert.equal(result.row.points, 0);
   assert.equal(result.row.source, 'migration');
-  assert.deepEqual(result.row.metadata, { origin: 'flash_challenge_completions', kind: 'challenge_completion' });
+  assert.deepEqual(result.row.metadata, {
+    origin: 'flash_challenge_completions',
+    kind: 'challenge_completion',
+    wallet_address: 'ut1flash',
+  });
 });
 
 test('mapBackfillRow: zkpassport_completions carries session_id and nullifier_hex into metadata', () => {
@@ -219,12 +224,12 @@ test('mapBackfillRow: zkpassport_completions carries session_id and nullifier_he
   assert.equal(result.row.activity_at, '2026-02-02T00:00:00Z');
 });
 
-test('mapBackfillRow: activity_extra_points carries its real point value, reason and wallet_address', () => {
+test('mapBackfillRow: activity_extra_points carries its real point value and reason', () => {
+  // No wallet_address in this fixture on purpose: the real
+  // activity_extra_points table has no such column.
   const row = {
-    offchain_activity_id: null,
     points: '2867.50',
     reason: 'Community moderation bonus',
-    wallet_address: 'ut1abc',
     created_at: '2026-02-03T00:00:00Z',
   };
   const result = mapBackfillRow('activity_extra_points', row, { userId: 12, challengeId: 22, seasonEventId: 32 });
@@ -235,7 +240,6 @@ test('mapBackfillRow: activity_extra_points carries its real point value, reason
     origin: 'activity_extra_points',
     kind: 'extra_points',
     reason: 'Community moderation bonus',
-    wallet_address: 'ut1abc',
   });
 });
 
@@ -257,6 +261,36 @@ test('buildBackfillMetadata: activity_extra_points omits reason/wallet_address w
   assert.deepEqual(metadata, { origin: 'activity_extra_points', kind: 'extra_points' });
   assert.equal('reason' in metadata, false);
   assert.equal('wallet_address' in metadata, false);
+});
+
+test('buildBackfillMetadata: zkpassport wallet_address is preserved when present, omitted when null', () => {
+  const withWallet = buildBackfillMetadata('zkpassport_completions', {
+    session_id: 's1',
+    nullifier_hex: '0x01',
+    wallet_address: 'ut1zk',
+  });
+  assert.equal(withWallet.wallet_address, 'ut1zk');
+  // wallet_address is nullable on zkpassport_completions in the source.
+  const withoutWallet = buildBackfillMetadata('zkpassport_completions', {
+    session_id: 's2',
+    nullifier_hex: '0x02',
+    wallet_address: null,
+  });
+  assert.equal('wallet_address' in withoutWallet, false);
+});
+
+// Guards the column names against the real topochain Laravel migrations:
+// the FK to phase_available_activities is `challenge_id` on the two
+// completion tables and `phase_available_activity_id` only on
+// activity_extra_points. (An earlier draft read
+// `phase_available_activity_id` for all three origins, which threw
+// `unmapped ... undefined` on the first flash/zkpassport row.)
+test('BACKFILL_CHALLENGE_FK: per-origin FK column names match the source schema', () => {
+  assert.deepEqual(BACKFILL_CHALLENGE_FK, {
+    flash_challenge_completions: 'challenge_id',
+    zkpassport_completions: 'challenge_id',
+    activity_extra_points: 'phase_available_activity_id',
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════
