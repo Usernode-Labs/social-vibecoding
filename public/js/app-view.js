@@ -4316,6 +4316,7 @@ const AppView = {
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
         ${AppView._mergeConflictDetailHtml(pr)}
         ${AppView._checksDetailHtml(pr)}
+        ${AppView._platformEnvDetailHtml(pr)}
         ${roster}
         ${helpHint}
         ${explicitNote}
@@ -4683,6 +4684,61 @@ const AppView = {
         ${checked}
         ${failing ? '<div class="mt-1 opacity-80">Pushing a fix rebuilds the preview and re-runs the checks — the block clears when they pass.</div>' : ''}
         ${failing ? AppView._recheckBtnHtml(pr) : ''}
+      </div>`;
+  },
+
+  // Platform-variables check row. Only ever renders for a proposal that
+  // touches the platform's own `platform_env` declarations — for every
+  // other proposal platform_env_state is 'skipped' or NULL and this is a
+  // no-op, which is why it can sit unconditionally in the checks card.
+  //
+  // 'passing' renders nothing when the proposal added no variables: a
+  // green line saying "adds no environment variables" on every PR would
+  // be noise. It DOES render when variables were added and are all set,
+  // because "the new variable is configured" is worth confirming before
+  // you vote to deploy it.
+  _platformEnvDetailHtml(pr) {
+    if (!pr) return '';
+    const state = pr.platform_env_state;
+    if (!state || state === 'skipped') return '';
+    const detail = pr.platform_env_detail || {};
+    const added = Array.isArray(detail.added) ? detail.added : [];
+    const missing = Array.isArray(detail.missing) ? detail.missing : [];
+
+    if (state === 'error') {
+      return `
+        <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
+          <div class="font-medium">Platform variables couldn't be checked.</div>
+          <div class="mt-0.5 opacity-90">This does not block the merge — the check is re-run when votes reach the threshold.</div>
+        </div>`;
+    }
+
+    if (state === 'failing') {
+      const items = missing.map((m) => {
+        const key = escapeHtml(String((m && m.key) || ''));
+        const desc = (m && m.description)
+          ? ` <span class="opacity-80">— ${escapeHtml(String(m.description).slice(0, 240))}</span>`
+          : '';
+        return `<li><code class="font-mono">${key}</code>${desc}</li>`;
+      }).join('');
+      const admin = App.user && App.user.isAdmin
+        ? ' <a href="#admin/platform-env" class="underline">Set them in the admin console</a>.'
+        : ' A platform admin can set them in the admin console.';
+      return `
+        <div class="mt-2 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-amber-600 dark:text-amber-500">
+          <div class="font-medium">⚠ New platform variables have no value set — merge is blocked.</div>
+          <ul class="mt-1 ml-4 list-disc space-y-0.5">${items}</ul>
+          <div class="mt-1 opacity-90">Deploying without ${missing.length === 1 ? 'it' : 'them'} would restart the platform missing configuration it now expects.${admin}</div>
+          <div class="mt-1 opacity-80">No rebuild needed — set the value${missing.length === 1 ? '' : 's'} and vote again.</div>
+        </div>`;
+    }
+
+    if (!added.length) return '';
+    const list = added.map((k) => `<code class="font-mono">${escapeHtml(String(k))}</code>`).join(', ');
+    return `
+      <div class="mt-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 text-emerald-600 dark:text-emerald-500">
+        <div class="font-medium">✓ New platform variables are configured.</div>
+        <div class="mt-0.5 opacity-90">This proposal adds ${list}, already set and ready for the deploy.</div>
       </div>`;
   },
 

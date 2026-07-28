@@ -68,6 +68,12 @@ const EVENT_TYPES = Object.freeze({
   // denials and failures, is the append-only `db_exports` table. No
   // backfill: the capability didn't exist before this shipped.
   DB_EXPORTED: 'db_exported',
+  // A platform environment variable was set or cleared from the admin
+  // console (src/routes/admin.js /api/admin/platform-env). Metadata
+  // carries { key, action:'set'|'clear', private } — never the value.
+  // No backfill: before this shipped, changing a platform variable meant
+  // editing deploy.yml, which leaves its trace in git, not here.
+  PLATFORM_ENV_CHANGED: 'platform_env_changed',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

@@ -74,6 +74,83 @@ jobs:
             caddy:
               - 'caddy.Dockerfile'
 
+      # ------------------------------------------------------------------
+      # Resolve GitHub-sourced values for variables that dapp.json's
+      # `platform_env` block declares.
+      #
+      # Every other line in the .env heredoc below names its secret
+      # literally, because `${{ secrets.FOO }}` has to be written out
+      # when the workflow is authored. A platform variable introduced by
+      # a proposal has no line here and can't get one without editing
+      # this guardrailed file — which is the whole problem the feature
+      # exists to solve. Filtering `toJSON(secrets)` / `toJSON(vars)`
+      # against the committed manifest is the only mechanism GitHub
+      # offers for reading a dynamically-named one.
+      #
+      # The manifest is the allow-list: only keys it DECLARES and marks
+      # writable are forwarded, using the same readPlatformEnv() the
+      # platform uses, so this can never widen the set of secrets that
+      # reach the VPS beyond what a reviewed commit asked for. Values
+      # are ::add-mask::'d before they can appear in any later log line.
+      #
+      # This is the fallback path. The primary one is the admin console
+      # (resolved on the VPS by scripts/dump-platform-env.js, appended
+      # after these lines and therefore winning) — but an operator who
+      # would rather keep a value in GitHub can, and a value set here
+      # still satisfies the pre-merge check's "somewhere to come from"
+      # only once it has also been recorded in the console. Both paths
+      # existing is deliberate: the console is not a lock-in.
+      # ------------------------------------------------------------------
+      - name: Resolve GitHub-sourced platform variables
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
+          OUT_FILE: ${{ runner.temp }}/platform-env-github.txt
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const { readPlatformEnv } = require('./src/services/app-manifest');
+
+          let declared = [];
+          try {
+            declared = readPlatformEnv(JSON.parse(fs.readFileSync('dapp.json', 'utf8')));
+          } catch (err) {
+            console.log(`No readable platform_env block (${err.message}); nothing to forward.`);
+          }
+
+          const secrets = JSON.parse(process.env.ALL_SECRETS || '{}');
+          const vars = JSON.parse(process.env.ALL_VARS || '{}');
+          const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+          const lines = [];
+          for (const entry of declared) {
+            // Unwritable keys already have an explicit line in the
+            // heredoc, sourced from the secret the operator actually
+            // named. Forwarding them again would be a no-op at best and
+            // a shadowing bug at worst.
+            if (entry.unwritable) continue;
+            const key = entry.key;
+            const value = has(secrets, key) ? secrets[key] : (has(vars, key) ? vars[key] : null);
+            if (typeof value !== 'string' || !value.length) continue;
+            // Same representability rule the admin console enforces:
+            // a single quote can't be escaped inside a single-quoted
+            // .env value, and a bare CR can't round-trip the file.
+            if (/['\r]/.test(value)) {
+              console.log(`Skipping ${key}: not representable as a single-quoted .env value`);
+              continue;
+            }
+            console.log(`::add-mask::${value}`);
+            lines.push(`${key}='${value}'`);
+          }
+
+          fs.writeFileSync(process.env.OUT_FILE, lines.length ? `${lines.join('\n')}\n` : '');
+          console.log(`Forwarding ${lines.length} GitHub-sourced platform variable(s).`);
+          NODE
+          # Single-line base64 so it survives $GITHUB_ENV and the
+          # ssh-action's `envs:` forwarding without any quoting games.
+          echo "GH_PLATFORM_ENV_B64=$(base64 -w0 < "$OUT_FILE")" >> "$GITHUB_ENV"
+          rm -f "$OUT_FILE"
+
       - name: Sync repo to VPS
         uses: easingthemes/ssh-deploy@v5.1.0
         with:
@@ -87,7 +164,11 @@ jobs:
           # survive. .git/.github/node_modules are build-time only.
           # `runtime/` is host-side ephemeral state (deploy-status.json,
           # bind-mounted into the container) — must survive a sync.
-          ARGS: "-avz --delete --exclude=.git --exclude=.github --exclude=node_modules --exclude=data --exclude=.env --exclude=runtime"
+          # `.platform-env` is the cached resolution of the console-set
+          # platform variables; without the exclude, --delete would wipe
+          # it on every deploy and the fallback would have nothing to
+          # fall back to.
+          ARGS: "-avz --delete --exclude=.git --exclude=.github --exclude=node_modules --exclude=data --exclude=.env --exclude=.platform-env* --exclude=runtime"
 
       - name: Write .env and run docker compose
         uses: appleboy/ssh-action@v1
@@ -101,6 +182,9 @@ jobs:
           # workflow_dispatch escape hatch. Unset on push events, in
           # which case `inputs.force_archive_refresh` evaluates to ''.
           FORCE_ARCHIVE_REFRESH: ${{ inputs.force_archive_refresh || 'false' }}
+          # base64 of the GitHub-sourced platform_env lines resolved above
+          # (empty string when there are none).
+          GH_PLATFORM_ENV_B64: ${{ env.GH_PLATFORM_ENV_B64 }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: deploy
@@ -108,7 +192,7 @@ jobs:
           # Forward the gating flags into the remote shell — appleboy
           # /ssh-action only exports vars listed here, not the whole
           # job env.
-          envs: NODE_FILES_CHANGED,CADDY_FILES_CHANGED,FORCE_ARCHIVE_REFRESH
+          envs: NODE_FILES_CHANGED,CADDY_FILES_CHANGED,FORCE_ARCHIVE_REFRESH,GH_PLATFORM_ENV_B64
           # Archive fetch can take several minutes on a fresh seed; bump
           # the action's default 10m ceiling so it doesn't kill the deploy
           # mid-tar.
@@ -116,6 +200,15 @@ jobs:
           script: |
             set -e
             cd /opt/usernode
+
+            # The sha currently deployed, read from the .env we are about
+            # to overwrite. This is what the post-deploy health probe
+            # rolls back to if the new container never becomes healthy.
+            # Best-effort: on a green-field deploy there is no previous
+            # .env, PREV_SHA stays empty, and the probe reports the
+            # failure without attempting a rollback to nothing.
+            PREV_SHA=$(grep -m1 '^GIT_SHA=' .env 2>/dev/null | cut -d= -f2- || true)
+            echo "==> Previous GIT_SHA: ${PREV_SHA:-(none)}"
 
             # Single-quoted heredoc: no shell expansion on the server.
             # GitHub Actions has already substituted all the expression
@@ -169,6 +262,17 @@ jobs:
             DOCKER_STOP_GRACE_SEC=${{ vars.DOCKER_STOP_GRACE_SEC || '5' }}
             ENVEOF
             chmod 600 .env
+
+            # GitHub-sourced values for manifest-declared platform
+            # variables (resolved on the runner above). Appended AFTER the
+            # heredoc so they override a committed default for the same
+            # key — docker compose's env-file parser takes the last
+            # occurrence. The admin-console values are appended after
+            # these and win over both.
+            if [ -n "${GH_PLATFORM_ENV_B64:-}" ]; then
+              echo "$GH_PLATFORM_ENV_B64" | base64 -d >> .env
+              echo "==> Applied $(echo "$GH_PLATFORM_ENV_B64" | base64 -d | grep -c . || true) GitHub-sourced platform variable(s)"
+            fi
 
             # ----------------------------------------------------------
             # Pull non-buildable images first so we can detect upstream
@@ -500,8 +604,91 @@ jobs:
             #    changes need no rebuild — the `caddy reload` below
             #    applies them to the running container.
             # ----------------------------------------------------------
-            docker compose up -d --build usernode
+            # Build first, separately from `up`, so the freshly-built
+            # image can resolve the admin-console platform variables into
+            # .env BEFORE the platform container starts with it. (This
+            # was `up -d --build usernode`; splitting it is what makes
+            # the step below possible on the same deploy that introduces
+            # a variable, rather than one deploy later.)
+            docker compose build usernode
+
+            # ----------------------------------------------------------
+            # Materialize the platform variables an admin set in the
+            # console. They live encrypted in the platform's own
+            # database, so something with the DB credentials has to
+            # decrypt them — and /opt/usernode/runtime is mounted :ro,
+            # so the running platform cannot write the snapshot itself.
+            # A throwaway container off the image we just built has the
+            # credentials already via env_file and needs no new mount,
+            # port, or auth surface. --no-deps because usernode-db is
+            # already up from the previous deploy; -T so stdout and
+            # stderr stay separate streams.
+            #
+            # Failure is non-fatal by design: `|| true` plus the sentinel
+            # check means a DB hiccup reuses the previous run's cached
+            # .platform-env rather than failing the deploy or silently
+            # truncating the platform's configuration. Losing an
+            # override for one deploy is cheaper than a failed deploy.
+            # ----------------------------------------------------------
+            RAW_ENV=$(docker compose run --rm --no-deps -T usernode \
+              node scripts/dump-platform-env.js 2>/dev/null || true)
+            if echo "$RAW_ENV" | grep -q '^#__PLATFORM_ENV_END__$'; then
+              echo "$RAW_ENV" \
+                | sed -n '/^#__PLATFORM_ENV_BEGIN__$/,/^#__PLATFORM_ENV_END__$/p' \
+                | grep -v '^#__PLATFORM_ENV_' > .platform-env.new
+              mv .platform-env.new .platform-env
+              chmod 600 .platform-env
+              echo "==> Resolved $(grep -c . .platform-env || true) console-set platform variable(s)"
+            else
+              echo "==> WARNING: platform-env resolution produced no complete block; reusing cache"
+            fi
+            if [ -s .platform-env ]; then
+              cat .platform-env >> .env
+            fi
+
+            docker compose up -d usernode
             docker compose up -d --remove-orphans
+
+            # ----------------------------------------------------------
+            # Post-deploy health gate. A platform variable that is
+            # declared, unset, and read at boot is exactly the failure
+            # this feature's pre-merge check tries to prevent — but the
+            # check can be skipped (force-merge, a value cleared after
+            # the merge, a GitHub outage that made it fail open), so the
+            # deploy needs its own answer to "did it actually come up?".
+            #
+            # Two CONSECUTIVE successes: a container mid-boot can answer
+            # once and then exit, and a single 200 from a process that
+            # is about to crash is worse than no signal at all.
+            # ----------------------------------------------------------
+            HEALTH_OK=0
+            HEALTH_STREAK=0
+            HEALTH_WAITED=0
+            while [ "$HEALTH_WAITED" -lt 120 ]; do
+              if docker compose exec -T usernode wget -qO- http://localhost:3000/health >/dev/null 2>&1; then
+                HEALTH_STREAK=$((HEALTH_STREAK + 1))
+                if [ "$HEALTH_STREAK" -ge 2 ]; then HEALTH_OK=1; break; fi
+              else
+                HEALTH_STREAK=0
+              fi
+              sleep 5
+              HEALTH_WAITED=$((HEALTH_WAITED + 5))
+            done
+
+            if [ "$HEALTH_OK" -ne 1 ]; then
+              echo "::error::Platform did not become healthy within 120s of deploying ${{ github.sha }}"
+              echo "==> Last 200 log lines from the unhealthy container:"
+              docker compose logs --tail 200 usernode || true
+              if [ -n "$PREV_SHA" ] && [ -x /opt/usernode-tools/rollback.sh ]; then
+                echo "==> Rolling back to $PREV_SHA"
+                /opt/usernode-tools/rollback.sh "$PREV_SHA" || \
+                  echo "::error::Rollback to $PREV_SHA also failed — manual intervention required"
+              else
+                echo "::error::No previous sha or rollback script available; leaving the stack as-is"
+              fi
+              exit 1
+            fi
+            echo "==> Platform healthy after ${HEALTH_WAITED}s"
 
             if [ "${CADDY_FILES_CHANGED:-false}" = "true" ]; then
               echo "==> caddy.Dockerfile changed; rebuilding + recreating caddy"

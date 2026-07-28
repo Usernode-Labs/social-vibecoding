@@ -50,6 +50,7 @@ const DENIED_TABLES = new Set([
   'activation_codes',   // invite/activation secrets
   'app_secrets',        // per-app env secrets (AES blobs, still deny)
   'user_agent_files',   // personal instruction files (private user text)
+  'platform_env_values', // platform's own env values (AES blobs, still deny)
 ]);
 
 const DENIED_COLUMNS = {

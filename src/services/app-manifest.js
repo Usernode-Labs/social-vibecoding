@@ -127,6 +127,123 @@ const RESERVED_KEY_PREFIXES = ['USERNODE_LLM_PROXY', 'USERNODE_STORAGE', 'USERNO
 
 const KEY_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
 
+// ---------------------------------------------------------------------------
+// platform_env: the platform's own environment-variable manifest.
+//
+// This block is read ONLY from the self-hosted platform repo's dapp.json.
+// It is deliberately separate from `secrets`, which describes a *child
+// dapp's* container env and is merged by services/app-secrets.js at
+// deploy time. Nothing in the child-dapp path reads platform_env, and
+// mergeForDeploy() never learns about it — that containment is the whole
+// point: a value declared here lands in the VPS `.env` of the platform
+// process, never in a dapp container.
+// ---------------------------------------------------------------------------
+
+// Keys that may be *declared* (so the admin console can show them and the
+// pre-merge check can reason about them) but can NEVER be written through
+// the admin UI or resolved from the platform_env store at deploy time.
+// These are the platform's structural identity and credentials: they are
+// injected by .github/workflows/deploy.yml straight from GitHub secrets,
+// or computed by the deploy itself. Letting an admin overwrite one from a
+// web form would be a privilege-escalation path (rotate JWT_SECRET →
+// forge any session; rewrite DATABASE_URL → point the platform at an
+// attacker's Postgres), so writes are refused at the DAO, the route, and
+// the UI. Declaring one is fine and useful: it documents the variable.
+const PLATFORM_ENV_UNWRITABLE = new Set([
+  // Reserved / structural.
+  'DATABASE_URL',
+  'PORT',
+  'USERNODE_ENV',
+  'GIT_SHA',
+  // Auth + session crypto. secrets.js derives its at-rest key from
+  // JWT_SECRET, so rewriting it would also orphan every stored value.
+  'JWT_SECRET',
+  'SESSION_SECRET',
+  'ADMIN_USERNAME',
+  'ADMIN_PASSWORD',
+  // Database and GitHub App credentials.
+  'USERNODE_DB_PASSWORD',
+  'GITHUB_APP_ID',
+  'GITHUB_PRIVATE_KEY',
+  'GITHUB_BOT_TOKEN',
+  // Model access and the platform's own dapp keypair.
+  'ANTHROPIC_API_KEY',
+  'USERNODE_APP_PUBKEY',
+  'USERNODE_APP_SECRET_KEY',
+  // Ingress / TLS, owned by the Caddy half of the deploy.
+  'USERNODE_DOMAIN',
+  'ZEROSSL_API_KEY',
+  'ZEROSSL_EAB_KID',
+  'ZEROSSL_EAB_HMAC',
+  'ACME_DNS_PROVIDER',
+  'ACME_DNS_API_TOKEN',
+]);
+
+const MAX_PLATFORM_ENV = 200;
+const MAX_PLATFORM_ENV_DESC_LEN = 400;
+const MAX_PLATFORM_ENV_GROUP_LEN = 48;
+const MAX_PLATFORM_ENV_DEFAULT_LEN = 2048;
+
+// Normalize the optional top-level `platform_env` array. Follows the same
+// lenient contract as every other reader here: never throws, drops what it
+// can't understand with a log.warn, and resolves an absent/invalid block to
+// [] so a platform repo without the block behaves exactly as it did before
+// this feature existed.
+//
+// Entry shape: { key, description?, required?, private?, group?, default? }.
+// `unwritable` is derived, not declared — a manifest cannot opt a key out of
+// PLATFORM_ENV_UNWRITABLE, only into it by naming one of those keys.
+function readPlatformEnv(parsed) {
+  const raw = Array.isArray(parsed?.platform_env) ? parsed.platform_env : [];
+  const out = [];
+  const seen = new Set();
+  let dropped = 0;
+  for (const e of raw) {
+    if (!e || typeof e !== 'object') { dropped++; continue; }
+    const key = typeof e.key === 'string' ? e.key.trim() : '';
+    if (!KEY_RE.test(key)) {
+      log.warn('app-manifest', 'Skipping invalid platform_env key', { key: e.key });
+      dropped++;
+      continue;
+    }
+    // Note: RESERVED_KEYS is NOT a rejection here the way it is for
+    // `secrets`. Those keys are reserved against *dapps* shadowing the
+    // platform; the platform declaring its own DATABASE_URL is legitimate
+    // documentation. They land as unwritable instead.
+    if (seen.has(key)) {
+      log.warn('app-manifest', 'Skipping duplicate platform_env key', { key });
+      dropped++;
+      continue;
+    }
+    if (out.length >= MAX_PLATFORM_ENV) { dropped++; continue; }
+    seen.add(key);
+    const unwritable = PLATFORM_ENV_UNWRITABLE.has(key)
+      || RESERVED_KEYS.has(key)
+      || RESERVED_KEY_PREFIXES.some((p) => key.startsWith(p));
+    out.push({
+      key,
+      description: typeof e.description === 'string'
+        ? e.description.slice(0, MAX_PLATFORM_ENV_DESC_LEN) : '',
+      required: !!e.required,
+      private: !!e.private || !!e.sensitive,
+      group: typeof e.group === 'string' && e.group.trim()
+        ? e.group.trim().slice(0, MAX_PLATFORM_ENV_GROUP_LEN) : 'General',
+      // Documentation of the compiled-in fallback, shown in the admin UI
+      // as "defaults to X". Never applied as a value — the deploy's own
+      // `${{ vars.X || 'default' }}` expressions remain authoritative.
+      default: typeof e.default === 'string'
+        ? e.default.slice(0, MAX_PLATFORM_ENV_DEFAULT_LEN) : null,
+      unwritable,
+    });
+  }
+  if (dropped > 0) {
+    log.warn('app-manifest', 'Dropped invalid/over-cap platform_env entries', {
+      dropped, kept: out.length, cap: MAX_PLATFORM_ENV,
+    });
+  }
+  return out;
+}
+
 // Bounds for the optional top-level `name` field (see readName). Matches
 // the rename flow's MAX_APP_NAME_LENGTH so a hand-written manifest name
 // can't outrun the apps.name column or the rename UI's validation.
@@ -456,9 +573,9 @@ function read(cloneDir) {
   try {
     raw = fs.readFileSync(filePath, 'utf-8');
   } catch (err) {
-    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null };
+    if (err.code === 'ENOENT') return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
     log.warn('app-manifest', 'Read failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null };
+    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
 
   let parsed;
@@ -466,8 +583,11 @@ function read(cloneDir) {
     parsed = JSON.parse(raw);
   } catch (err) {
     log.warn('app-manifest', 'Parse failed (treating as empty)', { filePath, err: err.message });
-    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null };
+    return { name: null, secrets: [], llm: null, visibility: null, governance: null, screenshot: { deviceScaleFactor: DEFAULT_SCREENSHOT_SCALE }, tests: [], icon: null, admins: null, platform_env: [] };
   }
+
+  const platformEnv = readPlatformEnv(parsed);
+  const platformEnvKeys = new Set(platformEnv.map((e) => e.key));
 
   const secretsIn = Array.isArray(parsed?.secrets) ? parsed.secrets : [];
   const seen = new Set();
@@ -482,6 +602,16 @@ function read(cloneDir) {
     }
     if (RESERVED_KEYS.has(key) || RESERVED_KEY_PREFIXES.some((p) => key.startsWith(p))) {
       log.warn('app-manifest', 'Skipping reserved key', { filePath, key });
+      continue;
+    }
+    // A key declared in BOTH blocks is a mistake with a dangerous failure
+    // mode: `secrets` values are handed to a dapp container, platform_env
+    // values are not. Rather than guess, platform_env wins and the
+    // `secrets` entry is dropped — the containment guarantee (a
+    // platform variable never leaks into a dapp's env) holds by
+    // construction rather than by review.
+    if (platformEnvKeys.has(key)) {
+      log.warn('app-manifest', 'Skipping secrets key also declared in platform_env', { filePath, key });
       continue;
     }
     if (seen.has(key)) {
@@ -512,6 +642,7 @@ function read(cloneDir) {
     tests: readTests(parsed),
     icon: readIcon(parsed),
     admins: readAdmins(parsed),
+    platform_env: platformEnv,
   };
 }
 
@@ -1194,6 +1325,73 @@ async function reconcileAppIcon(pool, app, manifest, cloneDir) {
   return true;
 }
 
+/**
+ * Write-through reconciliation of the platform's own `platform_env`
+ * declarations into `platform_env_declarations`.
+ *
+ * Mirrors the other reconcile* helpers: called once at boot from
+ * seedSelfApp() with the manifest freshly read off the checked-out repo,
+ * best-effort, and never allowed to break the caller. The DB table is a
+ * *cache* of what the committed manifest says — it exists so the admin
+ * console and the pre-merge check can query declarations by SQL without
+ * re-reading the working tree, and so a stored value that no longer has a
+ * declaration ("orphan") is detectable.
+ *
+ * Declarations are upserted; declarations that disappeared from the
+ * manifest are deleted. Stored *values* are never touched here — losing a
+ * declaration must not destroy the value, because the merge that removes
+ * a variable and the deploy that stops using it are two different events,
+ * and a rollback needs the value to still be there. The orphaned value
+ * simply surfaces in the admin UI as "no longer declared".
+ *
+ * Returns { declared, added, removed } for logging. Throws only on a DB
+ * error, which the caller is expected to swallow.
+ */
+async function reconcilePlatformEnv(pool, appId, entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  const keys = list.map((e) => e.key);
+
+  const before = await pool.query(
+    'SELECT key FROM platform_env_declarations WHERE app_id = $1',
+    [appId]
+  );
+  const beforeKeys = new Set(before.rows.map((r) => r.key));
+
+  for (const e of list) {
+    await pool.query(
+      `INSERT INTO platform_env_declarations
+         (app_id, key, description, required, private, grouping, default_value, unwritable)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (app_id, key) DO UPDATE SET
+         description = EXCLUDED.description,
+         required = EXCLUDED.required,
+         private = EXCLUDED.private,
+         grouping = EXCLUDED.grouping,
+         default_value = EXCLUDED.default_value,
+         unwritable = EXCLUDED.unwritable,
+         updated_at = NOW()`,
+      [appId, e.key, e.description || '', !!e.required, !!e.private,
+        e.group || 'General', e.default ?? null, !!e.unwritable]
+    );
+  }
+
+  // Delete declarations no longer in the manifest. `= ANY($2)` with an
+  // empty array is valid SQL and removes everything, which is the correct
+  // behaviour when the block was deleted wholesale.
+  const removed = await pool.query(
+    'DELETE FROM platform_env_declarations WHERE app_id = $1 AND NOT (key = ANY($2::text[])) RETURNING key',
+    [appId, keys]
+  );
+
+  const added = keys.filter((k) => !beforeKeys.has(k));
+  if (added.length || removed.rowCount) {
+    log.info('app-manifest', 'Reconciled platform_env declarations', {
+      appId, declared: keys.length, added, removed: removed.rows.map((r) => r.key),
+    });
+  }
+  return { declared: keys.length, added, removed: removed.rows.map((r) => r.key) };
+}
+
 module.exports = {
   read,
   readName,
@@ -1204,6 +1402,10 @@ module.exports = {
   readTests,
   readIcon,
   readAdmins,
+  readPlatformEnv,
+  reconcilePlatformEnv,
+  PLATFORM_ENV_UNWRITABLE,
+  MAX_PLATFORM_ENV,
   MAX_TESTS,
   MAX_APP_ADMINS,
   MAX_ADMIN_USERNAME_LENGTH,
