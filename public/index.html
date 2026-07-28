@@ -271,6 +271,24 @@
       <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
       <span class="text-sm font-medium">Profile</span>
     </a>
+    <!-- Topochain leaderboard — hash route handled by
+         App.navigateToTopochainLeaderboard (Task 14, public screens).
+         Real anchor (like Challenges) so hash navigation drives the
+         screen; always visible — no bridge capability or admin gate,
+         this is a public read. -->
+    <a id="drawer-row-topochain-leaderboard" href="#topochain/leaderboard"
+       class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      <span class="text-sm font-medium">Topochain leaderboard</span>
+    </a>
+    <!-- Topochain seasons/events — hash route handled by
+         App.navigateToTopochainSeasons (Task 14, public screens). Same
+         idiom as the leaderboard row above. -->
+    <a id="drawer-row-topochain-seasons" href="#topochain/seasons"
+       class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+      <span class="text-sm font-medium">Topochain seasons</span>
+    </a>
     <!-- Theme — Light / Dark / System segmented control. Unlike the rows
          above this is a live control, not a navigation action: it is a
          non-clickable container (no hover bg) and tapping a mode does NOT
@@ -392,6 +410,26 @@
        sibling screens. -->
   <main id="admin-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
     <div id="admin-root" class="max-w-5xl mx-auto p-4 w-full"></div>
+  </main>
+
+  <!-- Topochain leaderboard screen (Task 14, public screens): the
+       testnet-competition standings, rendered by
+       public/js/topochain-leaderboard.js from the public /api/v4 reads.
+       Hash route #topochain/leaderboard; mounted by
+       App.navigateToTopochainLeaderboard. No auth gate — this is a
+       public page like the existing Kudos leaderboard. Ships hidden
+       like its sibling screens. -->
+  <main id="topochain-leaderboard-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+    <div id="topochain-leaderboard-root" class="max-w-5xl mx-auto p-4 w-full"></div>
+  </main>
+
+  <!-- Topochain seasons/events screen (Task 14, public screens): the
+       season/event hero + challenge grid, rendered by
+       public/js/topochain-seasons.js from the public /api/v4 reads. Hash
+       route #topochain/seasons; mounted by App.navigateToTopochainSeasons.
+       No auth gate — public page. Ships hidden like its sibling screens. -->
+  <main id="topochain-seasons-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+    <div id="topochain-seasons-root" class="max-w-5xl mx-auto p-4 w-full"></div>
   </main>
 
   <!-- App view (hidden by default) -->
@@ -1438,6 +1476,13 @@
        app.js, whose restoreFromHash calls App.navigateToAdminConsole →
        AdminConsole.open(). -->
   <script src="/js/admin-console.js"></script>
+  <!-- Topochain public screens (Task 14): #topochain/leaderboard and
+       #topochain/seasons hash routes. Loaded before app.js, whose
+       restoreFromHash calls App.navigateToTopochainLeaderboard /
+       App.navigateToTopochainSeasons -> TopochainLeaderboard.open() /
+       TopochainSeasons.open(). -->
+  <script src="/js/topochain-leaderboard.js"></script>
+  <script src="/js/topochain-seasons.js"></script>
   <script src="/js/proposal-discuss.js"></script>
   <!-- Build-failure log panel (#416). Loaded before app-view.js/home.js
        so both surfaces can reference window.BuildLog. -->

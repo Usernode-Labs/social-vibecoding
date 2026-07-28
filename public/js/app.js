@@ -30,6 +30,14 @@ const App = {
   // Same for the #admin screen (admin & moderation console, #818) — set
   // by navigateToAdminConsole() / _exitAdminConsole() / navigateHome().
   _inAdmin: false,
+  // Same for the #topochain/leaderboard screen (Task 14, public screens)
+  // — set by navigateToTopochainLeaderboard() / _exitTopochainLeaderboard()
+  // / navigateHome().
+  _inTopochainLeaderboard: false,
+  // Same for the #topochain/seasons screen (Task 14, public screens) —
+  // set by navigateToTopochainSeasons() / _exitTopochainSeasons() /
+  // navigateHome().
+  _inTopochainSeasons: false,
 
   // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -1589,6 +1597,13 @@ const App = {
         // Navigation itself rides the anchor's #challenges hash.
         drawerChallenges.addEventListener('click', () => App.HeaderMenu.close());
       }
+      // Topochain public screens (Task 14) — same real-anchor idiom as
+      // Challenges/Profile above: navigation rides the anchor's hash,
+      // the click handler here just closes the drawer.
+      document.getElementById('drawer-row-topochain-leaderboard')
+        ?.addEventListener('click', () => App.HeaderMenu.close());
+      document.getElementById('drawer-row-topochain-seasons')
+        ?.addEventListener('click', () => App.HeaderMenu.close());
       document.getElementById('drawer-row-share')
         .addEventListener('click', () => {
           App.HeaderMenu.close();
@@ -2289,6 +2304,8 @@ const App = {
         else if (App._inChallenges) App.navigateHome();
         else if (App._inProfile) App.navigateHome();
         else if (App._inAdmin) App.navigateHome();
+        else if (App._inTopochainLeaderboard) App.navigateHome();
+        else if (App._inTopochainSeasons) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -2350,6 +2367,17 @@ const App = {
         // App.user.isAdmin lives inside navigateToAdminConsole.
         App.setChromeless(false);
         App.navigateToAdminConsole(parts[1] || null);
+        return;
+      }
+      if (parts[0] === 'topochain') {
+        // Topochain public screens (Task 14): #topochain/leaderboard and
+        // #topochain/seasons. Both are public reads under /api/v4 — no
+        // auth gate, unlike #admin above. Anything other than a literal
+        // 'seasons' second segment (including none at all) lands on the
+        // leaderboard, the more commonly linked of the two.
+        App.setChromeless(false);
+        if (parts[1] === 'seasons') App.navigateToTopochainSeasons();
+        else App.navigateToTopochainLeaderboard();
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
@@ -2424,6 +2452,8 @@ const App = {
         if (App._inChallenges) App._exitChallenges();
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
+        if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
+        if (App._inTopochainSeasons) App._exitTopochainSeasons();
         App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -2456,6 +2486,8 @@ const App = {
         if (App._inChallenges) App._exitChallenges();
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
+        if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
+        if (App._inTopochainSeasons) App._exitTopochainSeasons();
         App.setHeaderTitle('dApps');
         Home.load();
       }
@@ -2562,6 +2594,8 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
+    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('leaderboard-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -2609,6 +2643,8 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
+    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('challenges-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -2647,6 +2683,8 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inChallenges) App._exitChallenges();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
+    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -2696,6 +2734,8 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
+    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
+    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('admin-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -2723,6 +2763,103 @@ const App = {
     const screen = document.getElementById('admin-screen');
     if (screen) screen.classList.add('hidden');
     if (window.AdminConsole?.close) AdminConsole.close();
+  },
+
+  // Show the Topochain leaderboard screen (Task 14, public screens).
+  // Sibling to navigateToAdminConsole — hides home + app, reveals the
+  // dedicated #topochain-leaderboard-screen, lets the
+  // TopochainLeaderboard module (public/js/topochain-leaderboard.js)
+  // render itself into #topochain-leaderboard-root. Unlike the admin
+  // console, this carries NO isAdmin gate — it's a public read like the
+  // Kudos leaderboard, reachable by anyone.
+  navigateToTopochainLeaderboard() {
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inChallenges) App._exitChallenges();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inTopochainSeasons) App._exitTopochainSeasons();
+    const screen = document.getElementById('topochain-leaderboard-screen');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.add('hidden');
+      const lb = document.getElementById('leaderboard-screen');
+      if (lb) lb.classList.add('hidden');
+      const ch = document.getElementById('challenges-screen');
+      if (ch) ch.classList.add('hidden');
+      const pf = document.getElementById('profile-screen');
+      if (pf) pf.classList.add('hidden');
+      const ad = document.getElementById('admin-screen');
+      if (ad) ad.classList.add('hidden');
+      const ts = document.getElementById('topochain-seasons-screen');
+      if (ts) ts.classList.add('hidden');
+      if (screen) screen.classList.remove('hidden');
+    }, { type: fromIframe ? 'none' : 'push' });
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    App.setHeaderTitle('Topochain leaderboard');
+    App._inTopochainLeaderboard = true;
+    if (window.TopochainLeaderboard?.open) TopochainLeaderboard.open();
+  },
+
+  _exitTopochainLeaderboard() {
+    App._inTopochainLeaderboard = false;
+    const screen = document.getElementById('topochain-leaderboard-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.TopochainLeaderboard?.close) TopochainLeaderboard.close();
+  },
+
+  // Show the Topochain seasons/events screen (Task 14, public screens).
+  // Sibling to navigateToTopochainLeaderboard — same shape, no auth gate.
+  navigateToTopochainSeasons() {
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inChallenges) App._exitChallenges();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
+    const screen = document.getElementById('topochain-seasons-screen');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.add('hidden');
+      const lb = document.getElementById('leaderboard-screen');
+      if (lb) lb.classList.add('hidden');
+      const ch = document.getElementById('challenges-screen');
+      if (ch) ch.classList.add('hidden');
+      const pf = document.getElementById('profile-screen');
+      if (pf) pf.classList.add('hidden');
+      const ad = document.getElementById('admin-screen');
+      if (ad) ad.classList.add('hidden');
+      const tl = document.getElementById('topochain-leaderboard-screen');
+      if (tl) tl.classList.add('hidden');
+      if (screen) screen.classList.remove('hidden');
+    }, { type: fromIframe ? 'none' : 'push' });
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    App.setHeaderTitle('Topochain seasons');
+    App._inTopochainSeasons = true;
+    if (window.TopochainSeasons?.open) TopochainSeasons.open();
+  },
+
+  _exitTopochainSeasons() {
+    App._inTopochainSeasons = false;
+    const screen = document.getElementById('topochain-seasons-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.TopochainSeasons?.close) TopochainSeasons.close();
   },
 
   // Push a new history entry on real screen transitions (entering an
@@ -3059,6 +3196,8 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
+    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     // Real screen navigation. From the home feed the app view expands
     // out of the clicked tile (kit 'zoom-in'); from anywhere else (deep
     // link, history restore, tile off-screen, reduced motion) the kit
@@ -3148,6 +3287,8 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
+    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
     // hides the app view and clears its content — exactly once on
