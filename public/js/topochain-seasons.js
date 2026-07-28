@@ -53,9 +53,28 @@ const TopochainSeasons = {
 
   isOpen() { return TopochainSeasons._open; },
 
+  // Escapes every character that is dangerous in EITHER text-node context
+  // OR a double-quoted attribute-value context (this module interpolates
+  // into both). `&`/`<`/`>` alone is not enough for an attribute value —
+  // an unescaped `"` lets an admin-supplied string (challenge/template
+  // copy, a cta_link, ...) break out of `href="..."` and inject new
+  // attributes (e.g. `onclick=`). Escaping `'` too covers single-quoted
+  // attributes, in case this template literal style is ever copied into
+  // one.
   esc(s) {
     return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  },
+
+  // href-safe URL: only http(s) links are ever rendered as a real anchor.
+  // `esc()` alone stops attribute breakout but does NOT stop a
+  // `javascript:`-scheme href, which executes on click with no markup
+  // injection needed at all. Every cta/mobile_cta link in this file must
+  // go through this before it can reach an `href`; anything that isn't
+  // http(s) renders as plain (escaped) text instead of a clickable link.
+  safeHref(url) {
+    return typeof url === 'string' && /^https?:\/\//i.test(url) ? url : null;
   },
 
   async fetchJson(url) {
@@ -161,7 +180,7 @@ const TopochainSeasons = {
     sel.innerHTML = TopochainSeasons._events.map((ev) => {
       const selected = TopochainSeasons._eventId === ev.id ? ' selected' : '';
       const tag = ev.is_current ? ' (current)' : (ev.is_active ? '' : ' (past)');
-      return `<option value="${ev.id}"${selected}>${esc(ev.name)}${esc(tag)}</option>`;
+      return `<option value="${esc(ev.id)}"${selected}>${esc(ev.name)}${esc(tag)}</option>`;
     }).join('') || '<option value="">No events</option>';
   },
 
@@ -270,7 +289,7 @@ const TopochainSeasons = {
     const cards = TopochainSeasons._challenges.map((c, i) => {
       const cp = c.card_preview || {};
       return `
-        <div class="tc-se-card bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors" data-idx="${i}">
+        <div class="tc-se-card bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 cursor-pointer hover:border-violet-400 dark:hover:border-violet-600 transition-colors" data-idx="${esc(i)}">
           <div class="text-[10px] uppercase tracking-wide text-violet-600 dark:text-violet-400 font-semibold mb-1">${esc(cp.label || '')}</div>
           <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100 mb-1">${esc(cp.goal || '')}</div>
           <p class="text-xs text-zinc-500 line-clamp-2">${esc(cp.task || '')}</p>
@@ -332,6 +351,22 @@ const TopochainSeasons = {
     TopochainSeasons._renderDetailOverlay();
   },
 
+  // Renders a `detail_modal` CTA, scheme-guarded: only an http(s) link
+  // (per safeHref) becomes a real, clickable anchor. Anything else
+  // (missing, `javascript:`, a bare string, ...) renders the label as
+  // plain escaped text with no href at all — never an anchor whose href
+  // an attacker-controlled scheme could turn into script execution.
+  _ctaHtml(dm) {
+    const esc = TopochainSeasons.esc;
+    const label = esc(dm.cta_label || dm.cta_button || 'Go');
+    if (!dm.cta_link) return '';
+    const href = TopochainSeasons.safeHref(dm.cta_link);
+    if (!href) {
+      return `<p class="mb-3 text-xs text-zinc-500">${label} <span class="italic">(link unavailable)</span></p>`;
+    }
+    return `<a href="${esc(href)}" target="_blank" rel="noopener" class="inline-block mb-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">${label}</a>`;
+  },
+
   _renderDetailOverlay() {
     const panel = document.getElementById('tc-se-detail-panel');
     if (!panel) return;
@@ -351,7 +386,7 @@ const TopochainSeasons = {
       entriesHtml = `
         <ul class="space-y-1">
           ${bd.entries.map((e) => `
-            <li class="tc-se-entry flex items-center justify-between gap-3 text-xs p-1.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer" data-user-id="${e.user_id}">
+            <li class="tc-se-entry flex items-center justify-between gap-3 text-xs p-1.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 cursor-pointer" data-user-id="${esc(e.user_id)}">
               <span class="text-zinc-700 dark:text-zinc-200">${esc(e.display_name)}${e.is_non_podium ? ' <span class="text-zinc-400">(non-podium)</span>' : ''}</span>
               <span class="font-mono text-zinc-400">${esc(e.points)}${e.rate != null ? ` · ${esc(e.rate)}%` : ''}</span>
             </li>`).join('')}
@@ -376,7 +411,7 @@ const TopochainSeasons = {
       ${dm.description ? `<p class="text-sm text-zinc-600 dark:text-zinc-300 mb-2">${esc(dm.description)}</p>` : ''}
       ${dm.requirements ? `<p class="text-xs text-zinc-500 mb-2"><span class="font-medium">Requirements:</span> ${esc(dm.requirements)}</p>` : ''}
       ${dm.reward_logic ? `<p class="text-xs text-zinc-500 mb-3"><span class="font-medium">Reward logic:</span> ${esc(dm.reward_logic)}</p>` : ''}
-      ${dm.cta_link ? `<a href="${esc(dm.cta_link)}" target="_blank" rel="noopener" class="inline-block mb-3 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">${esc(dm.cta_label || dm.cta_button || 'Go')}</a>` : ''}
+      ${TopochainSeasons._ctaHtml(dm)}
       <div class="border-t border-zinc-200 dark:border-zinc-800 pt-3">
         <div class="text-xs uppercase tracking-wide text-zinc-500 mb-1">Participants</div>
         ${totalsHtml}

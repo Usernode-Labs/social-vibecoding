@@ -62,9 +62,16 @@ const TopochainLeaderboard = {
 
   isOpen() { return TopochainLeaderboard._open; },
 
+  // Escapes every character that is dangerous in EITHER text-node context
+  // OR a double-quoted attribute-value context (this module interpolates
+  // into both — e.g. row data inside data-* attributes). `&`/`<`/`>`
+  // alone is not enough for an attribute value: an unescaped `"` lets an
+  // interpolated string break out of the attribute and inject new ones.
+  // Escaping `'` too covers single-quoted attributes.
   esc(s) {
     return String(s == null ? '' : s)
-      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   },
 
   // Safe fetch+parse, ported from admin-console.js's fetchJson: never
@@ -154,7 +161,7 @@ const TopochainLeaderboard = {
       .concat(TopochainLeaderboard._events.map((ev) => {
         const selected = current === ev.id ? ' selected' : '';
         const tag = ev.is_current ? ' (current)' : (ev.is_active ? '' : ' (past)');
-        return `<option value="${ev.id}"${selected}>${esc(ev.name)}${esc(tag)}</option>`;
+        return `<option value="${esc(ev.id)}"${selected}>${esc(ev.name)}${esc(tag)}</option>`;
       }));
     sel.innerHTML = options.join('');
     // Reflect a server-resolved "current" event id back into the select
@@ -259,7 +266,7 @@ const TopochainLeaderboard = {
         ? ' <span class="text-[10px] uppercase tracking-wide text-zinc-400" title="Excluded from podium ranking">non-podium</span>'
         : '';
       return `
-        <tr class="tc-lb-row border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer" data-row-index="${i}">
+        <tr class="tc-lb-row border-b border-zinc-100 dark:border-zinc-800 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer" data-row-index="${esc(i)}">
           <td class="px-3 py-2 text-sm font-mono text-zinc-500">${esc(rankDisplay)}</td>
           <td class="px-3 py-2 text-sm">
             <span class="font-medium text-zinc-900 dark:text-zinc-100">${esc(r.display_name)}</span>${nonPodiumTag}

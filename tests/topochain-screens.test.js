@@ -170,6 +170,39 @@ test('both screens escape interpolated values with the established esc() idiom',
   }
 });
 
+test('esc() escapes quotes too, not just & < >', () => {
+  // Attribute-value breakout (`<option value="` / `data-*="`, ...) needs
+  // both quote characters escaped, not just the text-node-unsafe three —
+  // stopping-XSS review, task 14 fix.
+  for (const src of [leaderboardJs, seasonsJs]) {
+    const fn = src.slice(src.indexOf('esc(s) {'), src.indexOf('esc(s) {') + 300);
+    assert.match(fn, /\.replace\(\/"\/g, '&quot;'\)/, 'esc() escapes double quotes');
+    assert.match(fn, /\.replace\(\/'\/g, '&#39;'\)/, 'esc() escapes single quotes');
+  }
+});
+
+test('the challenge CTA link is scheme-guarded before it ever reaches an href', () => {
+  // stopping-XSS review, task 14 fix: a `javascript:` (or any non-http[s])
+  // cta_link must never become a clickable anchor — only escaping the
+  // string is not enough, the scheme itself must be validated.
+  const safeHrefFn = seasonsJs.slice(seasonsJs.indexOf('safeHref(url) {'), seasonsJs.indexOf('async fetchJson(url) {'));
+  assert.ok(safeHrefFn.length > 0, 'safeHref located');
+  assert.ok(safeHrefFn.includes('/^https?:\\/\\//i.test(url)'),
+    'safeHref validates the URL scheme with an http(s)-only regex');
+  const ctaFn = seasonsJs.slice(seasonsJs.indexOf('_ctaHtml(dm) {'), seasonsJs.indexOf('_renderDetailOverlay() {'));
+  assert.ok(ctaFn.length > 0, '_ctaHtml located');
+  assert.match(ctaFn, /TopochainSeasons\.safeHref\(dm\.cta_link\)/,
+    'the cta_link is run through safeHref before being used as an href');
+  assert.match(ctaFn, /if \(!href\)/,
+    'a link that fails the scheme check never reaches an <a href>');
+  // The only href in either file is this one, scheme-guarded — assert
+  // there is no OTHER raw href="${...}" interpolation anywhere that
+  // bypasses safeHref.
+  const hrefSites = (seasonsJs.match(/href="\$\{/g) || []).length
+    + (leaderboardJs.match(/href="\$\{/g) || []).length;
+  assert.equal(hrefSites, 1, 'exactly one interpolated href exists across both files — the safeHref-guarded cta_link');
+});
+
 // ─── dapp.json ────────────────────────────────────────────────────────────
 
 test('dapp.json locks both rendered pages in with checks', () => {
