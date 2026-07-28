@@ -31,6 +31,7 @@ const {
   deriveScopeColumns,
   buildBackfillMetadata,
   mapBackfillRow,
+  findAwardBackfillCollisions,
 } = require('../scripts/topochain-load');
 
 const loadSrc = fs.readFileSync(path.join(__dirname, '..', 'scripts/topochain-load.js'), 'utf8');
@@ -256,6 +257,87 @@ test('buildBackfillMetadata: activity_extra_points omits reason/wallet_address w
   assert.deepEqual(metadata, { origin: 'activity_extra_points', kind: 'extra_points' });
   assert.equal('reason' in metadata, false);
   assert.equal('wallet_address' in metadata, false);
+});
+
+// ═════════════════════════════════════════════════════════════════════
+// 5b. findAwardBackfillCollisions — the award-backfill pre-flight check
+// against the two §4.10 replay-protection partial unique indexes
+// ═════════════════════════════════════════════════════════════════════
+
+test('findAwardBackfillCollisions: two unrelated award rows produce no collisions', () => {
+  const actions = [
+    { origin: 'flash_challenge_completions', sourceId: 1, userId: 10, challengeId: 20, kind: 'challenge_completion', nullifierHex: null, targetIdentity: 'insert:flash_challenge_completions:1' },
+    { origin: 'flash_challenge_completions', sourceId: 2, userId: 11, challengeId: 20, kind: 'challenge_completion', nullifierHex: null, targetIdentity: 'insert:flash_challenge_completions:2' },
+  ];
+  assert.deepEqual(findAwardBackfillCollisions(actions), []);
+});
+
+test('findAwardBackfillCollisions: two DIFFERENT source rows inserting the same (user, challenge) completion key collide', () => {
+  // This is the duplicate-completion case from the review: the source
+  // has two unlinked completions for the same participant+challenge —
+  // both would insert a fresh user_activities row with
+  // kind: 'challenge_completion', which is exactly what
+  // user_activities_completion_unique (user_id, challenge_id) forbids.
+  const actions = [
+    { origin: 'flash_challenge_completions', sourceId: 1, userId: 10, challengeId: 20, kind: 'challenge_completion', nullifierHex: null, targetIdentity: 'insert:flash_challenge_completions:1' },
+    { origin: 'flash_challenge_completions', sourceId: 2, userId: 10, challengeId: 20, kind: 'challenge_completion', nullifierHex: null, targetIdentity: 'insert:flash_challenge_completions:2' },
+  ];
+  const collisions = findAwardBackfillCollisions(actions);
+  assert.equal(collisions.length, 1);
+  assert.match(collisions[0].indexName, /user_activities_completion_unique/);
+  assert.equal(collisions[0].key, '10:20');
+  assert.deepEqual(
+    new Set(collisions[0].actions.map((a) => `${a.origin}#${a.sourceId}`)),
+    new Set(['flash_challenge_completions#1', 'flash_challenge_completions#2'])
+  );
+});
+
+test('findAwardBackfillCollisions: an insert colliding with an already-reconciled key is caught too', () => {
+  // flash_challenge_completions#1 reconciles onto an existing activity
+  // (target id 555); zkpassport_completions#7 is unlinked and would
+  // INSERT a fresh row for the SAME (user, challenge) — two distinct
+  // physical rows both claiming kind: 'challenge_completion'.
+  const actions = [
+    { origin: 'flash_challenge_completions', sourceId: 1, userId: 10, challengeId: 20, kind: 'challenge_completion', nullifierHex: null, targetIdentity: 'reconcile:555' },
+    { origin: 'zkpassport_completions', sourceId: 7, userId: 10, challengeId: 20, kind: 'challenge_completion', nullifierHex: '0xabc', targetIdentity: 'insert:zkpassport_completions:7' },
+  ];
+  const collisions = findAwardBackfillCollisions(actions);
+  const completionCollision = collisions.find((c) => /completion_unique/.test(c.indexName));
+  assert.ok(completionCollision, 'the completion-unique collision must be reported');
+  assert.equal(completionCollision.key, '10:20');
+});
+
+test('findAwardBackfillCollisions: two reconciles onto the SAME existing row are never flagged (not a real collision)', () => {
+  // Same targetIdentity ("reconcile:555" both times) means these are two
+  // award-table rows both linked to the SAME already-existing activity —
+  // updating it twice is harmless, not two rows fighting over one key.
+  const actions = [
+    { origin: 'flash_challenge_completions', sourceId: 1, userId: 10, challengeId: 20, kind: 'challenge_completion', nullifierHex: null, targetIdentity: 'reconcile:555' },
+    { origin: 'zkpassport_completions', sourceId: 2, userId: 10, challengeId: 20, kind: 'challenge_completion', nullifierHex: null, targetIdentity: 'reconcile:555' },
+  ];
+  assert.deepEqual(findAwardBackfillCollisions(actions), []);
+});
+
+test('findAwardBackfillCollisions: two rows claiming the same (challenge, nullifier_hex) collide on the nullifier index', () => {
+  const actions = [
+    { origin: 'zkpassport_completions', sourceId: 3, userId: 10, challengeId: 20, kind: 'challenge_completion', nullifierHex: '0xdead', targetIdentity: 'insert:zkpassport_completions:3' },
+    { origin: 'zkpassport_completions', sourceId: 4, userId: 11, challengeId: 20, kind: 'challenge_completion', nullifierHex: '0xdead', targetIdentity: 'insert:zkpassport_completions:4' },
+  ];
+  const collisions = findAwardBackfillCollisions(actions);
+  const nullifierCollision = collisions.find((c) => /nullifier_unique/.test(c.indexName));
+  assert.ok(nullifierCollision, 'the nullifier-unique collision must be reported');
+  assert.equal(nullifierCollision.key, '20:0xdead');
+});
+
+test('findAwardBackfillCollisions: activity_extra_points rows (kind: extra_points) never collide on the completion index', () => {
+  // Two bonus awards to the same user+challenge are legitimate (no
+  // uniqueness constraint governs them) — only kind: 'challenge_completion'
+  // rows are checked against that index.
+  const actions = [
+    { origin: 'activity_extra_points', sourceId: 1, userId: 10, challengeId: 20, kind: 'extra_points', nullifierHex: null, targetIdentity: 'insert:activity_extra_points:1' },
+    { origin: 'activity_extra_points', sourceId: 2, userId: 10, challengeId: 20, kind: 'extra_points', nullifierHex: null, targetIdentity: 'insert:activity_extra_points:2' },
+  ];
+  assert.deepEqual(findAwardBackfillCollisions(actions), []);
 });
 
 // ═════════════════════════════════════════════════════════════════════

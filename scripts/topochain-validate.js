@@ -71,10 +71,11 @@ const ROW_COUNT_TABLE_MAP = {
 // ─── Orphan-FK gate declarations (SPEC §8.7: "every user_id,
 // season_event_id, challenge_id, challenge_template_id, season_id,
 // terms_version_id and kind resolves") ──────────────────────────────────
-// [table, column, referencedTable, referencedColumn]. `slot_outcome_
-// reports.user_id` has no database-level FK (per schema.sql, a plain
-// column) but the gate's wording names the COLUMN, not "every declared
-// FK", so it is checked here too — nullable, best-effort.
+// [table, column, referencedTable, referencedColumn]. Two entries here
+// have no database-level FK at all (both plain columns per schema.sql):
+// `slot_outcome_reports.user_id` and `leaderboard_snapshots.season_id`.
+// The gate's wording names the COLUMN, not "every declared FK", so both
+// are checked here too — nullable, best-effort, same reasoning for each.
 const FK_CHECKS = [
   ['season_events', 'season_id', 'seasons', 'id'],
   ['user_enrollments', 'user_id', 'users', 'id'],
@@ -92,6 +93,7 @@ const FK_CHECKS = [
   ['onchain_accounts', 'user_id', 'users', 'id'],
   ['leaderboard_snapshots', 'season_event_id', 'season_events', 'id'],
   ['leaderboard_snapshots', 'user_id', 'users', 'id'],
+  ['leaderboard_snapshots', 'season_id', 'seasons', 'id'],
   ['token_allocation', 'user_id', 'users', 'id'],
   ['token_allocation', 'season_id', 'seasons', 'id'],
   ['epoch_stats', 'user_id', 'users', 'id'],
@@ -621,16 +623,21 @@ if (require.main === module) {
     // Same read-only hardening as topochain-load.js (see its header
     // comment) — belt and suspenders even though this CLI path only ever
     // SELECTs.
+    // Same two-mechanism hardening as topochain-load.js's makeSourcePool
+    // (see that file's comment for the full reasoning): `options`
+    // is the standalone guarantee (a Postgres startup-packet option, set
+    // server-side before any query runs); `onConnect` — pg-pool's own
+    // hook, awaited before a client is ever handed back to a caller — is
+    // belt-and-braces, and unlike an unawaited 'connect'-event query, a
+    // failed SET here actually fails the connection instead of being
+    // silently swallowed.
     const sourcePool = sourceUrl
-      ? new Pool({ connectionString: sourceUrl, options: '-c default_transaction_read_only=on' })
+      ? new Pool({
+          connectionString: sourceUrl,
+          options: '-c default_transaction_read_only=on',
+          onConnect: (client) => client.query('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY'),
+        })
       : null;
-    if (sourcePool) {
-      sourcePool.on('connect', (client) => {
-        client.query('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY').catch((err) => {
-          console.error('Failed to set source connection read-only:', err.message);
-        });
-      });
-    }
 
     const targetClient = await targetPool.connect();
     let allPass = false;

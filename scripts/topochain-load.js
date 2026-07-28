@@ -86,6 +86,17 @@
 // real source differs, only these specific functions need to change —
 // nothing about the load order, the merge algorithm, or the validation
 // gates depends on the exact shape guessed here.
+//
+// A second, load-bearing assumption specific to the award backfill
+// (backfillAwards, below): the source enforces "one completion per
+// (user, challenge)" and "one claim per (challenge, nullifier)" — the
+// same guarantee its own `flash_challenge_completions`/`zkpassport_
+// completions` tables existed to provide before this migration converts
+// their rows into `user_activities` entries governed by the two §4.10
+// replay-protection partial unique indexes. This is checked, not just
+// assumed silently: findAwardBackfillCollisions() runs before any award
+// row is written and fails loud, naming every colliding source row, if
+// two rows would land on the same protected key.
 'use strict';
 
 const { Pool } = require('pg');
@@ -743,6 +754,98 @@ async function loadUserActivities(client, sourcePool, participantMap, phasesMap,
   return activitiesMap;
 }
 
+// findAwardBackfillCollisions(actions) -> [] | [{ indexName, key, actions }]
+//
+// Pure pre-flight check for the award backfill's two replay-protection
+// partial unique indexes (schema.sql:2246-2252 — `user_activities_
+// completion_unique (user_id, challenge_id) WHERE kind =
+// 'challenge_completion'` and `user_activities_nullifier_unique
+// (challenge_id, nullifier_hex) WHERE nullifier_hex IS NOT NULL`).
+//
+// This migration ASSUMES the source enforces "one completion per
+// (user, challenge)" and "one claim per (challenge, nullifier)" — the
+// same guarantee `flash_challenge_completions`/`zkpassport_completions`
+// existed to provide in the source app (see the file header's
+// documented-assumptions note). If a dump violates that assumption, the
+// backfill would otherwise hit one of these indexes as a raw Postgres
+// 23505 buried inside a loop — useless for an operator to act on. This
+// function finds every violated key BEFORE any insert/update runs and
+// names every source row involved, so the failure is a diagnosis, not a
+// stack trace.
+//
+//   actions: [{ origin, sourceId, userId, challengeId, kind, nullifierHex, targetIdentity }]
+//     `targetIdentity` distinguishes "the same physical destination row"
+//     from "a genuinely different one": a RECONCILE action's identity is
+//     the (already-existing) target user_activities id it will UPDATE —
+//     so two award rows reconciling onto the SAME existing activity are
+//     never flagged (it's one UPDATE landing twice, not a conflict). An
+//     INSERT action's identity is unique to itself (a new row always
+//     collides with anything else sharing its key). A real collision is
+//     a key backed by 2+ DISTINCT target identities.
+function findAwardBackfillCollisions(actions) {
+  const byCompletionKey = new Map();
+  const byNullifierKey = new Map();
+  for (const action of actions) {
+    if (action.kind === 'challenge_completion') {
+      const key = `${action.userId}:${action.challengeId}`;
+      if (!byCompletionKey.has(key)) byCompletionKey.set(key, []);
+      byCompletionKey.get(key).push(action);
+    }
+    if (action.nullifierHex != null) {
+      const key = `${action.challengeId}:${action.nullifierHex}`;
+      if (!byNullifierKey.has(key)) byNullifierKey.set(key, []);
+      byNullifierKey.get(key).push(action);
+    }
+  }
+
+  const collisions = [];
+  const check = (map, indexName) => {
+    for (const [key, groupActions] of map) {
+      const distinctTargets = new Set(groupActions.map((a) => a.targetIdentity));
+      if (distinctTargets.size > 1) {
+        collisions.push({
+          indexName,
+          key,
+          actions: groupActions.map((a) => ({ origin: a.origin, sourceId: a.sourceId })),
+        });
+      }
+    }
+  };
+  check(byCompletionKey, 'user_activities_completion_unique (user_id, challenge_id)');
+  check(byNullifierKey, 'user_activities_nullifier_unique (challenge_id, nullifier_hex)');
+  return collisions;
+}
+
+function formatAwardBackfillCollisions(collisions) {
+  const detail = collisions
+    .map((c) => `${c.indexName} key ${c.key}: ${c.actions.map((a) => `${a.origin}#${a.sourceId}`).join(', ')}`)
+    .join('; ');
+  return (
+    'Award backfill would violate a replay-protection unique index on user_activities. This migration assumes ' +
+    'the source enforces "one completion per (user, challenge)" and "one claim per (challenge, nullifier)" (see ' +
+    "this file's header) — that assumption does not hold for this dump; the offending rows need manual " +
+    `reconciliation before re-running. Colliding groups: ${detail}`
+  );
+}
+
+// If the pre-flight check above somehow misses a case (it is not
+// expected to, but it is defense in depth, the same two-independent-
+// mechanisms posture as the read-only source guarantee), a genuine
+// 23505 from Postgres is rethrown with the same diagnosis rather than
+// left as a bare driver error.
+function diagnoseUniqueViolation(err, origin, sourceId) {
+  if (err && err.code === '23505') {
+    return new Error(
+      `Award backfill row from ${origin}#${sourceId} violated a replay-protection unique index on ` +
+        `user_activities (${err.constraint || 'unknown constraint'}) that the pre-flight collision check did not ` +
+        `catch. This migration assumes the source enforces "one completion per (user, challenge)" and "one claim ` +
+        `per (challenge, nullifier)" (see the file header) — that assumption does not hold for this dump. ` +
+        `Original error: ${err.message}`
+    );
+  }
+  return err;
+}
+
 // The §8.6 award backfill: flash_challenge_completions +
 // zkpassport_completions + activity_extra_points -> user_activities.
 // Assumed source shape for all three (see the file header note): each
@@ -752,11 +855,18 @@ async function loadUserActivities(client, sourcePool, participantMap, phasesMap,
 // matching points-bearing activity row for this exact completion/award —
 // the reconcile path). zkpassport rows additionally carry `session_id`/
 // `nullifier_hex`; activity_extra_points rows carry `points`/`reason`/
-// `wallet_address`.
+// `wallet_address`. A further assumption, load-bearing for this
+// function specifically: the source enforces "one completion per (user,
+// challenge)" and "one claim per (challenge, nullifier)" the same way
+// its own now-excluded completion tables did — findAwardBackfillCollisions
+// checks that assumption up front rather than trusting it silently.
 async function backfillAwards(client, sourcePool, participantMap, challengesMap, challengeToSeasonEvent, activitiesMap) {
   const origins = ['flash_challenge_completions', 'zkpassport_completions', 'activity_extra_points'];
-  let inserted = 0;
-  let reconciled = 0;
+
+  // Phase 1: resolve every row's ids and decide its mode (reconcile vs
+  // insert) WITHOUT touching the database — this is what makes the
+  // collision check below possible before any write happens.
+  const planned = [];
   for (const origin of origins) {
     const rows = await fetchAll(sourcePool, origin);
     for (const row of rows) {
@@ -767,22 +877,65 @@ async function backfillAwards(client, sourcePool, participantMap, challengesMap,
         throw new Error(`${origin}: unmapped phase_available_activity_id ${row.phase_available_activity_id}`);
       }
       const seasonEventId = challengeToSeasonEvent.get(challengeId);
-
       const mapped = mapBackfillRow(origin, row, { userId, challengeId, seasonEventId });
+
+      let targetIdentity;
       if (mapped.mode === 'reconcile') {
         const targetActivityId = activitiesMap.get(mapped.sourceOffchainActivityId);
         if (targetActivityId === undefined) {
           throw new Error(`${origin}: unmapped offchain_activity_id ${mapped.sourceOffchainActivityId} to reconcile`);
         }
+        targetIdentity = `reconcile:${targetActivityId}`;
+      } else {
+        targetIdentity = `insert:${origin}:${row.id}`;
+      }
+
+      const metadata = mapped.mode === 'reconcile' ? mapped.metadataPatch : mapped.row.metadata;
+      planned.push({
+        origin,
+        sourceId: row.id,
+        userId,
+        challengeId,
+        kind: metadata.kind,
+        nullifierHex: metadata.nullifier_hex ?? null,
+        targetIdentity,
+        mapped,
+      });
+    }
+  }
+
+  // Phase 2: fail loud, up front, if any two rows would land on the same
+  // replay-protection key.
+  const collisions = findAwardBackfillCollisions(planned);
+  if (collisions.length > 0) {
+    throw new Error(formatAwardBackfillCollisions(collisions));
+  }
+
+  // Phase 3: execute. The 23505 catch here is defense in depth (see
+  // diagnoseUniqueViolation's comment) — the collision check above
+  // should already have ruled this out.
+  let inserted = 0;
+  let reconciled = 0;
+  for (const action of planned) {
+    const { mapped, origin, sourceId } = action;
+    if (mapped.mode === 'reconcile') {
+      const targetActivityId = activitiesMap.get(mapped.sourceOffchainActivityId);
+      try {
         await client.query(
           "UPDATE user_activities SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb WHERE id = $2",
           [JSON.stringify(mapped.metadataPatch), targetActivityId]
         );
-        reconciled++;
-      } else {
-        await insertRow(client, 'user_activities', mapped.row);
-        inserted++;
+      } catch (err) {
+        throw diagnoseUniqueViolation(err, origin, sourceId);
       }
+      reconciled++;
+    } else {
+      try {
+        await insertRow(client, 'user_activities', mapped.row);
+      } catch (err) {
+        throw diagnoseUniqueViolation(err, origin, sourceId);
+      }
+      inserted++;
     }
   }
   return { inserted, reconciled, total: inserted + reconciled };
@@ -829,8 +982,14 @@ async function loadAccountDelegationPeriods(client, sourcePool) {
 // leaderboard_snapshots <- leaderboard_snapshots. `season_id` is a plain
 // (no-FK) column in the target but still an id whose VALUE changes
 // across the migration (fresh season ids, SPEC §8.2), so it is remapped
-// through `seasonsMap` the same as everywhere else — just without a
-// database constraint enforcing it.
+// through `seasonsMap` the same as everywhere else and fails loud (like
+// every other unmapped-id case in this file) rather than silently
+// nulling out on an unmapped id — there is no database FK to catch that
+// for us here, so this is the one place doing so is entirely on this
+// function; topochain-validate.js's orphan-fk gate checks it too, since
+// SPEC §8.7 names `season_id` as a column to verify at every occurrence,
+// not only where a database FK happens to exist (the same reasoning
+// behind that gate also covering slot_outcome_reports.user_id).
 async function loadLeaderboardSnapshots(client, sourcePool, participantMap, phasesMap, seasonsMap) {
   const rows = await fetchAll(sourcePool, 'leaderboard_snapshots');
   const columns = [
@@ -848,7 +1007,11 @@ async function loadLeaderboardSnapshots(client, sourcePool, participantMap, phas
     if (seasonEventId === undefined) throw new Error(`leaderboard_snapshots: unmapped phase_id ${row.phase_id}`);
     const userId = participantMap.get(row.participant_id);
     if (userId === undefined) throw new Error(`leaderboard_snapshots: unmapped participant_id ${row.participant_id}`);
-    const seasonId = row.season_id != null ? seasonsMap.get(row.season_id) ?? null : null;
+    let seasonId = null;
+    if (row.season_id != null) {
+      seasonId = seasonsMap.get(row.season_id);
+      if (seasonId === undefined) throw new Error(`leaderboard_snapshots: unmapped season_id ${row.season_id}`);
+    }
     batch.push([
       seasonEventId, userId, row.rank, row.total_points ?? 0, row.offchain_points ?? 0, row.snapshot_at,
       row.created_at ?? null, row.updated_at ?? null,
@@ -1165,22 +1328,21 @@ function parseArgs(argv) {
 // both mechanisms exist. Exported so tests/topochain-load.test.js can
 // assert the exact strings are present without duplicating them.
 function makeSourcePool(connectionString) {
-  const pool = new Pool({ connectionString, options: '-c default_transaction_read_only=on' });
-  // The unawaited client.query() here is node-postgres's own documented
-  // idiom for per-connection setup (the same shape its docs use for
-  // `search_path`): it fires synchronously inside the 'connect' event,
-  // before the connection is handed back to whoever is awaiting
-  // pool.connect()/pool.query(), so the SET always completes first —
-  // Postgres processes each connection's queries strictly in submission
-  // order. It does trigger a pg deprecation notice ("client already
-  // executing a query") because pg queues it internally rather than the
-  // caller awaiting it; that queuing behavior is exactly what makes the
-  // ordering guarantee hold today, so the warning is expected and
-  // harmless, not a race condition.
-  pool.on('connect', (client) => {
-    client.query('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY').catch((err) => {
-      log.error('topochain-load', 'Failed to set source connection read-only', { message: err.message });
-    });
+  // Mechanism #1, the standalone guarantee: the `options` connection
+  // parameter is a Postgres startup-packet option, equivalent to
+  // `psql -c`, so `default_transaction_read_only=on` is set by the
+  // SERVER for this session before any query — even a bug in this file
+  // that somehow ran a mutating statement would still be refused.
+  // Mechanism #2, belt-and-braces: `onConnect` (pg-pool's own hook,
+  // `node_modules/pg-pool/index.js`) runs before a newly-connected
+  // client is EVER handed back to a caller — pg-pool awaits it and, if
+  // it rejects, tears the client down and fails whatever was waiting on
+  // it, so a failed SET here can never be silently swallowed the way an
+  // unawaited `client.query()` on the 'connect' event would be.
+  const pool = new Pool({
+    connectionString,
+    options: '-c default_transaction_read_only=on',
+    onConnect: (client) => client.query('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY'),
   });
   return pool;
 }
@@ -1278,6 +1440,7 @@ module.exports = {
   deriveScopeColumns,
   buildBackfillMetadata,
   mapBackfillRow,
+  findAwardBackfillCollisions,
   // DB-touching, exported for reuse/testing
   querySource,
   makeSourcePool,
