@@ -52,7 +52,6 @@ function makeHarness({ input = null, coarsePointer = false, draftWorks = true } 
     relTime: () => 'just now',
     Kudos: { renderButton: () => '' },
     ConfirmModal: { show: async () => true },
-    ProposalDiscuss: { open: () => {} },
     document: {
       getElementById: (id) => (id === 'dc-input' ? input : null),
       querySelector: () => null,

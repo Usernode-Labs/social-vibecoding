@@ -715,15 +715,17 @@ async function compareRefs(owner, repo, basehead) {
   };
 }
 
-// #297: a size-capped unified diff for the proposal-advisor context.
-// Concatenates the per-file `patch` hunks from the compare endpoint
-// (`main...<branch>`) into one unified-diff string, truncated to a hard
-// char budget so a huge PR can't blow the advisor's prompt budget.
-// Mirrors listChangedFiles' use of compareCommitsWithBasehead (so it
-// works on any ref pair, PR or not). Binary / overly-large files have no
-// `patch` field — those get a one-line "+N/-M" summary instead. Throws on
-// transport errors; the proposal-discuss route fails open (metadata +
-// spec only) rather than letting a GitHub hiccup break the conversation.
+// #297: a size-capped unified diff for LLM context. Concatenates the
+// per-file `patch` hunks from the compare endpoint (`main...<branch>`)
+// into one unified-diff string, truncated to a hard char budget so a huge
+// PR can't blow a prompt budget. Mirrors listChangedFiles' use of
+// compareCommitsWithBasehead (so it works on any ref pair, PR or not).
+// Binary / overly-large files have no `patch` field — those get a one-line
+// "+N/-M" summary instead. Throws on transport errors, so callers that
+// treat the diff as optional context should fail open around it.
+//
+// #827 retired its only caller (the proposal-advisor route). Kept as a
+// generic sibling of listChangedFiles / compareRefs.
 const PROPOSAL_DIFF_CHAR_BUDGET = 12000;
 
 async function getProposalDiff(owner, repo, basehead, charBudget = PROPOSAL_DIFF_CHAR_BUDGET) {

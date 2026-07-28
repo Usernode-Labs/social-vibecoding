@@ -157,18 +157,6 @@ const chatLimiter = makeLimiter({
   message: 'Too many chat messages — slow down for a minute.',
 });
 
-// #297: the per-proposal "Ask AI" advisor. Same 30/min/user shape as
-// chatLimiter — it hits the same daily LLM budget, so it must not be a
-// faster drain path than the dev chat. Per-user keyed for the same
-// shared-NAT fairness reason.
-const proposalDiscussLimiter = makeLimiter({
-  windowMs: 60 * 1000,
-  max: 30,
-  name: 'proposal-discuss',
-  keyByUser: true,
-  message: 'Too many messages — slow down for a minute.',
-});
-
 // #556: live title previews for the feedback modal (POST /api/feedback/
 // title). Same sizing rationale as chatLimiter — each call is a Haiku
 // spend against the daily LLM budget, so this must not become a faster
@@ -269,4 +257,4 @@ const dbExportLimiter = makeLimiter({
   message: (s) => `Rate limit reached: up to 3 database exports per day. You can try again ${retryPhrase(s)}.`,
 });
 
-module.exports = { dbExportLimiter, authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, proposalDiscussLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter };
+module.exports = { dbExportLimiter, authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter };

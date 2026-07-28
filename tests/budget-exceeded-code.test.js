@@ -31,13 +31,9 @@ test('sessions.js tags both billing 429s (chat turn + headless start) with budge
     'a bare billing 429 (no code) would be indistinguishable from a throttle');
 });
 
-test('proposal-discuss.js tags its billing 429 with budget_exceeded', () => {
-  const src = read('src/routes/proposal-discuss.js');
-  const tagged = src.match(TAGGED_429) || [];
-  assert.equal(tagged.length, 1);
-  assert.doesNotMatch(src,
-    /res\.status\(429\)\.json\(\{ error: billing\.error \}\)/);
-});
+// (#827 removed routes/proposal-discuss.js — the "Ask AI" advisor and its
+// own billing 429 — so sessions.js is the only remaining browser-facing
+// resolveBillingPath site.)
 
 test('rate-limit middleware 429s stay code-free (the discriminator the client relies on)', () => {
   const src = read('src/middleware/rate-limits.js');

@@ -885,14 +885,19 @@ const AppView = {
     // data-issue-row / data-proposal-row / data-gov-row hooks.
     const bodyEl = document.getElementById('dev-body');
     bodyEl.addEventListener('click', (e) => {
-      // #313: the card-level "Ask AI" button is a <button>, so the guard
-      // below would swallow it — handle it first, then bail.
-      const askBtn = e.target.closest('.gc-ask-ai-btn');
-      if (askBtn) { AppView._openAskAiFromCard(askBtn.dataset.proposalId); return; }
+      // #313/#827: the card-level "Explore in dev chat" button is a
+      // <button>, so the guard below would swallow it — handle it first,
+      // then bail. The node is passed along so the opener can disable it
+      // for the duration (a double-tap would otherwise create two chats).
+      const exploreBtn = e.target.closest('.gc-explore-chat-btn');
+      if (exploreBtn) {
+        AppView.exploreProposalInDevChat(exploreBtn.dataset.proposalId, exploreBtn);
+        return;
+      }
       // Session-card buttons (the pinned own-session block + shared
       // cards render on every repaint, so their controls are delegated
       // here rather than re-bound per paint). Handled before the
-      // generic button guard below, like the Ask AI pill.
+      // generic button guard below, like the Explore pill.
       const shareBtn = e.target.closest('[data-share-chip]');
       if (shareBtn) { AppView._setSessionShared(parseInt(shareBtn.dataset.shareChip, 10), true, shareBtn); return; }
       const unshareBtn = e.target.closest('[data-unshare-chip]');
@@ -1172,9 +1177,9 @@ const AppView = {
     } else if (t.kind === 'session') {
       // A shared session's public page: the static card (no nav — we're
       // already here) plus a one-line explainer. The discussion mounts
-      // beneath exactly like a proposal's. No Ask AI (the advisor is
-      // scoped to promoted/merging/merged sessions server-side), no vote
-      // panel — there's nothing to vote on yet.
+      // beneath exactly like a proposal's. No "Explore in dev chat" (there's
+      // no PR to explore yet) and no vote panel — there's nothing to vote
+      // on yet either.
       // Shared rows carry username; the viewer's own rows (from
       // /api/me/active-sessions) don't — the owner is the viewer then.
       const ownerName = item.username || (App.user ? App.user.username : '') || 'someone';
@@ -1193,72 +1198,45 @@ const AppView = {
         : '';
     }
 
-    // #297/#321/#348: the standalone "Ask AI" advisor button is the
-    // governance-only entry point. Opens a private, read-only conversation
-    // scoped to THIS proposal (see proposal-discuss.js).
+    // #827: the only AI affordance on a proposal is the card pill —
+    // "✨ Explore in dev chat" (_exploreChatBtnHtml, rendered when !mine).
+    // It replaced the old private read-only "Ask AI" advisor panel: instead
+    // of a bespoke side-chat, the pill opens the user's real dev chat with a
+    // message about this PR pre-filled (never sent) in the composer.
     //
-    // Why governance only:
-    // - Another user's PR proposal already carries an Ask AI PILL in its card
-    //   action row (_askAiCardBtnHtml, rendered when !mine), so the pill below
-    //   is the keeper and a standalone here would just duplicate it (#321).
-    // - The viewer's OWN PR proposal intentionally has NO Ask AI at all: the
-    //   card omits the pill (#313) because owners reach AI via "Open session"
-    //   + the in-session advisor, and #348 fixed the leftover standalone that
-    //   used to leak onto own proposals here.
-    // - Governance proposals have no dev session and their cards never show a
-    //   pill, so the standalone is the only advisor affordance — keep it
-    //   regardless of who created the proposal.
+    // Who gets it:
+    // - Another user's PR proposal: yes — the pill rides in the card action
+    //   row, and #321's "no duplicate standalone in the head" rule still
+    //   holds (there is no standalone button any more at all).
+    // - The viewer's OWN PR proposal: no (#313/#348) — owners reach the
+    //   Mayor through "Open session" on their own PR.
+    // - Governance proposals: no (#827). A dev chat can only reason about
+    //   repo code and cannot act on a rename / secret change / close-issue
+    //   vote, so a "let's explore this" seed there would mislead. Their
+    //   shared discussion thread is where that conversation belongs.
     const mine = !!(App.user && item.user_id === App.user.id);
-    const cardHasAskAiPill = (t.kind === 'proposal' && !mine);
-    const askAiHtml = (t.kind === 'gov' && !AppView.readOnly) ? AppView._askAiButtonHtml() : '';
+    const cardHasExplorePill = (t.kind === 'proposal' && !mine);
 
-    head.innerHTML = cardHtml + bodyHtml + askAiHtml;
+    head.innerHTML = cardHtml + bodyHtml;
     if (window.Kudos) Kudos.attach(head);
     if (t.kind === 'issue') AppView._loadIssueComments(item);
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
 
-    // #321: wire the kept card pill in the topic head. Unlike the feed and
-    // Completed list, #gc-thread-head has no delegated .gc-ask-ai-btn handler,
-    // so without this the pill would be inert (no click, no availability
-    // dimming). Bind the click to the same advisor opener the standalone used
-    // and run the shared availability pass over this container.
-    if (cardHasAskAiPill) {
-      const pill = head.querySelector('.gc-ask-ai-btn');
+    // #321: wire the card pill in the topic head. Unlike the feed and
+    // Completed list, #gc-thread-head has no delegated
+    // .gc-explore-chat-btn handler, so without this the pill would be inert
+    // (no click, no availability dimming). Bind the click to the same opener
+    // the delegated handler uses and run the shared availability pass over
+    // this container.
+    if (cardHasExplorePill) {
+      const pill = head.querySelector('.gc-explore-chat-btn');
       if (pill) {
         pill.addEventListener('click', () => {
           if (pill.disabled) return;
-          if (typeof ProposalDiscuss !== 'undefined') {
-            ProposalDiscuss.open(t.kind, t.id, AppView._findTopicItem());
-          }
+          AppView.exploreProposalInDevChat(t.id, pill);
         });
       }
-      AppView._applyAskAiCardAvailability(head);
-    }
-
-    if (askAiHtml) {
-      const btn = head.querySelector('#proposal-ask-ai');
-      if (btn) {
-        btn.addEventListener('click', () => {
-          if (btn.disabled) return;
-          if (typeof ProposalDiscuss !== 'undefined') {
-            ProposalDiscuss.open(t.kind, t.id, AppView._findTopicItem());
-          }
-        });
-      }
-      // Resolve AI availability and disable the button (with tooltip) when
-      // no LLM is configured — matches the dev chat's posture.
-      AppView._ensureAiAvailability().then((enabled) => {
-        const b = document.getElementById('proposal-ask-ai');
-        if (!b) return;
-        b.disabled = !enabled;
-        if (!enabled) {
-          b.title = "AI chat isn't configured on this deployment.";
-          b.classList.add('opacity-50', 'cursor-not-allowed');
-        } else {
-          b.title = 'Ask AI about this proposal (private to you)';
-          b.classList.remove('opacity-50', 'cursor-not-allowed');
-        }
-      });
+      AppView._applyExploreChatAvailability(head);
     }
 
     // Keep the generating-state poller in sync with what we just painted, the
@@ -1268,33 +1246,19 @@ const AppView = {
     AppView._syncHeadlessPolling();
   },
 
-  _askAiButtonHtml() {
-    return `
-      <div class="mt-3 px-1">
-        <button id="proposal-ask-ai" type="button"
-          class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium
-                 bg-violet-500/10 text-violet-600 dark:text-violet-300 border border-violet-500/30
-                 hover:bg-violet-500/20 transition-colors"
-          title="Ask AI about this proposal (private to you)">
-          <span aria-hidden="true">✨</span> Ask AI
-        </button>
-      </div>`;
-  },
-
-  // #313: a compact "Ask AI" action for the proposal CARD action row
-  // (the Dev feed + the Completed list), as opposed to the full-screen
-  // topic-head button above. Cards render many at once, so this uses a
-  // class + data-proposal-id hook instead of the id="proposal-ask-ai"
-  // the head uses (ids must stay unique). Only rendered on proposals the
-  // viewer does NOT own — owners reach AI through "Open session" and the
-  // in-discussion advisor, so a card button would be redundant clutter.
-  // Click is dispatched by the delegated feed/merged handlers.
-  _askAiCardBtnHtml(pr) {
-    // #621: the advisor spends the viewer's LLM budget and its API is
-    // collab-gated — no Ask AI for read-only viewers.
+  // #313/#827: a compact "Explore in dev chat" action for the proposal CARD
+  // action row (the Dev feed, the kanban board, the Completed list). Cards
+  // render many at once, so this uses a class + data-proposal-id hook (ids
+  // must stay unique). Only rendered on proposals the viewer does NOT own —
+  // owners reach the Mayor through "Open session" on their own PR, so a card
+  // button would be redundant clutter. Click is dispatched by the delegated
+  // feed/merged handler (and wired directly in the topic head).
+  _exploreChatBtnHtml(pr) {
+    // #621: the dev chat spends the viewer's LLM budget and its API is
+    // collab-gated — nothing to offer read-only viewers.
     if (AppView.readOnly) return '';
-    return `<button type="button" class="gc-vote-btn gc-ask-ai-btn" data-proposal-id="${pr.id}"
-      title="Ask AI about this proposal (private to you)"><span aria-hidden="true">✨</span> Ask AI</button>`;
+    return `<button type="button" class="gc-vote-btn gc-explore-chat-btn" data-proposal-id="${pr.id}"
+      title="${escapeAttr(AppView.EXPLORE_CHAT_TITLE)}"><span aria-hidden="true">✨</span> Explore in dev chat</button>`;
   },
 
   // #404: a card's action row. Takes a flat, already-ordered array of
@@ -1307,34 +1271,167 @@ const AppView = {
     return inner ? `<div class="gc-card-actions">${inner}</div>` : '';
   },
 
-  // Open the private read-only advisor for a card's proposal, resolving
-  // the row from the in-memory promoted/merged lists (same shape the
-  // topic head passes to ProposalDiscuss.open).
-  _openAskAiFromCard(id) {
+  EXPLORE_CHAT_TITLE: 'Open a dev chat with a message about this PR ready to edit and send',
+
+  // #827: the closing paragraph of every exploration seed. Load-bearing —
+  // it is what keeps an UNEDITED send from making the Mayor dispatch the
+  // coding agent: the turn stays a chat-only explanation. Pinned
+  // byte-for-byte by tests/explore-pr-in-dev-chat.test.js.
+  EXPLORE_SEED_TAIL:
+    'Please read it and explain in plain terms what it changes, how it works, '
+    + "and anything risky or worth checking. Just explain it for now — don't "
+    + 'change any code or open a PR.',
+
+  // #827: the editable kickoff message for "Explore in dev chat", built
+  // purely from the cached proposal row (no extra fetch). Optional lines are
+  // dropped when the data is absent, so an imported PR with no linked issues
+  // and a title-only row both produce clean text.
+  _exploreSeed(pr) {
+    const row = pr || {};
+    const title = (row.pr_title || '').trim();
+    const author = (row.username || '').trim();
+    const by = author ? ` by ${author}` : '';
+    const lines = [];
+    lines.push(row.pr_number
+      ? `Let's explore PR #${row.pr_number} in this app — "${title || `PR #${row.pr_number}`}"${by}.`
+      : `Let's explore the proposal "${title || 'this proposal'}" in this app${by}.`);
+    if (row.pr_url) lines.push(`PR link: ${row.pr_url}`);
+    const issues = Array.isArray(row.linked_issues)
+      ? row.linked_issues.filter((n) => Number.isInteger(n))
+      : [];
+    if (issues.length) lines.push(`Linked issues: ${issues.map((n) => `#${n}`).join(', ')}.`);
+    if (row.status === 'merged') lines.push('This proposal is already merged.');
+    else if (row.status === 'merging') lines.push('This proposal is currently being merged.');
+    return `${lines.join('\n')}\n\n${AppView.EXPLORE_SEED_TAIL}`;
+  },
+
+  // #827: is this dev chat one the user has never actually used?
+  //
+  // The decisive signal is EMPTINESS: /api/me/active-sessions computes
+  // last_activity_at as GREATEST(created_at, MAX(message.created_at)), so a
+  // session with no messages at all is exactly one where the two timestamps
+  // are equal. Don't lean on session_title for this — it's generated by an
+  // LLM call that never runs on a deployment without a key (and can fail),
+  // so a chat with ten messages can still carry a NULL title. It's kept as a
+  // cheap extra veto (a titled chat is definitely used), alongside
+  // pr_number (pushed work) and busy (a first turn mid-run).
+  _isUnusedChat(s) {
+    if (!s || s.pr_number || s.session_title || s.busy) return false;
+    const created = Date.parse(s.created_at || '');
+    const active = Date.parse(s.last_activity_at || s.created_at || '');
+    return Number.isFinite(created) && Number.isFinite(active) && created === active;
+  },
+
+  // #827: open the viewer's dev chat with a message about this proposal
+  // pre-filled in the composer — and NEVER sent. Replaces the old private
+  // read-only advisor panel (#297).
+  //
+  // Session choice, in order:
+  //   1. Reuse the most recently active UNUSED chat for this app. Sessions
+  //      cost a GitHub branch and a slot from a cap of 3
+  //      (config.maxUserSessions), so browsing three proposals in a row must
+  //      not burn the user's whole budget on throwaway chats.
+  //   2. Otherwise create a fresh one (no issueNumber — this isn't issue
+  //      work, so created_from_issue_number stays NULL).
+  //   3. If creation is refused (cap / capacity / no repo — createSession
+  //      already toasts the server's reason), fall back to the most recent
+  //      existing chat so the text still lands somewhere useful.
+  //
+  // The seed reaches the composer through the per-session draft
+  // (_setDraft → _restoreDraft on render), exactly like createPrForIssue's
+  // #609 flow. A composer that already holds text is never clobbered — the
+  // seed is appended below it.
+  async exploreProposalInDevChat(id, btnEl) {
     const pid = parseInt(id, 10);
-    if (!pid || typeof ProposalDiscuss === 'undefined') return;
+    const slug = AppView.appData && AppView.appData.slug;
+    if (!pid || !slug || typeof DevChat === 'undefined') return;
     const pr = (AppView._proposals || []).find((p) => p.id === pid)
       // Skip close-issue rows: issues.id can collide with a session id.
       || (AppView._merged || []).find((p) => p.id === pid && p.row_type !== 'close_issue');
-    if (pr) ProposalDiscuss.open('proposal', pid, pr);
+    if (!pr) return;
+
+    if (btnEl) btnEl.disabled = true;
+    try {
+      const seed = AppView._exploreSeed(pr);
+
+      // Ground truth before choosing: a cached row may have been archived or
+      // promoted in another tab. _refreshSessionCaches swallows its own
+      // errors and repopulates _mySessions (this app's active/paused rows,
+      // newest activity first).
+      await AppView._refreshSessionCaches(slug);
+      const mine = AppView._mySessions || [];
+
+      let sessionId = (mine.find(AppView._isUnusedChat) || {}).id || null;
+      if (!sessionId) {
+        const created = await DevChat.createSession(slug);
+        if (created) {
+          sessionId = created.id;
+        } else if (mine.length) {
+          // Cap / capacity / repo error — createSession already explained
+          // why. Land in the newest existing chat rather than dead-ending.
+          sessionId = mine[0].id;
+          PlatformUI.toast('Added the message to your most recent dev chat instead.');
+        }
+      }
+      if (!sessionId) return; // createSession's toast stands
+
+      // Never clobber half-typed text; and a double-tap must not stack the
+      // same seed twice.
+      const existing = (typeof DevChat._getDraft === 'function'
+        ? DevChat._getDraft(sessionId) : '') || '';
+      const draft = !existing
+        ? seed
+        : (existing.includes(seed) ? existing : `${existing}\n\n${seed}`);
+      if (typeof DevChat._setDraft === 'function') DevChat._setDraft(sessionId, draft);
+
+      // Land on the Dev Chat tab focused on that session. switchTab →
+      // renderDevChatTab(sessionId) opens the session (auto-resuming it when
+      // paused), renders the chat view — which calls _restoreDraft() and
+      // fills the composer, unsent — and syncs the hash for us.
+      if (typeof App !== 'undefined' && App.switchTab) {
+        await App.switchTab('dev', sessionId, 'sessions');
+      }
+
+      // Fallback for localStorage-disabled browsers (_setDraft silently
+      // no-ops there): put the draft straight into the mounted textarea if
+      // the draft restore left it empty. Focus with the cursor at the end on
+      // fine-pointer devices only — focusing on touch would pop the
+      // on-screen keyboard over the chat (#568).
+      const input = document.getElementById('dc-input');
+      if (input) {
+        if (!input.value) {
+          input.value = draft;
+          input.style.height = 'auto';
+          input.style.height = Math.min(input.scrollHeight, 120) + 'px';
+        }
+        if (typeof DevChat._isCoarsePointer !== 'function' || !DevChat._isCoarsePointer()) {
+          try {
+            input.focus();
+            input.setSelectionRange(input.value.length, input.value.length);
+          } catch {}
+        }
+      }
+    } finally {
+      if (btnEl) btnEl.disabled = false;
+    }
   },
 
   // Resolve AI availability once (memoized) and disable every card-level
-  // Ask AI button under `root` with a tooltip when no LLM is configured —
-  // mirrors the topic-head pass at _renderTopicHead. Must be re-run after
-  // each feed/merged re-render, since innerHTML replacement paints fresh,
-  // enabled buttons every time.
-  _applyAskAiCardAvailability(root) {
+  // "Explore in dev chat" button under `root` with a tooltip when no LLM is
+  // configured — a dev chat with no model behind it can't answer. Must be
+  // re-run after each feed/merged re-render, since innerHTML replacement
+  // paints fresh, enabled buttons every time.
+  _applyExploreChatAvailability(root) {
     const scope = root || document;
-    if (!scope.querySelector('.gc-ask-ai-btn')) return;
+    if (!scope.querySelector('.gc-explore-chat-btn')) return;
     AppView._ensureAiAvailability().then((enabled) => {
-      scope.querySelectorAll('.gc-ask-ai-btn').forEach((b) => {
+      scope.querySelectorAll('.gc-explore-chat-btn').forEach((b) => {
         b.disabled = !enabled;
         if (!enabled) {
           b.title = "AI chat isn't configured on this deployment.";
           b.classList.add('opacity-50', 'cursor-not-allowed');
         } else {
-          b.title = 'Ask AI about this proposal (private to you)';
+          b.title = AppView.EXPLORE_CHAT_TITLE;
           b.classList.remove('opacity-50', 'cursor-not-allowed');
         }
       });
@@ -2202,7 +2299,7 @@ const AppView = {
     if (mergedEl) {
       mergedEl.innerHTML = (AppView._merged || []).length ? AppView._renderMergedInner() : '';
       if (window.Kudos) Kudos.attach(mergedEl);
-      AppView._applyAskAiCardAvailability(mergedEl);
+      AppView._applyExploreChatAvailability(mergedEl);
     }
   },
 
@@ -2336,7 +2433,7 @@ const AppView = {
     if (!el) return;
     el.innerHTML = AppView._renderFeedInner();
     if (window.Kudos) Kudos.attach(el);
-    AppView._applyAskAiCardAvailability(el);
+    AppView._applyExploreChatAvailability(el);
     AppView._startMergeCountdownTimer();
   },
 
@@ -2855,7 +2952,7 @@ const AppView = {
     // stop it.
     AppView._syncHeadlessPolling();
     if (window.Kudos) Kudos.attach(board);
-    AppView._applyAskAiCardAvailability(board);
+    AppView._applyExploreChatAvailability(board);
     AppView._updateKanbanFilterBarUI();
     AppView._initKanbanDrag(board);
     AppView._initKanbanTabs(board);
@@ -3637,7 +3734,7 @@ const AppView = {
     }
     AppView._syncHeadlessPolling();
     if (window.Kudos) Kudos.attach(el);
-    AppView._applyAskAiCardAvailability(el);
+    AppView._applyExploreChatAvailability(el);
     AppView._updateKanbanFilterBarUI();
     AppView._initPmDrag(el);
   },
@@ -4199,10 +4296,10 @@ const AppView = {
     const archiveBtn = (mine && !isMerged && !isMerging && pr.status === 'promoted')
       ? `<button class="gc-vote-btn" title="Withdraw this proposal (closes the PR, removes it from the vote panel)" onclick="AppView.withdrawProposal(${pr.id})">Withdraw</button>`
       : '';
-    // #313: the per-proposal "Ask AI" advisor, surfaced on the card for
-    // proposals the viewer does NOT own. Owners reach AI via "Open
-    // session" + the in-discussion advisor, so it's omitted on own cards.
-    const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
+    // #313/#827: "Explore in dev chat", surfaced on the card for proposals
+    // the viewer does NOT own. Owners reach the Mayor via "Open session" on
+    // their own PR, so it's omitted on own cards.
+    const exploreBtn = !mine ? AppView._exploreChatBtnHtml(pr) : '';
     // #195/#211: before/after capture tiles, collapsed by default behind a
     // "Show before/after" pill that sits with the other action buttons. The
     // tiles wait in an inert <template> (no bandwidth, no autoplay loops)
@@ -4221,8 +4318,8 @@ const AppView = {
     // (topic-view fallback) drop the live vote buttons — the vote is settled;
     // kudos stays open.
     const actions = isMerged
-      ? AppView._cardActionsHtml([kudosBtn, sessionBtn, askAiBtn, visualsBtn])
-      : AppView._cardActionsHtml([AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, askAiBtn, visualsBtn]);
+      ? AppView._cardActionsHtml([kudosBtn, sessionBtn, exploreBtn, visualsBtn])
+      : AppView._cardActionsHtml([AppView.voteButtonsHtml(pr), kudosBtn, sessionBtn, archiveBtn, exploreBtn, visualsBtn]);
 
     return `
       <div class="gc-vote-item ${AppView.DEV_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}${isMerging ? ' opacity-70' : ''}"${isUnvoted ? ' data-unvoted="1"' : ''} data-ref-pr="${pr.pr_number || pr.id}"${visualTiles ? ' data-visuals-scope="1"' : ''}${noNav ? '' : ` data-proposal-row="${pr.id}" title="Open this proposal's discussion"`}>
@@ -6362,7 +6459,7 @@ const AppView = {
         if (el) {
           el.innerHTML = AppView._renderMergedInner();
           if (window.Kudos) Kudos.attach(el);
-          AppView._applyAskAiCardAvailability(el);
+          AppView._applyExploreChatAvailability(el);
         }
       }
     }
@@ -6387,10 +6484,10 @@ const AppView = {
     const kudosBtn = window.Kudos
       ? Kudos.renderButton(pr, { compact: true })
       : '';
-    // #313: Ask AI on the Completed list too, for proposals the viewer
-    // does not own (parallel to the live feed cards).
+    // #313/#827: "Explore in dev chat" on the Completed list too, for
+    // proposals the viewer does not own (parallel to the live feed cards).
     const mine = !!(App.user && pr.user_id === App.user.id);
-    const askAiBtn = !mine ? AppView._askAiCardBtnHtml(pr) : '';
+    const exploreBtn = !mine ? AppView._exploreChatBtnHtml(pr) : '';
 
     // #16: undo is a single direct action — clicking Undo opens a
     // revert PR (like proposing a change) which then needs the
@@ -6439,7 +6536,7 @@ const AppView = {
               ${AppView._attrChipsHtml('proposal', pr.id, pr, { readonly: true })}
               ${AppView._devChatBadge(parseInt(pr.chat_count) || 0)}
             </div>
-            ${AppView._cardActionsHtml([AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, askAiBtn])}
+            ${AppView._cardActionsHtml([AppView.voteButtonsHtml(pr, { collapseVoted: true }), undoUI, kudosBtn, exploreBtn])}
           </div>
           ${AppView.DEV_CARD_CHEVRON}
         </div>`;
@@ -6450,7 +6547,7 @@ const AppView = {
   // Same green check icon as merged PRs so the column reads uniformly, but
   // the meta line says "Issue close" where a code proposal shows its PR
   // number, and there are deliberately NO code-proposal actions (Undo,
-  // kudos, Ask AI, priority/assignee chips). The settled tally pill mirrors
+  // kudos, Explore in dev chat, priority/assignee chips). The settled tally pill mirrors
   // the merged-PR treatment: payload.required is the threshold snapshotted
   // at apply time; status 'merged' keeps voteCountPill clock-free. Clicking
   // opens the governance discussion via the delegated [data-gov-row]
@@ -6506,7 +6603,7 @@ const AppView = {
     const el = document.getElementById('gc-merged');
     if (el) {
       el.innerHTML = AppView._renderMergedInner();
-      AppView._applyAskAiCardAvailability(el);
+      AppView._applyExploreChatAvailability(el);
     }
   },
 

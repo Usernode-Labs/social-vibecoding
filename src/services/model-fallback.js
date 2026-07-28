@@ -9,8 +9,7 @@
 // signal; sticky-served turns carry no `fallback` content block). This
 // module holds the shared user-facing wording plus the admin record
 // (log.warn → /status recent-events ring, and an `events` analytics row)
-// so the chat handler, headless runner, and proposal-discuss don't
-// duplicate them.
+// so the chat handler and headless runner don't duplicate them.
 
 const log = require('./logger');
 const models = require('./models');

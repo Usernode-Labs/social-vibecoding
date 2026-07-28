@@ -37,7 +37,6 @@ async function migrate(config) {
   await seedStagingMyOpenPr(pool, config);
   await seedStagingImportedPrProposal(pool, config);
   await seedStagingRestartEligibleMerge(pool, config);
-  await seedStagingProposalDiscussion(pool, config);
   await seedStagingOtherUserProposal(pool, config);
   await seedStagingTopicScrollThreads(pool, config);
   await seedStagingArchiveProposalFixtures(pool, config);
@@ -6192,56 +6191,6 @@ async function seedStagingTopicAttributes(pool, config) {
   log.info('db', 'Staging topic-attribute votes seeded', { appId, sessionId });
 }
 
-// #297: seed a short "Ask AI" advisor conversation on the staging
-// my-open-PR fixture so a tester on a prod-cloned staging DB (where
-// proposal_ai_messages ships empty — it's staging:private) sees a
-// populated panel without needing a live LLM. Idempotent: fixed high IDs
-// + ON CONFLICT DO NOTHING. Owned by the same demo author the fixture PR
-// belongs to, pointed at that PR session (proposal_kind='pr').
-async function seedStagingProposalDiscussion(pool, config) {
-  if (process.env.USERNODE_ENV !== 'staging') return;
-
-  const { rows: appRows } = await pool.query(
-    'SELECT id FROM apps WHERE slug = $1',
-    [config.selfAppSlug]
-  );
-  const appId = appRows[0]?.id;
-  if (!appId) return;
-
-  // Anchor on the open-PR fixture seeded just above (same branch name).
-  const { rows: sessRows } = await pool.query(
-    `SELECT id, user_id FROM chat_sessions
-      WHERE app_id = $1 AND branch_name = $2 LIMIT 1`,
-    [appId, 'staging-fixture/my-open-pr']
-  );
-  if (!sessRows.length) {
-    log.warn('db', 'Staging proposal-discuss fixture skipped: open-PR fixture missing');
-    return;
-  }
-  const proposalRef = sessRows[0].id;
-  const userId = sessRows[0].user_id;
-
-  // 4 alternating turns — a tiny multi-turn Q&A so the panel shows the
-  // back-and-forth feel. Fixed high IDs keep the seed idempotent.
-  const turns = [
-    [990001, 'user', 'Staging demo: explain this proposal in plain terms.'],
-    [990002, 'assistant', 'Staging demo: This proposal adds a small, self-contained change to the app. In plain terms, it introduces a new feature without touching the existing data model, so it should be low-risk to merge. (This is seeded demo content — no live AI ran.)'],
-    [990003, 'user', 'Staging demo: what could break, and should I vote yes?'],
-    [990004, 'assistant', 'Staging demo: The main thing to watch is the new UI surface, but it degrades gracefully and is private per-user, so the blast radius is small. If it matches the linked issue, voting yes is reasonable. Remember I can only advise here — to actually build something, use "Propose a change" in your own dev chat.'],
-  ];
-
-  for (const [id, role, content] of turns) {
-    await pool.query(
-      `INSERT INTO proposal_ai_messages (id, app_id, proposal_kind, proposal_ref, user_id, role, content, model)
-       VALUES ($1, $2, 'pr', $3, $4, $5, $6, $7)
-       ON CONFLICT (id) DO NOTHING`,
-      [id, appId, proposalRef, userId, role, content, role === 'assistant' ? 'claude-sonnet-5' : null]
-    );
-  }
-
-  log.info('db', 'Staging proposal-discuss fixture seeded', { appId, proposalRef, userId });
-}
-
 // #363: the topic sub-view (issue / PR proposal / governance proposal) now
 // scrolls as ONE region — the topic card/body and the discussion share a
 // single scroller, with only the back bar and composer pinned. That unified
@@ -6360,17 +6309,15 @@ async function seedStagingTopicScrollThreads(pool, config) {
   });
 }
 
-// #313/#321: a PROMOTED proposal owned by a user OTHER than the tester, so
-// the card-level "Ask AI" pill (rendered only on proposals you do NOT own)
-// is exercisable in staging. seedStagingMyOpenPr covers the owned case;
-// this covers the non-owned case both issues are about. #321 reuses this
-// same fixture: opening this proposal FULL-SCREEN is how a tester confirms
-// the duplicate standalone "Ask AI" button is gone and only the pill-row
-// control remains. Also seeds a short advisor history keyed to the TESTER's
-// user_id (proposal_ai_messages is staging:private, so it ships empty) so
-// opening the panel from the foreign card shows a back-and-forth rather
-// than the empty state. Idempotent via branch name + fixed high message
-// IDs; a no-op outside staging.
+// #313/#321/#827: a PROMOTED proposal owned by a user OTHER than the
+// tester, so the card-level "✨ Explore in dev chat" pill (rendered only on
+// proposals you do NOT own) is exercisable in staging.
+// seedStagingMyOpenPr covers the owned case; this covers the non-owned case
+// those issues are about. Opening this proposal FULL-SCREEN is also how a
+// tester confirms the pill is the ONLY AI affordance in the topic head.
+// #827 dropped the advisor-history rows this used to seed alongside the
+// session (the panel they populated is gone). Idempotent via branch name; a
+// no-op outside staging.
 async function seedStagingOtherUserProposal(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
 
@@ -6398,7 +6345,7 @@ async function seedStagingOtherUserProposal(pool, config) {
   }
   // The tester logs in as the first admin (same selection as the other
   // fixtures). The proposal must be owned by SOMEONE ELSE so the card has
-  // no "Open session" button and the new Ask AI button renders.
+  // no "Open session" button and the Explore-in-dev-chat pill renders.
   const tester = users[0];
   const owner = users.find((u) => u.id !== tester.id);
   if (!owner) {
@@ -6421,7 +6368,7 @@ async function seedStagingOtherUserProposal(pool, config) {
           votes_required, created_at)
        VALUES
          ($1, $2, $3, 9300,
-          '[staging fixture] Another user''s proposal — Ask AI about it',
+          '[staging fixture] Another user''s proposal — explore it in dev chat',
           $5, 'promoted', $4, NOW() - INTERVAL '20 minutes')
        RETURNING id`,
       [appId, owner.id, branch, Math.max(1, Math.ceil(users.length / 2)),
@@ -6437,23 +6384,6 @@ async function seedStagingOtherUserProposal(pool, config) {
      ON CONFLICT (session_id, user_id) DO NOTHING`,
     [sessionId, owner.id]
   );
-
-  // Advisor history keyed to the TESTER (the per-user, private
-  // conversation they'd see), pointed at this PR session.
-  const turns = [
-    [990101, 'user', 'Staging demo: explain this proposal in plain terms.'],
-    [990102, 'assistant', 'Staging demo: This is another user\'s proposal, opened for the group to review and vote on. You can ask me anything about it here — privately. I can only advise; I can\'t vote or change the proposal. (Seeded demo content — no live AI ran.)'],
-    [990103, 'user', 'Staging demo: what should I watch for before voting yes?'],
-    [990104, 'assistant', 'Staging demo: Check that the change matches any linked issue, that its blast radius is small, and that it degrades gracefully. If all that holds, voting yes is reasonable. Remember this advisor is read-only.'],
-  ];
-  for (const [id, role, content] of turns) {
-    await pool.query(
-      `INSERT INTO proposal_ai_messages (id, app_id, proposal_kind, proposal_ref, user_id, role, content, model)
-       VALUES ($1, $2, 'pr', $3, $4, $5, $6, $7)
-       ON CONFLICT (id) DO NOTHING`,
-      [id, appId, sessionId, tester.id, role, content, role === 'assistant' ? 'claude-sonnet-5' : null]
-    );
-  }
 
   log.info('db', 'Staging other-user-proposal fixture seeded', {
     appId, ownerUser: owner.username, testerUser: tester.username, sessionId,
