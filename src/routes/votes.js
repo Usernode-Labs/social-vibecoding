@@ -647,6 +647,9 @@ function mergedRowSelect() {
            -- #47: checks snapshot, kept visible on merged proposals for
            -- post-hoc review (a merged proposal passed, by the gate).
            cs.check_state, cs.test_results, cs.checks_checked_at,
+           -- Platform-variables pre-merge check (display mirror; the merge
+           -- gate re-evaluates live).
+           cs.platform_env_state, cs.platform_env_detail,
            -- #237: when checks are in 'error' (staging preview wouldn't boot),
            -- the captured reason powers the "Preview won't boot" badge tooltip.
            cs.check_error_detail,
@@ -1780,6 +1783,9 @@ function voteRoutes(config) {
            -- per-test detail block. Unlike the console snapshot this GATES
            -- merge (checkAndMerge blocks a non-'passing' proposal).
            cs.check_state, cs.test_results, cs.checks_checked_at,
+           -- Platform-variables pre-merge check (display mirror; the merge
+           -- gate re-evaluates live).
+           cs.platform_env_state, cs.platform_env_detail,
            -- #237: captured reason when checks are 'error' (staging preview
            -- failed to boot) — drives the "Preview won't boot" badge tooltip.
            cs.check_error_detail,
@@ -3034,6 +3040,63 @@ async function checkAndMerge(config, pool, session, options = {}) {
       };
     }
     dstep({ phase: 'gate:checks', message: `Checks gate: state = ${checkState}.`, detail: { checkState } });
+
+    // Platform-variables gate. A self-app proposal that ADDS a required
+    // `platform_env` declaration with no value set would deploy the
+    // platform into a crash-loop, so it blocks here.
+    //
+    // Evaluated LIVE rather than read from platform_env_state. The stored
+    // column exists for display; trusting it here would mean an admin who
+    // sets the missing value has to wait for a staging rebuild before the
+    // merge unblocks, which is absurd for a change that has nothing to do
+    // with the build. Setting the value and voting again is enough.
+    //
+    // Fails open on everything indeterminate (see the service) — a GitHub
+    // hiccup must not freeze every platform merge. Admin force-merge
+    // bypasses along with the rest of this block.
+    const platformEnvCheck = require('../services/platform-env-check');
+    const { rows: gateAppRows } = await pool.query(
+      'SELECT id, repo_url, self_hosted FROM apps WHERE id = $1',
+      [session.app_id]
+    );
+    const gateApp = gateAppRows[0] || null;
+    if (gateApp && gateApp.self_hosted) {
+      const envVerdict = await platformEnvCheck.resolvePlatformEnvCheck({
+        pool, app: gateApp, session,
+      });
+      // Persist what we just computed so the Checks card agrees with the
+      // gate rather than showing an older verdict.
+      await platformEnvCheck.storePlatformEnvCheck(pool, session.id, envVerdict);
+
+      if (envVerdict.state === 'failing') {
+        const label = session.pr_title
+          ? `PR #${session.pr_number || session.id} — ${session.pr_title}`
+          : `PR #${session.pr_number || session.id}`;
+        const blockMsg = platformEnvCheck.describeBlock(envVerdict.detail, label);
+        await sendSystemMessage(pool, session.app_id, blockMsg, 'system').catch(() => {});
+        await sendSystemMessage(pool, session.app_id, blockMsg, 'system',
+          null, { type: 'session', ref: session.id }).catch(() => {});
+        log.info('votes', 'Merge blocked: platform variables unset', {
+          sessionId: session.id, missing: envVerdict.detail.missing.map((m) => m.key),
+        });
+        dstep({
+          phase: 'gate:platform-env', level: 'warn',
+          message: `Merge blocked: ${envVerdict.detail.missing.length} platform variable(s) declared but not set.`,
+          detail: envVerdict.detail,
+        });
+        dend('blocked', 'Blocked — a new platform variable has no value set.');
+        return {
+          merged: false, yesCount, needed: required,
+          platformEnvBlocked: true,
+          platformEnvMissing: envVerdict.detail.missing.map((m) => m.key),
+        };
+      }
+      dstep({
+        phase: 'gate:platform-env',
+        message: `Platform-variables gate: ${envVerdict.state}.`,
+        detail: { state: envVerdict.state, reason: envVerdict.detail.reason },
+      });
+    }
   }
   // For admin force-merge we deliberately skip the behind_main pre-check
   // — GitHub will still reject the merge if there's a real conflict,

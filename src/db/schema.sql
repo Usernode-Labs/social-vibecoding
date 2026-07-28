@@ -1996,3 +1996,86 @@ CREATE INDEX IF NOT EXISTS idx_db_exports_user ON db_exports (user_id, requested
 -- happened, never any exported content). A prod-debug session should be
 -- able to read the export log; that's an audit trail, not a secret.
 COMMENT ON TABLE db_exports IS 'staging:private';
+
+-- ── Platform environment variables ───────────────────────────────────
+--
+-- In-platform management of the *platform's own* env vars — the ones
+-- .github/workflows/deploy.yml writes into /opt/usernode/.env. Before
+-- this, adding a tunable meant editing deploy.yml (a guardrailed file)
+-- and adding a GitHub repo variable by hand, out of band from the
+-- proposal that needed it, so a merged proposal could deploy straight
+-- into a crash-loop on a variable nobody had set.
+--
+-- Two tables, deliberately separate:
+--
+--   platform_env_declarations — a CACHE of the `platform_env` block in
+--     the platform repo's committed dapp.json, refreshed on every boot
+--     by app-manifest.reconcilePlatformEnv() from seedSelfApp(). The
+--     manifest is the source of truth; this table exists so the admin
+--     console and the pre-merge check can query declarations in SQL
+--     instead of re-reading the working tree, and so a value with no
+--     declaration ("orphan") is detectable. NOT staging:private: it is a
+--     verbatim copy of a public committed file.
+--
+--   platform_env_values — the admin-set VALUES, AES-256-GCM encrypted at
+--     rest by services/secrets.js exactly as app_secrets is (same
+--     `v1:iv:tag:ct` format, same JWT_SECRET-derived key). Resolved at
+--     deploy time, never read by the running platform process — see the
+--     "Resolve platform env" step in deploy.yml.
+--
+-- The value table is credential-bearing: tagged staging:private (so a
+-- staging clone starts empty and the IS_STAGING seed fills it with
+-- obvious fixtures) AND listed in debug-access.js's DENIED_TABLES, the
+-- same treatment app_secrets gets.
+--
+-- A declaration is never required for a value to exist and vice versa:
+-- removing a variable from dapp.json drops the declaration but KEEPS the
+-- value, because the merge that removes it and the deploy that stops
+-- using it are separate events and a rollback needs the value intact.
+--
+-- `unwritable` is derived by the manifest reader from
+-- app-manifest.PLATFORM_ENV_UNWRITABLE, not declared: it marks a
+-- variable that may be documented here but whose value comes straight
+-- from a GitHub secret at deploy time and can never be written through
+-- the admin UI (JWT_SECRET, DATABASE_URL, the GitHub App credentials…).
+CREATE TABLE IF NOT EXISTS platform_env_declarations (
+  app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  key           VARCHAR(128) NOT NULL,
+  description   TEXT NOT NULL DEFAULT '',
+  required      BOOLEAN NOT NULL DEFAULT FALSE,
+  private       BOOLEAN NOT NULL DEFAULT FALSE,
+  grouping      VARCHAR(64) NOT NULL DEFAULT 'General',
+  default_value TEXT,
+  unwritable    BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (app_id, key)
+);
+
+CREATE TABLE IF NOT EXISTS platform_env_values (
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  key         VARCHAR(128) NOT NULL,
+  value_enc   TEXT NOT NULL,
+  value_last4 VARCHAR(8),
+  private     BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_by  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  PRIMARY KEY (app_id, key)
+);
+COMMENT ON TABLE platform_env_values IS 'staging:private';
+
+-- Display-only mirror of the platform-env pre-merge check for a proposal
+-- (see src/services/platform-env-check.js). Deliberately NOT folded into
+-- chat_sessions.check_state: that column is owned by the staging-capture
+-- pipeline and rewritten wholesale on every storeChecks() run, which
+-- would clobber a verdict computed from a different input (the diff
+-- against main, not a browser run). These columns feed the Checks card;
+-- the merge gate in routes/votes.js re-evaluates LIVE rather than
+-- trusting them, so a variable set between the last check run and the
+-- final vote unblocks the merge without a re-check.
+--
+--   platform_env_state  : 'passing' | 'failing' | 'skipped' | 'error'
+--                         (NULL until the first evaluation)
+--   platform_env_detail : { missing:[{key,required,description}],
+--                           added:[key], removed:[key], reason }
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_env_state TEXT;
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_env_detail JSONB;

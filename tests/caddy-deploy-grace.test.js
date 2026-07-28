@@ -156,9 +156,18 @@ test('deploy workflow no longer rebuilds caddy on routine deploys', () => {
   const deploy = fs.readFileSync(
     path.join(root, '.github', 'workflows', 'deploy.yml'), 'utf8'
   );
-  assert.match(deploy, /^\s*docker compose up -d --build usernode\s*$/m,
-    'final up must scope the --build/recreate to the platform service');
-  assert.doesNotMatch(deploy, /^\s*docker compose up -d --build --remove-orphans\s*$/m,
+  // The build and the recreate are two commands rather than one
+  // `up -d --build usernode`: the platform-env materializer has to run
+  // off the freshly built image, before the long-running container is
+  // recreated with the resolved .env. Both halves stay scoped to
+  // `usernode`, which is the property #711 actually cares about.
+  assert.match(deploy, /^\s*docker compose build usernode\s*$/m,
+    'the routine build must name the platform service, not the whole stack');
+  assert.match(deploy, /^\s*docker compose up -d usernode\s*$/m,
+    'final up must scope the recreate to the platform service');
+  assert.doesNotMatch(deploy, /^\s*docker compose build\s*$/m,
+    'an unscoped `build` rebuilds the caddy image on every deploy');
+  assert.doesNotMatch(deploy, /^\s*docker compose up -d --build( --remove-orphans)?\s*$/m,
     'the old unscoped `up -d --build` rebuilt the caddy image on every deploy');
   assert.match(deploy, /^\s*docker compose up -d --remove-orphans\s*$/m,
     'the unscoped no-build up must still ensure the rest of the stack is running');
