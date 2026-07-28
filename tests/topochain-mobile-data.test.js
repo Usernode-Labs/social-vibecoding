@@ -56,11 +56,32 @@ const USERS = [
     github: null, x: null, is_in_waitlist: false, email_confirmed: true,
     password_set: true, exclude_podium: false,
   },
+  // erin: exists ONLY to hold a snapshot in a display_leaderboard=false
+  // event (301, below) — proves that a hidden event's real points don't
+  // leak into the mobile leaderboard's season-scope totals (code review
+  // fix). Deliberately given a SMALL point value (1) so she sorts last
+  // and doesn't perturb alice/bob/carol's ranks in the OTHER standings-
+  // based tests that share this fixture set (see the comment on season
+  // 30 below for why she still shows up in /me/ranking's global scope).
+  {
+    id: 5, email: 'erin@example.com', telegram: null, discord: null, display_name: null,
+    github: null, x: null, is_in_waitlist: false, email_confirmed: true,
+    password_set: true, exclude_podium: false,
+  },
 ];
 
 const SEASONS = [
   { id: 10, name: 'Season Alpha', internal: false, display_order: 0 },
   { id: 20, name: 'Hidden Season', internal: true, display_order: 1 },
+  // A separate, public season whose ONLY event is display_leaderboard =
+  // false — isolated from season 10 so this fixture can't perturb any of
+  // the season-10-scoped assertions elsewhere in this file. It's still
+  // public (internal: false), so /me/ranking's GLOBAL scope (which has no
+  // display_leaderboard filter — services/topochain/standings.js's shared
+  // aggregate never had one, and that's explicitly out of scope for this
+  // fix) still picks up erin's event-301 snapshot; only the two global-
+  // scope total_participants assertions below account for her (3 -> 4).
+  { id: 30, name: 'Season Beta', internal: false, display_order: 2 },
 ];
 
 const SEASON_EVENTS = [
@@ -83,6 +104,14 @@ const SEASON_EVENTS = [
   {
     id: 105, name: 'No Data Event', internal: false, display_leaderboard: true, type: 'regular',
     season_id: 10, starts_at: T(-5), ends_at: T(5), is_active: true,
+  },
+  // Season 30's only event: public (internal: false) but hidden from the
+  // leaderboard (display_leaderboard: false) — AND it has a real snapshot
+  // (below), unlike event 101 above which has none. This is the exact
+  // shape the code review flagged as untested.
+  {
+    id: 301, name: 'Beta Hidden', internal: false, display_leaderboard: false, type: 'regular',
+    season_id: 30, starts_at: T(-10), ends_at: T(10), is_active: true,
   },
 ];
 
@@ -110,6 +139,16 @@ const LEADERBOARD_SNAPSHOTS = [
     id: 3, season_event_id: 100, user_id: 2, rank: 3, total_points: '100.00', extra_points: '5.00',
     snapshot_at: T(-1), first_block_points: 0, top_3_points: 0, success_50_percent_points: 0,
     event_total_produced_blocks: 10, vrf_total_won_slots: 20, event_success_rate: '50.00',
+  },
+  // erin's snapshot in the HIDDEN event 301 — real points (1) that must
+  // NOT surface in the mobile leaderboard's season-scope totals for
+  // season 30 (code review fix: SEASON_LEADERBOARD_SQL must filter
+  // display_leaderboard = TRUE, matching the events[] list on the same
+  // endpoint, not just internal = FALSE).
+  {
+    id: 6, season_event_id: 301, user_id: 5, rank: 1, total_points: '1.00', extra_points: '0.00',
+    snapshot_at: T(-1), first_block_points: 0, top_3_points: 0, success_50_percent_points: 0,
+    event_total_produced_blocks: 1, vrf_total_won_slots: 2, event_success_rate: '50.00',
   },
 ];
 
@@ -206,7 +245,10 @@ function computeStandingsRows(seasonId) {
 // that also sums vrf_total_won_slots) — used by the mobile GET
 // /leaderboard endpoint's season scope.
 function computeSeasonLeaderboardRows(seasonId) {
-  const events = SEASON_EVENTS.filter((e) => !e.internal && e.season_id === seasonId);
+  // Code review fix mirrored here: display_leaderboard = false events are
+  // excluded from the season-scope aggregate, same as SEASON_LEADERBOARD_SQL
+  // in mobile.js now requires (previously only `!e.internal` was checked).
+  const events = SEASON_EVENTS.filter((e) => !e.internal && e.display_leaderboard && e.season_id === seasonId);
   const byUser = new Map();
   for (const e of events) {
     for (const s of latestPerUserForEvent(e.id)) {
@@ -592,7 +634,13 @@ test('me/ranking global scope: rank/points/events_participated from standings, t
     const body = await res.json();
     assert.deepEqual(body.data, {
       scope: 'global', rank: 1, total_points: 200, total_tokens: 500,
-      events_participated: 1, total_produced_blocks: 20, total_participants: 3,
+      events_participated: 1, total_produced_blocks: 20,
+      // 4, not 3: erin (season 30's hidden-event snapshot, see fixtures
+      // above) still counts here — services/topochain/standings.js's
+      // shared aggregate has no display_leaderboard filter at all (a
+      // pre-existing, deliberately-unchanged behavior; only the mobile
+      // LEADERBOARD endpoint's OWN season-scope query was fixed).
+      total_participants: 4,
       terms_accepted: true, terms_version_required: 'v1', terms_link: 'https://example.com/terms/v1',
     });
   });
@@ -615,7 +663,7 @@ test('me/ranking global scope: a user with no data anywhere -> 200, rank null, z
     const body = await res.json();
     assert.deepEqual(body.data, {
       scope: 'global', rank: null, total_points: 0, total_tokens: 0,
-      events_participated: 0, total_produced_blocks: 0, total_participants: 3,
+      events_participated: 0, total_produced_blocks: 0, total_participants: 4, // see the note above
       terms_accepted: false, terms_version_required: 'v1', terms_link: 'https://example.com/terms/v1',
     });
   });
@@ -818,6 +866,28 @@ test('mobile leaderboard season scope: shared-rank rule, computed success_rate, 
     assert.equal(body.data.leaderboard[0].events_participated, 1);
     // success_rate computed live from produced/won (alice: 20/40 = 50%).
     assert.equal(body.data.leaderboard[0].success_rate, 50);
+  });
+});
+
+// Code review fix: season 30's only event (301) is public (internal:
+// false) but hidden from the leaderboard (display_leaderboard: false),
+// and DOES have a real snapshot for erin (1 point, event_total_produced
+// _blocks 1, vrf_total_won_slots 2) — unlike event 101 in season 10,
+// which has no snapshot rows at all and so never exercised this branch.
+// Before the fix, SEASON_LEADERBOARD_SQL only checked `se.internal =
+// FALSE`, so erin's hidden-event point would have leaked into season 30's
+// aggregate even though the SAME endpoint's events[] list already hides
+// event 301 — an internally inconsistent result. After the fix, season
+// 30 has no qualifying (public AND on-leaderboard) events at all, so the
+// season-scope leaderboard is empty.
+test('mobile leaderboard season scope: a display_leaderboard=false event with REAL snapshot rows contributes nothing', async () => {
+  await withServer(async (base) => {
+    const res = await getJson(base, '/api/v4/mobile/leaderboard?season_id=30', ALICE);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.data.events, [], 'the hidden event never appears in events[] either');
+    assert.deepEqual(body.data.leaderboard, [], 'erin\'s hidden-event point does not leak into the season aggregate');
+    assert.deepEqual(body.data.pagination, { page: 1, per_page: 50, total: 0, total_pages: 0 });
   });
 });
 

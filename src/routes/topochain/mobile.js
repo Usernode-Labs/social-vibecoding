@@ -350,6 +350,14 @@ async function fetchEventScopeLeaderboard(pool, eventId) {
 // extended, per the task brief's "reuse standings.js for the global
 // scope" (this is the mobile LEADERBOARD's season scope, a different
 // endpoint from /me/ranking, hence the separate query).
+//
+// Code review fix: `se.display_leaderboard = TRUE` is required here, not
+// just `se.internal = FALSE` — the `events[]` list on this same endpoint
+// (built a few lines below in the router) already filters
+// `display_leaderboard = TRUE`, and a hidden event's points/blocks/slots
+// must not silently leak into the season-wide totals of an event that
+// isn't shown anywhere. Without this, an event an operator hid from the
+// leaderboard mid-event would still move every user's season rank.
 const SEASON_LEADERBOARD_SQL = `
   WITH latest AS (
     SELECT DISTINCT ON (ls.season_event_id, ls.user_id)
@@ -357,7 +365,7 @@ const SEASON_LEADERBOARD_SQL = `
            ls.event_total_produced_blocks, ls.vrf_total_won_slots
       FROM leaderboard_snapshots ls
       JOIN season_events se ON se.id = ls.season_event_id
-     WHERE se.internal = FALSE AND se.season_id = $1
+     WHERE se.internal = FALSE AND se.display_leaderboard = TRUE AND se.season_id = $1
      ORDER BY ls.season_event_id, ls.user_id, ls.snapshot_at DESC, ls.id DESC
   )
   SELECT l.user_id,
