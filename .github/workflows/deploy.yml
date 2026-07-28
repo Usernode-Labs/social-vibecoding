@@ -686,9 +686,13 @@ jobs:
             RAW_ENV=$(docker compose run --rm --no-deps -T usernode \
               node scripts/dump-platform-env.js 2>/dev/null || true)
             if echo "$RAW_ENV" | grep -q '^#__PLATFORM_ENV_END__$'; then
+              # `|| true`: a complete-but-empty block (no console-set
+              # variables yet) makes grep -v exit 1, which under set -e
+              # killed the whole deploy with no output — first hit on the
+              # first deploy after the platform_env tables existed.
               echo "$RAW_ENV" \
                 | sed -n '/^#__PLATFORM_ENV_BEGIN__$/,/^#__PLATFORM_ENV_END__$/p' \
-                | grep -v '^#__PLATFORM_ENV_' > .platform-env.new
+                | { grep -v '^#__PLATFORM_ENV_' || true; } > .platform-env.new
               mv .platform-env.new .platform-env
               chmod 600 .platform-env
               echo "==> Resolved $(grep -c . .platform-env || true) console-set platform variable(s)"
