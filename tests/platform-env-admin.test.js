@@ -271,8 +271,12 @@ test('a private value is never rendered', () => {
 });
 
 test('an unwritable row offers neither a direct nor a propose button', () => {
+  // The action branch grew a third case (a 'proposed' row links to its
+  // declaration proposal), so this is the if/else form rather than the
+  // original ternary — the invariant it protects is unchanged: an
+  // unwritable row resolves to the empty string, i.e. no controls at all.
   const row = secretsJs.slice(secretsJs.indexOf('renderRow(s, canWrite) {'));
-  assert.match(row.slice(0, 5000), /s\.unwritable\s*\n?\s*\?\s*''/,
+  assert.match(row.slice(0, 8000), /else if \(s\.unwritable\) \{\s*\n\s*actions = '';/,
     'both button groups are suppressed — a vote that cannot be honoured is '
     + 'worse than no button at all');
   assert.match(secretsJs, /can't be edited here/,
@@ -314,7 +318,11 @@ test('dapp.json has a rendered check for the panel, inside the parse cap', () =>
 
 test('the panel is reachable from a URL so captures and checks can see it', () => {
   const appViewJs = fs.readFileSync(path.join(root, 'public/js/app-view.js'), 'utf8');
-  assert.match(appViewJs, /get\('shot'\) === 'secrets'/,
+  assert.match(appViewJs, /shot === 'secrets' \|\| shot === 'secrets-new'/,
     'the panel is a modal — without a deep link the before/after screenshots '
     + 'would show the home feed instead of the changed screen');
+  // `secrets-new` additionally expands the "New variable" form, which is a
+  // SECOND layer of interaction (a click inside a modal) that neither the
+  // capture pipeline nor a dapp.json test can reach on its own.
+  assert.match(appViewJs, /Secrets\.open\(slug, \{ declare: shot === 'secrets-new' \}\)/);
 });

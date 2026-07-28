@@ -195,7 +195,9 @@ test('the Checks card offers the fix in place, for admins and non-admins', () =>
 
 test('the propose buttons exist for a writable row and vanish for a managed one', () => {
   const row = secretsUiJs.slice(secretsUiJs.indexOf('renderRow(s, canWrite) {'));
-  assert.match(row.slice(0, 6000), /data-action="propose-set"/);
-  assert.match(row.slice(0, 6000), /s\.unwritable\s*\n?\s*\?\s*''/,
+  assert.match(row.slice(0, 8000), /data-action="propose-set"/);
+  // if/else since the branch grew a 'proposed' case (a key whose
+  // declaration is still up for vote links to that proposal instead).
+  assert.match(row.slice(0, 8000), /else if \(s\.unwritable\) \{\s*\n\s*actions = '';/,
     'a deploy-managed row gets neither path — the server refuses both');
 });

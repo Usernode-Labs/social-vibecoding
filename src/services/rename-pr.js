@@ -326,6 +326,119 @@ async function createAdminsPR(config, pool, app, { usernames }, actor) {
   });
 }
 
+function secretDeclarationPrTitle(scope, key) {
+  return scope === 'platform'
+    ? `Declare platform variable "${key}"`
+    : `Declare app secret "${key}"`;
+}
+
+/**
+ * Open a secret-DECLARATION PR — a manifest PR that appends one entry to
+ * dapp.json's `secrets` array (a child app) or `platform_env` array (the
+ * self-hosted platform).
+ *
+ * This is the manifest half of "add a brand-new variable from the App
+ * secrets panel". The VALUE half rides on the same proposal via
+ * services/pending-secrets.js (held encrypted until the merge) or, for a
+ * full admin, was already written directly to the value store. The PR
+ * body therefore says whether a value accompanies the proposal — but
+ * NEVER the value itself, since a PR body is public repo content.
+ *
+ * `declaration` is a services/pending-secrets.normalizeDeclaration()
+ * result: { description, required, private, default, staging_default,
+ * group }. Only the fields meaningful for the scope are written —
+ * `staging_default` is app-only (nothing in platform_env is injected into
+ * a container, so a staging fallback would be meaningless) and `group` is
+ * platform-only (the `secrets` reader has no group).
+ *
+ * Caller owns validation (key shape, reserved/unwritable keys, collision
+ * against the manifest + value store + pending rows, field caps,
+ * GitHub-enabled) and dedupe (findSecretDeclarationPr below).
+ */
+async function createSecretDeclarationPR(config, pool, app, { scope, key, declaration, hasValue }, actor) {
+  const isPlatform = scope === 'platform';
+  const decl = declaration || {};
+  const title = secretDeclarationPrTitle(scope, key);
+
+  // Field order matches how the manifest reader documents each block, so
+  // a hand-written entry and a platform-written one look the same.
+  const entry = isPlatform
+    ? { key, group: decl.group || 'General' }
+    : { key };
+  if (decl.description) entry.description = decl.description;
+  if (decl.required) entry.required = true;
+  if (decl.private) entry.private = true;
+  if (decl.default != null) entry.default = decl.default;
+  if (!isPlatform && decl.staging_default != null) entry.staging_default = decl.staging_default;
+
+  const flagBits = [
+    decl.required ? '`required: true` (deploys block until it has a value)' : '`required: false`',
+    decl.private ? '`private: true` (encrypted at rest, never returned by the API, not propagated into staging)' : '`private: false`',
+  ];
+  if (decl.default != null) {
+    flagBits.push(isPlatform
+      ? `\`default: "${decl.default}"\` (documentation of the committed fallback — the platform's deploy stays authoritative)`
+      : `\`default: "${decl.default}"\` (used when no value is stored)`);
+  }
+  if (!isPlatform && decl.staging_default != null) {
+    flagBits.push(`\`staging_default: "${decl.staging_default}"\` (what PR previews use)`);
+  }
+
+  const valueLine = hasValue
+    ? 'A value for it is part of this proposal and is applied when this PR merges. '
+      + 'The value itself is deliberately not in this PR — it is stored encrypted by the platform.'
+    : 'No value accompanies this proposal — it declares the variable only.';
+
+  return createManifestPR(config, pool, app, actor, {
+    mutate: (m) => {
+      const field = isPlatform ? 'platform_env' : 'secrets';
+      if (!Array.isArray(m[field])) m[field] = [];
+      // Replace rather than duplicate if the key somehow already exists
+      // on main (the route's collision check reads the manifest SNAPSHOT,
+      // which lags a dev-session edit that merged but hasn't deployed).
+      const at = m[field].findIndex((e) => e && e.key === key);
+      if (at >= 0) m[field][at] = entry;
+      else m[field].push(entry);
+    },
+    branchPrefix: 'secret-declare',
+    commitMessage: title,
+    prTitle: title,
+    prBody:
+      `${actor.username} (via Usernode) proposed declaring ${isPlatform ? 'a new platform variable' : 'a new app secret'} `
+      + `\`${key}\`${decl.description ? ` — ${decl.description}` : ''}.\n\n`
+      + `This PR appends one entry to the \`${isPlatform ? 'platform_env' : 'secrets'}\` array in \`dapp.json\`:\n`
+      + `${flagBits.map((b) => `- ${b}`).join('\n')}\n\n`
+      + `${valueLine}\n\n`
+      + `It still needs a regular merge vote to land — vote in the app's group chat panel. `
+      + (isPlatform
+        ? 'Once merged, the declaration is picked up on the platform\'s next deploy, which is also when the value reaches the platform process.'
+        : 'Once merged, the value is stored and the app redeploys with the new variable in its environment.'),
+    chatText: (prData, majority, activeUsers) =>
+      `${actor.username} proposed adding the ${isPlatform ? 'platform variable' : 'app secret'} ${key}`
+      + `${hasValue ? ' (value included)' : ''}. Opened PR #${prData.number} — needs ${majority}/${activeUsers} votes to land.`,
+    eventMetadata: { secretDeclaration: true, scope, key },
+    explicitApproval: false,
+  });
+}
+
+// Returns the open declaration PR session for one key, if any — the
+// dedupe check for POST /api/apps/:slug/secret-declaration-pr. Scoped to
+// the key (unlike visibility/governance/admins, which allow one proposal
+// of their kind per app): two people declaring two different variables at
+// once is perfectly reasonable.
+async function findSecretDeclarationPr(pool, appId, scope, key) {
+  const { rows } = await pool.query(
+    `SELECT id, pr_number, pr_url, pr_title FROM chat_sessions
+      WHERE app_id = $1 AND status IN ('promoted', 'merging')
+        AND branch_name LIKE 'secret-declare/%'
+        AND pr_title = $2
+      ORDER BY id DESC
+      LIMIT 1`,
+    [appId, secretDeclarationPrTitle(scope, key)]
+  );
+  return rows[0] || null;
+}
+
 // Returns the open admins-change PR session for an app, if any — the
 // dedupe check for POST /api/apps/:slug/admins-pr (one admins proposal
 // in flight per app, like visibility/governance), and the
@@ -534,6 +647,9 @@ module.exports = {
   createVisibilityPR,
   createGovernancePR,
   createAdminsPR,
+  createSecretDeclarationPR,
+  findSecretDeclarationPr,
+  secretDeclarationPrTitle,
   findVisibilityPr,
   findGovernancePr,
   findAdminsPr,

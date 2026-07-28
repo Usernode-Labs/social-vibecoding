@@ -217,6 +217,32 @@
       "expectText": "applied by the platform's next deploy"
     },
     {
+      "name": "Secrets panel offers the \"+ New variable\" declare affordance",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-declare #app-secrets-declare-open"
+    },
+    {
+      "name": "The New-variable form renders its fields (?shot=secrets-new)",
+      "path": "/?shot=secrets-new#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-declare #decl-key",
+      "expectText": "UPPER_SNAKE_CASE"
+    },
+    {
+      "name": "Platform variables panel lists the repo GitHub Actions secrets read-only",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectText": "GitHub Actions secrets (platform repo)"
+    },
+    {
+      "name": "A GitHub Actions row states its value can never be shown",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectText": "never returns a secret"
+    },
+    {
+      "name": "A declaration up for vote renders as an \"Up for vote\" row (STAGING_DEMO_PROPOSED)",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectText": "STAGING_DEMO_PROPOSED"
+    },
+    {
       "name": "Create-app modal opens in 'new' mode with the state on the presented card (#748)",
       "path": "/#create",
       "expectSelector": ".un-modal #create-card[data-mode=\"new\"][data-import-state=\"idle\"]",

@@ -2096,6 +2096,57 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_env_state TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_env_detail JSONB;
 
 -- ══════════════════════════════════════════════════════════════════
+-- Declaring a BRAND-NEW secret / platform variable from the panel.
+--
+-- The App secrets panel can set values for keys `dapp.json` already
+-- declares. Adding a key needs TWO things to land: the manifest
+-- DECLARATION (only ever changeable by a merged PR — see
+-- services/rename-pr.js, the single writer of dapp.json) and the
+-- VALUE (app_secrets / platform_env_values). This table is where the
+-- value waits while its declaration PR is up for vote, so ONE
+-- proposal carries both halves.
+--
+-- One row per proposed key, bound to the declaration PR's
+-- chat_sessions row:
+--   status='pending'   the PR is open; the value (if any) is held here
+--   status='applied'   the PR merged and the value was written to the
+--                      real store by routes/votes.js finalizeMerge()
+--   status='discarded' the PR was withdrawn / voted down
+--
+-- `value_enc` is NULL in two legitimate cases: no value was supplied
+-- (a declaration-only proposal, e.g. one that only documents a
+-- default), or the proposer was a full admin, who is already allowed
+-- to write values directly — those go straight to the real store and
+-- the row records `value_applied_at` so the panel can say
+-- "value set, declaration up for vote".
+--
+-- Credential-bearing exactly like app_secrets: staging:private (a
+-- clone starts empty; the IS_STAGING seed fills it with obvious
+-- fixtures) AND in debug-access.js's DENIED_TABLES.
+CREATE TABLE IF NOT EXISTS pending_secret_declarations (
+  id              SERIAL PRIMARY KEY,
+  app_id          INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  session_id      INTEGER NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  scope           TEXT NOT NULL,
+  key             VARCHAR(128) NOT NULL,
+  declaration     JSONB NOT NULL,
+  value_enc       TEXT,
+  value_last4     VARCHAR(8),
+  value_applied_at TIMESTAMPTZ,
+  status          TEXT NOT NULL DEFAULT 'pending',
+  created_by      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+COMMENT ON TABLE pending_secret_declarations IS 'staging:private';
+-- One live proposal per key per app. Partial index rather than a plain
+-- UNIQUE so the applied/discarded history can hold many rows for the
+-- same key (a variable declared, removed, and declared again).
+CREATE UNIQUE INDEX IF NOT EXISTS pending_secret_decl_live_key
+  ON pending_secret_declarations (app_id, key) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS pending_secret_decl_session
+  ON pending_secret_declarations (session_id);
+
+-- ══════════════════════════════════════════════════════════════════
 -- Topochain (testnet competition) — SPEC §3.4 schema
 --
 -- Topochain becomes a native part of this platform: a testnet

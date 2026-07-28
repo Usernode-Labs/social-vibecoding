@@ -51,6 +51,7 @@ const DENIED_TABLES = new Set([
   'app_secrets',        // per-app env secrets (AES blobs, still deny)
   'user_agent_files',   // personal instruction files (private user text)
   'platform_env_values', // platform's own env values (AES blobs, still deny)
+  'pending_secret_declarations', // values held for a declaration PR (AES blobs)
   'mobile_otp_codes',   // topochain: one-time login codes (SPEC §6)
   'mobile_auth_tokens', // topochain: bearer session/set-password tokens (plan Global Constraints #4)
 ]);

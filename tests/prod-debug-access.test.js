@@ -95,7 +95,11 @@ test('every staging:private COLUMN in schema.sql is covered by the deny lists', 
 });
 
 test('credential tables are deny-listed', () => {
-  for (const t of ['sessions', 'activation_codes', 'app_secrets']) {
+  // pending_secret_declarations holds the AES-encrypted value a
+  // declaration proposal carries until it merges — the same class of
+  // material as app_secrets / platform_env_values, so the same treatment.
+  for (const t of ['sessions', 'activation_codes', 'app_secrets',
+    'platform_env_values', 'pending_secret_declarations']) {
     assert.ok(debugAccess.DENIED_TABLES.has(t), `${t} must be denied`);
   }
 });

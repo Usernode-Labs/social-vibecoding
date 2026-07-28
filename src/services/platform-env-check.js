@@ -58,7 +58,7 @@ function headRefForSession(session) {
 
 const SKIP = (reason) => ({
   state: 'skipped',
-  detail: { missing: [], added: [], removed: [], reason },
+  detail: { missing: [], added: [], removed: [], pendingValues: [], reason },
 });
 
 /**
@@ -71,8 +71,10 @@ const SKIP = (reason) => ({
  *   'error'   — a DB failure while looking up stored values
  *
  * detail is always { missing:[{key,required,description}], added:[key],
- * removed:[key], reason } so the UI and the block message have one shape
- * to read regardless of outcome.
+ * removed:[key], pendingValues:[key], reason } so the UI and the block
+ * message have one shape to read regardless of outcome. `pendingValues`
+ * are keys whose value this proposal itself carries (see
+ * services/pending-secrets.js) and are therefore NOT counted as missing.
  */
 async function resolvePlatformEnvCheck({ pool, app, session }) {
   if (!app || !app.self_hosted) {
@@ -110,7 +112,7 @@ async function resolvePlatformEnvCheck({ pool, app, session }) {
   if (filesComplete && !files.includes(appManifest.MANIFEST_FILENAME)) {
     return {
       state: 'passing',
-      detail: { missing: [], added: [], removed: [], reason: 'This proposal does not change dapp.json.' },
+      detail: { missing: [], added: [], removed: [], pendingValues: [], reason: 'This proposal does not change dapp.json.' },
     };
   }
 
@@ -140,7 +142,7 @@ async function resolvePlatformEnvCheck({ pool, app, session }) {
     return {
       state: 'passing',
       detail: {
-        missing: [], added: [], removed,
+        missing: [], added: [], removed, pendingValues: [],
         reason: removed.length
           ? `This proposal removes ${removed.length} platform variable${removed.length === 1 ? '' : 's'} and adds none.`
           : 'This proposal adds no platform variables.',
@@ -153,7 +155,31 @@ async function resolvePlatformEnvCheck({ pool, app, session }) {
   // is documentation of a GitHub secret, not something to block on.
   const candidates = added.filter((e) => e.required && !e.unwritable);
   let stored = new Set();
+  // A value can also arrive WITH the proposal: the panel's "+ New
+  // variable" flow parks it in pending_secret_declarations bound to this
+  // very session, and routes/votes.js finalizeMerge() writes it the moment
+  // the PR merges (services/pending-secrets.js). Counting those is what
+  // stops such a proposal from blocking ITSELF — the declaration is in the
+  // branch, the value just isn't in platform_env_values yet. Scoped to
+  // THIS session on purpose: another proposal's held value proves nothing
+  // about this merge, since it might never land.
+  const pendingValues = new Set();
   if (candidates.length) {
+    try {
+      // eslint-disable-next-line global-require
+      const pendingSecrets = require('./pending-secrets');
+      const wanted = new Set(candidates.map((e) => e.key));
+      for (const p of await pendingSecrets.keysForSession(pool, session.id)) {
+        if (p.scope === 'platform' && p.hasValue && wanted.has(p.key)) pendingValues.add(p.key);
+      }
+    } catch (err) {
+      // Non-fatal: worst case the gate blocks a proposal whose value is in
+      // flight, and the operator sees the existing "set it and vote again"
+      // message. Never fail the check over this lookup.
+      log.warn('platform-env-check', 'Pending-declaration lookup failed', {
+        sessionId: session?.id, err: err.message,
+      });
+    }
     try {
       const { rows } = await pool.query(
         'SELECT key FROM platform_env_values WHERE app_id = $1 AND key = ANY($2::text[])',
@@ -167,7 +193,7 @@ async function resolvePlatformEnvCheck({ pool, app, session }) {
       return {
         state: 'error',
         detail: {
-          missing: [], added: added.map((e) => e.key), removed,
+          missing: [], added: added.map((e) => e.key), removed, pendingValues: [],
           reason: 'Could not read the stored platform variables.',
         },
       };
@@ -175,18 +201,25 @@ async function resolvePlatformEnvCheck({ pool, app, session }) {
   }
 
   const missing = candidates
-    .filter((e) => !stored.has(e.key))
+    .filter((e) => !stored.has(e.key) && !pendingValues.has(e.key))
     .map((e) => ({ key: e.key, required: true, description: e.description || '' }));
 
+  const carried = [...pendingValues];
   return {
     state: missing.length ? 'failing' : 'passing',
     detail: {
       missing,
       added: added.map((e) => e.key),
       removed,
+      // Keys whose value is carried by THIS proposal and applied on merge.
+      // The Checks card names them so a voter knows the value is part of
+      // what they're approving.
+      pendingValues: carried,
       reason: missing.length
         ? `This proposal adds ${missing.length} required platform variable${missing.length === 1 ? '' : 's'} that ${missing.length === 1 ? 'has' : 'have'} no value set.`
-        : `This proposal adds ${added.length} platform variable${added.length === 1 ? '' : 's'}, all with values set.`,
+        : carried.length
+          ? `This proposal adds ${added.length} platform variable${added.length === 1 ? '' : 's'} and carries ${carried.length === 1 ? 'its value' : 'their values'}, applied when it merges.`
+          : `This proposal adds ${added.length} platform variable${added.length === 1 ? '' : 's'}, all with values set.`,
     },
   };
 }

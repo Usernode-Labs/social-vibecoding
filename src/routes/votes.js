@@ -2487,6 +2487,60 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
     const { rows: appRows } = await pool.query('SELECT * FROM apps WHERE id = $1', [session.app_id]);
     const app = appRows[0];
 
+    // Apply any values this proposal carried for the variables it
+    // DECLARES (services/pending-secrets.js — the "+ New variable" panel
+    // flow). BEFORE the rebuild, deliberately: a newly `required` child-app
+    // secret whose value arrived with the proposal has to be in
+    // `app_secrets` before mergeForDeploy() looks for it, or the merge
+    // would park the app in `awaiting_secrets` over its own change.
+    //
+    // Best-effort: the GitHub merge has already happened and can't be
+    // rolled back, so a failure here logs and lets the rest of the tail
+    // run. The pending row stays claimed either way, and the panel shows
+    // the key as unset — recoverable by setting it directly.
+    if (app) {
+      try {
+        const pendingSecrets = require('../services/pending-secrets');
+        const { applied } = await pendingSecrets.applyForSession(config, pool, session.id);
+        for (const a of applied) {
+          if (!a.hadValue) continue;
+          dstep({
+            phase: 'pending_secrets',
+            message: `Applied the value declared with this proposal for ${a.key}.`,
+            detail: { key: a.key, scope: a.scope, private: a.private },
+          });
+          // Say what actually happens next — the platform's env is
+          // materialized by its own deploy, a child app's by the rebuild
+          // that follows a few lines below.
+          const msg = a.scope === 'platform'
+            ? `Platform variable "${a.key}" was declared and set by this proposal; takes effect on the platform's next deploy.`
+            : `Secret "${a.key}" was declared and set by this proposal; redeploying…`;
+          await sendSystemMessage(pool, session.app_id, msg, 'system').catch(() => {});
+          await sendSystemMessage(pool, session.app_id, msg, 'system',
+            null, { type: 'session', ref: session.id }).catch(() => {});
+          if (a.scope === 'platform') {
+            events.record(pool, {
+              type: events.EVENT_TYPES.PLATFORM_ENV_CHANGED,
+              userId: a.userId,
+              appId: session.app_id,
+              metadata: {
+                key: a.key, action: 'set', private: a.private,
+                appliedBy: 'declaration-proposal',
+              },
+            });
+          }
+        }
+      } catch (err) {
+        log.error('votes', 'Pending secret-declaration apply failed', {
+          sessionId: session.id, err: err.message,
+        });
+        dstep({
+          phase: 'pending_secrets', level: 'warn',
+          message: `Couldn't apply the value declared with this proposal: ${err.message}`,
+        });
+      }
+    }
+
     if (app) {
       let sha = null;
       // SELF-HOSTING.md sub-step 2g (Guard B): for the self-app,

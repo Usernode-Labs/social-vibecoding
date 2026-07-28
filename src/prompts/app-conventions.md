@@ -806,6 +806,22 @@ When generating dapps from scratch, it's fine for the manifest to be
 empty (`{ "secrets": [] }`) — only add entries when a feature actually
 needs a value the platform should store.
 
+**Users can also declare a secret without you.** The App secrets panel
+has a "+ New secret" form that opens a proposal carrying BOTH the
+`dapp.json` entry (key, description, `required`, `private`, `default`,
+`staging_default`) and the value: a full admin's value is stored on
+submit, everybody else's is held encrypted and written when the
+proposal merges. So a key can exist as a pending declaration before it
+is in the manifest on `main`. Two consequences for you:
+
+- If a key you were about to add is already up for vote, say so and
+  don't open a second entry for it — the platform refuses a duplicate
+  declaration anyway.
+- A declaration YOU author in a dev session still needs its value set
+  separately (that's the panel's per-row "set" / "propose set"
+  affordance) — only the panel's own form carries a value along with
+  the declaration.
+
 ## Public vs private secrets — **IMPORTANT**
 
 Staging containers receive the prod secret store by default for
@@ -993,6 +1009,21 @@ panel groups rows under (`Scaling`, `Sessions`, `TLS`, …). There is no
 Both blocks may appear in the platform's `dapp.json` at once: `secrets`
 documents the GitHub-injected credentials, `platform_env` holds the
 tunables. Only `platform_env` entries are settable.
+
+The panel can also declare a tunable on its own: its "+ New variable"
+form opens a proposal that appends the `platform_env` entry AND carries
+the value (held encrypted until the merge, or stored immediately when a
+full admin submits it). A value that rides along that way satisfies the
+pre-merge check, so such a proposal doesn't block itself. Point people
+at it rather than asking them to add a GitHub repo variable by hand.
+
+The same panel additionally lists the platform repo's **GitHub Actions
+secrets** read-only for admins — names, "Set", and when each last
+changed. GitHub's API never returns a secret's value to anyone, so that
+is presence and freshness only; it exists to answer "is that credential
+actually set?" without leaving the app. Changing one still means the
+repo's Settings → Secrets and variables → Actions (plus, usually, a
+`deploy.yml` edit), which is out of the panel's scope by design.
 
 ## App LLM access — the platform Claude proxy
 
