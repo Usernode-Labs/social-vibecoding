@@ -106,15 +106,19 @@ test('the forwarded block reaches the remote through the ssh-action envs list', 
 
 test('the previous sha is captured BEFORE .env is overwritten', () => {
   assert.ok(at("PREV_SHA=$(grep -m1 '^GIT_SHA=' .env", 'PREV_SHA capture')
-    < at("cat > .env <<'ENVEOF'", '.env heredoc'),
+    < at('base64 -d > .env', 'base .env write'),
     'reading GIT_SHA after the overwrite would roll back to the sha being deployed');
 });
 
 test('console values are appended to .env last, after the GitHub-sourced ones', () => {
-  const heredocEnd = at('\n            ENVEOF', 'heredoc end');
+  // The base layer is composed on the runner and decoded here with a
+  // single `> .env` (see deploy-workflow-expression-limit.test.js for why
+  // it is not a heredoc inside this script); the two override blocks then
+  // append with `>> .env`.
+  const baseWrite = at('base64 -d > .env', 'base .env write');
   const ghAppend = at('base64 -d >> .env', 'GitHub block append');
   const consoleAppend = at('cat .platform-env >> .env', 'console block append');
-  assert.ok(heredocEnd < ghAppend, 'GitHub-sourced values override committed defaults');
+  assert.ok(baseWrite < ghAppend, 'GitHub-sourced values override committed defaults');
   assert.ok(ghAppend < consoleAppend,
     'the admin console is the primary path — its values must win over both');
 });
