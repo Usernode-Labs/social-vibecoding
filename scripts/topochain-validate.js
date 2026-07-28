@@ -49,7 +49,6 @@ const { Pool } = require('pg');
 const ROW_COUNT_TABLE_MAP = {
   seasons: 'seasons',
   phases: 'season_events',
-  phase_participants: 'user_enrollments',
   challenge_sub_categories: 'challenge_kinds',
   offchain_activity_types: 'challenge_templates',
   phase_available_activities: 'challenges',
@@ -206,6 +205,46 @@ async function gateRowCounts(ctx) {
     }
   } else {
     results.push(skip('row-count: offchain_activities -> user_activities (+ award backfill)', 'target table or _mig_map_offchain_activities missing'));
+  }
+
+  // `user_enrollments` <- `phase_participants`, but NOT 1:1: the §8.4
+  // merge can fold two same-email participants into one user, and if
+  // both were enrolled in the same phase the loader deduplicates to a
+  // single enrollment (user_enrollments_user_season_event_unique).
+  // expected = count of DISTINCT (canonical user, season_event) pairs,
+  // computed by pushing every source (participant_id, phase_id) pair
+  // through the two id maps.
+  if ((await tableExists(targetClient, 'user_enrollments'))
+      && (await tableExists(targetClient, '_mig_map_participants'))
+      && (await tableExists(targetClient, '_mig_map_phases'))) {
+    try {
+      const { rows: srcPairs } = await querySource(sourcePool, 'SELECT participant_id, phase_id FROM phase_participants');
+      const { rows: pMap } = await targetClient.query('SELECT source_id, target_id FROM _mig_map_participants');
+      const { rows: phMap } = await targetClient.query('SELECT source_id, target_id FROM _mig_map_phases');
+      const participantToUser = new Map(pMap.map((r) => [String(r.source_id), String(r.target_id)]));
+      const phaseToEvent = new Map(phMap.map((r) => [String(r.source_id), String(r.target_id)]));
+      const distinctPairs = new Set();
+      for (const row of srcPairs) {
+        const userId = participantToUser.get(String(row.participant_id));
+        const eventId = phaseToEvent.get(String(row.phase_id));
+        if (userId && eventId) distinctPairs.add(`${userId}:${eventId}`);
+      }
+      const expected = distinctPairs.size;
+      const { rows: targetRows } = await targetClient.query('SELECT COUNT(*)::int AS n FROM user_enrollments');
+      const targetCount = targetRows[0].n;
+      results.push(
+        targetCount === expected
+          ? pass('row-count: phase_participants -> user_enrollments', `${targetCount} rows (${srcPairs.length} source rows, merge-deduped)`)
+          : fail(
+              'row-count: phase_participants -> user_enrollments',
+              `expected ${expected} distinct post-merge (user, event) pairs from ${srcPairs.length} source rows, got ${targetCount}`
+            )
+      );
+    } catch (err) {
+      results.push(skip('row-count: phase_participants -> user_enrollments', `source table unreadable: ${err.message}`));
+    }
+  } else {
+    results.push(skip('row-count: phase_participants -> user_enrollments', 'target table or id-map tables missing'));
   }
 
   for (const [sourceTable, targetTable] of Object.entries(ROW_COUNT_TABLE_MAP)) {
@@ -426,9 +465,12 @@ async function gatePointsInvariants(ctx) {
     );
     return results;
   }
+  // `global_leaderboard` has no offchain_points column (verified against
+  // the real schema: participant_id, total_points, phases_participated,
+  // rank, ...) — and only total_points is consumed below anyway.
   const { rows: glRows } = await querySource(
     sourcePool,
-    'SELECT participant_id, total_points, offchain_points FROM global_leaderboard'
+    'SELECT participant_id, total_points FROM global_leaderboard'
   );
   const { rows: mapRows } = await targetClient.query('SELECT source_id, target_id FROM _mig_map_participants');
   const participantToUser = new Map(mapRows.map((r) => [String(r.source_id), String(r.target_id)]));
