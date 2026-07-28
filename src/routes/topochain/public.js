@@ -52,6 +52,7 @@ const { computeStandings } = require('../../services/topochain/standings');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
+const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
 
 // ─── Small shared formatters ─────────────────────────────────────────────
 
@@ -253,92 +254,12 @@ function formatLeaderboardRow(r) {
 }
 
 // ─── GET /season-events/{event}/challenges: override/effective merge ────
-
-// The 11 fields `challenges` can override onto `challenge_templates`
-// (SPEC 1176-1179, 1203: cta_type/mobile_cta_*/kind/metric_*/
-// display_order/completed/featured are deliberately excluded from this
-// set — they come straight off the template, never the challenge row).
-const OVERRIDE_KEYS = [
-  'goal', 'task', 'reward', 'description', 'requirements',
-  'schedule_start', 'schedule_end', 'reward_logic',
-  'cta_button', 'cta_label', 'cta_link',
-];
-const DATE_OVERRIDE_KEYS = new Set(['schedule_start', 'schedule_end']);
-
-// `r` is one joined challenges+challenge_templates row where the
-// template's columns are aliased `t_<col>` (see the SELECT below) to
-// avoid colliding with the challenge's own same-named columns.
-function buildOverridesAndEffective(r) {
-  const overrides = {};
-  const effective = {};
-  for (const key of OVERRIDE_KEYS) {
-    const challengeVal = r[key];
-    const templateVal = r[`t_${key}`];
-    const isDate = DATE_OVERRIDE_KEYS.has(key);
-    overrides[key] = isDate ? iso(challengeVal) : (challengeVal ?? null);
-    const effRaw = challengeVal != null ? challengeVal : templateVal;
-    effective[key] = isDate ? iso(effRaw) : (effRaw ?? null);
-  }
-  overrides.enabled = r.enabled;
-  effective.enabled = r.enabled;
-  return { overrides, effective };
-}
-
-function buildChallengeListItem(r) {
-  const template = {
-    id: Number(r.t_id),
-    category: r.t_category,
-    goal: r.t_goal,
-    task: r.t_task,
-    reward: r.t_reward,
-    description: r.t_description,
-    requirements: r.t_requirements,
-    schedule_start: iso(r.t_schedule_start),
-    schedule_end: iso(r.t_schedule_end),
-    reward_logic: r.t_reward_logic,
-    cta_button: r.t_cta_button,
-    cta_label: r.t_cta_label,
-    cta_link: r.t_cta_link,
-    created_at: iso(r.t_created_at),
-    updated_at: iso(r.t_updated_at),
-    kind: r.t_kind,
-    cta_type: r.t_cta_type,
-    mobile_cta_type: r.t_mobile_cta_type,
-    mobile_cta_label: r.t_mobile_cta_label,
-    mobile_cta_link: r.t_mobile_cta_link,
-    metric_type: r.t_metric_type,
-    metric_target: num(r.t_metric_target),
-    metric_label: r.t_metric_label,
-  };
-  const { overrides, effective } = buildOverridesAndEffective(r);
-  return {
-    id: Number(r.id),
-    season_event_id: Number(r.season_event_id),
-    challenge_template_id: Number(r.challenge_template_id),
-    enabled: r.enabled,
-    activity_type: template,
-    overrides,
-    effective,
-    card_preview: {
-      label: (r.t_category || '').toUpperCase(),
-      goal: effective.goal,
-      task: effective.task,
-      reward: effective.reward,
-    },
-    detail_modal: {
-      description: effective.description,
-      requirements: effective.requirements,
-      reward_logic: effective.reward_logic,
-      cta_button: effective.cta_button,
-      cta_type: r.t_cta_type,
-      cta_label: effective.cta_label,
-      cta_link: effective.cta_link,
-      mobile_cta_type: r.t_mobile_cta_type,
-      mobile_cta_label: r.t_mobile_cta_label,
-      mobile_cta_link: r.t_mobile_cta_link,
-    },
-  };
-}
+//
+// Task 12 lifted this mapping (and the challenge_templates JOIN column
+// list) into ./challenge-view.js so admin/challenges.js's own D6 index
+// route can return "the same mapped structure" (SPEC 2672) without a
+// second, drifting copy of buildChallengeListItem. See that module's
+// top-of-file comment for the full rationale.
 
 // ─── Router ───────────────────────────────────────────────────────────
 
@@ -704,16 +625,7 @@ function topochainPublicRoutes(config) {
                 c.goal, c.task, c.reward, c.description, c.requirements,
                 c.schedule_start, c.schedule_end, c.reward_logic,
                 c.cta_button, c.cta_label, c.cta_link,
-                ct.id AS t_id, ct.category AS t_category, ct.goal AS t_goal, ct.task AS t_task,
-                ct.reward AS t_reward, ct.description AS t_description,
-                ct.requirements AS t_requirements, ct.schedule_start AS t_schedule_start,
-                ct.schedule_end AS t_schedule_end, ct.reward_logic AS t_reward_logic,
-                ct.cta_button AS t_cta_button, ct.cta_label AS t_cta_label, ct.cta_link AS t_cta_link,
-                ct.created_at AS t_created_at, ct.updated_at AS t_updated_at, ct.kind AS t_kind,
-                ct.cta_type AS t_cta_type, ct.mobile_cta_type AS t_mobile_cta_type,
-                ct.mobile_cta_label AS t_mobile_cta_label, ct.mobile_cta_link AS t_mobile_cta_link,
-                ct.metric_type AS t_metric_type, ct.metric_target AS t_metric_target,
-                ct.metric_label AS t_metric_label
+                ${TEMPLATE_JOIN_COLUMNS_SQL}
            FROM challenges c
            LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
           WHERE c.season_event_id = $1 AND c.enabled = TRUE

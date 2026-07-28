@@ -26,6 +26,11 @@ const { adminReadGate } = require('./admin/auth');
 const { seasonEventsAdminRoutes } = require('./admin/season-events');
 const { usersAdminRoutes } = require('./admin/users');
 const { userActivitiesAdminRoutes } = require('./admin/user-activities');
+const { challengeTemplatesAdminRoutes } = require('./admin/challenge-templates');
+const { onchainAccountsAdminRoutes } = require('./admin/onchain-accounts');
+const { challengesAdminRoutes } = require('./admin/challenges');
+const { appVersionConfigsAdminRoutes } = require('./admin/app-version-configs');
+const { settingsAdminRoutes } = require('./admin/settings');
 
 function topochainAdminRoutes(config) {
   const router = Router();
@@ -78,6 +83,19 @@ function topochainAdminRoutes(config) {
   router.use(seasonEventsAdminRoutes(config));
   router.use(usersAdminRoutes(config));
   router.use(userActivitiesAdminRoutes(config));
+
+  // Task 12: D4 challenge-templates, D5 onchain-accounts, D6 challenges
+  // (nested under season-events), D7 app-version-configs, D9 settings.
+  // No path collision with the Task 11 modules above: D6's routes all
+  // sit at `/season-events/:seasonEvent/challenges...` (3+ path segments
+  // past `/admin`), strictly longer than season-events.js's own
+  // `/season-events/:id` (2 segments), so Express can never confuse one
+  // for the other regardless of mount order.
+  router.use(challengeTemplatesAdminRoutes(config));
+  router.use(onchainAccountsAdminRoutes(config));
+  router.use(challengesAdminRoutes(config));
+  router.use(appVersionConfigsAdminRoutes(config));
+  router.use(settingsAdminRoutes(config));
 
   return router;
 }

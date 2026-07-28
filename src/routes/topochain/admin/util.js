@@ -33,4 +33,23 @@ function toDate(v) {
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
-module.exports = { toIntId, toBool, toDate };
+// Strict numeric coercion (Task 12 code-review finding): plain `Number(v)`
+// silently coerces non-numeric JSON values into a "valid" number —
+// `Number(true) === 1`, `Number([]) === 0`, `Number(null) === 0`,
+// `Number('') === 0` — so a boolean/array/null/blank-string request field
+// would pass a bare `Number.isInteger(Number(v))`/`!Number.isNaN(Number(v))`
+// check and get silently written as 0 or 1 instead of 422ing. This only
+// accepts an actual `number` or a non-blank `string`, and returns
+// `undefined` (never `NaN`, so callers can use `=== undefined` rather than
+// `Number.isNaN(...)`, which itself is `false` for `undefined`) for
+// anything else or anything that doesn't parse to a finite number.
+function toNumber(v) {
+  if (typeof v !== 'number' && typeof v !== 'string') return undefined;
+  if (typeof v === 'string' && v.trim() === '') return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+module.exports = {
+  toIntId, toBool, toDate, toNumber,
+};
