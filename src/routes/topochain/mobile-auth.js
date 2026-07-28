@@ -278,10 +278,29 @@ function topochainMobileAuthRoutes(config) {
       // creation branch's force-confirm; a judgment call to not extend
       // it to pre-existing accounts, documented here rather than assumed.
       const { rows: existingRows } = await pool.query(
-        'SELECT id, email, display_name, email_confirmed, password_set FROM users WHERE email = $1',
+        'SELECT id, email, display_name, email_confirmed, password_set, is_admin FROM users WHERE email = $1',
         [email]
       );
       let user = existingRows[0];
+
+      // GUARD (security-review finding): because Global Constraints #7
+      // folds every topochain user into the SHARED platform `users` table,
+      // an unrestricted OTP flow would double as an unauthenticated
+      // password RESET for any platform web account — including admins'
+      // web-console logins — since /set-password below overwrites
+      // `users.password` for whatever user this token points at. Refuse
+      // to issue a set-password token when the resolved account is an
+      // admin, or already has a real password (`password_set = TRUE`).
+      // This preserves the SPEC §8.5 flow exactly: the 199 migrated
+      // password-less participants (and every OTP-created account) have
+      // `password_set = FALSE` and `is_admin = FALSE`, so they still set
+      // their FIRST password here; only accounts that already own a
+      // usable password are excluded. The response is the same generic
+      // 422 as every other OTP failure (SPEC 1702/1707's one-message
+      // rule) so this branch is not an "is this an admin / has this
+      // account a password" oracle. The code was already consumed above,
+      // keeping single-use semantics identical to the success path.
+      if (user && (user.is_admin || user.password_set)) return invalidOrExpired();
       if (!user) {
         // Random, unusable bcrypt hash (nobody knows the plaintext) —
         // satisfies users.password NOT NULL without granting a usable
@@ -323,6 +342,26 @@ function topochainMobileAuthRoutes(config) {
           details.password_confirmation = ['The password confirmation does not match.'];
         }
         if (Object.keys(details).length) return fail(res, 422, 'The given data was invalid.', { details });
+
+        // GUARD (security-review finding, consume-side twin of the
+        // otp/verify issue-side check): even though otp/verify no longer
+        // issues set-password tokens for admins or accounts with a real
+        // password, re-check the CURRENT row state before overwriting
+        // `users.password` — a token minted before the account gained a
+        // password (or admin status) must not still be able to reset it.
+        // Responds exactly like an invalid/expired token (mobileTokenAuth's
+        // own 401), never a distinct message that would fingerprint the
+        // account; the presented token is revoked just as a successful
+        // consume would be (single-use either way).
+        const { rows: guardRows } = await pool.query(
+          'SELECT is_admin, password_set FROM users WHERE id = $1',
+          [req.user.id]
+        );
+        const guard = guardRows[0];
+        if (!guard || guard.is_admin || guard.password_set) {
+          await revokePresentedToken(pool, req);
+          return fail(res, 401, 'Unauthenticated.');
+        }
 
         const passwordHash = await bcrypt.hash(password, 12);
         await pool.query(

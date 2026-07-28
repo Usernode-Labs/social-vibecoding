@@ -581,7 +581,16 @@ function usersAdminRoutes(config) {
   });
 
   // ── GET /api/v4/admin/users/export-csv/:seasonEventId (SPEC 2396-2405) ─
-  router.get('/api/v4/admin/users/export-csv/:seasonEventId', async (req, res) => {
+  //
+  // `adminWriteGate` on a GET (security-review finding): SPEC says only
+  // "Auth: admin", but this endpoint streams every enrolled user's email
+  // AND registration_code out of the system as a file — the same "can
+  // this admin walk away with the data" reasoning that already puts
+  // /api/v4/admin/database/export behind the write gate (see db-tools.js's
+  // PRIVILEGE LEVEL comment). A view-only admin can read the same fields
+  // in the paginated JSON UI, but a bulk downloadable artifact is a
+  // different exposure class; full admins only, consistently.
+  router.get('/api/v4/admin/users/export-csv/:seasonEventId', adminWriteGate, async (req, res) => {
     try {
       const seasonEventId = toIntId(req.params.seasonEventId);
       if (!seasonEventId) return fail(res, 404, 'Event not found.');

@@ -53,12 +53,17 @@ function resetFixtures() {
     { id: 1, username: 'alice@example.com', password: ALICE_HASH, email: 'alice@example.com', display_name: 'Alice', email_confirmed: true, password_set: true, is_admin: false },
     { id: 2, username: 'operator@example.com', password: OPERATOR_HASH, email: 'operator@example.com', display_name: 'Op', email_confirmed: true, password_set: true, is_admin: false },
     { id: 3, username: 'noPasswordYet@example.com', password: UNUSABLE_HASH, email: 'nopasswordyet@example.com', display_name: null, email_confirmed: true, password_set: false, is_admin: false },
+    // A platform ADMIN sharing the users table (Global Constraints #7) —
+    // the OTP flow must never become a password reset for this row, even
+    // hypothetically with password_set FALSE (belt and braces: both flags
+    // block independently, this row exercises the is_admin one alone).
+    { id: 4, username: 'root@example.com', password: UNUSABLE_HASH, email: 'root@example.com', display_name: 'Root', email_confirmed: true, password_set: false, is_admin: true },
   ];
   tokens = [];
   otps = [];
   onchainAccounts = [{ user_id: 2 }]; // user 2 is the sole operator
   capturedCodes = {};
-  nextUserId = 4;
+  nextUserId = 5;
   nextTokenId = 1;
   nextOtpId = 1;
 }
@@ -95,14 +100,20 @@ function handleQuery(rawSql, params = []) {
     return { rows: u ? [{ ...u }] : [] };
   }
 
-  // otp/verify existing-user check, and set-password's post-update refetch.
-  if (sql.startsWith('SELECT id, email, display_name, email_confirmed, password_set FROM users WHERE email = $1')) {
+  // otp/verify existing-user check (now carries is_admin for the
+  // admin/password-set guard), and set-password's post-update refetch.
+  if (sql.startsWith('SELECT id, email, display_name, email_confirmed, password_set, is_admin FROM users WHERE email = $1')) {
     const u = users.find((x) => x.email === params[0]);
     return { rows: u ? [{ ...u }] : [] };
   }
   if (sql.startsWith('SELECT id, email, display_name, email_confirmed, password_set FROM users WHERE id = $1')) {
     const u = users.find((x) => x.id === params[0]);
     return { rows: u ? [{ ...u }] : [] };
+  }
+  // set-password's consume-side guard re-read.
+  if (sql.startsWith('SELECT is_admin, password_set FROM users WHERE id = $1')) {
+    const u = users.find((x) => x.id === params[0]);
+    return { rows: u ? [{ is_admin: !!u.is_admin, password_set: !!u.password_set }] : [] };
   }
 
   // otp/verify: account creation.
@@ -430,9 +441,13 @@ test('OTP lifecycle: request -> verify creates a brand-new user -> set-password 
   });
 });
 
-test('OTP lifecycle: verify for an email that already has an account attaches the token to the EXISTING user', async () => {
+test('OTP lifecycle: verify for an existing PASSWORD-LESS account attaches the token to the EXISTING user and completes set-password (the §8.5 migrated-participant flow)', async () => {
+  // User 3 models the 199 migrated participants: an existing users row
+  // with an unusable hash and password_set = FALSE. The security guard on
+  // otp/verify (is_admin / password_set refusal) must NOT touch this
+  // path — it is exactly the flow SPEC §8.5 requires to keep working.
   await withApp(async (base) => {
-    const email = 'alice@example.com';
+    const email = 'nopasswordyet@example.com';
     await postJson(base, '/api/v4/mobile/auth/otp/request', { email });
     const code = capturedCodes[email];
 
@@ -441,8 +456,68 @@ test('OTP lifecycle: verify for an email that already has an account attaches th
     assert.equal(users.filter((u) => u.email === email).length, 1, 'no duplicate user row created');
     const setPasswordToken = (await res.json()).set_password_token;
     const tokenRow = tokens.find((t) => t.ability === 'set-password');
-    assert.equal(tokenRow.user_id, 1, 'the token is attached to alice, not a new row');
+    assert.equal(tokenRow.user_id, 3, 'the token is attached to the existing row, not a new one');
     assert.ok(setPasswordToken);
+
+    // The first-password set itself must succeed end to end.
+    const setRes = await postJson(base, '/api/v4/mobile/auth/set-password', {
+      password: 'FirstPassword1!', password_confirmation: 'FirstPassword1!',
+    }, bearer(setPasswordToken));
+    assert.equal(setRes.status, 200);
+    const setBody = await setRes.json();
+    assert.ok(setBody.token, 'a fresh session token is issued');
+    assert.equal(users.find((u) => u.id === 3).password_set, true);
+  });
+});
+
+test('otp/verify: an account that ALREADY has a real password (password_set=TRUE) gets the generic 422 — never a set-password token (unauthenticated password-reset guard)', async () => {
+  // alice has a usable password. Handing out a set-password token here
+  // would turn the OTP flow into a password reset for any platform web
+  // account. The refusal body is byte-identical to every other OTP
+  // failure (SPEC 1702/1707's one-message rule) so this is not a
+  // "does this account have a password" oracle.
+  await withApp(async (base) => {
+    const email = 'alice@example.com';
+    await postJson(base, '/api/v4/mobile/auth/otp/request', { email });
+    const code = capturedCodes[email];
+
+    const res = await postJson(base, '/api/v4/mobile/auth/otp/verify', { email, code });
+    assert.equal(res.status, 422);
+    assert.deepEqual(await res.json(), { success: false, error: 'Invalid or expired code.' });
+    assert.ok(!tokens.some((t) => t.ability === 'set-password'), 'no set-password token may exist');
+    assert.equal(users.find((u) => u.id === 1).password, ALICE_HASH, 'password untouched');
+  });
+});
+
+test('otp/verify: a platform ADMIN account gets the same generic 422, even with password_set=FALSE (admin web-console takeover guard)', async () => {
+  await withApp(async (base) => {
+    const email = 'root@example.com';
+    await postJson(base, '/api/v4/mobile/auth/otp/request', { email });
+    const code = capturedCodes[email];
+
+    const res = await postJson(base, '/api/v4/mobile/auth/otp/verify', { email, code });
+    assert.equal(res.status, 422);
+    assert.deepEqual(await res.json(), { success: false, error: 'Invalid or expired code.' });
+    assert.ok(!tokens.some((t) => t.ability === 'set-password'), 'no set-password token may exist');
+  });
+});
+
+test('set-password: the consume-side guard — a live set-password token for an admin (or already-passworded) row is refused like an invalid token and revoked', async () => {
+  // Defense in depth for tokens minted BEFORE the account gained its
+  // password/admin status (otp/verify no longer issues them for such
+  // rows): seed the token directly, bypassing verify entirely.
+  await withApp(async (base) => {
+    const raw = crypto.randomBytes(40).toString('hex');
+    const tokenHash = crypto.createHash('sha256').update(raw).digest('hex');
+    tokens.push({ id: 999, user_id: 4, token_hash: tokenHash, ability: 'set-password', expires_at: new Date(Date.now() + 60000), last_used_at: null });
+
+    const res = await postJson(base, '/api/v4/mobile/auth/set-password', {
+      password: 'AdminTakeover1!', password_confirmation: 'AdminTakeover1!',
+    }, bearer(raw));
+    assert.equal(res.status, 401);
+    assert.deepEqual(await res.json(), { success: false, error: 'Unauthenticated.' });
+    assert.equal(users.find((u) => u.id === 4).password, UNUSABLE_HASH, 'admin password untouched');
+    assert.ok(!tokens.some((t) => t.id === 999), 'the token is revoked (single-use either way)');
   });
 });
 

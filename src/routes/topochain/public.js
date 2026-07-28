@@ -133,8 +133,17 @@ function maskIdentifier({ type, value }) {
 
 // discord -> display_name -> masked identifier (SPEC 1246's fallback
 // chain, reused everywhere a display name is shown in this file).
-function resolveDisplayName(user) {
-  if (user.discord) return user.discord;
+//
+// `includeDiscord: false` (security-review finding) drops the raw discord
+// handle from the head of the chain — used ONLY by /leaderboard/global for
+// non-admin callers: SPEC 988 marks `discord` ADMIN ONLY on that endpoint
+// ("key absent for anonymous callers"), and emitting the same handle
+// verbatim as `display_name` would defeat that redaction entirely. Every
+// other endpoint keeps the full SPEC 1246 chain (spec mandates it there);
+// note the masked-identifier tail may still derive from discord, but only
+// in its masked `abc***` form (SPEC 958), never the raw handle.
+function resolveDisplayName(user, { includeDiscord = true } = {}) {
+  if (includeDiscord && user.discord) return user.discord;
   if (user.display_name) return user.display_name;
   return maskIdentifier(resolveIdentifier(user));
 }
@@ -270,7 +279,28 @@ function topochainPublicRoutes(config) {
   // Every route in this group is optionally-authenticated (SPEC 900);
   // applied once here rather than per-route since it never itself
   // produces a response (see the middleware's own doc comment).
-  router.use(optionalSessionAuth(config));
+  //
+  // SCOPED to /api/v4/ (integration-review finding): this router is
+  // mounted UNSCOPED at the app root in server.js (`app.use(topochain
+  // PublicRoutes(config))`, server.js:443), BEFORE authMiddleware — so a
+  // bare `router.use(mw)` would run the middleware for EVERY request that
+  // reaches this mount point, including all v1 APIs, static assets and
+  // SPA loads. optionalSessionAuth does a `sessions JOIN users` query per
+  // request with a session cookie; authMiddleware then repeats the same
+  // lookup for the platform routes it guards — a pure duplicate per-
+  // request DB cost with no correctness impact. The prefix guard makes
+  // this middleware a no-op outside the /api/v4 surface it exists for.
+  //
+  // The compare is case-INSENSITIVE (`toLowerCase()`), the same idiom as
+  // topochain admin.js's read-gate guard: Express 4 matches routes
+  // case-insensitively, so `/api/v4/LEADERBOARD` reaches the handlers
+  // below and must get the same optional-auth enrichment (an admin's
+  // session must still resolve however the path is cased).
+  const sessionAuth = optionalSessionAuth(config);
+  router.use((req, res, next) => {
+    if (!req.path.toLowerCase().startsWith('/api/v4/')) return next();
+    return sessionAuth(req, res, next);
+  });
 
   // Mount-order probe (plan Task 3), kept as-is per the Task 5 brief.
   router.get('/api/v4/public/__ping', (_req, res) => ok(res, {}));
@@ -362,7 +392,10 @@ function topochainPublicRoutes(config) {
           rank: s.rank,
           is_non_podium: s.is_non_podium,
           identifier: maskIdentifier(resolveIdentifier(s)),
-          display_name: resolveDisplayName(s),
+          // SPEC 988 makes discord ADMIN ONLY on this endpoint, so the
+          // display-name fallback must not leak the raw handle to
+          // non-admins either (see resolveDisplayName's doc comment).
+          display_name: resolveDisplayName(s, { includeDiscord: isAdmin }),
           total_points: s.total_points,
           events_participated: s.events_participated,
           total_produced_blocks: s.total_produced_blocks,
@@ -494,10 +527,31 @@ function topochainPublicRoutes(config) {
 
       // SPEC 1108: email/telegram/discord match, OR any onchain account
       // address equal to the identifier — not scoped to this event.
+      //
+      // SCOPED TO TOPOCHAIN PARTICIPANTS (security-review finding): this
+      // route is public (pre-authMiddleware) and its 404-vs-200 split is
+      // an exact-match existence oracle for the identifier. The source
+      // system resolved identifiers against its own `participants` table,
+      // so "any user" there meant "any competition participant" — but the
+      // v4 migration folded participants into the SHARED platform `users`
+      // table (Global Constraints #7), which also holds every ordinary
+      // platform web account. Without the participant predicate below,
+      // this endpoint would confirm/deny the email, telegram or discord
+      // handle of EVERY platform account. Requiring at least one
+      // user_enrollments row (or, for migrated pre-enrollment data, a
+      // leaderboard_snapshots row) preserves the source's real semantics;
+      // a non-participant match falls through to the exact same 404 body
+      // as an unknown identifier — no distinguishable behavior. The
+      // onchain-account branch needs no extra predicate: `onchain_accounts`
+      // is itself a topochain-only table, so any user_id it links to is a
+      // participant by construction.
       const { rows: userRows } = await pool.query(
-        `SELECT id FROM users WHERE email = $1 OR telegram = $1 OR discord = $1
+        `SELECT u.id FROM users u
+          WHERE (u.email = $1 OR u.telegram = $1 OR u.discord = $1)
+            AND (EXISTS (SELECT 1 FROM user_enrollments ue WHERE ue.user_id = u.id)
+                 OR EXISTS (SELECT 1 FROM leaderboard_snapshots ls WHERE ls.user_id = u.id))
          UNION
-         SELECT user_id AS id FROM onchain_accounts WHERE address = $1 AND user_id IS NOT NULL
+         SELECT oa.user_id AS id FROM onchain_accounts oa WHERE oa.address = $1 AND oa.user_id IS NOT NULL
          LIMIT 1`,
         [identifier]
       );
@@ -754,8 +808,21 @@ function topochainPublicRoutes(config) {
       const userId = toIntId(req.params.userId);
       if (!userId) return fail(res, 404, 'User not found.');
 
+      // SCOPED TO TOPOCHAIN PARTICIPANTS (security-review finding, same
+      // reasoning as /leaderboard/user-activities above): this public
+      // route enumerates by sequential integer id, and the shared platform
+      // `users` table (Global Constraints #7) holds every platform web
+      // account, not just competition participants. The source system's
+      // profile lookups ran against its own `participants` table, so the
+      // participant predicate here (an enrollment, or a snapshot for
+      // migrated pre-enrollment data) preserves that intent; a
+      // non-participant id returns this exact same 404 as an unknown id.
       const { rows: userRows } = await pool.query(
-        'SELECT id, email, telegram, discord, display_name FROM users WHERE id = $1',
+        `SELECT u.id, u.email, u.telegram, u.discord, u.display_name
+           FROM users u
+          WHERE u.id = $1
+            AND (EXISTS (SELECT 1 FROM user_enrollments ue WHERE ue.user_id = u.id)
+                 OR EXISTS (SELECT 1 FROM leaderboard_snapshots ls WHERE ls.user_id = u.id))`,
         [userId]
       );
       const user = userRows[0];

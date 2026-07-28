@@ -357,6 +357,30 @@ function handleQuery(rawSql, params = []) {
     if (row) { row.user_id = userId; row.is_used = true; row.used_at = new Date(); }
     return { rows: [] };
   }
+  // export-csv: enrolled users (event-scoped or season-wide) joined to
+  // their best-matching onchain account's registration_code.
+  if (sql.startsWith('WITH enrolled AS')) {
+    const [seasonEventId, seasonId] = params;
+    const enrolledIds = [...new Set(db.userEnrollments
+      .filter((e) => e.season_event_id === seasonEventId || (e.season_event_id == null && e.season_id === seasonId))
+      .map((e) => e.user_id))];
+    const rows = enrolledIds
+      .map((uid) => db.users.find((u) => u.id === uid))
+      .filter(Boolean)
+      .sort((a, b) => a.id - b.id)
+      .map((u) => {
+        const accts = db.onchainAccounts
+          .filter((a) => a.user_id === u.id
+            && (a.season_event_id === seasonEventId || (a.season_event_id == null && a.season_id === seasonId)))
+          .sort((a, b) => ((a.season_event_id == null) - (b.season_event_id == null)) || (b.id - a.id));
+        return {
+          email: u.email ?? null,
+          username: u.discord ?? null,
+          registration_code: accts.length ? accts[0].registration_code : null,
+        };
+      });
+    return { rows };
+  }
 
   // ── challenge_templates / challenges ──────────────────────────────────
   if (sql === 'SELECT DISTINCT category FROM challenge_templates') {
@@ -691,6 +715,37 @@ test('admin auth: the gate is scoped to /api/v4/admin/* only — a non-admin (or
   }
 });
 
+test('admin auth: case-variant /api/v4/ADMIN/* paths are still gated for a non-admin (Express matches routes case-insensitively, so the prefix guard must too)', async () => {
+  // Regression for the security-review finding: Express 4 route matching
+  // is case-INSENSITIVE by default, so `GET /api/v4/ADMIN/users` executes
+  // the exact same handlers as `/api/v4/admin/users` — but req.path keeps
+  // the caller's casing, and the old case-SENSITIVE startsWith guard
+  // skipped adminReadGate entirely for any case-variant spelling. These
+  // requests returned 200 (full user list, emails and all) to a plain
+  // logged-in non-admin before the fix.
+  db.users.push({ id: 30, email: 'someone@example.com' });
+  const { server, base } = await listen(buildFullApp('user'));
+  try {
+    const upper = await fetch(`${base}/api/v4/ADMIN/users`);
+    assert.equal(upper.status, 403);
+    assert.deepEqual(await upper.json(), { success: false, error: 'Unauthorized. Admin access required.' });
+
+    const mixed = await fetch(`${base}/api/v4/Admin/__ping`);
+    assert.equal(mixed.status, 403);
+    assert.deepEqual(await mixed.json(), { success: false, error: 'Unauthorized. Admin access required.' });
+  } finally { server.close(); }
+
+  // Sanity companion: a real admin through the same case-variant path
+  // still reaches the route (the fix widens the GATE's scope to match
+  // Express's routing scope; it must not break case-variant access for
+  // callers the gate admits).
+  const { server: adminServer, base: adminBase } = await listen(buildFullApp('admin'));
+  try {
+    const ping = await fetch(`${adminBase}/api/v4/Admin/__ping`);
+    assert.equal(ping.status, 200);
+  } finally { adminServer.close(); }
+});
+
 // ─── 2. Route-shadowing regression (D3) ─────────────────────────────────
 
 test('user-activities: GET /totals reaches the totals handler, not the :id show handler (route-shadowing fix)', async () => {
@@ -987,6 +1042,75 @@ test('users: index returns ONE consistent row shape with or without season_event
     assert.equal(filteredBody.data[0].id, 1);
     assert.ok('events' in filteredBody.data[0] && 'onchain_accounts' in filteredBody.data[0],
       'the filtered branch must use the SAME shape as the unfiltered one');
+  } finally { server.close(); }
+});
+
+test('users: export-csv sits behind the WRITE gate — a view-only admin gets the 403 write-gate body (data-egress reasoning, same as /database/export)', async () => {
+  db.seasonEvents.push({ id: 8, name: 'Export Event', season_id: 5, starts_at: T(-5), ends_at: T(5) });
+  const { server, base } = await listen(buildFullApp('readonly'));
+  try {
+    const res = await fetch(`${base}/api/v4/admin/users/export-csv/8`);
+    assert.equal(res.status, 403);
+    assert.deepEqual(await res.json(), { success: false, error: 'Full admin access required.' });
+  } finally { server.close(); }
+});
+
+test('users: export-csv streams the documented CSV — header row, one row per enrolled user (event-scoped OR season-wide), code empty when no account (SPEC 2396-2405)', async () => {
+  db.seasonEvents.push({ id: 8, name: 'Export Event', season_id: 5, starts_at: T(-5), ends_at: T(5) });
+  db.users.push(
+    { id: 1, email: 'alice@example.com', discord: 'alice#1234' },
+    { id: 2, email: 'bob@example.com', discord: null },
+    { id: 3, email: 'outsider@example.com', discord: 'outsider#9' } // NOT enrolled
+  );
+  db.userEnrollments.push(
+    { id: 1, user_id: 1, season_event_id: 8, season_id: 5, registered_at: T(-1) },
+    // Season-wide enrollment (season_event_id NULL) counts as enrolled in
+    // every event of that season, mirroring the route's own CTE.
+    { id: 2, user_id: 2, season_event_id: null, season_id: 5, registered_at: T(-1) }
+  );
+  db.onchainAccounts.push({
+    id: 1, user_id: 1, season_event_id: 8, season_id: 5, registration_code: 'ABCD1234',
+    amount: 10, address: 'addr-1', tier: null, is_used: true,
+  });
+
+  const { server, base } = await listen(buildFullApp('admin'));
+  try {
+    const res = await fetch(`${base}/api/v4/admin/users/export-csv/8`);
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type'), /^text\/csv/);
+    assert.match(res.headers.get('content-disposition'), /season-event-8-users\.csv/);
+    const lines = (await res.text()).trim().split('\n');
+    assert.equal(lines[0], 'email,username,code');
+    assert.deepEqual(lines.slice(1).sort(), [
+      'alice@example.com,alice#1234,ABCD1234',
+      'bob@example.com,,',
+    ].sort());
+    assert.ok(!lines.some((l) => l.includes('outsider@example.com')), 'non-enrolled users never appear');
+
+    // Unknown event -> plain 404 JSON, never CSV headers.
+    const notFound = await fetch(`${base}/api/v4/admin/users/export-csv/999999`);
+    assert.equal(notFound.status, 404);
+    assert.equal((await notFound.json()).error, 'Event not found.');
+  } finally { server.close(); }
+});
+
+test('users: export-csv neutralizes spreadsheet formula injection in every field (leading =, +, @ get the plain-text apostrophe prefix)', async () => {
+  db.seasonEvents.push({ id: 8, name: 'Export Event', season_id: 5, starts_at: T(-5), ends_at: T(5) });
+  // Admin-entered/CSV-imported strings can start with a formula trigger
+  // character; opening the export in Excel/Sheets must not evaluate them.
+  db.users.push({ id: 1, email: '=cmd|calc!A0@x.com', discord: '+SUM(A1)' });
+  db.userEnrollments.push({ id: 1, user_id: 1, season_event_id: 8, season_id: 5, registered_at: T(-1) });
+  db.onchainAccounts.push({
+    id: 1, user_id: 1, season_event_id: 8, season_id: 5, registration_code: '@evilmacro',
+    amount: 1, address: 'addr-1', tier: null, is_used: true,
+  });
+
+  const { server, base } = await listen(buildFullApp('admin'));
+  try {
+    const res = await fetch(`${base}/api/v4/admin/users/export-csv/8`);
+    assert.equal(res.status, 200);
+    const lines = (await res.text()).trim().split('\n');
+    assert.equal(lines[1], "'=cmd|calc!A0@x.com,'+SUM(A1),'@evilmacro");
   } finally { server.close(); }
 });
 

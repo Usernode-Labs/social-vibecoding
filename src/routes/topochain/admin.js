@@ -69,8 +69,23 @@ function topochainAdminRoutes(config) {
   // restoring the "only ever receives /api/v4/admin/* requests" invariant
   // the rest of this file's comments (and adminReadGate's own req.path
   // logic) already assume.
+  //
+  // CASE-INSENSITIVE compare (security-review finding): Express 4 route
+  // matching is case-INSENSITIVE by default (`caseSensitive: false` on
+  // both app and Router), so `GET /api/v4/ADMIN/users` matches the exact
+  // same route handlers below as `/api/v4/admin/users` — but req.path
+  // preserves the caller's original casing. A case-SENSITIVE startsWith
+  // here would therefore skip adminReadGate for any case-variant spelling
+  // while the routes still matched and executed: every admin READ
+  // (user lists with emails, onchain_accounts with registration_code, the
+  // CSV export, sql-query execute/schema) would be reachable by any
+  // logged-in non-admin. Lower-casing req.path before the prefix check
+  // makes the gate's scope exactly match Express's own matching scope.
+  // (App-level `case sensitive routing` was deliberately NOT enabled —
+  // that would change routing behavior platform-wide, far beyond this
+  // router.) Regression-tested in tests/topochain-admin-api.test.js.
   router.use((req, res, next) => {
-    if (!req.path.startsWith('/api/v4/admin/')) return next();
+    if (!req.path.toLowerCase().startsWith('/api/v4/admin/')) return next();
     return adminReadGate(req, res, next);
   });
 

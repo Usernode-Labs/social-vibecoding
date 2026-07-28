@@ -14,6 +14,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
+const cookieParser = require('cookie-parser');
 
 // ─── Fixture data ─────────────────────────────────────────────────────
 
@@ -27,7 +28,15 @@ const USERS = [
   { id: 3, email: null, telegram: 'carolTG', discord: null, display_name: 'Carol Display', exclude_podium: false },
   { id: 4, email: 'dave@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
   { id: 5, email: 'erin@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
+  // frank: enrolled (event 101) but has no snapshots/activities — a
+  // participant who never scored, used by the "valid identifier, empty
+  // result" tests.
   { id: 6, email: 'frank@example.com', telegram: null, discord: null, display_name: null, exclude_podium: false },
+  // grace: an ordinary PLATFORM web account sharing the users table — no
+  // enrollment, no snapshot, no onchain account. The participant-scoping
+  // fix must make her unresolvable through the public endpoints exactly
+  // like an unknown identifier/id (enumeration-oracle regression).
+  { id: 7, email: 'platform-only@example.com', telegram: 'graceTG', discord: 'gracediscord', display_name: 'Grace', exclude_podium: false },
 ];
 
 const SEASON_EVENTS = [
@@ -179,7 +188,19 @@ const USER_ENROLLMENTS = [
   { season_event_id: 100, user_id: 2 },
   { season_event_id: 100, user_id: 4 },
   { season_event_id: 100, user_id: 5 },
+  // frank is enrolled in event 101 (not 100) so /season-events/100's
+  // users_count stays 3 while frank still counts as a participant for
+  // the enrollment-or-snapshot scoping predicate below.
+  { season_event_id: 101, user_id: 6 },
 ];
+
+// Mirrors the participant predicate the routes now apply (security fix):
+// EXISTS(user_enrollments) OR EXISTS(leaderboard_snapshots) — any user
+// matching neither is a plain platform account and must be unresolvable.
+function isParticipant(userId) {
+  return USER_ENROLLMENTS.some((e) => e.user_id === userId)
+    || LEADERBOARD_SNAPSHOTS.some((s) => s.user_id === userId);
+}
 
 // ─── Mock pool: SQL shape -> in-memory computation ──────────────────────
 
@@ -313,10 +334,14 @@ function makeMockPool() {
       const event = SEASON_EVENTS.find((e) => e.id === params[0]);
       return { rows: event ? [{ id: event.id }] : [] };
     }
-    // GET /leaderboard/user-activities: identifier resolution (UNION).
-    if (sql.includes('UNION') && sql.includes('FROM onchain_accounts WHERE address = $1')) {
+    // GET /leaderboard/user-activities: identifier resolution (UNION),
+    // participant-scoped on the email/telegram/discord branch (the
+    // onchain-account branch is inherently topochain-scoped — see the
+    // route's own comment).
+    if (sql.includes('UNION') && sql.includes('oa.address = $1')) {
       const identifier = params[0];
-      const byField = USERS.find((u) => u.email === identifier || u.telegram === identifier || u.discord === identifier);
+      const byField = USERS.find((u) => (u.email === identifier || u.telegram === identifier || u.discord === identifier)
+        && isParticipant(u.id));
       if (byField) return { rows: [{ id: byField.id }] };
       const acct = ONCHAIN_ACCOUNTS.find((a) => a.address === identifier && a.user_id != null);
       return { rows: acct ? [{ id: acct.user_id }] : [] };
@@ -354,8 +379,10 @@ function makeMockPool() {
       const event = SEASON_EVENTS.find((e) => e.id === params[0]);
       return { rows: event ? [event] : [] };
     }
-    // GET /season-events/{id}: enrollment count.
-    if (sql.includes('FROM user_enrollments')) {
+    // GET /season-events/{id}: enrollment count. (Matcher is deliberately
+    // narrow — the participant-scoped profile lookup below ALSO mentions
+    // user_enrollments in its EXISTS subquery and must not match here.)
+    if (sql.includes('COUNT(*)::int AS c FROM user_enrollments')) {
       const count = USER_ENROLLMENTS.filter((r) => r.season_event_id === params[0]).length;
       return { rows: [{ c: count }] };
     }
@@ -417,9 +444,9 @@ function makeMockPool() {
       return { rows };
     }
 
-    // GET /users/{id}/profile: base user lookup.
-    if (sql.includes('SELECT id, email, telegram, discord, display_name FROM users')) {
-      const user = USERS.find((u) => u.id === params[0]);
+    // GET /users/{id}/profile: base user lookup (participant-scoped).
+    if (sql.includes('u.email, u.telegram, u.discord, u.display_name FROM users u')) {
+      const user = USERS.find((u) => u.id === params[0] && isParticipant(u.id));
       return { rows: user ? [user] : [] };
     }
     // GET /users/{id}/profile (event mode): single latest snapshot.
@@ -496,11 +523,17 @@ function joinChallengeTemplate(c, t) {
 // ─── Test app wiring (require.cache pool swap, mirrors topochain-foundation.test.js) ─
 
 function withMockPool(fn) {
+  return withInjectedPool(makeMockPool(), fn);
+}
+
+// Same require.cache swap, but with a caller-supplied pool — used by the
+// optionalSessionAuth-scoping test, which needs a query-COUNTING pool
+// rather than the shared fixture-backed mock.
+function withInjectedPool(mockPool, fn) {
   const poolModulePath = require.resolve('../src/db/pool');
   const publicModulePath = require.resolve('../src/routes/topochain/public');
   const authModulePath = require.resolve('../src/middleware/topochain-auth');
   const standingsModulePath = require.resolve('../src/services/topochain/standings');
-  const mockPool = makeMockPool();
   const original = require.cache[poolModulePath];
   require.cache[poolModulePath] = {
     exports: { getPool: () => mockPool },
@@ -554,6 +587,43 @@ async function get(path, opts) { return fetch(`${base}${path}`, opts); }
 async function postJson(path, body) {
   return fetch(`${base}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 }
+
+// ─── optionalSessionAuth prefix scoping (integration-review fix) ────────
+
+test('optionalSessionAuth is scoped to /api/v4/: a non-API request with a session cookie runs ZERO queries through the public router', async () => {
+  // This router is mounted UNSCOPED at the app root (server.js:443),
+  // before authMiddleware — an unscoped `router.use(optionalSessionAuth)`
+  // therefore ran a duplicate `sessions JOIN users` query for EVERY
+  // authenticated request platform-wide (v1 APIs, static assets, SPA
+  // loads), which authMiddleware then repeated. The counting pool proves
+  // the session lookup now happens only on the /api/v4 surface.
+  let queries = 0;
+  const countingPool = { query: async () => { queries += 1; return { rows: [] }; } };
+  let srv;
+  withInjectedPool(countingPool, ({ topochainPublicRoutes }) => {
+    const app = express();
+    app.use(cookieParser());
+    app.use(topochainPublicRoutes({ databaseUrl: 'postgres://fake/fake' }));
+    // Stand-ins for the platform routes mounted after this router.
+    app.get('/dashboard', (_req, res) => res.status(200).send('DASHBOARD'));
+    srv = app.listen(0);
+  });
+  await new Promise((r) => srv.once('listening', r));
+  const localBase = `http://127.0.0.1:${srv.address().port}`;
+  try {
+    const dash = await fetch(`${localBase}/dashboard`, { headers: { cookie: 'session=some-token' } });
+    assert.equal(dash.status, 200);
+    assert.equal(await dash.text(), 'DASHBOARD');
+    assert.equal(queries, 0, 'a non-/api/v4 path must never trigger the session lookup');
+
+    // Sanity companion: the SAME cookie on an /api/v4 path DOES run
+    // exactly the one session lookup (__ping itself issues no queries),
+    // proving the guard scopes the middleware rather than disabling it.
+    const ping = await fetch(`${localBase}/api/v4/public/__ping`, { headers: { cookie: 'session=some-token' } });
+    assert.equal(ping.status, 200);
+    assert.equal(queries, 1, 'the /api/v4 surface still gets optional session resolution');
+  } finally { srv.close(); }
+});
 
 // ─── __ping (kept from Task 3) ──────────────────────────────────────────
 
@@ -691,6 +761,22 @@ test('GET /leaderboard/global: admin caller sees the discord key (present, possi
   assert.equal(bobRow.discord, 'bobdiscord');
 });
 
+test('GET /leaderboard/global: anon display_name never falls back to the raw discord handle (SPEC 988 admin-only redaction)', async () => {
+  // bob's only human-readable name is his discord handle. SPEC 988 makes
+  // `discord` ADMIN ONLY on this endpoint, so the display-name fallback
+  // chain must skip discord for non-admins (masked identifier instead) —
+  // otherwise display_name re-leaks the very field the discord key
+  // redaction hides. The admin test above pins the opposite: admins still
+  // get the full SPEC 1246 chain (display_name === 'bobdiscord').
+  const res = await get('/api/v4/leaderboard/global');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  const bob = body.data.leaderboard.find((r) => r.identifier === 'bob***@***.com');
+  assert.ok(bob, 'bob must appear in the global standings');
+  assert.notEqual(bob.display_name, 'bobdiscord');
+  assert.equal(bob.display_name, 'bob***@***.com');
+});
+
 test('GET /leaderboard/global: shared-rank rule — podium-excluded user shares the next rank, no slot consumed', async () => {
   const res = await get('/api/v4/leaderboard/global');
   const body = await res.json();
@@ -780,6 +866,17 @@ test('GET /leaderboard/user-activities: unknown identifier -> 404 Participant no
   const res = await get('/api/v4/leaderboard/user-activities?season_event_id=100&participant_identifier=nobody@example.com');
   assert.equal(res.status, 404);
   assert.deepEqual(await res.json(), { success: false, error: 'Participant not found', data: [] });
+});
+
+test('GET /leaderboard/user-activities: a platform account with no enrollment or snapshot gets the SAME 404 as an unknown identifier (enumeration-oracle guard)', async () => {
+  // grace (user 7) is a real row in the shared platform users table, but
+  // has never participated in topochain. All three of her identifiers
+  // must be indistinguishable from identifiers that match nothing.
+  for (const identifier of ['platform-only@example.com', 'graceTG', 'gracediscord']) {
+    const res = await get(`/api/v4/leaderboard/user-activities?season_event_id=100&participant_identifier=${identifier}`);
+    assert.equal(res.status, 404, `identifier=${identifier}`);
+    assert.deepEqual(await res.json(), { success: false, error: 'Participant not found', data: [] });
+  }
 });
 
 test('GET /leaderboard/user-activities: missing params -> 422', async () => {
@@ -922,6 +1019,26 @@ test('GET /users/:id/profile: unknown user -> 404 User not found.', async () => 
   const res = await get('/api/v4/users/9999/profile');
   assert.equal(res.status, 404);
   assert.deepEqual(await res.json(), { success: false, error: 'User not found.' });
+});
+
+test('GET /users/:id/profile: a platform account with no enrollment or snapshot gets the SAME 404 as an unknown id (enumeration-oracle guard)', async () => {
+  // grace (user 7) exists in the shared users table but never
+  // participated — byte-identical body to the unknown-id case above.
+  const res = await get('/api/v4/users/7/profile');
+  assert.equal(res.status, 404);
+  assert.deepEqual(await res.json(), { success: false, error: 'User not found.' });
+});
+
+test('GET /users/:id/profile: an enrollment-only participant (no snapshots yet) still resolves', async () => {
+  // frank (user 6) is enrolled in event 101 but has no snapshots or
+  // activities — the scoping fix must not lock out participants who
+  // simply haven\'t scored yet.
+  const res = await get('/api/v4/users/6/profile');
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.data.identifier_type, 'email');
+  assert.equal(body.data.rank, null);
+  assert.equal(body.data.total_points, 0);
 });
 
 test('GET /users/:id/profile: internal season_event_id -> 404 Event not found.', async () => {
