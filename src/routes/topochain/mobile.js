@@ -13,21 +13,28 @@
 //     (src/middleware/topochain-auth.js); the user is ALWAYS resolved from
 //     the token, never a client-supplied id (constraint #12).
 //
-// This module is a SKELETON for Task 3 (foundation): only the mount-order
-// probe route exists. Task 8 builds the auth endpoints + mailer; Tasks 9-10
-// build the data endpoints.
+// Task 3 built the mount-order probe below. Task 8 (this task) composes
+// in the auth sub-surface (./mobile-auth.js: check-email, login,
+// otp/request, otp/verify, set-password, logout) + its mailer
+// (src/services/topochain/mailer.js). Tasks 9-10 will add this router's
+// remaining data endpoints (me, leaderboard, challenges, seasons, terms,
+// logs, zkpassport, delegation).
 'use strict';
 
 const { Router } = require('express');
 const { ok } = require('./helpers');
+const { topochainMobileAuthRoutes } = require('./mobile-auth');
 
-function topochainMobileRoutes(_config) {
+function topochainMobileRoutes(config) {
   const router = Router();
 
   // Mount-order probe (plan Task 3). Deliberately NOT gated by
   // mobileTokenAuth — it exists only to prove this router sits ahead of
-  // authMiddleware; Tasks 8-10 apply the real per-route auth.
+  // authMiddleware; the real per-route auth lives on each endpoint below.
   router.get('/api/v4/mobile/__ping', (_req, res) => ok(res, {}));
+
+  // Task 8: the six auth endpoints (their own throttle/token gating).
+  router.use(topochainMobileAuthRoutes(config));
 
   return router;
 }

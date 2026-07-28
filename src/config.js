@@ -39,6 +39,12 @@ function load() {
   }
 
   const config = {
+    // Deployment environment tag (plan Global Constraints #6, topochain
+    // mailer): drives ONE behavior today — src/services/topochain/
+    // mailer.js logs the OTP code at dev/staging convenience only when
+    // `env !== 'production'`. Not in REQUIRED: defaults to 'development'
+    // so a bare checkout without NODE_ENV set behaves like local dev.
+    env: process.env.NODE_ENV || 'development',
     port: parseInt(process.env.PORT || '3000', 10),
     databaseUrl: process.env.DATABASE_URL,
     sessionSecret: process.env.SESSION_SECRET,
@@ -203,6 +209,7 @@ function load() {
   };
 
   console.log('[config] Loaded:');
+  console.log(`  NODE_ENV=${config.env}`);
   console.log(`  DATABASE_URL=${mask(config.databaseUrl)}`);
   console.log(`  JWT_SECRET=${mask(config.jwtSecret)}`);
   console.log(`  GITHUB_APP_ID=${config.githubAppId || '(not set)'}`);

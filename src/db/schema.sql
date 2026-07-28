@@ -2765,3 +2765,24 @@ COMMENT ON COLUMN users.email_confirmation_token    IS 'staging:private';
 COMMENT ON COLUMN users.waitlist_ip                 IS 'staging:private';
 COMMENT ON COLUMN onchain_accounts.secret_key        IS 'staging:private';
 COMMENT ON COLUMN onchain_accounts.registration_code IS 'staging:private';
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Topochain Task 8 — mobile auth: users.password_set (plan Task 8;
+-- Global Constraints #4/#6, task-8 brief).
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Every platform `users` row already has a NOT NULL `password` (a real
+-- bcrypt hash) — but the topochain mobile OTP flow
+-- (POST /api/v4/mobile/auth/otp/verify) can create a user row with NO
+-- caller-chosen password at all: it stores a random, unusable bcrypt hash
+-- (of 32 random bytes nobody knows) just to satisfy the NOT NULL
+-- constraint. `password_set` is how the mobile auth surface tells "a real,
+-- caller-chosen password exists" apart from "some syntactically-valid
+-- hash nobody can ever produce" — POST /auth/check-email's
+-- `password_set` response field and POST /auth/login's guest/member/
+-- operator level computation both branch on it directly (mobile-auth.js).
+-- Existing platform users (registered the normal way, always with a real
+-- chosen password) default TRUE via DEFAULT TRUE, so this column is a
+-- no-op for every pre-existing account; only the OTP-created path (and,
+-- until it completes set-password, that path alone) ever sets it FALSE.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_set BOOLEAN NOT NULL DEFAULT TRUE;

@@ -98,6 +98,14 @@ function partnerApiKey(config) {
 // ability still authenticates (it's a real, unexpired token) but is
 // refused with 403, never 401 — mirroring SPEC 1599's distinction between
 // "not a valid credential" (401) and "valid credential, wrong scope" (403).
+// `ability: null` (used by mobile-auth.js's POST /logout, SPEC 1734 "Auth:
+// any valid token") skips the ability check entirely — any live token of
+// EITHER ability authenticates. `forbiddenMessage` lets one call site
+// override the generic ABILITY_MESSAGES text with a route-specific SPEC
+// sentence (POST /set-password's 403 is "This token cannot set a
+// password.", SPEC 1729 — distinct from the generic
+// "A set-password token is required." every other set-password-gated
+// route would get by default).
 //
 // Constraint #12: mobile users' is_admin is always false and the mobile
 // surface never trusts a client-supplied id — req.user.id always comes
@@ -109,13 +117,22 @@ const ABILITY_MESSAGES = {
   'set-password': 'A set-password token is required.',
 };
 
-function mobileTokenAuth(config, { ability = 'session' } = {}) {
+// Authorization: Bearer <token> -> the raw token string, or null if the
+// header is absent/malformed. Shared by mobileTokenAuth itself and by
+// mobile-auth.js routes (set-password, logout) that need to re-derive the
+// SAME token's sha256 hash after authentication, to revoke exactly the
+// one token presented — never every token the user holds.
+function extractBearerToken(req) {
+  const header = req.headers['authorization'];
+  const match = typeof header === 'string' ? /^Bearer\s+(.+)$/i.exec(header.trim()) : null;
+  return match ? match[1].trim() : null;
+}
+
+function mobileTokenAuth(config, { ability = 'session', forbiddenMessage } = {}) {
   const pool = getPool(config);
 
   return async (req, res, next) => {
-    const header = req.headers['authorization'];
-    const match = typeof header === 'string' ? /^Bearer\s+(.+)$/i.exec(header.trim()) : null;
-    const token = match ? match[1].trim() : null;
+    const token = extractBearerToken(req);
     if (!token) return fail(res, 401, 'Unauthenticated.');
 
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
@@ -141,8 +158,8 @@ function mobileTokenAuth(config, { ability = 'session' } = {}) {
       return fail(res, 401, 'Unauthenticated.');
     }
 
-    if (row.ability !== ability) {
-      return fail(res, 403, ABILITY_MESSAGES[ability] || 'Wrong token type.');
+    if (ability !== null && row.ability !== ability) {
+      return fail(res, 403, forbiddenMessage || ABILITY_MESSAGES[ability] || 'Wrong token type.');
     }
 
     req.user = { id: row.user_id, username: row.username, isAdmin: false };
@@ -156,4 +173,4 @@ function mobileTokenAuth(config, { ability = 'session' } = {}) {
   };
 }
 
-module.exports = { optionalSessionAuth, partnerApiKey, mobileTokenAuth };
+module.exports = { optionalSessionAuth, partnerApiKey, mobileTokenAuth, extractBearerToken };
