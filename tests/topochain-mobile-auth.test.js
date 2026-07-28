@@ -335,6 +335,29 @@ test('login: wrong password -> the SAME 401 message', async () => {
   });
 });
 
+// Code review fix: bcrypt.compare must run on EVERY failure path (real
+// hash or the fixed DUMMY_PASSWORD_HASH when there's no row/no password
+// to compare against) so an unknown email can't be timed apart from a
+// known one. This test doesn't assert on timing directly (flaky in CI)
+// — it asserts the three modes are byte-identical side by side, which is
+// what the shared bcrypt.compare call guarantees: no code path returns
+// the 401 without first doing that one comparison.
+test('login: all three failure modes (unknown email, no password set, wrong password) return the IDENTICAL body', async () => {
+  await withApp(async (base) => {
+    const [unknownRes, noPasswordRes, wrongPasswordRes] = await Promise.all([
+      postJson(base, '/api/v4/mobile/auth/login', { email: 'nobody@example.com', password: 'whatever123' }),
+      postJson(base, '/api/v4/mobile/auth/login', { email: 'nopasswordyet@example.com', password: 'whatever123' }),
+      postJson(base, '/api/v4/mobile/auth/login', { email: 'alice@example.com', password: 'totallyWrong123' }),
+    ]);
+    for (const res of [unknownRes, noPasswordRes, wrongPasswordRes]) {
+      assert.equal(res.status, 401);
+    }
+    const bodies = await Promise.all([unknownRes, noPasswordRes, wrongPasswordRes].map((r) => r.json()));
+    const expected = { success: false, error: 'Invalid email or password.' };
+    for (const body of bodies) assert.deepEqual(body, expected);
+  });
+});
+
 test('login: concurrent sessions — logging in twice mints two independent tokens', async () => {
   await withApp(async (base) => {
     const res1 = await postJson(base, '/api/v4/mobile/auth/login', { email: 'alice@example.com', password: ALICE_PASSWORD });

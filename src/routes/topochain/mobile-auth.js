@@ -51,6 +51,20 @@ const MAX_OTP_ATTEMPTS = 5;
 // without changing what every other set-password-gated route would say.
 const SET_PASSWORD_FORBIDDEN_MESSAGE = 'This token cannot set a password.';
 
+// Timing side-channel guard for /login (code review fix). A bcrypt
+// compare against a REAL row's hash and a synchronous "no row" branch
+// take measurably different wall-clock time — an attacker could time
+// responses to tell "no account with this email" apart from "account
+// exists, wrong password" even though both return the identical 401
+// SPEC 1648 requires. Comparing against this fixed, precomputed hash
+// whenever there's no real user (or password) row to compare against
+// keeps every failure path doing one bcrypt compare, so all three
+// failure modes (unknown email, no password set, wrong password) cost
+// about the same. The plaintext behind this hash is never used to
+// authenticate anything; only its shape (a valid bcrypt hash, so
+// `compare` takes its normal code path) matters.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('topochain-timing-normalization-only', 12);
+
 // ─── Validation helpers ──────────────────────────────────────────────────
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -163,7 +177,11 @@ function topochainMobileAuthRoutes(config) {
         [email]
       );
       const user = rows[0];
-      const passwordMatches = user ? await bcrypt.compare(password, user.password) : false;
+      // Always run exactly one bcrypt.compare, real hash or the fixed
+      // dummy one (see DUMMY_PASSWORD_HASH above) — an unknown email must
+      // do comparable work to a known one, or response timing alone would
+      // leak which case occurred.
+      const passwordMatches = await bcrypt.compare(password, user ? user.password : DUMMY_PASSWORD_HASH);
 
       // SPEC 1648: ONE message for all three failure modes (unknown
       // email, no password set, wrong password) — never disclose which.
