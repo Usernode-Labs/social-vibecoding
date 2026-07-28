@@ -181,6 +181,33 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     const stagingManifest = appManifest.read(cloneDir);
     const stagingPool = getPool(config);
     const stagingStored = await appSecrets.getRawValues(stagingPool, app.id, config.jwtSecret);
+    // A proposal may DECLARE a new secret and carry its value (the panel's
+    // "+ New variable" flow — services/pending-secrets.js). That value is
+    // not in `app_secrets` yet, so without this a PR adding a new required
+    // secret couldn't build its own preview. Only NON-private pending
+    // values are injected: a private value is kept out of an unreviewed
+    // PR's container exactly as mergeForDeploy's private-in-staging branch
+    // keeps the stored one out. Best-effort — a lookup failure must not
+    // fail a build that would otherwise succeed.
+    try {
+      // eslint-disable-next-line global-require
+      const pendingSecrets = require('./pending-secrets');
+      const heldValues = await pendingSecrets.rawValuesForSession(
+        stagingPool, session.id, config.jwtSecret
+      );
+      for (const [k, v] of Object.entries(heldValues)) {
+        if (!Object.prototype.hasOwnProperty.call(stagingStored, k)) stagingStored[k] = v;
+      }
+      if (Object.keys(heldValues).length) {
+        log.info('staging', 'Injected pending declared secrets into staging env', {
+          sessionId: session.id, keys: Object.keys(heldValues),
+        });
+      }
+    } catch (err) {
+      log.warn('staging', 'Pending declared-secret lookup failed', {
+        sessionId: session.id, err: err.message,
+      });
+    }
     const stagingMerge = appSecrets.mergeForDeploy(
       stagingManifest, stagingStored, appSecrets.platformDefaultsFromEnv(),
       { forStaging: true }

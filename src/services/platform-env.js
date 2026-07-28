@@ -233,8 +233,18 @@ function computeLast4(value, isPrivate) {
  * `private` is taken from the declaration when there is one, so an admin
  * cannot downgrade a private variable to non-private (and thereby cause
  * its last-4 to start being stored) by passing a flag.
+ *
+ * `opts.privateHint` is honoured ONLY when no declaration row exists —
+ * the brand-new-variable path (services/pending-secrets.js and the
+ * declare route), where the declaration is committed in the same
+ * proposal but doesn't reach platform_env_declarations until the
+ * post-deploy boot's reconcile. Without it a new NON-private variable
+ * would fall into the undeclared→private default and never show its
+ * value in the panel. It cannot weaken anything: a declared key ignores
+ * it entirely, so the "an admin cannot downgrade privacy" invariant
+ * above holds unchanged.
  */
-async function setValue(pool, appId, key, value, { userId = null, jwtSecret } = {}) {
+async function setValue(pool, appId, key, value, { userId = null, jwtSecret, privateHint } = {}) {
   if (!isWritableKey(key)) {
     throw new Error(`platform-env.setValue: key is not writable: ${key}`);
   }
@@ -247,11 +257,15 @@ async function setValue(pool, appId, key, value, { userId = null, jwtSecret } = 
     'SELECT private FROM platform_env_declarations WHERE app_id = $1 AND key = $2',
     [appId, key]
   );
-  // No declaration → treat as private. Setting a value for a key nothing
-  // declares is legitimate (you set it in the same breath as the
-  // proposal that declares it), and the safe default for an unknown
+  // No declaration → the caller's hint if it gave one (the
+  // declare-a-new-variable path, whose declaration is committed in the
+  // same proposal), otherwise treat as private. Setting a value for a key
+  // nothing declares is legitimate — you set it in the same breath as the
+  // proposal that declares it — and the safe default for an unknown
   // variable is "don't display it".
-  const isPrivate = declRows.length ? !!declRows[0].private : true;
+  const isPrivate = declRows.length
+    ? !!declRows[0].private
+    : (privateHint === undefined ? true : !!privateHint);
 
   await pool.query(
     `INSERT INTO platform_env_values (app_id, key, value_enc, value_last4, private, updated_by)

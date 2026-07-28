@@ -933,6 +933,114 @@ async function seedStagingPlatformEnv(pool, config) {
       );
     }
 
+    // ── Declaration proposals in flight (pending_secret_declarations) ──
+    //
+    // The table is brand new AND staging:private, so a clone starts empty
+    // and the panel's three new row states would be unreviewable in every
+    // PR preview. Each fixture is bound to a live (promoted) self-app
+    // session, because listLive() only returns rows whose proposal is
+    // still in flight — without one the rows are correctly invisible.
+    const { rows: liveSess } = await pool.query(
+      `SELECT id FROM chat_sessions
+        WHERE app_id = $1 AND status IN ('promoted', 'merging')
+        ORDER BY id DESC LIMIT 1`,
+      [appId]
+    );
+    const sessionId = liveSess[0]?.id || null;
+    if (!sessionId) {
+      log.info('db', 'Platform-env pending fixtures skipped: no live self-app proposal');
+    } else {
+      // Three rows, one per visual:
+      //   STAGING_DEMO_PROPOSED         — up for vote, value included
+      //                                   (non-private → shows a last-4)
+      //   STAGING_DEMO_PROPOSED_PRIVATE — up for vote, private value (no
+      //                                   preview of any kind)
+      //   STAGING_DEMO_ADMIN_SET        — an admin already stored the
+      //                                   value, declaration still voting
+      //                                   (value_enc NULL + applied stamp,
+      //                                   plus the real value row below)
+      const pendings = [
+        ['STAGING_DEMO_PROPOSED', {
+          description: 'Demo: a variable proposed from the panel, with its value riding along.',
+          required: false, private: false, default: null, staging_default: null, group: 'Staging demo',
+        }, 'https://demo.proposed.invalid/hook'],
+        ['STAGING_DEMO_PROPOSED_PRIVATE', {
+          description: 'Demo: a proposed PRIVATE variable — its value is never previewed, not even the last 4 characters.',
+          required: true, private: true, default: null, staging_default: null, group: 'Staging demo',
+        }, 'sk-staging-demo-proposed-4d1c'],
+        ['STAGING_DEMO_ADMIN_SET', {
+          description: 'Demo: an admin set the value outright; the declaration is still up for vote.',
+          required: false, private: false, default: null, staging_default: null, group: 'Staging demo',
+        }, null],
+      ];
+      for (const [key, declaration, value] of pendings) {
+        const isPrivate = !!declaration.private;
+        await pool.query(
+          `INSERT INTO pending_secret_declarations
+             (app_id, session_id, scope, key, declaration, value_enc, value_last4,
+              value_applied_at, status, created_by, created_at)
+           SELECT $1, $2, 'platform', $3::varchar, $4::jsonb, $5, $6, $7, 'pending', $8,
+                  NOW() - INTERVAL '3 hours'
+            WHERE NOT EXISTS (
+              SELECT 1 FROM pending_secret_declarations
+               WHERE app_id = $1 AND key = $3::varchar AND status = 'pending')`,
+          [
+            appId, sessionId, key, JSON.stringify(declaration),
+            value ? encrypt(value, config.jwtSecret) : null,
+            value && !isPrivate ? value.slice(-4) : null,
+            value ? null : new Date(),
+            updatedBy,
+          ]
+        );
+      }
+      // The value row that makes STAGING_DEMO_ADMIN_SET's "value set ·
+      // declaration up for vote" state real rather than just labelled.
+      await pool.query(
+        `INSERT INTO platform_env_values
+           (app_id, key, value_enc, value_last4, private, updated_by, updated_at)
+         VALUES ($1, 'STAGING_DEMO_ADMIN_SET', $2, $3, FALSE, $4, NOW() - INTERVAL '3 hours')
+         ON CONFLICT (app_id, key) DO NOTHING`,
+        [appId, encrypt('set-by-an-admin-before-the-vote', config.jwtSecret), 'vote', updatedBy]
+      );
+
+      // A child-app pending row too, so the app-scope variant of the row
+      // (and its staging_default field) is reviewable. Skipped silently
+      // when the clone has no child app with a live proposal.
+      const { rows: childRows } = await pool.query(
+        `SELECT cs.id AS session_id, cs.app_id
+           FROM chat_sessions cs
+           JOIN apps a ON a.id = cs.app_id
+          WHERE a.self_hosted = FALSE AND cs.status IN ('promoted', 'merging')
+          ORDER BY cs.id DESC LIMIT 1`
+      );
+      if (childRows.length) {
+        await pool.query(
+          `INSERT INTO pending_secret_declarations
+             (app_id, session_id, scope, key, declaration, value_enc, value_last4,
+              status, created_by, created_at)
+           SELECT $1, $2, 'app', 'STAGING_DEMO_APP_TOKEN', $3::jsonb, $4, $5,
+                  'pending', $6, NOW() - INTERVAL '2 hours'
+            WHERE NOT EXISTS (
+              SELECT 1 FROM pending_secret_declarations
+               WHERE app_id = $1 AND key = 'STAGING_DEMO_APP_TOKEN' AND status = 'pending')`,
+          [
+            childRows[0].app_id, childRows[0].session_id,
+            JSON.stringify({
+              description: 'Demo: an app secret proposed from the panel, with a staging fallback committed.',
+              required: true,
+              private: true,
+              default: null,
+              staging_default: 'staging-demo-token',
+              group: 'General',
+            }),
+            encrypt('prod-demo-token-9a2f', config.jwtSecret),
+            null,
+            updatedBy,
+          ]
+        );
+      }
+    }
+
     // Give the Checks card a failing platform-env verdict to render. Any
     // open/promoted self-app proposal will do; only stamp one that has no
     // verdict yet so a real evaluation in the preview isn't overwritten.
@@ -957,7 +1065,36 @@ async function seedStagingPlatformEnv(pool, config) {
           }],
           added: ['STAGING_DEMO_REQUIRED'],
           removed: [],
+          pendingValues: [],
           reason: 'This proposal adds 1 required platform variable that has no value set.',
+        }),
+        appId,
+      ]
+    );
+
+    // …and a PASSING verdict whose value rides along with the proposal, so
+    // the Checks card's "carries its value with this proposal" line is
+    // reviewable too. A different session from the failing one above (that
+    // one now has a verdict, so `platform_env_state IS NULL` skips it).
+    await pool.query(
+      `UPDATE chat_sessions
+          SET platform_env_state = 'passing',
+              platform_env_detail = $1::jsonb
+        WHERE id = (
+          SELECT id FROM chat_sessions
+           WHERE app_id = $2
+             AND status IN ('open', 'promoted')
+             AND platform_env_state IS NULL
+           ORDER BY id DESC
+           LIMIT 1
+        )`,
+      [
+        JSON.stringify({
+          missing: [],
+          added: ['STAGING_DEMO_PROPOSED'],
+          removed: [],
+          pendingValues: ['STAGING_DEMO_PROPOSED'],
+          reason: 'This proposal adds 1 platform variable and carries its value, applied when it merges.',
         }),
         appId,
       ]

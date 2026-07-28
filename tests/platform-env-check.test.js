@@ -255,6 +255,103 @@ test('the block message names the variables and where to set them', () => {
   assert.match(msg, /vote again/, 'the gate re-evaluates live — say so, or people rebuild for nothing');
 });
 
+// ── Values carried BY the proposal (pending_secret_declarations) ──────
+//
+// The panel's "+ New variable" flow declares a variable and holds its
+// value until the merge. Without counting those, such a proposal blocks
+// ITSELF: the declaration is in the branch, the value isn't in
+// platform_env_values yet, and the gate would demand somebody set it
+// separately — defeating the entire point of carrying it.
+
+// Pool double answering BOTH statements the check issues: the stored-value
+// lookup (params[1] = candidate keys) and keysForSession (params[0] =
+// session id). `pending` maps session id → [{ key, scope, hasValue }].
+function poolWithPending(stored = [], pending = {}) {
+  return {
+    query: async (sql, params) => {
+      if (/FROM pending_secret_declarations/.test(sql)) {
+        const rows = (pending[params[0]] || []).map((p) => ({
+          key: p.key,
+          scope: p.scope || 'platform',
+          declaration: {},
+          has_held_value: p.hasValue !== false,
+          value_applied_at: null,
+        }));
+        return { rows };
+      }
+      return {
+        rows: (params[1] || []).filter((k) => stored.includes(k)).map((key) => ({ key })),
+      };
+    },
+  };
+}
+
+test('a required key whose value this proposal carries resolves passing', async () => {
+  const result = await withGithub(
+    githubStub({ head: ['CARRIED_KEY'] }),
+    () => check.resolvePlatformEnvCheck({
+      pool: poolWithPending([], { 42: [{ key: 'CARRIED_KEY' }] }),
+      app: SELF_APP,
+      session: SESSION,
+    })
+  );
+  assert.equal(result.state, 'passing',
+    'the value rides on the proposal, so there is nothing for anyone to go and set');
+  assert.deepEqual(result.detail.missing, []);
+  assert.deepEqual(result.detail.pendingValues, ['CARRIED_KEY']);
+  assert.match(result.detail.reason, /carries its value/);
+});
+
+test('the same key carried by a DIFFERENT proposal still fails', async () => {
+  const result = await withGithub(
+    githubStub({ head: ['CARRIED_KEY'] }),
+    () => check.resolvePlatformEnvCheck({
+      // Session 99's held value proves nothing about session 42's merge —
+      // that proposal might never land.
+      pool: poolWithPending([], { 99: [{ key: 'CARRIED_KEY' }] }),
+      app: SELF_APP,
+      session: SESSION,
+    })
+  );
+  assert.equal(result.state, 'failing');
+  assert.deepEqual(result.detail.missing.map((m) => m.key), ['CARRIED_KEY']);
+  assert.deepEqual(result.detail.pendingValues, []);
+});
+
+test('a declaration-only pending row (no value) does not clear the gate', async () => {
+  const result = await withGithub(
+    githubStub({ head: ['DOC_ONLY'] }),
+    () => check.resolvePlatformEnvCheck({
+      pool: poolWithPending([], { 42: [{ key: 'DOC_ONLY', hasValue: false }] }),
+      app: SELF_APP,
+      session: SESSION,
+    })
+  );
+  assert.equal(result.state, 'failing', 'a proposal with no value to apply leaves the key unset');
+});
+
+test('an app-scope pending row never clears a PLATFORM variable', async () => {
+  const result = await withGithub(
+    githubStub({ head: ['PLATFORM_KEY'] }),
+    () => check.resolvePlatformEnvCheck({
+      pool: poolWithPending([], { 42: [{ key: 'PLATFORM_KEY', scope: 'app' }] }),
+      app: SELF_APP,
+      session: SESSION,
+    })
+  );
+  assert.equal(result.state, 'failing',
+    'the two stores are segregated — an app_secrets write would never reach the platform .env');
+});
+
+test('every detail shape carries pendingValues, so the UI has one shape to read', async () => {
+  const skipped = await run({ enabled: false });
+  assert.deepEqual(skipped.detail.pendingValues, []);
+  const noChange = await run({ files: ['README.md'] });
+  assert.deepEqual(noChange.detail.pendingValues, []);
+  const removalOnly = await run({ base: ['GONE'], head: [] });
+  assert.deepEqual(removalOnly.detail.pendingValues, []);
+});
+
 test('an unparseable manifest blob is emptiness, not a throw', () => {
   assert.deepEqual(check.platformEnvFromManifestSource(null), []);
   assert.deepEqual(check.platformEnvFromManifestSource('{ not json'), []);

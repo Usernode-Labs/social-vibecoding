@@ -226,6 +226,59 @@ test('POST /api/apps/:slug/fork response never exposes secrets', async () => {
   }
 });
 
+// ── The secrets panel's own response ──────────────────────────────────
+//
+// GET /api/apps/:slug/secrets grew two new row sources, and neither may
+// carry plaintext:
+//   * a `proposed` row (a declaration up for vote) — its value lives
+//     encrypted in pending_secret_declarations, and only a NON-private
+//     one may preview its last 4 characters;
+//   * a `github-actions` row — GitHub's API returns no value at all, so
+//     value/valueLast4 are hard nulls rather than derived.
+// Both are asserted at the source: the view builders in
+// src/routes/apps.js, and the DAO that feeds the first one.
+
+test('a proposed row never carries plaintext, and a private one carries no preview', () => {
+  const appsJs = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
+  const merge = appsJs.slice(
+    appsJs.indexOf('async function mergePendingDeclarations('),
+    appsJs.indexOf('// Can this user open a declaration proposal')
+  );
+  assert.ok(merge.length, 'mergePendingDeclarations not found');
+  assert.match(merge, /value: null/, 'a proposed row has no plaintext field to leak');
+  assert.match(merge, /valueLast4: p\.valueLast4/,
+    'the preview comes from the DAO, which nulls it for a private declaration');
+
+  // …and the DAO is where that nulling happens, so pin it there too.
+  const pendingJs = fs.readFileSync(
+    path.join(__dirname, '../src/services/pending-secrets.js'), 'utf8'
+  );
+  assert.match(pendingJs, /valueLast4: decl\.private \? null : \(r\.value_last4 \|\| null\)/);
+  assert.match(pendingJs, /if \(isPrivate\) return null;/, 'and no last-4 is ever stored for one');
+});
+
+test('a GitHub Actions row hard-codes null for value and last-4', () => {
+  const appsJs = fs.readFileSync(path.join(__dirname, '../src/routes/apps.js'), 'utf8');
+  const block = appsJs.slice(
+    appsJs.indexOf("if (actionsSecrets && Array.isArray(actionsSecrets.secrets))"),
+    appsJs.indexOf('// Group in key order within a group')
+  );
+  assert.ok(block.length, 'the Actions-secrets merge was not found');
+  assert.match(block, /value: null/);
+  assert.match(block, /valueLast4: null/);
+  assert.ok(!/includeValues/.test(block),
+    'these rows must not become value-bearing for an admin — there is no value to bear');
+});
+
+test('the declaration route holds the value encrypted, never in the clear', () => {
+  const pendingJs = fs.readFileSync(
+    path.join(__dirname, '../src/services/pending-secrets.js'), 'utf8'
+  );
+  assert.match(pendingJs, /encrypt\(value, jwtSecret\)/, 'held values are encrypted at rest');
+  assert.match(pendingJs, /SET value_enc = NULL/,
+    'and the ciphertext is dropped once the value is live in the real store');
+});
+
 // ── Schema cross-check (mirrors tests/prod-debug-access.test.js) ───────
 
 test('every staging:private apps.<column> in schema.sql is covered by SECRET_APP_COLUMNS', () => {

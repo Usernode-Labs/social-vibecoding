@@ -9,6 +9,7 @@ const github = require('../services/github');
 const driftPoller = require('../services/main-drift-poller');
 const appSecrets = require('../services/app-secrets');
 const platformEnv = require('../services/platform-env');
+const pendingSecrets = require('../services/pending-secrets');
 const appManifest = require('../services/app-manifest');
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
@@ -205,7 +206,40 @@ function refuseIfSelfHosted(app, res) {
 // here rather than derived, and isWritableKey() refuses the write anyway.
 // `hasValue` comes from process.env because that IS where the value lives
 // for these; no ciphertext exists to read and none is ever returned.
-function platformSecretsView(rows, manifest, { includeValues }) {
+// Heading for the read-only rows that come straight from the platform
+// repo's GitHub Actions secrets. Its own group so the panel can say where
+// the rows came from and where to change them.
+const GITHUB_ACTIONS_GROUP = 'GitHub Actions secrets (platform repo)';
+
+// Staging fixtures for the Actions-secrets group. A self-app staging
+// container has no GitHub credentials at all (GITHUB_APP_ID /
+// GITHUB_BOT_TOKEN carry `staging_default: ""`), so the live fetch always
+// fails there and every PR preview would show only the unavailable line —
+// the group's actual rows, and the exact-name annotation path, would be
+// unreviewable. Three obviously-fake rows cover all three visuals:
+//   STAGING_DEMO_GH_DEPLOY_KEY — an old secret (updated months ago)
+//   STAGING_DEMO_GH_API_TOKEN  — a fresh one (updated yesterday)
+//   GITHUB_BOT_TOKEN           — an EXACT match with a row the platform's
+//                                own `secrets` block declares, so the
+//                                "also a GitHub Actions secret"
+//                                annotation renders on that row instead
+//                                of a duplicate one appearing here
+// Returns null outside staging, so production only ever shows real data.
+function stagingMockActionsSecrets() {
+  if (!IS_STAGING) return null;
+  const days = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+  return {
+    ok: true,
+    source: 'staging-mock',
+    secrets: [
+      { name: 'STAGING_DEMO_GH_DEPLOY_KEY', createdAt: days(400), updatedAt: days(140) },
+      { name: 'STAGING_DEMO_GH_API_TOKEN', createdAt: days(30), updatedAt: days(1) },
+      { name: 'GITHUB_BOT_TOKEN', createdAt: days(220), updatedAt: days(60) },
+    ],
+  };
+}
+
+function platformSecretsView(rows, manifest, { includeValues, actionsSecrets = null }) {
   const declared = new Set(rows.map((r) => r.key));
   const merged = rows.map((r) => ({
     key: r.key,
@@ -250,10 +284,56 @@ function platformSecretsView(rows, manifest, { includeValues }) {
     });
   }
 
+  // The platform repo's GitHub Actions secrets, read-only. GitHub's API
+  // returns names + timestamps ONLY — no endpoint reveals a value with any
+  // credential — so `value`/`valueLast4` are hard-coded null here rather
+  // than derived: there is nothing to leak, and the UI says so.
+  //
+  // Dedupe is EXACT-NAME only, and that is deliberate. deploy.yml renames
+  // most secrets on their way into the env (`secrets.USERNODE_JWT_SECRET`
+  // → `JWT_SECRET`), so an exact match is the only case where the two
+  // really are the same object; those annotate the existing row instead of
+  // duplicating it. Everything else — including deploy-only secrets that
+  // were never env vars (DEPLOY_HOST, DEPLOY_SSH_KEY) — gets its own row.
+  // Inferring the rename map would mean parsing the workflow file.
+  if (actionsSecrets && Array.isArray(actionsSecrets.secrets)) {
+    const byKey = new Map(merged.map((r) => [r.key, r]));
+    for (const s of actionsSecrets.secrets) {
+      if (!s || typeof s.name !== 'string') continue;
+      const existing = byKey.get(s.name);
+      if (existing) {
+        existing.githubSecret = { name: s.name, updatedAt: s.updatedAt || null };
+        continue;
+      }
+      const row = {
+        key: s.name,
+        description: '',
+        required: false,
+        private: true,
+        sensitive: true,
+        default: null,
+        hasValue: true,
+        value: null,
+        valueLast4: null,
+        updatedAt: s.updatedAt || null,
+        updatedBy: null,
+        unwritable: true,
+        group: GITHUB_ACTIONS_GROUP,
+        state: 'managed',
+        orphan: false,
+        source: 'github-actions',
+      };
+      merged.push(row);
+      byKey.set(row.key, row);
+    }
+  }
+
   // Group in key order within a group, then float the groups nobody can
   // act on to the bottom: an all-unwritable group leading the list (the
   // API's alphabetical order puts "Managed by the deploy" first) pushes
-  // every editable variable below the fold.
+  // every editable variable below the fold. The GitHub-secrets group is
+  // all-unwritable by construction, so it sinks with them — which is
+  // where it belongs.
   const groups = [];
   const byGroup = new Map();
   for (const row of merged) {
@@ -1094,10 +1174,123 @@ function appRoutes(config) {
     }
   }
 
+  // Resolve the platform repo's Actions secrets for the panel, or the
+  // reason we can't. Returns { state, reason?, result?, staged? } where
+  // state is 'ok' | 'unavailable'.
+  //
+  // In STAGING the live fetch essentially always fails — a self-app
+  // staging container boots with GITHUB_APP_ID / GITHUB_BOT_TOKEN empty
+  // (their `staging_default: ""` in the platform's own dapp.json) — so the
+  // group would only ever render its unavailable state in a PR preview.
+  // Fall back to an obviously-fake staged list there, the same
+  // request-time demo-injection pattern routes/issues.js
+  // stagingMockGovernance() uses. Strictly a no-op outside staging.
+  async function resolveActionsSecrets(app) {
+    const [, owner, repo] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+    let result = null;
+    if (!github.isEnabled() || !owner || !repo) {
+      result = {
+        ok: false,
+        code: 'disabled',
+        message: 'GitHub is not configured on this platform, so its Actions secrets can\'t be listed.',
+      };
+    } else {
+      result = await github.listActionsSecrets(owner, repo.replace(/\.git$/, ''));
+    }
+    if (result.ok) return { state: 'ok', result };
+
+    const staged = stagingMockActionsSecrets();
+    if (staged) return { state: 'ok', result: staged, staged: true };
+    return { state: 'unavailable', reason: result.message, result: null };
+  }
+
+  // Fold the keys with a declaration PR in flight into the panel view.
+  // A key nobody has a row for yet becomes a `state: 'proposed'` row; a
+  // key whose value an admin already wrote directly keeps its existing
+  // row and just carries the `pending` pointer, so the panel can say
+  // "value set, declaration up for vote".
+  async function mergePendingDeclarations(view, app) {
+    let pending;
+    try {
+      pending = await pendingSecrets.listLive(pool, app.id);
+    } catch (err) {
+      log.warn('apps', 'Pending-declaration lookup failed', { slug: app.slug, message: err.message });
+      return view;
+    }
+    if (!pending.length) return view;
+
+    const out = view.slice();
+    const byKey = new Map(out.map((r, i) => [r.key, i]));
+    for (const p of pending) {
+      const pointer = {
+        sessionId: p.sessionId,
+        prNumber: p.prNumber,
+        prUrl: p.prUrl,
+        valueApplied: p.valueApplied,
+        proposedBy: p.createdBy,
+      };
+      const at = byKey.get(p.key);
+      if (at != null) {
+        const row = { ...out[at], pending: pointer };
+        // A value with no declaration normally means "removed from
+        // dapp.json, value kept for a rollback" — which is what the admin
+        // path here looks like from the store's point of view, since the
+        // declaration is still only in the PR. It is the opposite
+        // situation, so don't render it as an orphan and tell the user to
+        // clear it: it is a brand-new key whose declaration is up for vote.
+        if (row.state === 'orphan') {
+          row.state = 'set';
+          row.orphan = false;
+          if (p.description) row.description = p.description;
+          if (p.group) row.group = p.group;
+          row.required = p.required;
+        }
+        out[at] = row;
+        continue;
+      }
+      out.push({
+        key: p.key,
+        description: p.description,
+        required: p.required,
+        private: p.private,
+        sensitive: p.private,
+        default: p.default,
+        stagingDefault: p.stagingDefault,
+        hasValue: p.hasValue,
+        value: null,
+        valueLast4: p.valueLast4,
+        updatedAt: p.createdAt,
+        updatedBy: p.createdBy,
+        unwritable: false,
+        orphan: false,
+        state: 'proposed',
+        ...(app.self_hosted ? { group: p.group } : {}),
+        pending: pointer,
+      });
+    }
+    return out;
+  }
+
+  // Can this user open a declaration proposal on this app, and if not, why?
+  // Mirrors the gates POST /secret-declaration-pr enforces so the button's
+  // disabled reason and the route's refusal can't disagree.
+  async function describeDeclareAbility(app, user) {
+    if (!app.repo_url || !(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+      return { canDeclare: false, reason: 'This app has no GitHub repository to open a proposal against.' };
+    }
+    if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+      return {
+        canDeclare: false,
+        reason: 'Declaring a variable needs GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+      };
+    }
+    return { canDeclare: true, reason: null };
+  }
+
   router.get('/api/apps/:slug/secrets', async (req, res) => {
     try {
       const { rows } = await pool.query(
-        'SELECT id, slug, manifest_snapshot, self_hosted, collab_visibility, view_visibility FROM apps WHERE slug = $1',
+        'SELECT id, slug, repo_url, manifest_snapshot, self_hosted, collab_visibility, view_visibility FROM apps WHERE slug = $1',
         [req.params.slug]
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
@@ -1124,6 +1317,14 @@ function appRoutes(config) {
         ? app.manifest_snapshot
         : { secrets: [] };
       let view;
+      // The platform repo's Actions secrets (metadata only), admins only —
+      // the same gate that decides `includeValues`. Names are already
+      // public in the committed deploy.yml, so this isn't a disclosure
+      // question; it's that nobody else can act on these rows and each
+      // panel open otherwise costs a GitHub call. Fails open: a
+      // `githubSecrets.state` of 'unavailable' prints one line and the
+      // rest of the panel renders exactly as before.
+      let githubSecrets = null;
       if (app.self_hosted) {
         // Platform variables. Non-private values ARE shown in full to
         // admins — that's the point of marking a variable non-private,
@@ -1131,16 +1332,45 @@ function appRoutes(config) {
         // prod?" answerable from the panel. Non-admins get no jwtSecret
         // passed, so listView() never decrypts anything for them.
         const includeValues = !!req.user?.isAdmin;
+        const actions = includeValues
+          ? await resolveActionsSecrets(app)
+          : { state: 'hidden', result: null };
+        githubSecrets = {
+          state: actions.state,
+          reason: actions.reason || null,
+          count: actions.result?.ok ? actions.result.secrets.length : 0,
+          fetchedAt: actions.state === 'ok' ? new Date().toISOString() : null,
+          staged: !!actions.staged,
+        };
         const rows2 = await platformEnv.listView(
           pool, app.id, includeValues ? config.jwtSecret : null
         );
-        view = platformSecretsView(rows2, manifest, { includeValues });
+        view = platformSecretsView(rows2, manifest, {
+          includeValues,
+          actionsSecrets: actions.result?.ok ? actions.result : null,
+        });
       } else {
         view = await appSecrets.getRedactedView(pool, app.id, manifest);
       }
+
+      // Keys with a declaration PR in flight. A pending key has no row in
+      // either store yet (or, on the admin path, a value row and no
+      // declaration), so without this the panel would show nothing for a
+      // variable somebody just proposed — and a second person would open a
+      // duplicate proposal.
+      view = await mergePendingDeclarations(view, app);
+
+      const declare = await describeDeclareAbility(app, req.user);
+
       res.json({
         secrets: view,
         manifestKnown: !!app.manifest_snapshot,
+        // Whether the "+ New variable" affordance is offered, and if not,
+        // why — so the client renders the real reason instead of guessing.
+        canDeclare: declare.canDeclare,
+        declareDisabledReason: declare.reason,
+        // Platform-only: the read-only Actions-secrets group's meta.
+        githubSecrets,
         // `scope` drives the panel's wording: a platform variable takes
         // effect on the next platform deploy, an app secret on the next
         // rebuild of that app.
@@ -1227,6 +1457,273 @@ function appRoutes(config) {
         slug: req.params.slug, key: req.params.key, message: err.message,
       });
       res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Declare a BRAND-NEW secret / platform variable.
+  //
+  // The panel's other write paths set the VALUE of a key `dapp.json`
+  // already declares. This one adds the key itself, which means editing
+  // the manifest — and the manifest only ever changes through a merged PR
+  // (services/rename-pr.js is its single writer). So one request produces
+  // one proposal: a `secret-declare/*` PR appending the declaration, plus
+  // the value, which either lands immediately (a full admin, who may
+  // already write values directly) or waits in
+  // `pending_secret_declarations` until routes/votes.js finalizeMerge()
+  // applies it.
+  //
+  // Scope follows `self_hosted`, exactly like the value routes above:
+  // a child app's key goes in `secrets`, the platform's in `platform_env`
+  // (a tunable in the platform's `secrets` block would be silently inert —
+  // see app-conventions.md "Editing the PLATFORM itself").
+  // ────────────────────────────────────────────────────────────────────
+  const MAX_DECLARED_VALUE_LENGTH = 4096;   // matches issues.js MAX_SECRET_VALUE_LENGTH
+  const MAX_DECL_DESC_LEN = 400;            // matches MAX_PLATFORM_ENV_DESC_LEN
+  const MAX_DECL_DEFAULT_LEN = 2048;        // matches MAX_PLATFORM_ENV_DEFAULT_LEN
+  const MAX_DECL_GROUP_LEN = 48;            // matches MAX_PLATFORM_ENV_GROUP_LEN
+
+  router.post('/api/apps/:slug/secret-declaration-pr', drainGuard, issueCreateLimiter, async (req, res) => {
+    const body = req.body || {};
+    const key = typeof body.key === 'string' ? body.key.trim() : '';
+    const value = typeof body.value === 'string' ? body.value : '';
+    const description = typeof body.description === 'string' ? body.description.trim() : '';
+    const defaultValue = typeof body.default === 'string' && body.default.length ? body.default : null;
+    const stagingDefault = typeof body.stagingDefault === 'string' && body.stagingDefault.length
+      ? body.stagingDefault : null;
+    const group = typeof body.group === 'string' && body.group.trim() ? body.group.trim() : 'General';
+    const required = !!body.required;
+    const isPrivate = !!body.private;
+
+    try {
+      const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
+      if (!rows.length) return res.status(404).json({ error: 'App not found' });
+      const app = rows[0];
+
+      // Same access shape the secrets panel itself has: collab-level, and
+      // for the self-app the Phase-4 public-voting gate. Deliberately NOT
+      // canManageApp — proposing an env-var change is the `secret_change`
+      // authority level, which any collaborator already has.
+      if (!(await appAccess.checkAppAccess(pool, app, req.user, 'collab'))) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+      if (app.self_hosted && !req.user?.isAdmin && !config.selfAppPublicVoting) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+
+      const scope = app.self_hosted ? 'platform' : 'app';
+
+      // Key shape + the reserved/unwritable sets. For the platform,
+      // isWritableKey() covers PLATFORM_ENV_UNWRITABLE *and* both reserved
+      // sets in one call, and the refusal reuses the shared message so the
+      // direct write, the vote path, and this route can't disagree about
+      // why a key is off limits.
+      if (!appManifest.KEY_RE.test(key)) {
+        return res.status(400).json({ error: 'Key must be UPPER_SNAKE_CASE (letters, digits and underscores).' });
+      }
+      if (scope === 'platform') {
+        if (!platformEnv.isWritableKey(key)) {
+          return res.status(400).json({ error: UNWRITABLE_MESSAGE });
+        }
+      } else if (appManifest.RESERVED_KEYS.has(key)
+        || appManifest.RESERVED_KEY_PREFIXES.some((p) => key.startsWith(p))) {
+        return res.status(400).json({ error: `${key} is reserved by the platform` });
+      }
+
+      // Collision: the manifest snapshot, the value store, and any live
+      // declaration proposal. Pointing at the existing row/proposal beats
+      // a second entry for the same key.
+      const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
+        ? app.manifest_snapshot : { secrets: [] };
+      const declaredHere = scope === 'platform'
+        ? (manifest.platform_env || []).find((s) => s.key === key)
+        : (manifest.secrets || []).find((s) => s.key === key);
+      // The platform's `secrets` block documents the GitHub-injected
+      // credentials; platformSecretsView already renders a read-only row
+      // for each, so declaring the same key as a tunable would be two rows
+      // for one variable.
+      const documentedAsDeployOwned = scope === 'platform'
+        && (manifest.secrets || []).some((s) => s.key === key);
+      if (declaredHere || documentedAsDeployOwned) {
+        return res.status(409).json({ error: `${key} already exists — use its row in the panel.` });
+      }
+      const { rows: valueRows } = await pool.query(
+        scope === 'platform'
+          ? 'SELECT key FROM platform_env_values WHERE app_id = $1 AND key = $2'
+          : 'SELECT key FROM app_secrets WHERE app_id = $1 AND key = $2',
+        [app.id, key]
+      );
+      if (valueRows.length) {
+        return res.status(409).json({ error: `${key} already has a stored value — use its row in the panel.` });
+      }
+      const alreadyPending = await pendingSecrets.findLiveByKey(pool, app.id, key);
+      if (alreadyPending) {
+        return res.status(409).json({
+          error: `${key} is already up for vote`,
+          sessionId: alreadyPending.sessionId,
+          prNumber: alreadyPending.prNumber,
+          prUrl: alreadyPending.prUrl,
+        });
+      }
+
+      // Field bounds mirroring the manifest readers, so nothing committed
+      // here is silently trimmed when the manifest is read back.
+      if (description.length > MAX_DECL_DESC_LEN) {
+        return res.status(400).json({ error: `Description must be ≤ ${MAX_DECL_DESC_LEN} characters.` });
+      }
+      if (defaultValue && defaultValue.length > MAX_DECL_DEFAULT_LEN) {
+        return res.status(400).json({ error: `Default must be ≤ ${MAX_DECL_DEFAULT_LEN} characters.` });
+      }
+      if (stagingDefault && stagingDefault.length > MAX_DECL_DEFAULT_LEN) {
+        return res.status(400).json({ error: `Staging default must be ≤ ${MAX_DECL_DEFAULT_LEN} characters.` });
+      }
+      if (group.length > MAX_DECL_GROUP_LEN) {
+        return res.status(400).json({ error: `Group must be ≤ ${MAX_DECL_GROUP_LEN} characters.` });
+      }
+      if (scope === 'platform'
+        && (manifest.platform_env || []).length >= appManifest.MAX_PLATFORM_ENV) {
+        return res.status(400).json({
+          error: `The platform already declares the maximum of ${appManifest.MAX_PLATFORM_ENV} variables.`,
+        });
+      }
+
+      // Value rules. A value is optional — a declaration that only
+      // documents a committed default is legitimate — but a `required`
+      // variable with neither a value nor a default would block the very
+      // deploy this proposal produces.
+      if (value.length > MAX_DECLARED_VALUE_LENGTH) {
+        return res.status(400).json({
+          error: `Value must be ≤ ${MAX_DECLARED_VALUE_LENGTH} characters.`,
+        });
+      }
+      if (required && !value.length && !defaultValue) {
+        return res.status(400).json({ error: 'A required variable needs either a value or a default.' });
+      }
+      if (scope === 'platform' && value.length) {
+        // Representability in the platform's single-quoted .env line —
+        // rejected now rather than accepted and silently dropped by a
+        // deploy days later.
+        const unrepresentable = platformEnv.validateValue(value);
+        if (unrepresentable) return res.status(400).json({ error: unrepresentable });
+      }
+      if (scope === 'app' && required && isPrivate && !stagingDefault && !defaultValue) {
+        // staging.buildAndDeployStaging would throw
+        // PrivateSecretMissingStagingDefaultError on this proposal's OWN
+        // preview: a private value is never propagated into staging, so a
+        // required+private entry must commit a fallback.
+        return res.status(400).json({
+          error: "PR previews of this app won't boot without a staging default for a required private secret.",
+        });
+      }
+
+      // GitHub preconditions — same three guards and wording as
+      // visibility-pr / governance-pr / admins-pr.
+      if (!github.isEnabled() || !process.env.GITHUB_BOT_TOKEN) {
+        return res.status(503).json({
+          error: 'Declaring a variable needs GitHub configured on the platform (GITHUB_BOT_TOKEN).',
+        });
+      }
+      if (!app.repo_url) {
+        return res.status(400).json({ error: 'App has no GitHub repository to open a PR against' });
+      }
+      if (!(app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/)) {
+        return res.status(400).json({ error: 'Could not parse the app repository URL' });
+      }
+
+      const declaration = pendingSecrets.normalizeDeclaration({
+        description,
+        required,
+        private: isPrivate,
+        default: defaultValue,
+        staging_default: scope === 'app' ? stagingDefault : null,
+        group: scope === 'platform' ? group : null,
+      });
+
+      const result = await renamePr.createSecretDeclarationPR(
+        config, pool, app,
+        { scope, key, declaration, hasValue: !!value.length },
+        { id: req.user.id, username: req.user.username }
+      );
+
+      // Value handling, only after the PR exists — a failed proposal must
+      // not leave a value behind.
+      //
+      // A full admin's value lands NOW, through the same DAO path the PUT
+      // route uses (both stores accept a not-yet-declared key: that's the
+      // pre-declaration bootstrapping the PUT route and
+      // platform-env.setValue already document). For a child app it stays
+      // inert until the declaration merges, because mergeForDeploy only
+      // injects declared keys. Everyone else's value waits in
+      // pending_secret_declarations and is applied by the merge.
+      const applyNow = !!req.user?.canAdminWrite && !!value.length;
+      if (applyNow) {
+        if (scope === 'platform') {
+          const client = await pool.connect();
+          try {
+            await client.query('BEGIN');
+            await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
+            await platformEnv.setValue(client, app.id, key, value, {
+              userId: req.user.id,
+              jwtSecret: config.jwtSecret,
+              privateHint: isPrivate,
+            });
+            await client.query('COMMIT');
+          } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
+          } finally {
+            client.release();
+          }
+          events.record(pool, {
+            type: events.EVENT_TYPES.PLATFORM_ENV_CHANGED,
+            userId: req.user.id,
+            appId: app.id,
+            metadata: { key, action: 'set', private: isPrivate, appliedBy: 'admin-direct' },
+          });
+        } else {
+          await appSecrets.setValue(pool, app.id, key, value, {
+            sensitive: isPrivate,
+            userId: req.user.id,
+            jwtSecret: config.jwtSecret,
+          });
+        }
+      }
+
+      await pendingSecrets.create(pool, {
+        appId: app.id,
+        sessionId: result.sessionId,
+        scope,
+        key,
+        declaration,
+        value: value.length ? value : null,
+        userId: req.user.id,
+        jwtSecret: config.jwtSecret,
+        valueApplied: applyNow,
+      });
+
+      // The VALUE never reaches a log line — only the key, its privacy
+      // flag, and who proposed it.
+      log.info('apps', 'Secret declaration proposed', {
+        slug: app.slug, scope, key, private: isPrivate,
+        hasValue: !!value.length, valueApplied: applyNow,
+        prNumber: result.prNumber, by: req.user.username,
+      });
+
+      res.status(201).json({
+        ok: true,
+        key,
+        scope,
+        sessionId: result.sessionId,
+        prNumber: result.prNumber,
+        prUrl: result.prUrl,
+        valueApplied: applyNow,
+        hasValue: !!value.length,
+      });
+    } catch (err) {
+      log.error('apps', 'Secret declaration PR failed', {
+        slug: req.params.slug, message: err.message,
+      });
+      res.status(500).json({ error: err.message || 'Internal server error' });
     }
   });
 

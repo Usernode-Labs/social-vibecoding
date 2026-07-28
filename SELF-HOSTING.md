@@ -535,6 +535,50 @@ What is still refused, and where:
 declared tunable succeed for a full admin and 400 for an unwritable
 key; a non-admin's GET carries no `value` and no `valueLast4`.
 
+**Declaring a NEW tunable from the panel.** The panel's "+ New
+variable" form opens one proposal that carries both halves of the
+change: a `secret-declare/*` PR appending the entry to `platform_env`
+in [dapp.json](./dapp.json) (via the shared manifest-PR core in
+[services/rename-pr.js](./src/services/rename-pr.js)), plus the value.
+A full admin's value is written to `platform_env_values` on submit —
+which they may already do for any declared key — while everybody
+else's waits encrypted in `pending_secret_declarations` and is written
+by [routes/votes.js](./src/routes/votes.js) `finalizeMerge()` the
+moment the PR merges. The pre-merge platform-env check counts a value
+carried by the same session, so such a proposal never blocks itself;
+the declaration itself reaches `platform_env_declarations` on the
+post-deploy boot's `reconcilePlatformEnv`, like any other manifest
+change. Deploy-owned credentials stay out of this: `isWritableKey()`
+refuses them at creation, so the form can never declare `JWT_SECRET`
+as a writable tunable.
+
+**Reading the repo's GitHub Actions secrets (operator step).** For
+admins, the panel also lists the platform repo's Actions secrets
+read-only — name, "Set", and last-updated. GitHub's API returns
+`{ name, created_at, updated_at }` and never a value, so there is
+nothing to reveal and no write path; changing one means the repo's
+Settings → Secrets and variables → Actions.
+
+Reading that list is an **admin-level capability on the repo**, and the
+platform tries both of its clients
+([services/github.js](./src/services/github.js) `listActionsSecrets`):
+
+- the classic PAT (`GITHUB_BOT_TOKEN`) — works when the bot user has
+  **admin** access to the platform repo;
+- the GitHub App installation — works when the App has the repository
+  **Secrets: read** permission, which the App owner must add and the
+  installation must approve.
+
+Neither is guaranteed, so the call **fails open**: a 401/403/404 (or
+any transport failure or a 4s timeout) degrades to one explanatory
+line under the group heading — *"The platform's GitHub token can't read
+this repo's Actions secrets…"* — and the rest of the panel renders
+unchanged. Grant one of the two above to turn the list on; nothing else
+in the platform depends on it. Results are cached for 5 minutes
+(failures for 1), and in staging the group is filled with obviously-fake
+demo rows because a self-app staging container has no GitHub
+credentials at all.
+
 ### 2i. Mayor refuse-list paragraph (self-app-only)
 
 [src/services/prompts.js](./src/services/prompts.js) is where

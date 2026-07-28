@@ -407,12 +407,20 @@ const AppView = {
     // kit shell on screen with the card back in its old home: a blank
     // white panel. Letting navigation finish first makes it the same
     // sequence a real click produces.
+    //
+    // `?shot=secrets-new` goes one step further and expands the "New
+    // variable" form, which is otherwise behind a click inside a modal —
+    // two layers of interaction that neither the capture pipeline nor a
+    // dapp.json test can reach.
     try {
-      if (new URLSearchParams(location.search).get('shot') === 'secrets') {
+      const shot = new URLSearchParams(location.search).get('shot');
+      if (shot === 'secrets' || shot === 'secrets-new') {
         setTimeout(() => {
           // Still on this app? A fast navigate-away must not pop a modal
           // onto whatever screen the user actually landed on.
-          if (window.Secrets && AppView.appData?.slug === slug) Secrets.open(slug);
+          if (window.Secrets && AppView.appData?.slug === slug) {
+            Secrets.open(slug, { declare: shot === 'secrets-new' });
+          }
         }, 300);
       }
     } catch { /* malformed query string — nothing to open */ }
@@ -4864,10 +4872,16 @@ const AppView = {
 
     if (!added.length) return '';
     const list = added.map((k) => `<code class="font-mono">${escapeHtml(String(k))}</code>`).join(', ');
+    // Keys whose value THIS proposal carries (the panel's "+ New variable"
+    // flow) read differently from keys somebody set separately: the value
+    // is part of what a voter is approving, and it lands on merge.
+    const carried = Array.isArray(detail.pendingValues) ? detail.pendingValues : [];
+    const carriedList = carried.map((k) => `<code class="font-mono">${escapeHtml(String(k))}</code>`).join(', ');
     return `
       <div class="mt-2 rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1.5 text-emerald-600 dark:text-emerald-500">
         <div class="font-medium">✓ New platform variables are configured.</div>
         <div class="mt-0.5 opacity-90">This proposal adds ${list}, already set and ready for the deploy.</div>
+        ${carried.length ? `<div class="mt-0.5 opacity-90">${carriedList} ${carried.length === 1 ? 'carries its value' : 'carry their values'} with this proposal — applied when it merges.</div>` : ''}
       </div>`;
   },
 
@@ -8380,8 +8394,13 @@ const AppView = {
       // the platform's required credential rows (GITHUB_APP_ID,
       // ADMIN_PASSWORD…) come from GitHub secrets, so counting them would
       // permanently badge the menu with a state this panel cannot fix.
+      // A `proposed` row is excluded too: its declaration isn't merged, so
+      // nothing is broken yet — a proposal in flight is not a blocked
+      // deploy, and badging it red would make the panel look wrong for as
+      // long as the vote runs.
       const list = Array.isArray(data.secrets) ? data.secrets : [];
-      const missing = list.filter((s) => s.required && !s.hasValue && !s.unwritable).length;
+      const missing = list.filter((s) => s.required && !s.hasValue
+        && !s.unwritable && s.state !== 'proposed').length;
       if (missing > 0) {
         setLabel(`${missing} required missing`, 'err');
       } else {

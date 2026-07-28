@@ -1406,7 +1406,19 @@
            platform's own row, where a change lands on the next deploy. -->
       <h2 id="app-secrets-title" class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">App secrets</h2>
       <p id="app-secrets-subtitle" class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Environment variables this app declares in <code class="text-xs">dapp.json</code>.</p>
-      <div id="app-secrets-list" class="flex-1 overflow-y-auto -mx-2 px-2"></div>
+      <!-- One scroll container for the rows AND the "New variable" form:
+           as two flex siblings the open form squeezes the row list to
+           zero height, so the panel would appear to lose its contents
+           the moment you start adding a variable. -->
+      <div class="flex-1 overflow-y-auto -mx-2 px-2">
+        <div id="app-secrets-list"></div>
+        <!-- "+ New variable": declares a key that dapp.json doesn't have
+             yet. The button and the (collapsed) form are both rendered by
+             Secrets.render() into this slot, because every field in the
+             form is scope-dependent (staging default is app-only, group
+             is platform-only) and the helper copy differs too. -->
+        <div id="app-secrets-declare" class="mt-3 hidden"></div>
+      </div>
       <div id="app-secrets-status" class="text-sm mt-3 hidden"></div>
       <div id="app-secrets-footer" class="mt-4 pt-4 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500 hidden">
         Changes apply on the next deploy. Admins can <button id="app-secrets-redeploy" class="text-violet-500 hover:text-violet-400 underline">redeploy now</button>.

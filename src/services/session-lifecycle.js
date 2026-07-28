@@ -268,6 +268,17 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
   workerProgress.clear(sessionId);
   await worker.destroyWorker(worker.workerContainerName(sessionId)).catch(() => {});
 
+  // A withdrawn / voted-down declaration proposal takes its held secret
+  // value with it: the group didn't approve the change, so the value must
+  // stop existing rather than sit around waiting for a PR that will never
+  // merge (services/pending-secrets.js). This covers every abandonment
+  // path, since they all funnel through archiveSession. Best-effort — the
+  // panel also treats a row whose session left the live statuses as dead.
+  await require('./pending-secrets').discardForSession(pool, sessionId)
+    .catch((err) => log.warn('session-lifecycle', 'Pending-declaration discard failed', {
+      sessionId, err: err.message,
+    }));
+
   // Retention: keep the CC volume so /unarchive can restore conversation
   // memory. purgeArchivedCc (or purgeCc=true here) destroys it later.
   if (purgeCc) {

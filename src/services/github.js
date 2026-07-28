@@ -130,6 +130,161 @@ function normRepoKey(owner, repo) {
   return `${owner}/${repo}`.toLowerCase().replace(/\.git$/, '');
 }
 
+// ─────────────────────────────────────────────────────────────────────
+// Actions secrets METADATA for a repo — names, created/updated only.
+//
+// GitHub's API cannot return a secret's VALUE to anyone, with any
+// credential: `GET /repos/{owner}/{repo}/actions/secrets` yields
+// { name, created_at, updated_at } and that is the whole surface. So this
+// is a presence-and-freshness read by construction — there is nothing
+// here that could leak a value even by accident, which is what makes it
+// safe to render in the Platform variables panel.
+//
+// PERMISSIONS. Reading Actions secrets is an admin-level capability on
+// the repo. The classic PAT (GITHUB_BOT_TOKEN, `repo` scope) works only
+// if the bot user has admin access; the App installation works only if
+// the App carries the `secrets: read` repository permission (an operator
+// must add and approve it). Neither is guaranteed for a given
+// deployment, so every failure FAILS OPEN with a reason the panel can
+// print — same philosophy as services/platform-env-check.js. A GitHub
+// hiccup must never break a panel whose real job is elsewhere.
+const actionsSecretsCache = new Map();
+const ACTIONS_SECRETS_CACHE_TTL_MS = 5 * 60 * 1000;
+// Negative results are cached too, but briefly: a token that can't read
+// the list shouldn't be re-probed on every panel open, and an operator
+// who has just granted access shouldn't wait out the full TTL.
+const ACTIONS_SECRETS_NEG_TTL_MS = 60 * 1000;
+const ACTIONS_SECRETS_MAX = 300;      // 3 pages of 100 — a hard stall guard
+const ACTIONS_SECRETS_TIMEOUT_MS = 4000;
+
+const ACTIONS_SECRETS_FORBIDDEN_MESSAGE =
+  "The platform's GitHub token can't read this repo's Actions secrets — it needs admin "
+  + 'access on the platform repo (or the GitHub App needs the `secrets: read` permission).';
+
+function actionsSecretsFailure(code, message) {
+  return { ok: false, code, message };
+}
+
+// One page-walking pass with a given client. Throws on any HTTP error so
+// the caller can decide whether to try the other client.
+async function fetchActionsSecretsWith(octokit, owner, repo) {
+  const out = [];
+  for (let page = 1; page <= Math.ceil(ACTIONS_SECRETS_MAX / 100); page++) {
+    // Raw request() rather than the named plugin method, matching the
+    // style used for the installation-token call above: no dependence on
+    // @octokit/plugin-rest-endpoint-methods' surface.
+    const { data } = await octokit.request('GET /repos/{owner}/{repo}/actions/secrets', {
+      owner, repo, per_page: 100, page,
+    });
+    const batch = Array.isArray(data?.secrets) ? data.secrets : [];
+    for (const s of batch) {
+      if (!s || typeof s.name !== 'string') continue;
+      out.push({
+        name: s.name,
+        createdAt: s.created_at || null,
+        updatedAt: s.updated_at || s.created_at || null,
+      });
+      if (out.length >= ACTIONS_SECRETS_MAX) return out;
+    }
+    const total = Number(data?.total_count);
+    if (!batch.length || (Number.isFinite(total) && out.length >= total)) break;
+  }
+  return out;
+}
+
+/**
+ * List a repo's Actions secrets (metadata only).
+ *
+ * Returns { ok: true, secrets: [{ name, createdAt, updatedAt }], source }
+ * or { ok: false, code, message } with `code` one of `disabled`,
+ * `no_token`, `forbidden`, `not_found`, `github_error`. Never throws.
+ *
+ * Tries the PAT client first (getOctokit's own preference) and falls back
+ * to the App installation client, because the two carry different
+ * permissions and either one might be the one that's allowed.
+ */
+async function listActionsSecrets(owner, repo) {
+  if (!owner || !repo) return actionsSecretsFailure('not_found', 'No repository to read secrets from.');
+
+  const cacheKey = normRepoKey(owner, repo);
+  const cached = actionsSecretsCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.result;
+
+  const remember = (result) => {
+    actionsSecretsCache.set(cacheKey, {
+      result,
+      expiresAt: Date.now() + (result.ok ? ACTIONS_SECRETS_CACHE_TTL_MS : ACTIONS_SECRETS_NEG_TTL_MS),
+    });
+    return result;
+  };
+
+  const attempt = async () => {
+    const errors = [];
+    const clients = [];
+    if (process.env.GITHUB_BOT_TOKEN || _octokitFactoryForTests) {
+      clients.push(['pat', () => getOctokit(owner)]);
+    }
+    if (app) clients.push(['installation', () => getInstallationOctokit(owner)]);
+    if (!clients.length) {
+      return actionsSecretsFailure('no_token',
+        'GitHub is not configured on this platform, so its Actions secrets can\'t be listed.');
+    }
+
+    for (const [source, make] of clients) {
+      try {
+        const octokit = await make();
+        const secrets = await fetchActionsSecretsWith(octokit, owner, repo);
+        secrets.sort((a, b) => a.name.localeCompare(b.name));
+        return { ok: true, secrets, source };
+      } catch (err) {
+        errors.push({ source, status: err?.status, message: err?.message });
+      }
+    }
+
+    const statuses = errors.map((e) => e.status);
+    log.warn('github', 'Actions-secrets listing failed (failing open)', {
+      repo: `${owner}/${repo}`, errors,
+    });
+    if (statuses.includes(403) || statuses.includes(401)) {
+      return actionsSecretsFailure('forbidden', ACTIONS_SECRETS_FORBIDDEN_MESSAGE);
+    }
+    if (statuses.includes(404)) {
+      // 404 on this endpoint is GitHub's "you may not know this exists"
+      // for a caller without admin rights, so say the same thing as 403
+      // rather than implying the repo is gone.
+      return actionsSecretsFailure('not_found', ACTIONS_SECRETS_FORBIDDEN_MESSAGE);
+    }
+    return actionsSecretsFailure('github_error',
+      "Couldn't reach GitHub to list this repo's Actions secrets.");
+  };
+
+  // Hard timeout: the panel must never hang waiting on GitHub.
+  let timer;
+  const timeout = new Promise((resolve) => {
+    timer = setTimeout(
+      () => resolve(actionsSecretsFailure('github_error',
+        "Couldn't reach GitHub to list this repo's Actions secrets (timed out).")),
+      ACTIONS_SECRETS_TIMEOUT_MS
+    );
+    timer.unref?.();
+  });
+  try {
+    return remember(await Promise.race([attempt(), timeout]));
+  } catch (err) {
+    log.warn('github', 'Actions-secrets listing threw (failing open)', { err: err.message });
+    return remember(actionsSecretsFailure('github_error',
+      "Couldn't reach GitHub to list this repo's Actions secrets."));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Test/ops hook: drop the Actions-secrets cache for one repo (or all). */
+function invalidateActionsSecretsCache(owner, repo) {
+  if (owner && repo) actionsSecretsCache.delete(normRepoKey(owner, repo));
+  else actionsSecretsCache.clear();
+}
+
 // Record issue numbers as closed so fetchPublicIssues stops returning
 // them, regardless of what GitHub's stale list (or our cache) says.
 // Called from the merge path (routes/votes.js, with the session's
@@ -1528,4 +1683,8 @@ module.exports = {
   noteIssueCreated,
   noteIssuesClosed,
   unsuppressIssues,
+  listActionsSecrets,
+  invalidateActionsSecretsCache,
+  ACTIONS_SECRETS_FORBIDDEN_MESSAGE,
+  ACTIONS_SECRETS_MAX,
 };
