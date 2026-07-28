@@ -36,6 +36,7 @@ const AdminConsole = {
     { key: 'codes', label: 'Activation codes' },
     { key: 'limits', label: 'Spend limits' },
     { key: 'features', label: 'Submitted features' },
+    { key: 'platform-env', label: 'Platform variables' },
     { key: 'db-export', label: 'Database export' },
     // Topochain (Task 15, migration plan Global Constraint #8): ONE
     // section, its own sub-nav under #admin/topochain/<sub> — see
@@ -260,6 +261,7 @@ const AdminConsole = {
       case 'codes': return AdminConsole.renderCodesSection(host);
       case 'limits': return AdminConsole.renderLimitsSection(host);
       case 'features': return AdminConsole.renderFeaturesSection(host);
+      case 'platform-env': return AdminConsole.renderPlatformEnvSection(host);
       case 'db-export': return AdminConsole.renderDbExportSection(host);
       case 'topochain': return AdminConsole.renderTopochainSection(host);
       default: return AdminConsole.renderOverviewSection(host);
@@ -1261,9 +1263,10 @@ const AdminConsole = {
 
   // ── Database export ────────────────────────────────────────────────────
   //
-  // Downloads a full, unredacted pg_dump of the platform database. The file
-  // is a live credential bundle — every password hash, every valid session
-  // token, every app credential — so this section is deliberately sober:
+  // Downloads a full, unredacted pg_dump of the platform database as a
+  // gzip-compressed plain-SQL file (`.sql.gz`, restored with gunzip + psql).
+  // The file is a live credential bundle — every password hash, every valid
+  // session token, every app credential — so this section is deliberately sober:
   // a permanent red warning panel, a typed confirmation plus password
   // re-entry on every run, and an append-only history nobody can clear.
   //
@@ -1279,7 +1282,8 @@ const AdminConsole = {
   // confirmation, then NAVIGATE to the returned single-use URL. A Blob
   // (the pattern downloadFeaturesCsv uses above) would hold a
   // multi-hundred-megabyte dump in page memory; navigating gives a real
-  // streamed download with the browser's own progress UI.
+  // streamed download with the browser's own progress UI — and lets the
+  // browser save the gzip bytes verbatim instead of trying to decode them.
 
   DB_EXPORT_REASONS: {
     staging: 'Database export is disabled in staging previews.',
@@ -1316,6 +1320,287 @@ const AdminConsole = {
     const s = ms / 1000;
     if (s < 90) return `${s.toFixed(s < 10 ? 1 : 0)} s`;
     return `${Math.round(s / 60)} min`;
+  },
+
+  // ── Platform variables ─────────────────────────────────────────────────
+  //
+  // The platform's own environment variables — the ones deploy.yml writes
+  // into /opt/usernode/.env. The single most important thing this screen
+  // has to communicate is that a change here is NOT live: it is picked up
+  // by the next deploy. Hence the banner at the top rather than a footnote.
+  //
+  // Row states come straight from the API (`state`): set / unset /
+  // managed / orphan. `managed` variables are shown but never editable —
+  // they come from GitHub secrets and an edit box would be a lie.
+
+  PLATFORM_ENV_STATE_BADGES: {
+    set: { label: 'Set', cls: 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300' },
+    unset: { label: 'Not set', cls: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400' },
+    managed: { label: 'Deploy-managed', cls: 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' },
+    orphan: { label: 'No longer declared', cls: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300' },
+  },
+
+  renderPlatformEnvSection(host) {
+    host.innerHTML = `
+      <div id="admin-platform-env-panel" class="space-y-4">
+        <div class="rounded-lg border border-violet-300 dark:border-violet-900 bg-violet-50 dark:bg-violet-950/40 p-4">
+          <h2 class="text-lg font-semibold text-violet-800 dark:text-violet-200">Platform variables</h2>
+          <p class="text-sm text-violet-900 dark:text-violet-200 mt-2">
+            These are the platform's own environment variables — what ends up in
+            <code class="font-mono">/opt/usernode/.env</code> on the server. They are declared in the
+            platform's <code class="font-mono">dapp.json</code> and their values are set here.
+          </p>
+          <p class="text-sm font-semibold text-violet-900 dark:text-violet-100 mt-2">
+            A change here does not take effect immediately. Values are resolved by the
+            next deploy, which restarts the platform with the new environment.
+          </p>
+        </div>
+
+        <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+            <p id="admin-platform-env-summary" class="text-sm text-zinc-500">Loading…</p>
+            <button id="admin-platform-env-refresh" class="text-xs text-zinc-400 hover:text-violet-400 px-1 py-1">Refresh</button>
+          </div>
+          <div id="admin-platform-env-list" class="space-y-4"></div>
+          <p id="admin-platform-env-empty" class="hidden text-sm text-zinc-500">
+            No platform variables are declared yet. Add a <code class="font-mono">platform_env</code>
+            block to the platform's <code class="font-mono">dapp.json</code>.
+          </p>
+        </div>
+      </div>`;
+
+    document.getElementById('admin-platform-env-refresh')
+      .addEventListener('click', () => AdminConsole.loadPlatformEnv());
+
+    // One delegated listener for the whole list — rows are re-rendered on
+    // every load, so per-row listeners would have to be re-wired each time.
+    document.getElementById('admin-platform-env-list')
+      .addEventListener('click', (e) => AdminConsole._platformEnvClick(e));
+
+    AdminConsole.loadPlatformEnv();
+  },
+
+  async loadPlatformEnv() {
+    const { status: httpStatus, data } = await AdminConsole.fetchJson('/api/admin/platform-env');
+    if (AdminConsole._section !== 'platform-env') return;
+    const list = document.getElementById('admin-platform-env-list');
+    const summary = document.getElementById('admin-platform-env-summary');
+    const empty = document.getElementById('admin-platform-env-empty');
+    if (!list || !summary || !empty) return;
+
+    if (httpStatus === 403) {
+      summary.textContent = 'Platform variables require admin access.';
+      list.innerHTML = '';
+      return;
+    }
+    if (!data || !Array.isArray(data.variables)) {
+      summary.textContent = 'Could not load platform variables.';
+      list.innerHTML = '';
+      return;
+    }
+
+    const esc = AdminConsole.esc;
+    const vars = data.variables;
+    const canWrite = AdminConsole.canWrite();
+
+    if (!vars.length) {
+      summary.textContent = '';
+      list.innerHTML = '';
+      empty.classList.remove('hidden');
+      return;
+    }
+    empty.classList.add('hidden');
+
+    const missing = vars.filter((v) => v.required && !v.hasValue && !v.unwritable);
+    const parts = [`${vars.length} variable${vars.length === 1 ? '' : 's'}`];
+    if (missing.length) parts.push(`${missing.length} required and unset`);
+    if (data.gitSha) parts.push(`running ${esc(String(data.gitSha).slice(0, 7))}`);
+    summary.innerHTML = missing.length
+      ? `<span class="text-amber-600 dark:text-amber-400">${parts.join(' · ')}</span>`
+      : parts.join(' · ');
+
+    // Group in first-seen order — the API already sorts by group then key.
+    const groups = [];
+    const byGroup = new Map();
+    for (const v of vars) {
+      if (!byGroup.has(v.group)) { byGroup.set(v.group, []); groups.push(v.group); }
+      byGroup.get(v.group).push(v);
+    }
+
+    // …then float the groups nobody can act on to the bottom. The API's
+    // alphabetical order puts "Managed by the deploy" first, which is the
+    // one group whose rows are read-only documentation — leading with it
+    // pushes every editable variable below the fold.
+    const rank = (g) => {
+      const rows = byGroup.get(g);
+      if (rows.every((v) => v.state === 'orphan')) return 2;
+      if (rows.every((v) => v.unwritable)) return 1;
+      return 0;
+    };
+    groups.sort((a, b) => rank(a) - rank(b));
+
+    list.innerHTML = groups.map((g) => `
+      <div>
+        <h3 class="text-xs uppercase tracking-wide text-zinc-500 mb-2">${esc(g)}</h3>
+        <div class="divide-y divide-zinc-200 dark:divide-zinc-800 rounded-lg border border-zinc-200 dark:border-zinc-800">
+          ${byGroup.get(g).map((v) => AdminConsole._platformEnvRow(v, canWrite)).join('')}
+        </div>
+      </div>`).join('');
+  },
+
+  _platformEnvRow(v, canWrite) {
+    const esc = AdminConsole.esc;
+    const badge = AdminConsole.PLATFORM_ENV_STATE_BADGES[v.state]
+      || AdminConsole.PLATFORM_ENV_STATE_BADGES.unset;
+
+    // What we're allowed to show of the value. A private variable never
+    // returns its plaintext from the API at all — there is no client-side
+    // "reveal", because there is nothing to reveal.
+    let valueHtml;
+    if (!v.hasValue) {
+      valueHtml = v.defaultValue
+        ? `<span class="text-xs text-zinc-500">not set — deploy falls back to <code class="font-mono">${esc(v.defaultValue)}</code></span>`
+        : '<span class="text-xs text-zinc-500">not set</span>';
+    } else if (v.private) {
+      valueHtml = '<span class="text-xs text-zinc-500 font-mono">•••••••• (private — never displayed)</span>';
+    } else if (v.value == null) {
+      valueHtml = '<span class="text-xs text-amber-600 dark:text-amber-400">set, but the stored value could not be decrypted</span>';
+    } else {
+      valueHtml = `<code class="text-xs font-mono text-zinc-700 dark:text-zinc-300 break-all">${esc(v.value)}</code>`;
+    }
+
+    const meta = [];
+    if (v.required) meta.push('required');
+    if (v.private) meta.push('private');
+    if (v.hasValue && v.updatedBy) meta.push(`last set by ${esc(v.updatedBy)}`);
+
+    const editable = canWrite && !v.unwritable;
+
+    return `
+      <div class="p-3" data-platform-env-row="${esc(v.key)}">
+        <div class="flex items-start justify-between gap-2">
+          <div class="flex-1 min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <code class="font-mono text-sm text-zinc-900 dark:text-zinc-100">${esc(v.key)}</code>
+              <span class="rounded px-1.5 py-0.5 text-[10px] font-medium ${badge.cls}">${badge.label}</span>
+              ${meta.length ? `<span class="text-[10px] text-zinc-500">${meta.join(' · ')}</span>` : ''}
+            </div>
+            ${v.description ? `<p class="text-xs text-zinc-500 mt-1">${esc(v.description)}</p>` : ''}
+            ${v.state === 'orphan' ? `<p class="text-xs text-amber-600 dark:text-amber-400 mt-1">
+              This variable is no longer declared in dapp.json. Its value is kept so a rollback still works — clear it once you're sure.</p>` : ''}
+            ${v.unwritable ? `<p class="text-xs text-zinc-500 mt-1">
+              Set by the deploy from a GitHub secret. Editing it here is not possible.</p>` : ''}
+            <div class="mt-1">${valueHtml}</div>
+          </div>
+          ${editable ? `
+          <div class="flex items-center gap-2 shrink-0">
+            <button class="admin-platform-env-edit text-xs text-zinc-400 hover:text-violet-400" data-key="${esc(v.key)}">
+              ${v.hasValue ? 'Edit' : 'Set'}</button>
+            ${v.hasValue ? `<button class="admin-platform-env-clear text-xs text-zinc-400 hover:text-red-500" data-key="${esc(v.key)}">Clear</button>` : ''}
+          </div>` : ''}
+        </div>
+        <div class="admin-platform-env-editor hidden mt-3" data-key="${esc(v.key)}">
+          <div class="flex flex-wrap items-center gap-2">
+            <input type="${v.private ? 'password' : 'text'}" autocomplete="off" spellcheck="false"
+              class="admin-platform-env-input flex-1 min-w-[12rem] rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono"
+              placeholder="New value">
+            <button class="admin-platform-env-save rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-2 text-xs font-medium text-white transition-colors" data-key="${esc(v.key)}">Save</button>
+            <button class="admin-platform-env-cancel rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors" data-key="${esc(v.key)}">Cancel</button>
+          </div>
+          <p class="admin-platform-env-error hidden text-xs text-red-600 dark:text-red-400 mt-2"></p>
+        </div>
+      </div>`;
+  },
+
+  _platformEnvRowEl(key) {
+    return document.querySelector(`[data-platform-env-row="${CSS.escape(key)}"]`);
+  },
+
+  _platformEnvClick(e) {
+    const edit = e.target.closest('.admin-platform-env-edit');
+    if (edit) {
+      const row = AdminConsole._platformEnvRowEl(edit.dataset.key);
+      const editor = row && row.querySelector('.admin-platform-env-editor');
+      if (!editor) return;
+      editor.classList.remove('hidden');
+      const input = editor.querySelector('.admin-platform-env-input');
+      if (input) { input.value = ''; input.focus(); }
+      return;
+    }
+    const cancel = e.target.closest('.admin-platform-env-cancel');
+    if (cancel) {
+      const row = AdminConsole._platformEnvRowEl(cancel.dataset.key);
+      const editor = row && row.querySelector('.admin-platform-env-editor');
+      if (editor) editor.classList.add('hidden');
+      return;
+    }
+    const save = e.target.closest('.admin-platform-env-save');
+    if (save) { AdminConsole._platformEnvSave(save.dataset.key); return; }
+    const clear = e.target.closest('.admin-platform-env-clear');
+    if (clear) { AdminConsole._platformEnvClear(clear.dataset.key); }
+  },
+
+  _platformEnvError(key, message) {
+    const row = AdminConsole._platformEnvRowEl(key);
+    const el = row && row.querySelector('.admin-platform-env-error');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.toggle('hidden', !message);
+  },
+
+  async _platformEnvSave(key) {
+    const row = AdminConsole._platformEnvRowEl(key);
+    const input = row && row.querySelector('.admin-platform-env-input');
+    const btn = row && row.querySelector('.admin-platform-env-save');
+    if (!input) return;
+    const value = input.value;
+    if (!value) {
+      AdminConsole._platformEnvError(key, 'Enter a value, or use Clear to remove it.');
+      return;
+    }
+    AdminConsole._platformEnvError(key, '');
+    if (btn) btn.disabled = true;
+    try {
+      const res = await fetch(`/api/admin/platform-env/${encodeURIComponent(key)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        AdminConsole._platformEnvError(key, data.error || `Save failed (HTTP ${res.status})`);
+        return;
+      }
+    } catch {
+      AdminConsole._platformEnvError(key, 'Save failed — network error.');
+      return;
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+    await AdminConsole.loadPlatformEnv();
+  },
+
+  async _platformEnvClear(key) {
+    const ok = await AdminConsole._confirm({
+      title: 'Clear this variable?',
+      message: `Remove the stored value for ${key}? The next deploy will run without it.`,
+      confirmLabel: 'Clear',
+    });
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/admin/platform-env/${encodeURIComponent(key)}`, {
+        method: 'DELETE',
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        AdminConsole._alert(data.error || `Clear failed (HTTP ${res.status})`);
+        return;
+      }
+    } catch {
+      AdminConsole._alert('Clear failed — network error.');
+      return;
+    }
+    await AdminConsole.loadPlatformEnv();
   },
 
   renderDbExportSection(host) {
@@ -1379,7 +1664,7 @@ const AdminConsole = {
             <div class="flex items-center gap-2 mt-3">
               <button id="admin-db-export-go"
                 class="rounded-lg bg-red-600 hover:bg-red-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors">
-                Download the dump</button>
+                Download the .sql.gz</button>
               <button id="admin-db-export-cancel"
                 class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
                 Cancel</button>
@@ -1387,8 +1672,10 @@ const AdminConsole = {
           </div>
 
           <p class="text-xs text-zinc-500 mt-4">
-            The file is a PostgreSQL custom-format dump. Restore it with:
-            <code class="font-mono text-zinc-600 dark:text-zinc-300 break-all">pg_restore --no-owner --no-privileges -d &lt;target-db&gt; &lt;file&gt;.dump</code>
+            The file is a gzip-compressed plain-SQL dump (<code class="font-mono">.sql.gz</code>),
+            taken with <code class="font-mono">--no-owner --no-privileges</code>. Restore it with:<br>
+            <code class="font-mono text-zinc-600 dark:text-zinc-300 break-all">gunzip -c &lt;file&gt;.sql.gz | psql -v ON_ERROR_STOP=1 -d &lt;target-db&gt;</code><br>
+            Read it without unpacking with <code class="font-mono">zless</code> / <code class="font-mono">zgrep</code>.
           </p>
         </div>
 
@@ -1396,7 +1683,7 @@ const AdminConsole = {
           <summary class="text-sm font-semibold text-amber-800 dark:text-amber-200 cursor-pointer">After you download it — and what to do if it leaks</summary>
           <ul class="text-sm text-amber-800 dark:text-amber-200 mt-3 list-disc pl-5 space-y-1">
             <li>Treat the file as a live credential: keep it encrypted, never on shared storage, and delete it when you're done.</li>
-            <li>It is unencrypted in your Downloads folder — desktop search will index it and cloud backup may sync it.</li>
+            <li>It is unencrypted in your Downloads folder — gzip is compression, not protection; cloud backup may sync it and anyone can read it with <code class="font-mono">zless</code>.</li>
             <li>If it may have been exposed, deletion is not enough — rotate:</li>
             <li class="list-none pl-4">— the platform JWT secret (invalidates every session; stored API keys and app secrets must be re-entered afterwards)</li>
             <li class="list-none pl-4">— the platform database password</li>
@@ -1477,6 +1764,7 @@ const AdminConsole = {
     const esc = AdminConsole.esc;
     target.innerHTML = `Target database <code class="font-mono text-zinc-700 dark:text-zinc-200">${esc(data.dbName || 'unknown')}</code>`
       + ` · current size <span class="font-medium">${esc(AdminConsole._fmtBytes(data.dbSizeBytes))}</span>`
+      + ` <span class="text-zinc-500">(the .sql.gz download is smaller)</span>`
       + ` · <span class="text-zinc-500">${esc(data.remainingToday)} of ${esc(data.maxPerDay)} exports left today</span>`;
 
     if (btn) {
@@ -1565,7 +1853,7 @@ const AdminConsole = {
           <div class="text-xs text-zinc-500 mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
             <span>${esc(AdminConsole._fmtTime(r.requested_at))}</span>
             <span class="font-mono">${esc(r.db_name)}</span>
-            <span>${esc(AdminConsole._fmtBytes(r.bytes_sent))}</span>
+            <span title="compressed size downloaded">${esc(AdminConsole._fmtBytes(r.bytes_sent))}</span>
             <span>${esc(AdminConsole._fmtDuration(r.started_at, r.finished_at))}</span>
             <span>from ${esc(r.ip || '—')}</span>
             ${denied}

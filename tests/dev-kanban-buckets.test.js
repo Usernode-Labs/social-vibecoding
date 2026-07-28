@@ -328,7 +328,7 @@ test('Kanban Done footer is absent once every completed item is loaded', () => {
 // ── loadMoreMerged re-render is view-mode aware ────────────────────────────
 
 // A capturing #gc-merged element; records innerHTML writes and no-ops the
-// querySelector calls _applyAskAiCardAvailability makes.
+// querySelector calls _applyExploreChatAvailability makes.
 const captureEl = (sink) => ({
   set innerHTML(v) { sink.push(v); },
   querySelector: () => null,
@@ -387,7 +387,8 @@ test('loadMoreMerged updates #gc-merged (not the board) in list mode', async () 
 
 // ── _getViewMode default: explicit preference, else width-based (#462) ─────
 
-// A matchMedia stub that answers `wide` for the 1024px query and counts how
+// A matchMedia stub that answers `wide` for the 640px multi-column query and
+// counts how
 // many times it is evaluated (for the once-per-page-load memoization test).
 const mediaStub = (wide, counter) => (query) => {
   if (counter) counter.n += 1;

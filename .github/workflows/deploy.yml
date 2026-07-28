@@ -74,6 +74,160 @@ jobs:
             caddy:
               - 'caddy.Dockerfile'
 
+      # ------------------------------------------------------------------
+      # Resolve GitHub-sourced values for variables that dapp.json's
+      # `platform_env` block declares.
+      #
+      # Every other line in the .env heredoc below names its secret
+      # literally, because `${{ secrets.FOO }}` has to be written out
+      # when the workflow is authored. A platform variable introduced by
+      # a proposal has no line here and can't get one without editing
+      # this guardrailed file — which is the whole problem the feature
+      # exists to solve. Filtering `toJSON(secrets)` / `toJSON(vars)`
+      # against the committed manifest is the only mechanism GitHub
+      # offers for reading a dynamically-named one.
+      #
+      # The manifest is the allow-list: only keys it DECLARES and marks
+      # writable are forwarded, using the same readPlatformEnv() the
+      # platform uses, so this can never widen the set of secrets that
+      # reach the VPS beyond what a reviewed commit asked for. Values
+      # are ::add-mask::'d before they can appear in any later log line.
+      #
+      # This is the fallback path. The primary one is the admin console
+      # (resolved on the VPS by scripts/dump-platform-env.js, appended
+      # after these lines and therefore winning) — but an operator who
+      # would rather keep a value in GitHub can, and a value set here
+      # still satisfies the pre-merge check's "somewhere to come from"
+      # only once it has also been recorded in the console. Both paths
+      # existing is deliberate: the console is not a lock-in.
+      # ------------------------------------------------------------------
+      - name: Resolve GitHub-sourced platform variables
+        env:
+          ALL_SECRETS: ${{ toJSON(secrets) }}
+          ALL_VARS: ${{ toJSON(vars) }}
+          OUT_FILE: ${{ runner.temp }}/platform-env-github.txt
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const { readPlatformEnv } = require('./src/services/app-manifest');
+
+          let declared = [];
+          try {
+            declared = readPlatformEnv(JSON.parse(fs.readFileSync('dapp.json', 'utf8')));
+          } catch (err) {
+            console.log(`No readable platform_env block (${err.message}); nothing to forward.`);
+          }
+
+          const secrets = JSON.parse(process.env.ALL_SECRETS || '{}');
+          const vars = JSON.parse(process.env.ALL_VARS || '{}');
+          const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+
+          const lines = [];
+          for (const entry of declared) {
+            // Unwritable keys already have an explicit line in the
+            // heredoc, sourced from the secret the operator actually
+            // named. Forwarding them again would be a no-op at best and
+            // a shadowing bug at worst.
+            if (entry.unwritable) continue;
+            const key = entry.key;
+            const value = has(secrets, key) ? secrets[key] : (has(vars, key) ? vars[key] : null);
+            if (typeof value !== 'string' || !value.length) continue;
+            // Same representability rule the admin console enforces:
+            // a single quote can't be escaped inside a single-quoted
+            // .env value, and a bare CR can't round-trip the file.
+            if (/['\r]/.test(value)) {
+              console.log(`Skipping ${key}: not representable as a single-quoted .env value`);
+              continue;
+            }
+            console.log(`::add-mask::${value}`);
+            lines.push(`${key}='${value}'`);
+          }
+
+          fs.writeFileSync(process.env.OUT_FILE, lines.length ? `${lines.join('\n')}\n` : '');
+          console.log(`Forwarding ${lines.length} GitHub-sourced platform variable(s).`);
+          NODE
+          # Single-line base64 so it survives $GITHUB_ENV and the
+          # ssh-action's `envs:` forwarding without any quoting games.
+          echo "GH_PLATFORM_ENV_B64=$(base64 -w0 < "$OUT_FILE")" >> "$GITHUB_ENV"
+          rm -f "$OUT_FILE"
+
+      # ------------------------------------------------------------------
+      # Compose the base `.env` on the runner.
+      #
+      # These lines lived inside the ssh script below until GitHub started
+      # rejecting the file outright: any string carrying a `${{ }}`
+      # interpolation is compiled into one format() expression, and an
+      # expression may not exceed 21,000 characters. The remote script is
+      # ~30 KB, so wrapping the interpolated .env lines in it made the
+      # whole workflow invalid ("Exceeded max expression length 21000")
+      # and no deploy run was created at all — merges to main stopped
+      # reaching production with no failed run to notice.
+      #
+      # So every interpolation lives in a SHORT step (this one) and the
+      # long script receives the result as one opaque base64 blob, the
+      # same shape the GitHub-sourced platform variables already use.
+      #
+      # Byte-for-byte the same .env as before: same keys, same order,
+      # same quoting, same committed defaults. The single-quoted heredoc
+      # still means no shell expansion of its own — GitHub Actions has
+      # already substituted every value, so a `$` inside a secret (e.g. a
+      # password) stays literal.
+      # ------------------------------------------------------------------
+      - name: Compose base .env
+        env:
+          OUT_FILE: ${{ runner.temp }}/base-env.txt
+        run: |
+          cat > "$OUT_FILE" <<'ENVEOF'
+          USERNODE_DOMAIN=${{ vars.USERNODE_DOMAIN }}
+          ZEROSSL_API_KEY=${{ secrets.ZEROSSL_API_KEY }}
+          ZEROSSL_EAB_KID=${{ secrets.ZEROSSL_EAB_KID }}
+          ZEROSSL_EAB_HMAC=${{ secrets.ZEROSSL_EAB_HMAC }}
+          ACME_DNS_USERNAME=${{ secrets.ACME_DNS_USERNAME }}
+          ACME_DNS_PASSWORD=${{ secrets.ACME_DNS_PASSWORD }}
+          ACME_DNS_SUBDOMAIN=${{ secrets.ACME_DNS_SUBDOMAIN }}
+          ADMIN_USERNAME=${{ secrets.USERNODE_ADMIN_USERNAME }}
+          ADMIN_PASSWORD=${{ secrets.USERNODE_ADMIN_PASSWORD }}
+          SESSION_SECRET=${{ secrets.USERNODE_SESSION_SECRET }}
+          JWT_SECRET=${{ secrets.USERNODE_JWT_SECRET }}
+          USERNODE_DB_PASSWORD=${{ secrets.USERNODE_DB_PASSWORD }}
+          GITHUB_APP_ID=${{ secrets.USERNODE_GITHUB_APP_ID }}
+          GITHUB_PRIVATE_KEY='${{ secrets.USERNODE_GITHUB_PRIVATE_KEY }}'
+          GITHUB_BOT_TOKEN=${{ secrets.USERNODE_GITHUB_BOT_TOKEN }}
+          ANTHROPIC_API_KEY=${{ secrets.USERNODE_ANTHROPIC_API_KEY }}
+          USERNODE_APP_PUBKEY=${{ secrets.USERNODE_APP_PUBKEY }}
+          USERNODE_APP_SECRET_KEY=${{ secrets.USERNODE_APP_SECRET_KEY }}
+          LOG_LEVEL=INFO
+          GIT_SHA=${{ github.sha }}
+          # Scaling tunables (see README scaling notes). Committed defaults
+          # target ~50 concurrent users on the current 20-core/62GB box;
+          # override any of them by setting a matching GitHub repo var
+          # (Settings -> Secrets and variables -> Actions -> Variables)
+          # without a code change.
+          MAX_GLOBAL_SESSIONS=${{ vars.MAX_GLOBAL_SESSIONS || '75' }}
+          MAX_USER_SESSIONS=${{ vars.MAX_USER_SESSIONS || '3' }}
+          WORKER_MEMORY=${{ vars.WORKER_MEMORY || '1280m' }}
+          WORKER_CPUS=${{ vars.WORKER_CPUS || '1' }}
+          WORKER_IDLE_EVICTION_MS=${{ vars.WORKER_IDLE_EVICTION_MS || '300000' }}
+          DB_POOL_MAX=${{ vars.DB_POOL_MAX || '60' }}
+          SESSION_AUTOPAUSE_IDLE_MS=${{ vars.SESSION_AUTOPAUSE_IDLE_MS || '300000' }}
+          STAGING_IDLE_TEARDOWN_MS=${{ vars.STAGING_IDLE_TEARDOWN_MS || '21600000' }}
+          SESSION_SWEEP_INTERVAL_MS=${{ vars.SESSION_SWEEP_INTERVAL_MS || '60000' }}
+          SESSION_LRU_ON_RESUME=${{ vars.SESSION_LRU_ON_RESUME || 'true' }}
+          SESSION_PRESSURE_GRACE_MS=${{ vars.SESSION_PRESSURE_GRACE_MS || '900000' }}
+          PR_STALE_NOTIFY_MS=${{ vars.PR_STALE_NOTIFY_MS || '604800000' }}
+          PR_STALE_GRACE_MS=${{ vars.PR_STALE_GRACE_MS || '259200000' }}
+          ARCHIVED_RETENTION_MS=${{ vars.ARCHIVED_RETENTION_MS || '2592000000' }}
+          STALE_SWEEP_INTERVAL_MS=${{ vars.STALE_SWEEP_INTERVAL_MS || '3600000' }}
+          CERT_WARM_TIMEOUT_MS=${{ vars.CERT_WARM_TIMEOUT_MS || '15000' }}
+          CERT_PROBE_SLOW_MS=${{ vars.CERT_PROBE_SLOW_MS || '5000' }}
+          DOCKER_STOP_GRACE_SEC=${{ vars.DOCKER_STOP_GRACE_SEC || '5' }}
+          ENVEOF
+          # Single-line base64 so it survives $GITHUB_ENV and the
+          # ssh-action's `envs:` forwarding without any quoting games —
+          # and so the multi-line GITHUB_PRIVATE_KEY PEM survives it too.
+          echo "BASE_ENV_B64=$(base64 -w0 < "$OUT_FILE")" >> "$GITHUB_ENV"
+          rm -f "$OUT_FILE"
+
       - name: Sync repo to VPS
         uses: easingthemes/ssh-deploy@v5.1.0
         with:
@@ -87,7 +241,11 @@ jobs:
           # survive. .git/.github/node_modules are build-time only.
           # `runtime/` is host-side ephemeral state (deploy-status.json,
           # bind-mounted into the container) — must survive a sync.
-          ARGS: "-avz --delete --exclude=.git --exclude=.github --exclude=node_modules --exclude=data --exclude=.env --exclude=runtime"
+          # `.platform-env` is the cached resolution of the console-set
+          # platform variables; without the exclude, --delete would wipe
+          # it on every deploy and the fallback would have nothing to
+          # fall back to.
+          ARGS: "-avz --delete --exclude=.git --exclude=.github --exclude=node_modules --exclude=data --exclude=.env --exclude=.platform-env* --exclude=runtime"
 
       - name: Write .env and run docker compose
         uses: appleboy/ssh-action@v1
@@ -101,6 +259,16 @@ jobs:
           # workflow_dispatch escape hatch. Unset on push events, in
           # which case `inputs.force_archive_refresh` evaluates to ''.
           FORCE_ARCHIVE_REFRESH: ${{ inputs.force_archive_refresh || 'false' }}
+          # base64 of the GitHub-sourced platform_env lines resolved above
+          # (empty string when there are none).
+          GH_PLATFORM_ENV_B64: ${{ env.GH_PLATFORM_ENV_B64 }}
+          # base64 of the base .env composed by the step above. The remote
+          # script decodes it instead of carrying the interpolations itself
+          # (see that step's comment for why it cannot).
+          BASE_ENV_B64: ${{ env.BASE_ENV_B64 }}
+          # The sha being deployed. Forwarded rather than interpolated for
+          # the same reason — the script must stay expression-free.
+          DEPLOY_SHA: ${{ github.sha }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: deploy
@@ -108,7 +276,7 @@ jobs:
           # Forward the gating flags into the remote shell — appleboy
           # /ssh-action only exports vars listed here, not the whole
           # job env.
-          envs: NODE_FILES_CHANGED,CADDY_FILES_CHANGED,FORCE_ARCHIVE_REFRESH
+          envs: NODE_FILES_CHANGED,CADDY_FILES_CHANGED,FORCE_ARCHIVE_REFRESH,GH_PLATFORM_ENV_B64,BASE_ENV_B64,DEPLOY_SHA
           # Archive fetch can take several minutes on a fresh seed; bump
           # the action's default 10m ceiling so it doesn't kill the deploy
           # mid-tar.
@@ -117,58 +285,47 @@ jobs:
             set -e
             cd /opt/usernode
 
-            # Single-quoted heredoc: no shell expansion on the server.
-            # GitHub Actions has already substituted all the expression
-            # interpolations above, so the remote just sees literal
-            # key=value lines. Safer than double-quoted, which would try
-            # to expand $-refs that might appear inside secrets (e.g. a
-            # $ sign in a password).
-            cat > .env <<'ENVEOF'
-            USERNODE_DOMAIN=${{ vars.USERNODE_DOMAIN }}
-            ZEROSSL_API_KEY=${{ secrets.ZEROSSL_API_KEY }}
-            ZEROSSL_EAB_KID=${{ secrets.ZEROSSL_EAB_KID }}
-            ZEROSSL_EAB_HMAC=${{ secrets.ZEROSSL_EAB_HMAC }}
-            ACME_DNS_USERNAME=${{ secrets.ACME_DNS_USERNAME }}
-            ACME_DNS_PASSWORD=${{ secrets.ACME_DNS_PASSWORD }}
-            ACME_DNS_SUBDOMAIN=${{ secrets.ACME_DNS_SUBDOMAIN }}
-            ADMIN_USERNAME=${{ secrets.USERNODE_ADMIN_USERNAME }}
-            ADMIN_PASSWORD=${{ secrets.USERNODE_ADMIN_PASSWORD }}
-            SESSION_SECRET=${{ secrets.USERNODE_SESSION_SECRET }}
-            JWT_SECRET=${{ secrets.USERNODE_JWT_SECRET }}
-            USERNODE_DB_PASSWORD=${{ secrets.USERNODE_DB_PASSWORD }}
-            GITHUB_APP_ID=${{ secrets.USERNODE_GITHUB_APP_ID }}
-            GITHUB_PRIVATE_KEY='${{ secrets.USERNODE_GITHUB_PRIVATE_KEY }}'
-            GITHUB_BOT_TOKEN=${{ secrets.USERNODE_GITHUB_BOT_TOKEN }}
-            ANTHROPIC_API_KEY=${{ secrets.USERNODE_ANTHROPIC_API_KEY }}
-            USERNODE_APP_PUBKEY=${{ secrets.USERNODE_APP_PUBKEY }}
-            USERNODE_APP_SECRET_KEY=${{ secrets.USERNODE_APP_SECRET_KEY }}
-            LOG_LEVEL=INFO
-            GIT_SHA=${{ github.sha }}
-            # Scaling tunables (see README scaling notes). Committed defaults
-            # target ~50 concurrent users on the current 20-core/62GB box;
-            # override any of them by setting a matching GitHub repo var
-            # (Settings -> Secrets and variables -> Actions -> Variables)
-            # without a code change.
-            MAX_GLOBAL_SESSIONS=${{ vars.MAX_GLOBAL_SESSIONS || '75' }}
-            MAX_USER_SESSIONS=${{ vars.MAX_USER_SESSIONS || '3' }}
-            WORKER_MEMORY=${{ vars.WORKER_MEMORY || '1280m' }}
-            WORKER_CPUS=${{ vars.WORKER_CPUS || '1' }}
-            WORKER_IDLE_EVICTION_MS=${{ vars.WORKER_IDLE_EVICTION_MS || '300000' }}
-            DB_POOL_MAX=${{ vars.DB_POOL_MAX || '60' }}
-            SESSION_AUTOPAUSE_IDLE_MS=${{ vars.SESSION_AUTOPAUSE_IDLE_MS || '300000' }}
-            STAGING_IDLE_TEARDOWN_MS=${{ vars.STAGING_IDLE_TEARDOWN_MS || '21600000' }}
-            SESSION_SWEEP_INTERVAL_MS=${{ vars.SESSION_SWEEP_INTERVAL_MS || '60000' }}
-            SESSION_LRU_ON_RESUME=${{ vars.SESSION_LRU_ON_RESUME || 'true' }}
-            SESSION_PRESSURE_GRACE_MS=${{ vars.SESSION_PRESSURE_GRACE_MS || '900000' }}
-            PR_STALE_NOTIFY_MS=${{ vars.PR_STALE_NOTIFY_MS || '604800000' }}
-            PR_STALE_GRACE_MS=${{ vars.PR_STALE_GRACE_MS || '259200000' }}
-            ARCHIVED_RETENTION_MS=${{ vars.ARCHIVED_RETENTION_MS || '2592000000' }}
-            STALE_SWEEP_INTERVAL_MS=${{ vars.STALE_SWEEP_INTERVAL_MS || '3600000' }}
-            CERT_WARM_TIMEOUT_MS=${{ vars.CERT_WARM_TIMEOUT_MS || '15000' }}
-            CERT_PROBE_SLOW_MS=${{ vars.CERT_PROBE_SLOW_MS || '5000' }}
-            DOCKER_STOP_GRACE_SEC=${{ vars.DOCKER_STOP_GRACE_SEC || '5' }}
-            ENVEOF
+            # The sha currently deployed, read from the .env we are about
+            # to overwrite. This is what the post-deploy health probe
+            # rolls back to if the new container never becomes healthy.
+            # Best-effort: on a green-field deploy there is no previous
+            # .env, PREV_SHA stays empty, and the probe reports the
+            # failure without attempting a rollback to nothing.
+            PREV_SHA=$(grep -m1 '^GIT_SHA=' .env 2>/dev/null | cut -d= -f2- || true)
+            echo "==> Previous GIT_SHA: ${PREV_SHA:-(none)}"
+
+            # Base .env, composed on the runner by the "Compose base .env"
+            # step above and handed over as ONE base64 blob. It used to be a
+            # `cat > .env <<'ENVEOF'` heredoc right here, and it cannot be:
+            # GitHub compiles any string carrying an interpolation into a
+            # single format() expression, and expressions are capped at
+            # 21,000 characters. Wrapping ~45 interpolated .env lines in
+            # ~500 lines of remote script pushed this scalar to ~30 KB and
+            # GitHub rejected the whole workflow ("Invalid workflow file …
+            # Exceeded max expression length 21000") — no run was created at
+            # all, so merges to main silently stopped reaching production.
+            # Keeping this script free of interpolations is what keeps it a
+            # plain literal, and therefore unbounded in length.
+            #
+            # Written (not appended): this is the authoritative base layer
+            # that the two platform-variable blocks below override.
+            if [ -z "${BASE_ENV_B64:-}" ]; then
+              echo "::error::BASE_ENV_B64 was not forwarded from the runner; refusing to truncate .env"
+              exit 1
+            fi
+            echo "$BASE_ENV_B64" | base64 -d > .env
             chmod 600 .env
+
+            # GitHub-sourced values for manifest-declared platform
+            # variables (resolved on the runner above). Appended AFTER the
+            # heredoc so they override a committed default for the same
+            # key — docker compose's env-file parser takes the last
+            # occurrence. The admin-console values are appended after
+            # these and win over both.
+            if [ -n "${GH_PLATFORM_ENV_B64:-}" ]; then
+              echo "$GH_PLATFORM_ENV_B64" | base64 -d >> .env
+              echo "==> Applied $(echo "$GH_PLATFORM_ENV_B64" | base64 -d | grep -c . || true) GitHub-sourced platform variable(s)"
+            fi
 
             # ----------------------------------------------------------
             # Pull non-buildable images first so we can detect upstream
@@ -500,8 +657,91 @@ jobs:
             #    changes need no rebuild — the `caddy reload` below
             #    applies them to the running container.
             # ----------------------------------------------------------
-            docker compose up -d --build usernode
+            # Build first, separately from `up`, so the freshly-built
+            # image can resolve the admin-console platform variables into
+            # .env BEFORE the platform container starts with it. (This
+            # was `up -d --build usernode`; splitting it is what makes
+            # the step below possible on the same deploy that introduces
+            # a variable, rather than one deploy later.)
+            docker compose build usernode
+
+            # ----------------------------------------------------------
+            # Materialize the platform variables an admin set in the
+            # console. They live encrypted in the platform's own
+            # database, so something with the DB credentials has to
+            # decrypt them — and /opt/usernode/runtime is mounted :ro,
+            # so the running platform cannot write the snapshot itself.
+            # A throwaway container off the image we just built has the
+            # credentials already via env_file and needs no new mount,
+            # port, or auth surface. --no-deps because usernode-db is
+            # already up from the previous deploy; -T so stdout and
+            # stderr stay separate streams.
+            #
+            # Failure is non-fatal by design: `|| true` plus the sentinel
+            # check means a DB hiccup reuses the previous run's cached
+            # .platform-env rather than failing the deploy or silently
+            # truncating the platform's configuration. Losing an
+            # override for one deploy is cheaper than a failed deploy.
+            # ----------------------------------------------------------
+            RAW_ENV=$(docker compose run --rm --no-deps -T usernode \
+              node scripts/dump-platform-env.js 2>/dev/null || true)
+            if echo "$RAW_ENV" | grep -q '^#__PLATFORM_ENV_END__$'; then
+              echo "$RAW_ENV" \
+                | sed -n '/^#__PLATFORM_ENV_BEGIN__$/,/^#__PLATFORM_ENV_END__$/p' \
+                | grep -v '^#__PLATFORM_ENV_' > .platform-env.new
+              mv .platform-env.new .platform-env
+              chmod 600 .platform-env
+              echo "==> Resolved $(grep -c . .platform-env || true) console-set platform variable(s)"
+            else
+              echo "==> WARNING: platform-env resolution produced no complete block; reusing cache"
+            fi
+            if [ -s .platform-env ]; then
+              cat .platform-env >> .env
+            fi
+
+            docker compose up -d usernode
             docker compose up -d --remove-orphans
+
+            # ----------------------------------------------------------
+            # Post-deploy health gate. A platform variable that is
+            # declared, unset, and read at boot is exactly the failure
+            # this feature's pre-merge check tries to prevent — but the
+            # check can be skipped (force-merge, a value cleared after
+            # the merge, a GitHub outage that made it fail open), so the
+            # deploy needs its own answer to "did it actually come up?".
+            #
+            # Two CONSECUTIVE successes: a container mid-boot can answer
+            # once and then exit, and a single 200 from a process that
+            # is about to crash is worse than no signal at all.
+            # ----------------------------------------------------------
+            HEALTH_OK=0
+            HEALTH_STREAK=0
+            HEALTH_WAITED=0
+            while [ "$HEALTH_WAITED" -lt 120 ]; do
+              if docker compose exec -T usernode wget -qO- http://localhost:3000/health >/dev/null 2>&1; then
+                HEALTH_STREAK=$((HEALTH_STREAK + 1))
+                if [ "$HEALTH_STREAK" -ge 2 ]; then HEALTH_OK=1; break; fi
+              else
+                HEALTH_STREAK=0
+              fi
+              sleep 5
+              HEALTH_WAITED=$((HEALTH_WAITED + 5))
+            done
+
+            if [ "$HEALTH_OK" -ne 1 ]; then
+              echo "::error::Platform did not become healthy within 120s of deploying ${DEPLOY_SHA:-(unknown sha)}"
+              echo "==> Last 200 log lines from the unhealthy container:"
+              docker compose logs --tail 200 usernode || true
+              if [ -n "$PREV_SHA" ] && [ -x /opt/usernode-tools/rollback.sh ]; then
+                echo "==> Rolling back to $PREV_SHA"
+                /opt/usernode-tools/rollback.sh "$PREV_SHA" || \
+                  echo "::error::Rollback to $PREV_SHA also failed — manual intervention required"
+              else
+                echo "::error::No previous sha or rollback script available; leaving the stack as-is"
+              fi
+              exit 1
+            fi
+            echo "==> Platform healthy after ${HEALTH_WAITED}s"
 
             if [ "${CADDY_FILES_CHANGED:-false}" = "true" ]; then
               echo "==> caddy.Dockerfile changed; rebuilding + recreating caddy"

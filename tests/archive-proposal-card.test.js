@@ -98,33 +98,33 @@ test('my own rename PR proposal renders Withdraw', () => {
   assert.match(html, /withdrawProposal\(7\)/, 'rename PR shows Withdraw');
 });
 
-// #313: the card-level "Ask AI" advisor button renders on proposals the
-// viewer does NOT own (where there's no "Open session"), and is omitted
-// on the viewer's own cards.
-test("someone else's proposal renders the Ask AI card button", () => {
+// #313/#827: the card-level "Explore in dev chat" button renders on
+// proposals the viewer does NOT own (where there's no "Open session"), and is
+// omitted on the viewer's own cards.
+test("someone else's proposal renders the Explore-in-dev-chat card button", () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ user_id: 999 }));
-  assert.match(html, /gc-ask-ai-btn/, 'Ask AI button present on a foreign proposal');
+  assert.match(html, /gc-explore-chat-btn/, 'Explore pill present on a foreign proposal');
   assert.match(html, /data-proposal-id="7"/, 'wired to the proposal id');
 });
 
-test('my own proposal does NOT render the Ask AI card button', () => {
+test('my own proposal does NOT render the Explore-in-dev-chat card button', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal());
-  assert.doesNotMatch(html, /gc-ask-ai-btn/, 'own card has no Ask AI (Open session covers it)');
+  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'own card has none (Open session covers it)');
 });
 
-test("someone else's merged proposal renders the Ask AI card button", () => {
+test("someone else's merged proposal renders the Explore-in-dev-chat button", () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderProposalCard(baseProposal({ user_id: 999, status: 'merged' }));
-  assert.match(html, /gc-ask-ai-btn/, 'Ask AI present on a foreign merged card');
+  assert.match(html, /gc-explore-chat-btn/, 'Explore pill present on a foreign merged card');
 });
 
-// #321: the topic detail view (_renderTopicHead) must not show TWO Ask AI
-// triggers. Another user's proposal card already carries the gc-ask-ai-btn
-// PILL, so the standalone #proposal-ask-ai button is dropped there and the
-// pill is wired in the head. Governance proposals and the viewer's OWN
-// proposal have no pill, so they keep the standalone button.
+// #321/#827: the topic detail view (_renderTopicHead) shows exactly ONE AI
+// affordance — the card's gc-explore-chat-btn PILL, wired here because the
+// head has no delegated handler. The old standalone #proposal-ask-ai button
+// is gone entirely: it was the governance-only entry point into the retired
+// advisor panel, and governance proposals get no replacement (#827).
 function makeTopicHarness(viewerId) {
   const els = {};
   const opened = [];
@@ -134,7 +134,6 @@ function makeTopicHarness(viewerId) {
     App: { user: { id: viewerId } },
     Kudos: { renderButton: () => '', attach: () => {} },
     ConfirmModal: { show: async () => true },
-    ProposalDiscuss: { open: (...a) => opened.push(a) },
     document: {
       getElementById: (id) => els[id] || null,
       querySelector: () => null,
@@ -159,11 +158,13 @@ function makeTopicHarness(viewerId) {
   // Keep AI availability synchronous and configured so the wiring path runs
   // without hitting fetch.
   AppView._ensureAiAvailability = () => Promise.resolve(true);
+  // Spy on the opener the pill should reach (the real one navigates away).
+  AppView.exploreProposalInDevChat = (...a) => { opened.push(a); };
   return { AppView, els, opened };
 }
 
 // A fake #gc-thread-head whose innerHTML setter records the HTML and exposes
-// stub button nodes for the pill / standalone so we can probe click wiring.
+// a stub button node for the pill so we can probe click wiring.
 function fakeHead() {
   const btnStub = () => ({
     disabled: false,
@@ -175,26 +176,23 @@ function fakeHead() {
   return {
     _html: '',
     _pill: null,
-    _standalone: null,
     get innerHTML() { return this._html; },
     set innerHTML(v) {
       this._html = v;
-      this._pill = /gc-ask-ai-btn/.test(v) ? btnStub() : null;
-      this._standalone = /id="proposal-ask-ai"/.test(v) ? btnStub() : null;
+      this._pill = /gc-explore-chat-btn/.test(v) ? btnStub() : null;
     },
     querySelector(sel) {
-      if (sel === '.gc-ask-ai-btn') return this._pill;
-      if (sel === '#proposal-ask-ai') return this._standalone;
+      if (sel === '.gc-explore-chat-btn') return this._pill;
       return null;
     },
     querySelectorAll(sel) {
-      if (sel === '.gc-ask-ai-btn') return this._pill ? [this._pill] : [];
+      if (sel === '.gc-explore-chat-btn') return this._pill ? [this._pill] : [];
       return [];
     },
   };
 }
 
-test("topic head for another user's proposal shows ONLY the pill (no standalone)", () => {
+test("topic head for another user's proposal wires the pill to the dev chat", () => {
   const { AppView, els, opened } = makeTopicHarness(ME);
   const head = fakeHead();
   els['gc-thread-head'] = head;
@@ -203,19 +201,17 @@ test("topic head for another user's proposal shows ONLY the pill (no standalone)
 
   AppView._renderTopicHead();
 
-  assert.match(head._html, /gc-ask-ai-btn/, 'kept pill is present');
-  assert.doesNotMatch(head._html, /id="proposal-ask-ai"/, 'standalone duplicate removed');
-  // The kept pill is wired in the head: clicking it opens the advisor.
+  assert.match(head._html, /gc-explore-chat-btn/, 'the pill is present');
+  assert.doesNotMatch(head._html, /id="proposal-ask-ai"/, 'the retired standalone is gone');
   assert.ok(head._pill && typeof head._pill._click === 'function', 'pill click is wired');
   head._pill._click();
-  assert.deepEqual(opened, [['proposal', 7, baseProposal({ user_id: 999 })]],
-    'pill click reaches ProposalDiscuss.open with kind/id/item');
+  assert.deepEqual(opened, [[7, head._pill]],
+    'pill click reaches exploreProposalInDevChat with the id and the button node');
 });
 
-test("topic head for the viewer's OWN proposal shows no Ask AI button", () => {
-  // #348: owners reach AI via "Open session" + the in-session advisor, so the
-  // detail view must show neither the standalone button nor the card pill on
-  // the viewer's own PR proposal (matching the card behaviour from #313).
+test("topic head for the viewer's OWN proposal shows no AI button", () => {
+  // #348: owners reach the Mayor via "Open session" on their own PR, so the
+  // detail view shows no pill (matching the card behaviour from #313).
   const { AppView, els } = makeTopicHarness(ME);
   const head = fakeHead();
   els['gc-thread-head'] = head;
@@ -224,11 +220,13 @@ test("topic head for the viewer's OWN proposal shows no Ask AI button", () => {
 
   AppView._renderTopicHead();
 
-  assert.doesNotMatch(head._html, /id="proposal-ask-ai"/, 'own proposal has no standalone Ask AI');
-  assert.doesNotMatch(head._html, /gc-ask-ai-btn/, 'no card pill on own proposal');
+  assert.doesNotMatch(head._html, /id="proposal-ask-ai"/, 'no standalone button');
+  assert.doesNotMatch(head._html, /gc-explore-chat-btn/, 'no card pill on own proposal');
 });
 
-test('topic head for a governance proposal keeps the standalone button', () => {
+test('topic head for a governance proposal has NO AI button at all (#827)', () => {
+  // A dev chat can't act on a rename / secret change / close-issue vote, so
+  // the governance-only standalone button was dropped with no replacement.
   const { AppView, els } = makeTopicHarness(ME);
   const head = fakeHead();
   els['gc-thread-head'] = head;
@@ -241,8 +239,8 @@ test('topic head for a governance proposal keeps the standalone button', () => {
 
   AppView._renderTopicHead();
 
-  assert.match(head._html, /id="proposal-ask-ai"/, 'gov proposal keeps the standalone Ask AI');
-  assert.doesNotMatch(head._html, /gc-ask-ai-btn/, 'gov cards have no Ask AI pill');
+  assert.doesNotMatch(head._html, /id="proposal-ask-ai"/, 'standalone Ask AI removed');
+  assert.doesNotMatch(head._html, /gc-explore-chat-btn/, 'gov cards have no Explore pill');
 });
 
 test('withdrawProposal POSTs to the archive endpoint and reloads the feed', async () => {

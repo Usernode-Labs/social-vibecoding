@@ -3564,19 +3564,39 @@ button.attr-chip { cursor: pointer; }
 .voting-help-rules strong { color: var(--text-primary); font-weight: 600; }
 
 /* ── Mobile kanban tabs (#814) ─────────────────────────────────────
-   Below 1024px the Dev board shows ONE column at a time behind the
-   #dev-kanban-tabs strip instead of scrolling sideways — four
-   min-w-[16rem] columns can't fit a phone, which is exactly why
-   _getViewMode()'s width default (min-width: 1024px) draws the line
-   here too. Presentation only: the markup always carries all four
-   columns, and JS only ever moves the `dev-kanban-col-active` class.
-   At >=1024px none of this applies and the board is unchanged. */
-@media (max-width: 1023px) {
+   Below 640px the Dev board shows ONE column at a time behind the
+   #dev-kanban-tabs strip instead of scrolling sideways — four columns
+   can't fit a phone, which is exactly why _getViewMode()'s width
+   default (min-width: 640px) draws the line here too. Presentation
+   only: the markup always carries all four columns, and JS only ever
+   moves the `dev-kanban-col-active` class. At >=640px none of this
+   applies and every column is on screen at once.
+
+   The single-column line was 1024px (Tailwind's lg) until it was
+   lowered to 640px (Tailwind's sm): the board is useful well below a
+   laptop, so the tab strip now only takes over on genuinely
+   phone-sized windows. In the band that changed hands (640-1023px) all
+   four columns sit in ONE row at their readable 16rem width and the
+   board scrolls sideways to reach the last of them — see the block
+   below. */
+
+/* The columns' flex sizing lives here rather than as inline
+   `flex-1 basis-0 min-w-[16rem]` utilities so the media queries below
+   can actually beat it — Tailwind's injected utilities have the same
+   specificity and land later in the cascade, so a `basis-0` /
+   `min-w-[16rem]` in the markup would win over both of them. Wide
+   screens: four equal columns with a 16rem floor (unchanged). */
+.dev-kanban-col {
+  flex: 1 1 0;
+  min-width: 16rem;
+}
+
+@media (max-width: 639px) {
   /* No sideways scroll left to do — one column fills the width. */
   #dev-kanban { overflow-x: hidden; }
 
-  /* min-width beats the inline min-w-[16rem] so the single visible
-     column still fits a 320px-wide phone. */
+  /* The floor lifts so the single visible column still fits a
+     320px-wide phone. */
   .dev-kanban-col {
     display: none;
     min-width: 0;
@@ -3586,4 +3606,31 @@ button.attr-chip { cursor: pointer; }
 
   /* The active tab already names the column and shows its count. */
   .dev-kanban-col-head { display: none; }
+}
+
+/* The band the 640px line reclaimed from the tab strip (640-1023px):
+   one row of four columns that the board scrolls sideways to cover.
+   The 16rem floor from the base rule is what makes the scroll
+   necessary — squeezing four columns into 640px would give each ~150px
+   and break card titles to one word per line — so the floor stays and
+   the overflow moves horizontally instead. Explicit rather than
+   inherited from the markup's `overflow-x-auto`, so a future edit to
+   this block can't quietly turn the band into a wrap. */
+@media (min-width: 640px) and (max-width: 1023px) {
+  #dev-kanban {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+}
+
+/* From 1024px the four columns must fit side by side with NO sideways
+   scroll. The 16rem floor above doesn't quite allow that at the bottom
+   of the range — four 256px columns plus three 12px gaps is 1060px,
+   past the ~1000px of content width a 1024px window has — so the floor
+   drops here. It stays a floor, not a width: `flex: 1 1 0` still
+   divides the row evenly, giving ~241px columns at 1024px and ~305px at
+   1280px. (Without this the board scrolled between 1024px and ~1084px,
+   which it did before the breakpoint moved too.) */
+@media (min-width: 1024px) {
+  .dev-kanban-col { min-width: 14rem; }
 }

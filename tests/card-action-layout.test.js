@@ -33,7 +33,6 @@ function makeAppView(userId, opts) {
     // Distinct marker so we can assert the kudos button is present inline.
     Kudos: { renderButton: () => '<button class="gc-vote-btn">kudos</button>' },
     ConfirmModal: { show: async () => true },
-    ProposalDiscuss: { open: () => {} },
     document: {
       getElementById: () => null,
       querySelector: () => null,
@@ -151,7 +150,7 @@ test('proposal card (admin, not author): every action renders inline, none hidde
   assert.match(html, /swapToStagingForSession\(7/, 'Preview present');
   assert.match(html, />kudos</, 'kudos present');
   assert.match(html, /castAdminMerge\(7\)/, 'Admin merge present');
-  assert.match(html, /gc-ask-ai-btn/, 'Ask AI present');
+  assert.match(html, /gc-explore-chat-btn/, 'Explore in dev chat present');
   assertNoOverflowMachinery(html);
 });
 
@@ -160,7 +159,7 @@ test('proposal card (author): Open session + Withdraw render inline', () => {
   const html = AppView._renderProposalCard(baseProposal({ user_id: ME }));
   assert.match(html, /openProposalSession\(7\)/, 'Open session present');
   assert.match(html, /withdrawProposal\(7\)/, 'Withdraw present');
-  assert.doesNotMatch(html, /gc-ask-ai-btn/, 'no Ask AI on your own proposal');
+  assert.doesNotMatch(html, /gc-explore-chat-btn/, 'no Explore pill on your own proposal');
   assertNoOverflowMachinery(html);
 });
 
@@ -199,13 +198,13 @@ const baseMerged = (over) => ({
   created_at: '2026-06-01T00:00:00Z', ...over,
 });
 
-test('merged card: voted box, Undo, kudos, Ask AI all inline in the shared row', () => {
+test('merged card: voted box, Undo, kudos, Explore pill all inline in the shared row', () => {
   const AppView = makeAppView(ME);
   const html = AppView._renderMergedCard(baseMerged({ my_vote: 'yes' }), 1);
   assert.match(html, /gc-card-actions/, 'shared action row present');
   assert.match(html, /gc-vote-voted-box-yes[^>]*>You voted Yes</, '"You voted Yes" indicator present in the action row');
   assert.match(html, /undoPr\(8\)/, 'Undo present');
-  assert.match(html, /gc-ask-ai-btn/, 'Ask AI present');
+  assert.match(html, /gc-explore-chat-btn/, 'Explore in dev chat present');
   assertNoOverflowMachinery(html);
 });
 

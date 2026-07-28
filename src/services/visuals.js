@@ -1190,6 +1190,40 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       });
     }
 
+    // Platform-variables check. Piggybacks on the same recompute trigger
+    // as the test suite so the Checks card fills in together, but it is
+    // computed from the branch's dapp.json diff, not from this run — a
+    // capture failure above leaves the test verdict 'error' while this
+    // one still resolves correctly. Display only: the merge gate in
+    // routes/votes.js re-evaluates live. Fire-and-forget.
+    try {
+      // eslint-disable-next-line global-require
+      const platformEnvCheck = require('./platform-env-check');
+      const { rows: appRows } = await pool.query(
+        'SELECT id, repo_url, self_hosted FROM apps WHERE id = $1',
+        [session.app_id]
+      );
+      if (appRows[0]?.self_hosted) {
+        const verdict = await platformEnvCheck.refreshPlatformEnvCheck({
+          pool, app: appRows[0], session,
+        });
+        if (verdict) {
+          log.info('visuals', 'Platform-env check stored', {
+            sessionId: session.id, state: verdict.state,
+          });
+          // Reuse the existing checks_ready broadcast: every client that
+          // cares about the Checks card already listens for it and
+          // re-fetches the proposal, so a second event type would only
+          // add a code path with the same effect.
+          notifyChecks(session.id, checksResult, commitHash, null);
+        }
+      }
+    } catch (err) {
+      log.warn('visuals', 'Platform-env check failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
     // #451: a passing verdict is the *other* half of the merge gate (the
     // first being a winning vote). The vote path already re-drives a merge
     // when a vote lands, but nothing re-drove it when the checks were the

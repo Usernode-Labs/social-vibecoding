@@ -74,7 +74,143 @@
       "description": "Private counterpart to USERNODE_APP_PUBKEY. Pre-staged in deploy.yml so any future platform-originated wallet-send flow can use it without a redeploy — currently no runtime consumer reads it. Always set together with USERNODE_APP_PUBKEY. `private` blocks staging propagation: this key signs real on-chain transactions with real funds."
     }
   ],
+  "platform_env": [
+    {
+      "key": "LOG_LEVEL",
+      "group": "Platform",
+      "default": "INFO",
+      "description": "Log verbosity for the platform process: DEBUG, INFO, WARN or ERROR. Raising it to DEBUG is the one tunable you actually want to change without a code change while chasing something in prod."
+    },
+    {
+      "key": "MAX_GLOBAL_SESSIONS",
+      "group": "Scaling",
+      "default": "75",
+      "description": "Ceiling on concurrent worker containers across the whole platform. The committed default targets ~50 concurrent users on a 20-core/62GB box; raise it only alongside WORKER_MEMORY headroom."
+    },
+    {
+      "key": "MAX_USER_SESSIONS",
+      "group": "Scaling",
+      "default": "3",
+      "description": "Ceiling on concurrent worker containers per user. Stops one person from consuming the whole global budget."
+    },
+    {
+      "key": "WORKER_MEMORY",
+      "group": "Scaling",
+      "default": "1280m",
+      "description": "Docker memory limit for each worker container, in docker's own units (e.g. `1280m`). MAX_GLOBAL_SESSIONS × WORKER_MEMORY is the worst-case worker footprint."
+    },
+    {
+      "key": "WORKER_CPUS",
+      "group": "Scaling",
+      "default": "1",
+      "description": "Docker CPU limit for each worker container."
+    },
+    {
+      "key": "DB_POOL_MAX",
+      "group": "Scaling",
+      "default": "60",
+      "description": "Maximum Postgres connections in the platform's pool. Must stay comfortably under the postgres container's own max_connections."
+    },
+    {
+      "key": "WORKER_IDLE_EVICTION_MS",
+      "group": "Sessions",
+      "default": "300000",
+      "description": "How long a worker container may sit idle before it is evicted to free a session slot."
+    },
+    {
+      "key": "SESSION_AUTOPAUSE_IDLE_MS",
+      "group": "Sessions",
+      "default": "300000",
+      "description": "Idle time before an active chat session is auto-paused. Paused sessions keep their state but release their worker."
+    },
+    {
+      "key": "SESSION_SWEEP_INTERVAL_MS",
+      "group": "Sessions",
+      "default": "60000",
+      "description": "How often the session sweeper runs the autopause/eviction pass."
+    },
+    {
+      "key": "SESSION_LRU_ON_RESUME",
+      "group": "Sessions",
+      "default": "true",
+      "description": "When `true`, resuming a session under global pressure evicts the least-recently-used worker instead of refusing the resume."
+    },
+    {
+      "key": "SESSION_PRESSURE_GRACE_MS",
+      "group": "Sessions",
+      "default": "900000",
+      "description": "Minimum age a session must reach before pressure-driven LRU eviction may take its worker."
+    },
+    {
+      "key": "STAGING_IDLE_TEARDOWN_MS",
+      "group": "Sessions",
+      "default": "21600000",
+      "description": "How long an idle staging container survives before it is torn down. Staging is rebuilt on demand, so this trades disk and memory against the wait on the next preview."
+    },
+    {
+      "key": "PR_STALE_NOTIFY_MS",
+      "group": "Proposals & retention",
+      "default": "604800000",
+      "description": "Age at which an open proposal is flagged stale and its author notified."
+    },
+    {
+      "key": "PR_STALE_GRACE_MS",
+      "group": "Proposals & retention",
+      "default": "259200000",
+      "description": "Grace period after the stale notification before the proposal is archived."
+    },
+    {
+      "key": "ARCHIVED_RETENTION_MS",
+      "group": "Proposals & retention",
+      "default": "2592000000",
+      "description": "How long archived proposals are retained before deletion."
+    },
+    {
+      "key": "STALE_SWEEP_INTERVAL_MS",
+      "group": "Proposals & retention",
+      "default": "3600000",
+      "description": "How often the stale-proposal sweeper runs."
+    },
+    {
+      "key": "CERT_WARM_TIMEOUT_MS",
+      "group": "TLS",
+      "default": "15000",
+      "description": "How long to wait for Caddy to obtain a certificate for a newly-published app subdomain before giving up on the warm-up."
+    },
+    {
+      "key": "CERT_PROBE_SLOW_MS",
+      "group": "TLS",
+      "default": "5000",
+      "description": "Threshold above which a certificate probe is logged as slow."
+    },
+    {
+      "key": "DOCKER_STOP_GRACE_SEC",
+      "group": "Platform",
+      "default": "5",
+      "description": "Seconds docker waits after SIGTERM before killing a container. Raising it makes deploys slower but gives in-flight requests longer to drain."
+    },
+    {
+      "key": "USERNODE_DOMAIN",
+      "group": "Managed by the deploy",
+      "description": "Apex domain the platform and every app subdomain live under. Set from a GitHub repo variable by the deploy and listed here for documentation only — changing it needs the DNS and certificate change to land in the same breath, so it is deliberately not editable in the console."
+    },
+    {
+      "key": "GIT_SHA",
+      "group": "Managed by the deploy",
+      "description": "Commit the running container was built from. Written by the deploy workflow from `github.sha`; documentation only."
+    },
+    {
+      "key": "DATABASE_URL",
+      "group": "Managed by the deploy",
+      "description": "Platform Postgres connection string, assembled by docker-compose from USERNODE_DB_PASSWORD. Documentation only — it is a reserved key and can never be written from here."
+    }
+  ],
   "tests": [
+    {
+      "name": "Admin console renders the Platform variables section",
+      "path": "/#admin/platform-env",
+      "expectSelector": "#admin-platform-env-panel #admin-platform-env-list"
+    },
     {
       "name": "Create-app modal opens in 'new' mode with the state on the presented card (#748)",
       "path": "/#create",
@@ -208,6 +344,17 @@
       "name": "Proposal view shows the How-voting-works help button",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
       "expectSelector": ".voting-help-btn"
+    },
+    {
+      "name": "Foreign proposal head offers Explore in dev chat, and no retired Ask AI button (#827)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
+      "expectSelector": "#gc-thread-head .gc-explore-chat-btn[data-proposal-id='9000001']",
+      "expectText": "Explore in dev chat"
+    },
+    {
+      "name": "Dev board cards carry the Explore-in-dev-chat pill (#827)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": ".gc-explore-chat-btn[data-proposal-id]"
     },
     {
       "name": "At-least-approvals proposal renders the approvals pill (#646)",
@@ -474,6 +621,11 @@
       "name": "Database export warns before it offers",
       "path": "/#admin/db-export",
       "expectText": "handle as a credential"
+    },
+    {
+      "name": "Database export documents the gunzip + psql restore",
+      "path": "/#admin/db-export",
+      "expectText": "gunzip -c"
     },
     {
       "name": "Home 'Your apps' section renders for the seeded admin",
