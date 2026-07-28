@@ -595,6 +595,23 @@ async function start() {
     });
   });
 
+  // Task 13 fix round: same pattern as debugAccess.ensureRole just above,
+  // for the topochain admin SQL console's dedicated read-only, column-
+  // scoped Postgres role (src/services/topochain/db-console-role.js) —
+  // it, not the regex validation in sql-console.js, is the actual
+  // security boundary for POST /api/v4/admin/sql-query/execute. Non-
+  // blocking and self-contained (ensureConsoleRole never rejects; it
+  // catches its own failures and leaves the capability unavailable), so
+  // this `.catch()` is defense-in-depth, matching the debugAccess call
+  // above line for line. On failure, execute degrades to a 503 rather
+  // than ever running a console query unscoped — boot proceeds normally.
+  const topochainConsoleRole = require('./src/services/topochain/db-console-role');
+  topochainConsoleRole.ensureConsoleRole(config).catch((err) => {
+    log.warn('server', 'topochain SQL console role bootstrap failed (capability disabled)', {
+      err: err.message,
+    });
+  });
+
   await github.init(config);
   await llm.init(config);
 

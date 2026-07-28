@@ -125,6 +125,18 @@ function dbToolsAdminRoutes(config) {
       if (outcome.kind === 'validation_error') {
         return res.status(400).json({ success: false, error: outcome.reason, query });
       }
+      // The console's REAL security boundary is a dedicated, column-
+      // scoped Postgres role (db-console-role.js) — if it failed to
+      // bootstrap at boot, `runConsoleQuery` refuses to run the query
+      // unscoped rather than silently falling back to the app's normal
+      // (unrestricted) connection. Degrade to 503, never run it anyway.
+      if (outcome.kind === 'unavailable') {
+        return res.status(503).json({
+          success: false,
+          error: 'The SQL console is not available right now.',
+          code: 'console_unavailable',
+        });
+      }
       if (outcome.kind === 'driver_error') {
         return res.status(400).json({ success: false, error: 'Query failed.', query });
       }

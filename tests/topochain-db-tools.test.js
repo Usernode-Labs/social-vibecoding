@@ -38,6 +38,18 @@ const {
 } = require('../src/services/topochain/sql-console');
 const { TEMPLATES } = require('../src/services/topochain/db-query-templates');
 const { QUERYABLE_TABLES } = require('../src/services/topochain/db-allowlist');
+const consoleRoleMod = require('../src/services/topochain/db-console-role');
+
+// `sql-console.js` holds a reference to this whole module object (`const
+// consoleRole = require('./db-console-role')`, not a destructured copy),
+// so overwriting these two functions on it here is visible to
+// `runConsoleQuery` on every call, regardless of require order — unlike
+// the `poolMod.getPool` override above, this doesn't need to happen
+// before any other require. Defaults to "available" for every test in
+// this file except the one that explicitly flips it off to exercise the
+// 503 path.
+consoleRoleMod.isAvailable = () => true;
+consoleRoleMod.unavailableReason = () => null;
 
 // ═══════════════════════════════════════════════════════════════════════
 // 1. Pure unit tests — sql-console.js hardening rules
@@ -173,6 +185,75 @@ test('validateStatement: a bare wildcard against an allowed table with no secret
   assert.match(r.reason, /wildcard/);
 });
 
+// ── Regression tests: the two live-reproduced bypasses ─────────────────
+//
+// A live security review reproduced BOTH of these against the seeded
+// Postgres and got real secret_key/bcrypt-hash values back before the
+// fix. Bypass class 1 (comma joins) is now caught by validateStatement
+// itself (extractReferencedTables was fixed to parse the whole FROM-list,
+// not just its first entry). Bypass class 2 (whole-row serialization) is
+// NOT reliably catchable by any regex — see the last two tests below,
+// which document exactly that and rely instead on db-console-role.js's
+// column-level GRANT (verified separately against the live seeded
+// Postgres; see the fix report).
+
+test('BYPASS 1 (comma join) — validateStatement now catches SELECT u.password FROM onchain_accounts a, users u', () => {
+  const r = validateStatement(
+    'SELECT u.password FROM onchain_accounts a, users u WHERE a.user_id = u.id'
+  );
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /outside the allowed list/);
+  assert.match(r.reason, /users/);
+});
+
+test('BYPASS 1 (comma join) — three-way comma list still surfaces every table, not just the first', () => {
+  const { tables } = extractReferencedTables(
+    'SELECT 1 FROM onchain_accounts a, users u, sessions s WHERE true'
+  );
+  assert.ok(tables.has('onchain_accounts'));
+  assert.ok(tables.has('users'));
+  assert.ok(tables.has('sessions'));
+});
+
+test('BYPASS 1 (comma join) — a subquery inside the FROM list is not split on ITS internal comma', () => {
+  const { tables } = extractReferencedTables(
+    'SELECT 1 FROM (SELECT id, name FROM seasons) x, onchain_accounts y'
+  );
+  // Both the outer comma-list entries AND the inner subquery's own FROM
+  // are found (via separate FROM occurrences) — "id, name" must NOT be
+  // misread as two more "tables" from the subquery's SELECT list.
+  assert.ok(tables.has('seasons'));
+  assert.ok(tables.has('onchain_accounts'));
+  assert.ok(!tables.has('id'));
+  assert.ok(!tables.has('name'));
+});
+
+test('BYPASS 2 (whole-row serialization) — row_to_json/to_jsonb/to_json/hstore are caught by the pre-flight denylist', () => {
+  for (const fn of ['row_to_json', 'to_jsonb', 'to_json', 'hstore']) {
+    const r = validateStatement(`SELECT ${fn}(o) FROM onchain_accounts o`);
+    assert.equal(r.ok, false, `${fn}(o) should have been rejected`);
+    assert.match(r.reason, /whole-row serialization/);
+  }
+});
+
+test('BYPASS 2 (whole-row serialization) — HONEST GAP: a bare row alias or a cast is NOT caught by any pre-flight check', () => {
+  // These are exactly the shapes a live security review used to pull
+  // real secret_key/registration_code values out of onchain_accounts —
+  // neither spells out an excluded column name, uses "*", or calls one
+  // of the denylisted functions above, so validateStatement has nothing
+  // to reject them on. This is not a bug in the test: it is the reason
+  // db-console-role.js's column-level GRANT exists at all. Confirmed
+  // separately against the live seeded Postgres that BOTH now come back
+  // "permission denied for table onchain_accounts" once executed as the
+  // restricted role (see the fix report) — validateStatement alone
+  // cannot and does not stop them.
+  const bareAlias = validateStatement('SELECT o FROM onchain_accounts o');
+  assert.equal(bareAlias.ok, true);
+
+  const cast = validateStatement('SELECT o::text FROM onchain_accounts o');
+  assert.equal(cast.ok, true);
+});
+
 test('extractReferencedTables: finds FROM/JOIN identifiers and CTE aliases separately', () => {
   const { tables, cteNames } = extractReferencedTables(
     'WITH latest AS (SELECT 1) SELECT * FROM seasons JOIN latest ON true'
@@ -242,6 +323,31 @@ test('templates: all six pass validateStatement (the exact execute-endpoint gate
     assert.equal(result.ok, true, `template "${t.name}" failed validation: ${result.reason}`);
     assert.doesNotMatch(t.query.toLowerCase(), /\bmetrics\b/, 'SPEC 2920: templates must not reference the excluded metrics table');
   }
+});
+
+test('db-console-role: buildGrantStatements excludes secret_key/registration_code from onchain_accounts and grants everything else plainly', async () => {
+  const mockPool = {
+    async query(sql, params) {
+      assert.match(sql, /information_schema\.columns/);
+      assert.deepEqual(params[0], QUERYABLE_TABLES);
+      return {
+        rows: [
+          { table: 'seasons', columns: ['id', 'name', 'description'] },
+          { table: 'onchain_accounts', columns: ['id', 'amount', 'secret_key', 'registration_code', 'tier'] },
+        ],
+      };
+    },
+  };
+  const stmts = await consoleRoleMod.buildGrantStatements(mockPool);
+
+  const seasonsStmt = stmts.find((s) => s.includes('"seasons"'));
+  assert.match(seasonsStmt, /^GRANT SELECT ON public\."seasons" TO topochain_console_ro$/);
+
+  const onchainStmt = stmts.find((s) => s.includes('"onchain_accounts"'));
+  assert.match(onchainStmt, /^GRANT SELECT \(/); // column-level grant, not a plain table grant
+  assert.doesNotMatch(onchainStmt, /secret_key/);
+  assert.doesNotMatch(onchainStmt, /registration_code/);
+  assert.match(onchainStmt, /"tier"/);
 });
 
 // ═══════════════════════════════════════════════════════════════════════
@@ -380,7 +486,51 @@ test('execute: a valid SELECT runs inside BEGIN TRANSACTION READ ONLY + SET LOCA
     assert.ok(currentMockPool.calls.some((c) => /^BEGIN TRANSACTION READ ONLY/i.test(c.trim())));
     assert.ok(currentMockPool.calls.some((c) => /^SET LOCAL statement_timeout/i.test(c.trim())));
     assert.ok(currentMockPool.calls.some((c) => c.includes('_topochain_console_q') && c.includes('LIMIT 101')));
+
+    // BYPASS regression coverage (mock-pool level, as required by the
+    // fix ruling): SET LOCAL ROLE <the console role> is issued, and
+    // BEFORE the user's wrapped query runs — this is the actual
+    // security boundary now (see sql-console.js's header), not a
+    // detail that's merely nice to have in the right order.
+    const roleIdx = currentMockPool.calls.findIndex((c) => new RegExp(`^SET LOCAL ROLE ${consoleRoleMod.ROLE}\\b`, 'i').test(c.trim()));
+    const queryIdx = currentMockPool.calls.findIndex((c) => c.includes('_topochain_console_q'));
+    assert.notEqual(roleIdx, -1, 'SET LOCAL ROLE must be issued');
+    assert.ok(roleIdx < queryIdx, 'SET LOCAL ROLE must run BEFORE the wrapped user query');
+
+    // Always ROLLBACK (never COMMIT) even on the happy path — nothing
+    // to persist, and this is what makes the role switch transaction-
+    // local (reverts either way, but ROLLBACK is the deliberately
+    // inert choice — see runConsoleQuery's own comment).
+    assert.ok(currentMockPool.calls.some((c) => /^ROLLBACK/i.test(c.trim())));
+    assert.ok(!currentMockPool.calls.some((c) => /^COMMIT/i.test(c.trim())));
   } finally { server.close(); }
+});
+
+test('execute: the SQL console degrades to 503 (never runs unscoped) if the console role failed to bootstrap', async () => {
+  scenario.executeRows = [{ id: 1 }];
+  const original = consoleRoleMod.isAvailable;
+  consoleRoleMod.isAvailable = () => false;
+  consoleRoleMod.unavailableReason = () => 'topochain console role bootstrap failed: simulated boot failure';
+  try {
+    const { server, base } = await listen(buildApp('admin'));
+    try {
+      const res = await fetch(`${base}/api/v4/admin/sql-query/execute`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ query: 'SELECT id FROM seasons' }),
+      });
+      assert.equal(res.status, 503);
+      const body = await res.json();
+      assert.equal(body.success, false);
+      assert.equal(body.code, 'console_unavailable');
+      // Never ran the query unscoped: no BEGIN/SET ROLE/wrapped-query
+      // calls should have reached the pool at all.
+      assert.equal(currentMockPool.calls.length, 0);
+    } finally { server.close(); }
+  } finally {
+    consoleRoleMod.isAvailable = original;
+    consoleRoleMod.unavailableReason = () => null;
+  }
 });
 
 test('execute: row cap enforcement — cap+1 rows come back limited and sliced to the cap', async () => {

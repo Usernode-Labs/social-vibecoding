@@ -1,6 +1,9 @@
 // Topochain v4 admin API — the D10 SQL console's hardening (Task 13;
 // SPEC 2864-2893, Global Constraints #9 — "SQL console hardening" is
-// listed there as a settled, non-relitigable architecture decision).
+// listed there as a settled, non-relitigable architecture decision;
+// AMENDED by a controller ruling after a live security review to match
+// SPEC 2893's normative text: "execute under a read-only database role
+// scoped to the migrated tables").
 //
 // THE FINDING THIS FIXES (SPEC 2891, "the most important finding in this
 // audit"): the source's read-only allow-list is commented out, so
@@ -10,6 +13,41 @@
 // CTEs or any query containing the word "LIMIT"; raw driver errors go
 // straight to the client.
 //
+// ⚠ CORRECTED AFTER A LIVE SECURITY REVIEW: an earlier version of this
+// file's header claimed "`BEGIN TRANSACTION READ ONLY` is the actual
+// security boundary... regardless of which table it touches." That
+// claim was WRONG and has been live-reproduced as wrong: READ ONLY
+// restricts WRITES, not which tables a SELECT may read, and TWO shapes
+// of query walked straight past every regex check below while reading
+// real secrets out of `onchain_accounts` from the live seeded database:
+//   1. Old-style comma joins — `SELECT u.password FROM onchain_accounts
+//      a, users u WHERE ...` — the table allow-list regex used to only
+//      look at the first identifier after FROM/JOIN, so `users` (after
+//      the comma) was invisible to it. FIXED below: `extractReferenced
+//      Tables` now parses the whole FROM-clause table LIST, not just
+//      its first entry (see that function's own comment).
+//   2. Whole-row serialization — `row_to_json(o)` / `to_jsonb(o)` /
+//      a bare `SELECT o FROM onchain_accounts o` / `o::text` returns
+//      EVERY column, including `secret_key`/`registration_code`,
+//      without the query ever spelling either name out as a token or
+//      using a `*` — both the by-name deny check and the wildcard ban
+//      are structurally blind to this, and there is no finite denylist
+//      of functions/casts that closes it off completely (a regex is
+//      not a permissions system). NOT FIXABLE at this layer.
+// THE REAL FIX for #2 (and the thing that ALSO makes #1 harmless even
+// if a future regex change reopens it): `db-console-role.js` creates a
+// dedicated Postgres role, `topochain_console_ro`, granted SELECT on
+// exactly the queryable tables with a COLUMN-LEVEL grant on
+// `onchain_accounts` that excludes `secret_key`/`registration_code`.
+// `runConsoleQuery` below executes every console query with
+// `SET LOCAL ROLE topochain_console_ro` inside the transaction — so
+// Postgres itself refuses to return either column's value through ANY
+// access path (direct reference, wildcard, `row_to_json`, a cast, a
+// comma join reaching `users`, or a function nobody's thought of yet),
+// at the executor level, independent of anything this file's regexes
+// do or don't recognize. THIS is the security boundary now. Read
+// `db-console-role.js`'s header before touching any of this.
+//
 // THIS MODULE'S LAYERS, IN THE ORDER THEY RUN (`runConsoleQuery` below):
 //   1. `validateStatement` — comment-stripped prefix must be SELECT or
 //      WITH; exactly one statement; a fixed deny-substring list; a
@@ -17,15 +55,18 @@
 //      write-inside-a-CTE trick a bare SELECT/WITH prefix check misses,
 //      e.g. `WITH x AS (DELETE FROM foo RETURNING *) SELECT * FROM x`);
 //      a deny check for `onchain_accounts.secret_key`/`.registration_code`
-//      by NAME (this console reads the live table directly — the table-
-//      allow-list check alone would happily let `SELECT secret_key FROM
-//      onchain_accounts` through, since that's an allowed table with an
-//      allowed verb; the export's column-level redaction has to be
-//      repeated here or it's meaningless); table references restricted
-//      to the topochain allow-list; AND a ban on bare wildcard column
-//      lists (`SELECT *`/`alias.*`, though not `COUNT(*)`) — a by-name
-//      deny check is useless against `SELECT * FROM onchain_accounts`,
-//      which never spells `secret_key` out but returns it anyway.
+//      by NAME; table references restricted to the topochain allow-list
+//      (now comma-join-aware, see above); a ban on bare wildcard column
+//      lists (`SELECT *`/`alias.*`, though not `COUNT(*)`); and a
+//      best-effort denylist of whole-row-serialization function names
+//      (`row_to_json`, `to_jsonb`, `to_json`, `hstore`). EVERY check in
+//      this list is a UX-layer speed bump — a fast, specific 400 instead
+//      of waiting on a round trip to discover a bare Postgres
+//      "permission denied" — NONE of them, individually or combined, is
+//      exhaustive (see `o::text` above, which no keyword/function
+//      denylist here catches). The role's grants (below) are what
+//      actually make every one of these bypasses come back
+//      empty/denied no matter what this layer missed.
 //   2. `wrapWithLimit` — the row cap, enforced server-side by wrapping
 //      the WHOLE validated statement in an outer
 //      `SELECT * FROM (<query>) AS _topochain_console_q LIMIT <cap+1>`,
@@ -36,7 +77,14 @@
 //      neither needs to parse the query's own (possibly absent, possibly
 ///     tighter) LIMIT nor cares whether the query starts with WITH.
 //   3. Execution inside `BEGIN TRANSACTION READ ONLY` +
-//      `SET LOCAL statement_timeout = '10s'`.
+//      `SET LOCAL ROLE topochain_console_ro` + `SET LOCAL
+//      statement_timeout = '10s'`, then unconditionally `ROLLBACK`
+//      (never `COMMIT` — there is nothing to persist, and `SET LOCAL`
+//      settings revert at end-of-transaction either way, so ROLLBACK is
+//      simply the more obviously-inert choice). If the role failed to
+//      bootstrap at boot, `runConsoleQuery` refuses to run the query
+//      unscoped — it returns `{ kind: 'unavailable' }` instead, which
+//      the route handler turns into a 503.
 //   4. Raw driver errors are logged, never echoed (`{success:false,
 //      "error":"Query failed."}`); ONLY validation-layer rejections
 //      (steps 1-2, and the length/shape checks the route handler itself
@@ -47,7 +95,8 @@
 // a regex over identifiers following `FROM`/`JOIN` (Global Constraints #9
 // explicitly permits this: "regex over FROM/JOIN identifiers is
 // acceptable... document the approach"). This is NOT a SQL parser and
-// has known blind spots in both directions:
+// has known blind spots in both directions, EVEN AFTER the comma-join
+// fix:
 //   - FALSE POSITIVES: `EXTRACT(EPOCH FROM created_at)` contains the
 //     literal token sequence "FROM created_at" — a query using EXTRACT
 //     would have `created_at` misidentified as a referenced "table" and
@@ -59,17 +108,14 @@
 //     through a view, a function, or dynamic SQL this regex doesn't
 //     walk into, and a sufficiently exotic reference the regex just
 //     doesn't recognize as an identifier slips through unflagged.
-// This check is a UX-layer speed bump, not the security boundary. THE
-// ACTUAL BOUNDARY is `BEGIN TRANSACTION READ ONLY`: Postgres itself
-// refuses every data-modifying statement inside a read-only transaction
-// at the executor level, regardless of what any regex here did or didn't
-// catch, and regardless of which table it touches. Every layer above
-// this comment exists to fail fast and explain itself; this one is the
-// one that cannot be bypassed by a cleverer query.
+// This check (and every other check in `validateStatement`) is a
+// UX-layer speed bump, NOT the security boundary — see the ⚠ correction
+// above for what actually is.
 'use strict';
 
 const log = require('../logger');
 const { QUERYABLE_TABLES_SET, EXCLUDED_SECRET_COLUMN_NAMES } = require('./db-allowlist');
+const consoleRole = require('./db-console-role');
 
 // SPEC 2872: `limit` is optional int, 1..1000, default 100.
 const DEFAULT_LIMIT = 100;
@@ -137,6 +183,20 @@ const EXCLUDED_COLUMNS_RE = EXCLUDED_SECRET_COLUMN_NAMES.length
   ? new RegExp(`\\b(${EXCLUDED_SECRET_COLUMN_NAMES.join('|')})\\b`, 'i')
   : null;
 
+// BEST-EFFORT ONLY — NOT EXHAUSTIVE (see the file header's ⚠ correction).
+// The most common ways to serialize an entire row as one value (dodging
+// both the by-name column check and the wildcard ban, since none of
+// these spell out `secret_key`/`registration_code` or use `*`):
+// `row_to_json(o)`, `to_jsonb(o)`, `to_json(o)`, `hstore(o)`. A plain
+// cast (`o::text`, `o::jsonb`) does the SAME thing and is NOT caught
+// here — there is no finite list of casts/functions that closes this
+// off completely, which is exactly why `db-console-role.js`'s
+// column-level GRANT is the real fix, not this list. Kept anyway
+// because it turns the MOST common form of this bypass into an
+// immediate, specific 400 instead of a bare Postgres permission error.
+const ROW_SERIALIZATION_FUNCTIONS = ['ROW_TO_JSON', 'TO_JSONB', 'TO_JSON', 'HSTORE'];
+const ROW_SERIALIZATION_RE = new RegExp(`\\b(${ROW_SERIALIZATION_FUNCTIONS.join('|')})\\s*\\(`, 'i');
+
 // ─── Statement scanning ─────────────────────────────────────────────────
 //
 // One pass over the raw query text that simultaneously:
@@ -196,6 +256,24 @@ function stripCommentsTrackingSemicolons(sql) {
 
 // ─── Table allow-list extraction (documented at length in the file
 // header comment above) ─────────────────────────────────────────────────
+//
+// A `JOIN` target is always a single identifier — `joinRe` below is
+// unchanged from the original, simpler version of this function.
+//
+// A `FROM` clause is NOT always a single identifier: old-style implicit
+// joins write it as a COMMA-SEPARATED list (`FROM a, b, c` / `FROM a x,
+// b y`). The bypass a live security review reproduced —
+// `SELECT u.password FROM onchain_accounts a, users u WHERE ...` — got
+// past an earlier version of this function because it only ever
+// captured the FIRST identifier after `FROM`, silently missing every
+// table after a comma. `extractFromWindow`/`splitTopLevelCommas` below
+// fix that: for each `FROM` occurrence, isolate the table-list window
+// (stopping at the next clause keyword, `JOIN`, a closing paren that
+// belongs to an ENCLOSING expression, a `;`, or end-of-string — paren-
+// depth-aware so a `FROM` inside a nested subquery doesn't run past its
+// own closing paren), split that window on TOP-LEVEL commas, and read
+// the leading identifier of each piece (discarding any alias that
+// follows it).
 function extractReferencedTables(strippedSql) {
   const cteNames = new Set();
   const cteRe = /\b([a-zA-Z_][a-zA-Z0-9_]*)\s+AS\s*\(/gi;
@@ -203,10 +281,67 @@ function extractReferencedTables(strippedSql) {
   while ((m = cteRe.exec(strippedSql))) cteNames.add(m[1].toLowerCase());
 
   const tables = new Set();
-  const refRe = /\b(?:FROM|JOIN)\s+"?([a-zA-Z_][a-zA-Z0-9_]*)"?/gi;
-  while ((m = refRe.exec(strippedSql))) tables.add(m[1].toLowerCase());
+
+  const joinRe = /\bJOIN\s+"?([a-zA-Z_][a-zA-Z0-9_]*)"?/gi;
+  while ((m = joinRe.exec(strippedSql))) tables.add(m[1].toLowerCase());
+
+  const fromRe = /\bFROM\b/gi;
+  while ((m = fromRe.exec(strippedSql))) {
+    const window = extractFromWindow(strippedSql, fromRe.lastIndex);
+    for (const piece of splitTopLevelCommas(window)) {
+      const identMatch = piece.trim().match(/^"?([a-zA-Z_][a-zA-Z0-9_]*)"?/);
+      if (identMatch) tables.add(identMatch[1].toLowerCase());
+    }
+  }
 
   return { tables, cteNames };
+}
+
+// Keywords/clauses that end a FROM-clause table list. Checked with a
+// leading AND trailing `\b` (via the sticky regex below) so a substring
+// hit inside a longer identifier (`workgroup_id` containing "group")
+// never counts as a stop.
+const FROM_WINDOW_STOP_RE = /\b(WHERE|GROUP\s+BY|ORDER\s+BY|LIMIT|HAVING|WINDOW|UNION|INTERSECT|EXCEPT|JOIN)\b/iy;
+
+// The substring of `text` starting at `start` that makes up one FROM
+// clause's table list — depth-aware so a `)` that closes an ENCLOSING
+// paren (not one opened inside this window) ends the window instead of
+// being consumed by it.
+function extractFromWindow(text, start) {
+  let depth = 0;
+  let i = start;
+  for (; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '(') { depth++; continue; }
+    if (ch === ')') {
+      if (depth === 0) break;
+      depth--;
+      continue;
+    }
+    if (ch === ';') break;
+    if (depth === 0 && /[A-Za-z]/.test(ch)) {
+      FROM_WINDOW_STOP_RE.lastIndex = i;
+      if (FROM_WINDOW_STOP_RE.test(text)) break;
+    }
+  }
+  return text.slice(start, i);
+}
+
+// Splits `text` on commas that are NOT nested inside parens (so a
+// subquery in the FROM list, `(SELECT ... ) x, other_table y`, doesn't
+// get split on a comma that lives INSIDE the subquery).
+function splitTopLevelCommas(text) {
+  const parts = [];
+  let depth = 0;
+  let current = '';
+  for (const ch of text) {
+    if (ch === '(') depth++;
+    if (ch === ')') depth--;
+    if (ch === ',' && depth === 0) { parts.push(current); current = ''; continue; }
+    current += ch;
+  }
+  if (current.trim()) parts.push(current);
+  return parts;
 }
 
 // Returns `{ ok: true }` or `{ ok: false, reason: '<explains itself>' }`.
@@ -261,6 +396,18 @@ function validateStatement(query) {
         reason: `Query references a column that is not accessible through this console: ${columnMatch[1].toLowerCase()}.`,
       };
     }
+  }
+
+  // Best-effort only (see this constant's own comment and the file
+  // header's ⚠ correction) — catches the most common whole-row-
+  // serialization functions, not every shape of the bypass (a bare
+  // cast like `o::text` is NOT caught here).
+  const rowFuncMatch = body.match(ROW_SERIALIZATION_RE);
+  if (rowFuncMatch) {
+    return {
+      ok: false,
+      reason: `Query uses a whole-row serialization function that is not allowed: ${rowFuncMatch[1].toLowerCase()}.`,
+    };
   }
 
   const { tables, cteNames } = extractReferencedTables(body);
@@ -352,18 +499,38 @@ async function runConsoleQuery(pool, { query, limit }) {
     return { kind: 'validation_error', reason: validation.reason };
   }
 
+  // The regex checks above are a UX layer, not the boundary (see file
+  // header). If the console role failed to bootstrap at boot, refuse to
+  // run the query at all rather than silently falling back to running
+  // it unscoped as the app's normal (unrestricted) connection — the
+  // route handler turns this into a 503.
+  if (!consoleRole.isAvailable()) {
+    return { kind: 'unavailable', reason: consoleRole.unavailableReason() };
+  }
+
   const wrapped = wrapWithLimit(query, limit);
   const client = await pool.connect();
   const startedAt = process.hrtime.bigint();
   try {
     await client.query('BEGIN TRANSACTION READ ONLY');
-    // Fixed literal, never interpolated from request input — Postgres's
-    // SET command does not accept a bind parameter for its value, so
-    // this has to be a constant string; it IS one, hard-coded here, not
-    // derived from anything the caller sent.
+    // `consoleRole.ROLE` is a hardcoded module constant (never derived
+    // from request input — see db-console-role.js), so splicing it into
+    // this SET command is as safe as the fixed statement_timeout
+    // literal right below it; neither could carry a bind parameter
+    // anyway (Postgres's SET does not accept one). THIS is the actual
+    // security boundary: every SELECT/WITH runs AS this restricted
+    // role, which the database itself refuses to let read
+    // secret_key/registration_code or any non-allow-listed table
+    // through ANY access path — see db-console-role.js's header.
+    await client.query(`SET LOCAL ROLE ${consoleRole.ROLE}`);
     await client.query("SET LOCAL statement_timeout = '10s'");
     const result = await client.query(wrapped);
-    await client.query('COMMIT');
+    // Always ROLLBACK, never COMMIT: there is nothing to persist (this
+    // role has no write grants regardless), and `SET LOCAL` — the role
+    // switch included — reverts at end-of-transaction either way, so
+    // ROLLBACK is simply the more obviously-inert choice for a query
+    // that only ever reads.
+    await client.query('ROLLBACK');
 
     const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
     const limited = result.rows.length > limit;
