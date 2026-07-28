@@ -581,23 +581,40 @@ async function loadSeasonEvents(client, sourcePool, seasonsMap) {
 async function loadUserEnrollments(client, sourcePool, participantMap, phasesMap, seasonEventToSeasonMap) {
   const rows = await fetchAll(sourcePool, 'phase_participants');
   const columns = ['season_event_id', 'user_id', 'season_id', 'registered_at', 'created_at', 'updated_at'];
-  const batch = [];
+  // The §8.4 merge can fold two source participants (same email) into ONE
+  // target user; if both were enrolled in the same phase, a naive copy
+  // violates user_enrollments_user_season_event_unique. Dedupe on
+  // (user_id, season_event_id), keeping the EARLIEST registration —
+  // consistent with the merge's earliest-row-is-canonical rule.
+  const byKey = new Map();
+  let mergedDupes = 0;
   for (const row of rows) {
     const userId = participantMap.get(row.participant_id);
     if (userId === undefined) throw new Error(`user_enrollments: unmapped participant_id ${row.participant_id}`);
     const seasonEventId = phasesMap.get(row.phase_id);
     if (seasonEventId === undefined) throw new Error(`user_enrollments: unmapped phase_id ${row.phase_id}`);
     const scope = deriveScopeColumns(seasonEventId, seasonEventToSeasonMap);
-    batch.push([
+    const registeredAt = row.registered_at || row.created_at || new Date();
+    const key = `${userId}:${scope.season_event_id}`;
+    const prev = byKey.get(key);
+    if (prev && new Date(prev[3]).getTime() <= new Date(registeredAt).getTime()) {
+      mergedDupes++;
+      continue;
+    }
+    if (prev) mergedDupes++;
+    byKey.set(key, [
       scope.season_event_id,
       userId,
       scope.season_id,
-      row.registered_at || row.created_at || new Date(),
+      registeredAt,
       row.created_at ?? null,
       row.updated_at ?? null,
     ]);
   }
-  await insertBatch(client, 'user_enrollments', columns, batch);
+  if (mergedDupes > 0) {
+    log.warn('topochain-load', `Deduplicated ${mergedDupes} post-merge duplicate enrollment(s)`);
+  }
+  await insertBatch(client, 'user_enrollments', columns, [...byKey.values()]);
 }
 
 // challenge_kinds <- challenge_sub_categories. PK is a hand-assigned
@@ -1255,7 +1272,12 @@ async function loadTermsVersions(client, sourcePool) {
     const targetId = await insertReturningId(client, 'terms_versions', {
       version: row.version,
       title: row.title,
-      body_markdown: row.body_markdown,
+      // The source table has NO body_markdown column (it stores a
+      // terms_link only — verified against the real Laravel migration
+      // 2026_07_15_000001); SPEC §3.4's "=" mapping for body_markdown
+      // was wrong. Nothing in SV serves body_markdown yet (mobile.js
+      // serves terms_link), so an empty body is safe.
+      body_markdown: row.body_markdown ?? '',
       terms_link: row.terms_link ?? null,
       published_at: row.published_at ?? null,
       created_at: row.created_at ?? null,
