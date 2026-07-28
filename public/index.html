@@ -1363,7 +1363,10 @@
       <button id="app-secrets-close" class="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors" aria-label="Close">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
-      <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">App secrets</h2>
+      <!-- Title + subtitle are set by Secrets.render(): the same modal is
+           "App secrets" for a child app and "Platform variables" for the
+           platform's own row, where a change lands on the next deploy. -->
+      <h2 id="app-secrets-title" class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">App secrets</h2>
       <p id="app-secrets-subtitle" class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Environment variables this app declares in <code class="text-xs">dapp.json</code>.</p>
       <div id="app-secrets-list" class="flex-1 overflow-y-auto -mx-2 px-2"></div>
       <div id="app-secrets-status" class="text-sm mt-3 hidden"></div>

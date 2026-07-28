@@ -494,28 +494,46 @@ both branches; that's the hook the banner in Phase 3 reads.
 - A merged PR against any normal app behaves identically to
   before.
 
-### 2h. Self-app secrets UI: read-only
+### 2h. Self-app secrets UI: the platform's own env store
 
-Per
-[the assessment](.cursor/plans/self-hosting_assessment_c649755e.plan.md):
-saving a new value via the Settings → Secrets UI for the
-self-app row would persist into `app_secrets` (encrypted with
-`JWT_SECRET`), but the platform's own process env is loaded from
-`.env` written by GitHub Actions — it doesn't read `app_secrets`.
-A "Save" click would be a silent no-op.
+Originally shipped as "read-only": saving a value for the self-app
+row would have persisted into `app_secrets`, which the platform's
+own process never reads (its env comes from `.env`, written by
+GitHub Actions), so a "Save" click was a silent no-op and the
+routes returned 403.
 
-Solution: in the secrets UI route (look in
-[src/routes/admin.js](./src/routes/admin.js) or wherever the
-`POST /api/apps/:slug/secrets` handler lives), branch on
-`app.self_hosted` and return 403 with a body explaining
-"Edit via GitHub Actions secrets — saving here would not be
-effective for the platform itself." The client-side UI shows the
-fields but disables the Save button with a tooltip pointing at
-the GitHub Actions secrets page.
+**Superseded.** The panel is now the platform's real configuration
+surface. The three secrets routes in
+[src/routes/apps.js](./src/routes/apps.js) branch on
+`app.self_hosted` onto [services/platform-env.js](./src/services/platform-env.js),
+which writes `platform_env_values` — the store the deploy actually
+resolves into `/opt/usernode/.env` (see
+[scripts/dump-platform-env.js](./scripts/dump-platform-env.js) and
+the "Resolve platform env" step in the workflow). So a write here
+is effective; it lands on the platform's **next deploy**, which the
+panel says in as many words. The panel is titled "Platform
+variables" for this row, and the admin console's separate
+Platform-variables section was folded into it.
 
-**Acceptance:** GETs return the manifest-merged view with
-`hasValue` reflecting the GitHub-Actions-configured reality;
-POST/PUT/DELETE return 403 with the explanatory message.
+What is still refused, and where:
+
+- **Credentials and deploy-owned keys** (`JWT_SECRET`,
+  `DATABASE_URL`, `ADMIN_PASSWORD`, the GitHub App credentials,
+  `USERNODE_DOMAIN`, …) are in `app-manifest.PLATFORM_ENV_UNWRITABLE`
+  and refused by the DAO, by the route, and by the vote path. They
+  render as read-only "Deploy-managed" rows with no controls at all.
+  A web form that could rewrite the platform's signing secret is a
+  privilege-escalation path, not a feature.
+- **`/redeploy` and `/check-updates`** still 403 via
+  `refuseIfSelfHosted` — the platform's deploy is GHA-driven (2g).
+- **Plaintext to non-admins.** Any collaborator may see which
+  variables exist and whether they are set; only an admin gets a
+  non-private variable's value, and nobody ever gets a private one.
+
+**Acceptance:** GET returns the merged declaration+value view with
+`scope: 'platform'` and `redeployable: false`; PUT/DELETE of a
+declared tunable succeed for a full admin and 400 for an unwritable
+key; a non-admin's GET carries no `value` and no `valueLast4`.
 
 ### 2i. Mayor refuse-list paragraph (self-app-only)
 
@@ -657,16 +675,23 @@ sites. Non-admins can:
 - list its promoted PRs and cast votes via the existing PR
   voting UI (which has no admin gate, so once visibility is
   granted, voting works)
-- view the read-only secrets metadata (key + description +
-  required + `hasValue`; values are never returned, write
-  protection unchanged via `refuseIfSelfHosted`)
+- view the Platform-variables metadata (key + description +
+  group + `required` + `hasValue`; a non-admin never receives a
+  value or a last-4)
+- **propose** a platform-variable change by vote
+  (`kind='secret_change'`, same flow as any app's secrets) —
+  deploy-owned credential keys are refused at creation, and the
+  self-app is `locked`, so a passing vote still needs an admin
+  up-vote before it applies
 
 What stays locked even when the flag is on (intentional — this
 flag is purely about audience, not about disabling self-hosting
 guards):
 - 2g — `createApp` / `rebuildProduction` skip; GHA still drives
   the deploy
-- 2h — secrets writes refused (read-only metadata only)
+- 2h — credential / deploy-owned keys still unwritable (a
+  declared tunable IS writable by a full admin, and proposable by
+  anyone — that's the point of the panel)
 - 2i — Mayor refuse-list still appended to self-app sessions
 - 2k — `USERNODE_PLATFORM_REPO` import still blocked
 
@@ -841,7 +866,7 @@ flowchart LR
     P2e[2e: dapp.json]
     P2f[2f: boot-time seed]
     P2g[2g: ownership guards]
-    P2h[2h: secrets UI read-only]
+    P2h[2h: platform-variables panel]
     P2i[2i: Mayor refuse-list]
     P2j[2j: admin-only filter]
     P2k[2k: import-flow guard]
@@ -904,11 +929,12 @@ self-staging from racing the prod platform on shared resources).
   updates `main_sha`. Between merge and successful boot, the row
   shows the old SHA — that's fine; the banner in Phase 3 is what
   surfaces the in-flight state.
-- **Should `app_secrets` for the self-app row be hidden entirely,
-  or just read-only?** The shipped behavior is read-only (so
-  admins can audit what the platform is configured with). If
-  audit visibility is undesired, hide them entirely with another
-  branch on `app.self_hosted`.
+- **Should the self-app row's env be hidden entirely, read-only,
+  or writable?** Settled: writable for declared tunables (see 2h),
+  read-only for the credential rows the deploy owns, and never
+  disclosing a value to a non-admin. The `app_secrets` table plays
+  no part for this row in any case — nothing reads it, and nothing
+  writes it now that the routes branch to the platform-env store.
 
 ## Centralized bridge endpoint
 

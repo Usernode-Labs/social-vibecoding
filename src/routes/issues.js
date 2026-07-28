@@ -7,6 +7,7 @@ const { getActiveUserStats } = require('../services/active-users');
 const { isAppLocked, hasAdminUpVote } = require('../services/admin-approval');
 const appManifest = require('../services/app-manifest');
 const appSecrets = require('../services/app-secrets');
+const platformEnv = require('../services/platform-env');
 const staging = require('../services/staging');
 const { encrypt, decrypt } = require('../services/secrets');
 const { issueKindLimiter } = require('../middleware/rate-limits');
@@ -464,6 +465,17 @@ function issueRoutes(config) {
         if (appManifest.RESERVED_KEYS.has(key)) {
           return res.status(400).json({ error: `${key} is reserved by the platform` });
         }
+        // The self-hosted app's proposals write platform_env_values, so the
+        // key has to clear the same bar a direct admin write does: no
+        // credential and no deploy-owned key, ever. Refusing at CREATION
+        // (rather than at apply) matters \u2014 a vote that can only ever be
+        // refused is worse than no vote, and "let's rotate JWT_SECRET by
+        // majority" must never appear on the proposals list at all.
+        if (app.self_hosted && !platformEnv.isWritableKey(key)) {
+          return res.status(400).json({
+            error: 'This variable is set by the deploy from a GitHub secret and cannot be edited here.',
+          });
+        }
         if (!['set', 'delete'].includes(action)) {
           return res.status(400).json({ error: 'payload.action must be "set" or "delete"' });
         }
@@ -472,13 +484,35 @@ function issueRoutes(config) {
             error: `payload.value is required and must be \u2264 ${MAX_SECRET_VALUE_LENGTH} chars`,
           });
         }
+        // Representability, same rule and same message the panel's direct
+        // write uses: a value carrying a single quote or a bare CR cannot
+        // survive being written into the platform's .env, so it is rejected
+        // now rather than accepted and silently dropped by a deploy days
+        // later. (MAX_SECRET_VALUE_LENGTH above is the tighter of the two
+        // length caps, so the DAO's 8192 never binds on this path.)
+        if (app.self_hosted && action === 'set') {
+          const unrepresentable = platformEnv.validateValue(value);
+          if (unrepresentable) return res.status(400).json({ error: unrepresentable });
+        }
 
         const manifest = (app.manifest_snapshot && typeof app.manifest_snapshot === 'object')
           ? app.manifest_snapshot : { secrets: [] };
-        const declared = (manifest.secrets || []).find((s) => s.key === key);
+        // Which block declares this key depends on which store the apply
+        // will write. For the platform that's `platform_env`; reading
+        // `secrets` there would classify a private tunable as public and
+        // capture its last-4 into the proposal payload.
+        const declared = app.self_hosted
+          ? (manifest.platform_env || []).find((s) => s.key === key)
+          : (manifest.secrets || []).find((s) => s.key === key);
         // `private` is canonical; manifest.read() also accepts the
         // legacy `sensitive` alias and normalizes to `.private`.
-        const isPrivate = !!declared?.private;
+        //
+        // An UNDECLARED key on the platform defaults to private, matching
+        // platform-env.setValue(): the safe default for a variable nothing
+        // has declared yet is "don't display it".
+        const isPrivate = app.self_hosted
+          ? (declared ? !!declared.private : true)
+          : !!declared?.private;
 
         // Encrypt the proposed value before it ever lands in the DB.
         // Even other admins reading the issues table see only ciphertext;
@@ -495,10 +529,15 @@ function issueRoutes(config) {
         title = action === 'delete'
           ? `Remove secret "${key}"`
           : `Set secret "${key}"`;
+        // The platform's own variables reach the process through the next
+        // DEPLOY, not through a rebuild of a container — so don't promise a
+        // redeploy the apply path deliberately never performs.
         description = description?.trim() ||
           `${req.user.username} (via Usernode) proposed ${
             action === 'delete' ? 'removing' : 'setting'
-          } the env var "${key}". Auto-applies + redeploys when a majority of active users vote up.`;
+          } the env var "${key}". ${app.self_hosted
+            ? 'Auto-applies when a majority of active users vote up; the value reaches the platform on its next deploy.'
+            : 'Auto-applies + redeploys when a majority of active users vote up.'}`;
       } else if (kind === 'close_issue') {
         const issueNumber = Number(payload?.issueNumber);
         if (!Number.isInteger(issueNumber) || issueNumber <= 0) {
@@ -1930,6 +1969,18 @@ async function maybeApplyRenameProposal(pool, issue) {
  * the change atomically, then trigger an async production rebuild so
  * the new value reaches the running container without a manual step.
  *
+ * TWO STORES, ONE PATH. For an ordinary app the write lands in
+ * `app_secrets` and is followed by a production rebuild. For the
+ * SELF-HOSTED app it lands in `platform_env_values` through the
+ * platform-env DAO and is followed by NOTHING: the platform's env is
+ * materialized by its own deploy (scripts/dump-platform-env.js writes
+ * /opt/usernode/.env), so the value goes live on the next deploy.
+ * Calling staging.rebuildProduction() on the self-app row would try to
+ * rebuild the platform as if it were a child container — exactly what
+ * refuseIfSelfHosted() prevents on the direct route in routes/apps.js —
+ * so the branch below skips it. That is not an optimization; it is the
+ * whole reason this function has to know which app it is applying to.
+ *
  * `options.force` (admin force-apply, POST /api/issues/:id/admin-apply):
  * skip the majority + locked-app gates entirely — the row lock below
  * still prevents a double-apply racing a vote-driven one. `options.forceBy`
@@ -1939,6 +1990,16 @@ async function maybeApplyRenameProposal(pool, issue) {
 async function maybeApplySecretChangeProposal(config, pool, issue, options = {}) {
   const force = !!options.force;
   const { majority } = await getActiveUserStats(pool, issue.app_id);
+
+  // Resolved BEFORE the transaction so both the write branch and the
+  // side-effect branch read the same flag. A missing row can't happen
+  // (the issue FKs to it) but degrade to the ordinary app path rather
+  // than throwing if it somehow does.
+  const { rows: appRows } = await pool.query(
+    'SELECT id, self_hosted FROM apps WHERE id = $1',
+    [issue.app_id]
+  );
+  const selfHosted = !!appRows[0]?.self_hosted;
 
   // #646: governance-aware gate (down votes feed both gates, anchored
   // on created_at). An admin force-apply skips it, like force-merge.
@@ -1994,6 +2055,36 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
       return { applied: false, upCount, majority, active };
     }
 
+    // A declaration can change under an open proposal (the manifest edit
+    // that makes a key deploy-owned merges while the vote runs). Refuse
+    // rather than write, and CLOSE the issue — leaving it open would re-run
+    // this failure, and re-post its message, on every subsequent vote.
+    if (selfHosted && !platformEnv.isWritableKey(key)) {
+      const refusedPayload = {
+        key, action,
+        private: !!(payload.private || payload.sensitive),
+        sensitive: !!(payload.private || payload.sensitive),
+        valueLast4: null,
+        appliedAt: new Date().toISOString(),
+        appliedBy: 'refused:unwritable',
+        upCount, required, active,
+      };
+      await client.query(
+        `UPDATE issues SET status = 'closed', payload = $1 WHERE id = $2`,
+        [JSON.stringify(refusedPayload), locked.id]
+      );
+      await client.query('COMMIT');
+      log.warn('issues', 'Secret-change refused: key is not writable', {
+        issueId: issue.id, key,
+      });
+      const refusedMsg = `Proposal for "${key}" was closed without applying: that variable is `
+        + 'now set by the deploy from a GitHub secret and cannot be written here.';
+      await sendSystemMessage(pool, issue.app_id, refusedMsg, 'system').catch(() => {});
+      await sendSystemMessage(pool, issue.app_id, refusedMsg, 'system',
+        null, { type: 'governance', ref: locked.id }).catch(() => {});
+      return { applied: false, refused: true, upCount, majority, active };
+    }
+
     if (action === 'set') {
       const valueEnc = payload.valueEnc || null;
       const plaintext = valueEnc ? decrypt(valueEnc, config.jwtSecret) : null;
@@ -2002,23 +2093,37 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
         log.warn('issues', 'Secret-change proposal could not decrypt value', { issueId: issue.id });
         return { applied: false, upCount, majority, active };
       }
-      // Read canonical `private`, fall back to `sensitive` for issues
-      // proposed by an older build before the field was renamed.
-      const isPrivate = !!(payload.private || payload.sensitive);
-      const valueLast4 = isPrivate ? null : plaintext.slice(-4);
-      // Re-encrypt to ensure the stored row uses a fresh IV (the
-      // payload ciphertext was captured at proposal time).
-      const reEnc = encrypt(plaintext, config.jwtSecret);
-      await client.query(
-        `INSERT INTO app_secrets (app_id, key, value_enc, value_last4, updated_by)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (app_id, key)
-         DO UPDATE SET value_enc = EXCLUDED.value_enc,
-                       value_last4 = EXCLUDED.value_last4,
-                       updated_at = NOW(),
-                       updated_by = EXCLUDED.updated_by`,
-        [issue.app_id, key, reEnc, valueLast4, locked.created_by || null]
-      );
+      if (selfHosted) {
+        // Through the DAO, not raw SQL: it re-encrypts with a fresh IV,
+        // re-checks isWritableKey, and derives `private` (and therefore
+        // whether a last-4 is kept) from the DECLARATION rather than from
+        // the proposal payload — so a proposal can't smuggle in a
+        // classification the manifest doesn't agree with.
+        await platformEnv.setValue(client, issue.app_id, key, plaintext, {
+          userId: locked.created_by || null,
+          jwtSecret: config.jwtSecret,
+        });
+      } else {
+        // Read canonical `private`, fall back to `sensitive` for issues
+        // proposed by an older build before the field was renamed.
+        const isPrivate = !!(payload.private || payload.sensitive);
+        const valueLast4 = isPrivate ? null : plaintext.slice(-4);
+        // Re-encrypt to ensure the stored row uses a fresh IV (the
+        // payload ciphertext was captured at proposal time).
+        const reEnc = encrypt(plaintext, config.jwtSecret);
+        await client.query(
+          `INSERT INTO app_secrets (app_id, key, value_enc, value_last4, updated_by)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (app_id, key)
+           DO UPDATE SET value_enc = EXCLUDED.value_enc,
+                         value_last4 = EXCLUDED.value_last4,
+                         updated_at = NOW(),
+                         updated_by = EXCLUDED.updated_by`,
+          [issue.app_id, key, reEnc, valueLast4, locked.created_by || null]
+        );
+      }
+    } else if (selfHosted) {
+      await platformEnv.deleteValue(client, issue.app_id, key);
     } else {
       await client.query(
         'DELETE FROM app_secrets WHERE app_id = $1 AND key = $2',
@@ -2050,33 +2155,58 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
     const appliedHow = force
       ? `by admin override (${options.forceBy?.username || 'admin'})`
       : `by group vote (${upCount}/${required})`;
-    const secretMsg = `Secret "${key}" ${verb} ${appliedHow}; redeploying…`;
+    // Say what actually happens next. Promising a redeploy the platform
+    // path deliberately doesn't perform is how someone concludes the
+    // feature is broken while watching for an immediate change.
+    const secretMsg = selfHosted
+      ? `Platform variable "${key}" ${verb} ${appliedHow}; takes effect on the platform's next deploy.`
+      : `Secret "${key}" ${verb} ${appliedHow}; redeploying…`;
     await sendSystemMessage(pool, issue.app_id, secretMsg, 'system')
       .catch((err) => log.warn('issues', 'Secret-change chat msg failed', { err: err.message }));
     // Dual-post the outcome into the governance proposal's thread.
     await sendSystemMessage(pool, issue.app_id, secretMsg, 'system',
       null, { type: 'governance', ref: locked.id }).catch(() => {});
 
-    // Auto-redeploy: same fan-out the drift poller and dev-chat merge use.
-    // Failures (including MissingSecretsError if the dapp still requires
-    // additional unset keys) propagate via the existing deploy-status
-    // broadcast and don't poison the vote-apply success.
-    pool.query('SELECT * FROM apps WHERE id = $1', [issue.app_id])
-      .then(({ rows }) => rows[0] && staging.rebuildProduction(config, rows[0]))
-      .then(async (result) => {
-        if (!result) return;
-        await pool.query(
-          `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',
-                           last_deploy_at = NOW()
-           WHERE id = $3`,
-          [result.containerId, result.sha || null, issue.app_id]
-        );
-      })
-      .catch((err) => {
-        log.warn('issues', 'Post-secret-change redeploy failed', {
-          slug: issue.app_slug, err: err.message,
-        });
+    if (selfHosted) {
+      // One event type for a platform-variable change regardless of which
+      // path wrote it, so the audit trail reads as one series. The value is
+      // never carried — only the key, its privacy flag and how it applied.
+      events.record(pool, {
+        type: events.EVENT_TYPES.PLATFORM_ENV_CHANGED,
+        userId: force ? (options.forceBy?.id || null) : (locked.created_by || null),
+        appId: issue.app_id,
+        metadata: {
+          key,
+          action: action === 'delete' ? 'clear' : 'set',
+          private: !!(payload.private || payload.sensitive),
+          appliedBy: force ? 'admin-force-apply' : 'group-vote',
+        },
       });
+    } else {
+      // Auto-redeploy: same fan-out the drift poller and dev-chat merge use.
+      // Failures (including MissingSecretsError if the dapp still requires
+      // additional unset keys) propagate via the existing deploy-status
+      // broadcast and don't poison the vote-apply success.
+      //
+      // NEVER for the self-hosted row: rebuildProduction() would treat the
+      // platform like a child container (see this function's header).
+      pool.query('SELECT * FROM apps WHERE id = $1', [issue.app_id])
+        .then(({ rows }) => rows[0] && staging.rebuildProduction(config, rows[0]))
+        .then(async (result) => {
+          if (!result) return;
+          await pool.query(
+            `UPDATE apps SET container_id = $1, main_sha = $2, status = 'running',
+                             last_deploy_at = NOW()
+             WHERE id = $3`,
+            [result.containerId, result.sha || null, issue.app_id]
+          );
+        })
+        .catch((err) => {
+          log.warn('issues', 'Post-secret-change redeploy failed', {
+            slug: issue.app_slug, err: err.message,
+          });
+        });
+    }
 
     if (locked.github_issue_number) {
       const { rows: r } = await pool.query('SELECT repo_url FROM apps WHERE id = $1', [issue.app_id]);

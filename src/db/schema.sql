@@ -2010,22 +2010,33 @@ COMMENT ON TABLE db_exports IS 'staging:private';
 -- proposal that needed it, so a merged proposal could deploy straight
 -- into a crash-loop on a variable nobody had set.
 --
+-- THE SURFACE is the platform app's own secrets panel, labelled "Platform
+-- variables" (the "+" menu on its dev tab) — served by the self-hosted
+-- branch of /api/apps/:slug/secrets* in routes/apps.js, with the vote path
+-- riding kind='secret_change' like any other app's secrets. There is no
+-- separate admin-console section: it existed briefly and was folded in,
+-- because two screens describing one process's environment is how you get
+-- an inert list of credentials with buttons that don't work.
+--
 -- Two tables, deliberately separate:
 --
 --   platform_env_declarations — a CACHE of the `platform_env` block in
 --     the platform repo's committed dapp.json, refreshed on every boot
 --     by app-manifest.reconcilePlatformEnv() from seedSelfApp(). The
---     manifest is the source of truth; this table exists so the admin
---     console and the pre-merge check can query declarations in SQL
---     instead of re-reading the working tree, and so a value with no
---     declaration ("orphan") is detectable. NOT staging:private: it is a
---     verbatim copy of a public committed file.
+--     manifest is the source of truth; this table exists so the panel
+--     and the pre-merge check can query declarations in SQL instead of
+--     re-reading the working tree, and so a value with no declaration
+--     ("orphan") is detectable. NOT staging:private: it is a verbatim
+--     copy of a public committed file.
 --
---   platform_env_values — the admin-set VALUES, AES-256-GCM encrypted at
---     rest by services/secrets.js exactly as app_secrets is (same
---     `v1:iv:tag:ct` format, same JWT_SECRET-derived key). Resolved at
---     deploy time, never read by the running platform process — see the
---     "Resolve platform env" step in deploy.yml.
+--   platform_env_values — the SET VALUES (by an admin directly, or by an
+--     applied secret_change vote), AES-256-GCM encrypted at rest by
+--     services/secrets.js exactly as app_secrets is (same `v1:iv:tag:ct`
+--     format, same JWT_SECRET-derived key). Resolved at deploy time,
+--     never read by the running platform process — see the "Resolve
+--     platform env" step in deploy.yml. Both write paths go through
+--     services/platform-env.js so the unwritable-key and
+--     private-from-declaration rules hold for either.
 --
 -- The value table is credential-bearing: tagged staging:private (so a
 -- staging clone starts empty and the IS_STAGING seed fills it with

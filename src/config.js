@@ -189,9 +189,12 @@ function load() {
     // app row, list its promoted PRs, and cast votes via the existing
     // PR voting UI. Set SELF_APP_PUBLIC_VOTING=false to restrict
     // visibility back to admins only. All the other self-hosting
-    // protections (2g rebuild skip, 2h secrets read-only-write-
-    // protection, 2i Mayor refuse-list, 2k import block) stay in
-    // place; this flag is purely about audience.
+    // protections (2g rebuild skip, 2h's unwritable credential keys,
+    // 2i Mayor refuse-list, 2k import block) stay in place; this flag
+    // is purely about audience. Note it also gates who may PROPOSE a
+    // platform-variable change: the proposal rides the secrets panel,
+    // and turning this off puts that panel back behind admin-only
+    // visibility.
     selfAppPublicVoting: process.env.SELF_APP_PUBLIC_VOTING !== 'false',
   };
 

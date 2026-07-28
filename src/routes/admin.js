@@ -14,8 +14,9 @@ const events = require('../services/events');
 // the admin count must take this lock inside its transaction so the
 // "at least one admin must remain" invariant is checked and committed
 // atomically — two concurrent revokes/deletes can't both observe >1 admin
-// and race to zero. The number is arbitrary but must stay stable.
-const ADMIN_MUTATION_LOCK = 991001;
+// and race to zero. Now shared with the platform-variable writes in
+// routes/apps.js, which is why the number lives in one module.
+const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 
 function adminRoutes(config) {
   const router = Router();
@@ -752,146 +753,6 @@ function adminRoutes(config) {
     } catch (err) {
       log.error('admin', 'Submitted-features list failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  // ── Platform environment variables ─────────────────────────
-  //
-  // Read/write the platform's own env vars (services/platform-env.js).
-  // These are NOT applied to the running process: they are resolved by
-  // the next deploy, which writes them into /opt/usernode/.env. The UI
-  // says so, and it matters — an admin who sets a value here and then
-  // watches for an immediate behaviour change would otherwise conclude
-  // the feature is broken.
-  //
-  // Gating follows the console-wide split exactly: the list is a plain
-  // read on router-level adminMiddleware (view-only admins can see what
-  // is configured — that's the point of a view-only admin), and every
-  // mutation chains requireAdminWrite. Mutations additionally take the
-  // ADMIN_MUTATION_LOCK advisory lock so two admins editing the same key
-  // at once serialize instead of interleaving a read-modify-write.
-  //
-  // Unwritable keys (JWT_SECRET, DATABASE_URL, the GitHub App
-  // credentials — app-manifest.PLATFORM_ENV_UNWRITABLE) are refused here
-  // as well as in the DAO and hidden from the write UI. Three layers for
-  // one rule is deliberate: the DAO throw is the backstop, this 400 is
-  // the honest error message, and the UI omission is the courtesy.
-  const platformEnv = require('../services/platform-env');
-
-  async function selfAppId() {
-    const { rows } = await pool.query(
-      'SELECT id FROM apps WHERE slug = $1 LIMIT 1',
-      [config.selfAppSlug]
-    );
-    return rows[0]?.id || null;
-  }
-
-  router.get('/api/admin/platform-env', async (_req, res) => {
-    try {
-      const appId = await selfAppId();
-      if (!appId) return res.status(503).json({ error: 'Self-app row not found' });
-      const vars = await platformEnv.listView(pool, appId, config.jwtSecret);
-      res.json({
-        variables: vars,
-        // Surfaced so the UI can render the "takes effect on next deploy"
-        // banner with the sha the current process is actually running.
-        gitSha: process.env.GIT_SHA || null,
-      });
-    } catch (err) {
-      log.error('admin', 'Platform-env list failed', { message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    }
-  });
-
-  router.put('/api/admin/platform-env/:key', requireAdminWrite, async (req, res) => {
-    const key = String(req.params.key || '');
-    const value = typeof req.body?.value === 'string' ? req.body.value : null;
-
-    if (!platformEnv.isWritableKey(key)) {
-      log.warn('admin', 'Platform-env write refused: unwritable key', {
-        key, by: req.user.username,
-      });
-      return res.status(400).json({
-        error: 'This variable is set by the deploy from a GitHub secret and cannot be edited here.',
-      });
-    }
-    // Shape/representability rules live in the DAO so the route and
-    // setValue() can never disagree about what is storable.
-    const invalid = platformEnv.validateValue(value);
-    if (invalid) {
-      return res.status(400).json({ error: invalid });
-    }
-
-    const client = await pool.connect();
-    try {
-      const appId = await selfAppId();
-      if (!appId) return res.status(503).json({ error: 'Self-app row not found' });
-
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
-      const result = await platformEnv.setValue(client, appId, key, value, {
-        userId: req.user.id,
-        jwtSecret: config.jwtSecret,
-      });
-      await client.query('COMMIT');
-
-      // The value itself is never logged or emitted — only that it
-      // changed, by whom. Same discipline as the secrets flow.
-      log.info('admin', 'Platform env var set', {
-        key, private: result.private, by: req.user.username,
-      });
-      events.record(pool, {
-        type: events.EVENT_TYPES.PLATFORM_ENV_CHANGED,
-        userId: req.user.id,
-        appId,
-        metadata: { key, action: 'set', private: result.private },
-      });
-      res.json({ ok: true, key, private: result.private });
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      log.error('admin', 'Platform-env write failed', { key, message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    } finally {
-      client.release();
-    }
-  });
-
-  router.delete('/api/admin/platform-env/:key', requireAdminWrite, async (req, res) => {
-    const key = String(req.params.key || '');
-    // Deleting an unwritable key's row is refused for the same reason
-    // setting it is: nothing legitimate ever created one.
-    if (!platformEnv.isWritableKey(key)) {
-      return res.status(400).json({
-        error: 'This variable is set by the deploy from a GitHub secret and cannot be edited here.',
-      });
-    }
-
-    const client = await pool.connect();
-    try {
-      const appId = await selfAppId();
-      if (!appId) return res.status(503).json({ error: 'Self-app row not found' });
-
-      await client.query('BEGIN');
-      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
-      const removed = await platformEnv.deleteValue(client, appId, key);
-      await client.query('COMMIT');
-
-      if (!removed) return res.status(404).json({ error: 'No value set for that variable' });
-
-      log.info('admin', 'Platform env var cleared', { key, by: req.user.username });
-      events.record(pool, {
-        type: events.EVENT_TYPES.PLATFORM_ENV_CHANGED,
-        userId: req.user.id,
-        appId,
-        metadata: { key, action: 'clear' },
-      });
-      res.json({ ok: true, key });
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => {});
-      log.error('admin', 'Platform-env delete failed', { key, message: err.message });
-      res.status(500).json({ error: 'Internal server error' });
-    } finally {
-      client.release();
     }
   });
 

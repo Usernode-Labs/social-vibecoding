@@ -86,10 +86,16 @@ test('skipped renders nothing at all', () => {
     'the overwhelmingly common case must add no chrome to the card');
 });
 
-test('a failing verdict names the missing keys and links an admin to the fix', () => {
+test('a failing verdict names the missing keys and offers the fix in place', () => {
   assert.match(detailFn, /missing/);
-  assert.match(detailFn, /#admin\/platform-env/,
-    'the deep link is the difference between a 20-second fix and a hunt');
+  // The card only ever renders on a self-app proposal, so the viewer is
+  // already on the app whose panel fixes this — open it rather than sending
+  // them to a deep link (and a non-admin to a screen they can't act on).
+  assert.match(detailFn, /AppView\.openPlatformVariables\(\)/,
+    'one click from the block to the panel is the difference between a '
+    + '20-second fix and a hunt');
+  assert.match(detailFn, /'Set them now' : 'Propose a value'/,
+    'both audiences get an action: admins set it, everyone else proposes it');
 });
 
 test('an error verdict is shown as non-blocking, not as a failure', () => {

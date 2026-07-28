@@ -846,18 +846,26 @@ async function seedStagingAdminConsoleData(pool) {
 
 // Platform-variables fixtures. `platform_env_values` is table-level
 // `staging:private`, so a staging clone arrives with ZERO values — the
-// admin console's Platform variables section would render nothing but its
-// empty state in every PR preview, and the "set / unset / private /
-// orphaned" row states (the whole point of the screen) would be
-// unreviewable. Declarations DO survive the clone (they're a copy of a
-// public committed file), so only values need seeding — plus one extra
-// declaration that is deliberately required-and-unset, because that state
-// is what the pre-merge check blocks on and it can't otherwise be
-// demonstrated without breaking the real manifest.
+// platform app's Platform variables panel (its "+" menu → the app-secrets
+// modal) would render nothing but its empty state in every PR preview, and
+// the "set / unset / private / orphaned" row states (the whole point of
+// the screen) would be unreviewable. Declarations DO survive the clone
+// (they're a copy of a public committed file), so only values need
+// seeding — plus one extra declaration that is deliberately
+// required-and-unset, because that state is what the pre-merge check
+// blocks on and it can't otherwise be demonstrated without breaking the
+// real manifest.
+//
+// The "deploy-managed" row state needs no fixture: those rows are
+// synthesized in routes/apps.js from the manifest's `secrets` block, which
+// travels with the cloned manifest_snapshot.
 //
 // Four rows covering every state the UI renders:
 //   STAGING_DEMO_PUBLIC_URL   — set, non-private (value shown in full)
-//   STAGING_DEMO_SECRET_TOKEN — set, private (masked to last-4)
+//   STAGING_DEMO_SECRET_TOKEN — set, private (never displayed at all — a
+//                               private row keeps NO last-4, on the
+//                               grounds that 4 characters of a token is
+//                               still 4 characters of a token)
 //   STAGING_DEMO_REQUIRED     — declared required, NO value (blocks merge)
 //   STAGING_DEMO_ORPHAN       — value with no declaration (removed from
 //                               dapp.json but deliberately kept)
@@ -895,7 +903,7 @@ async function seedStagingPlatformEnv(pool, config) {
     // values. STAGING_DEMO_ORPHAN gets no declaration — that IS its state.
     const decls = [
       ['STAGING_DEMO_PUBLIC_URL', 'Demo: a non-private platform variable. Safe to display in full.', false, false, 'Staging demo'],
-      ['STAGING_DEMO_SECRET_TOKEN', 'Demo: a private platform variable. Only the last 4 characters are ever returned.', false, true, 'Staging demo'],
+      ['STAGING_DEMO_SECRET_TOKEN', 'Demo: a private platform variable. Its value is never returned by the API at all — not even the last 4 characters.', false, true, 'Staging demo'],
       ['STAGING_DEMO_REQUIRED', 'Demo: declared required with no value set — this is the state that blocks a merge.', true, false, 'Staging demo'],
     ];
     for (const [key, description, required, isPrivate, grouping] of decls) {
@@ -1452,12 +1460,19 @@ async function seedStagingChatEditFixtures(pool, config) {
 // open proposal for the self-app — payload shaped exactly like the
 // create path in routes/issues.js, including a real `valueEnc`
 // ciphertext (encrypted with this environment's own JWT_SECRET) so
-// vote-through-majority / admin-apply work end-to-end against the
-// staging app_secrets table. github_issue_number stays NULL: the
-// fixture has no GitHub twin, which also means the kudos button is
-// (correctly) omitted on its row. Idempotent on restart: keyed off the
-// fixture title, any status — a proposal applied/closed during testing
-// doesn't resurrect on the next boot.
+// vote-through-majority / admin-apply work end-to-end. github_issue_number
+// stays NULL: the fixture has no GitHub twin, which also means the kudos
+// button is (correctly) omitted on its row. Idempotent on restart: keyed
+// off the fixture title, any status — a proposal applied/closed during
+// testing doesn't resurrect on the next boot.
+//
+// The key is STAGING_DEMO_PUBLIC_URL, which seedStagingPlatformEnv() also
+// declares and sets. That pairing is deliberate: because this is the
+// SELF-hosted app, voting the fixture through exercises the platform-env
+// apply branch (write via the platform-env DAO, no rebuildProduction) and
+// the reviewer can see the change land on the matching row in the Platform
+// variables panel. A key nothing declares would still apply, but as an
+// orphan row — a worse demo of the normal case.
 async function seedStagingEnvProposal(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
   if (!config.jwtSecret) {
@@ -1492,7 +1507,8 @@ async function seedStagingEnvProposal(pool, config) {
 
   // Title matches what routes/issues.js generates for a real proposal,
   // and doubles as the idempotency key.
-  const fixtureTitle = 'Set secret "STAGING_DEMO_KEY"';
+  const fixtureKey = 'STAGING_DEMO_PUBLIC_URL';
+  const fixtureTitle = `Set secret "${fixtureKey}"`;
   const { rows: existing } = await pool.query(
     'SELECT id FROM issues WHERE app_id = $1 AND title = $2 LIMIT 1',
     [appId, fixtureTitle]
@@ -1502,9 +1518,9 @@ async function seedStagingEnvProposal(pool, config) {
   if (existing.length) {
     issueId = existing[0].id;
   } else {
-    const demoValue = 'demo-value';
+    const demoValue = 'https://demo.staging.invalid/hook-v2';
     const payload = {
-      key: 'STAGING_DEMO_KEY',
+      key: fixtureKey,
       action: 'set',
       valueEnc: encrypt(demoValue, config.jwtSecret),
       valueLast4: demoValue.slice(-4),
@@ -1520,8 +1536,8 @@ async function seedStagingEnvProposal(pool, config) {
       [
         appId,
         fixtureTitle,
-        `[staging fixture] ${creator.username} (via Usernode) proposed setting the env var "STAGING_DEMO_KEY". `
-          + 'Auto-applies + redeploys when a majority of active users vote up.',
+        `[staging fixture] ${creator.username} (via Usernode) proposed setting the env var "${fixtureKey}". `
+          + 'Auto-applies when a majority of active users vote up; the value reaches the platform on its next deploy.',
         JSON.stringify(payload),
         creator.id,
       ]
@@ -6241,7 +6257,7 @@ async function seedStagingTopicScrollThreads(pool, config) {
   // Resolve the governance anchor (the env-var change proposal fixture).
   const { rows: govRows } = await pool.query(
     `SELECT id FROM issues WHERE app_id = $1 AND title = $2 LIMIT 1`,
-    [appId, 'Set secret "STAGING_DEMO_KEY"']
+    [appId, 'Set secret "STAGING_DEMO_PUBLIC_URL"']
   );
   const govRef = govRows[0]?.id || null;
 

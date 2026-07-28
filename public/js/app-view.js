@@ -390,6 +390,32 @@ const AppView = {
     if (window.Secrets) {
       Secrets.applyMissingBadge(appData.missingSecrets || null);
     }
+
+    // Screenshot-state deep link (`?shot=secrets`): the secrets panel —
+    // "Platform variables" on the platform's own row — is a modal reached
+    // from the "+" menu, so plain navigation can't render it and the
+    // before/after captures would silently show the home feed. Opening it
+    // from a URL param makes it capturable and testable. Pure UI state: it
+    // just opens the same modal a click opens, in every environment, so
+    // the "before" side of a capture works too.
+    //
+    // DEFERRED, not opened inline: open() is awaited from the middle of
+    // App.navigateToApp, which still has a switchTab() to run after it.
+    // Opening here directly puts the modal's present-animation in a race
+    // with that render — PlatformUI adopts the modal into the native kit
+    // by moving its card, and a hide/show landing mid-present leaves the
+    // kit shell on screen with the card back in its old home: a blank
+    // white panel. Letting navigation finish first makes it the same
+    // sequence a real click produces.
+    try {
+      if (new URLSearchParams(location.search).get('shot') === 'secrets') {
+        setTimeout(() => {
+          // Still on this app? A fast navigate-away must not pop a modal
+          // onto whatever screen the user actually landed on.
+          if (window.Secrets && AppView.appData?.slug === slug) Secrets.open(slug);
+        }, 300);
+      }
+    } catch { /* malformed query string — nothing to open */ }
   },
 
   close() {
@@ -821,10 +847,13 @@ const AppView = {
                 <span class="block text-xs text-zinc-500 dark:text-zinc-400">Renames are proposals — applied once voted in</span>
               </button>
               <button data-plus="secrets" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors border-t border-zinc-200 dark:border-zinc-800">
-                <span class="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">App secrets
+                <span class="flex items-center gap-2 text-sm font-medium text-zinc-800 dark:text-zinc-200">${
+                  AppView.appData?.self_hosted ? 'Platform variables' : 'App secrets'}
                   <span id="dc-secrets-state" class="text-xs font-normal text-zinc-400 dark:text-zinc-500"></span>
                 </span>
-                <span class="block text-xs text-zinc-500 dark:text-zinc-400">Set or update secret values</span>
+                <span class="block text-xs text-zinc-500 dark:text-zinc-400">${AppView.appData?.self_hosted
+                  ? 'The platform\'s own env — applied on its next deploy'
+                  : 'Set or update secret values'}</span>
               </button>`}
               ${AppView.appData?.self_hosted ? '' : `
               <button data-plus="fork" class="w-full text-left px-3 py-2.5 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors ${AppView.readOnly ? '' : 'border-t border-zinc-200 dark:border-zinc-800'}">
@@ -4818,15 +4847,18 @@ const AppView = {
           : '';
         return `<li><code class="font-mono">${key}</code>${desc}</li>`;
       }).join('');
-      const admin = App.user && App.user.isAdmin
-        ? ' <a href="#admin/platform-env" class="underline">Set them in the admin console</a>.'
-        : ' A platform admin can set them in the admin console.';
+      // The panel that fixes this lives on THIS app (the card only ever
+      // renders for a self-app proposal), so open it in place rather than
+      // sending anyone off to a deep link. A full admin sets the value
+      // outright; everyone else opens a proposal from the same panel.
+      const fixLabel = App.user && App.user.canAdminWrite ? 'Set them now' : 'Propose a value';
       return `
         <div class="mt-2 rounded border border-amber-500/30 bg-amber-500/5 px-2 py-1.5 text-amber-600 dark:text-amber-500">
           <div class="font-medium">⚠ New platform variables have no value set — merge is blocked.</div>
           <ul class="mt-1 ml-4 list-disc space-y-0.5">${items}</ul>
-          <div class="mt-1 opacity-90">Deploying without ${missing.length === 1 ? 'it' : 'them'} would restart the platform missing configuration it now expects.${admin}</div>
+          <div class="mt-1 opacity-90">Deploying without ${missing.length === 1 ? 'it' : 'them'} would restart the platform missing configuration it now expects.</div>
           <div class="mt-1 opacity-80">No rebuild needed — set the value${missing.length === 1 ? '' : 's'} and vote again.</div>
+          <button type="button" class="mt-1.5 text-xs px-2 py-1 rounded border border-amber-500/50 hover:bg-amber-500/10 transition-colors" onclick="AppView.openPlatformVariables()">${fixLabel}</button>
         </div>`;
     }
 
@@ -4837,6 +4869,14 @@ const AppView = {
         <div class="font-medium">✓ New platform variables are configured.</div>
         <div class="mt-0.5 opacity-90">This proposal adds ${list}, already set and ready for the deploy.</div>
       </div>`;
+  },
+
+  // Open the Platform variables panel from the blocked-merge note above.
+  // The note only ever renders on a self-app proposal, so "the current app"
+  // is already the platform — no navigation, no deep link that a
+  // non-admin would land on and find empty.
+  openPlatformVariables() {
+    if (window.Secrets) Secrets.openForCurrentApp();
   },
 
   // #607: is an in-progress checks run old enough to count as stuck? A
@@ -8335,8 +8375,13 @@ const AppView = {
       // default declared in dapp.json) are fine, so they shouldn't
       // light anything up. When nothing is broken we leave the slot
       // blank — the chevron alone says "tap to manage".
+      //
+      // `unwritable` rows are excluded for the same "actionable" reason:
+      // the platform's required credential rows (GITHUB_APP_ID,
+      // ADMIN_PASSWORD…) come from GitHub secrets, so counting them would
+      // permanently badge the menu with a state this panel cannot fix.
       const list = Array.isArray(data.secrets) ? data.secrets : [];
-      const missing = list.filter((s) => s.required && !s.hasValue).length;
+      const missing = list.filter((s) => s.required && !s.hasValue && !s.unwritable).length;
       if (missing > 0) {
         setLabel(`${missing} required missing`, 'err');
       } else {
