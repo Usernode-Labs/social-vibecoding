@@ -206,6 +206,15 @@ function load() {
     // makes every partner-group request 500 with "API key authentication
     // not configured." until an operator sets TOPOCHAIN_PARTNER_API_KEY.
     topochainPartnerApiKey: process.env.TOPOCHAIN_PARTNER_API_KEY || '',
+    // Topochain zkPassport bridge (plan Task 10; SPEC §4.5 POST
+    // /mobile/zkpassport/complete, lines 2092-2141): the external service
+    // that actually verifies a zkPassport proof. Deliberately OPTIONAL and
+    // NOT in REQUIRED, same shape as TOPOCHAIN_PARTNER_API_KEY above — an
+    // unset URL doesn't block boot, it makes every zkpassport/complete
+    // call 500 "The zkPassport bridge is not configured." (SPEC's own
+    // error table row for this exact condition) until an operator sets
+    // TOPOCHAIN_ZK_BRIDGE_URL. See src/services/topochain/zk-bridge.js.
+    topochainZkBridgeUrl: process.env.TOPOCHAIN_ZK_BRIDGE_URL || '',
   };
 
   console.log('[config] Loaded:');
@@ -248,6 +257,7 @@ function load() {
   console.log(`  SELF_APP_CONTAINER=${config.selfAppContainer}`);
   console.log(`  SELF_APP_PUBLIC_VOTING=${config.selfAppPublicVoting} (Phase 4: ${config.selfAppPublicVoting ? 'enabled — all users can see + vote on self-app PRs' : 'disabled — self-app is admin-only'})`);
   console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
+  console.log(`  TOPOCHAIN_ZK_BRIDGE_URL=${config.topochainZkBridgeUrl || '(not set — zkpassport/complete returns 500)'}`);
 
   return config;
 }

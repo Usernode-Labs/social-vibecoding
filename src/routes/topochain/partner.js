@@ -67,6 +67,7 @@ const { partnerApiKey } = require('../../middleware/topochain-auth');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
+const { readDelegationState, setDelegationState } = require('../../services/topochain/delegations');
 
 // ─── Small shared formatters ─────────────────────────────────────────────
 
@@ -312,18 +313,16 @@ function topochainPartnerRoutes(config) {
       );
       if (!acctRows.length) return fail(res, 404, 'Unknown account address.');
 
-      const { rows: delRows } = await pool.query(
-        'SELECT started_at, ended_at FROM account_delegation_periods WHERE account = $1',
-        [account]
-      );
-      const period = delRows[0] || null;
-      const delegated = !!(period && period.ended_at == null);
+      // Task 10 extracted this read into services/topochain/delegations.js
+      // (readDelegationState) — same query, now shared with the mobile
+      // group's GET /delegation.
+      const state = await readDelegationState(pool, account);
 
       return ok(res, {
         data: {
           account,
-          delegated,
-          delegated_since: delegated ? iso(period.started_at) : null,
+          delegated: state.delegated,
+          delegated_since: iso(state.delegatedSince),
         },
       });
     } catch (err) {
@@ -360,69 +359,24 @@ function topochainPartnerRoutes(config) {
 
       await client.query('BEGIN');
       try {
-        const { rows: lockedRows } = await client.query(
-          'SELECT id, started_at, ended_at FROM account_delegation_periods WHERE account = $1 FOR UPDATE',
-          [account]
-        );
-        const current = lockedRows[0] || null;
-        const isOpen = !!(current && current.ended_at == null);
-
-        if (delegated === isOpen) {
-          // Idempotent re-assert (SPEC 1451): no-op.
-          await client.query('COMMIT');
-          return ok(res, {
-            data: {
-              account,
-              delegated: isOpen,
-              changed: false,
-              delegated_since: isOpen ? iso(current.started_at) : null,
-            },
-            message: 'Delegation flag unchanged.',
-          });
-        }
-
-        let startedAt = null;
-        if (delegated) {
-          // Turning delegation ON: open a period on this account's single
-          // row (insert if it has never had one).
-          if (current) {
-            const { rows } = await client.query(
-              `UPDATE account_delegation_periods
-                  SET started_at = NOW(), ended_at = NULL, updated_at = NOW()
-                WHERE id = $1
-                RETURNING started_at`,
-              [current.id]
-            );
-            startedAt = rows[0].started_at;
-          } else {
-            const { rows } = await client.query(
-              `INSERT INTO account_delegation_periods (account, started_at, ended_at, created_at, updated_at)
-               VALUES ($1, NOW(), NULL, NOW(), NOW())
-               RETURNING started_at`,
-              [account]
-            );
-            startedAt = rows[0].started_at;
-          }
-        } else {
-          // Turning delegation OFF: close the open period. (current must
-          // exist and be open here — delegated !== isOpen and delegated
-          // is false means isOpen was true.)
-          await client.query(
-            'UPDATE account_delegation_periods SET ended_at = NOW(), updated_at = NOW() WHERE id = $1',
-            [current.id]
-          );
-        }
-
+        // Task 10 extracted the toggle state machine itself into
+        // services/topochain/delegations.js (setDelegationState) — same
+        // queries as before, now shared with the mobile group's POST
+        // /delegation. Only the transaction boundary + response/message
+        // shaping stay here (they differ slightly between the two callers).
+        const result = await setDelegationState(client, account, delegated);
         await client.query('COMMIT');
 
         return ok(res, {
           data: {
             account,
-            delegated,
-            changed: true,
-            delegated_since: delegated ? iso(startedAt) : null,
+            delegated: result.delegated,
+            changed: result.changed,
+            delegated_since: iso(result.delegatedSince),
           },
-          message: delegated ? 'Account marked as delegated.' : 'Account unmarked as delegated.',
+          message: result.changed
+            ? (delegated ? 'Account marked as delegated.' : 'Account unmarked as delegated.')
+            : 'Delegation flag unchanged.',
         });
       } catch (err) {
         await client.query('ROLLBACK').catch(() => {});
