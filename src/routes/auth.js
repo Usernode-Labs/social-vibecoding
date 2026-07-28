@@ -258,7 +258,7 @@ function authRoutes(config) {
     }
 
     const secrets = require('../services/secrets');
-    const encrypted = secrets.encrypt(clean, config.jwtSecret);
+    const encrypted = secrets.encrypt(clean, config.dataEncryptionKey);
     const last4 = clean.slice(-4);
 
     try {

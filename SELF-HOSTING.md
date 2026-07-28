@@ -395,7 +395,13 @@ on the manifest's reserved list (see
 [src/services/app-manifest.js#L41-L47](./src/services/app-manifest.js))
 and don't go in here. `JWT_SECRET` is genuinely the platform's
 own and not a manifest secret either way; it's set via the
-deploy workflow.
+deploy workflow. The same is true of the four keys that phase-1
+key separation split out of it — `DATA_ENCRYPTION_KEY`,
+`IFRAME_JWT_PRIVATE_KEY`, `IFRAME_JWT_PUBLIC_KEY`,
+`WORKER_JWT_SECRET`, `EDGE_JWT_SECRET`. Those are declared in
+the `platform_env` block under the "Platform keys" group so the
+panel can document them, and they land in
+`PLATFORM_ENV_UNWRITABLE` so they render read-only.
 
 **Acceptance:** the file parses through `appManifest.read()`,
 all listed keys appear in the Settings → Secrets UI for the
@@ -517,13 +523,17 @@ Platform-variables section was folded into it.
 
 What is still refused, and where:
 
-- **Credentials and deploy-owned keys** (`JWT_SECRET`,
-  `DATABASE_URL`, `ADMIN_PASSWORD`, the GitHub App credentials,
-  `USERNODE_DOMAIN`, …) are in `app-manifest.PLATFORM_ENV_UNWRITABLE`
-  and refused by the DAO, by the route, and by the vote path. They
-  render as read-only "Deploy-managed" rows with no controls at all.
-  A web form that could rewrite the platform's signing secret is a
-  privilege-escalation path, not a feature.
+- **Credentials and deploy-owned keys** (`DATA_ENCRYPTION_KEY`, the
+  `IFRAME_JWT_*` pair, `WORKER_JWT_SECRET`, `EDGE_JWT_SECRET`,
+  `JWT_SECRET`, `DATABASE_URL`, `ADMIN_PASSWORD`, the GitHub App
+  credentials, `USERNODE_DOMAIN`, …) are in
+  `app-manifest.PLATFORM_ENV_UNWRITABLE` and refused by the DAO, by
+  the route, and by the vote path. They render as read-only
+  "Deploy-managed" rows with no controls at all. A web form that could
+  rewrite one of the platform's signing keys is a privilege-escalation
+  path, not a feature — and for `DATA_ENCRYPTION_KEY` it is also
+  structurally impossible: `platform_env_values.value_enc` is encrypted
+  with that key, so the store cannot hold it.
 - **`/redeploy` and `/check-updates`** still 403 via
   `refuseIfSelfHosted` — the platform's deploy is GHA-driven (2g).
 - **Plaintext to non-admins.** Any collaborator may see which
@@ -590,8 +600,11 @@ has `self_hosted = TRUE`, append a paragraph (after the existing
 > propose edits to any of the following without an explicit
 > `allow_risky: true` confirmation from the user in the same
 > message: `server.js` bootstrap path; `src/middleware/auth.js`;
-> any code that reads or writes `JWT_SECRET` or anything in
-> `src/services/secrets.js`; `src/db/migrate.js` for anything
+> any code that reads or writes `JWT_SECRET`,
+> `DATA_ENCRYPTION_KEY`, the `IFRAME_JWT_*` pair,
+> `WORKER_JWT_SECRET`, `EDGE_JWT_SECRET`, or anything in
+> `src/services/secrets.js` / `src/services/platform-jwt.js`;
+> `src/db/migrate.js` for anything
 > beyond append-only DDL; files configuring
 > `/var/run/docker.sock` mounting; `docker-compose.yml`;
 > `.github/workflows/deploy.yml`. If the user asks you to touch
@@ -601,11 +614,29 @@ has `self_hosted = TRUE`, append a paragraph (after the existing
 
 The list combines the doc's globs plus two added by the
 assessment: `docker-compose.yml` (sidecar-volume hazard) and
-`.github/workflows/deploy.yml` (`JWT_SECRET` rotation hazard).
+`.github/workflows/deploy.yml` (`DATA_ENCRYPTION_KEY` rotation
+hazard — see below).
+
+Where the rotation hazard actually lives, after phase-1 key
+separation: **`DATA_ENCRYPTION_KEY`**, not the signing keys.
+`services/secrets.js` derives its AES-256-GCM key from it, so
+rotating it makes every stored BYOK Anthropic key, app secret and
+platform-variable value undecryptable — and `decrypt()` swallows
+its own errors and returns `null`, so the platform boots green and
+the values simply stop resolving. There is no crash to notice and
+no automatic recovery. In the deploy workflow it is sourced from
+`secrets.USERNODE_JWT_SECRET` precisely so that no second GitHub
+secret exists that someone could regenerate by accident; a genuine
+rotation needs a re-encryption migration behind a new `v2:`
+envelope. The three new signing keys are the opposite: rotating
+`WORKER_JWT_SECRET` evicts warm workers (they re-bootstrap),
+rotating `EDGE_JWT_SECRET` makes people re-authorize, and rotating
+the `IFRAME_JWT_*` pair re-auths app identities once phase 2 puts
+it in the path — all recoverable.
 
 **Acceptance:** dev-chat against the self-app, with Mayor asked
-to "edit `JWT_SECRET` to a new value," produces a refusal +
-explanation; with `allow_risky: true`, produces the proposed
+to "edit `DATA_ENCRYPTION_KEY` to a new value," produces a refusal
++ explanation; with `allow_risky: true`, produces the proposed
 change. Other apps' Mayor planning is unchanged.
 
 ### 2j. Admin-only filter on `/api/apps`
@@ -775,6 +806,14 @@ propagates `JWT_SECRET` into every staging container, so a parent-issued
 JWT verifies against the same secret inside staging. Child apps already
 honor this — see "Auth — iframe token injection" in
 [src/prompts/app-conventions.md](./src/prompts/app-conventions.md).
+`JWT_SECRET` is the *only* platform key that propagates: after phase-1
+key separation the data key, worker secret, edge secret and iframe
+private key are never placed in any child or staging container, and a
+staging clone resolves its at-rest key from the committed
+`config.stagingDataKey()` constant instead (which is why prod ciphertext
+is structurally undecryptable in a preview — not that any reaches one,
+since `app_secrets` / `platform_env_values` are `staging:private` and
+truncated by the clone).
 Phase 5 wires the platform's *own*
 [src/middleware/auth.js](./src/middleware/auth.js) to the same
 convention, gated entirely on `USERNODE_ENV === 'staging'`:
@@ -953,7 +992,8 @@ self-staging from racing the prod platform on shared resources).
 | Botched DB rename loses data | 2d | Keep original `usernode` DB for ~1 week; rehearse on local-dev first. |
 | Phase 0 TRUNCATE kills production data accidentally | 0 | TRUNCATE runs on the cloned DB only, never on the source; staging.js call site is the only invocation. |
 | Self-app PR breaks prompts.js, removing the refuse-list | 2i | rollback.sh restores the previous SHA. The refuse-list is built into the prompt at runtime, so it can't fail-open silently — a bug that breaks prompts.js takes the whole platform down loudly. |
-| `JWT_SECRET` rotation via deploy.yml edit | 2i | Refuse-list explicitly covers `.github/workflows/deploy.yml`. |
+| `DATA_ENCRYPTION_KEY` rotation via deploy.yml edit orphans every stored ciphertext, silently | 2i | Refuse-list explicitly covers `.github/workflows/deploy.yml` and the key by name. The workflow sources it from `USERNODE_JWT_SECRET` rather than a second secret, so there is nothing to regenerate by accident; `services/secrets.js` carries a do-not-touch note on the KDF and the `v1:` envelope. |
+| Signing-key rotation (`WORKER_JWT_SECRET` / `EDGE_JWT_SECRET` / `IFRAME_JWT_*`) | 2i | Recoverable by design — workers re-bootstrap, edge users re-authorize. The `usernode.proxy` label bump is what evicts warm workers eagerly on a worker-key change. |
 | Sidecar `usernode-node` archive cache lost in rolling restart | 2i | Refuse-list covers `docker-compose.yml`; archive volume is named and persistent so even an accidental recreate-recovers ([docker-compose.yml#L153-L166](./docker-compose.yml)). |
 | Admin accidentally merges a hostile self-app PR | All | Manual review in shadow mode; rollback.sh as backstop. |
 
@@ -1066,7 +1106,11 @@ Operational notes for self-hosting:
   `dapp.json` marks every credential-bearing entry `private` (e.g.
   `ADMIN_PASSWORD`, `JWT_SECRET`, `SESSION_SECRET`,
   `USERNODE_DB_PASSWORD`, `USERNODE_APP_SECRET_KEY`,
-  `GITHUB_PRIVATE_KEY`, `GITHUB_BOT_TOKEN`, `ANTHROPIC_API_KEY`) —
+  `GITHUB_PRIVATE_KEY`, `GITHUB_BOT_TOKEN`, `ANTHROPIC_API_KEY`, and
+  the "Platform keys" group's `DATA_ENCRYPTION_KEY`,
+  `IFRAME_JWT_PRIVATE_KEY`, `WORKER_JWT_SECRET`, `EDGE_JWT_SECRET` —
+  `IFRAME_JWT_PUBLIC_KEY` is deliberately NOT private, since a public
+  key is not a credential and containers are meant to receive it) —
   defensive, since no platform-driven self-app staging exists
   today, but ready if/when it does.
 - [scripts/rollback.sh](./scripts/rollback.sh) — Phase 1

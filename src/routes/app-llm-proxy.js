@@ -120,11 +120,11 @@ async function refreshUserBudget(pool, userId) {
 // Mirrors limits.resolveBillingPath but consults the grant before the
 // key lookup — an app the user didn't opt in never sees their key
 // spend, even when one is on file.
-async function resolveAppPayer(pool, jwtSecret, userId, grant) {
+async function resolveAppPayer(pool, dataKey, userId, grant) {
   const budget = await limits.checkBudget(pool, userId);
   if (!budget.error) return { byok: false };
   if (grant.allowByok) {
-    const apiKey = await limits.loadUserApiKey(pool, userId, jwtSecret);
+    const apiKey = await limits.loadUserApiKey(pool, userId, dataKey);
     if (apiKey) return { byok: true, apiKey };
   }
   return { error: budget.error };
@@ -202,7 +202,7 @@ function appLlmProxyRoutes(config) {
     res.setHeader('x-usernode-llm-cap-cents', String(capCents));
 
     // 1. Payer resolution (limit-first, grant-scoped BYOK spillover).
-    const payer = await resolveAppPayer(pool, config.jwtSecret, userId, grant);
+    const payer = await resolveAppPayer(pool, config.dataEncryptionKey, userId, grant);
     if (payer.error) {
       return res.status(429).json({ ok: false, code: 'budget_exceeded', message: payer.error });
     }

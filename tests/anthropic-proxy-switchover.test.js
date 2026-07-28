@@ -22,10 +22,13 @@ const express = require('express');
 const limits = require('../src/services/limits');
 const secrets = require('../src/services/secrets');
 
-const JWT_SECRET = 'test-jwt-secret';
+// At-rest encryption key (services/secrets.js KDF input) — not a
+// signing key. Same value the old shared JWT_SECRET held; the split was
+// a rename, so existing ciphertext keeps decrypting.
+const DATA_KEY = 'test-jwt-secret';
 const USER_KEY = 'sk-ant-user-key';
 const PLATFORM_KEY = 'sk-ant-platform-key';
-const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, JWT_SECRET);
+const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, DATA_KEY);
 const SESSION_ID = 42;
 const USER_ID = 7;
 
@@ -156,7 +159,13 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
   const anthropicProxyRoutes = require('../src/routes/anthropic-proxy');
 
   const app = express();
-  app.use(anthropicProxyRoutes({ anthropicApiKey: PLATFORM_KEY, jwtSecret: JWT_SECRET }));
+  app.use(anthropicProxyRoutes({
+    anthropicApiKey: PLATFORM_KEY,
+    // The BYOK ciphertext is keyed off the at-rest data key, which is no
+    // longer any token-signing secret. Same bytes here — the split was an
+    // env-var rename, so GOOD_KEY_ENC below still decrypts.
+    dataEncryptionKey: DATA_KEY,
+  }));
   const server = http.createServer(app);
 
   const restore = () => {

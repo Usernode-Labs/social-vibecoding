@@ -1111,7 +1111,7 @@ ALTER TABLE notifications ADD COLUMN IF NOT EXISTS session_id
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS detail VARCHAR(32);
 
 -- Per-app environment secrets. Values are AES-256-GCM encrypted via
--- src/services/secrets.js (keyed off jwtSecret), serialized as
+-- src/services/secrets.js (keyed off DATA_ENCRYPTION_KEY), serialized as
 -- "v1:<iv>:<tag>:<ct>" — same scheme used for users.anthropic_key_enc.
 --
 -- A dapp declares which keys it needs in `dapp.json` at its repo root

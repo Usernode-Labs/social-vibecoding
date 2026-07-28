@@ -79,7 +79,7 @@ function normalizeDeclaration(input = {}) {
  */
 async function create(pool, {
   appId, sessionId, scope, key, declaration,
-  value = null, userId = null, jwtSecret, valueApplied = false,
+  value = null, userId = null, dataKey, valueApplied = false,
 } = {}) {
   const decl = normalizeDeclaration(declaration);
   const isPrivate = !!decl.private;
@@ -94,7 +94,7 @@ async function create(pool, {
     [
       appId, sessionId, scope === 'platform' ? 'platform' : 'app', key,
       JSON.stringify(decl),
-      hasHeldValue ? encrypt(value, jwtSecret) : null,
+      hasHeldValue ? encrypt(value, dataKey) : null,
       hasHeldValue ? computeLast4(value, isPrivate) : (valueApplied ? computeLast4(value, isPrivate) : null),
       valueApplied ? new Date() : null,
       userId,
@@ -201,9 +201,9 @@ async function keysForSession(pool, sessionId) {
  * unreviewed PR's container — the same reasoning as
  * app-secrets.mergeForDeploy({ forStaging: true }).
  */
-async function rawValuesForSession(pool, sessionId, jwtSecret, { includePrivate = false } = {}) {
+async function rawValuesForSession(pool, sessionId, dataKey, { includePrivate = false } = {}) {
   const out = {};
-  if (!sessionId || !jwtSecret) return out;
+  if (!sessionId || !dataKey) return out;
   const { rows } = await pool.query(
     `SELECT key, declaration, value_enc
        FROM pending_secret_declarations
@@ -213,7 +213,7 @@ async function rawValuesForSession(pool, sessionId, jwtSecret, { includePrivate 
   for (const r of rows) {
     const decl = r.declaration || {};
     if (decl.private && !includePrivate) continue;
-    const v = decrypt(r.value_enc, jwtSecret);
+    const v = decrypt(r.value_enc, dataKey);
     if (v != null) out[r.key] = v;
     else log.warn('pending-secrets', 'Decrypt returned null (skipping)', { key: r.key });
   }
@@ -255,7 +255,7 @@ async function applyForSession(config, pool, sessionId) {
     let hadValue = !!r.value_applied_at;
 
     if (r.value_enc) {
-      const plaintext = decrypt(r.value_enc, config.jwtSecret);
+      const plaintext = decrypt(r.value_enc, config.dataEncryptionKey);
       if (plaintext == null) {
         log.warn('pending-secrets', 'Pending value could not be decrypted (skipping write)', {
           key: r.key, sessionId,
@@ -268,7 +268,7 @@ async function applyForSession(config, pool, sessionId) {
         // post-deploy boot's reconcile, not now.
         await platformEnv.setValue(pool, r.app_id, r.key, plaintext, {
           userId: r.created_by || null,
-          jwtSecret: config.jwtSecret,
+          dataKey: config.dataEncryptionKey,
           privateHint: isPrivate,
         });
         hadValue = true;
@@ -276,7 +276,7 @@ async function applyForSession(config, pool, sessionId) {
         await appSecrets.setValue(pool, r.app_id, r.key, plaintext, {
           sensitive: isPrivate,
           userId: r.created_by || null,
-          jwtSecret: config.jwtSecret,
+          dataKey: config.dataEncryptionKey,
         });
         hadValue = true;
       }

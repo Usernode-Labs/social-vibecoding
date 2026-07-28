@@ -252,7 +252,7 @@ function platformSecretsView(rows, manifest, { includeValues, actionsSecrets = n
     default: r.defaultValue,
     hasValue: r.hasValue,
     // A private value is never decrypted by listView(), and a non-private
-    // one only when the caller passed a jwtSecret (admins only).
+    // one only when the caller passed a dataKey (admins only).
     value: includeValues ? r.value : null,
     valueLast4: includeValues && !r.private ? r.valueLast4 : null,
     updatedAt: r.updatedAt,
@@ -1116,7 +1116,7 @@ function appRoutes(config) {
       await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
       const result = await platformEnv.setValue(client, app.id, key, value, {
         userId: req.user.id,
-        jwtSecret: config.jwtSecret,
+        dataKey: config.dataEncryptionKey,
       });
       await client.query('COMMIT');
 
@@ -1329,7 +1329,7 @@ function appRoutes(config) {
         // Platform variables. Non-private values ARE shown in full to
         // admins — that's the point of marking a variable non-private,
         // and it's what makes "is MAX_GLOBAL_SESSIONS actually 75 in
-        // prod?" answerable from the panel. Non-admins get no jwtSecret
+        // prod?" answerable from the panel. Non-admins get no data key
         // passed, so listView() never decrypts anything for them.
         const includeValues = !!req.user?.isAdmin;
         const actions = includeValues
@@ -1343,7 +1343,7 @@ function appRoutes(config) {
           staged: !!actions.staged,
         };
         const rows2 = await platformEnv.listView(
-          pool, app.id, includeValues ? config.jwtSecret : null
+          pool, app.id, includeValues ? config.dataEncryptionKey : null
         );
         view = platformSecretsView(rows2, manifest, {
           includeValues,
@@ -1425,7 +1425,7 @@ function appRoutes(config) {
       await appSecrets.setValue(pool, app.id, req.params.key, value, {
         sensitive: !!declared?.private,
         userId: req.user.id,
-        jwtSecret: config.jwtSecret,
+        dataKey: config.dataEncryptionKey,
       });
       log.info('apps', 'Secret set (admin direct)', {
         slug: req.params.slug, key: req.params.key, userId: req.user.id,
@@ -1664,7 +1664,7 @@ function appRoutes(config) {
             await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
             await platformEnv.setValue(client, app.id, key, value, {
               userId: req.user.id,
-              jwtSecret: config.jwtSecret,
+              dataKey: config.dataEncryptionKey,
               privateHint: isPrivate,
             });
             await client.query('COMMIT');
@@ -1684,7 +1684,7 @@ function appRoutes(config) {
           await appSecrets.setValue(pool, app.id, key, value, {
             sensitive: isPrivate,
             userId: req.user.id,
-            jwtSecret: config.jwtSecret,
+            dataKey: config.dataEncryptionKey,
           });
         }
       }
@@ -1697,7 +1697,7 @@ function appRoutes(config) {
         declaration,
         value: value.length ? value : null,
         userId: req.user.id,
-        jwtSecret: config.jwtSecret,
+        dataKey: config.dataEncryptionKey,
         valueApplied: applyNow,
       });
 
@@ -2314,7 +2314,7 @@ function appRoutes(config) {
       );
       if (!app) return res.status(404).send('Not found');
 
-      const grant = appAccess.mintAccessGrant(config.jwtSecret, {
+      const grant = appAccess.mintAccessGrant({
         uid: req.user.id,
         appId: app.id,
         host: parsed.host,

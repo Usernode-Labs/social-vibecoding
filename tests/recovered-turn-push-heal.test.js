@@ -24,6 +24,8 @@ process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'test-session';
 process.env.ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
 process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin';
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt';
+// config.load() requires the four separated platform keys (REQUIRED_PROD).
+require('./platform-keys').setPlatformKeys();
 
 // ── worker stub ─────────────────────────────────────────────────────────
 // pushBehavior is mutated per-test to drive success vs failure.

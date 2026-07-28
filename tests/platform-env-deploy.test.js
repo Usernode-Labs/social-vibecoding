@@ -57,7 +57,7 @@ test('diagnostics go to stderr so they cannot corrupt the block', () => {
 });
 
 test('the script resolves through the DAO, which filters unwritable keys', () => {
-  assert.match(dumpJs, /platformEnv\.getRawValues\(pool, rows\[0\]\.id, config\.jwtSecret\)/);
+  assert.match(dumpJs, /platformEnv\.getRawValues\(pool, rows\[0\]\.id, config\.dataEncryptionKey\)/);
   assert.match(dumpJs, /self_hosted = TRUE/,
     'only the platform\'s own row — a child app\'s env comes from app_secrets');
 });

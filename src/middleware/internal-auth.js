@@ -1,7 +1,7 @@
 'use strict';
 
-const jwt = require('jsonwebtoken');
 const log = require('../services/logger');
+const platformJwt = require('../services/platform-jwt');
 
 // Authenticates requests from worker containers calling back into the
 // platform's internal API surface (see src/routes/internal.js). Worker
@@ -11,6 +11,12 @@ const log = require('../services/logger');
 // session id in the route param — checked in the route handler, not
 // here, so an obviously-malformed token gets a clean 401 before any
 // route logic runs.
+//
+// The signing key is WORKER_JWT_SECRET, an authority of its own that is
+// never placed in any container. verifyWorkerToken pins HS256, the
+// `usernode` issuer, the `usernode:worker` audience and the
+// `worker:session` purpose, so an app-identity or edge token — or
+// anything minted with the old shared secret — cannot be presented here.
 //
 // This middleware mounts BEFORE the global authMiddleware in server.js
 // so cookie auth doesn't apply. The endpoint is intentionally NOT
@@ -54,20 +60,19 @@ function internalAuth(req, res, next) {
     return res.status(401).json({ ok: false, code: 'missing_auth' });
   }
 
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    log.error('internal-auth', 'JWT_SECRET not configured');
+  if (!process.env.WORKER_JWT_SECRET) {
+    log.error('internal-auth', 'WORKER_JWT_SECRET not configured');
     return res.status(500).json({ ok: false, code: 'server_misconfigured' });
   }
 
   let claims;
   try {
-    claims = jwt.verify(m[1], secret);
+    claims = platformJwt.verifyWorkerToken(m[1]);
   } catch (err) {
     return res.status(401).json({ ok: false, code: 'bad_token', message: err.message });
   }
 
-  if (!claims || claims.scope !== 'worker:session' || typeof claims.session_id === 'undefined') {
+  if (!claims || claims.scope !== platformJwt.PUR_WORKER || typeof claims.session_id === 'undefined') {
     return res.status(403).json({ ok: false, code: 'bad_scope' });
   }
 

@@ -42,7 +42,7 @@ async function runExistingImage(config, app) {
 
   const pool = getPool(config);
   const manifest = app.manifest_snapshot || { secrets: [] };
-  const stored = await appSecrets.getRawValues(pool, app.id, config.jwtSecret);
+  const stored = await appSecrets.getRawValues(pool, app.id, config.dataEncryptionKey);
   const merge = appSecrets.mergeForDeploy(
     manifest, stored, appSecrets.platformDefaultsFromEnv()
   );

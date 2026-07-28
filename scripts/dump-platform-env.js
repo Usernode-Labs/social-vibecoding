@@ -77,7 +77,7 @@ async function main() {
     return;
   }
 
-  const values = await platformEnv.getRawValues(pool, rows[0].id, config.jwtSecret);
+  const values = await platformEnv.getRawValues(pool, rows[0].id, config.dataEncryptionKey);
   const keys = Object.keys(values).sort();
 
   const lines = [BEGIN];

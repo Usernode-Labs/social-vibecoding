@@ -15,6 +15,7 @@ const { USERNODE_DOMAIN } = require('../services/caddy');
 const appAccess = require('../services/app-access');
 const { broadcastGlobal } = require('../services/ws');
 const sessionBus = require('../services/session-bus');
+const platformJwt = require('../services/platform-jwt');
 
 // On-demand-TLS gate for Caddy. Caddy GETs this before issuing a Let's
 // Encrypt cert for a hostname it has never seen (see Caddyfile's
@@ -105,15 +106,26 @@ async function isKnownHost(pool, rawDomain) {
 // platform credential must never be readable on their hosts; the scoped
 // cookie grants nothing beyond "may load this one host" and membership
 // is still re-verified server-side on every request.
+//
+// Both the grant and the cookie are signed with EDGE_JWT_SECRET, an
+// authority that exists nowhere but the platform process (see
+// src/services/platform-jwt.js). They are distinguished by their `pur`
+// claim, so a 120s grant cannot be replayed as a 12h cookie even though
+// they share a key. Step 5's iframe token is still verified with the
+// legacy shared secret — the iframe authority moves in the next phase.
 
 const ACCESS_COOKIE = '__usernode_access';
-const ACCESS_COOKIE_TTL_S = 12 * 60 * 60; // 12h, re-minted via authorize after expiry
+// 12h, re-minted via authorize after expiry. The signer owns the TTL;
+// mirrored here for the cookie's own maxAge.
+const ACCESS_COOKIE_TTL_S = platformJwt.EDGE_COOKIE_TTL_S;
 // Marker appended when we 302-to-self to set the cookie from an iframe
 // token. If we see it again WITHOUT the cookie (cookies blocked), we
 // serve the page anyway rather than redirect-looping — the app itself
 // still auths via the token, only same-host asset caching degrades.
 const RETRY_MARKER = '__ua';
 
+// Legacy shared-secret verify, still used only by step 5's iframe token
+// (that authority moves in the iframe cutover).
 function verifyJwt(token, secret) {
   try { return jwt.verify(token, secret); } catch { return null; }
 }
@@ -160,15 +172,15 @@ function internalRoutes(_config) {
       // copied to the client by forward_auth, which is exactly how the
       // Set-Cookie + redirect get out.
       if (uri.startsWith('/__usernode_access')) {
-        const grant = verifyJwt(query.get('grant') || '', _config.jwtSecret);
-        if (grant && grant.t === 'app-access-grant' && grant.host === host
+        const grant = platformJwt.orNull(
+          () => platformJwt.verifyEdgeGrant(query.get('grant') || '')
+        );
+        if (grant && grant.host === host
             && grant.appId === vis.appId
             && await appAccess.isViewMember(pool, vis.appId, grant.uid)) {
-          const cookieToken = jwt.sign(
-            { t: 'app-access', uid: grant.uid, appId: vis.appId, host },
-            _config.jwtSecret,
-            { expiresIn: ACCESS_COOKIE_TTL_S }
-          );
+          const cookieToken = platformJwt.signEdgeCookie({
+            uid: grant.uid, appId: vis.appId, host,
+          });
           res.cookie(ACCESS_COOKIE, cookieToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
@@ -182,8 +194,10 @@ function internalRoutes(_config) {
       }
 
       // 4. Scoped access cookie.
-      const cookiePayload = verifyJwt(req.cookies?.[ACCESS_COOKIE] || '', _config.jwtSecret);
-      if (cookiePayload && cookiePayload.t === 'app-access' && cookiePayload.host === host
+      const cookiePayload = platformJwt.orNull(
+        () => platformJwt.verifyEdgeCookie(req.cookies?.[ACCESS_COOKIE] || '')
+      );
+      if (cookiePayload && cookiePayload.host === host
           && cookiePayload.appId === vis.appId
           && await appAccess.isViewMember(pool, vis.appId, cookiePayload.uid)) {
         return res.status(200).send('ok');
@@ -215,11 +229,11 @@ function internalRoutes(_config) {
         // Initial iframe document load: set the scoped cookie and bounce
         // back to the same URL (+ loop-breaker marker) so the page's
         // asset requests pass via the cookie.
-        const cookieToken = jwt.sign(
-          { t: 'app-access', uid: iframeJwt.id, appId: vis.appId, host },
-          _config.jwtSecret,
-          { expiresIn: ACCESS_COOKIE_TTL_S }
-        );
+        // The cookie is an edge credential regardless of which credential
+        // earned it, so it is minted with the edge authority here too.
+        const cookieToken = platformJwt.signEdgeCookie({
+          uid: iframeJwt.id, appId: vis.appId, host,
+        });
         res.cookie(ACCESS_COOKIE, cookieToken, {
           httpOnly: true,
           secure: process.env.NODE_ENV === 'production',

@@ -167,11 +167,13 @@ jobs:
       # long script receives the result as one opaque base64 blob, the
       # same shape the GitHub-sourced platform variables already use.
       #
-      # Byte-for-byte the same .env as before: same keys, same order,
-      # same quoting, same committed defaults. The single-quoted heredoc
-      # still means no shell expansion of its own — GitHub Actions has
-      # already substituted every value, so a `$` inside a secret (e.g. a
-      # password) stays literal.
+      # Same keys, same order, same quoting, same committed defaults as
+      # the heredoc this replaced (plus the platform-key block added by
+      # the JWT key separation). The single-quoted heredoc still means no
+      # shell expansion of its own — GitHub Actions has already
+      # substituted every value, so a `$` inside a secret (e.g. a
+      # password) stays literal. `#` lines land in .env as comments,
+      # which docker compose's env-file parser ignores.
       # ------------------------------------------------------------------
       - name: Compose base .env
         env:
@@ -188,7 +190,41 @@ jobs:
           ADMIN_USERNAME=${{ secrets.USERNODE_ADMIN_USERNAME }}
           ADMIN_PASSWORD=${{ secrets.USERNODE_ADMIN_PASSWORD }}
           SESSION_SECRET=${{ secrets.USERNODE_SESSION_SECRET }}
+          # Platform key separation. One USERNODE_JWT_SECRET used to sign
+          # every token type AND double as the at-rest encryption key AND
+          # get handed verbatim to every child container. It is now four
+          # keys with one job each (src/services/platform-jwt.js).
+          #
+          # JWT_SECRET stays for now: phase 1 does NOT cut the iframe
+          # authority over, so this value still signs iframe / capture /
+          # WebSocket / app-file tokens (config.jwtSecret) and is still
+          # what child containers receive. Phase 2 removes this line.
           JWT_SECRET=${{ secrets.USERNODE_JWT_SECRET }}
+          # DATA_ENCRYPTION_KEY deliberately ALSO reads
+          # USERNODE_JWT_SECRET: it is the AES-256-GCM KDF input for every
+          # BYOK key and app secret already at rest, so the VALUE MUST NOT
+          # CHANGE. Renaming the env var is safe; rotating the secret makes
+          # every stored ciphertext silently undecryptable (decrypt()
+          # returns null — nothing crashes, the values just vanish). Never
+          # point this at a freshly generated secret, and never add a
+          # separate USERNODE_DATA_ENCRYPTION_KEY.
+          DATA_ENCRYPTION_KEY=${{ secrets.USERNODE_JWT_SECRET }}
+          # The three new authorities. These ARE free to rotate: rotating
+          # the iframe pair or the edge secret just re-auths users;
+          # rotating the worker secret evicts warm workers, which
+          # re-bootstrap on their next turn. Add them under Settings ->
+          # Secrets and variables -> Actions BEFORE the first deploy of
+          # this change — boot refuses to start without them (see
+          # src/config.js REQUIRED_PROD), and the post-deploy health gate
+          # will roll production back.
+          # Single-quoted like GITHUB_PRIVATE_KEY: single-line PEMs with
+          # literal \n escapes. The pair must be generated TOGETHER — the
+          # boot check round-trips a probe token through both halves and
+          # exits 1 on a mismatch.
+          IFRAME_JWT_PRIVATE_KEY='${{ secrets.USERNODE_IFRAME_JWT_PRIVATE_KEY }}'
+          IFRAME_JWT_PUBLIC_KEY='${{ secrets.USERNODE_IFRAME_JWT_PUBLIC_KEY }}'
+          WORKER_JWT_SECRET=${{ secrets.USERNODE_WORKER_JWT_SECRET }}
+          EDGE_JWT_SECRET=${{ secrets.USERNODE_EDGE_JWT_SECRET }}
           USERNODE_DB_PASSWORD=${{ secrets.USERNODE_DB_PASSWORD }}
           GITHUB_APP_ID=${{ secrets.USERNODE_GITHUB_APP_ID }}
           GITHUB_PRIVATE_KEY='${{ secrets.USERNODE_GITHUB_PRIVATE_KEY }}'

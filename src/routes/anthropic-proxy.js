@@ -377,7 +377,7 @@ function anthropicProxyRoutes(config) {
       const globalOver =
         globalSpend.totalAtCheckpointCents + globalSpend.liveDeltaCents >= globalCap;
       if (userOver || globalOver) {
-        const byokKey = await limits.loadUserApiKey(pool, userId, config.jwtSecret);
+        const byokKey = await limits.loadUserApiKey(pool, userId, config.dataEncryptionKey);
         if (byokKey) {
           if (workerMod && workerMod.markTurnByokSwitched(sessionId)) {
             await emitSwitchNotice(pool, sessionId, userId);

@@ -180,7 +180,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     //    unmark private.
     const stagingManifest = appManifest.read(cloneDir);
     const stagingPool = getPool(config);
-    const stagingStored = await appSecrets.getRawValues(stagingPool, app.id, config.jwtSecret);
+    const stagingStored = await appSecrets.getRawValues(stagingPool, app.id, config.dataEncryptionKey);
     // A proposal may DECLARE a new secret and carry its value (the panel's
     // "+ New variable" flow — services/pending-secrets.js). That value is
     // not in `app_secrets` yet, so without this a PR adding a new required
@@ -193,7 +193,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       // eslint-disable-next-line global-require
       const pendingSecrets = require('./pending-secrets');
       const heldValues = await pendingSecrets.rawValuesForSession(
-        stagingPool, session.id, config.jwtSecret
+        stagingPool, session.id, config.dataEncryptionKey
       );
       for (const [k, v] of Object.entries(heldValues)) {
         if (!Object.prototype.hasOwnProperty.call(stagingStored, k)) stagingStored[k] = v;
@@ -533,7 +533,7 @@ async function rebuildProductionInner(config, app) {
     // the letter tile. Best-effort; needs cloneDir for the image bytes.
     await appManifest.reconcileAppIcon(prodPool, app, manifest, cloneDir)
       .catch((err) => log.warn('staging', 'Icon reconcile failed', { app: app.slug, err: err.message }));
-    const stored = await appSecrets.getRawValues(prodPool, app.id, config.jwtSecret);
+    const stored = await appSecrets.getRawValues(prodPool, app.id, config.dataEncryptionKey);
     const merge = appSecrets.mergeForDeploy(
       manifest, stored, appSecrets.platformDefaultsFromEnv()
     );

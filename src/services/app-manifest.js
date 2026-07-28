@@ -155,8 +155,25 @@ const PLATFORM_ENV_UNWRITABLE = new Set([
   'PORT',
   'USERNODE_ENV',
   'GIT_SHA',
-  // Auth + session crypto. secrets.js derives its at-rest key from
-  // JWT_SECRET, so rewriting it would also orphan every stored value.
+  // Auth + session crypto.
+  //
+  // DATA_ENCRYPTION_KEY is the load-bearing one: services/secrets.js
+  // derives its AES-256-GCM key from it, and platform_env_values.value_enc
+  // is itself encrypted with it. A console-settable data key is therefore
+  // circular — the store would need the key to read the key — and changing
+  // the value silently orphans every BYOK key and app secret at rest
+  // (decrypt() returns null; nothing throws). It can only come from the
+  // deploy.
+  //
+  // The other four are signing keys: rewriting one from a web form would
+  // let an admin mint app identities, worker tokens or edge cookies at
+  // will. JWT_SECRET is still the transitional iframe signer AND still
+  // holds the same bytes as DATA_ENCRYPTION_KEY, so it stays listed too.
+  'DATA_ENCRYPTION_KEY',
+  'IFRAME_JWT_PRIVATE_KEY',
+  'IFRAME_JWT_PUBLIC_KEY',
+  'WORKER_JWT_SECRET',
+  'EDGE_JWT_SECRET',
   'JWT_SECRET',
   'SESSION_SECRET',
   'ADMIN_USERNAME',
