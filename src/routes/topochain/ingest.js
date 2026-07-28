@@ -407,7 +407,13 @@ function topochainIngestRoutes(config) {
       // sequential per-row upserts instead — see that route's own comment).
       const dedup = new Map();
       for (const row of kept) {
-        dedup.set(`${row.chain_id} ${row.wallet_address} ${row.id}`, row);
+        // `::` is not a valid character in any of chain_id/wallet_address/id
+        // per their own maxLen/charset expectations in practice, so a
+        // plain-concatenated key would be ambiguous (e.g. chain_id="a",
+        // wallet_address="b c" colliding with chain_id="a b",
+        // wallet_address="c") — this separator keeps the three parts
+        // distinguishable.
+        dedup.set(`${row.chain_id}::${row.wallet_address}::${row.id}`, row);
       }
       const toWrite = Array.from(dedup.values());
 
