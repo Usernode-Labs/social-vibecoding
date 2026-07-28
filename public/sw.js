@@ -74,6 +74,7 @@ const SHELL_ASSETS = [
   '/js/offline.js',
   '/js/profile.js',
   '/js/screenshot-select.js',
+  '/js/session-transcript.js',
   '/js/settings.js',
   '/js/spec-sections.js',
   '/js/streaming-markdown.js',

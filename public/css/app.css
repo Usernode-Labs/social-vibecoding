@@ -3634,3 +3634,96 @@ button.attr-chip { cursor: pointer; }
 @media (min-width: 1024px) {
   .dev-kanban-col { min-width: 14rem; }
 }
+
+/* ── Shared dev-chat transcript (read-only) ─────────────────────────────
+   The "Dev chat" section on a shared session's / a proposal's topic page,
+   painted by public/js/session-transcript.js. It reuses the dev chat's
+   dc-* message and status classes so a shared transcript reads like the
+   real chat; everything here is the read-only frame around them.
+
+   Deliberately no composer/send styling exists for this surface — there
+   is no composer to style (see the renderer's rule 2). */
+
+.st-section {
+  margin-top: 8px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-card-alt);
+  overflow: hidden;
+}
+
+.st-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: left;
+}
+.st-section-head:hover { background: var(--bg-code); color: var(--text-primary); }
+
+/* Two glyphs rather than a rotated one, matching .dc-cc-attached-chevron's
+   reasoning (a rotated triangle's bounding box flips and drags its visual
+   center off the baseline). */
+.st-caret { font-size: 16px; line-height: 1; color: var(--text-muted); width: 14px; text-align: center; }
+.st-caret::before { content: '\25B8'; /* ▸ */ }
+/* The section is a div + button (not a <details>), so aria-expanded on the
+   header — which _toggleTranscript keeps in sync — is what flips the glyph. */
+.st-section-head[aria-expanded="true"] .st-caret::before { content: '\25BE'; /* ▾ */ }
+
+.st-readonly-tag {
+  margin-left: auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.st-body { padding: 4px 10px 10px; }
+.st-body[hidden] { display: none; }
+
+.st-timeline { display: flex; flex-direction: column; }
+
+/* Messages sit full-width here (no 92% inset): the topic page column is
+   already narrower than the dev-chat pane, and the alignment asymmetry is
+   what distinguishes the two speakers. */
+.st-msg { max-width: 100%; }
+.st-msg-who { color: var(--text-secondary); font-weight: 600; }
+.st-msg-when { color: var(--text-muted); font-size: 10px; }
+
+.st-agent-details { margin: 2px 0 2px 2px; }
+.st-agent-body { padding: 2px 0 4px 8px; border-left: 1px solid var(--border-light); margin-left: 6px; }
+.st-cc-summary { font-size: 12px; color: var(--text-secondary); padding: 2px 0 0 14px; }
+
+.st-spec-card {
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  padding: 6px 8px;
+  margin: 4px 0 4px 22px;
+  background: var(--bg-card);
+}
+.st-spec-head { font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); }
+.st-spec-snippet { font-size: 12px; color: var(--text-secondary); }
+
+/* Attachment chips are inert here — names only, no bytes (the sanitiser
+   strips the ids). Cursor stays default so they don't read as links. */
+.st-att-chip { cursor: default; }
+.st-att-chip:hover { border-color: var(--border); }
+
+.st-truncated,
+.st-empty,
+.st-error {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+.st-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }

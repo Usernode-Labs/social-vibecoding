@@ -43,6 +43,8 @@ async function migrate(config) {
   await seedStagingActiveSessions(pool, config);
   await seedStagingStartScreenSession(pool, config);
   await seedStagingSharedSession(pool, config);
+  // Must run AFTER seedStagingSharedSession — it forks that fixture's rows.
+  await seedStagingForkedChat(pool, config);
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingPlatformIssueDrafts(pool, config);
@@ -1886,14 +1888,103 @@ async function seedStagingSharedSession(pool, config) {
   } else {
     const { rows } = await pool.query(
       `INSERT INTO chat_sessions
-         (app_id, user_id, branch_name, pr_number, session_title, status, shared_at, created_at)
+         (app_id, user_id, branch_name, pr_number, session_title, status, shared_at,
+          transcript_shared_at, created_at)
        VALUES
          ($1, $2, $3, 9301, 'Staging demo shared session', 'paused',
-          NOW() - INTERVAL '45 minutes', NOW() - INTERVAL '2 hours')
+          NOW() - INTERVAL '45 minutes', NOW() - INTERVAL '40 minutes',
+          NOW() - INTERVAL '2 hours')
        RETURNING id`,
       [appId, demoUserId, fixtureBranch]
     );
     sessionId = rows[0].id;
+  }
+
+  // The transcript itself. Without these rows the "Read the dev chat"
+  // section on the fixture's topic page would expand to an empty box —
+  // chat_session_messages for a session created by THIS seed obviously
+  // doesn't come across in the prod DB clone.
+  //
+  // The set deliberately includes rows the sanitiser must STRIP (a ccLog
+  // row, a platformIssueDraft card, per-message cost_cents) so a tester can
+  // confirm on staging that they don't render, and one attachment row so
+  // the name-only chip path is reviewable. Idempotent per row on
+  // (session_id, content).
+  const transcriptRows = [
+    {
+      role: 'user', mins: 118, model: null,
+      content: '[staging fixture] The session cards get cramped on my phone — the title ends up squeezed against the buttons. Can we fix that?',
+      metadata: { attachments: [{ id: 'b'.repeat(32), filename: 'cramped-card.png', kind: 'image', sizeBytes: 48210 }] },
+    },
+    {
+      role: 'assistant', mins: 117, model: 'claude-opus-5', cost: 3.1,
+      content: "[staging fixture] Agreed — the action buttons are fixed-width, so they crush the title at narrow widths. I'll split the card into a title row and an actions row that wraps.",
+      metadata: {},
+    },
+    {
+      role: 'system', mins: 116, model: null,
+      content: 'Claude Code is running',
+      metadata: { progressLog: [
+        'Reading public/js/app-view.js',
+        'Editing _renderMySessionCard',
+        'Adding tests/session-card-layout.test.js cases',
+        'Running node --test tests/session-card-layout.test.js',
+      ] },
+    },
+    {
+      role: 'system', mins: 112, model: null,
+      content: 'Claude Code log',
+      // MUST NOT render in the read-only view (raw agent stderr).
+      metadata: { ccLog: '[staging fixture] raw stderr — a reader must never see this line' },
+    },
+    {
+      role: 'system', mins: 111, model: null,
+      content: 'Spec drafted',
+      metadata: {
+        specPreview: '# [staging fixture] Readable session cards on narrow screens\n\n- Two-row card layout\n- Actions wrap instead of crushing the title\n',
+        specVersion: 1, specLines: 4,
+      },
+    },
+    {
+      role: 'system', mins: 105, model: null,
+      content: 'Changes ready',
+      metadata: {
+        changesReady: true, prNumber: 9301, ccOutcome: 'success', durationMs: 246000,
+        ccOutput: '[staging fixture] Split the session card into a title row and a wrapping actions row; added layout tests.',
+      },
+    },
+    {
+      role: 'system', mins: 104, model: null,
+      content: 'The AI suggests reporting this to the platform',
+      // MUST NOT render in the read-only view (owner-only action card).
+      metadata: { platformIssueDraft: { body: '[staging fixture] draft report a reader must never see', status: 'pending' } },
+    },
+    {
+      role: 'user', mins: 100, model: null,
+      content: '[staging fixture] Looks good. Do the buttons keep their order when they wrap?',
+      metadata: { suggestions: ['[staging fixture] leaked suggestion chip'] },
+    },
+    {
+      role: 'assistant', mins: 99, model: 'claude-opus-5', cost: 1.8,
+      content: '[staging fixture] Yes — they wrap in source order, so Preview stays first and Archive stays last.',
+      metadata: {},
+    },
+  ];
+  let transcriptInserted = 0;
+  for (const row of transcriptRows) {
+    const { rows: existingMsg } = await pool.query(
+      'SELECT id FROM chat_session_messages WHERE session_id = $1 AND content = $2 LIMIT 1',
+      [sessionId, row.content]
+    );
+    if (existingMsg.length) continue;
+    await pool.query(
+      `INSERT INTO chat_session_messages
+         (session_id, role, content, model, cost_cents, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW() - (($7::int) * INTERVAL '1 minute'))`,
+      [sessionId, row.role, row.content, row.model, row.cost || 0,
+       JSON.stringify(row.metadata || {}), row.mins]
+    );
+    transcriptInserted++;
   }
 
   // Ensure the flag survives a tester having unshared it in an earlier
@@ -1918,7 +2009,116 @@ async function seedStagingSharedSession(pool, config) {
   }
 
   log.info('db', 'Staging shared-session fixture seeded', {
-    appId, sessionId, threadInserted,
+    appId, sessionId, threadInserted, transcriptInserted,
+  });
+}
+
+// Fork fixture: the RESULT of "Fork this chat" on the shared-session
+// fixture above, owned by the staging admin so a tester can open it in
+// their own dev chat. Reviewable without running a real fork (which needs a
+// free session slot, a live branch and a GitHub round trip).
+//
+// What it exercises: the greyed inherited-history styling and the
+// collapsed-by-default agent disclosures (both keyed off
+// metadata.inheritedFrom by DevChat._markInheritedMessages /
+// _ccDefaultOpen), plus the fork follow-up copy — including its
+// load-bearing "I don't have the agent's memory of that work" caveat.
+//
+// Copies are SANITISED here exactly as the fork route does, so the fixture
+// can't demonstrate a leak the real path wouldn't produce. Idempotent on
+// the fixture branch name.
+async function seedStagingForkedChat(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging forked-chat fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  // The source is the shared-session fixture seeded above.
+  const { rows: srcRows } = await pool.query(
+    `SELECT cs.id, cs.session_title, cs.spec_md, u.username AS owner_username
+       FROM chat_sessions cs
+       LEFT JOIN users u ON u.id = cs.user_id
+      WHERE cs.app_id = $1 AND cs.branch_name = $2 LIMIT 1`,
+    [appId, 'staging-fixture/shared-session']
+  );
+  if (!srcRows.length) {
+    log.warn('db', 'Staging forked-chat fixture skipped: shared-session fixture missing');
+    return;
+  }
+  const src = srcRows[0];
+
+  // Owned by the staging admin (first admin, else lowest id) so the tester
+  // can actually open it — a fork belongs to the person who made it.
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username FROM users ORDER BY is_admin DESC, id ASC LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging forked-chat fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const fixtureBranch = 'staging-fixture/forked-chat';
+  const { rows: existing } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, fixtureBranch]
+  );
+  if (existing.length) return;
+
+  const { rows: forkRows } = await pool.query(
+    `INSERT INTO chat_sessions
+       (app_id, user_id, branch_name, session_title, status, spec_md,
+        cloned_from_session_id, created_at)
+     VALUES ($1, $2, $3, $4, 'paused', $5, $6, NOW() - INTERVAL '20 minutes')
+     RETURNING id`,
+    // Title matches what POST /fork actually produces (the source's own
+    // title, verbatim) — a fixture that invented a nicer name would
+    // misrepresent the real output.
+    [appId, owner.id, fixtureBranch,
+     src.session_title || 'Forked dev chat', src.spec_md || '', src.id]
+  );
+  const forkId = forkRows[0].id;
+
+  const { rows: srcMessages } = await pool.query(
+    `SELECT id, role, content, model, metadata FROM chat_session_messages
+      WHERE session_id = $1 ORDER BY id ASC`,
+    [src.id]
+  );
+  const transcriptShare = require('../services/transcript-share');
+  let copied = 0;
+  for (const raw of srcMessages) {
+    const clean = transcriptShare.sanitizeTranscriptMessage(raw);
+    if (!clean) continue;
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, model, metadata, created_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, NOW() - INTERVAL '20 minutes')`,
+      [forkId, clean.role, clean.content, clean.model || null,
+       JSON.stringify({ ...(clean.metadata || {}), inheritedFrom: src.id })]
+    );
+    copied++;
+  }
+
+  // The follow-up, built by the SAME function the fork route uses, so the
+  // fixture can never show copy the real path doesn't produce. Deliberately
+  // carries NO inheritedFrom — it belongs to the fork, and it's the boundary
+  // the inherited/own history styling renders against.
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+     VALUES ($1, 'assistant', $2, '{}'::jsonb, NOW() - INTERVAL '19 minutes')`,
+    [forkId, transcriptShare.buildForkFollowUpMessage(src)]
+  );
+
+  log.info('db', 'Staging forked-chat fixture seeded', {
+    appId, forkId, src: src.id, copied, owner: owner.username,
   });
 }
 
