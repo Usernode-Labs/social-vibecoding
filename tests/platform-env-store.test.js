@@ -254,7 +254,7 @@ test('missingRequired lists required declarations with no value', async () => {
 test('setValue throws for an unwritable key', async () => {
   const pool = mockPool();
   await assert.rejects(
-    () => platformEnv.setValue(pool, 1, 'JWT_SECRET', 'nope', { jwtSecret: SECRET }),
+    () => platformEnv.setValue(pool, 1, 'JWT_SECRET', 'nope', { dataKey: SECRET }),
     /not writable/
   );
   assert.equal(find(pool, /INSERT INTO platform_env_values/).length, 0);
@@ -262,14 +262,14 @@ test('setValue throws for an unwritable key', async () => {
 
 test('setValue enforces the same value rules as validateValue', async () => {
   const pool = mockPool();
-  await assert.rejects(() => platformEnv.setValue(pool, 1, 'LOG_LEVEL', '', { jwtSecret: SECRET }));
-  await assert.rejects(() => platformEnv.setValue(pool, 1, 'LOG_LEVEL', "it's", { jwtSecret: SECRET }),
+  await assert.rejects(() => platformEnv.setValue(pool, 1, 'LOG_LEVEL', '', { dataKey: SECRET }));
+  await assert.rejects(() => platformEnv.setValue(pool, 1, 'LOG_LEVEL', "it's", { dataKey: SECRET }),
     /single quote/);
 });
 
 test('setValue stores ciphertext, never plaintext', async () => {
   const pool = mockPool({ declarations: [{ key: 'LOG_LEVEL', private: false }] });
-  await platformEnv.setValue(pool, 1, 'LOG_LEVEL', 'DEBUG', { userId: 3, jwtSecret: SECRET });
+  await platformEnv.setValue(pool, 1, 'LOG_LEVEL', 'DEBUG', { userId: 3, dataKey: SECRET });
   const [insert] = find(pool, /INSERT INTO platform_env_values/);
   assert.ok(insert, 'the upsert ran');
   assert.ok(!insert.params.includes('DEBUG'), 'the plaintext must not be a bound parameter');
@@ -280,7 +280,7 @@ test('setValue stores ciphertext, never plaintext', async () => {
 
 test('privacy comes from the declaration, not the caller', async () => {
   const pool = mockPool({ declarations: [{ key: 'SOME_TOKEN', private: true }] });
-  const result = await platformEnv.setValue(pool, 1, 'SOME_TOKEN', 'sk-live-xyz', { jwtSecret: SECRET });
+  const result = await platformEnv.setValue(pool, 1, 'SOME_TOKEN', 'sk-live-xyz', { dataKey: SECRET });
   assert.equal(result.private, true);
   const [insert] = find(pool, /INSERT INTO platform_env_values/);
   assert.equal(insert.params[3], null, 'a private value stores no last-4');
@@ -289,7 +289,7 @@ test('privacy comes from the declaration, not the caller', async () => {
 
 test('an undeclared key defaults to private', async () => {
   const pool = mockPool();
-  const result = await platformEnv.setValue(pool, 1, 'BRAND_NEW_KEY', 'value', { jwtSecret: SECRET });
+  const result = await platformEnv.setValue(pool, 1, 'BRAND_NEW_KEY', 'value', { dataKey: SECRET });
   assert.equal(result.private, true,
     'setting a value before the declaring proposal merges is legitimate; '
     + 'the safe default for an unknown variable is "do not display it"');

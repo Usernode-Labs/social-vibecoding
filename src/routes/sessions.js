@@ -882,7 +882,7 @@ function sessionRoutes(config) {
       // exhausted — exactly like a chat turn. No headroom + no key → 429.
       // The code lets the client tell budget exhaustion apart from a
       // rate-limit 429 (#463).
-      const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
+      const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
       if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       const userApiKey = billing.apiKey;
 
@@ -2293,7 +2293,7 @@ function sessionRoutes(config) {
       // below routes the cost to the right bucket. Allowance gone and
       // no key on file → the same 429 as always, tagged with a code so
       // the client can tell it apart from a chatLimiter throttle (#463).
-      const billing = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
+      const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
       if (billing.error) return res.status(429).json({ error: billing.error, code: 'budget_exceeded' });
       // Mutable since #664: an expensive CC phase can exhaust the
       // allowance mid-turn, so billing is re-resolved after the tool
@@ -3243,7 +3243,7 @@ function sessionRoutes(config) {
         // platform path — the wrap-up is cheap and ends the turn anyway.
         if (!userApiKey) {
           try {
-            const rebill = await limits.resolveBillingPath(pool, config.jwtSecret, req.user.id);
+            const rebill = await limits.resolveBillingPath(pool, config.dataEncryptionKey, req.user.id);
             if (!rebill.error && rebill.apiKey) userApiKey = rebill.apiKey;
           } catch (err) {
             log.warn('sessions', 'Post-dispatch billing re-resolve failed (continuing platform-billed)', {
@@ -3946,7 +3946,7 @@ function sessionRoutes(config) {
       // "Explore in dev chat" pill) can disable itself with a tooltip when there's
       // no usable LLM path — the platform key is unset AND the user has
       // no BYOK key on file. Same degradation posture the dev chat takes.
-      const userApiKey = await limits.loadUserApiKey(pool, req.user.id, config.jwtSecret);
+      const userApiKey = await limits.loadUserApiKey(pool, req.user.id, config.dataEncryptionKey);
       res.json({
         spentCents: userSpent,
         limitCents: userLimit,
@@ -4713,7 +4713,7 @@ async function runHeadlessSession({
       // the platform path (the wrap-up is cheap and ends the run).
       if (!userApiKey) {
         try {
-          const rebill = await limits.resolveBillingPath(pool, config.jwtSecret, user.id);
+          const rebill = await limits.resolveBillingPath(pool, config.dataEncryptionKey, user.id);
           if (!rebill.error && rebill.apiKey) userApiKey = rebill.apiKey;
         } catch (err) {
           log.warn('sessions', 'Headless post-dispatch billing re-resolve failed (continuing platform-billed)', {
@@ -4853,7 +4853,7 @@ async function runHeadlessSession({
             // build stays platform-billed; allowance gone + BYOK key on
             // file → the build proceeds on the key (previously it was
             // skipped); allowance gone + no key → skip, as today.
-            const buildBilling = await limits.resolveBillingPath(pool, config.jwtSecret, user.id);
+            const buildBilling = await limits.resolveBillingPath(pool, config.dataEncryptionKey, user.id);
             let buildResult;
             if (buildBilling.error) {
               await sendStatus('Spec drafted; implementation skipped — daily budget reached.');
@@ -4881,7 +4881,7 @@ async function runHeadlessSession({
               // re-resolve so the phase-3 wrap-up bills the fresh payer.
               if (!userApiKey) {
                 try {
-                  const rebill = await limits.resolveBillingPath(pool, config.jwtSecret, user.id);
+                  const rebill = await limits.resolveBillingPath(pool, config.dataEncryptionKey, user.id);
                   if (!rebill.error && rebill.apiKey) userApiKey = rebill.apiKey;
                 } catch (err) {
                   log.warn('sessions', 'Headless post-build billing re-resolve failed (continuing platform-billed)', {
@@ -5134,7 +5134,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   // proceeds platform-billed like it always has — the Anthropic proxy
   // enforces the cap per-call, so the run fails with the same message
   // it would have shown live rather than dying silently here.
-  const resumeBilling = await limits.resolveBillingPath(pool, config.jwtSecret, session.user_id);
+  const resumeBilling = await limits.resolveBillingPath(pool, config.dataEncryptionKey, session.user_id);
   const userApiKey = resumeBilling.error ? null : resumeBilling.apiKey;
   // The model picked at start isn't a session column, but every persisted
   // assistant turn carries it — reuse the latest, else the default.

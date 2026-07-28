@@ -48,6 +48,117 @@ function platformEnvFromManifestSource(raw) {
   return appManifest.readPlatformEnv(parsed) || [];
 }
 
+// ---------------------------------------------------------------------------
+// Head-scoped `unwritable` derivation.
+//
+// THE BUG THIS FIXES. readPlatformEnv() derives `unwritable` from the reserved
+// lists of the module that is CURRENTLY RUNNING — the deployed platform. But
+// this check evaluates a BRANCH's dapp.json. A proposal that declares a new
+// deploy-owned variable does two things in one commit: adds the platform_env
+// entry, and names the key in PLATFORM_ENV_UNWRITABLE so it renders read-only.
+// The running platform hasn't got that second half yet, so it scored the new
+// entry as writable-and-required-and-unset and blocked the very merge that
+// would have made it unwritable. Self-blocking, with no way out except a
+// force-merge — exactly what happened to the JWT key-separation PR, which
+// declared DATA_ENCRYPTION_KEY / IFRAME_JWT_{PRIVATE,PUBLIC}_KEY /
+// WORKER_JWT_SECRET / EDGE_JWT_SECRET and was told all five "have no value
+// set" despite being unsettable by construction.
+//
+// The fix is to make the reserved lists head-scoped, the same way the manifest
+// diff already is: read them out of the branch's own app-manifest.js and union
+// them with the running platform's.
+//
+// WHY THIS DOESN'T WEAKEN THE GATE. Becoming unwritable is not something a
+// manifest can ask for — it requires editing the reserved list in
+// src/services/app-manifest.js, a reviewed code change to a file the self-edit
+// refuse-list already covers. And once a key IS unwritable, the DAO, the route
+// and the vote path all refuse to store it, so "block the merge until someone
+// sets a value" is demanding something structurally impossible: the value can
+// only ever come from the deploy. A genuinely console-settable required
+// variable — one named in neither list — still blocks exactly as before.
+//
+// Union, never replace: a branch cannot shrink the running platform's reserved
+// set to make a credential writable.
+// ---------------------------------------------------------------------------
+
+const MANIFEST_MODULE_PATH = 'src/services/app-manifest.js';
+
+// Env-var-shaped tokens only. Anything else in the literal is not a key we
+// would honour, so dropping it is both safe and a parse-sanity signal.
+const KEY_TOKEN_RE = /^[A-Z][A-Z0-9_]{0,127}$/;
+
+// Smallest plausible size for a correctly-parsed reserved set. The real lists
+// are far larger; a handful of matches means the regex found the wrong thing,
+// and we would rather fall back to the running list (i.e. keep blocking) than
+// act on a garbage parse.
+const MIN_PLAUSIBLE_TOKENS = 4;
+
+/**
+ * Pull the string literals out of one `const <id> = new Set([...])` or
+ * `const <id> = [...]` declaration in module source, WITHOUT executing it.
+ *
+ * Deliberately a static text scan: this source comes from a branch that has
+ * not been reviewed or merged, so it must never be require()'d, eval'd or
+ * vm-run. Comments are stripped before extracting quotes because the real
+ * declarations carry prose that contains apostrophes.
+ *
+ * Returns null when the declaration isn't found or doesn't parse — callers
+ * treat null as "no overlay", which preserves today's behaviour.
+ */
+function stringLiteralsIn(raw, identifier) {
+  const decl = new RegExp(`${identifier}\\s*=\\s*(?:new\\s+Set\\s*\\()?\\s*\\[`).exec(raw);
+  if (!decl) return null;
+
+  // Walk from the opening bracket to its balanced close so a nested array
+  // (there are none today, but be exact rather than lucky) can't truncate us.
+  const open = raw.indexOf('[', decl.index);
+  if (open < 0) return null;
+  let depth = 0;
+  let close = -1;
+  for (let i = open; i < raw.length; i += 1) {
+    if (raw[i] === '[') depth += 1;
+    else if (raw[i] === ']') {
+      depth -= 1;
+      if (depth === 0) { close = i; break; }
+    }
+  }
+  if (close < 0) return null;
+
+  const body = raw.slice(open + 1, close)
+    .replace(/\/\*[\s\S]*?\*\//g, '')   // block comments
+    .replace(/\/\/[^\n]*/g, '');        // line comments (and their apostrophes)
+
+  const out = [];
+  for (const m of body.matchAll(/'([^'\\\n]*)'|"([^"\\\n]*)"/g)) {
+    const tok = m[1] ?? m[2];
+    if (KEY_TOKEN_RE.test(tok)) out.push(tok);
+  }
+  return out.length ? out : null;
+}
+
+/**
+ * The branch's own view of "which platform variables are deploy-owned".
+ * Returns null when nothing usable could be read, meaning "no overlay".
+ */
+function unwritableOverlayFromSource(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const unwritable = stringLiteralsIn(raw, 'PLATFORM_ENV_UNWRITABLE');
+  const reserved = stringLiteralsIn(raw, 'RESERVED_KEYS');
+  const prefixes = stringLiteralsIn(raw, 'RESERVED_KEY_PREFIXES');
+  const keys = [...(unwritable || []), ...(reserved || [])];
+  // Both key lists missing, or implausibly short — assume the parse failed.
+  if (keys.length < MIN_PLAUSIBLE_TOKENS) return null;
+  return { keys: new Set(keys), prefixes: prefixes || [] };
+}
+
+/** Is `key` deploy-owned according to the running platform OR the branch? */
+function isUnwritableWithOverlay(entry, overlay) {
+  if (entry.unwritable) return true;               // running platform says so
+  if (!overlay) return false;
+  if (overlay.keys.has(entry.key)) return true;    // the branch says so
+  return overlay.prefixes.some((p) => entry.key.startsWith(p));
+}
+
 // Same ref-selection rule as app-admins.headRefForSession: an imported
 // PR is identified by its head sha, a native proposal by its branch.
 function headRefForSession(session) {
@@ -150,10 +261,35 @@ async function resolvePlatformEnvCheck({ pool, app, session }) {
     };
   }
 
+  // Honour the BRANCH's reserved-key list, not just the running platform's.
+  // A proposal that declares a deploy-owned variable adds the platform_env
+  // entry and names the key in PLATFORM_ENV_UNWRITABLE in the same commit;
+  // scoring it against the deployed list alone made such a proposal block
+  // itself (see unwritableOverlayFromSource above). Only fetched when this
+  // branch actually touches the module, or when the compare's file list was
+  // capped and therefore proves nothing — otherwise the running list already
+  // is the branch's list and an extra API call would buy nothing.
+  let overlay = null;
+  if (!filesComplete || (files || []).includes(MANIFEST_MODULE_PATH)) {
+    try {
+      overlay = unwritableOverlayFromSource(
+        await github.getFileContent(owner, repo, MANIFEST_MODULE_PATH, headRef)
+      );
+    } catch (err) {
+      // Non-fatal and fail-CLOSED: without the overlay we fall back to the
+      // running list, which can only over-block, never under-block.
+      log.warn('platform-env-check', 'Reserved-list fetch failed; using the deployed list', {
+        sessionId: session?.id, err: err.message,
+      });
+    }
+  }
+
   // Which of the added variables already have a value? Only the ones a
   // human could actually set matter — an added `unwritable` declaration
   // is documentation of a GitHub secret, not something to block on.
-  const candidates = added.filter((e) => e.required && !e.unwritable);
+  const candidates = added.filter(
+    (e) => e.required && !isUnwritableWithOverlay(e, overlay)
+  );
   let stored = new Set();
   // A value can also arrive WITH the proposal: the panel's "+ New
   // variable" flow parks it in pending_secret_declarations bound to this
@@ -279,4 +415,8 @@ module.exports = {
   describeBlock,
   headRefForSession,
   platformEnvFromManifestSource,
+  MANIFEST_MODULE_PATH,
+  stringLiteralsIn,
+  unwritableOverlayFromSource,
+  isUnwritableWithOverlay,
 };

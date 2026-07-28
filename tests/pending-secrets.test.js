@@ -70,7 +70,7 @@ test('create stores a last-4 for a non-private value and none for a private one'
   await pendingSecrets.create(pool, {
     appId: 1, sessionId: 7, scope: 'platform', key: 'PUBLIC_THING',
     declaration: { description: 'x', private: false }, value: 'hello-1234',
-    userId: 5, jwtSecret: SECRET,
+    userId: 5, dataKey: SECRET,
   });
   const publicInsert = pool.calls.at(-1);
   assert.equal(publicInsert.params[6], '1234', 'a non-private held value previews its last 4');
@@ -78,7 +78,7 @@ test('create stores a last-4 for a non-private value and none for a private one'
   await pendingSecrets.create(pool, {
     appId: 1, sessionId: 7, scope: 'platform', key: 'PRIVATE_THING',
     declaration: { description: 'x', private: true }, value: 'sk-live-abcd',
-    userId: 5, jwtSecret: SECRET,
+    userId: 5, dataKey: SECRET,
   });
   const privateInsert = pool.calls.at(-1);
   assert.equal(privateInsert.params[6], null, 'a private held value keeps NO last-4');
@@ -89,7 +89,7 @@ test('create encrypts the held value — no plaintext reaches the INSERT', async
   await pendingSecrets.create(pool, {
     appId: 1, sessionId: 7, scope: 'app', key: 'TOKEN',
     declaration: { private: true }, value: 'super-secret-value',
-    jwtSecret: SECRET,
+    dataKey: SECRET,
   });
   const params = pool.calls.at(-1).params;
   const serialized = JSON.stringify(params);
@@ -102,7 +102,7 @@ test("create with valueApplied holds no ciphertext (the admin's value is already
   await pendingSecrets.create(pool, {
     appId: 1, sessionId: 7, scope: 'platform', key: 'ADMIN_SET',
     declaration: { private: false }, value: 'already-stored',
-    jwtSecret: SECRET, valueApplied: true,
+    dataKey: SECRET, valueApplied: true,
   });
   const params = pool.calls.at(-1).params;
   assert.equal(params[5], null, 'no second encrypted copy of a value that is already live');
@@ -227,7 +227,7 @@ test('applyForSession claims rows once and writes through the scope DAO', async 
     ],
   });
 
-  const { applied } = await pendingSecrets.applyForSession({ jwtSecret: SECRET }, pool, 7);
+  const { applied } = await pendingSecrets.applyForSession({ dataEncryptionKey: SECRET }, pool, 7);
   assert.deepEqual(applied.map((a) => a.key).sort(), ['APP_KEY', 'PLAT_KEY']);
   assert.ok(applied.every((a) => a.hadValue));
 
@@ -247,7 +247,7 @@ test('applyForSession claims rows once and writes through the scope DAO', async 
 
 test('applyForSession on an already-applied session is a no-op', async () => {
   const pool = mockPool({ claimRows: [] });
-  const result = await pendingSecrets.applyForSession({ jwtSecret: SECRET }, pool, 7);
+  const result = await pendingSecrets.applyForSession({ dataEncryptionKey: SECRET }, pool, 7);
   assert.deepEqual(result, { applied: [] });
   assert.ok(!pool.calls.some((c) => /SET value_enc = NULL/.test(c.sql)),
     'nothing is written when no row was claimed');
@@ -264,7 +264,7 @@ test('applyForSession skips (but still claims) a row whose value cannot be decry
       declaration: {}, value_enc: 'v1:garbage', value_applied_at: null, created_by: null,
     }],
   });
-  const { applied } = await pendingSecrets.applyForSession({ jwtSecret: SECRET }, pool, 7);
+  const { applied } = await pendingSecrets.applyForSession({ dataEncryptionKey: SECRET }, pool, 7);
   assert.equal(wrote, 0, 'no write attempted with a null plaintext');
   assert.equal(applied.length, 1);
   assert.equal(applied[0].hadValue, false, 'and the caller is told no value landed');

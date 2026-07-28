@@ -46,7 +46,7 @@
       "key": "JWT_SECRET",
       "required": true,
       "private": true,
-      "description": "Signing key for session JWTs and the iframe-issued tokens child apps verify (see app-conventions.md). Required at boot — config.js refuses to start without it. Rotating invalidates every active session. `private` ensures a self-app-staging container could not mint valid prod JWTs. NOTE: this entry is silently skipped by app-manifest.read() because JWT_SECRET is on the reserved-keys list (services/app-manifest.js); the platform injects the parent's value into staging containers explicitly via services/staging.js. Listed here for documentation only — no runtime effect."
+      "description": "TRANSITIONAL. This used to sign every platform token AND double as the at-rest encryption key AND get handed verbatim to every child container. Key separation (phase 1) moved the worker, edge and at-rest jobs onto their own keys — see the `platform_env` \"Platform keys\" group — leaving JWT_SECRET as the signer for iframe / capture / WebSocket / app-file identity tokens only, still injected into child containers as `JWT_SECRET` (see app-conventions.md). It is no longer required at boot: config.js falls back to DATA_ENCRYPTION_KEY, and the two hold the SAME bytes, which is why renaming the deploy's variable did not orphan any stored ciphertext. Do not rotate it — it is still the data key's twin until the phase-2 iframe cutover retires this field. `private` ensures a self-app-staging container could not mint valid prod JWTs. NOTE: this entry is silently skipped by app-manifest.read() because JWT_SECRET is on the reserved-keys list (services/app-manifest.js); the platform injects the parent's value into staging containers explicitly via services/staging.js. Listed here for documentation only — no runtime effect."
     },
     {
       "key": "SESSION_SECRET",
@@ -190,10 +190,44 @@
       "description": "Seconds docker waits after SIGTERM before killing a container. Raising it makes deploys slower but gives in-flight requests longer to drain."
     },
     {
+      "key": "DATA_ENCRYPTION_KEY",
+      "group": "Platform keys",
+      "required": false,
+      "private": true,
+      "description": "The at-rest key: services/secrets.js derives AES-256-GCM from it, and every stored BYOK Anthropic key, app secret and platform-variable value is encrypted under it. Deploy-owned (from the USERNODE_JWT_SECRET repo secret) and NOT settable here — the values in this very table are encrypted with it. NEVER rotate: decrypt() returns null silently, orphaning every ciphertext. Boot exits 1 without it."
+    },
+    {
+      "key": "IFRAME_JWT_PRIVATE_KEY",
+      "group": "Platform keys",
+      "required": false,
+      "private": true,
+      "description": "RSA-2048 PKCS#8 private half (RS256) of the app-identity pair that signs the per-user token the shell injects into app iframes. Asymmetric on purpose: containers get only the public half, so an app can verify a user but never forge one. Deploy-owned, single-line PEM with literal \\n escapes. Boot exits 1 without it, and round-trips a probe token so a mismatched pair fails loudly at startup."
+    },
+    {
+      "key": "IFRAME_JWT_PUBLIC_KEY",
+      "group": "Platform keys",
+      "required": false,
+      "description": "SPKI public half of the app-identity pair, same single-line-PEM convention. The only platform key ever handed to a child container — it can verify, never sign — so it is deliberately not marked private. Deploy-owned; must be generated TOGETHER with the private half or the boot pair-check fails. Boot exits 1 without it. Dormant until the phase-2 iframe cutover; validated at startup regardless."
+    },
+    {
+      "key": "WORKER_JWT_SECRET",
+      "group": "Platform keys",
+      "required": false,
+      "private": true,
+      "description": "HMAC key for the tokens worker containers present to the internal API (middleware/internal-auth.js, anthropic-proxy-auth.js). Its own authority: never placed in any container — workers receive only the minted capability token. Deploy-owned (openssl rand -hex 32). Safe to rotate: warm workers holding a stale token get evicted and re-bootstrap. Boot exits 1 without it; under 32 bytes only warns."
+    },
+    {
+      "key": "EDGE_JWT_SECRET",
+      "group": "Platform keys",
+      "required": false,
+      "private": true,
+      "description": "HMAC key for private-app edge grants and the scoped __usernode_access per-host cookie (routes/internal.js, services/app-access.js). Both purposes share this key and are separated by an explicit pur claim, so a 120s grant cannot be replayed as a 12h cookie. Deploy-owned; use a DIFFERENT openssl rand -hex 32 from the worker secret. Safe to rotate — people just re-authorize. Boot exits 1 without it."
+    },
+    {
       "key": "TOPOCHAIN_INGEST_API_KEY",
       "group": "Topochain",
       "private": true,
-      "description": "Shared secret compared against the X-Ingest-Key header on the two ingest writes, POST /api/v4/slot-outcomes and /api/v4/epoch-stats (src/middleware/topochain-auth.js#ingestApiKey). Generate with `openssl rand -hex 32`. Unset doesn't block boot — every ingest write returns 500 'Ingest key authentication not configured.' until it is set. The only known caller is the observability-hub-receiver (usernode repo), which must be configured with the same value at its v4 cutover. Rotates independently of TOPOCHAIN_PARTNER_API_KEY."
+      "description": "Shared secret checked against the X-Ingest-Key header on the two ingest writes, POST /api/v4/slot-outcomes and /api/v4/epoch-stats (middleware/topochain-auth.js). `openssl rand -hex 32`. Unset never blocks boot — ingest writes just 500 until set. Sole caller is usernode's observability-hub-receiver, which needs the same value at its v4 cutover. Rotates independently of the partner key."
     },
     {
       "key": "TOPOCHAIN_PARTNER_API_KEY",

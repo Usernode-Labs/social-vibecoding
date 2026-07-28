@@ -1,8 +1,8 @@
 'use strict';
 
 const { spawn } = require('child_process');
-const jwt = require('jsonwebtoken');
 const log = require('./logger');
+const platformJwt = require('./platform-jwt');
 const docker = require('./docker');
 const github = require('./github');
 const models = require('./models');
@@ -27,28 +27,23 @@ const PLATFORM_INTERNAL_URL = process.env.PLATFORM_INTERNAL_URL || 'http://usern
 // Worker JWTs are short-lived but cover the entire chat session; 24h is
 // the cap any single session is allowed to run before re-auth becomes
 // the chat handler's problem. Re-minted on every warm bootstrap and on
-// every per-turn `docker exec`.
-const WORKER_JWT_TTL = '24h';
-
-// Lazy-load JWT_SECRET so module import doesn't crash before config
-// loads. server.js calls config.load() at startup which crashes on
-// missing JWT_SECRET; by the time any worker bootstrap runs the env
-// var is guaranteed present.
-function _jwtSecret() {
-  const s = process.env.JWT_SECRET;
-  if (!s) throw new Error('JWT_SECRET not set — cannot mint worker JWT');
-  return s;
-}
+// every per-turn `docker exec`. The TTL itself lives with the signer in
+// services/platform-jwt.js; kept here as the name the comments below use.
+const WORKER_JWT_TTL = platformJwt.WORKER_TTL;
 
 // Mint the auth token the worker container uses to call back into the
-// platform's internal API. Scope locks it to a single session id; the
-// internal-auth middleware rejects anything missing the scope claim.
+// platform's internal API. Scoped to a single session id; the
+// internal-auth middleware rejects anything whose purpose isn't
+// worker:session.
+//
+// Signed with WORKER_JWT_SECRET — an authority of its own, independent
+// of the key that signs app identities. The signing key is never put in
+// a worker (or app, or staging) container; workers receive only the
+// minted capability token. platform-jwt reads the key from env at call
+// time, which also preserves the old laziness here: module import can
+// precede config.load().
 function mintWorkerJwt(sessionId) {
-  return jwt.sign(
-    { session_id: sessionId, scope: 'worker:session' },
-    _jwtSecret(),
-    { expiresIn: WORKER_JWT_TTL }
-  );
+  return platformJwt.signWorkerToken({ sessionId });
 }
 
 // #616: same shape as mintWorkerJwt plus the `prod_debug` claim that the
@@ -57,11 +52,7 @@ function mintWorkerJwt(sessionId) {
 // self-edit app) — the ordinary per-turn WORKER_JWT/ISSUES_JWT never
 // carry the claim, so a stolen ordinary token can't reach those routes.
 function mintProdDebugJwt(sessionId) {
-  return jwt.sign(
-    { session_id: sessionId, scope: 'worker:session', prod_debug: true },
-    _jwtSecret(),
-    { expiresIn: WORKER_JWT_TTL }
-  );
+  return platformJwt.signWorkerToken({ sessionId, prodDebug: true });
 }
 
 // Pure builder for a turn's secret env (exported for unit tests).
@@ -677,7 +668,10 @@ async function _bootstrapWarmContainer(sessionId, {
     // it, so pre-proxy containers (which had the real ANTHROPIC_API_KEY
     // baked into their bootstrap env) get cycled out on the next ensure.
     // Bump the version when the bootstrap-env shape changes again.
-    '--label', 'usernode.proxy=v1',
+    // v2: worker tokens moved off the shared JWT_SECRET onto
+    // WORKER_JWT_SECRET, so any container still holding a v1-era token
+    // would 401 on its next internal call. Evicting them re-mints.
+    '--label', 'usernode.proxy=v2',
     '-v', `${ccVolume}:/home/node/.claude`,
     ...secretEnvArgs,
     ...safeEnvArgs,
@@ -787,15 +781,16 @@ async function ensureWorker(sessionId, {
   // an external `docker rm` would otherwise leave stale state.
   const status = await docker.getContainerStatus(containerName);
   if (status === 'running') {
-    // Anthropic-proxy migration gate: pre-proxy warm containers had
-    // the real ANTHROPIC_API_KEY baked into their bootstrap env (still
-    // readable from /proc/1/environ between turns). Detect them via
-    // the missing usernode.proxy=v1 label and force a re-bootstrap so
-    // the platform key gets out of those containers ASAP. Cheap —
-    // single `docker inspect` on the warm-path hot path.
+    // Bootstrap-env migration gate: v1-era warm containers had the real
+    // ANTHROPIC_API_KEY baked into their bootstrap env (still readable
+    // from /proc/1/environ between turns), and hold a worker token
+    // signed with the retired shared secret that the internal API no
+    // longer accepts. Detect them via a stale usernode.proxy label and
+    // force a re-bootstrap. Cheap — single `docker inspect` on the
+    // warm-path hot path.
     const labels = await docker.getContainerLabels(containerName);
-    if (labels['usernode.proxy'] !== 'v1') {
-      log.info('worker', 'Evicting pre-proxy warm container', { containerName });
+    if (labels['usernode.proxy'] !== 'v2') {
+      log.info('worker', 'Evicting stale-label warm container', { containerName });
       await evictWorker(sessionId).catch((err) => {
         log.warn('worker', 'Eviction failed; falling through to bootstrap', {
           containerName, err: err.message,

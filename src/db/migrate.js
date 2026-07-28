@@ -881,8 +881,8 @@ async function seedStagingAdminConsoleData(pool) {
 // outside staging.
 async function seedStagingPlatformEnv(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
-  if (!config.jwtSecret) {
-    log.warn('db', 'Platform-env staging fixtures skipped: no JWT_SECRET to encrypt with');
+  if (!config.dataEncryptionKey) {
+    log.warn('db', 'Platform-env staging fixtures skipped: no data-encryption key to encrypt with');
     return;
   }
   try {
@@ -930,7 +930,7 @@ async function seedStagingPlatformEnv(pool, config) {
            (app_id, key, value_enc, value_last4, private, updated_by, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, NOW() - INTERVAL '2 days')
          ON CONFLICT (app_id, key) DO NOTHING`,
-        [appId, key, encrypt(value, config.jwtSecret),
+        [appId, key, encrypt(value, config.dataEncryptionKey),
           isPrivate ? null : value.slice(-4), isPrivate, updatedBy]
       );
     }
@@ -988,7 +988,7 @@ async function seedStagingPlatformEnv(pool, config) {
                WHERE app_id = $1 AND key = $3::varchar AND status = 'pending')`,
           [
             appId, sessionId, key, JSON.stringify(declaration),
-            value ? encrypt(value, config.jwtSecret) : null,
+            value ? encrypt(value, config.dataEncryptionKey) : null,
             value && !isPrivate ? value.slice(-4) : null,
             value ? null : new Date(),
             updatedBy,
@@ -1002,7 +1002,7 @@ async function seedStagingPlatformEnv(pool, config) {
            (app_id, key, value_enc, value_last4, private, updated_by, updated_at)
          VALUES ($1, 'STAGING_DEMO_ADMIN_SET', $2, $3, FALSE, $4, NOW() - INTERVAL '3 hours')
          ON CONFLICT (app_id, key) DO NOTHING`,
-        [appId, encrypt('set-by-an-admin-before-the-vote', config.jwtSecret), 'vote', updatedBy]
+        [appId, encrypt('set-by-an-admin-before-the-vote', config.dataEncryptionKey), 'vote', updatedBy]
       );
 
       // A child-app pending row too, so the app-scope variant of the row
@@ -1035,7 +1035,7 @@ async function seedStagingPlatformEnv(pool, config) {
               staging_default: 'staging-demo-token',
               group: 'General',
             }),
-            encrypt('prod-demo-token-9a2f', config.jwtSecret),
+            encrypt('prod-demo-token-9a2f', config.dataEncryptionKey),
             null,
             updatedBy,
           ]
@@ -1599,12 +1599,15 @@ async function seedStagingChatEditFixtures(pool, config) {
 // the section would render empty on every preview. Seed one synthetic
 // open proposal for the self-app — payload shaped exactly like the
 // create path in routes/issues.js, including a real `valueEnc`
-// ciphertext (encrypted with this environment's own JWT_SECRET) so
-// vote-through-majority / admin-apply work end-to-end. github_issue_number
-// stays NULL: the fixture has no GitHub twin, which also means the kudos
-// button is (correctly) omitted on its row. Idempotent on restart: keyed
-// off the fixture title, any status — a proposal applied/closed during
-// testing doesn't resurrect on the next boot.
+// ciphertext (encrypted with this environment's own data-encryption key
+// — in staging that's the committed non-secret constant from
+// config.stagingDataKey(), so this fixture is never confusable with prod
+// ciphertext) so vote-through-majority / admin-apply work end-to-end.
+// github_issue_number stays NULL: the fixture has no GitHub twin, which
+// also means the kudos button is (correctly) omitted on its row.
+// Idempotent on restart: keyed off the fixture title, any status — a
+// proposal applied/closed during testing doesn't resurrect on the next
+// boot.
 //
 // The key is STAGING_DEMO_PUBLIC_URL, which seedStagingPlatformEnv() also
 // declares and sets. That pairing is deliberate: because this is the
@@ -1615,8 +1618,8 @@ async function seedStagingChatEditFixtures(pool, config) {
 // orphan row — a worse demo of the normal case.
 async function seedStagingEnvProposal(pool, config) {
   if (process.env.USERNODE_ENV !== 'staging') return;
-  if (!config.jwtSecret) {
-    log.warn('db', 'Staging env-proposal fixture skipped: no JWT_SECRET to encrypt with');
+  if (!config.dataEncryptionKey) {
+    log.warn('db', 'Staging env-proposal fixture skipped: no data-encryption key to encrypt with');
     return;
   }
 
@@ -1662,7 +1665,7 @@ async function seedStagingEnvProposal(pool, config) {
     const payload = {
       key: fixtureKey,
       action: 'set',
-      valueEnc: encrypt(demoValue, config.jwtSecret),
+      valueEnc: encrypt(demoValue, config.dataEncryptionKey),
       valueLast4: demoValue.slice(-4),
       private: false,
       sensitive: false,

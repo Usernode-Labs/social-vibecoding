@@ -37,7 +37,7 @@
  *   listView(pool, appId)                 → merged declaration+value rows
  *                                           for the panel (never any
  *                                           plaintext of a private value)
- *   getRawValues(pool, appId, jwtSecret)  → { KEY: plaintext } for deploy
+ *   getRawValues(pool, appId, dataKey)    → { KEY: plaintext } for deploy
  *   setValue / deleteValue                → admin + vote-applied mutations
  *   missingRequired(pool, appId)          → required-and-unset keys
  */
@@ -112,7 +112,7 @@ function isWritableKey(key) {
  * point of marking a variable non-private, and it's what makes "is
  * MAX_GLOBAL_SESSIONS actually 75 in prod?" answerable from the UI.
  */
-async function listView(pool, appId, jwtSecret) {
+async function listView(pool, appId, dataKey) {
   const { rows } = await pool.query(
     `SELECT COALESCE(d.key, v.key)      AS key,
             d.key IS NOT NULL           AS declared,
@@ -142,8 +142,8 @@ async function listView(pool, appId, jwtSecret) {
     // JWT_SECRET, corrupt row) degrades to "set, value unreadable"
     // rather than erroring the whole screen.
     let value = null;
-    if (r.has_value && !isPrivate && jwtSecret) {
-      value = decrypt(r.value_enc, jwtSecret);
+    if (r.has_value && !isPrivate && dataKey) {
+      value = decrypt(r.value_enc, dataKey);
       if (value == null) {
         log.warn('platform-env', 'Decrypt returned null', { key: r.key });
       }
@@ -176,7 +176,7 @@ async function listView(pool, appId, jwtSecret) {
  * write (or a row surviving from before a key joined the unwritable set)
  * can never override the GitHub-secret-sourced line in .env.
  */
-async function getRawValues(pool, appId, jwtSecret) {
+async function getRawValues(pool, appId, dataKey) {
   const { rows } = await pool.query(
     'SELECT key, value_enc FROM platform_env_values WHERE app_id = $1 ORDER BY key ASC',
     [appId]
@@ -187,7 +187,7 @@ async function getRawValues(pool, appId, jwtSecret) {
       log.warn('platform-env', 'Refusing to resolve unwritable key', { key: r.key });
       continue;
     }
-    const v = decrypt(r.value_enc, jwtSecret);
+    const v = decrypt(r.value_enc, dataKey);
     if (v != null) out[r.key] = v;
     else log.warn('platform-env', 'Decrypt returned null (skipping)', { key: r.key });
   }
@@ -244,7 +244,7 @@ function computeLast4(value, isPrivate) {
  * it entirely, so the "an admin cannot downgrade privacy" invariant
  * above holds unchanged.
  */
-async function setValue(pool, appId, key, value, { userId = null, jwtSecret, privateHint } = {}) {
+async function setValue(pool, appId, key, value, { userId = null, dataKey, privateHint } = {}) {
   if (!isWritableKey(key)) {
     throw new Error(`platform-env.setValue: key is not writable: ${key}`);
   }
@@ -276,7 +276,7 @@ async function setValue(pool, appId, key, value, { userId = null, jwtSecret, pri
                    private     = EXCLUDED.private,
                    updated_at  = NOW(),
                    updated_by  = EXCLUDED.updated_by`,
-    [appId, key, encrypt(value, jwtSecret), computeLast4(value, isPrivate), isPrivate, userId]
+    [appId, key, encrypt(value, dataKey), computeLast4(value, isPrivate), isPrivate, userId]
   );
   return { key, private: isPrivate };
 }

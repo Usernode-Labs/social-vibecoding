@@ -185,7 +185,7 @@ test('the change is auditable through the existing events pipeline', () => {
 test('non-private values reach admins; nothing reaches a non-admin', () => {
   const get = route('get', '/api/apps/:slug/secrets');
   assert.match(get, /const includeValues = !!req\.user\?\.isAdmin/);
-  assert.match(get, /includeValues \? config\.jwtSecret : null/,
+  assert.match(get, /includeValues \? config\.dataEncryptionKey : null/,
     'a non-admin request must not even hand listView the key to decrypt with');
 
   const view = appsJs.slice(appsJs.indexOf('function platformSecretsView('));

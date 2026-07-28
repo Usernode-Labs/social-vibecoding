@@ -173,7 +173,10 @@ Add these secrets to the `evanshapi.ro` GitHub repo (**Settings > Secrets and va
 |--------|-------|
 | `USERNODE_DB_PASSWORD` | Generate: `openssl rand -hex 32` |
 | `USERNODE_SESSION_SECRET` | Generate: `openssl rand -hex 32` |
-| `USERNODE_JWT_SECRET` | Generate: `openssl rand -hex 32` |
+| `USERNODE_JWT_SECRET` | Generate: `openssl rand -hex 32`. Deployed as `DATA_ENCRYPTION_KEY` — the at-rest AES key, no longer a signing key. Never rotate it after first deploy: every stored BYOK key and app secret is encrypted under it. |
+| `USERNODE_WORKER_JWT_SECRET` | Generate: `openssl rand -hex 32`. Signs worker → internal-API tokens. |
+| `USERNODE_EDGE_JWT_SECRET` | Generate: `openssl rand -hex 32`. Signs private-app edge grants + access cookies. |
+| `USERNODE_IFRAME_JWT_PRIVATE_KEY` / `USERNODE_IFRAME_JWT_PUBLIC_KEY` | RSA-2048 pair (RS256) for app identity tokens; single line with literal `\n`. Recipe in `.env.example`. Containers get only the public half. |
 | `USERNODE_ADMIN_USERNAME` | `admin` |
 | `USERNODE_ADMIN_PASSWORD` | (choose a strong password) |
 | `USERNODE_GITHUB_APP_ID` | (from step 3.7) |
@@ -190,7 +193,11 @@ cat > /opt/infra/repo/projects/usernode-social-vibecoding/.env << 'ENVEOF'
 ADMIN_USERNAME=${{ secrets.USERNODE_ADMIN_USERNAME }}
 ADMIN_PASSWORD=${{ secrets.USERNODE_ADMIN_PASSWORD }}
 SESSION_SECRET=${{ secrets.USERNODE_SESSION_SECRET }}
-JWT_SECRET=${{ secrets.USERNODE_JWT_SECRET }}
+DATA_ENCRYPTION_KEY=${{ secrets.USERNODE_JWT_SECRET }}
+IFRAME_JWT_PRIVATE_KEY='${{ secrets.USERNODE_IFRAME_JWT_PRIVATE_KEY }}'
+IFRAME_JWT_PUBLIC_KEY='${{ secrets.USERNODE_IFRAME_JWT_PUBLIC_KEY }}'
+WORKER_JWT_SECRET=${{ secrets.USERNODE_WORKER_JWT_SECRET }}
+EDGE_JWT_SECRET=${{ secrets.USERNODE_EDGE_JWT_SECRET }}
 DATABASE_URL=postgres://usernode:${{ secrets.USERNODE_DB_PASSWORD }}@project-usernode-db:5432/usernode
 USERNODE_DB_PASSWORD=${{ secrets.USERNODE_DB_PASSWORD }}
 GITHUB_APP_ID=${{ secrets.USERNODE_GITHUB_APP_ID }}

@@ -18,9 +18,12 @@ const {
   spentCentsHeaderValue,
 } = require('../src/routes/app-llm-proxy');
 
-const JWT_SECRET = 'test-jwt-secret';
+// At-rest encryption key (services/secrets.js KDF input) — not a
+// signing key. Same value the old shared JWT_SECRET held; the split was
+// a rename, so existing ciphertext keeps decrypting.
+const DATA_KEY = 'test-jwt-secret';
 const USER_KEY = 'sk-ant-test-123';
-const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, JWT_SECRET);
+const GOOD_KEY_ENC = secrets.encrypt(USER_KEY, DATA_KEY);
 
 // Same mock-pool shape as limits-resolve-billing-path.test.js, plus
 // app_llm_usage capture for the settlement tests.
@@ -66,20 +69,20 @@ test.beforeEach(() => limits.invalidate());
 
 test('budget headroom → platform path, key never looked up', async () => {
   const pool = makePool({ userSpent: 100, keyEnc: GOOD_KEY_ENC });
-  const r = await resolveAppPayer(pool, JWT_SECRET, 7, GRANT_BYOK);
+  const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
   assert.deepEqual(r, { byok: false });
   assert.equal(pool.issued(/anthropic_key_enc/), false);
 });
 
 test('budget exhausted + allow_byok + key → BYOK path with the decrypted key', async () => {
   const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC });
-  const r = await resolveAppPayer(pool, JWT_SECRET, 7, GRANT_BYOK);
+  const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
   assert.deepEqual(r, { byok: true, apiKey: USER_KEY });
 });
 
 test('budget exhausted + allow_byok=false → 429-shaped error, key never looked up', async () => {
   const pool = makePool({ userSpent: 2500, keyEnc: GOOD_KEY_ENC });
-  const r = await resolveAppPayer(pool, JWT_SECRET, 7, GRANT_NO_BYOK);
+  const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_NO_BYOK);
   assert.match(r.error, /Daily limit reached/);
   assert.equal(pool.issued(/anthropic_key_enc/), false,
     'an app the user did not opt into BYOK must never trigger a key lookup');
@@ -87,13 +90,13 @@ test('budget exhausted + allow_byok=false → 429-shaped error, key never looked
 
 test('budget exhausted + allow_byok but no key on file → error', async () => {
   const pool = makePool({ userSpent: 2500 });
-  const r = await resolveAppPayer(pool, JWT_SECRET, 7, GRANT_BYOK);
+  const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
   assert.match(r.error, /Daily limit reached/);
 });
 
 test('global cap hit + allow_byok + key → BYOK path', async () => {
   const pool = makePool({ userSpent: 0, globalSpent: 20000, keyEnc: GOOD_KEY_ENC });
-  const r = await resolveAppPayer(pool, JWT_SECRET, 7, GRANT_BYOK);
+  const r = await resolveAppPayer(pool, DATA_KEY, 7, GRANT_BYOK);
   assert.deepEqual(r, { byok: true, apiKey: USER_KEY });
 });
 

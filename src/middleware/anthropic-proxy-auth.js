@@ -1,13 +1,15 @@
 'use strict';
 
-const jwt = require('jsonwebtoken');
 const log = require('../services/logger');
+const platformJwt = require('../services/platform-jwt');
 
 // Authenticates worker → platform Anthropic-proxy requests
 // (POST /api/internal/anthropic/v1/messages, etc.).
 //
-// Sibling of internal-auth.js — same JWT shape (`scope: 'worker:session'`),
-// same private-IP gate, same JWT_SECRET — but reads the token from
+// Sibling of internal-auth.js — same token authority (WORKER_JWT_SECRET,
+// verified through platform-jwt with HS256 / issuer / `usernode:worker`
+// audience / `worker:session` purpose all pinned), same private-IP gate —
+// but reads the token from
 // `x-api-key` instead of `Authorization: Bearer`. The Anthropic SDK and
 // the `claude` CLI authenticate via `x-api-key`, so the worker container
 // puts its WORKER_JWT in `ANTHROPIC_API_KEY` and the SDK forwards it
@@ -45,20 +47,19 @@ function anthropicProxyAuth(req, res, next) {
     return res.status(401).json({ ok: false, code: 'missing_api_key' });
   }
 
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    log.error('anthropic-proxy-auth', 'JWT_SECRET not configured');
+  if (!process.env.WORKER_JWT_SECRET) {
+    log.error('anthropic-proxy-auth', 'WORKER_JWT_SECRET not configured');
     return res.status(500).json({ ok: false, code: 'server_misconfigured' });
   }
 
   let claims;
   try {
-    claims = jwt.verify(token, secret);
+    claims = platformJwt.verifyWorkerToken(token);
   } catch (err) {
     return res.status(401).json({ ok: false, code: 'bad_token', message: err.message });
   }
 
-  if (!claims || claims.scope !== 'worker:session' || typeof claims.session_id === 'undefined') {
+  if (!claims || claims.scope !== platformJwt.PUR_WORKER || typeof claims.session_id === 'undefined') {
     return res.status(403).json({ ok: false, code: 'bad_scope' });
   }
 

@@ -274,7 +274,7 @@ test('the declaration route holds the value encrypted, never in the clear', () =
   const pendingJs = fs.readFileSync(
     path.join(__dirname, '../src/services/pending-secrets.js'), 'utf8'
   );
-  assert.match(pendingJs, /encrypt\(value, jwtSecret\)/, 'held values are encrypted at rest');
+  assert.match(pendingJs, /encrypt\(value, dataKey\)/, 'held values are encrypted at rest');
   assert.match(pendingJs, /SET value_enc = NULL/,
     'and the ciphertext is dropped once the value is live in the real store');
 });

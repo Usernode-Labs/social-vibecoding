@@ -140,7 +140,7 @@ async function checkBudget(pool, userId) {
 // and services/sync-main.js — now the single home, used by
 // resolveBillingPath below. Returns the decrypted key string or null
 // (missing key, decrypt failure — both mean "no key on file").
-async function loadUserApiKey(pool, userId, jwtSecret) {
+async function loadUserApiKey(pool, userId, dataKey) {
   try {
     const { rows } = await pool.query(
       'SELECT anthropic_key_enc FROM users WHERE id = $1',
@@ -148,7 +148,7 @@ async function loadUserApiKey(pool, userId, jwtSecret) {
     );
     if (rows[0]?.anthropic_key_enc) {
       const secrets = require('./secrets');
-      const key = secrets.decrypt(rows[0].anthropic_key_enc, jwtSecret);
+      const key = secrets.decrypt(rows[0].anthropic_key_enc, dataKey);
       if (!key) {
         log.warn('limits', 'BYOK key decryption failed; treating as no key', { userId });
       }
@@ -174,10 +174,10 @@ async function loadUserApiKey(pool, userId, jwtSecret) {
 // Key decryption failures keep the existing tolerance (warn + treat as
 // "no key") — which now means a 429 once the cap is hit, instead of
 // the old silent payer switch.
-async function resolveBillingPath(pool, jwtSecret, userId) {
+async function resolveBillingPath(pool, dataKey, userId) {
   const budget = await checkBudget(pool, userId);
   if (!budget.error) return { apiKey: null, byok: false };
-  const apiKey = await loadUserApiKey(pool, userId, jwtSecret);
+  const apiKey = await loadUserApiKey(pool, userId, dataKey);
   if (apiKey) return { apiKey, byok: true };
   // #463: this branch is only reachable with NO usable key on file, so
   // the BYOK hint is always accurate here. checkBudget itself stays

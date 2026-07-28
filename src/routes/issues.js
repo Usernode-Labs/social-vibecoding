@@ -518,7 +518,7 @@ function issueRoutes(config) {
         // Even other admins reading the issues table see only ciphertext;
         // the GET /api/apps/:slug/issues route strips it from the
         // payload before serializing (see further below).
-        const valueEnc = action === 'set' ? encrypt(value, config.jwtSecret) : null;
+        const valueEnc = action === 'set' ? encrypt(value, config.dataEncryptionKey) : null;
         const valueLast4 = action === 'set' && !isPrivate
           ? value.slice(-4) : null;
 
@@ -2087,7 +2087,7 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
 
     if (action === 'set') {
       const valueEnc = payload.valueEnc || null;
-      const plaintext = valueEnc ? decrypt(valueEnc, config.jwtSecret) : null;
+      const plaintext = valueEnc ? decrypt(valueEnc, config.dataEncryptionKey) : null;
       if (!plaintext) {
         await client.query('ROLLBACK');
         log.warn('issues', 'Secret-change proposal could not decrypt value', { issueId: issue.id });
@@ -2101,7 +2101,7 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
         // classification the manifest doesn't agree with.
         await platformEnv.setValue(client, issue.app_id, key, plaintext, {
           userId: locked.created_by || null,
-          jwtSecret: config.jwtSecret,
+          dataKey: config.dataEncryptionKey,
         });
       } else {
         // Read canonical `private`, fall back to `sensitive` for issues
@@ -2110,7 +2110,7 @@ async function maybeApplySecretChangeProposal(config, pool, issue, options = {})
         const valueLast4 = isPrivate ? null : plaintext.slice(-4);
         // Re-encrypt to ensure the stored row uses a fresh IV (the
         // payload ciphertext was captured at proposal time).
-        const reEnc = encrypt(plaintext, config.jwtSecret);
+        const reEnc = encrypt(plaintext, config.dataEncryptionKey);
         await client.query(
           `INSERT INTO app_secrets (app_id, key, value_enc, value_last4, updated_by)
            VALUES ($1, $2, $3, $4, $5)
