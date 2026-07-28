@@ -249,20 +249,23 @@ function deriveScopeColumns(seasonEventId, seasonEventToSeasonMap) {
 //     replay-guarded the same way (a user can legitimately receive more
 //     than one manual bonus award on the same challenge).
 //   - `session_id`/`nullifier_hex` only ever come from zkpassport rows;
-//     `wallet_address`/`reason` only ever come from activity_extra_points
-//     rows. Omitted (not just null) when the origin doesn't carry them,
-//     so `metadata->>'nullifier_hex' IS NOT NULL` stays a clean filter.
+//     `reason` only ever comes from activity_extra_points rows;
+//     `wallet_address` comes from the two completion tables (NOT NULL on
+//     flash, nullable on zkpassport — activity_extra_points has no such
+//     column). Omitted (not just null) when the origin doesn't carry
+//     them, so `metadata->>'nullifier_hex' IS NOT NULL` stays a clean
+//     filter.
 function buildBackfillMetadata(origin, row) {
   const metadata = { origin };
   if (origin === 'activity_extra_points') {
     metadata.kind = 'extra_points';
     if (row.reason != null) metadata.reason = row.reason;
-    if (row.wallet_address != null) metadata.wallet_address = row.wallet_address;
   } else {
     metadata.kind = 'challenge_completion';
     if (origin === 'zkpassport_completions' && row.session_id != null) metadata.session_id = row.session_id;
     if (origin === 'zkpassport_completions' && row.nullifier_hex != null) metadata.nullifier_hex = row.nullifier_hex;
   }
+  if (row.wallet_address != null) metadata.wallet_address = row.wallet_address;
   return metadata;
 }
 
@@ -848,20 +851,38 @@ function diagnoseUniqueViolation(err, origin, sourceId) {
 
 // The §8.6 award backfill: flash_challenge_completions +
 // zkpassport_completions + activity_extra_points -> user_activities.
-// Assumed source shape for all three (see the file header note): each
-// row carries `participant_id`, `phase_available_activity_id` (which
-// challenge the award/completion is against) and a nullable
-// `offchain_activity_id` (set when the source app already recorded a
-// matching points-bearing activity row for this exact completion/award —
-// the reconcile path). zkpassport rows additionally carry `session_id`/
-// `nullifier_hex`; activity_extra_points rows carry `points`/`reason`/
-// `wallet_address`. A further assumption, load-bearing for this
+// Source shape (verified against the topochain Laravel migrations —
+// create_flash_challenge_completions_table, create_zkpassport_
+// completions_table, create_activity_extra_points_table): each row
+// carries `participant_id` and an FK to `phase_available_activities`
+// naming which challenge the award/completion is against — called
+// `challenge_id` on the two completion tables and
+// `phase_available_activity_id` on activity_extra_points (see
+// BACKFILL_CHALLENGE_FK below). The two completion tables also carry a
+// nullable `offchain_activity_id` (set when the source app already
+// recorded a matching points-bearing activity row for this exact
+// completion — the reconcile path) and a `wallet_address` (NOT NULL on
+// flash, nullable on zkpassport); activity_extra_points has neither, so
+// its rows always take the insert path. zkpassport rows additionally
+// carry `session_id`/`nullifier_hex`; activity_extra_points rows carry
+// `points`/`reason`. A further assumption, load-bearing for this
 // function specifically: the source enforces "one completion per (user,
 // challenge)" and "one claim per (challenge, nullifier)" the same way
 // its own now-excluded completion tables did — findAwardBackfillCollisions
 // checks that assumption up front rather than trusting it silently.
+//
+// Which source column is the FK to phase_available_activities, per
+// origin. Getting this wrong is not a silent mis-map: every FK value
+// must resolve through challengesMap, so a wrong column name reads
+// undefined and throws on the first row.
+const BACKFILL_CHALLENGE_FK = {
+  flash_challenge_completions: 'challenge_id',
+  zkpassport_completions: 'challenge_id',
+  activity_extra_points: 'phase_available_activity_id',
+};
+
 async function backfillAwards(client, sourcePool, participantMap, challengesMap, challengeToSeasonEvent, activitiesMap) {
-  const origins = ['flash_challenge_completions', 'zkpassport_completions', 'activity_extra_points'];
+  const origins = Object.keys(BACKFILL_CHALLENGE_FK);
 
   // Phase 1: resolve every row's ids and decide its mode (reconcile vs
   // insert) WITHOUT touching the database — this is what makes the
@@ -872,9 +893,10 @@ async function backfillAwards(client, sourcePool, participantMap, challengesMap,
     for (const row of rows) {
       const userId = participantMap.get(row.participant_id);
       if (userId === undefined) throw new Error(`${origin}: unmapped participant_id ${row.participant_id}`);
-      const challengeId = challengesMap.get(row.phase_available_activity_id);
+      const challengeFk = BACKFILL_CHALLENGE_FK[origin];
+      const challengeId = challengesMap.get(row[challengeFk]);
       if (challengeId === undefined) {
-        throw new Error(`${origin}: unmapped phase_available_activity_id ${row.phase_available_activity_id}`);
+        throw new Error(`${origin}: unmapped ${challengeFk} ${row[challengeFk]}`);
       }
       const seasonEventId = challengeToSeasonEvent.get(challengeId);
       const mapped = mapBackfillRow(origin, row, { userId, challengeId, seasonEventId });
@@ -1441,6 +1463,7 @@ module.exports = {
   buildBackfillMetadata,
   mapBackfillRow,
   findAwardBackfillCollisions,
+  BACKFILL_CHALLENGE_FK,
   // DB-touching, exported for reuse/testing
   querySource,
   makeSourcePool,

@@ -224,6 +224,23 @@
       "description": "HMAC key for private-app edge grants and the scoped `__usernode_access` per-host cookie (`routes/internal.js`, `services/app-access.js`). Both purposes share this key and are kept apart by an explicit `pur` claim, so a 120s grant cannot be replayed as a 12h cookie. Set by the deploy from `USERNODE_EDGE_JWT_SECRET` (`openssl rand -hex 32`) — a value distinct from the worker secret, or the audience separation collapses. Safe to rotate: it just makes people re-authorize."
     },
     {
+      "key": "TOPOCHAIN_INGEST_API_KEY",
+      "group": "Topochain",
+      "private": true,
+      "description": "Shared secret compared against the X-Ingest-Key header on the two ingest writes, POST /api/v4/slot-outcomes and /api/v4/epoch-stats (src/middleware/topochain-auth.js#ingestApiKey). Generate with `openssl rand -hex 32`. Unset doesn't block boot — every ingest write returns 500 'Ingest key authentication not configured.' until it is set. The only known caller is the observability-hub-receiver (usernode repo), which must be configured with the same value at its v4 cutover. Rotates independently of TOPOCHAIN_PARTNER_API_KEY."
+    },
+    {
+      "key": "TOPOCHAIN_PARTNER_API_KEY",
+      "group": "Topochain",
+      "private": true,
+      "description": "Shared secret compared against the partner group's X-API-Key header (src/middleware/topochain-auth.js#partnerApiKey). Generate with `openssl rand -hex 32` and hand it to partner API callers at their /api/v4 cutover. Unset doesn't block boot — every partner-group request returns 500 'API key authentication not configured.' until it is set. Rotates independently of TOPOCHAIN_INGEST_API_KEY."
+    },
+    {
+      "key": "TOPOCHAIN_ZK_BRIDGE_URL",
+      "group": "Topochain",
+      "description": "Base URL of the external zkPassport bridge service that verifies proofs for POST /api/v4/mobile/zkpassport/complete (src/services/topochain/zk-bridge.js). Unset doesn't block boot — every zkpassport/complete call returns 500 'The zkPassport bridge is not configured.' until it is set. Not secret, so it stays visible in the console for is-it-pointed-at-the-right-host checks."
+    },
+    {
       "key": "USERNODE_DOMAIN",
       "group": "Managed by the deploy",
       "description": "Apex domain the platform and every app subdomain live under. Set from a GitHub repo variable by the deploy and listed here for documentation only — changing it needs the DNS and certificate change to land in the same breath, so it is deliberately not editable in the console."
