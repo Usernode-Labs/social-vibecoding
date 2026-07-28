@@ -4,10 +4,15 @@
 // resolution carried over from §4.10).
 //
 // Mounted in server.js BEFORE authMiddleware, alongside public.js and
-// partner.js: every route here is PUBLIC (SPEC: "Auth: none") — these are
-// chain-side/backoffice telemetry callers, not browser sessions or partner
-// API-key holders, so unlike partner.js there is no auth middleware to
-// apply at all.
+// partner.js. The SPEC carries "Auth: none" for this group from v2, where
+// the endpoints sat behind a network boundary — on this platform they are
+// internet-reachable, so the two WRITE endpoints (POST /slot-outcomes,
+// POST /epoch-stats) are gated by ingestApiKey (X-Ingest-Key vs
+// TOPOCHAIN_INGEST_API_KEY; see src/middleware/topochain-auth.js). The
+// reads (__ping, GET /onchain-accounts) stay public per SPEC. The only
+// known write caller is the observability-hub-receiver's sidecar sinks
+// (usernode repo), which gain the header as part of their v4 cutover —
+// the same change that already re-points their URLs to the renamed paths.
 //
 // Judgment calls made here where the spec text was ambiguous (documented
 // inline at the point of use, flagged again in the task report):
@@ -60,6 +65,7 @@ const { Router } = require('express');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { ok, fail } = require('./helpers');
+const { ingestApiKey } = require('../../middleware/topochain-auth');
 
 // ─── Body-shape detection (SPEC 1490, 1560) ──────────────────────────────
 //
@@ -295,6 +301,7 @@ function buildEpochStatsUpsert(row) {
 function topochainIngestRoutes(config) {
   const router = Router();
   const pool = getPool(config);
+  const requireIngestKey = ingestApiKey(config);
 
   // Mount-order probe (plan Task 3), kept as-is per the Task 7 brief.
   router.get('/api/v4/ingest/__ping', (_req, res) => ok(res, {}));
@@ -365,7 +372,7 @@ function topochainIngestRoutes(config) {
   });
 
   // ── POST /slot-outcomes (SPEC 1485-1546, v2 POST /slot_outcomes) ────
-  router.post('/api/v4/slot-outcomes', async (req, res) => {
+  router.post('/api/v4/slot-outcomes', requireIngestKey, async (req, res) => {
     try {
       const batch = extractSlotOutcomesBatch(req.body);
       if (!Array.isArray(batch)) {
@@ -449,7 +456,7 @@ function topochainIngestRoutes(config) {
   });
 
   // ── POST /epoch-stats (SPEC 1548-1586, v2 POST /epoch_stats) ────────
-  router.post('/api/v4/epoch-stats', async (req, res) => {
+  router.post('/api/v4/epoch-stats', requireIngestKey, async (req, res) => {
     try {
       const batch = extractEpochStatsBatch(req.body);
       if (!Array.isArray(batch)) {

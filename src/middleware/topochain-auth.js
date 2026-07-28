@@ -13,6 +13,13 @@
 //     unset and the request proceeds anonymously.
 //   - partnerApiKey — partner group (SPEC §4.3). Architecture decision #5:
 //     strict compare of X-API-Key against a single configured secret.
+//   - ingestApiKey — ingest group's two write endpoints (SPEC §4.4 says
+//     "Auth: none", carried from v2 where the endpoints sat behind a
+//     network boundary; on this platform they are internet-reachable, so
+//     the pre-merge review asked for a shared-secret gate). Same strict-
+//     compare shape as partnerApiKey, on its own header (X-Ingest-Key)
+//     and its own secret, so partner and ingest credentials can rotate
+//     independently.
 //   - mobileTokenAuth — mobile group (SPEC §4.5). Bearer token -> sha256 ->
 //     mobile_auth_tokens lookup; enforces the token-ability contract (SPEC
 //     1588-1599).
@@ -82,6 +89,29 @@ function partnerApiKey(config) {
     const provided = req.headers['x-api-key'];
     if (typeof provided !== 'string' || provided !== config.topochainPartnerApiKey) {
       return fail(res, 401, 'Invalid or missing API key.');
+    }
+
+    return next();
+  };
+}
+
+// ─── ingestApiKey (ingest write gate — see the header note above) ────────
+//
+// Mirrors partnerApiKey exactly: unconfigured server 500s BEFORE the key
+// is inspected (fail loudly, never silently reject every caller), then a
+// strict compare of X-Ingest-Key against the one configured secret. The
+// sole known caller is the observability-hub-receiver's sidecar sinks
+// (usernode repo, tools/observability-hub-receiver), which must be
+// configured with this header when it is cut over to the v4 paths.
+function ingestApiKey(config) {
+  return (req, res, next) => {
+    if (!config.topochainIngestApiKey) {
+      return fail(res, 500, 'Ingest key authentication not configured.');
+    }
+
+    const provided = req.headers['x-ingest-key'];
+    if (typeof provided !== 'string' || provided !== config.topochainIngestApiKey) {
+      return fail(res, 401, 'Invalid or missing ingest key.');
     }
 
     return next();
@@ -173,4 +203,4 @@ function mobileTokenAuth(config, { ability = 'session', forbiddenMessage } = {})
   };
 }
 
-module.exports = { optionalSessionAuth, partnerApiKey, mobileTokenAuth, extractBearerToken };
+module.exports = { optionalSessionAuth, partnerApiKey, ingestApiKey, mobileTokenAuth, extractBearerToken };

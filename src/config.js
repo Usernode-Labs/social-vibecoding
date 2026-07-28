@@ -206,6 +206,18 @@ function load() {
     // makes every partner-group request 500 with "API key authentication
     // not configured." until an operator sets TOPOCHAIN_PARTNER_API_KEY.
     topochainPartnerApiKey: process.env.TOPOCHAIN_PARTNER_API_KEY || '',
+    // Topochain ingest write gate: the shared secret compared against the
+    // X-Ingest-Key header on POST /api/v4/slot-outcomes and /epoch-stats
+    // (src/middleware/topochain-auth.js#ingestApiKey). The spec carried
+    // "Auth: none" from v2, where these endpoints sat behind a network
+    // boundary; here they are internet-reachable, so writes require this
+    // key. Deliberately separate from TOPOCHAIN_PARTNER_API_KEY (the two
+    // credentials rotate independently) and OPTIONAL like it — unset
+    // doesn't block boot, it makes every ingest write 500 with "Ingest
+    // key authentication not configured." The only known caller is the
+    // observability-hub-receiver (usernode repo), configured with this
+    // header at its v4 cutover.
+    topochainIngestApiKey: process.env.TOPOCHAIN_INGEST_API_KEY || '',
     // Topochain zkPassport bridge (plan Task 10; SPEC §4.5 POST
     // /mobile/zkpassport/complete, lines 2092-2141): the external service
     // that actually verifies a zkPassport proof. Deliberately OPTIONAL and
@@ -257,6 +269,7 @@ function load() {
   console.log(`  SELF_APP_CONTAINER=${config.selfAppContainer}`);
   console.log(`  SELF_APP_PUBLIC_VOTING=${config.selfAppPublicVoting} (Phase 4: ${config.selfAppPublicVoting ? 'enabled — all users can see + vote on self-app PRs' : 'disabled — self-app is admin-only'})`);
   console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
+  console.log(`  TOPOCHAIN_INGEST_API_KEY=${config.topochainIngestApiKey ? mask(config.topochainIngestApiKey) : '(not set — ingest writes return 500)'}`);
   console.log(`  TOPOCHAIN_ZK_BRIDGE_URL=${config.topochainZkBridgeUrl || '(not set — zkpassport/complete returns 500)'}`);
 
   return config;

@@ -221,8 +221,10 @@ function startServer(config) {
   });
 }
 
+const INGEST_KEY = 'test-ingest-key';
+
 test.before(async () => {
-  await startServer({ databaseUrl: 'postgres://fake/fake' });
+  await startServer({ databaseUrl: 'postgres://fake/fake', topochainIngestApiKey: INGEST_KEY });
   base = `http://127.0.0.1:${server.address().port}`;
 });
 
@@ -242,7 +244,7 @@ async function get(path) {
 async function postJson(path, body) {
   return fetch(`${base}${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-ingest-key': INGEST_KEY },
     body: JSON.stringify(body),
   });
 }
@@ -253,6 +255,50 @@ test('__ping responds 200 unauthenticated', async () => {
   const res = await fetch(`${base}/api/v4/ingest/__ping`);
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { success: true });
+});
+
+// ─── Ingest write auth (X-Ingest-Key) — reads stay public, writes are gated ─
+
+test('POST /slot-outcomes: missing X-Ingest-Key -> 401', async () => {
+  const res = await fetch(`${base}/api/v4/slot-outcomes`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: '[]',
+  });
+  assert.equal(res.status, 401);
+  assert.deepEqual(await res.json(), { success: false, error: 'Invalid or missing ingest key.' });
+});
+
+test('POST /epoch-stats: wrong X-Ingest-Key -> 401', async () => {
+  const res = await fetch(`${base}/api/v4/epoch-stats`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-ingest-key': 'nope' },
+    body: '[]',
+  });
+  assert.equal(res.status, 401);
+  assert.deepEqual(await res.json(), { success: false, error: 'Invalid or missing ingest key.' });
+});
+
+test('GET /onchain-accounts needs no ingest key (public read)', async () => {
+  const res = await get('/api/v4/onchain-accounts?chainId=chainA');
+  assert.equal(res.status, 200);
+});
+
+test('unconfigured server -> 500 before the ingest key is even checked (own server instance)', async () => {
+  await withMockPool({ databaseUrl: 'postgres://fake/fake', topochainIngestApiKey: '' }, async (app) => {
+    const s = app.listen(0);
+    await new Promise((r) => s.once('listening', r));
+    try {
+      const b = `http://127.0.0.1:${s.address().port}`;
+      const res = await fetch(`${b}/api/v4/slot-outcomes`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ingest-key': 'anything' },
+        body: '[]',
+      });
+      assert.equal(res.status, 500);
+      assert.deepEqual(await res.json(), { success: false, error: 'Ingest key authentication not configured.' });
+    } finally {
+      s.close();
+    }
+  });
 });
 
 // ─── GET /onchain-accounts ────────────────────────────────────────────────
