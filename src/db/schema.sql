@@ -1684,6 +1684,10 @@ COMMENT ON TABLE progress_estimates IS 'staging:private';
 -- (staging:private), so a prod-cloned staging DB ships this table empty
 -- and seeds its own "Staging demo …" rows. A private table may FK public
 -- tables (apps, users); only the reverse is barred by the linter.
+-- RETIRED by #827: the "Ask AI" advisor panel was replaced by the
+-- "Explore in dev chat" flow, so nothing reads or writes this table any
+-- more. The DDL stays (migrations are append-only; dropping is a separate,
+-- deliberate data-retirement change) and existing rows are left in place.
 CREATE TABLE IF NOT EXISTS proposal_ai_messages (
   id            SERIAL PRIMARY KEY,
   app_id        INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,

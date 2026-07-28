@@ -210,6 +210,17 @@
       "expectSelector": ".voting-help-btn"
     },
     {
+      "name": "Foreign proposal head offers Explore in dev chat, and no retired Ask AI button (#827)",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000001",
+      "expectSelector": "#gc-thread-head .gc-explore-chat-btn[data-proposal-id='9000001']",
+      "expectText": "Explore in dev chat"
+    },
+    {
+      "name": "Dev board cards carry the Explore-in-dev-chat pill (#827)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": ".gc-explore-chat-btn[data-proposal-id]"
+    },
+    {
       "name": "At-least-approvals proposal renders the approvals pill (#646)",
       "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
       "expectText": "of 1 approval"

@@ -328,7 +328,7 @@ test('Kanban Done footer is absent once every completed item is loaded', () => {
 // ── loadMoreMerged re-render is view-mode aware ────────────────────────────
 
 // A capturing #gc-merged element; records innerHTML writes and no-ops the
-// querySelector calls _applyAskAiCardAvailability makes.
+// querySelector calls _applyExploreChatAvailability makes.
 const captureEl = (sink) => ({
   set innerHTML(v) { sink.push(v); },
   querySelector: () => null,
