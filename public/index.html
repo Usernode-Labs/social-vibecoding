@@ -1483,6 +1483,11 @@
        TopochainSeasons.open(). -->
   <script src="/js/topochain-leaderboard.js"></script>
   <script src="/js/topochain-seasons.js"></script>
+  <!-- Topochain admin console screens (Task 15): the 'topochain' entry
+       in AdminConsole.SECTIONS delegates to AdminTopochain.render(),
+       which owns its own sub-nav under #admin/topochain/<sub>. Loaded
+       after admin-console.js (which it extends) and before app.js. -->
+  <script src="/js/admin-topochain.js"></script>
   <script src="/js/proposal-discuss.js"></script>
   <!-- Build-failure log panel (#416). Loaded before app-view.js/home.js
        so both surfaces can reference window.BuildLog. -->
