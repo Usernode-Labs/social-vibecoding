@@ -277,6 +277,25 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS behind_main INTEGER 
 -- naming mirrors chat_session_specs.shared_to_group_at ("private until
 -- explicitly shared").
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS shared_at TIMESTAMPTZ;
+-- Opt-in TRANSCRIPT visibility — a second, strictly NARROWER opt-in that
+-- sits on top of shared_at: NULL = the conversation with the AI stays
+-- private to the owner (every pre-existing row), non-NULL = anyone with
+-- view access to the app may READ the dev-chat transcript (and fork it
+-- into their own session via POST /api/sessions/:id/fork).
+--
+-- Readability requires BOTH stamps to be non-NULL, deliberately
+-- redundant: /share-transcript sets shared_at too (publishing the chat
+-- implies board visibility) and /unshare clears BOTH, so there is no
+-- state where a hidden session is still readable. Reads are served by
+-- GET /api/sessions/:id/transcript, which sanitises every row through a
+-- deny-by-default allowlist (services/transcript-share.js) — costs,
+-- token counts, raw agent stderr (metadata.ccLog), owner-only action
+-- cards and attachment BYTES never leave the owner's session.
+--
+-- Posting into someone else's chat stays structurally impossible: POST
+-- /api/sessions/:id/chat is owner-scoped (cs.user_id = caller), so
+-- "read-only" is enforced by authorization, not by missing UI.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS transcript_shared_at TIMESTAMPTZ;
 -- #361: persisted merge-conflict snapshot so proposal cards can render a
 -- rich merge-status badge (clean | behind | conflict | resolving |
 -- failed) without a live GitHub call per render. Derived/written by
@@ -480,8 +499,17 @@ CREATE INDEX IF NOT EXISTS chat_sessions_activity_idx ON chat_sessions(status, l
 --                            decision turn implemented it) | 'question'. Drives
 --                            the cloned session's follow-up message. NULL until
 --                            the run finishes.
---   cloned_from_session_id = on ORDINARY sessions: the headless session this
---                            dev chat was cloned from (many clones per source).
+--   cloned_from_session_id = on ORDINARY sessions: the session this dev chat
+--                            was seeded from (many clones/forks per source).
+--                            Two producers, told apart by the SOURCE row's
+--                            is_headless: the headless auto session this was
+--                            cloned from (POST /clone-headless), or — since
+--                            transcript sharing — another user's HUMAN dev
+--                            chat this was forked from (POST /fork, source
+--                            is_headless = FALSE). Either way the copied
+--                            history rows carry metadata.inheritedFrom, which
+--                            is what DevChat._markInheritedMessages keys the
+--                            collapsed-agent-block rendering off.
 --   created_from_issue_number = #287: on ORDINARY sessions, the GitHub issue
 --                            this dev chat was started for via the issue row's
 --                            start-work button. Recorded at creation time (not

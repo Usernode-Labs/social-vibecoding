@@ -1455,6 +1455,12 @@
   <!-- Pure two-half spec splitter (#196). Must load BEFORE dev-chat.js,
        whose spec viewer calls window.splitSpecSections. -->
   <script src="/js/spec-sections.js"></script>
+  <!-- Read-only renderer for a SHARED dev-chat transcript. Pure string
+       builder; app-view.js's topic page calls SessionTranscript.renderHtml.
+       Load order is unconstrained relative to dev-chat.js — it looks up
+       DevChat.renderMarkdown at CALL time (and falls back to escaped text
+       if it's missing), not at load time. -->
+  <script src="/js/session-transcript.js"></script>
   <!-- Pure progress-indicator helpers (#50). Must load BEFORE dev-chat.js,
        whose elapsed ticker / live-activity summary call formatElapsed and
        summarizeCcProgress. -->

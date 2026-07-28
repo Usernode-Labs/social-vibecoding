@@ -939,6 +939,26 @@ const AppView = {
       if (shareBtn) { AppView._setSessionShared(parseInt(shareBtn.dataset.shareChip, 10), true, shareBtn); return; }
       const unshareBtn = e.target.closest('[data-unshare-chip]');
       if (unshareBtn) { AppView._setSessionShared(parseInt(unshareBtn.dataset.unshareChip, 10), false, unshareBtn); return; }
+      // The second, narrower opt-in: publish/revoke the TRANSCRIPT.
+      const shareChatBtn = e.target.closest('[data-transcript-chip]');
+      if (shareChatBtn) {
+        AppView._setTranscriptShared(parseInt(shareChatBtn.dataset.transcriptChip, 10), true, shareChatBtn);
+        return;
+      }
+      const unshareChatBtn = e.target.closest('[data-untranscript-chip]');
+      if (unshareChatBtn) {
+        AppView._setTranscriptShared(parseInt(unshareChatBtn.dataset.untranscriptChip, 10), false, unshareChatBtn);
+        return;
+      }
+      // "Read chat" on someone else's shared card: open the session's
+      // topic page with the transcript section already expanded.
+      const readChatBtn = e.target.closest('[data-read-chat]');
+      if (readChatBtn) {
+        const readId = parseInt(readChatBtn.dataset.readChat, 10);
+        AppView._transcriptOpen = readId;
+        AppView.openTopic('session', readId);
+        return;
+      }
       const archiveBtn = e.target.closest('[data-archive-chip]');
       if (archiveBtn) {
         (async () => {
@@ -1210,7 +1230,12 @@ const AppView = {
       // Plain-language summary (when one was generated) sits at the very top
       // of the proposal body region, above proposer / linked issues / roster
       // and the discussion thread — mirroring _issueBodyHtml for issues.
-      bodyHtml = AppView._proposalSummaryHtml(item) + AppView._proposalDetailsHtml(item);
+      bodyHtml = AppView._proposalSummaryHtml(item) + AppView._proposalDetailsHtml(item)
+        // shared_at (and so transcript_shared) survives promotion and
+        // merge, so a proposal whose owner published the dev chat keeps
+        // offering it here — the "how did this change come about?" read,
+        // available while voting and after it merged.
+        + AppView._transcriptSectionHtml(item);
     } else if (t.kind === 'session') {
       // A shared session's public page: the static card (no nav — we're
       // already here) plus a one-line explainer. The discussion mounts
@@ -1222,7 +1247,8 @@ const AppView = {
       const ownerName = item.username || (App.user ? App.user.username : '') || 'someone';
       const owner = escapeHtml(ownerName);
       cardHtml = AppView._renderSharedSessionCard({ ...item, username: ownerName }, { noNav: true });
-      bodyHtml = `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">Live dev session by ${owner} — the discussion below is visible to everyone and carries over if this becomes a proposal.</div>`;
+      bodyHtml = `<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">Live dev session by ${owner} — the discussion below is visible to everyone and carries over if this becomes a proposal.</div>`
+        + AppView._transcriptSectionHtml(item);
     } else {
       cardHtml = AppView._renderGovCard(item, { noNav: true });
       // Close-issue proposals store the proposer's reason in the payload;
@@ -1258,6 +1284,29 @@ const AppView = {
     if (window.Kudos) Kudos.attach(head);
     if (t.kind === 'issue') AppView._loadIssueComments(item);
     if (t.kind === 'proposal' && item.status !== 'merged') AppView._loadVoteRoster(item.id);
+
+    // Transcript section: same reason as the Explore pill below — the topic
+    // head has no delegated handler, so bind per paint. Rebinding on every
+    // repaint is leak-free because the old nodes go with the innerHTML.
+    // Auto-expanded (arrived via "Read chat") sections load immediately.
+    const transcriptToggle = head.querySelector('[data-transcript-toggle]');
+    if (transcriptToggle) {
+      transcriptToggle.addEventListener('click', () => AppView._toggleTranscript(transcriptToggle));
+      if (transcriptToggle.getAttribute('aria-expanded') === 'true') {
+        AppView._loadSessionTranscript(parseInt(transcriptToggle.dataset.transcriptToggle, 10));
+      }
+    }
+    // "Fork this chat" is painted INSIDE the transcript body (after its
+    // fetch), so it can't be bound here — delegate from the section.
+    const transcriptSection = head.querySelector('[data-transcript-section]');
+    if (transcriptSection) {
+      transcriptSection.addEventListener('click', (ev) => {
+        const forkBtn = ev.target.closest('[data-fork-chat]');
+        if (!forkBtn || forkBtn.disabled) return;
+        ev.preventDefault();
+        AppView.forkSharedChat(parseInt(forkBtn.dataset.forkChat, 10), forkBtn);
+      });
+    }
 
     // #321: wire the card pill in the topic head. Unlike the feed and
     // Completed list, #gc-thread-head has no delegated
@@ -3823,8 +3872,20 @@ const AppView = {
       ? `<button type="button" class="gc-vote-btn inline-flex items-center gap-1" data-session-discuss="${s.id}" title="Open the public discussion on this session">Open chat ${AppView._devChatBadge(sh ? sh.chat_count : 0)}</button>`
       : '';
     const visBtn = shared
-      ? `<button type="button" class="gc-vote-btn" data-unshare-chip="${s.id}" title="Make this session private again (removes it from everyone's In progress area)">Hide</button>`
-      : `<button type="button" class="gc-vote-btn" data-share-chip="${s.id}" title="Show this session in everyone's In progress area — others can comment and open its live preview, but can't open your dev chat">Make visible</button>`;
+      ? `<button type="button" class="gc-vote-btn" data-unshare-chip="${s.id}" title="Make this session private again (removes it from everyone's In progress area, and stops anyone reading the chat)">Hide</button>`
+      : `<button type="button" class="gc-vote-btn" data-share-chip="${s.id}" title="Show this session in everyone's In progress area — others can comment and open its live preview, but can't read your chat unless you also share it">Make visible</button>`;
+    // The SECOND opt-in, offered only once the session is visible (there
+    // is nowhere for a reader to reach an invisible session's chat from).
+    // Sharing the chat is a strictly narrower, separate decision from
+    // showing the card, so it gets its own chip rather than being folded
+    // into "Make visible".
+    const transcriptShared = !!s.transcript_shared_at;
+    const chatShareBtn = !shared ? '' : (transcriptShared
+      ? `<button type="button" class="gc-vote-btn" data-untranscript-chip="${s.id}" title="Stop others reading this chat (they keep the card and the discussion)">Chat shared</button>`
+      : `<button type="button" class="gc-vote-btn" data-transcript-chip="${s.id}" title="Let everyone read this chat, read-only — they can't reply in it, and can't see your costs or uploaded files">Share chat</button>`);
+    const subtitle = shared
+      ? (transcriptShared ? 'Visible to everyone · chat readable' : 'Visible to everyone')
+      : 'Your dev session';
     return `<div data-session-chip="${s.id}" role="button" tabindex="0"
       class="${AppView.SESSION_CARD_CLS} ${AppView.DEV_CARD_HOVER_CLS}"
       title="${s.busy ? 'AI is working — ' : ''}${label}">
@@ -3832,7 +3893,7 @@ const AppView = {
         ${AppView._devCardIcon('session')}
         <span class="flex-1 min-w-0">
           <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200 break-words">${label}</span>
-          <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${shared ? 'Visible to everyone' : 'Your dev session'}</span>
+          <span class="block text-xs text-zinc-500 dark:text-zinc-400 truncate">${subtitle}</span>
         </span>
         ${AppView.DEV_CARD_CHEVRON}
       </div>
@@ -3841,6 +3902,7 @@ const AppView = {
         ${AppView.issueChipsHtml(s.linked_issues)}
         ${previewBtn}
         ${chatBtn}
+        ${chatShareBtn}
         ${visBtn}
         <button type="button" class="dc-active-archive" data-archive-chip="${s.id}" data-name="${label}" title="Archive this session (closes the PR, frees the slot)">Archive</button>
       </div>
@@ -3868,6 +3930,12 @@ const AppView = {
       : '';
     const nav = noNav ? '' : ` data-shared-session-row="${s.id}" role="button" tabindex="0"`;
     const chevron = noNav ? '' : AppView.DEV_CARD_CHEVRON;
+    // "Read chat" only when the owner took the transcript opt-in. Not
+    // rendered in the noNav (topic-head) variant — you're already on the
+    // page that holds the transcript section there.
+    const readChat = (!noNav && s.transcript_shared)
+      ? `<button type="button" class="gc-vote-btn" data-read-chat="${s.id}" title="Read this session's dev chat (read-only)">Read chat</button>`
+      : '';
     // Same two-row structure as the owner's cards (see _renderMySessionCard)
     // — the Preview pill plus a busy tag can crush the title just the same.
     return `<div${nav} class="${AppView.SESSION_CARD_CLS}${noNav ? '' : ` ${AppView.DEV_CARD_HOVER_CLS}`}" title="${label}">
@@ -3883,6 +3951,7 @@ const AppView = {
         ${statusTag}
         ${AppView.issueChipsHtml(s.linked_issues)}
         ${AppView._devChatBadge(s.chat_count)}
+        ${readChat}
         ${preview}
       </div>
     </div>`;
@@ -4020,6 +4089,73 @@ const AppView = {
           AppView._sharedById[sessionId] = { id: sessionId, chat_count: 0 };
         }
       }
+      AppView._repaintDevBody();
+      if (AppView.appData) {
+        AppView._refreshSessionCaches(AppView.appData.slug).then((changed) => {
+          if (changed) AppView._repaintDevBody();
+        });
+      }
+    } catch (err) {
+      PlatformUI.toast(`Failed: ${err.message}`);
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+    }
+  },
+
+  // Confirmation copy for turning transcript sharing ON. Spelled out
+  // rather than a generic "are you sure?": the whole point is that the
+  // owner knows what becomes readable (their own typed messages included)
+  // and what doesn't, before they publish it.
+  SHARE_CHAT_CONFIRM: {
+    title: 'Let everyone read this chat?',
+    message: 'Anyone who can see this app will be able to read the whole conversation — '
+      + "your messages, the AI's replies, and what the coding agent did. They can't reply "
+      + "in your chat, and they can't see your costs or your uploaded files. You can turn "
+      + 'this off at any time.',
+    confirmLabel: 'Share chat',
+  },
+
+  // Publish / revoke the transcript of one of the viewer's own sessions
+  // ("Share chat" / "Chat shared"). Same optimistic shape as
+  // _setSessionShared: flip the cached row, repaint, then reconcile with
+  // server truth in the background.
+  //
+  // Turning it ON is gated behind ConfirmModal (webview-safe — native
+  // confirm() is suppressed in several shells the platform runs in).
+  // Turning it OFF is immediate: revoking access should never be the
+  // slower path.
+  async _setTranscriptShared(sessionId, on, btn) {
+    if (!sessionId) return;
+    if (on) {
+      const ok = await ConfirmModal.show(AppView.SHARE_CHAT_CONFIRM);
+      if (!ok) return;
+    }
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '...'; }
+    try {
+      const resp = await fetch(
+        `/api/sessions/${sessionId}/${on ? 'share-transcript' : 'unshare-transcript'}`,
+        { method: 'POST' }
+      );
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        PlatformUI.toast(body.error || `Failed (HTTP ${resp.status}).`);
+        if (btn) { btn.disabled = false; btn.textContent = original; }
+        return;
+      }
+      const s = (AppView._mySessions || []).find((x) => x.id === sessionId);
+      if (s) {
+        s.transcript_shared_at = on
+          ? (body.transcript_shared_at || new Date().toISOString())
+          : null;
+        // share-transcript implies visibility server-side — mirror that
+        // locally so the card jumps to the "Visible to everyone" group in
+        // the same repaint rather than after the background refresh.
+        if (on && !s.shared_at) s.shared_at = body.shared_at || new Date().toISOString();
+      }
+      // Drop any cached transcript for this session: what a reader may see
+      // just changed, and a stale cache would keep serving the old answer
+      // to the owner's own preview.
+      if (AppView._transcripts) delete AppView._transcripts[sessionId];
       AppView._repaintDevBody();
       if (AppView.appData) {
         AppView._refreshSessionCaches(AppView.appData.slug).then((changed) => {
@@ -4172,6 +4308,170 @@ const AppView = {
         ${omitted}
         ${rows.join('')}
       </div>`;
+  },
+
+  // ── Shared dev-chat transcript (read-only) ─────────────────────────
+  //
+  // Rendered on a shared session's topic page, and on a proposal's page
+  // when its owner published the chat. Collapsed by default and fetched on
+  // expand: a transcript is the biggest payload on either page and most
+  // visits are there for the discussion, not the chat.
+
+  // Per-session transcript cache, so re-expanding (or a WS-driven
+  // _renderTopicHead repaint) paints from memory instead of refetching.
+  // Cleared for a session when its owner toggles sharing (see
+  // _setTranscriptShared).
+  _transcripts: {},
+
+  // The id of the session whose transcript section is currently EXPANDED
+  // (null = collapsed). Deliberately AppView state rather than DOM state:
+  // _renderTopicHead re-innerHTML's the whole head on every WS/poll-driven
+  // refresh, so a DOM-only open flag gets wiped seconds after the reader
+  // expands the chat. Keeping it here means a repaint re-renders the
+  // section already open and repaints from _transcripts cache — no flicker,
+  // no lost scroll. Also what the "Read chat" chip sets to arrive expanded.
+  _transcriptOpen: null,
+
+  // The collapsed section shell. Returns '' when the item's owner hasn't
+  // published the transcript — the ONLY gate on the client; the server
+  // re-checks both share flags on the fetch, so a stale flag here buys
+  // nothing but an empty section.
+  //
+  // `item` is a shared-session row (transcript_shared + message_count from
+  // /shared-sessions) or a proposal row (transcript_shared from
+  // mergedRowSelect). The viewer's OWN rows carry transcript_shared_at
+  // instead, so accept either shape — the owner gets the section too, as
+  // the "preview what everyone else sees" path.
+  _transcriptSectionHtml(item) {
+    if (!item) return '';
+    const shared = !!(item.transcript_shared || item.transcript_shared_at);
+    if (!shared) return '';
+    const id = item.id;
+    const label = (typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText)
+      ? SessionTranscript.headerText(item, { expanded: false })
+      : 'Read the dev chat';
+    const expanded = AppView._transcriptOpen === id;
+    return `<div class="st-section" data-transcript-section="${id}">
+        <button type="button" class="st-section-head" data-transcript-toggle="${id}"
+          aria-expanded="${expanded ? 'true' : 'false'}">
+          <span class="st-caret" aria-hidden="true"></span>
+          <span data-transcript-label>${escapeHtml(label)}</span>
+          <span class="st-readonly-tag">read-only</span>
+        </button>
+        <div class="st-body" data-transcript-body="${id}" ${expanded ? '' : 'hidden'}></div>
+      </div>`;
+  },
+
+  // Expand/collapse + lazy load. Flips _transcriptOpen (the durable state)
+  // as well as the DOM, so the next repaint of the topic head paints the
+  // section in the same state instead of snapping it shut.
+  _toggleTranscript(toggle) {
+    const id = parseInt(toggle.dataset.transcriptToggle, 10);
+    const body = document.querySelector(`[data-transcript-body="${id}"]`);
+    if (!body) return;
+    const opening = body.hasAttribute('hidden');
+    AppView._transcriptOpen = opening ? id : null;
+    if (opening) {
+      body.removeAttribute('hidden');
+      toggle.setAttribute('aria-expanded', 'true');
+      AppView._loadSessionTranscript(id);
+    } else {
+      body.setAttribute('hidden', '');
+      toggle.setAttribute('aria-expanded', 'false');
+    }
+  },
+
+  // Fetch (or repaint from cache) one session's sanitised transcript.
+  // Best-effort in the same style as _loadIssueComments: a failure leaves a
+  // short note rather than breaking the page, and we re-resolve the slot
+  // after the await in case a repaint replaced it.
+  async _loadSessionTranscript(sessionId) {
+    if (!sessionId) return;
+    const paint = (data) => {
+      const slot = document.querySelector(`[data-transcript-body="${sessionId}"]`);
+      if (!slot) return;
+      // Swap the collapsed label ("Read the dev chat (24 messages)") for the
+      // expanded one ("Dev chat by alice · 24 messages · read-only") now
+      // that the payload names the owner. Keyed on a data attribute, not
+      // nth-child, so reordering the header's spans can't silently break it.
+      const head = document.querySelector(`[data-transcript-toggle="${sessionId}"]`);
+      if (head && typeof SessionTranscript !== 'undefined' && SessionTranscript.headerText) {
+        const label = head.querySelector('[data-transcript-label]');
+        if (label) label.textContent = SessionTranscript.headerText(data.session, { expanded: true });
+      }
+      const body = (typeof SessionTranscript !== 'undefined' && SessionTranscript.renderHtml)
+        ? SessionTranscript.renderHtml(data)
+        : '';
+      slot.innerHTML = body + AppView._transcriptActionsHtml(data.session);
+    };
+
+    const cached = AppView._transcripts[sessionId];
+    if (cached) { paint(cached); return; }
+
+    const slot = document.querySelector(`[data-transcript-body="${sessionId}"]`);
+    if (slot) slot.innerHTML = '<div class="st-truncated">Loading the chat…</div>';
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/transcript${AppView._demoQS()}`);
+      if (!res.ok) {
+        const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
+        if (after) {
+          after.innerHTML = `<div class="st-error">${res.status === 404
+            ? 'This chat is no longer shared.'
+            : `Couldn't load the chat (HTTP ${res.status}).`}</div>`;
+        }
+        return;
+      }
+      const data = await res.json();
+      AppView._transcripts[sessionId] = data;
+      paint(data);
+    } catch (err) {
+      const after = document.querySelector(`[data-transcript-body="${sessionId}"]`);
+      if (after) after.innerHTML = `<div class="st-error">Couldn't load the chat: ${escapeHtml(err.message)}</div>`;
+    }
+  },
+
+  // "Fork this chat", under the transcript. Suppressed for read-only
+  // viewers (a dev chat spends the viewer's own AI budget and its API is
+  // collab-gated — same rule as _exploreChatBtnHtml) and for the owner,
+  // whose own session is right there. can_fork comes from the server, so
+  // the button never appears where the POST would be refused.
+  _transcriptActionsHtml(session) {
+    if (!session || !session.can_fork || AppView.readOnly) return '';
+    return `<div class="st-actions">
+        <button type="button" class="gc-vote-btn" data-fork-chat="${session.id}"
+          title="${escapeAttr(AppView.FORK_CHAT_TITLE)}">Fork this chat</button>
+      </div>`;
+  },
+
+  FORK_CHAT_TITLE: 'Start your own dev session from this chat — you get a copy of the '
+    + "conversation and your own branch off theirs. Their session isn't affected.",
+
+  // Fork a shared chat into the viewer's own new session, then open it.
+  // The server owns every refusal (not shared, your own chat, session caps,
+  // platform capacity), so this just surfaces whatever it says.
+  async forkSharedChat(sessionId, btn) {
+    if (!sessionId) return;
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Forking…'; }
+    try {
+      const res = await fetch(`/api/sessions/${sessionId}/fork`, { method: 'POST' });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        PlatformUI.toast(body.error || `Couldn't fork this chat (HTTP ${res.status}).`);
+        if (btn) { btn.disabled = false; btn.textContent = original; }
+        return;
+      }
+      const created = body.session;
+      if (!created || !created.id) {
+        PlatformUI.toast("Fork created, but couldn't open it — check your sessions.");
+        if (btn) { btn.disabled = false; btn.textContent = original; }
+        return;
+      }
+      App.switchTab('dev', created.id, 'sessions');
+    } catch (err) {
+      PlatformUI.toast(`Couldn't fork this chat: ${err.message}`);
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+    }
   },
 
   // #396: lazily fetch + render an issue's GitHub comment thread into the

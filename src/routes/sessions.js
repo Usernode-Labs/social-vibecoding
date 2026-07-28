@@ -31,6 +31,9 @@ const modelFallback = require('../services/model-fallback');
 const { getActiveUserStats } = require('../services/active-users');
 const { chatLimiter, attachmentUploadLimiter } = require('../middleware/rate-limits');
 const attachmentsSvc = require('../services/attachments');
+// Read-only transcript sharing: the deny-by-default row/metadata allowlist
+// shared by GET /transcript and POST /fork (see services/transcript-share.js).
+const transcriptShare = require('../services/transcript-share');
 const appAccess = require('../services/app-access');
 const userAgentFiles = require('../services/user-agent-files');
 const debugAccess = require('../services/debug-access');
@@ -77,6 +80,92 @@ const ensureStagingInFlight = new Set();
 // recheck settles. (captureForSession is _inFlight-guarded internally too;
 // this just avoids a redundant rebuild on the rebuild path.)
 const recheckInFlight = new Set();
+
+// ── Staging mock data ──────────────────────────────────────────────────
+//
+// Read-only transcript for the fake 99xxxx shared-session ids the
+// ?demo=1 branch of GET /shared-sessions injects (those rows exist only in
+// that response, never in the DB, so a real transcript read would 404 and
+// the demo card's "Read chat" button would dead-end). Same convention as
+// stagingMockIssueComments in routes/issues.js: request-time only, never
+// persisted, and a strict no-op outside staging — the caller gates on
+// USERNODE_ENV === 'staging' && ?demo=1 before consulting this.
+//
+// Deliberately includes rows the sanitiser must strip (metadata.ccLog, a
+// platformIssueDraft card, per-message cost) so a tester can confirm on
+// staging that they do NOT render in the read-only view. Because the mock
+// goes through sanitizeTranscript exactly like a real read, that check
+// exercises the real allowlist rather than a hand-written "safe" payload.
+const STAGING_MOCK_TRANSCRIPT_IDS = new Set([990002]);
+
+function stagingMockTranscript(sessionId) {
+  if (!STAGING_MOCK_TRANSCRIPT_IDS.has(sessionId)) return null;
+  const t = (minsAgo) => new Date(Date.now() - minsAgo * 60 * 1000).toISOString();
+  const raw = [
+    {
+      id: 1, role: 'user', model: null, created_at: t(90), cost_cents: 0,
+      content: '[Mock] Can we make the board cards a bit easier to read on a phone?',
+      metadata: { attachments: [{ id: 'a'.repeat(32), filename: 'phone-screenshot.png', kind: 'image', sizeBytes: 51234 }] },
+    },
+    {
+      id: 2, role: 'assistant', model: 'claude-opus-5', created_at: t(89),
+      token_count: 812, cost_cents: 3.4,
+      content: "[Mock] Sure — the title gets crushed by the action buttons at narrow widths. I'll split the card into a title row and a wrapping actions row.",
+      metadata: {},
+    },
+    {
+      id: 3, role: 'system', model: null, created_at: t(88),
+      content: 'Claude Code is running',
+      metadata: { progressLog: ['Reading public/js/app-view.js', 'Editing the card renderer', 'Running the layout tests'] },
+    },
+    {
+      id: 4, role: 'system', model: null, created_at: t(85),
+      content: 'Claude Code log',
+      // MUST NOT render: raw agent stderr.
+      metadata: { ccLog: '[Mock] raw stderr that a reader must never see' },
+    },
+    {
+      id: 5, role: 'system', model: null, created_at: t(84),
+      content: 'Spec drafted',
+      metadata: { specPreview: '# [Mock] Readable cards on narrow screens\n\n- Two-row card layout\n- Actions wrap instead of crushing the title\n', specVersion: 1, specLines: 4 },
+    },
+    {
+      id: 6, role: 'system', model: null, created_at: t(80),
+      content: 'Changes ready',
+      metadata: { changesReady: true, ccOutput: '[Mock] Split the session card into a title row and an actions row that wraps.', ccOutcome: 'success', durationMs: 252000, prNumber: 9301 },
+    },
+    {
+      id: 7, role: 'system', model: null, created_at: t(79),
+      content: 'The AI suggests reporting this to the platform',
+      // MUST NOT render: owner-only action card.
+      metadata: { platformIssueDraft: { body: '[Mock] draft report a reader must never see', status: 'pending', msgId: 7 } },
+    },
+    {
+      id: 8, role: 'user', model: null, created_at: t(70),
+      content: '[Mock] Nice — can the buttons keep their order when they wrap?',
+      metadata: { suggestions: ['[Mock] leaked suggestion chip'] },
+    },
+  ];
+  return {
+    session: {
+      id: sessionId,
+      session_title: '[Mock] Paused shared session with a preview',
+      pr_title: null,
+      branch_name: 'mock/shared-preview',
+      status: 'paused',
+      username: 'staging-demo-user',
+      transcript_shared_at: t(30),
+      message_count: raw.length,
+      is_owner: false,
+      // Forking a mock id 404s harmlessly (no such row), same posture as
+      // voting on a mock proposal — but the button must RENDER so the
+      // read-only layout is reviewable in a demo preview.
+      can_fork: true,
+    },
+    messages: transcriptShare.sanitizeTranscript(raw),
+    truncated: false,
+  };
+}
 
 // getActiveWorkerCount is imported from services/active-workers and
 // re-exported at the bottom of this module (server.js imports it here).
@@ -324,7 +413,8 @@ function sessionRoutes(config) {
       // not by creation order.
       const { rows } = await pool.query(
         `SELECT cs.id, cs.branch_name, cs.pr_number, cs.pr_url, cs.pr_title,
-                cs.session_title, cs.status, cs.linked_issues, cs.shared_at, cs.created_at,
+                cs.session_title, cs.status, cs.linked_issues, cs.shared_at,
+                cs.transcript_shared_at, cs.created_at,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 a.slug AS app_slug, a.name AS app_name
          FROM chat_sessions cs
@@ -386,15 +476,33 @@ function sessionRoutes(config) {
           },
           // Visible (shared) own session — renders below the archived
           // toggle under the "Visible to everyone." caption, with the
-          // Preview (#689: pr_number set) + Open chat + Hide buttons.
+          // Preview (#689: pr_number set) + Open chat + Share chat + Hide
+          // buttons. transcript_shared_at is NULL here, so this row is the
+          // "visible, chat still private" half of the chip pair.
           {
             id: 990103, branch_name: 'mock/my-session-visible', pr_number: 990103,
             pr_url: null, pr_title: null,
             session_title: '[Mock] Your visible session',
             status: 'active', linked_issues: [],
             shared_at: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+            transcript_shared_at: null,
             created_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+            app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
+          },
+          // The other half: visible AND transcript-published, so the card
+          // renders the "Chat shared" toggle plus the "· chat readable"
+          // subtitle. A live seed can't hold both states at once (one row,
+          // one flag), which is exactly what the demo path is for.
+          {
+            id: 990104, branch_name: 'mock/my-session-chat-shared', pr_number: 990104,
+            pr_url: null, pr_title: null,
+            session_title: '[Mock] Your visible session with the chat shared',
+            status: 'active', linked_issues: [],
+            shared_at: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
+            transcript_shared_at: new Date(Date.now() - 20 * 60 * 1000).toISOString(),
+            created_at: new Date(Date.now() - 70 * 60 * 1000).toISOString(),
+            last_activity_at: new Date(Date.now() - 12 * 60 * 1000).toISOString(),
             app_slug: config.selfAppSlug, app_name: 'Usernode', busy: false,
           },
           // #747: promoted own session whose id matches the first mock
@@ -452,7 +560,7 @@ function sessionRoutes(config) {
       const appRows = [app];
 
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, created_at
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
          ORDER BY created_at DESC`,
@@ -507,6 +615,13 @@ function sessionRoutes(config) {
   //   included — issue numbers are group-visible data (the issue list
   //   itself is view-level), and the card renders them as "#N" chips
   //   linking to each issue's in-app discussion.
+  //
+  //   `transcript_shared` (+ `message_count` for its label) is the ONE
+  //   addition that widens what a viewer can reach: it says the owner took
+  //   the second opt-in and published the conversation, so the card renders
+  //   a "Read chat" chip. Note what it still is NOT — the transcript itself
+  //   is not inlined here; the chip routes to GET /transcript, which
+  //   re-checks both flags server-side. This endpoint stays metadata-only.
   router.get('/api/apps/:slug/shared-sessions', async (req, res) => {
     try {
       // View-level (#621): explicitly-shared rows are metadata-only by
@@ -520,6 +635,9 @@ function sessionRoutes(config) {
         `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
                 cs.staging_url, (cs.pr_number IS NOT NULL) AS can_preview,
                 cs.linked_issues,
+                (cs.transcript_shared_at IS NOT NULL) AS transcript_shared,
+                (SELECT COUNT(*)::int FROM chat_session_messages m
+                  WHERE m.session_id = cs.id) AS message_count,
                 cs.user_id, u.username, cs.shared_at, cs.created_at,
                 GREATEST(cs.created_at, COALESCE(m.last_message_at, cs.created_at)) AS last_activity_at,
                 (SELECT COUNT(*)::int FROM chat_messages cm
@@ -562,6 +680,10 @@ function sessionRoutes(config) {
             created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date().toISOString(),
             chat_count: 0, last_message_at: null, busy: true,
+            // Visible but chat NOT published — no "Read chat" chip. Kept
+            // false on two of the three rows so the demo board shows both
+            // states side by side.
+            transcript_shared: false, message_count: 0,
           },
           {
             id: 990002, session_title: '[Mock] Paused shared session with a preview',
@@ -572,6 +694,10 @@ function sessionRoutes(config) {
             created_at: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 30 * 60 * 1000).toISOString(),
             chat_count: 3, last_message_at: new Date().toISOString(), busy: false,
+            // The one demo row with a readable chat: its "Read chat" chip
+            // opens the topic page and stagingMockTranscript serves the
+            // matching id, so the round trip works in a demo preview.
+            transcript_shared: true, message_count: 8,
           },
           // #689: preview asleep (staging GC'd the container) but the
           // branch has pushed changes — the pill still renders and routes
@@ -586,6 +712,7 @@ function sessionRoutes(config) {
             created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
             last_activity_at: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
             chat_count: 1, last_message_at: new Date().toISOString(), busy: false,
+            transcript_shared: false, message_count: 0,
           }
         );
       }
@@ -1403,33 +1530,53 @@ function sessionRoutes(config) {
   //   and keeps the ORIGINAL shared_at (COALESCE) so re-sharing doesn't
   //   jump the card to the bottom of other users' In progress area.
   //   Both broadcast a session_update so open Dev boards refresh live.
+  //
+  //   `{ transcript: true }` in the body ALSO publishes the transcript in
+  //   the same write (the "make it visible and readable in one go" path).
+  //   Omitting it — every pre-existing caller — leaves
+  //   transcript_shared_at untouched, so today's behaviour is unchanged
+  //   byte for byte: making a session visible never publishes the chat by
+  //   accident.
   router.post('/api/sessions/:id/share', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
+      const withTranscript = !!(req.body && req.body.transcript);
       const { rows } = await pool.query(
-        `UPDATE chat_sessions cs SET shared_at = COALESCE(cs.shared_at, NOW())
+        `UPDATE chat_sessions cs
+            SET shared_at = COALESCE(cs.shared_at, NOW()),
+                transcript_shared_at = CASE WHEN $3::boolean
+                  THEN COALESCE(cs.transcript_shared_at, NOW())
+                  ELSE cs.transcript_shared_at END
            FROM apps a
           WHERE cs.id = $1 AND cs.user_id = $2 AND cs.is_headless = FALSE
             AND cs.status IN ('active', 'paused', 'promoted')
             AND a.id = cs.app_id
-          RETURNING cs.id, cs.shared_at, a.id AS app_id, a.slug AS app_slug`,
-        [sessionId, req.user.id]
+          RETURNING cs.id, cs.shared_at, cs.transcript_shared_at,
+                    a.id AS app_id, a.slug AS app_slug`,
+        [sessionId, req.user.id, withTranscript]
       );
       if (!rows.length) return res.status(404).json({ error: 'Session not found' });
       const { pushSessionUpdate } = require('../services/ws');
       pushSessionUpdate({ action: 'shared', sessionId, appId: rows[0].app_id, appSlug: rows[0].app_slug });
-      res.json({ ok: true, shared_at: rows[0].shared_at });
+      res.json({
+        ok: true,
+        shared_at: rows[0].shared_at,
+        transcript_shared_at: rows[0].transcript_shared_at,
+      });
     } catch (err) {
       log.error('sessions', 'Share failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
 
+  // Unshare clears BOTH stamps. Making a session private again must never
+  // leave the transcript readable behind a card nobody can see any more —
+  // the reader could still hold (or bookmark) the session id.
   router.post('/api/sessions/:id/unshare', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
       const { rows } = await pool.query(
-        `UPDATE chat_sessions cs SET shared_at = NULL
+        `UPDATE chat_sessions cs SET shared_at = NULL, transcript_shared_at = NULL
            FROM apps a
           WHERE cs.id = $1 AND cs.user_id = $2 AND cs.is_headless = FALSE
             AND a.id = cs.app_id
@@ -1442,6 +1589,324 @@ function sessionRoutes(config) {
       res.json({ ok: true });
     } catch (err) {
       log.error('sessions', 'Unshare failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/share-transcript | /unshare-transcript
+  //   The SECOND, narrower opt-in: publish the dev-chat TRANSCRIPT so
+  //   anyone with view access can read it (and fork it). Owner-scoped and
+  //   headless-excluded exactly like /share.
+  //
+  //   share-transcript sets shared_at too — publishing the chat implies
+  //   board visibility, so the reader has a card to reach it from and the
+  //   two flags can never disagree in the "readable but invisible"
+  //   direction. Both stamps use COALESCE so re-sharing is idempotent and
+  //   doesn't reshuffle the board's oldest-shared-first ordering.
+  router.post('/api/sessions/:id/share-transcript', async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions cs
+            SET shared_at = COALESCE(cs.shared_at, NOW()),
+                transcript_shared_at = COALESCE(cs.transcript_shared_at, NOW())
+           FROM apps a
+          WHERE cs.id = $1 AND cs.user_id = $2 AND cs.is_headless = FALSE
+            AND cs.status IN ('active', 'paused', 'promoted')
+            AND a.id = cs.app_id
+          RETURNING cs.id, cs.shared_at, cs.transcript_shared_at,
+                    a.id AS app_id, a.slug AS app_slug`,
+        [sessionId, req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const { pushSessionUpdate } = require('../services/ws');
+      pushSessionUpdate({
+        action: 'transcript_shared', sessionId,
+        appId: rows[0].app_id, appSlug: rows[0].app_slug,
+      });
+      res.json({
+        ok: true,
+        shared_at: rows[0].shared_at,
+        transcript_shared_at: rows[0].transcript_shared_at,
+      });
+    } catch (err) {
+      log.error('sessions', 'Share transcript failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Revokes transcript reading only — the session stays on everyone's
+  // board with its discussion thread intact. Deliberately NOT
+  // status-filtered: revoking must work on any row whose flag is set,
+  // including one that has since been promoted or archived.
+  router.post('/api/sessions/:id/unshare-transcript', async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+      const { rows } = await pool.query(
+        `UPDATE chat_sessions cs SET transcript_shared_at = NULL
+           FROM apps a
+          WHERE cs.id = $1 AND cs.user_id = $2 AND cs.is_headless = FALSE
+            AND a.id = cs.app_id
+          RETURNING cs.id, cs.shared_at, a.id AS app_id, a.slug AS app_slug`,
+        [sessionId, req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Session not found' });
+      const { pushSessionUpdate } = require('../services/ws');
+      pushSessionUpdate({
+        action: 'transcript_unshared', sessionId,
+        appId: rows[0].app_id, appSlug: rows[0].app_slug,
+      });
+      res.json({ ok: true, shared_at: rows[0].shared_at, transcript_shared_at: null });
+    } catch (err) {
+      log.error('sessions', 'Unshare transcript failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/sessions/:id/transcript
+  //   The read-only surface: a shared session's conversation, sanitised.
+  //   View-gated by the sessionCollabGuard at the top of this router (GET →
+  //   'view'), so read-only app viewers may read a published transcript
+  //   while writes below stay collab-gated.
+  //
+  //   Deliberately a SEPARATE route from GET /api/sessions/:id rather than a
+  //   relaxation of it: that one auto-resumes paused sessions, bumps
+  //   last_activity_at and clears the owner's notifications. A reader must
+  //   trigger none of those side effects, so this handler only ever SELECTs.
+  //
+  //   Authorization: both stamps non-NULL and non-headless, OR the caller is
+  //   the owner (who gets the identical sanitised payload — that's the
+  //   "preview what everyone else sees" path, and keeping it identical means
+  //   there is no second, laxer code path to get wrong). 404 on deny, never
+  //   403, matching the guard's non-enumerable posture.
+  //
+  //   NOT status-filtered: shared_at survives promotion and merge in
+  //   production, and the proposal page reuses this exact route.
+  router.get('/api/sessions/:id/transcript', async (req, res) => {
+    try {
+      const sessionId = parseInt(req.params.id, 10);
+
+      // Staging-only demo rows (?demo=1): the 99xxxx shared-session ids the
+      // demo branch of GET /shared-sessions injects don't exist in the DB, so
+      // serve a mock transcript for them instead of a 404 — same convention
+      // as stagingMockIssueComments. Strict no-op in production.
+      if (process.env.USERNODE_ENV === 'staging' && req.query.demo === '1') {
+        const mock = stagingMockTranscript(sessionId);
+        if (mock) return res.json(mock);
+      }
+
+      const { rows } = await pool.query(
+        `SELECT cs.id, cs.session_title, cs.pr_title, cs.branch_name, cs.status,
+                cs.user_id, u.username, cs.shared_at, cs.transcript_shared_at,
+                cs.created_at,
+                (SELECT COUNT(*)::int FROM chat_session_messages m
+                  WHERE m.session_id = cs.id) AS message_count
+           FROM chat_sessions cs
+           JOIN users u ON u.id = cs.user_id
+          WHERE cs.id = $1
+            AND cs.is_headless = FALSE
+            AND (cs.user_id = $2
+                 OR (cs.shared_at IS NOT NULL AND cs.transcript_shared_at IS NOT NULL))`,
+        [sessionId, req.user.id]
+      );
+      if (!rows.length) return res.status(404).json({ error: 'Transcript not available' });
+      const row = rows[0];
+      const isOwner = row.user_id === req.user.id;
+
+      // Most recent N by id, then flipped back to oldest-first for render, so
+      // truncation drops the START of a very long chat rather than its
+      // conclusion (the useful end).
+      const { rows: raw } = await pool.query(
+        `SELECT id, role, content, model, metadata, created_at
+           FROM chat_session_messages
+          WHERE session_id = $1
+          ORDER BY id DESC
+          LIMIT $2`,
+        [sessionId, transcriptShare.MAX_TRANSCRIPT_MESSAGES + 1]
+      );
+      const truncated = raw.length > transcriptShare.MAX_TRANSCRIPT_MESSAGES;
+      const newestFirst = truncated
+        ? raw.slice(0, transcriptShare.MAX_TRANSCRIPT_MESSAGES)
+        : raw;
+      const messages = transcriptShare.sanitizeTranscript(newestFirst.slice().reverse());
+
+      res.json({
+        session: {
+          id: row.id,
+          session_title: row.session_title,
+          pr_title: row.pr_title,
+          branch_name: row.branch_name,
+          status: row.status,
+          username: row.username,
+          transcript_shared_at: row.transcript_shared_at,
+          message_count: row.message_count,
+          is_owner: isOwner,
+          // A fork spends the caller's own AI budget and needs collab
+          // access; the guard has already proven collab for writes, but a
+          // read-only viewer reaches THIS route legitimately, so the flag
+          // tells the client whether to render the button at all. Forking
+          // your own chat is meaningless (use "Start a new change").
+          can_fork: !isOwner
+            && row.shared_at != null && row.transcript_shared_at != null,
+        },
+        messages,
+        truncated,
+      });
+    } catch (err) {
+      log.error('sessions', 'Transcript read failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/sessions/:id/fork
+  //   Fork a shared, transcript-published dev chat into the CALLER's own new
+  //   session. Collab-gated by the sessionCollabGuard (POST → 'collab'), so a
+  //   read-only viewer who can read the transcript still can't fork it.
+  //
+  //   Modelled on /clone-headless with ONE deliberate difference: the source
+  //   session's Claude Code memory volume is NOT cloned. Copying it would
+  //   hand the fork's agent everything the sanitiser withholds from the
+  //   reader (raw logs, attachment bytes) — reopening by proxy exactly what
+  //   transcript sharing closed. The fork starts with fresh CC memory;
+  //   context still reaches the model because buildMayorMessages folds the
+  //   copied history (including ccOutput summaries) into every turn.
+  //
+  //   Many people can fork the same chat independently, and the source
+  //   session is never touched — its owner sees nothing change.
+  router.post('/api/sessions/:id/fork', drainGuard, async (req, res) => {
+    try {
+      const { rows: srcRows } = await pool.query(
+        `SELECT cs.*, a.slug as app_slug, a.name as app_name, a.repo_url,
+                u.username AS owner_username
+           FROM chat_sessions cs
+           JOIN apps a ON cs.app_id = a.id
+           LEFT JOIN users u ON u.id = cs.user_id
+          WHERE cs.id = $1 AND cs.is_headless = FALSE
+            AND cs.shared_at IS NOT NULL
+            AND cs.transcript_shared_at IS NOT NULL`,
+        [req.params.id]
+      );
+      if (!srcRows.length) {
+        return res.status(404).json({ error: 'This chat is not shared for reading.' });
+      }
+      const src = srcRows[0];
+      if (src.user_id === req.user.id) {
+        return res.status(400).json({
+          error: "That's your own chat — use “Start a new change” to branch off it.",
+        });
+      }
+
+      // The fork is an ordinary dev-chat session, so the usual caps apply.
+      // Per-user cap counts only 'active' sessions (#193) and the ceiling is
+      // per-requester (full admins get a raised cap) — identical to the
+      // clone-headless block above.
+      const caps = effectiveSessionCaps(config, req.user);
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*) as cnt FROM chat_sessions
+         WHERE user_id = $1 AND status = 'active' AND is_headless = FALSE`,
+        [req.user.id]
+      );
+      if (parseInt(countRows[0].cnt) >= caps.activeSessions) {
+        return res.status(429).json({ error: `You already have ${caps.activeSessions} running sessions. Pause or archive one first.` });
+      }
+      const { rows: globalRows } = await pool.query(
+        `SELECT COUNT(*) as cnt FROM chat_sessions WHERE status IN ('active', 'promoted')`
+      );
+      if (parseInt(globalRows[0].cnt) >= config.maxGlobalSessions) {
+        const { freed } = await sessionLifecycle.freeGlobalSlot({
+          pool, graceMs: config.sessionPressureGraceMs,
+        });
+        if (!freed) {
+          return res.status(429).json({ error: 'Platform is at capacity right now. Try again in a few minutes.' });
+        }
+      }
+
+      // Fork the branch off the source's branch so any commit it pushed
+      // carries over; fall back to main if that branch is gone.
+      const branchName = `dev/${req.user.username}-${Date.now()}`;
+      const [, repoOwner, repoName] = (src.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+      if (github.isEnabled() && repoOwner && repoName) {
+        try {
+          await github.createBranch(repoOwner, repoName, branchName, src.branch_name);
+        } catch (err) {
+          log.warn('sessions', 'Branch fork off shared session failed — falling back to main', { err: err.message, from: src.branch_name });
+          try {
+            await github.createBranch(repoOwner, repoName, branchName);
+          } catch (err2) {
+            log.warn('sessions', 'GitHub branch creation failed (continuing)', { err: err2.message });
+          }
+        }
+      }
+
+      const forkTitle = src.session_title || src.pr_title || 'Forked dev chat';
+
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions (app_id, user_id, branch_name, status, spec_md, linked_issues, testing_md, testing_path, testing_paths, cloned_from_session_id, session_title)
+         VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, $10)
+         RETURNING *`,
+        [src.app_id, req.user.id, branchName, src.spec_md || '', src.linked_issues, src.testing_md, src.testing_path,
+         src.testing_paths != null ? JSON.stringify(src.testing_paths) : null, src.id, forkTitle]
+      );
+      const session = rows[0];
+
+      // Copy the conversation THROUGH THE SANITISER — the fork must never
+      // carry content the forker wasn't allowed to read. Done row-by-row in
+      // JS rather than as an INSERT…SELECT precisely so the allowlist runs;
+      // an in-SQL copy would smuggle ccLog / attachment ids across.
+      //
+      // Costs are left at their zero defaults: the forker didn't pay for the
+      // original run and the per-message figures would double-count.
+      //
+      // Every row is stamped `inheritedFrom` (the source id), which is what
+      // the dev-chat renderer keys the collapsed-by-default Claude Code
+      // disclosures and the greyed inherited-history styling off (#647). The
+      // follow-up appended below deliberately does NOT carry it — that
+      // message belongs to this session.
+      const { rows: srcMessages } = await pool.query(
+        `SELECT id, role, content, model, metadata FROM chat_session_messages
+          WHERE session_id = $1 ORDER BY id ASC`,
+        [src.id]
+      );
+      for (const raw of srcMessages) {
+        const clean = transcriptShare.sanitizeTranscriptMessage(raw);
+        if (!clean) continue;
+        await pool.query(
+          `INSERT INTO chat_session_messages (session_id, role, content, model, metadata)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [session.id, clean.role, clean.content, clean.model || null,
+           JSON.stringify({ ...(clean.metadata || {}), inheritedFrom: src.id })]
+        );
+      }
+      // Carry the spec version history too, so the spec viewer shows v1…vN.
+      await pool.query(
+        `INSERT INTO chat_session_specs (session_id, version, content, built_at, commit_sha, pr_number)
+         SELECT $1, version, content, built_at, commit_sha, pr_number
+         FROM chat_session_specs WHERE session_id = $2`,
+        [session.id, src.id]
+      ).catch((err) => log.warn('sessions', 'Spec history copy failed (continuing)', { err: err.message }));
+
+      // The orientation message: where the original left off, what carried
+      // over, and — load-bearing — that the AGENT's own memory did not, so
+      // the new owner restates anything important instead of assuming it.
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata) VALUES ($1, 'assistant', $2, $3)`,
+        [session.id, transcriptShare.buildForkFollowUpMessage(src), JSON.stringify({
+          quickReplies: buildForkFollowUpQuickReplies(),
+        })]
+      );
+
+      events.record(pool, {
+        type: events.EVENT_TYPES.DEV_SESSION_STARTED,
+        userId: req.user.id,
+        appId: src.app_id,
+        sessionId: session.id,
+        metadata: { forkedFromSession: src.id },
+      });
+
+      log.info('sessions', 'Forked shared dev chat', { src: src.id, sessionId: session.id, user: req.user.username });
+      res.status(201).json({ session });
+    } catch (err) {
+      log.error('sessions', 'Fork shared chat failed', { message: err.message, stack: err.stack });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
@@ -3790,6 +4255,18 @@ function buildHeadlessFollowUpQuickReplies(src) {
       return null;
   }
   return sanitizeQuickReplies({ replies });
+}
+
+// The fork follow-up's TEXT lives in services/transcript-share.js
+// (buildForkFollowUpMessage) so the staging fixture in db/migrate.js can seed
+// the identical copy instead of a hand-written duplicate that drifts. Only the
+// pill sanitising stays here, since sanitizeQuickReplies is route-local.
+//
+// Built on CALL, not at module load: sanitizeQuickReplies reads
+// QR_MAX_REPLIES, a `const` declared further down this file, so evaluating
+// this at load time hits its temporal dead zone and throws on require.
+function buildForkFollowUpQuickReplies() {
+  return sanitizeQuickReplies({ replies: [...transcriptShare.FORK_FOLLOWUP_REPLIES] });
 }
 
 // The unattended-mode addendum appended to the Mayor system prompt for

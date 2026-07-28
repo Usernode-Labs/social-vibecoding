@@ -181,6 +181,153 @@ test('private own card has no Open chat and keeps Make visible', () => {
   assert.match(html, /data-share-chip="51"/, 'Make visible renders');
 });
 
+// ── Transcript sharing: the second, narrower opt-in ─────────────────────────
+
+test('private own card offers NO chat-sharing chip (nowhere to read it from yet)', () => {
+  const AppView = makeAppView();
+  AppView._sharedById = {};
+  const html = AppView._renderMySessionCard(mySess({}));
+  assert.doesNotMatch(html, /data-transcript-chip/);
+  assert.doesNotMatch(html, /data-untranscript-chip/);
+  assert.doesNotMatch(html, /chat readable/);
+  assert.match(html, /Your dev session/, 'subtitle unchanged for a private session');
+});
+
+test('visible own card offers "Share chat"; the subtitle stays plain', () => {
+  const AppView = makeAppView();
+  AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
+  const html = AppView._renderMySessionCard(mySess({ shared_at: '2026-06-01T03:00:00Z' }));
+  assert.match(html, /data-transcript-chip="51"/, 'the opt-in chip renders');
+  assert.match(html, />Share chat</);
+  assert.doesNotMatch(html, /data-untranscript-chip/);
+  // Visible ≠ readable: the card must not claim the chat is shared.
+  assert.match(html, /Visible to everyone</);
+  assert.doesNotMatch(html, /chat readable/);
+});
+
+test('chat-shared own card flips to the revoke chip and says so in the subtitle', () => {
+  const AppView = makeAppView();
+  AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
+  const html = AppView._renderMySessionCard(mySess({
+    shared_at: '2026-06-01T03:00:00Z',
+    transcript_shared_at: '2026-06-01T03:05:00Z',
+  }));
+  assert.match(html, /data-untranscript-chip="51"/);
+  assert.match(html, />Chat shared</);
+  assert.doesNotMatch(html, /data-transcript-chip/);
+  assert.match(html, /Visible to everyone · chat readable/);
+});
+
+test('the chat-sharing chip sits between Open chat and Hide in the actions row', () => {
+  const AppView = makeAppView();
+  AppView._sharedById = { 51: { id: 51, chat_count: 0 } };
+  const html = AppView._renderMySessionCard(mySess({ shared_at: '2026-06-01T03:00:00Z' }));
+  assertOrder(html, [
+    CHEVRON, ACTIONS_ROW, 'data-session-discuss="51"',
+    'data-transcript-chip="51"', 'data-unshare-chip="51"', 'data-archive-chip="51"',
+  ]);
+});
+
+test('shared card: "Read chat" only when the owner published the transcript', () => {
+  const AppView = makeAppView();
+  const off = AppView._renderSharedSessionCard(sharedSess({ transcript_shared: false }));
+  assert.doesNotMatch(off, /data-read-chat/);
+
+  const on = AppView._renderSharedSessionCard(sharedSess({ transcript_shared: true }));
+  assert.match(on, /data-read-chat="71"/);
+  assert.match(on, />Read chat</);
+});
+
+test('shared card: "Read chat" is dropped in the noNav (topic-head) variant', () => {
+  // On the topic page you're already looking at the transcript section, so a
+  // chip that navigates to the page you're on would be dead weight.
+  const AppView = makeAppView();
+  const html = AppView._renderSharedSessionCard(
+    sharedSess({ transcript_shared: true }), { noNav: true });
+  assert.doesNotMatch(html, /data-read-chat/);
+});
+
+test('read-only viewers still get "Read chat" (published group content)', () => {
+  // #621: read-only viewers may READ a shared transcript — it's the fork
+  // action that needs collab access, and that lives in the transcript
+  // section (see _transcriptActionsHtml), not on this card.
+  const AppView = makeAppView();
+  // readOnly is a getter over appData.can_collaborate (#621) — assigning
+  // AppView.readOnly directly is a silent no-op.
+  AppView.appData = { can_collaborate: false };
+  const html = AppView._renderSharedSessionCard(sharedSess({ transcript_shared: true }));
+  assert.match(html, /data-read-chat="71"/);
+});
+
+// ── The transcript section + fork button on the topic page ──────────────────
+
+test('transcript section renders only when the item reports the chat shared', () => {
+  const AppView = makeAppView();
+  assert.strictEqual(AppView._transcriptSectionHtml({ id: 5 }), '');
+  assert.strictEqual(AppView._transcriptSectionHtml({ id: 5, transcript_shared: false }), '');
+  assert.strictEqual(AppView._transcriptSectionHtml(null), '');
+
+  // Shared-session / proposal rows carry the boolean…
+  const shared = AppView._transcriptSectionHtml({ id: 5, transcript_shared: true, message_count: 9 });
+  assert.match(shared, /data-transcript-section="5"/);
+  assert.match(shared, /data-transcript-toggle="5"/);
+  assert.match(shared, /data-transcript-body="5"/);
+  assert.match(shared, /read-only/);
+  // …the viewer's OWN rows carry the timestamp instead (the owner gets the
+  // section too, as the "preview what everyone else sees" path).
+  const mine = AppView._transcriptSectionHtml({ id: 5, transcript_shared_at: '2026-07-01T00:00:00Z' });
+  assert.match(mine, /data-transcript-section="5"/);
+});
+
+test('transcript section starts collapsed unless the reader asked to read it', () => {
+  const AppView = makeAppView();
+  const collapsed = AppView._transcriptSectionHtml({ id: 5, transcript_shared: true });
+  assert.match(collapsed, /aria-expanded="false"/);
+  assert.match(collapsed, /hidden/);
+
+  AppView._transcriptOpen = 5;
+  const open = AppView._transcriptSectionHtml({ id: 5, transcript_shared: true });
+  assert.match(open, /aria-expanded="true"/);
+  assert.doesNotMatch(open, /data-transcript-body="5" hidden/);
+});
+
+test('an expanded transcript SURVIVES a topic-head repaint', () => {
+  // _renderTopicHead re-innerHTML's the head on every WS/poll refresh, so
+  // an open flag held only in the DOM gets wiped seconds after the reader
+  // expands the chat (observed in the browser before this was state-backed).
+  // Re-rendering the section must therefore paint it open again.
+  const AppView = makeAppView();
+  const item = { id: 5, transcript_shared: true, message_count: 3 };
+  AppView._transcriptOpen = 5;
+  for (let repaint = 0; repaint < 3; repaint++) {
+    assert.match(AppView._transcriptSectionHtml(item), /aria-expanded="true"/,
+      'stays expanded across repaints');
+  }
+  // …and an explicit collapse likewise sticks across repaints.
+  AppView._transcriptOpen = null;
+  assert.match(AppView._transcriptSectionHtml(item), /aria-expanded="false"/);
+  // The flag is per-session: another session's open state never leaks.
+  AppView._transcriptOpen = 5;
+  assert.match(
+    AppView._transcriptSectionHtml({ id: 6, transcript_shared: true }),
+    /aria-expanded="false"/
+  );
+});
+
+test('"Fork this chat" follows the server can_fork flag, and never for read-only viewers', () => {
+  const AppView = makeAppView();
+  assert.match(AppView._transcriptActionsHtml({ id: 5, can_fork: true }), /data-fork-chat="5"/);
+  // The owner's own chat: nothing to fork (that's "Start a new change").
+  assert.strictEqual(AppView._transcriptActionsHtml({ id: 5, can_fork: false, is_owner: true }), '');
+  assert.strictEqual(AppView._transcriptActionsHtml(null), '');
+
+  // A dev chat spends the viewer's own AI budget and its API is
+  // collab-gated, so a read-only viewer is never offered the button.
+  // (readOnly is a getter over appData.can_collaborate — see #621.)
+  AppView.appData = { can_collaborate: false };
+  assert.strictEqual(AppView._transcriptActionsHtml({ id: 5, can_fork: true }), '');
+});
+
 // ── Private/visible split around the archived toggle ────────────────────────
 
 const issueEntry = () => ({

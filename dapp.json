@@ -279,6 +279,28 @@
       "expectText": "Staging demo: pills after an interrupted reply"
     },
     {
+      "name": "Visible own session card offers the \"Share chat\" opt-in",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "[data-transcript-chip]"
+    },
+    {
+      "name": "A chat-shared own session card flips to the \"Chat shared\" toggle",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "[data-untranscript-chip]",
+      "expectText": "chat readable"
+    },
+    {
+      "name": "Another user's shared session card offers \"Read chat\" when the chat is published",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "[data-read-chat]"
+    },
+    {
+      "name": "Shared session page renders the read-only dev-chat section",
+      "path": "/?demo=1#app/usernode-2d5619/dev/shared/990002",
+      "expectSelector": "[data-transcript-section] [data-transcript-toggle]",
+      "expectText": "Read the dev chat"
+    },
+    {
       "name": "Native-feel UI kit demo renders",
       "path": "/usernode-native/v1/demo.html",
       "expectSelector": ".un-switch",
