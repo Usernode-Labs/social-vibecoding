@@ -8,7 +8,9 @@ const docker = require('../services/docker');
 const github = require('../services/github');
 const driftPoller = require('../services/main-drift-poller');
 const appSecrets = require('../services/app-secrets');
+const platformEnv = require('../services/platform-env');
 const appManifest = require('../services/app-manifest');
+const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
 const renamePr = require('../services/rename-pr');
 const staging = require('../services/staging');
 const { drainGuard } = require('../services/lifecycle');
@@ -172,21 +174,100 @@ function isPlatformRepo(parsed, config) {
       && parsed.repo.toLowerCase() === platform.repo.toLowerCase();
 }
 
-// SELF-HOSTING.md sub-step 2h: the platform reads its own env from
-// .env (written by deploy.yml from GitHub Actions secrets), not from
-// app_secrets. A POST/PUT/DELETE here would persist into the table but
-// have zero runtime effect, which is silent-broken UX. Refuse them with
-// an explanatory 403 so the only visible path matches reality. Same
-// rationale applies to /redeploy and /check-updates: the platform's
-// deploy is GHA-driven, not staging.rebuildProduction-driven.
-function refuseIfSelfHosted(app, res, action) {
+// SELF-HOSTING.md sub-step 2h: the platform's deploy is GHA-driven, not
+// staging.rebuildProduction-driven, so /redeploy and /check-updates don't
+// apply to the self-app row and are refused with an explanatory 403.
+//
+// The secrets routes used to be refused here too, on the grounds that the
+// platform reads its env from .env rather than app_secrets. That is still
+// true of `app_secrets` — but the secrets routes now BRANCH for the
+// self-hosted app onto services/platform-env.js, which writes the store
+// the deploy actually resolves (scripts/dump-platform-env.js). So they
+// are no longer a dead end and no longer refused; see the self-hosted
+// branches in the three routes further below.
+function refuseIfSelfHosted(app, res) {
   if (!app || !app.self_hosted) return false;
   res.status(403).json({
-    error: action === 'secret'
-      ? 'The Usernode platform reads its env from .env written by GitHub Actions; storing values here would have no effect. Edit secrets via the repository\'s Actions secrets settings.'
-      : 'The Usernode platform deploys via GitHub Actions; this action does not apply to the self-app row.',
+    error: 'The Usernode platform deploys via GitHub Actions; this action does not apply to the self-app row.',
   });
   return true;
+}
+
+// The platform's own env is documented in TWO manifest blocks: `platform_env`
+// (the tunables an admin may actually set — backed by platform_env_values)
+// and `secrets` (the credentials the deploy injects straight from GitHub
+// secrets). Both describe the same process, so the one panel renders both:
+// declared tunables from the DAO, plus a synthesized read-only row per
+// `secrets` key that platform_env doesn't already declare.
+//
+// Every such key is in app-manifest.PLATFORM_ENV_UNWRITABLE, so a
+// synthesized row can never be editable — `unwritable: true` is asserted
+// here rather than derived, and isWritableKey() refuses the write anyway.
+// `hasValue` comes from process.env because that IS where the value lives
+// for these; no ciphertext exists to read and none is ever returned.
+function platformSecretsView(rows, manifest, { includeValues }) {
+  const declared = new Set(rows.map((r) => r.key));
+  const merged = rows.map((r) => ({
+    key: r.key,
+    description: r.description,
+    required: r.required,
+    // Canonical `private` plus the `sensitive` BC alias, populated
+    // identically — same contract app-secrets.getRedactedView() has.
+    private: r.private,
+    sensitive: r.private,
+    default: r.defaultValue,
+    hasValue: r.hasValue,
+    // A private value is never decrypted by listView(), and a non-private
+    // one only when the caller passed a jwtSecret (admins only).
+    value: includeValues ? r.value : null,
+    valueLast4: includeValues && !r.private ? r.valueLast4 : null,
+    updatedAt: r.updatedAt,
+    updatedBy: includeValues ? r.updatedBy : null,
+    unwritable: r.unwritable,
+    group: r.group,
+    state: r.state,
+    orphan: r.state === 'orphan',
+  }));
+
+  for (const entry of (manifest.secrets || [])) {
+    if (declared.has(entry.key)) continue;
+    merged.push({
+      key: entry.key,
+      description: entry.description,
+      required: entry.required,
+      private: entry.private,
+      sensitive: entry.private,
+      default: entry.default,
+      hasValue: !!process.env[entry.key],
+      value: null,
+      valueLast4: null,
+      updatedAt: null,
+      updatedBy: null,
+      unwritable: true,
+      group: 'Managed by the deploy',
+      state: 'managed',
+      orphan: false,
+    });
+  }
+
+  // Group in key order within a group, then float the groups nobody can
+  // act on to the bottom: an all-unwritable group leading the list (the
+  // API's alphabetical order puts "Managed by the deploy" first) pushes
+  // every editable variable below the fold.
+  const groups = [];
+  const byGroup = new Map();
+  for (const row of merged) {
+    if (!byGroup.has(row.group)) { byGroup.set(row.group, []); groups.push(row.group); }
+    byGroup.get(row.group).push(row);
+  }
+  const rank = (g) => {
+    const inGroup = byGroup.get(g);
+    if (inGroup.every((v) => v.state === 'orphan')) return 2;
+    if (inGroup.every((v) => v.unwritable)) return 1;
+    return 0;
+  };
+  groups.sort((a, b) => rank(a) - rank(b));
+  return groups.flatMap((g) => byGroup.get(g).sort((a, b) => a.key.localeCompare(b.key)));
 }
 
 // If app creation hasn't reached `running` within this window, a watchdog
@@ -349,15 +430,17 @@ function appRoutes(config) {
         // each) and lets the home tile show a "fix secrets" warning
         // without each card making its own /secrets fetch on render.
         //
-        // Skipped for self-hosted apps: the platform reads its env from
-        // `.env` written by GitHub Actions (Phase 2h), and the secrets
-        // UI is intentionally read-only via refuseIfSelfHosted, so
-        // app_secrets is always empty. Computing missingSecrets here
-        // would surface every required manifest key as "missing" and
-        // prompt users to click Refresh, which then 403s with the
-        // "deploys via GitHub Actions" message — pure false-positive UX.
+        // The self-hosted app answers from platform_env instead: its
+        // `secrets` block documents GitHub-injected credentials nobody can
+        // set from the panel, so counting those would be a permanent
+        // false positive. `missingRequired` counts only what the panel can
+        // actually fix (required, writable, unset) — the same input the
+        // pre-merge gate blocks on.
         let missingSecrets = null;
-        if (!a.self_hosted && a.manifest_snapshot && typeof a.manifest_snapshot === 'object') {
+        if (a.self_hosted) {
+          const missing = await platformEnv.missingRequired(pool, a.id);
+          missingSecrets = missing.length ? missing.map((m) => m.key) : null;
+        } else if (a.manifest_snapshot && typeof a.manifest_snapshot === 'object') {
           const declared = Array.isArray(a.manifest_snapshot.secrets)
             ? a.manifest_snapshot.secrets : [];
           if (declared.some((s) => s && s.required)) {
@@ -813,11 +896,12 @@ function appRoutes(config) {
       // Same missingSecrets computation as the /api/apps list — needed
       // here so AppView.open() can paint the header badge and the
       // 'awaiting_secrets' splash without a second round-trip. Same
-      // self_hosted skip rationale as above: refuseIfSelfHosted keeps
-      // app_secrets empty for the self-app, so the badge would always
-      // false-positive.
+      // self_hosted branch rationale as above.
       let missingSecrets = null;
-      if (!appRow.self_hosted && appRow.manifest_snapshot && typeof appRow.manifest_snapshot === 'object') {
+      if (appRow.self_hosted) {
+        const missing = await platformEnv.missingRequired(pool, appRow.id);
+        missingSecrets = missing.length ? missing.map((m) => m.key) : null;
+      } else if (appRow.manifest_snapshot && typeof appRow.manifest_snapshot === 'object') {
         const declared = Array.isArray(appRow.manifest_snapshot.secrets)
           ? appRow.manifest_snapshot.secrets : [];
         if (declared.some((s) => s && s.required)) {
@@ -898,7 +982,117 @@ function appRoutes(config) {
   //
   // Non-admins propose a secret change via POST /api/apps/:slug/issues
   // with kind='secret_change' (handled in routes/issues.js).
+  //
+  // ALL THREE BRANCH ON `self_hosted`. For the platform's own app row the
+  // store is `platform_env_values` via services/platform-env.js, not
+  // `app_secrets`: that is the store the deploy resolves into
+  // /opt/usernode/.env, so it is the only one where a write has any
+  // effect. The branch is why this panel is the single surface for the
+  // platform's configuration (the admin console's Platform variables
+  // section was deleted in favour of it) — and why nothing here can leak
+  // a platform value into a child container: platform-env.js has no path
+  // to app-secrets.mergeForDeploy().
+  //
+  // Credential keys (JWT_SECRET, the GitHub App key, ADMIN_PASSWORD…) are
+  // in app-manifest.PLATFORM_ENV_UNWRITABLE and refused by both mutations
+  // regardless of who asks — a web form that could rewrite the platform's
+  // own signing secret is a privilege-escalation path, not a feature.
   // ────────────────────────────────────────────────────────────────────
+
+  // Shared refusal for a write to a key the deploy owns. Same wording on
+  // the direct route and the vote route so the two can't disagree about
+  // why a key is off limits.
+  const UNWRITABLE_MESSAGE =
+    'This variable is set by the deploy from a GitHub secret and cannot be edited here.';
+
+  // Direct (full-admin) write of one platform variable. Called from the PUT
+  // route's self_hosted branch; the caller has already enforced
+  // canAdminWrite and a non-empty value.
+  //
+  // Three properties this must keep, all of which the deleted admin-console
+  // route also had:
+  //   - Shape rules live in the DAO (isWritableKey / validateValue) so the
+  //     route and setValue() can never disagree about what is storable.
+  //   - The write takes ADMIN_MUTATION_LOCK inside a transaction, so two
+  //     admins editing the same key serialize instead of interleaving.
+  //   - The VALUE never reaches a log line or an event — only the key, its
+  //     privacy flag, and who changed it.
+  async function setPlatformVariable(req, res, app) {
+    const key = String(req.params.key || '');
+    const value = typeof req.body?.value === 'string' ? req.body.value : null;
+
+    if (!platformEnv.isWritableKey(key)) {
+      log.warn('apps', 'Platform-env write refused: unwritable key', {
+        key, by: req.user.username,
+      });
+      return res.status(400).json({ error: UNWRITABLE_MESSAGE });
+    }
+    const invalid = platformEnv.validateValue(value);
+    if (invalid) return res.status(400).json({ error: invalid });
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
+      const result = await platformEnv.setValue(client, app.id, key, value, {
+        userId: req.user.id,
+        jwtSecret: config.jwtSecret,
+      });
+      await client.query('COMMIT');
+
+      log.info('apps', 'Platform env var set', {
+        key, private: result.private, by: req.user.username,
+      });
+      events.record(pool, {
+        type: events.EVENT_TYPES.PLATFORM_ENV_CHANGED,
+        userId: req.user.id,
+        appId: app.id,
+        metadata: { key, action: 'set', private: result.private, appliedBy: 'admin-direct' },
+      });
+      return res.json({ ok: true, key, private: result.private });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      log.error('apps', 'Platform-env write failed', { key, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
+    }
+  }
+
+  // Direct (full-admin) clear of one platform variable. Deleting an
+  // unwritable key's row is refused for the same reason setting it is:
+  // nothing legitimate ever created one.
+  async function clearPlatformVariable(req, res, app) {
+    const key = String(req.params.key || '');
+    if (!platformEnv.isWritableKey(key)) {
+      return res.status(400).json({ error: UNWRITABLE_MESSAGE });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SELECT pg_advisory_xact_lock($1)', [ADMIN_MUTATION_LOCK]);
+      const removed = await platformEnv.deleteValue(client, app.id, key);
+      await client.query('COMMIT');
+
+      if (!removed) return res.status(404).json({ error: 'No value set for that variable' });
+
+      log.info('apps', 'Platform env var cleared', { key, by: req.user.username });
+      events.record(pool, {
+        type: events.EVENT_TYPES.PLATFORM_ENV_CHANGED,
+        userId: req.user.id,
+        appId: app.id,
+        metadata: { key, action: 'clear', appliedBy: 'admin-direct' },
+      });
+      return res.json({ ok: true, key });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      log.error('apps', 'Platform-env delete failed', { key, message: err.message });
+      return res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
+    }
+  }
 
   router.get('/api/apps/:slug/secrets', async (req, res) => {
     try {
@@ -917,49 +1111,49 @@ function appRoutes(config) {
       // secret keys for the platform itself.
       //
       // Phase 4 (SELF_APP_PUBLIC_VOTING): when the flag is on, expose
-      // the read-only secrets view to all users. Only the metadata
-      // (key, description, required, hasValue) is returned — actual
-      // values are never read from app_secrets for the self-app
-      // (process.env is the source of truth, see below) and
-      // valueLast4 stays null in this branch, so this is metadata-
-      // only disclosure consistent with "open-source-by-live-dev-
-      // chat" transparency. The write protection (refuseIfSelfHosted
-      // on POST/PUT/DELETE) is unchanged.
+      // the view to all users, because proposing a platform-variable
+      // change by vote is now open to everyone and you can't propose a
+      // change to a list you can't see. PLAINTEXT is still admin-only
+      // (see includeValues below), so for a non-admin this stays
+      // metadata-only disclosure of information the committed dapp.json
+      // already carries — consistent with "open-source-by-live-dev-chat".
       if (app.self_hosted && !req.user?.isAdmin && !config.selfAppPublicVoting) {
         return res.status(404).json({ error: 'App not found' });
       }
       const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
         ? app.manifest_snapshot
         : { secrets: [] };
-      // SELF-HOSTING.md sub-step 2h: for the self-app, hasValue
-      // mirrors the GitHub-Actions-configured reality (process.env)
-      // rather than app_secrets, since the platform never reads
-      // app_secrets for its own keys. Orphans don't apply (nothing is
-      // ever stored). valueLast4 is null because the platform process
-      // can't safely surface its own env values via an API.
       let view;
       if (app.self_hosted) {
-        view = manifest.secrets.map((entry) => ({
-          key: entry.key,
-          description: entry.description,
-          required: entry.required,
-          // Canonical `private` plus `sensitive` BC alias (populated
-          // identically) so old UI clients keep working.
-          private: entry.private,
-          sensitive: entry.private,
-          default: entry.default,
-          hasValue: !!process.env[entry.key],
-          valueLast4: null,
-          updatedAt: null,
-          orphan: false,
-        }));
+        // Platform variables. Non-private values ARE shown in full to
+        // admins — that's the point of marking a variable non-private,
+        // and it's what makes "is MAX_GLOBAL_SESSIONS actually 75 in
+        // prod?" answerable from the panel. Non-admins get no jwtSecret
+        // passed, so listView() never decrypts anything for them.
+        const includeValues = !!req.user?.isAdmin;
+        const rows2 = await platformEnv.listView(
+          pool, app.id, includeValues ? config.jwtSecret : null
+        );
+        view = platformSecretsView(rows2, manifest, { includeValues });
       } else {
         view = await appSecrets.getRedactedView(pool, app.id, manifest);
       }
       res.json({
         secrets: view,
         manifestKnown: !!app.manifest_snapshot,
-        readOnly: !!app.self_hosted,
+        // `scope` drives the panel's wording: a platform variable takes
+        // effect on the next platform deploy, an app secret on the next
+        // rebuild of that app.
+        scope: app.self_hosted ? 'platform' : 'app',
+        // The "redeploy now" footer shortcut hits POST /redeploy, which
+        // refuseIfSelfHosted still rejects for the platform — don't offer
+        // a button that can only 403.
+        redeployable: !app.self_hosted,
+        // Retained for older clients that gated their write controls on
+        // it. Writes are no longer blanket-refused for the self-app, so
+        // it is false everywhere now; per-row `unwritable` is the real
+        // signal.
+        readOnly: false,
       });
     } catch (err) {
       log.error('apps', 'Failed to list secrets', { slug: req.params.slug, message: err.message });
@@ -979,7 +1173,9 @@ function appRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
-      if (refuseIfSelfHosted(app, res, 'secret')) return;
+      if (app.self_hosted) {
+        return setPlatformVariable(req, res, app);
+      }
       const manifest = app.manifest_snapshot && typeof app.manifest_snapshot === 'object'
         ? app.manifest_snapshot
         : { secrets: [] };
@@ -1018,7 +1214,9 @@ function appRoutes(config) {
     try {
       const { rows } = await pool.query('SELECT id, self_hosted FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
-      if (refuseIfSelfHosted(rows[0], res, 'secret')) return;
+      if (rows[0].self_hosted) {
+        return clearPlatformVariable(req, res, rows[0]);
+      }
       await appSecrets.deleteValue(pool, rows[0].id, req.params.key);
       log.info('apps', 'Secret deleted (admin direct)', {
         slug: req.params.slug, key: req.params.key, userId: req.user.id,
@@ -1043,7 +1241,7 @@ function appRoutes(config) {
       const { rows } = await pool.query('SELECT * FROM apps WHERE slug = $1', [req.params.slug]);
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
-      if (refuseIfSelfHosted(app, res, 'rebuild')) return;
+      if (refuseIfSelfHosted(app, res)) return;
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
@@ -1082,7 +1280,7 @@ function appRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'App not found' });
       const app = rows[0];
-      if (refuseIfSelfHosted(app, res, 'rebuild')) return;
+      if (refuseIfSelfHosted(app, res)) return;
       if (!app.repo_url) {
         return res.status(400).json({ error: 'This app is not backed by a GitHub repo' });
       }
@@ -1233,7 +1431,7 @@ function appRoutes(config) {
       if (!(await appAdmins.canManageApp(pool, app, req.user))) {
         return res.status(403).json({ error: 'Only the app creator or an admin can propose a visibility change' });
       }
-      if (refuseIfSelfHosted(app, res, 'visibility')) return;
+      if (refuseIfSelfHosted(app, res)) return;
 
       if (app.collab_visibility === collabVisibility
           && app.view_visibility === viewVisibility) {
@@ -1422,7 +1620,7 @@ function appRoutes(config) {
       // visibility-pr: reconcileAppAdmins skips self_hosted apps —
       // per-app admins would inherit force-merge on platform proposals —
       // so a merged self-app admins PR would silently do nothing.
-      if (refuseIfSelfHosted(app, res, 'admins')) return;
+      if (refuseIfSelfHosted(app, res)) return;
 
       // Normalized compare (trim/lowercase/dedupe/sort), so re-ordering
       // or re-casing the same names is correctly a non-change.

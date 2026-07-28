@@ -931,6 +931,69 @@ Leave **non-private** (the default) for:
    staging) — added `staging_default: 'sk_test_publishable_dummy'`
    so staging gets a no-op test key."
 
+## Editing the PLATFORM itself — `platform_env`, not `secrets`
+
+Everything above is about a **child app's** env: `secrets` entries are
+injected into that app's container by the deploy that builds it.
+
+**The self-hosted platform app is different, and this is the one place
+where using the `secrets` block is silently wrong.** The platform reads
+its env from `/opt/usernode/.env`, written by
+`.github/workflows/deploy.yml` and topped up at deploy time from the
+platform's own value store. It never reads `app_secrets` for itself. So
+a tunable added to the platform's `secrets` block does *nothing* — the
+value can be stored and the platform will never see it.
+
+The platform's `dapp.json` therefore carries a **second** top-level
+block, `platform_env`, which is the source of truth for the platform's
+own environment variables:
+
+```json
+{
+  "platform_env": [
+    {
+      "key": "SESSION_SWEEP_INTERVAL_MS",
+      "group": "Sessions",
+      "default": "60000",
+      "description": "How often the session sweeper runs the autopause/eviction pass."
+    }
+  ]
+}
+```
+
+Per-field: `key` / `description` / `required` / `private` / `default`
+mean what they do for `secrets`, plus `group` — a short heading the
+panel groups rows under (`Scaling`, `Sessions`, `TLS`, …). There is no
+`staging_default`: nothing here is ever injected into a container.
+
+**When a change to the platform starts reading a new
+`process.env.SOMETHING`:**
+
+1. **Declare it in `platform_env`** in the SAME commit. A `required: true`
+   declaration with no value set **blocks the merge** — the pre-merge
+   check diffs the block against the merge base and names the missing
+   keys — so declaring it is what makes the value get set before the
+   deploy that needs it, instead of after the crash-loop.
+2. **Prefer `required: false` with a `default`** that matches the
+   committed default in `deploy.yml`. Most tunables have a sane default
+   and shouldn't be able to block a merge.
+3. **Never declare a credential as writable.** Keys the deploy owns
+   (`JWT_SECRET`, `DATABASE_URL`, `ADMIN_PASSWORD`, the GitHub App
+   credentials, `USERNODE_DOMAIN`, …) come from GitHub secrets. You may
+   declare one for documentation — the platform derives `unwritable`
+   from its own reserved list and renders it read-only — but it can
+   never be written from the UI, by an admin or by a vote.
+4. **Say in the dev-chat reply that the value must be set before merge**,
+   and where: the platform app's **Platform variables** panel (the "+"
+   menu on its dev tab — the same panel other apps call "App secrets").
+   A full admin can set it directly; anyone else can propose it by vote
+   (`kind='secret_change'`, exactly like an app secret). Either way it
+   takes effect on the platform's **next deploy**, not immediately.
+
+Both blocks may appear in the platform's `dapp.json` at once: `secrets`
+documents the GitHub-injected credentials, `platform_env` holds the
+tunables. Only `platform_env` entries are settable.
+
 ## App LLM access — the platform Claude proxy
 
 Apps that want AI features call Claude **through the platform's

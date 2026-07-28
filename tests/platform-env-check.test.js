@@ -244,7 +244,14 @@ test('the block message names the variables and where to set them', () => {
   const msg = check.describeBlock({ missing: [{ key: 'ALPHA' }, { key: 'BETA' }] }, 'Proposal #12');
   assert.match(msg, /Proposal #12/);
   assert.match(msg, /ALPHA, BETA/, 'a gate that only says "blocked" costs more time than it saves');
-  assert.match(msg, /admin console/);
+  assert.match(msg, /Platform variables panel/,
+    'the surface is the platform app\'s own secrets panel now — the admin-console '
+    + 'section this used to name was folded into it');
+  assert.match(msg, /propose one by vote/,
+    'a non-admin who hits the block needs a route that is open to them');
+  assert.match(msg, /does not count/,
+    'the gate reads APPLIED values, so a proposal still collecting votes does not '
+    + 'clear it — say so or someone waits on a vote forever');
   assert.match(msg, /vote again/, 'the gate re-evaluates live — say so, or people rebuild for nothing');
 });
 

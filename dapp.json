@@ -33,7 +33,7 @@
       "key": "ADMIN_USERNAME",
       "required": true,
       "default": "admin",
-      "description": "Bootstrap admin username. The first row in `users` is created with this name and is_admin=true on first boot. `default: \"admin\"` covers self-app staging (where the secrets UI is read-only and prod app_secrets is always empty); the staging DB clone already carries whatever admin row prod has, so this default only matters for a fresh-DB clone."
+      "description": "Bootstrap admin username. The first row in `users` is created with this name and is_admin=true on first boot. `default: \"admin\"` covers self-app staging (this key is deploy-owned, so the panel renders it read-only and no value is ever stored for it); the staging DB clone already carries whatever admin row prod has, so this default only matters for a fresh-DB clone."
     },
     {
       "key": "ADMIN_PASSWORD",
@@ -207,9 +207,14 @@
   ],
   "tests": [
     {
-      "name": "Admin console renders the Platform variables section",
-      "path": "/#admin/platform-env",
-      "expectSelector": "#admin-platform-env-panel #admin-platform-env-list"
+      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-list code"
+    },
+    {
+      "name": "Platform variables panel is titled for the platform, not \"App secrets\"",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectText": "applied by the platform's next deploy"
     },
     {
       "name": "Create-app modal opens in 'new' mode with the state on the presented card (#748)",

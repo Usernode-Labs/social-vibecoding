@@ -13,22 +13,32 @@
  * container env; nothing here ever reaches that function, and nothing
  * there ever reads these tables. A platform variable lands in
  * /opt/usernode/.env — the platform process's own environment — and
- * nowhere else. Keeping the two modules apart is what makes that
- * containment checkable by reading one file instead of auditing a
- * branch inside a shared one.
+ * nowhere else.
+ *
+ * WHERE THE BRANCH LIVES. The two stores now share ONE user-facing
+ * surface: the app-secrets panel (labelled "Platform variables" for the
+ * self-hosted app). So exactly two call sites choose between the two
+ * DAOs, both keyed on `apps.self_hosted`:
+ *   - routes/apps.js  — GET/PUT/DELETE /api/apps/:slug/secrets*
+ *   - routes/issues.js — maybeApplySecretChangeProposal (the vote path)
+ * Everything else stays segregated: mergeForDeploy() never learns about
+ * platform_env, and this module never learns about app_secrets. The
+ * invariant to check when auditing is therefore "the branch picks the
+ * right DAO", and it is covered by tests/platform-env-admin.test.js and
+ * tests/platform-env-vote.test.js.
  *
  * The running platform never reads values out of here either: they are
  * resolved once, by scripts/dump-platform-env.js, during the deploy that
- * writes .env. A variable set in the admin console takes effect on the
- * next deploy, not immediately — the same contract as a GitHub repo
- * variable, which is what this replaces.
+ * writes .env. A variable set in the panel takes effect on the next
+ * deploy, not immediately — the same contract as a GitHub repo variable,
+ * which is what this replaces.
  *
  * Shapes:
  *   listView(pool, appId)                 → merged declaration+value rows
- *                                           for the admin UI (never any
+ *                                           for the panel (never any
  *                                           plaintext of a private value)
  *   getRawValues(pool, appId, jwtSecret)  → { KEY: plaintext } for deploy
- *   setValue / deleteValue                → admin mutations
+ *   setValue / deleteValue                → admin + vote-applied mutations
  *   missingRequired(pool, appId)          → required-and-unset keys
  */
 
