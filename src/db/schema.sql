@@ -2094,3 +2094,793 @@ COMMENT ON TABLE platform_env_values IS 'staging:private';
 --                           added:[key], removed:[key], reason }
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_env_state TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS platform_env_detail JSONB;
+
+-- ══════════════════════════════════════════════════════════════════
+-- Topochain (testnet competition) — SPEC §3.4 schema
+--
+-- Topochain becomes a native part of this platform: a testnet
+-- competition organized as Season → Event → Challenge.
+--   Season          the top-level competition period (`seasons`).
+--   Season Event    a phase within a season (`season_events` — named
+--                   with the full word "season_event" everywhere,
+--                   never "event", because the platform already owns
+--                   an unrelated analytics table called `events`).
+--   Challenge       a task instance scoped to one season_event,
+--                   itself an instantiation of a reusable
+--                   `challenge_templates` row (`challenges`).
+-- Users earn points by completing challenges and producing blocks;
+-- `user_activities` is the append-only ledger of both, scored into
+-- periodic `leaderboard_snapshots`.
+--
+-- Source: topochain's own Postgres database, migrated table-for-table
+-- per docs/migration/usernode-migration.md §3.4 (line-referenced
+-- below as "SPEC"). SPEC wins over convenience for every exact type,
+-- default, and index. `users.id` here is the platform's SERIAL/
+-- INTEGER primary key; every FK column below is BIGINT as specced —
+-- Postgres allows a bigint column to reference an integer primary key
+-- (int4/int8 share a btree operator family), so no type downgrade is
+-- needed to keep the FK real.
+--
+-- Every CREATE is IF NOT EXISTS / guarded so this whole file can run
+-- as one boot-time multi-statement query, every boot, forever.
+-- ══════════════════════════════════════════════════════════════════
+
+-- `seasons` — the top level of Season → Event → Challenge. One row
+-- per competition period (e.g. "Season 1"). `pool_info` is a free-text
+-- description of the token pool being distributed; `internal` flags a
+-- season not meant for public display (staff dry-runs).
+CREATE TABLE IF NOT EXISTS seasons (
+  id             BIGSERIAL PRIMARY KEY,
+  name           VARCHAR(255) NOT NULL,
+  description    TEXT,
+  starts_at      TIMESTAMPTZ NOT NULL,
+  ends_at        TIMESTAMPTZ NOT NULL,
+  is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+  internal       BOOLEAN NOT NULL DEFAULT FALSE,
+  display_order  INTEGER NOT NULL DEFAULT 0,
+  pool_info      VARCHAR(255),
+  created_at     TIMESTAMPTZ,
+  updated_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_seasons_display_order ON seasons (display_order);
+CREATE INDEX IF NOT EXISTS idx_seasons_is_active ON seasons (is_active);
+CREATE INDEX IF NOT EXISTS idx_seasons_starts_ends ON seasons (starts_at, ends_at);
+
+-- `season_events` — the Event level of Season → Event → Challenge, one
+-- phase of a season. Named `season_events` (not `events`) because the
+-- platform already has an unrelated `events` analytics table; every FK
+-- to this table is named `season_event_id` in full, never `event_id`.
+-- `account_source_season_event_id` is a self-referential FK used for
+-- account inheritance between events (`account_inheritance_mode`
+-- governs whether/how onchain_accounts carry over from a prior event).
+-- `chain_id` deliberately stays TEXT with no FK — it is a free-form
+-- match against `chains.chain_id` values, which are not unique per row
+-- there either (chains is an append-only block log).
+CREATE TABLE IF NOT EXISTS season_events (
+  id                                BIGSERIAL PRIMARY KEY,
+  name                              VARCHAR(255) NOT NULL,
+  description                       TEXT,
+  starts_at                         TIMESTAMPTZ NOT NULL,
+  ends_at                           TIMESTAMPTZ NOT NULL,
+  is_active                         BOOLEAN NOT NULL DEFAULT TRUE,
+  scoring_formula                   JSONB NOT NULL,
+  created_at                        TIMESTAMPTZ,
+  updated_at                        TIMESTAMPTZ,
+  start_epoch                       BIGINT,
+  end_epoch                         BIGINT,
+  internal                          BOOLEAN NOT NULL DEFAULT FALSE,
+  disclaimer                        TEXT,
+  display_leaderboard               BOOLEAN NOT NULL DEFAULT TRUE,
+  score_start_time                  TIMESTAMPTZ,
+  score_end_time                    TIMESTAMPTZ,
+  display_disclaimer                BOOLEAN NOT NULL DEFAULT FALSE,
+  chain_id                          TEXT,
+  rank_based_on_bp_or_success_rate  VARCHAR(255) NOT NULL DEFAULT 'BP',
+  display_activities                BOOLEAN NOT NULL DEFAULT FALSE,
+  season_id                         BIGINT REFERENCES seasons(id) ON DELETE CASCADE,
+  type                              VARCHAR(20) NOT NULL DEFAULT 'regular',
+  account_inheritance_mode          VARCHAR(32) NOT NULL DEFAULT 'none',
+  account_source_season_event_id    BIGINT REFERENCES season_events(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_season_events_epoch_range ON season_events (start_epoch, end_epoch);
+CREATE INDEX IF NOT EXISTS idx_season_events_display_activities ON season_events (display_activities);
+CREATE INDEX IF NOT EXISTS idx_season_events_is_active ON season_events (is_active);
+CREATE INDEX IF NOT EXISTS idx_season_events_starts_ends ON season_events (starts_at, ends_at);
+
+-- `user_enrollments` — a user enrolled either in an entire season
+-- (`season_event_id` NULL) or in one specific event (`season_event_id`
+-- set). `season_id` is always set (denormalized from the event when
+-- event-scoped) so "everyone in season X" is a single-column filter.
+-- Invariant (app/ETL-enforced, no cross-table CHECK): when
+-- season_event_id is set, season_id must equal that event's season_id.
+-- Two partial uniques — rather than one composite — let season-wide
+-- and per-event enrollments coexist without NULL-uniqueness surprises.
+CREATE TABLE IF NOT EXISTS user_enrollments (
+  id               BIGSERIAL PRIMARY KEY,
+  season_event_id  BIGINT REFERENCES season_events(id) ON DELETE CASCADE,
+  user_id          BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  season_id        BIGINT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  registered_at    TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at       TIMESTAMPTZ,
+  updated_at       TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS user_enrollments_user_season_event_unique
+  ON user_enrollments (user_id, season_event_id) WHERE season_event_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS user_enrollments_user_season_unique
+  ON user_enrollments (user_id, season_id) WHERE season_event_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_user_enrollments_season ON user_enrollments (season_id);
+CREATE INDEX IF NOT EXISTS idx_user_enrollments_season_event ON user_enrollments (season_event_id);
+CREATE INDEX IF NOT EXISTS idx_user_enrollments_user ON user_enrollments (user_id);
+
+-- `challenge_kinds` — the taxonomy scanners key off (a flat slug list,
+-- not hierarchical — the sibling `category` column on templates stays
+-- free text with no table behind it). PK is a VARCHAR(100) slug such
+-- as REPORT_BUG_CHALLENGE / SEND_TX_CHALLENGE.
+CREATE TABLE IF NOT EXISTS challenge_kinds (
+  id           VARCHAR(100) PRIMARY KEY,
+  name         VARCHAR(255) NOT NULL,
+  description  TEXT,
+  created_at   TIMESTAMPTZ,
+  updated_at   TIMESTAMPTZ
+);
+
+-- `challenge_templates` — a reusable challenge definition; one or more
+-- `challenges` rows instantiate it per event (referenced there as
+-- `challenge_template_id`). `kind` carries a real FK to
+-- `challenge_kinds(id)` (the source only validated this in app code).
+CREATE TABLE IF NOT EXISTS challenge_templates (
+  id                BIGSERIAL PRIMARY KEY,
+  category          VARCHAR(50) NOT NULL,
+  goal              VARCHAR(255) NOT NULL,
+  task              TEXT NOT NULL,
+  reward            VARCHAR(255) NOT NULL,
+  description       TEXT,
+  requirements      TEXT,
+  schedule_start    TIMESTAMPTZ,
+  schedule_end      TIMESTAMPTZ,
+  reward_logic      TEXT,
+  cta_button        VARCHAR(255),
+  cta_label         VARCHAR(255),
+  cta_link          TEXT,
+  created_at        TIMESTAMPTZ,
+  updated_at        TIMESTAMPTZ,
+  kind              VARCHAR(100) REFERENCES challenge_kinds(id) ON DELETE SET NULL,
+  cta_type          VARCHAR(10),
+  mobile_cta_type   VARCHAR(10),
+  mobile_cta_label  VARCHAR(255),
+  mobile_cta_link   TEXT,
+  metric_type       VARCHAR(30),
+  metric_target     NUMERIC(20,4),
+  metric_label      VARCHAR(255)
+);
+CREATE INDEX IF NOT EXISTS idx_challenge_templates_category ON challenge_templates (category);
+
+-- `challenges` — the Challenge level of Season → Event → Challenge: an
+-- instance of a `challenge_templates` row scoped to one season_event,
+-- overriding whatever fields it needs. Challenge completions are NOT a
+-- separate table (the source's completion tables are excluded) — every
+-- completion is a `user_activities` row instead (see the two replay-
+-- protection indexes on that table below).
+-- `challenge_template_id` deliberately has NO ON DELETE action (defaults
+-- to NO ACTION/RESTRICT): SPEC §D4 calls the source's cascading template
+-- delete "destructive with no guard" (it silently wipes every challenge
+-- using the type, and transitively their scored user_activities history)
+-- and says v4 must REFUSE deletion while challenges still reference the
+-- template. Unlike season_events → challenges (a real CASCADE further
+-- up this table), this FK is the database backstop for that refusal —
+-- the admin API's own guard (a later task) is the primary UX, but a
+-- direct DB delete must still fail closed, not cascade.
+CREATE TABLE IF NOT EXISTS challenges (
+  id                     BIGSERIAL PRIMARY KEY,
+  season_event_id        BIGINT NOT NULL REFERENCES season_events(id) ON DELETE CASCADE,
+  challenge_template_id  BIGINT NOT NULL REFERENCES challenge_templates(id),
+  goal                   VARCHAR(255),
+  task                   TEXT,
+  reward                 VARCHAR(255),
+  description            TEXT,
+  requirements           TEXT,
+  schedule_start         TIMESTAMPTZ,
+  schedule_end           TIMESTAMPTZ,
+  reward_logic           TEXT,
+  cta_button             VARCHAR(255),
+  cta_label              VARCHAR(255),
+  cta_link               TEXT,
+  created_at             TIMESTAMPTZ,
+  updated_at             TIMESTAMPTZ,
+  enabled                BOOLEAN NOT NULL DEFAULT TRUE,
+  display_order          INTEGER NOT NULL DEFAULT 0,
+  completed              BOOLEAN NOT NULL DEFAULT FALSE,
+  kind                   VARCHAR(100) REFERENCES challenge_kinds(id) ON DELETE SET NULL,
+  cta_type               VARCHAR(10),
+  mobile_cta_type        VARCHAR(10),
+  mobile_cta_label       VARCHAR(255),
+  mobile_cta_link        TEXT,
+  metric_type            VARCHAR(30),
+  metric_target          NUMERIC(20,4),
+  metric_label           VARCHAR(255),
+  featured               BOOLEAN NOT NULL DEFAULT FALSE,
+  featured_order         INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_challenges_completed ON challenges (completed);
+CREATE INDEX IF NOT EXISTS idx_challenges_display_order ON challenges (display_order);
+CREATE INDEX IF NOT EXISTS idx_challenges_enabled ON challenges (enabled);
+CREATE INDEX IF NOT EXISTS idx_challenges_featured ON challenges (featured);
+CREATE INDEX IF NOT EXISTS idx_challenges_challenge_template ON challenges (challenge_template_id);
+CREATE INDEX IF NOT EXISTS idx_challenges_season_event ON challenges (season_event_id);
+CREATE INDEX IF NOT EXISTS idx_challenges_season_event_display_order ON challenges (season_event_id, display_order);
+
+-- `user_activities` — the append-only points ledger: one row per
+-- completed challenge OR per block-production credit. `added_by` is a
+-- soft reference to a source admin user (admins are not migrated, so
+-- it carries no FK and is simply left NULL for migrated rows).
+-- `source` keeps the original enum verbatim ('admin_ui', scanner/agent
+-- values); agent rows remain valid history even though agent tables
+-- are excluded from this migration.
+CREATE TABLE IF NOT EXISTS user_activities (
+  id               BIGSERIAL PRIMARY KEY,
+  user_id          BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  season_event_id  BIGINT NOT NULL REFERENCES season_events(id) ON DELETE CASCADE,
+  activity_type    VARCHAR(100) NOT NULL,
+  points           NUMERIC(10,2) NOT NULL DEFAULT 0,
+  description      TEXT,
+  metadata         JSONB,
+  activity_at      TIMESTAMPTZ NOT NULL,
+  added_by         BIGINT,
+  source           VARCHAR(255) NOT NULL DEFAULT 'admin_ui',
+  created_at       TIMESTAMPTZ,
+  updated_at       TIMESTAMPTZ,
+  challenge_id     BIGINT NOT NULL REFERENCES challenges(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_user_activities_activity_type ON user_activities (activity_type);
+CREATE INDEX IF NOT EXISTS idx_user_activities_user_season_event ON user_activities (user_id, season_event_id);
+
+-- Anti-replay after dropping the source's completion tables (SPEC
+-- §4.10): the source enforced "one completion per (user, challenge)"
+-- and "one claim per (challenge, zkPassport nullifier)" at the
+-- database level via those tables; recording completions as
+-- `user_activities` rows keeps the points but drops the constraints
+-- unless restored here. Restored as partial unique indexes over
+-- expression values pulled from `metadata`, verbatim per spec.
+CREATE UNIQUE INDEX IF NOT EXISTS user_activities_completion_unique
+  ON user_activities (user_id, challenge_id)
+  WHERE metadata->>'kind' = 'challenge_completion';
+
+CREATE UNIQUE INDEX IF NOT EXISTS user_activities_nullifier_unique
+  ON user_activities (challenge_id, (metadata->>'nullifier_hex'))
+  WHERE metadata->>'nullifier_hex' IS NOT NULL;
+
+-- `onchain_accounts` — a testnet account (address + keys) granted to a
+-- user, scoped to a season or to a single event, mirroring
+-- `user_enrollments`: `season_id` is always set, `season_event_id` is
+-- nullable, and a NULL event means the account is granted for the
+-- whole season. Invariant (app/ETL-enforced): when season_event_id is
+-- set, season_id must equal that event's season_id. Two partial
+-- uniques keep season-scoped and event-scoped accounts from colliding
+-- on the same public key. `secret_key` is a real testnet credential —
+-- handled like `apps.db_password` elsewhere in this schema: scrubbed
+-- in staging and denied from prod-debug access (wired in Task 2).
+-- `address` (ut1…) is the participant-facing account; `public_key`
+-- (utpk1… hash source) is the VRF-side key.
+CREATE TABLE IF NOT EXISTS onchain_accounts (
+  id                 BIGSERIAL PRIMARY KEY,
+  amount             BIGINT NOT NULL,
+  identity_uid       VARCHAR(64) NOT NULL,
+  address            VARCHAR(100) NOT NULL,
+  public_key         VARCHAR(64) NOT NULL,
+  secret_key         VARCHAR(64) NOT NULL,
+  tier               VARCHAR(50) NOT NULL,
+  description        TEXT,
+  registration_code  VARCHAR(64) NOT NULL UNIQUE,
+  season_event_id    BIGINT REFERENCES season_events(id) ON DELETE CASCADE,
+  season_id          BIGINT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  user_id            BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  is_used            BOOLEAN NOT NULL DEFAULT FALSE,
+  used_at            TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ,
+  updated_at         TIMESTAMPTZ
+);
+CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_season_event_public_key_unique
+  ON onchain_accounts (season_event_id, public_key) WHERE season_event_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS onchain_accounts_season_public_key_unique
+  ON onchain_accounts (season_id, public_key) WHERE season_event_id IS NULL;
+CREATE INDEX IF NOT EXISTS idx_onchain_accounts_user ON onchain_accounts (user_id);
+CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season ON onchain_accounts (season_id);
+CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season_event_address ON onchain_accounts (season_event_id, address);
+CREATE INDEX IF NOT EXISTS idx_onchain_accounts_address ON onchain_accounts (address);
+CREATE INDEX IF NOT EXISTS idx_onchain_accounts_identity_uid ON onchain_accounts (identity_uid);
+CREATE INDEX IF NOT EXISTS idx_onchain_accounts_public_key ON onchain_accounts (public_key);
+CREATE INDEX IF NOT EXISTS idx_onchain_accounts_user_season_event_used ON onchain_accounts (user_id, season_event_id, is_used);
+CREATE INDEX IF NOT EXISTS idx_onchain_accounts_season_event_used ON onchain_accounts (season_event_id, is_used);
+
+-- `account_delegation_periods` — when a testnet account (`account`, a
+-- ut1… address matching `onchain_accounts.address`) had its stake
+-- delegated. Deliberately no FK: delegations can reference accounts
+-- from any event/season, and the source table wasn't scoped that way.
+CREATE TABLE IF NOT EXISTS account_delegation_periods (
+  id          BIGSERIAL PRIMARY KEY,
+  account     VARCHAR(255) NOT NULL UNIQUE,
+  started_at  TIMESTAMPTZ NOT NULL,
+  ended_at    TIMESTAMPTZ,
+  created_at  TIMESTAMPTZ,
+  updated_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_account_delegation_periods_account_ended ON account_delegation_periods (account, ended_at);
+
+-- `leaderboard_snapshots` — point-in-time leaderboard rows, one per
+-- (season_event, user, snapshot_at). With the source's
+-- `global_leaderboard` table excluded from this migration, this is
+-- the ONLY persisted leaderboard; any all-time/global view is derived
+-- from it at query time (see the standings service, Task 5).
+-- `extra_points` holds points awarded outside block production (the
+-- source called this `offchain_points`; API payloads use the new
+-- name). `challenge_details` was already JSONB in the source.
+CREATE TABLE IF NOT EXISTS leaderboard_snapshots (
+  id                                       BIGSERIAL PRIMARY KEY,
+  season_event_id                          BIGINT NOT NULL REFERENCES season_events(id) ON DELETE CASCADE,
+  user_id                                  BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  rank                                     INTEGER NOT NULL,
+  total_points                             NUMERIC(15,2) NOT NULL DEFAULT 0,
+  extra_points                             NUMERIC(15,2) NOT NULL DEFAULT 0,
+  snapshot_at                              TIMESTAMPTZ NOT NULL,
+  created_at                               TIMESTAMPTZ,
+  updated_at                               TIMESTAMPTZ,
+  last_epoch_total_produced_blocks         BIGINT NOT NULL DEFAULT 0,
+  event_total_produced_blocks              BIGINT NOT NULL DEFAULT 0,
+  event_success_rate                       NUMERIC(5,2),
+  epoch_success_rate                       NUMERIC(5,2),
+  first_block_points                       INTEGER NOT NULL DEFAULT 0,
+  produced_half_blocks_points              INTEGER NOT NULL DEFAULT 0,
+  top_3_points                             INTEGER NOT NULL DEFAULT 0,
+  success_50_percent_points                INTEGER NOT NULL DEFAULT 0,
+  bug_report_points                        INTEGER NOT NULL DEFAULT 0,
+  inviting_new_participant_points          INTEGER NOT NULL DEFAULT 0,
+  community_contribution_points            INTEGER NOT NULL DEFAULT 0,
+  vrf_total_won_slots                      INTEGER NOT NULL DEFAULT 0,
+  canonical_total_won_slots                INTEGER NOT NULL DEFAULT 0,
+  canonical_total_produced_blocks          INTEGER NOT NULL DEFAULT 0,
+  canonical_won_slots_up_to_current        INTEGER NOT NULL DEFAULT 0,
+  canonical_produced_blocks_up_to_current  INTEGER NOT NULL DEFAULT 0,
+  max_bp_success_rate_up_to_current        NUMERIC(5,2) NOT NULL DEFAULT 0,
+  season_id                                BIGINT,
+  challenge_details                        JSONB,
+  UNIQUE (season_event_id, user_id, snapshot_at)
+);
+CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshots_season_event_rank ON leaderboard_snapshots (season_event_id, rank);
+CREATE INDEX IF NOT EXISTS idx_leaderboard_snapshots_season_event_snapshot ON leaderboard_snapshots (season_event_id, snapshot_at);
+
+-- `token_allocation` — the financial record of tokens allocated to a
+-- user for a season. `updated_by` referenced a source admin user;
+-- admins are not migrated, so it is a soft (no-FK) column, left NULL.
+CREATE TABLE IF NOT EXISTS token_allocation (
+  id                   BIGSERIAL PRIMARY KEY,
+  user_id              BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  season_id            BIGINT NOT NULL REFERENCES seasons(id) ON DELETE CASCADE,
+  total_points         NUMERIC(14,2) NOT NULL DEFAULT 0,
+  total_season_tokens  NUMERIC(18,2) NOT NULL DEFAULT 0,
+  allocated_tokens     NUMERIC(30,8) NOT NULL DEFAULT 0,
+  description          VARCHAR(255),
+  created_at           TIMESTAMPTZ,
+  updated_at           TIMESTAMPTZ,
+  updated_by           BIGINT,
+  UNIQUE (user_id, season_id)
+);
+CREATE INDEX IF NOT EXISTS idx_token_allocation_updated_by ON token_allocation (updated_by);
+
+-- `epoch_stats` — per-(chain, wallet, epoch) block-production tallies.
+-- `wallet_address` is kept alongside the nullable `user_id` because
+-- stats can exist for wallets never linked to a platform user; a
+-- deleted user's history stays (SET NULL, not CASCADE).
+CREATE TABLE IF NOT EXISTS epoch_stats (
+  id                      BIGSERIAL PRIMARY KEY,
+  chain_id                VARCHAR(64) NOT NULL,
+  wallet_address          VARCHAR(255) NOT NULL,
+  user_id                 BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  epoch                   INTEGER NOT NULL,
+  epoch_won_slots         INTEGER NOT NULL DEFAULT 0,
+  epoch_produced_blocks   INTEGER NOT NULL DEFAULT 0,
+  epoch_canonical_blocks  INTEGER NOT NULL DEFAULT 0,
+  epoch_orphaned_blocks   INTEGER NOT NULL DEFAULT 0,
+  epoch_failed_blocks     INTEGER NOT NULL DEFAULT 0,
+  created_at              TIMESTAMPTZ,
+  updated_at              TIMESTAMPTZ,
+  UNIQUE (chain_id, epoch, wallet_address)
+);
+CREATE INDEX IF NOT EXISTS idx_epoch_stats_chain_epoch ON epoch_stats (chain_id, epoch);
+
+-- `chains` — append-only block log (public chain data). No FKs by
+-- design: `chain_id` is a free-form value, not a foreign key to
+-- anything, since this table itself never carries a unique
+-- (chain_id) row. Currently 0 rows in the source; schema only.
+CREATE TABLE IF NOT EXISTS chains (
+  id            BIGSERIAL PRIMARY KEY,
+  chain_id      VARCHAR(64) NOT NULL,
+  global_slot   BIGINT NOT NULL,
+  block_height  BIGINT NOT NULL,
+  slot_time     TIMESTAMPTZ NOT NULL,
+  canonical     BOOLEAN NOT NULL,
+  block_hash    VARCHAR(255) NOT NULL,
+  producer      VARCHAR(255) NOT NULL,
+  predecessor   VARCHAR(255),
+  epoch         INTEGER NOT NULL,
+  created_at    TIMESTAMPTZ,
+  updated_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_chains_block_height ON chains (block_height);
+CREATE INDEX IF NOT EXISTS idx_chains_canonical ON chains (canonical);
+CREATE INDEX IF NOT EXISTS idx_chains_chain_id ON chains (chain_id);
+CREATE INDEX IF NOT EXISTS idx_chains_epoch ON chains (epoch);
+CREATE INDEX IF NOT EXISTS idx_chains_global_slot ON chains (global_slot);
+
+-- `bytea_larger` / `max(bytea)` — the source database defines a custom
+-- MAX() aggregate over bytea (its own migration 2026_05_18_000003) so
+-- queries can take the largest `vrf_obligations.vrf_output_be_bytes`
+-- value. Postgres ships no built-in bytea ordering aggregate, so it is
+-- recreated here: an IMMUTABLE helper function picks the larger of two
+-- (byte-wise) bytea values, NULL-safe, and a custom aggregate folds it
+-- across rows. `CREATE AGGREGATE` has no IF NOT EXISTS / OR REPLACE
+-- form, so it is guarded by checking pg_proc/pg_aggregate directly —
+-- the same idempotency this whole file relies on everywhere else.
+CREATE OR REPLACE FUNCTION bytea_larger(a BYTEA, b BYTEA) RETURNS BYTEA AS $$
+  SELECT CASE
+    WHEN a IS NULL THEN b
+    WHEN b IS NULL THEN a
+    WHEN a > b THEN a
+    ELSE b
+  END;
+$$ LANGUAGE SQL IMMUTABLE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_aggregate ag
+      JOIN pg_proc p ON p.oid = ag.aggfnoid
+      JOIN pg_type t ON t.oid = p.proargtypes[0]
+     WHERE p.proname = 'max' AND t.typname = 'bytea'
+  ) THEN
+    CREATE AGGREGATE max(BYTEA) (
+      SFUNC = bytea_larger,
+      STYPE = BYTEA
+    );
+  END IF;
+END $$;
+
+-- `vrf_obligations` — the largest migrated table by far (source has
+-- ~3.08M rows): one row per VRF slot obligation observed for a
+-- (chain, sender). `raw` is the observed JSON payload (JSON→JSONB).
+-- No FKs by design (chain_id is a free-form value, same as `chains`).
+CREATE TABLE IF NOT EXISTS vrf_obligations (
+  id                            BIGSERIAL PRIMARY KEY,
+  chain_id                      VARCHAR(64) NOT NULL,
+  global_slot                   BIGINT NOT NULL,
+  sender_pk_hash                VARCHAR(255) NOT NULL,
+  sender                        VARCHAR(255),
+  active_participant            BOOLEAN NOT NULL DEFAULT FALSE,
+  stake                         VARCHAR(255),
+  tier                          VARCHAR(32),
+  threshold                     DOUBLE PRECISION,
+  status                        VARCHAR(32) NOT NULL,
+  produced_count                SMALLINT NOT NULL DEFAULT 0,
+  out_of_window_produced_count  SMALLINT NOT NULL DEFAULT 0,
+  dropped_count                 SMALLINT NOT NULL DEFAULT 0,
+  evidence_run_id               VARCHAR(255),
+  evidence_event_id             BIGINT,
+  evidence_timestamp_ms         BIGINT,
+  observed_first_seen_ms        BIGINT,
+  observed_last_seen_ms         BIGINT,
+  epoch                         INTEGER NOT NULL,
+  epoch_slot                    INTEGER,
+  slot_time_ms                  BIGINT,
+  raw                           JSONB,
+  synced_at                     TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at                    TIMESTAMPTZ,
+  updated_at                    TIMESTAMPTZ,
+  vrf_output_truncated          VARCHAR(80),
+  vrf_output_be_bytes           BYTEA,
+  UNIQUE (chain_id, global_slot, sender_pk_hash)
+);
+CREATE INDEX IF NOT EXISTS idx_vrf_obligations_chain_epoch ON vrf_obligations (chain_id, epoch);
+CREATE INDEX IF NOT EXISTS idx_vrf_obligations_chain_global_slot ON vrf_obligations (chain_id, global_slot);
+CREATE INDEX IF NOT EXISTS idx_vrf_obligations_chain_status ON vrf_obligations (chain_id, status);
+CREATE INDEX IF NOT EXISTS idx_vrf_obligations_sender_pk_hash ON vrf_obligations (sender_pk_hash);
+
+-- `vrf_obligations_sync_state` — one cursor row per chain tracking how
+-- far the VRF obligations sync has progressed. PK is `chain_id`
+-- itself (not a surrogate id) since there is exactly one row per chain.
+CREATE TABLE IF NOT EXISTS vrf_obligations_sync_state (
+  chain_id                  VARCHAR(64) PRIMARY KEY,
+  last_synced_slot          BIGINT NOT NULL DEFAULT 0,
+  partial_window_from_slot  BIGINT,
+  partial_window_to_slot    BIGINT,
+  last_synced_at            TIMESTAMPTZ,
+  created_at                TIMESTAMPTZ,
+  updated_at                TIMESTAMPTZ,
+  descending_cursor_slot    BIGINT,
+  last_known_tip_slot       BIGINT
+);
+
+-- `slot_outcome_reports` — mobile-client device telemetry: what
+-- happened to a wallet's assigned slot, as observed on-device. There
+-- is no `metric_id` column here — the source column referenced a
+-- telemetry table outside this system's scope, so it was dropped.
+-- `user_id` is a plain column (no FK) per spec — unlike `epoch_stats`,
+-- the source never validated it against a users table either.
+-- `report_uid` is the mobile client's dedup key; the unique index
+-- below is the idempotency guard for re-sent reports.
+CREATE TABLE IF NOT EXISTS slot_outcome_reports (
+  id                          BIGSERIAL PRIMARY KEY,
+  report_uid                  VARCHAR(64) NOT NULL,
+  chain_id                    VARCHAR(64) NOT NULL,
+  wallet_address              VARCHAR(255) NOT NULL,
+  user_id                     BIGINT,
+  captured_at_ms              BIGINT NOT NULL,
+  global_slot                 BIGINT NOT NULL,
+  epoch                       INTEGER,
+  slot_in_epoch               INTEGER,
+  slot_time_ms                BIGINT,
+  outcome                     VARCHAR(32) NOT NULL,
+  outcome_reason              VARCHAR(255),
+  block_hash                  VARCHAR(255),
+  block_height                BIGINT,
+  canonical                   BOOLEAN,
+  produced_at_ms              BIGINT,
+  discarded_at_ms             BIGINT,
+  node_slot_status            VARCHAR(16),
+  flow_outcome                VARCHAR(64),
+  flow_outcome_detail         TEXT,
+  terminal_stage              VARCHAR(32),
+  discard_reason              TEXT,
+  empty_reason                TEXT,
+  block_injected_at_ms        BIGINT,
+  flow_summary_at_ms          BIGINT,
+  build_ms                    INTEGER,
+  db_diff_ms                  INTEGER,
+  sign_ms                     INTEGER,
+  inject_ms                   INTEGER,
+  batch_fetch_ms              INTEGER,
+  hydration_visible_ms        INTEGER,
+  app_state                   VARCHAR(32),
+  network_type                VARCHAR(32),
+  network_connected           BOOLEAN,
+  platform                    VARCHAR(32),
+  platform_version            VARCHAR(255),
+  app_version                 VARCHAR(255),
+  app_build_number            VARCHAR(255),
+  battery_level               SMALLINT,
+  wakelock_held               BOOLEAN,
+  foreground_service_running  BOOLEAN,
+  alarm_scheduled_at_ms       BIGINT,
+  alarm_fired_at_ms           BIGINT,
+  monitoring_started_at_ms    BIGINT,
+  created_at                  TIMESTAMPTZ,
+  updated_at                  TIMESTAMPTZ,
+  UNIQUE (chain_id, wallet_address, report_uid)
+);
+CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_captured_at_ms ON slot_outcome_reports (captured_at_ms);
+CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_chain_epoch ON slot_outcome_reports (chain_id, epoch);
+CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_user ON slot_outcome_reports (user_id);
+CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_chain_wallet_global_slot ON slot_outcome_reports (chain_id, wallet_address, global_slot);
+CREATE INDEX IF NOT EXISTS idx_slot_outcome_reports_chain_global_slot ON slot_outcome_reports (chain_id, global_slot);
+
+-- `mobile_logs` — raw device log payloads uploaded from the mobile
+-- app, keyed to the user who sent them. `payload` was JSON→JSONB.
+CREATE TABLE IF NOT EXISTS mobile_logs (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  payload     JSONB,
+  created_at  TIMESTAMPTZ,
+  updated_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_logs_user ON mobile_logs (user_id);
+
+-- `mobile_otp_codes` — email login codes for the mobile app. Schema
+-- only is migrated; ROWS ARE NOT (migrating live login codes would be
+-- a security smell). Keyed by email; after identity merge, lookups go
+-- through the platform's own `users.email`. No FK (rows here predate
+-- any user match, by email string alone).
+CREATE TABLE IF NOT EXISTS mobile_otp_codes (
+  id           BIGSERIAL PRIMARY KEY,
+  email        VARCHAR(255) NOT NULL,
+  code_hash    VARCHAR(255) NOT NULL,
+  attempts     SMALLINT NOT NULL DEFAULT 0,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  consumed_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ,
+  updated_at   TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_otp_codes_email ON mobile_otp_codes (email);
+
+-- `app_version_configs` — one row per mobile OS, gating minimum /
+-- recommended client build numbers. Direct carry-over from the source.
+CREATE TABLE IF NOT EXISTS app_version_configs (
+  id                        BIGSERIAL PRIMARY KEY,
+  os                        VARCHAR(255) NOT NULL UNIQUE,
+  min_build_number          INTEGER NOT NULL,
+  recommended_build_number  INTEGER,
+  current_version           VARCHAR(50),
+  must_update_message       TEXT,
+  is_active                 BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at                TIMESTAMPTZ,
+  updated_at                TIMESTAMPTZ,
+  should_update_message     TEXT,
+  update_url                VARCHAR(500)
+);
+CREATE INDEX IF NOT EXISTS idx_app_version_configs_is_active ON app_version_configs (is_active);
+
+-- `terms_versions` — one row per published terms-of-service revision.
+CREATE TABLE IF NOT EXISTS terms_versions (
+  id             BIGSERIAL PRIMARY KEY,
+  version        VARCHAR(255) NOT NULL UNIQUE,
+  title          VARCHAR(255) NOT NULL,
+  body_markdown  TEXT NOT NULL,
+  terms_link     VARCHAR(255),
+  published_at   TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ,
+  updated_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_terms_versions_published_at ON terms_versions (published_at);
+
+-- `user_terms_consents` — one row per user's response to a
+-- `terms_versions` row. `ip` is PII (the consent IP), classified
+-- staging:private in Task 2 alongside the rest of this batch.
+CREATE TABLE IF NOT EXISTS user_terms_consents (
+  id                BIGSERIAL PRIMARY KEY,
+  user_id           BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  terms_version_id  BIGINT NOT NULL REFERENCES terms_versions(id) ON DELETE CASCADE,
+  status            VARCHAR(255) NOT NULL,
+  responded_at      TIMESTAMPTZ NOT NULL,
+  ip                VARCHAR(45),
+  app_version       VARCHAR(255),
+  created_at        TIMESTAMPTZ,
+  updated_at        TIMESTAMPTZ,
+  UNIQUE (user_id, terms_version_id)
+);
+
+-- `mobile_auth_tokens` — bearer tokens for the topochain mobile
+-- surface (plan Global Constraints #4; this table has no equivalent in
+-- the source topochain database — it is new capability for the
+-- platform-hosted mobile auth flow). `token_hash` stores the sha256
+-- hex of the bearer token, never the token itself. `ability`
+-- distinguishes a normal 90-day 'session' token from a single-use,
+-- 10-minute 'set-password' token (issued right after OTP login for
+-- users who still need to set a platform password). Never trust a
+-- client-supplied user id on the mobile surface — the user always
+-- comes from this table via the token (see topochain-auth
+-- middleware, Task 3).
+CREATE TABLE IF NOT EXISTS mobile_auth_tokens (
+  id            BIGSERIAL PRIMARY KEY,
+  user_id       BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash    VARCHAR(64) NOT NULL UNIQUE,
+  ability       VARCHAR(20) NOT NULL,
+  expires_at    TIMESTAMPTZ NOT NULL,
+  last_used_at  TIMESTAMPTZ,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mobile_auth_tokens_user ON mobile_auth_tokens (user_id);
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Topochain Task 2 — `users` columns, `platform_settings` seed, staging
+-- privacy (plan Task 2; SPEC §8.5 users columns 3283-3294, §3.5 settings
+-- 801-804, §6 staging privacy 3080-3088).
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Columns the topochain merge adds to the platform's existing `users`
+-- table — SPEC §8.5 says plainly "the platform users table IS the users
+-- table"; there is no separate topochain users table. Every new column
+-- is nullable or safely defaulted so this whole block is a no-op for
+-- every pre-existing platform account. `email` gets a PARTIAL unique
+-- index below (WHERE email IS NOT NULL) because existing platform users
+-- have none. `users.password` is already tagged staging:private near
+-- schema.sql:1148 — not re-tagged here.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email                      VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmed            BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmation_token   VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmation_sent_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS email_confirmed_at         TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name               VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS telegram                   VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS discord                    VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS github                     VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS x                          VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_in_waitlist             BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS waitlist_submitted_at      TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS waitlist_ip                VARCHAR(45);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS waitlist_answers           JSONB;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer                   VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS referrer_handle            VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS country                    VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS city                       VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS device_info                JSONB;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS exclude_podium             BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS accept_logs                BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at                 TIMESTAMPTZ;
+
+CREATE UNIQUE INDEX IF NOT EXISTS users_email_unique ON users(email) WHERE email IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_users_is_in_waitlist ON users(is_in_waitlist);
+CREATE INDEX IF NOT EXISTS idx_users_exclude_podium ON users(exclude_podium);
+CREATE INDEX IF NOT EXISTS idx_users_email_confirmation_token ON users(email_confirmation_token);
+CREATE INDEX IF NOT EXISTS idx_users_telegram ON users(telegram);
+CREATE INDEX IF NOT EXISTS idx_users_discord ON users(discord);
+CREATE INDEX IF NOT EXISTS idx_users_country ON users(country);
+
+-- `platform_settings` gains a `description` column (SPEC §3.5) and the
+-- topochain point-values as `topochain_`-prefixed keys, so the prefix can
+-- never collide with a platform key. Seeded with ON CONFLICT (key) DO
+-- NOTHING so an operator's later edit (admin settings screen) survives
+-- every reboot.
+--
+-- NOTE on key count (task-2 brief resolution of a SPEC ambiguity): SPEC
+-- §3.5's prose says "the seven topochain values", but the reset-defaults
+-- table it points readers at (§4.9 POST /point-settings/reset, SPEC
+-- 2825-2840) lists only SIX keys (first_block, produced_half_blocks,
+-- top_1, top_2, top_3, success_50_percent). The task-2 brief resolves
+-- the count by naming seven keys explicitly — those six plus
+-- `inviting_new_participant_points` — and that concrete list is what's
+-- seeded below verbatim. `bug_report_points` and
+-- `community_contribution_points` are NOT settings keys: they are
+-- per-row columns already on `leaderboard_snapshots` (Task 1), scored
+-- per activity rather than configured as a flat point value.
+ALTER TABLE platform_settings ADD COLUMN IF NOT EXISTS description TEXT;
+INSERT INTO platform_settings (key, value, description) VALUES
+  ('topochain_first_block_points',              '250',
+    'Points awarded for producing a season event''s first block.'),
+  ('topochain_produced_half_blocks_points',     '0',
+    'Points awarded for producing at least half of the expected blocks.'),
+  ('topochain_top_1_points',                    '1500',
+    'Points awarded for finishing rank 1 on the leaderboard.'),
+  ('topochain_top_2_points',                    '1000',
+    'Points awarded for finishing rank 2 on the leaderboard.'),
+  ('topochain_top_3_points',                    '500',
+    'Points awarded for finishing rank 3 on the leaderboard.'),
+  ('topochain_success_50_percent_points',       '1000',
+    'Points awarded for a block-production success rate of at least 50%.'),
+  ('topochain_inviting_new_participant_points', '0',
+    'Points awarded for inviting a new participant into the competition.')
+ON CONFLICT (key) DO NOTHING;
+
+-- Staging privacy (SPEC §6), table-level: every row of these tables is
+-- sensitive in its entirety in a staging clone (truncated by
+-- db-manager.js's truncatePrivateTables — discovered dynamically via
+-- these COMMENTs, no code change needed there). `mobile_otp_codes` and
+-- `mobile_auth_tokens` are additionally hidden from the prod-debug role
+-- entirely (see DENIED_TABLES in src/services/debug-access.js).
+COMMENT ON TABLE token_allocation     IS 'staging:private';
+COMMENT ON TABLE chains               IS 'staging:private';
+COMMENT ON TABLE vrf_obligations      IS 'staging:private';
+COMMENT ON TABLE slot_outcome_reports IS 'staging:private';
+COMMENT ON TABLE mobile_logs          IS 'staging:private';
+COMMENT ON TABLE mobile_otp_codes     IS 'staging:private';
+COMMENT ON TABLE mobile_auth_tokens   IS 'staging:private';
+COMMENT ON TABLE user_terms_consents  IS 'staging:private'; -- contains consent IPs, SPEC 781-799
+
+-- Staging privacy (SPEC §6), column-level: the row survives cloning (FK-
+-- targeted attribution keeps working) but the credential/PII-bearing
+-- value is scrubbed. All four are additionally hidden from the
+-- prod-debug role by column (DENIED_COLUMNS in
+-- src/services/debug-access.js) so a future secret column on either
+-- table fails closed rather than leaking.
+COMMENT ON COLUMN users.email_confirmation_token    IS 'staging:private';
+COMMENT ON COLUMN users.waitlist_ip                 IS 'staging:private';
+COMMENT ON COLUMN onchain_accounts.secret_key        IS 'staging:private';
+COMMENT ON COLUMN onchain_accounts.registration_code IS 'staging:private';
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Topochain Task 8 — mobile auth: users.password_set (plan Task 8;
+-- Global Constraints #4/#6, task-8 brief).
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Every platform `users` row already has a NOT NULL `password` (a real
+-- bcrypt hash) — but the topochain mobile OTP flow
+-- (POST /api/v4/mobile/auth/otp/verify) can create a user row with NO
+-- caller-chosen password at all: it stores a random, unusable bcrypt hash
+-- (of 32 random bytes nobody knows) just to satisfy the NOT NULL
+-- constraint. `password_set` is how the mobile auth surface tells "a real,
+-- caller-chosen password exists" apart from "some syntactically-valid
+-- hash nobody can ever produce" — POST /auth/check-email's
+-- `password_set` response field and POST /auth/login's guest/member/
+-- operator level computation both branch on it directly (mobile-auth.js).
+-- Existing platform users (registered the normal way, always with a real
+-- chosen password) default TRUE via DEFAULT TRUE, so this column is a
+-- no-op for every pre-existing account; only the OTP-created path (and,
+-- until it completes set-password, that path alone) ever sets it FALSE.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_set BOOLEAN NOT NULL DEFAULT TRUE;

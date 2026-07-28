@@ -39,6 +39,12 @@ function load() {
   }
 
   const config = {
+    // Deployment environment tag (plan Global Constraints #6, topochain
+    // mailer): drives ONE behavior today — src/services/topochain/
+    // mailer.js logs the OTP code at dev/staging convenience only when
+    // `env !== 'production'`. Not in REQUIRED: defaults to 'development'
+    // so a bare checkout without NODE_ENV set behaves like local dev.
+    env: process.env.NODE_ENV || 'development',
     port: parseInt(process.env.PORT || '3000', 10),
     databaseUrl: process.env.DATABASE_URL,
     sessionSecret: process.env.SESSION_SECRET,
@@ -196,9 +202,38 @@ function load() {
     // and turning this off puts that panel back behind admin-only
     // visibility.
     selfAppPublicVoting: process.env.SELF_APP_PUBLIC_VOTING !== 'false',
+    // Topochain partner API (plan Task 3; architecture decision #5): the
+    // shared secret compared against the partner group's X-API-Key header
+    // (src/middleware/topochain-auth.js#partnerApiKey). Deliberately
+    // OPTIONAL and NOT in REQUIRED — an unset key doesn't block boot, it
+    // makes every partner-group request 500 with "API key authentication
+    // not configured." until an operator sets TOPOCHAIN_PARTNER_API_KEY.
+    topochainPartnerApiKey: process.env.TOPOCHAIN_PARTNER_API_KEY || '',
+    // Topochain ingest write gate: the shared secret compared against the
+    // X-Ingest-Key header on POST /api/v4/slot-outcomes and /epoch-stats
+    // (src/middleware/topochain-auth.js#ingestApiKey). The spec carried
+    // "Auth: none" from v2, where these endpoints sat behind a network
+    // boundary; here they are internet-reachable, so writes require this
+    // key. Deliberately separate from TOPOCHAIN_PARTNER_API_KEY (the two
+    // credentials rotate independently) and OPTIONAL like it — unset
+    // doesn't block boot, it makes every ingest write 500 with "Ingest
+    // key authentication not configured." The only known caller is the
+    // observability-hub-receiver (usernode repo), configured with this
+    // header at its v4 cutover.
+    topochainIngestApiKey: process.env.TOPOCHAIN_INGEST_API_KEY || '',
+    // Topochain zkPassport bridge (plan Task 10; SPEC §4.5 POST
+    // /mobile/zkpassport/complete, lines 2092-2141): the external service
+    // that actually verifies a zkPassport proof. Deliberately OPTIONAL and
+    // NOT in REQUIRED, same shape as TOPOCHAIN_PARTNER_API_KEY above — an
+    // unset URL doesn't block boot, it makes every zkpassport/complete
+    // call 500 "The zkPassport bridge is not configured." (SPEC's own
+    // error table row for this exact condition) until an operator sets
+    // TOPOCHAIN_ZK_BRIDGE_URL. See src/services/topochain/zk-bridge.js.
+    topochainZkBridgeUrl: process.env.TOPOCHAIN_ZK_BRIDGE_URL || '',
   };
 
   console.log('[config] Loaded:');
+  console.log(`  NODE_ENV=${config.env}`);
   console.log(`  DATABASE_URL=${mask(config.databaseUrl)}`);
   console.log(`  JWT_SECRET=${mask(config.jwtSecret)}`);
   console.log(`  GITHUB_APP_ID=${config.githubAppId || '(not set)'}`);
@@ -236,6 +271,9 @@ function load() {
   console.log(`  SELF_APP_SLUG=${config.selfAppSlug} (db=${config.selfAppDbName})`);
   console.log(`  SELF_APP_CONTAINER=${config.selfAppContainer}`);
   console.log(`  SELF_APP_PUBLIC_VOTING=${config.selfAppPublicVoting} (Phase 4: ${config.selfAppPublicVoting ? 'enabled — all users can see + vote on self-app PRs' : 'disabled — self-app is admin-only'})`);
+  console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
+  console.log(`  TOPOCHAIN_INGEST_API_KEY=${config.topochainIngestApiKey ? mask(config.topochainIngestApiKey) : '(not set — ingest writes return 500)'}`);
+  console.log(`  TOPOCHAIN_ZK_BRIDGE_URL=${config.topochainZkBridgeUrl || '(not set — zkpassport/complete returns 500)'}`);
 
   return config;
 }
