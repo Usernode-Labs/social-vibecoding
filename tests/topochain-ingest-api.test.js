@@ -57,6 +57,31 @@ function resolveEvent(chainId) {
     .sort((a, b) => a.id - b.id)[0];
 }
 
+// ─── Fixture data (wallet_address -> user_id resolution, judgment call #5) ─
+//
+// wallet-1/wallet-2 have one assignment each. wallet-reassigned models a
+// key handed to a different user in a later event: the resolver's
+// latest-assignment-wins rule (used_at DESC, id DESC) must pick user 202,
+// never user 7. Addresses absent here (e.g. wallet-unknown) don't resolve.
+const WALLET_ASSIGNMENTS = [
+  { id: 1, address: 'wallet-1', user_id: 101, used_at: '2026-01-01' },
+  { id: 2, address: 'wallet-2', user_id: 102, used_at: '2026-01-01' },
+  { id: 3, address: 'wallet-reassigned', user_id: 7, used_at: '2026-01-01' },
+  { id: 4, address: 'wallet-reassigned', user_id: 202, used_at: '2026-06-01' },
+];
+
+function resolveWallets(addresses) {
+  const byAddr = new Map();
+  for (const a of WALLET_ASSIGNMENTS) {
+    if (!addresses.includes(a.address) || a.user_id == null) continue;
+    const prev = byAddr.get(a.address);
+    if (!prev || a.used_at > prev.used_at || (a.used_at === prev.used_at && a.id > prev.id)) {
+      byAddr.set(a.address, a);
+    }
+  }
+  return Array.from(byAddr.values()).map((a) => ({ address: a.address, user_id: a.user_id }));
+}
+
 // ─── Generic in-memory upsert table, driven by the route's own SQL text ──
 //
 // Parses `INSERT INTO <table> (col1, col2, …, created_at, updated_at)
@@ -140,6 +165,11 @@ function handleQuery(rawSql, params = []) {
   if (sql === 'BEGIN') { slotTable.begin(); epochTable.begin(); return { rows: [] }; }
   if (sql === 'COMMIT') { slotTable.commit(); epochTable.commit(); return { rows: [] }; }
   if (sql === 'ROLLBACK') { slotTable.rollback(); epochTable.rollback(); return { rows: [] }; }
+
+  // POST write paths: wallet_address -> user_id resolution.
+  if (sql.startsWith('SELECT DISTINCT ON (address) address, user_id FROM onchain_accounts')) {
+    return { rows: resolveWallets(params[0]) };
+  }
 
   // GET /onchain-accounts: active-event resolution.
   if (sql.startsWith('SELECT id, season_id FROM season_events WHERE is_active = TRUE')) {
@@ -451,9 +481,22 @@ test('POST /slot-outcomes: upsert conflict target is (chain_id, wallet_address, 
   assert.equal(rows[0].report_uid, 'report-1');
 });
 
-test('POST /slot-outcomes: participant_id maps to user_id column', async () => {
+test('POST /slot-outcomes: user_id resolved from wallet_address; payload participant_id accepted but ignored', async () => {
   await postJson('/api/v4/slot-outcomes', [slotOutcome({ participant_id: 7 })]);
-  assert.equal(slotTable.rows()[0].user_id, 7);
+  // wallet-1's registry assignment (101), never the node-self-reported 7 —
+  // stale topochain ids live in a different namespace post-migration.
+  assert.equal(slotTable.rows()[0].user_id, 101);
+});
+
+test('POST /slot-outcomes: reassigned key attributes to its latest holder', async () => {
+  await postJson('/api/v4/slot-outcomes', [slotOutcome({ wallet_address: 'wallet-reassigned' })]);
+  assert.equal(slotTable.rows()[0].user_id, 202);
+});
+
+test('POST /slot-outcomes: unknown wallet_address stores user_id null instead of failing', async () => {
+  const res = await postJson('/api/v4/slot-outcomes', [slotOutcome({ wallet_address: 'wallet-unknown' })]);
+  assert.equal(res.status, 201);
+  assert.equal(slotTable.rows()[0].user_id, null);
 });
 
 test('POST /slot-outcomes: unknown keys are silently ignored', async () => {
@@ -578,9 +621,18 @@ test('POST /epoch-stats: upsert key is (chain_id, epoch, wallet_address)', async
   assert.match(epochTable.insertSqls[0], /ON CONFLICT \(chain_id, epoch, wallet_address\) DO UPDATE SET/);
 });
 
-test('POST /epoch-stats: participant_id maps to user_id column', async () => {
+test('POST /epoch-stats: user_id resolved from wallet_address; payload participant_id accepted but ignored', async () => {
   await postJson('/api/v4/epoch-stats', [epochStat({ participant_id: 3 })]);
-  assert.equal(epochTable.rows()[0].user_id, 3);
+  assert.equal(epochTable.rows()[0].user_id, 101);
+});
+
+test('POST /epoch-stats: unresolved wallet_address omits user_id from the SQL (sparse update preserves stored attribution)', async () => {
+  const res = await postJson('/api/v4/epoch-stats', [epochStat({ wallet_address: 'wallet-unknown', participant_id: 3 })]);
+  assert.equal(res.status, 201);
+  const sql = epochTable.insertSqls[epochTable.insertSqls.length - 1];
+  assert.doesNotMatch(sql, /user_id/);
+  const row = epochTable.rows().find((r) => r.wallet_address === 'wallet-unknown');
+  assert.equal(row.user_id, null, 'schema default — the column was never bound');
 });
 
 test('POST /epoch-stats: in-batch duplicates are NOT pre-deduped — both count toward stored, last write wins in the table', async () => {
