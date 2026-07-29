@@ -133,12 +133,14 @@ test("uses the canonical cursor and dedupes an older page", async ({ page }) => 
 test("re-reads the first authoritative page on notification websocket events", async ({ page }) => {
   await installNotificationSocket(page)
   let reads = 0
+  let liveMentionAvailable = false
   await page.route("**/api/notifications?limit=20", (route) => {
     reads += 1
-    return route.fulfill({ json: { ...firstPage, pendingInvites: [], notifications: [{ ...firstPage.notifications[0], messageContent: reads > 2 ? "A live mention arrived" : "Can we add a pantry filter?" }] } })
+    return route.fulfill({ json: { ...firstPage, pendingInvites: [], notifications: [{ ...firstPage.notifications[0], messageContent: liveMentionAvailable ? "A live mention arrived" : "Can we add a pantry filter?" }] } })
   })
   await page.goto("/react/notifications")
   await expect(page.getByTestId("notifications")).toContainText("Can we add a pantry filter?")
+  liveMentionAvailable = true
   await page.evaluate(() => {
     const sockets = (window as unknown as { __notificationSockets: Array<{ emit: (value: unknown) => void }> }).__notificationSockets
     sockets.at(-1)?.emit({ type: "notification_new", id: 1 })

@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: { id: "recipebot", slug: "recipebot", name: "RecipeBot", can_collaborate: false } } }))
+  await page.route("**/api/apps/recipebot/messages?*", (route) => route.fulfill({ json: { messages: [] } }))
   await page.route("**/api/me/active-sessions", (route) => route.fulfill({ json: {
     sessions: [
       { id: 23, app_slug: "recipebot", app_name: "RecipeBot", branch_name: "feature/pantry", pr_title: null, session_title: "Improve pantry search", status: "active", busy: true, last_activity_at: "2026-07-28T12:00:00.000Z", created_at: "2026-07-28T11:00:00.000Z" },

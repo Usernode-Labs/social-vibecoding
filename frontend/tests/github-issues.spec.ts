@@ -28,6 +28,8 @@ async function installDevOverviewFixture(page: import("@playwright/test").Page, 
 
 async function installIssueFixture(page: import("@playwright/test").Page, issues = [issue], priority = { field: "priority", options: [], myValue: null }, onPriorityMutation?: (route: import("@playwright/test").Route) => Promise<void>) {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { id: 7, username: "mira", canCreateApps: true } } }))
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: { id: "recipebot", slug: "recipebot", name: "RecipeBot", can_collaborate: false } } }))
+  await page.route("**/api/apps/recipebot/messages?thread_type=issue&thread_ref=84&limit=50", (route) => route.fulfill({ json: { messages: [] } }))
   await page.route("**/api/models", (route) => route.fulfill({ json: {
     default: "claude-sonnet-5",
     models: [
