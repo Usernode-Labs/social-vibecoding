@@ -6,22 +6,32 @@ name: Deploy
 # is rsync'd to /opt/usernode, an `.env` is written from GitHub
 # secrets, then `docker compose up -d --build` brings the stack up.
 #
-# Auto-deploys on every push to `main`. workflow_dispatch is kept for
-# manual re-runs (e.g. rolling forward without a new commit, or
-# replaying a deploy after rotating secrets).
+# Auto-deploy starts only after Frontend checks succeeds for the exact main
+# head SHA. workflow_dispatch is retained as an explicit replay path, but it
+# also requires a successful checks run and artifact for the requested SHA.
 
 on:
-  push:
+  workflow_run:
+    workflows: ["Frontend checks"]
+    types: [completed]
     branches: [main]
   workflow_dispatch:
     inputs:
+      source_sha:
+        description: "Exact 40-character main commit SHA whose successful verified artifact should be deployed"
+        type: string
+        required: true
       force_archive_refresh:
         description: "Force archive snapshot refresh + sidecar recreate (default: only when node-related files or upstream image changed)"
         type: boolean
         default: false
 
+permissions:
+  actions: read
+  contents: read
+
 concurrency:
-  group: deploy-${{ github.ref }}
+  group: deploy-production
   # When multiple commits land in rapid succession, queue them rather than
   # cancelling. Each deploy is small enough (~1–2 min) that running them in
   # order is fine, and we avoid the case where a cancelled deploy leaves
@@ -31,13 +41,100 @@ concurrency:
 
 jobs:
   deploy:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve successful verification run
+        id: verified
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTO_SHA: ${{ github.event.workflow_run.head_sha }}
+          AUTO_RUN_ID: ${{ github.event.workflow_run.id }}
+          MANUAL_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          SHOULD_DEPLOY=true
+          if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+            SOURCE_SHA="$AUTO_SHA"
+            CHECK_RUN_ID="$AUTO_RUN_ID"
+            CURRENT_MAIN_SHA=$(gh api "/repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')
+            if [ "$SOURCE_SHA" != "$CURRENT_MAIN_SHA" ]; then
+              echo "::notice::Skipping stale successful checks for $SOURCE_SHA; current main is $CURRENT_MAIN_SHA"
+              SHOULD_DEPLOY=false
+            fi
+          else
+            SOURCE_SHA="$MANUAL_SHA"
+            if ! printf '%s' "$SOURCE_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "::error::source_sha must be an exact 40-character lowercase commit SHA"
+              exit 1
+            fi
+            CHECK_RUN_ID=$(
+              gh api \
+                "/repos/$GITHUB_REPOSITORY/actions/workflows/frontend-checks.yml/runs?branch=main&head_sha=$SOURCE_SHA&status=completed&per_page=100" \
+                --jq '.workflow_runs | map(select(.conclusion == "success" and .event == "push")) | first | .id'
+            )
+            if [ -z "$CHECK_RUN_ID" ] || [ "$CHECK_RUN_ID" = "null" ]; then
+              echo "::error::No successful Frontend checks run exists on main for $SOURCE_SHA"
+              exit 1
+            fi
+          fi
+          printf 'source_sha=%s\n' "$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          printf 'check_run_id=%s\n' "$CHECK_RUN_ID" >> "$GITHUB_OUTPUT"
+          printf 'should_deploy=%s\n' "$SHOULD_DEPLOY" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: steps.verified.outputs.should_deploy == 'true'
+        with:
+          ref: ${{ steps.verified.outputs.source_sha }}
+          fetch-depth: 2
+
+      - name: Download exact verified React shell
+        if: steps.verified.outputs.should_deploy == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: react-shell-${{ steps.verified.outputs.source_sha }}
+          path: ${{ runner.temp }}/verified-react-shell
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.verified.outputs.check_run_id }}
+
+      - name: Verify and install React shell artifact
+        if: steps.verified.outputs.should_deploy == 'true'
+        env:
+          SOURCE_SHA: ${{ steps.verified.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/verified-react-shell"
+          # The JavaScript is intentionally single-quoted so the shell does
+          # not expand template syntax inside the validation program.
+          # shellcheck disable=SC2016
+          node -e '
+            const fs = require("node:fs")
+            const manifest = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/verified-react-shell/manifest.json", "utf8"))
+            const sha = process.env.SOURCE_SHA
+            if (manifest.schemaVersion !== 1 ||
+                manifest.sourceSha !== sha ||
+                manifest.reactShellRevision !== sha) {
+              throw new Error(`verified artifact identity mismatch: ${JSON.stringify(manifest)}`)
+            }
+          '
+          (cd "$STAGE" && sha256sum --check checksums.sha256)
+          rm -rf public/react
+          mkdir -p public
+          cp -a "$STAGE/public/react" public/react
+          cp "$STAGE/manifest.json" .verified-react-shell.json
+          cp "$STAGE/checksums.sha256" .verified-react-shell.sha256
+          grep --recursive --fixed-string --quiet "$SOURCE_SHA" public/react
+
       # Signal deploy-in-progress to the /status page BEFORE doing anything
-      # else, so users hitting the page during the deploy see "deploy in
-      # progress". The matching "Signal deploy finished" step at the bottom
-      # runs `if: always()` so cancelled/failed deploys also clear the flag.
+      # on the server, after artifact identity is proven. The matching cleanup
+      # step at the bottom runs `if: always()`.
       - name: Signal deploy started
+        if: steps.verified.outputs.should_deploy == 'true'
+        id: deploy_signal
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}
@@ -46,10 +143,8 @@ jobs:
           script: |
             mkdir -p /opt/usernode/runtime
             cat > /opt/usernode/runtime/deploy-status.json <<EOF
-            {"deploying":true,"sha":"${{ github.sha }}","startedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+            {"deploying":true,"sha":"${{ steps.verified.outputs.source_sha }}","startedAt":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
             EOF
-
-      - uses: actions/checkout@v4
 
       # Detect whether anything in this commit affects the usernode-node
       # sidecar's archive seeding or service definition. When false (and
@@ -58,21 +153,27 @@ jobs:
       # platform-code deploys then never touch the running sidecar —
       # child-app SSE streams stay open, the deploy is ~1 min faster,
       # and users don't see the loading overlay flash on every push.
-      - uses: dorny/paths-filter@v3
+      - name: Detect deploy-affecting changes
+        if: steps.verified.outputs.should_deploy == 'true'
         id: changes
-        with:
-          filters: |
-            node:
-              - 'docker-compose.yml'
-              - '.github/workflows/deploy.yml'
-              - 'scripts/fetch-archive-snapshot.sh'
-              - 'scripts/package-archive-snapshot.sh'
-            # caddy is only rebuilt when its image inputs change (#711).
-            # Caddyfile is deliberately NOT listed: it's a read-only
-            # mount, applied by the `caddy reload` step with no rebuild
-            # or container recreate needed.
-            caddy:
-              - 'caddy.Dockerfile'
+        env:
+          SOURCE_SHA: ${{ steps.verified.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          CHANGED=$(git diff --name-only "${SOURCE_SHA}^" "$SOURCE_SHA")
+          if printf '%s\n' "$CHANGED" | grep -Eq \
+            '^(docker-compose\.yml|\.github/workflows/deploy\.yml|scripts/(fetch|package)-archive-snapshot\.sh)$'; then
+            echo "node=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "node=false" >> "$GITHUB_OUTPUT"
+          fi
+          # Caddyfile is deliberately omitted: it is a read-only mount and
+          # takes effect through caddy reload without rebuilding the image.
+          if printf '%s\n' "$CHANGED" | grep -qx 'caddy.Dockerfile'; then
+            echo "caddy=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "caddy=false" >> "$GITHUB_OUTPUT"
+          fi
 
       # ------------------------------------------------------------------
       # Resolve GitHub-sourced values for variables that dapp.json's
@@ -238,7 +339,8 @@ jobs:
           USERNODE_APP_PUBKEY=${{ secrets.USERNODE_APP_PUBKEY }}
           USERNODE_APP_SECRET_KEY=${{ secrets.USERNODE_APP_SECRET_KEY }}
           LOG_LEVEL=INFO
-          GIT_SHA=${{ github.sha }}
+          GIT_SHA=${{ steps.verified.outputs.source_sha }}
+          SV_REACT_SHELL_REVISION=${{ steps.verified.outputs.source_sha }}
           # Scaling tunables (see README scaling notes). Committed defaults
           # target ~50 concurrent users on the current 20-core/62GB box;
           # override any of them by setting a matching GitHub repo var
@@ -270,6 +372,7 @@ jobs:
           rm -f "$OUT_FILE"
 
       - name: Sync repo to VPS
+        if: steps.verified.outputs.should_deploy == 'true'
         uses: easingthemes/ssh-deploy@v5.1.0
         with:
           SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
@@ -289,6 +392,7 @@ jobs:
           ARGS: "-avz --delete --exclude=.git --exclude=.github --exclude=node_modules --exclude=data --exclude=.env --exclude=.platform-env* --exclude=runtime"
 
       - name: Write .env and run docker compose
+        if: steps.verified.outputs.should_deploy == 'true'
         uses: appleboy/ssh-action@v1
         env:
           # Path-filter result for files that affect the sidecar. Empty
@@ -309,7 +413,7 @@ jobs:
           BASE_ENV_B64: ${{ env.BASE_ENV_B64 }}
           # The sha being deployed. Forwarded rather than interpolated for
           # the same reason — the script must stay expression-free.
-          DEPLOY_SHA: ${{ github.sha }}
+          DEPLOY_SHA: ${{ steps.verified.outputs.source_sha }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: deploy
@@ -839,7 +943,7 @@ jobs:
       # `if: always()` runs on success/failure/cancel, so this is the
       # closest we get to a guaranteed cleanup.
       - name: Signal deploy finished
-        if: always()
+        if: always() && steps.verified.outputs.should_deploy == 'true' && steps.deploy_signal.outcome == 'success'
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.DEPLOY_HOST }}

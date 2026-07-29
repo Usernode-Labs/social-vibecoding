@@ -4,7 +4,20 @@ on:
   pull_request:
     paths:
       - "frontend/**"
+      - "public/usernode-bridge.js"
+      - "public/usernode-bridge/**"
+      - "public/index.html"
+      - "public/js/home.js"
+      - "public/sw.js"
+      - "tests/home-card-menu.test.js"
+      - "tests/pwa-sw-classify.test.js"
+      - "tests/pwa-sw-session-boundary.test.js"
+      - "tests/usernode-bridge*.test.js"
+      - "NATIVE-BRIDGE.md"
       - "Dockerfile"
+      - "docker-compose.yml"
+      - ".github/workflows/frontend-checks.yml"
+      - ".github/workflows/deploy.yml"
       - "server.js"
       - "AGENTS.md"
       - "agent-skills/ui-development/**"
@@ -12,14 +25,12 @@ on:
       - "tool/**"
   push:
     branches: [main]
-    paths:
-      - "frontend/**"
-      - "Dockerfile"
-      - "server.js"
-      - "AGENTS.md"
-      - "agent-skills/ui-development/**"
-      - "docs/react-migration.md"
-      - "tool/**"
+
+# Every main commit produces the immutable React shell bundled into the
+# production image, including backend-only commits. This is deliberate:
+# deployment consumes this workflow's artifact and never rebuilds the shell.
+permissions:
+  contents: read
 
 jobs:
   react:
@@ -45,9 +56,78 @@ jobs:
       - run: npm run check:harness
       - run: npm run test:agent-battery
       - run: npm run typecheck
+      - run: npm run test:native-bridge-contract
+      - name: Build immutable React shell
+        env:
+          SV_REACT_SHELL_REVISION: ${{ github.sha }}
+        run: npm run build
+      - name: Test the prebuilt service worker
+        env:
+          CI: ""
+          PLAYWRIGHT_PORT: "4363"
+        run: |
+          set -euo pipefail
+          SV_SW_CONTRACT_TEST=true npm run preview -- --host 127.0.0.1 --port "$PLAYWRIGHT_PORT" > /tmp/react-shell-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          trap 'kill "$PREVIEW_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent "http://127.0.0.1:${PLAYWRIGHT_PORT}/react/" >/dev/null; then
+              break
+            fi
+            if [ "$attempt" -eq 60 ]; then
+              cat /tmp/react-shell-preview.log
+              exit 1
+            fi
+            sleep 1
+          done
+          # Empty CI makes the shared Playwright config reuse the already
+          # running production preview instead of starting a Vite dev server.
+          npx playwright test tests/react-service-worker.spec.ts --project=desktop --workers=1
       - run: npm run test:e2e
       - run: npm run test:production-review
-      - run: npm run build
+      - run: npm run check:cutover-contract
       - run: npm run check:bundle
       - run: npm run test:storybook
       - run: npm run check:storybook-build
+      - name: Hosted bridge relay contract
+        run: node --test tests/home-card-menu.test.js tests/usernode-bridge.test.js tests/usernode-bridge-relay.test.js
+        working-directory: .
+      - name: Legacy service-worker cache contract
+        run: node --test tests/pwa-sw-classify.test.js tests/pwa-sw-session-boundary.test.js
+        working-directory: .
+      - name: Package verified React shell
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          STAGE="$RUNNER_TEMP/verified-react-shell"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/public"
+          cp -a ../public/react "$STAGE/public/react"
+          grep --recursive --fixed-string --quiet "$SOURCE_SHA" "$STAGE/public/react"
+          (
+            cd "$STAGE"
+            find public/react -type f -print0 \
+              | LC_ALL=C sort -z \
+              | xargs -0 sha256sum > checksums.sha256
+          )
+          node -e '
+            const fs = require("node:fs")
+            const sha = process.env.SOURCE_SHA
+            fs.writeFileSync(
+              process.env.RUNNER_TEMP + "/verified-react-shell/manifest.json",
+              JSON.stringify({
+                schemaVersion: 1,
+                sourceSha: sha,
+                reactShellRevision: sha,
+                workflowRunId: process.env.GITHUB_RUN_ID,
+              }, null, 2) + "\n",
+            )
+          '
+      - name: Upload verified React shell
+        uses: actions/upload-artifact@v4
+        with:
+          name: react-shell-${{ github.sha }}
+          path: ${{ runner.temp }}/verified-react-shell
+          if-no-files-found: error
+          retention-days: 30

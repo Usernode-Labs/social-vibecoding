@@ -115,6 +115,7 @@ services:
       dockerfile: Dockerfile
       args:
         GIT_SHA: ${GIT_SHA:-dev}
+        SV_REACT_SHELL_REVISION: ${SV_REACT_SHELL_REVISION:-dev}
     container_name: usernode
     restart: unless-stopped
     # Explicit SIGTERM→SIGKILL budget for deploys (#711). server.js's

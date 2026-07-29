@@ -172,7 +172,10 @@ test('deploy workflow no longer rebuilds caddy on routine deploys', () => {
   assert.match(deploy, /^\s*docker compose up -d --remove-orphans\s*$/m,
     'the unscoped no-build up must still ensure the rest of the stack is running');
   assert.match(deploy, /CADDY_FILES_CHANGED/,
-    'caddy rebuilds must be gated on the caddy paths-filter');
-  assert.match(deploy, /caddy:\n\s+- 'caddy\.Dockerfile'/,
-    'paths-filter must watch caddy.Dockerfile');
+    'caddy rebuilds must be gated on the exact-SHA change detector');
+  assert.match(
+    deploy,
+    /git diff --name-only "\$\{SOURCE_SHA\}\^" "\$SOURCE_SHA"[\s\S]*grep -qx 'caddy\.Dockerfile'/,
+    'exact-SHA deploy change detection must watch caddy.Dockerfile'
+  );
 });
