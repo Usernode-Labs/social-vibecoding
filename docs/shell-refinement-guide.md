@@ -655,51 +655,44 @@ working while each consumer moves after the new contract has its own evidence.
 Public props:
 
 ```ts
-type PageHeaderAction = {
-  id: "leaderboard" | "feedback" | "account" | "settings" |
-      "notifications" | "admin" | "dev-console" | string
-  label: string
-  icon: LucideIcon
-  href?: string
-  onSelect?: () => void
-  visible?: boolean
-  badge?: { count?: number; tone?: "attention" | "status" }
-}
-
 type PageHeaderProps = {
   title: string
-  navigationLabel: string
-  onNavigationToggle: () => void
-  actions: readonly PageHeaderAction[]
+  description?: string
+  action?: ReactNode
   compact?: boolean
-  back?: { label: string; href: string } | null
 }
 ```
 
-`title` is route context, not a second platform brand. On platform home it is
-`dApps`; in a focused dApp it is the dApp name. `compact` changes spacing and
-may hide low-priority labels, never action reachability or action order.
+`PageHeader` is the route's sole `h1`. It owns route context, an optional
+Read-layer description, and at most one contextual route action. It does not
+own the platform-navigation trigger, global destinations, attention badges,
+Back, Close, or app chrome. Genuine nested Back belongs to `AppChrome`;
+platform navigation belongs to shell composition.
+
+`HeaderLayout` is the lower-level shared layout for page and section headings.
+The caller supplies the semantic heading level; the layout owns only responsive
+placement and internal spacing.
 
 States and evidence:
 
-- `PlatformHome`, `FocusedApp`, `BackNavigation`, `NarrowOverflow`,
-  `NotificationAttention`, and `AdminHidden` stories.
-- Browser fixture: narrow and desktop header, keyboard navigation trigger,
-  every visible action label, and no horizontal clipping at 320 CSS px.
-- The action list is props-only. Admin eligibility and notification counts are
-  resolved in owned adapters/route orchestration, not the header.
+- `WithDescription`, `WithAction`, `Compact`, `LongTitle`, `Narrow`, and
+  `NoDescription` stories.
+- Every story renders light/dark and desktop/mobile evidence. Interaction
+  assertions prove one `h1`, description linkage, action behavior, and no
+  narrow horizontal clipping.
+- Route orchestration resolves authorization and action behavior before
+  supplying the optional action.
 
 Accessibility and performance:
 
-- Header is a landmark label or contains a labelled navigation trigger.
-- Every icon-only action has one accessible name and a tooltip. `PlatformIcon`
-  continues to own icon-grid sizing.
+- The header is labelled by its `h1` and described by the optional paragraph.
+- The action is caller-owned and must retain its visible label or accessible
+  name.
 - Native title sync remains in the host adapter; `PageHeader` never calls the
   bridge.
-- Static action arrays are stable. Badge updates should not remount navigation
-  or the hosted iframe.
-- Motion candidate: sidebar-trigger state only. Use reduced-motion-safe
-  official sidebar motion; no custom header animation in this wave.
+- The pattern is static, props-only, and never remounts navigation or a hosted
+  iframe.
+- No custom PageHeader motion is planned.
 
 ### `PlatformNavigation`
 
@@ -707,34 +700,41 @@ Public props:
 
 ```ts
 type PlatformNavItem = {
-  id: "apps" | "work" | "community" | "account" | "settings" | string
+  id: string
   label: string
   href: string
   icon: LucideIcon
   match: (pathname: string) => boolean
-  group?: "platform" | "account"
+  group?: "primary" | "node" | "utility"
   visible?: boolean
+  trailing?: ReactNode
 }
 
 type PlatformNavigationProps = {
   items: readonly PlatformNavItem[]
   pathname: string
   brand: { label: "dApps"; href: string }
-  preferenceControl: ReactNode
   onNavigate?: () => void
 }
 ```
 
 The same item source drives desktop sidebar, off-canvas narrow sidebar, and
-header trigger. The known initial items are Apps, Your work, Community,
-Account, and Settings. Notifications remains a PageHeader destination, not a
-top-level navigation group. Its event-history meaning must remain distinct
-from the Notifications destination.
+the shell-owned header trigger. The accepted primary items are Home, Explore,
+Work, Challenges, and Activity. Node is a separately divided technical row.
+Account, Settings, Send feedback, and authorization-gated Admin are utility
+rows in the footer. Theme selection lives inside Settings and is not a
+navigation control.
+
+`trailing` carries adapter-fed evidence such as the Activity attention count
+or Node `StatusDot`; it does not authorize the navigation component to fetch
+either value. The dApps brand link is not a second active navigation row:
+Home alone owns `aria-current` on the root route.
 
 States and evidence:
 
-- `DesktopExpanded`, `NarrowClosed`, `NarrowOpen`, `ActiveCommunity`,
-  `AccountFooter`, `AdminAbsent`, `SystemThemePreference` stories.
+- `DesktopExpanded`, `NarrowClosed`, `NarrowOpen`, `ActiveChallenges`,
+  `AccountFooter`, `AdminAbsent`, `AttentionCount`, `NodeStatus`, and
+  `DesktopExpandedDark` stories.
 - Browser fixture: active route semantics, Escape closes off-canvas navigation,
   focus returns to header trigger, and navigation closes before route content
   receives focus on narrow screens.
@@ -742,7 +742,7 @@ States and evidence:
 Boundaries:
 
 - This is presentation and route matching only. It does not fetch admin state,
-  profile data, or notifications.
+  profile data, Activity attention, or Node status.
 - It supersedes `PlatformSidebar` and `mainLinks` in
   `@/components/platform-shell.tsx`; `PlatformShell` remains composition and
   provider ownership until all consumers are migrated.
@@ -858,16 +858,17 @@ generic icon primitive.
 Public props:
 
 ```ts
-type AppPresentationStatus =
-  | "running"
-  | "building"
-  | "awaiting-secrets"
-  | "unavailable"
-  | "paused"
-  | "unknown"
+type StatusDotRole =
+  | "positive"
+  | "info"
+  | "warning"
+  | "negative"
+  | "attention"
+  | "neutral"
 
 type StatusDotProps = {
-  status: AppPresentationStatus
+  role: StatusDotRole
+  subject: string
   label: string
   detail?: string
   size?: "sm" | "md"
@@ -875,7 +876,7 @@ type StatusDotProps = {
 }
 ```
 
-The mapping is owned and finite:
+Domain adapters own finite mappings. The app adapter, for example, maps:
 
 | Presentation status | Semantic role | Minimum non-color signal |
 |---|---|---|
@@ -886,11 +887,12 @@ The mapping is owned and finite:
 | paused | attention | `Paused` label |
 | unknown | neutral (existing muted/outline) | `Unknown` label |
 
-`StatusDot` owns rendering, shape, size, accessible-name format
-(`<subject>, <state>` — `Node, synced` · `Game Corner, building`), and
-semantic-role consumption. Domain adapters (Node, App, Connection) own their
+`StatusDot` owns rendering, shape, size, semantic-role consumption, and the
+accessible-name format (`<subject>, <state>` — `Node, synced` ·
+`Game Corner, building`). Domain adapters (Node, App, Connection) own their
 state vocabulary and mapping; sharing a semantic role does not make `syncing`
-and `building` the same domain state.
+and `building` the same domain
+state.
 
 `StatusDot` is the compact state glyph. It does not replace `Alert` for an
 error that needs a recovery action, or `Badge` for arbitrary metadata. A
@@ -900,11 +902,9 @@ the visual contract.
 States and evidence:
 
 - One story per status in light/dark, `DotOnly`, `WithLabel`, and
-  `WithDetail`.
+  `WithDetail`, plus explicit App/Node/Connection adapter stories.
 - Dot-only has an accessible name. Color is never the sole state signal.
-- The dot's role colors use only the proposed status/attention tokens. The
-  single direct emerald wallet-link icon is not migrated until the positive
-  role exists.
+- The dot's role colors use only the canonical status/attention tokens.
 
 ### `FocusedAppFrame` and `AppChrome`
 
@@ -924,24 +924,40 @@ type FocusedAppFrameProps = {
 
 type AppChromeProps = {
   app: AppDetail
+  mode: "use" | "improve" | "nested"
   state: "loading" | "ready" | "offline" | "unavailable" | "self-hosted"
-  onOpenDetails: () => void
+  onClose: () => void
+  onBack?: () => void
   onImprove?: () => void
   onRetry?: () => void
+  onUse?: () => void
+  onOpenOverflow?: () => void
+  consoleError?: boolean
+  nestedLabel?: string
 }
 ```
 
 `FocusedAppFrame` owns the exact iframe source validation, sandbox string,
-token refresh cadence, frame ref, dev-console frame registration, and no
-unrequested iframe remount. `AppChrome` is a compact, props-only presentation
-layer around it: app title/identity, state, and essential escape hatches. It
-is not a replacement page header and must not consume permanent vertical space
-when the iframe is ready.
+frame ref, dev-console frame registration, load handoff, and no unrequested
+iframe remount. The route/host orchestration adapter owns app loading, the
+45-minute iframe-token refresh cadence, online/offline subscriptions, native
+title sync, routing, and retry policy.
+
+`AppChrome` is the focused route's compact, props-only presentation layer: its
+app name is the route `h1`; it shows identity, state, exactly one reciprocal
+Use/Improve action where authorized, Close, genuine nested Back, and optional
+overflow/console-error evidence. It is absolutely overlaid and must not reserve
+permanent iframe space. It never shows Use and Improve as equal-weight
+persistent modes.
 
 States and evidence:
 
-- `Loading`, `Ready`, `OfflineRetry`, `TokenUnavailable`, `UnsafeDestination`,
-  `SelfHosted`, `NotRunning`, and `NarrowFocused` fixture evidence.
+- AppChrome stories: `Loading`, `Ready`, `OfflineRetry`, `SelfHosted`,
+  `NotRunning`, `NarrowFocused`, `ImproveMode`, `NestedRoute`, and
+  `ConsoleError`.
+- FocusedAppFrame stories: `TokenUnavailable`, `OfflineRetry`,
+  `UnsafeDestination`, `SelfHosted`, and `NotRunning`. A fake ready iframe is
+  deliberately absent from Storybook.
 - Browser host-contract tests assert source sanitization, `sandbox`,
   `allow`, token refresh, offline retry, direct-link inner path, header/native
   title handoff, back/history, and iframe continuity across compact chrome
@@ -952,11 +968,11 @@ States and evidence:
 Performance and motion metadata: `FocusedAppFrame` is a
 mount-continuity-sensitive pattern: it stays mounted across header/sidebar,
 notifications, state badge, and compact-chrome updates. Only a URL/token/retry
-change may replace the frame. It is a `review-later` performance contract until
-browser profiling confirms the implementation. Motion candidate: the
-`AppChrome` compact/expanded transition only. It must respect reduced motion
-and must never animate an iframe size in a way that causes resize/reload or
-hides a focused child-app control.
+change may replace the frame. It is a `review-later` performance contract
+until browser profiling confirms the implementation. Motion candidates are
+drawer/frame settling and compact-chrome state changes only. They must respect
+reduced motion and must never animate iframe dimensions in a way that causes
+resize/reload or hides a focused child-app control.
 
 ### Parallel source and story ownership
 
@@ -978,13 +994,15 @@ by fixture-driven browser tests. No worker may widen scope by importing legacy
 1. Approve the semantic-token specification (Part III) before identity/status
    styling.
 2. Land PageHeader and PlatformNavigation with adapters around the current
-   `PlatformShell`; preserve current route/href behavior and header icons.
+   `PlatformShell`; preserve route/deep-link behavior while retiring the
+   superseded global toolbar.
 3. Split `AppCard` into `HomeAppShortcut` and `ExploreAppCard`; route data and
    favorite/reorder mutation behavior stay in `AppsHome`.
 4. Migrate AppIdentity with deterministic slots and then introduce StatusDot
    after role tokens are available.
-5. Extract FocusedAppFrame without changing iframe URL, sandbox, token, or
-   offline behavior; layer AppChrome on it only after parity fixtures pass.
+5. Extract FocusedAppFrame without changing iframe URL, sandbox, allow, token
+   cadence, or offline behavior; layer AppChrome on it only after parity
+   fixtures pass.
 6. Update catalog, Storybook, browser/a11y evidence, and cutover notes per
    slice. Retire an old local pattern only once all of its route consumers have
    moved and the route-parity checklist is approved.

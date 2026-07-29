@@ -169,7 +169,215 @@
         "evidence": "StatusDot role and App/Node/Connection adapter stories, semantic token contrast checks, and forced-colors browser evidence."
       }
     },
+    "page-header": {
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "PageHeader receives a route title, optional Read-layer description, and at most one caller-owned contextual action. It performs no routing, authorization, loading, or native title synchronization."
+      },
+      "content": {
+        "layer": "read",
+        "canonicalTerms": ["dApp", "Improve"],
+        "requiredStates": [],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": ["context-restatement", "vague-link-text"]
+      },
+      "accessibility": {
+        "contract": [
+          "PageHeader is the route's sole h1 and its header landmark is labelled by that title.",
+          "An optional description is linked through aria-describedby.",
+          "The caller-owned contextual action retains a visible label or accessible name.",
+          "Long titles and actions do not create horizontal overflow at the narrow-mobile contract."
+        ],
+        "evidence": "WithDescription, WithAction, Compact, LongTitle, Narrow and NoDescription stories render light/dark desktop/mobile evidence with interaction assertions."
+      }
+    },
+    "platform-navigation": {
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "PlatformNavigation receives visible route items, route matchers, Activity attention evidence, Node status evidence and authorization decisions from shell adapters. It fetches no platform state."
+      },
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "small",
+          "rationale": "The accepted platform information architecture has five primary destinations, one Node row and a bounded utility footer."
+        },
+        "updateFrequency": "streaming",
+        "stateScope": "shared",
+        "virtualization": "not-required",
+        "mountPolicy": "Keep navigation and the adjacent focused app mounted while Activity counts, Node state, authorization, active route and drawer state update.",
+        "sensitiveInteractions": [
+          "Opening and closing the narrow drawer must not remount the hosted iframe.",
+          "Activity and Node evidence updates must not rebuild unrelated route content."
+        ],
+        "followUp": "profile-before-cutover"
+      },
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": ["Home", "Explore", "Work", "Challenges", "Activity", "Node", "Account", "Settings", "Send feedback", "Admin"],
+        "requiredStates": ["attention", "unknown"],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": ["context-restatement", "mechanism-as-content"]
+      },
+      "accessibility": {
+        "contract": [
+          "Expose one navigation landmark named Platform navigation.",
+          "Only the matching destination owns aria-current; the dApps brand link is not a second current item.",
+          "The narrow drawer closes with Escape and returns focus to its trigger.",
+          "Node state and Activity attention retain non-color accessible evidence."
+        ],
+        "evidence": "Desktop, narrow open/closed, active route, utility footer, authorization, attention, Node and dark-theme Storybook states; browser integration later proves focus return and iframe continuity."
+      }
+    },
+    "home-app-shortcut": {
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "HomeAppShortcut receives one AppRecord, a direct-launch destination, finite presentation status and optional reorder callbacks. Grouping, ordering, persistence, rollback and navigation remain route responsibilities."
+      },
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "small",
+          "rationale": "Home intentionally exposes a sparse set of pinned or recent personal shortcuts rather than the complete app catalog."
+        },
+        "updateFrequency": "interactive",
+        "stateScope": "local",
+        "virtualization": "not-required",
+        "mountPolicy": "Keep each shortcut and its focused reorder control mounted across optimistic earlier/later updates.",
+        "sensitiveInteractions": [
+          "An optimistic reorder retains keyboard focus and rolls back through the route adapter without rebuilding unrelated shortcuts."
+        ],
+        "followUp": "none"
+      },
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": ["Open", "Collaborator"],
+        "requiredStates": ["unavailable", "pending"],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": ["context-restatement", "vague-link-text"]
+      },
+      "accessibility": {
+        "contract": [
+          "The direct-launch action includes the dApp name.",
+          "Status has a visible label and a '<subject>, <state>' accessible name.",
+          "Earlier/later controls have dApp-specific labels and truthful disabled states.",
+          "AppIdentity remains decorative because the adjacent dApp name labels the destination."
+        ],
+        "evidence": "Running, unavailable, collaborator and every reorder-edge Storybook state render both themes and interaction assertions."
+      }
+    },
+    "explore-app-card": {
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "ExploreAppCard receives one AppRecord, a details destination, finite presentation status and optional community signal. Search, filtering, categories, pagination and app actions remain route or details responsibilities."
+      },
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "medium",
+          "rationale": "Explore renders the searchable catalog in a responsive grid; the route may page or virtualize if production size later exceeds the initial bounded collection."
+        },
+        "updateFrequency": "occasional",
+        "stateScope": "local",
+        "virtualization": "not-required",
+        "mountPolicy": "Keep each visible card mounted while status or community evidence updates; collection filtering remains the route's responsibility.",
+        "sensitiveInteractions": [
+          "Updating one card's status must not rebuild or resize unrelated cards in the catalog grid."
+        ],
+        "followUp": "profile-before-stable"
+      },
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": ["View details"],
+        "requiredStates": ["building", "configuration-required", "unavailable", "no-description"],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": ["vague-link-text", "context-restatement"]
+      },
+      "accessibility": {
+        "contract": [
+          "The sole details action includes the dApp name.",
+          "The card has no hidden overflow or management action.",
+          "Missing descriptions omit the description region instead of inventing filler.",
+          "AppIdentity remains decorative because the adjacent dApp name labels the card."
+        ],
+        "evidence": "Running, Building, AwaitingSecrets, Unavailable, WithCommunity and NoDescription stories render both themes with assertions."
+      }
+    },
+    "app-chrome": {
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "AppChrome receives app identity, finite host state, use/improve/nested mode, authorization-filtered callbacks and console-error evidence. It performs no routing, fetching, bridge calls or iframe work."
+      },
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "single",
+          "rationale": "Exactly one contextual chrome instance accompanies the currently focused dApp."
+        },
+        "updateFrequency": "streaming",
+        "stateScope": "shared",
+        "virtualization": "not-required",
+        "mountPolicy": "Keep AppChrome and the adjacent FocusedAppFrame mounted while status, console evidence and use/improve mode update.",
+        "sensitiveInteractions": [
+          "Chrome state changes must not resize, reload or remount the iframe.",
+          "Exactly one reciprocal Use or Improve action remains reachable as authorization changes."
+        ],
+        "followUp": "profile-before-cutover"
+      },
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": ["Use", "Improve", "Back", "Close", "Retry"],
+        "requiredStates": ["loading", "offline", "unavailable", "self-hosted"],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": ["internal-state leak", "vague state"]
+      },
+      "accessibility": {
+        "contract": [
+          "The dApp name is the focused route's sole h1.",
+          "Close, Back and overflow controls have dApp- or action-specific accessible names and 48 CSS-pixel targets.",
+          "The compact status remains understandable without color.",
+          "Use and Improve are never presented as permanent equal-weight modes."
+        ],
+        "evidence": "Loading, ready, offline, self-hosted, unavailable, narrow, improve, nested and console-error stories render both themes with interaction assertions."
+      }
+    },
+    "focused-app-frame": {
+      "dataBoundary": {
+        "kind": "host-adapter-fed",
+        "contract": "FocusedAppFrame receives one loaded AppDetail, validated route path input, current iframe token, offline state and callbacks. The route adapter owns API calls, token refresh cadence, online subscriptions, retry policy, native title sync and routing."
+      },
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "single",
+          "rationale": "The focused shell hosts at most one active child-app iframe."
+        },
+        "updateFrequency": "interactive",
+        "stateScope": "mixed",
+        "virtualization": "not-required",
+        "mountPolicy": "The iframe must stay mounted across drawer open/close, chrome/status updates, Activity/Node evidence updates and temporary shell focus changes. Only a deliberate URL, token or retry transition may replace it.",
+        "sensitiveInteractions": [
+          "Translate or inert the focused-app plane for narrow navigation without remounting the iframe.",
+          "Preserve iframe form, scroll, JavaScript and focus state across shell updates.",
+          "Refresh credentials without silently changing sandbox, allow or direct-link path semantics."
+        ],
+        "followUp": "profile-before-cutover"
+      },
+      "content": {
+        "layer": "read",
+        "canonicalTerms": ["Retry", "Dev"],
+        "requiredStates": ["loading", "offline", "unavailable", "self-hosted", "unsafe-destination"],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": ["internal-state leak", "performative apology", "vague state"]
+      },
+      "accessibility": {
+        "contract": [
+          "The iframe has the dApp name as its title.",
+          "Loading is announced politely without a fake ready frame.",
+          "Offline and unavailable states use named alerts with a visible recovery action where recovery is possible.",
+          "Focus and inert behavior are proven later in the real browser host fixture, not simulated in Storybook."
+        ],
+        "evidence": "TokenUnavailable, OfflineRetry, UnsafeDestination, SelfHosted and NotRunning Storybook states plus the required Wave 6 browser host-contract matrix."
+      }
+    },
     "app-card": {
+      "maturity": "deprecated",
+      "deprecation": "Replaced by HomeAppShortcut for personal direct launch and ExploreAppCard for catalog discovery. Existing AppsHome use remains only until the Wave 5 route split; no new use is allowed.",
       "dataBoundary": {
         "kind": "props-only",
         "contract": "The card receives an AppRecord and callbacks; data loading, ordering and navigation remain route concerns."

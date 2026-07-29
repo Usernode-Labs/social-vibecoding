@@ -74,6 +74,66 @@
       }
     },
     {
+      "id": "page-header",
+      "name": "PageHeader",
+      "module": "@/components/page-header.tsx",
+      "export": "PageHeader",
+      "story": {
+        "module": "@/components/page-header.stories.tsx",
+        "states": ["WithDescription", "WithAction", "Compact", "LongTitle", "Narrow", "NoDescription"]
+      }
+    },
+    {
+      "id": "platform-navigation",
+      "name": "PlatformNavigation",
+      "module": "@/components/platform-navigation.tsx",
+      "export": "PlatformNavigation",
+      "story": {
+        "module": "@/components/platform-navigation.stories.tsx",
+        "states": ["DesktopExpanded", "NarrowClosed", "NarrowOpen", "DesktopExpandedDark", "ActiveChallenges", "AccountFooter", "AdminAbsent", "AttentionCount", "NodeStatus"]
+      }
+    },
+    {
+      "id": "home-app-shortcut",
+      "name": "HomeAppShortcut",
+      "module": "@/features/apps/home-app-shortcut.tsx",
+      "export": "HomeAppShortcut",
+      "story": {
+        "module": "@/features/apps/home-app-shortcut.stories.tsx",
+        "states": ["Running", "Unavailable", "Collaborator", "ReorderFirst", "ReorderMiddle", "ReorderLast", "ReorderPending"]
+      }
+    },
+    {
+      "id": "explore-app-card",
+      "name": "ExploreAppCard",
+      "module": "@/features/apps/explore-app-card.tsx",
+      "export": "ExploreAppCard",
+      "story": {
+        "module": "@/features/apps/explore-app-card.stories.tsx",
+        "states": ["Running", "Building", "AwaitingSecrets", "Unavailable", "WithCommunity", "NoDescription"]
+      }
+    },
+    {
+      "id": "app-chrome",
+      "name": "AppChrome",
+      "module": "@/features/apps/app-chrome.tsx",
+      "export": "AppChrome",
+      "story": {
+        "module": "@/features/apps/app-chrome.stories.tsx",
+        "states": ["Loading", "Ready", "OfflineRetry", "SelfHosted", "NotRunning", "NarrowFocused", "ImproveMode", "NestedRoute", "ConsoleError"]
+      }
+    },
+    {
+      "id": "focused-app-frame",
+      "name": "FocusedAppFrame",
+      "module": "@/features/apps/focused-app-frame.tsx",
+      "export": "FocusedAppFrame",
+      "story": {
+        "module": "@/features/apps/focused-app-frame.stories.tsx",
+        "states": ["TokenUnavailable", "OfflineRetry", "UnsafeDestination", "SelfHosted", "NotRunning"]
+      }
+    },
+    {
       "id": "native-device-summary",
       "name": "NativeDeviceSummary",
       "module": "@/features/account/native-device-summary.tsx",
