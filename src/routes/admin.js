@@ -4,10 +4,12 @@ const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const { dbExportLimiter } = require('../middleware/rate-limits');
+const { drainGuard } = require('../services/lifecycle');
 const log = require('../services/logger');
 const limits = require('../services/limits');
 const dbExport = require('../services/db-export');
 const events = require('../services/events');
+const appRollover = require('../services/app-rollover');
 
 // Fixed app-wide key for pg_advisory_xact_lock, dedicated to admin-status
 // mutations (revoke-admin and delete-user). Any code path that could drop
@@ -68,6 +70,67 @@ function adminRoutes(config) {
       });
     } catch (err) {
       log.error('admin', 'Overview failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Container rollover ─────────────────────────────────────
+  //
+  // Recreate every running child-app container with freshly assembled env
+  // (see services/app-rollover.js for why an env change needs a container
+  // recreate at all). Fire-and-forget with a progress feed: POST answers
+  // 202 with the job record and the docker work runs on a detached
+  // promise, exactly like POST /api/apps/:slug/redeploy.
+
+  router.post('/api/admin/rollover', requireAdminWrite, drainGuard, async (req, res) => {
+    try {
+      // A staging preview has no production containers to roll over (and
+      // no docker socket to reach them with). An explicit refusal beats a
+      // sweep that fails 35 times.
+      if (appRollover.isStagingEnv()) {
+        return res.status(400).json({
+          error: 'Container rollover is unavailable in staging previews.',
+        });
+      }
+      const { started, job } = appRollover.start(config, {
+        userId: req.user.id,
+        username: req.user.username,
+      });
+      if (!started) {
+        return res.status(409).json({ error: 'Rollover already in progress', job });
+      }
+      // warn-level: a fleet-wide container recreate is worth finding in
+      // the logs later, same stance as the db-export audit lines.
+      log.warn('admin', 'Container rollover started', {
+        by: req.user.username, jobId: job.id, total: job.total,
+      });
+      res.status(202).json({ job });
+    } catch (err) {
+      log.error('admin', 'Rollover kickoff failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Read-only, so it stays on the plain adminMiddleware gate — view-only
+  // admins can watch a rollover, they just can't start one. This is the
+  // page-load + WS-reconnect source of truth (the job lives in memory,
+  // exactly like app-deploy-status).
+  router.get('/api/admin/rollover', async (req, res) => {
+    try {
+      // Staging mock data (request-time demo injection): a preview has no
+      // real job to show, so the console section would screenshot empty.
+      // Never persisted, strictly a no-op outside staging.
+      if (appRollover.isStagingEnv() && req.query.demo === '1') {
+        return res.json({ job: appRollover.demoJob(), eligible: 5, demo: true });
+      }
+      const eligible = await appRollover.eligibleCount(config).catch(() => null);
+      res.json({
+        job: appRollover.read(),
+        eligible,
+        concurrency: appRollover.concurrency(),
+      });
+    } catch (err) {
+      log.error('admin', 'Rollover status failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -642,6 +642,15 @@ module.exports = {
   warmStagingCert,
   teardownStaging,
   rebuildProduction,
+  // Exported for services/app-rollover.js: its cheap respawn path
+  // (appRespawn.runExistingImage) does its own stopAndRemove +
+  // runContainer without going through rebuildProduction, so it has to
+  // take the same per-slug lock or it can interleave with a
+  // merge-triggered rebuild of the same app — the exact "container name is
+  // already in use" race the comment above documents. Do NOT call it from
+  // inside a function that rebuildProduction already wraps: the chain is
+  // not re-entrant.
+  serializeRebuild,
   MissingSecretsError,
   PrivateSecretMissingStagingDefaultError,
 };

@@ -327,6 +327,22 @@ async function containerExists(nameOrId) {
   return status !== 'not_found';
 }
 
+// Is this image tag present on the host? Sibling of containerExists.
+// Used by the bulk container rollover (services/app-rollover.js) to decide
+// between the cheap re-run-the-existing-image path and the full
+// clone+build fallback: `docker run` on a missing image fails late and
+// after the old container is already gone, so we check first.
+async function imageExists(tag) {
+  try {
+    await execFileAsync('docker', ['image', 'inspect', '--format', '{{.Id}}', tag], {
+      timeout: 5000,
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Escalating backoff between health polls (#767). Attempt 1 essentially
 // always fails — the container has only just started — and the old flat
 // 2000ms sleep meant EVERY container start paid ~2s waiting for a process
@@ -446,6 +462,7 @@ module.exports = {
   getContainerStatus,
   getContainerLabels,
   containerExists,
+  imageExists,
   waitForHealthy,
   getHostPort,
   ensureVolume,
