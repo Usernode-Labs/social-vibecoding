@@ -75,8 +75,12 @@ test("does not expose a retry write to viewers without management access", async
 test("does not offer retry for a healthy app", async ({ page }) => {
   await page.route("**/api/apps/pantry-pal", (route) => route.fulfill({ json: { app: { ...failedApp, status: "running", lastFailure: null } } }))
   await page.goto("/react/apps/pantry-pal/recovery")
-  await expect(page.getByText("This app does not need setup repair")).toBeVisible()
-  await expect(page.getByRole("button", { name: "Retry setup" })).toHaveCount(0)
+  const recovery = page.getByTestId("app-recovery")
+  await expect(recovery.getByText("This app does not need setup repair")).toBeVisible()
+  await expect(recovery.getByRole("button", { name: "Retry setup" })).toHaveCount(0)
+  await expect(recovery.getByRole("link", { name: "Back to app" })).toHaveCount(0)
+  await recovery.getByTestId("app-context-chrome").getByRole("button", { name: "Back" }).click()
+  await expect(page).toHaveURL("/react/apps/pantry-pal")
 })
 
 test("works at a narrow viewport and has no critical accessibility violations", async ({ page }) => {
