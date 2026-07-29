@@ -1080,8 +1080,8 @@ exist; uncommitted work remains in progress even when focused checks pass.
 | M2 content governance | Complete | `f12635a` |
 | Luma probe and reliability preparation | Complete | `521e926`, `aedb14d` |
 | M3 single-owner Luma merge | Complete | `4c5d93e` |
-| M4 semantic foundation | In progress | token, identity, status, and theme work must land as one independently green milestone |
-| M5 successor contracts | Not started | Storybook-first contracts may land only after M4 |
+| M4 semantic foundation | Complete | `565c5ff`; AppIdentity, StatusDot, Light/Dark/System parity, DTCG roles, contrast and forced-colors evidence, 165 Storybook states, production-review tests, and shell gates are green |
+| M5 successor contracts | In progress | Storybook-first contracts may now proceed without route integration |
 | M6–M10 route integration, host proof, optional Motion, and cutover | Not started | follow the gates below; do not collapse them into the current milestone |
 
 ### Wave 0 — Charter and preset freeze
