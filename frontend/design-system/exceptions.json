@@ -377,11 +377,22 @@
       "rule": "no-raw-palette",
       "file": "@/components/ui/alert-dialog.tsx",
       "matches": [
-        "bg-black/10"
+        "bg-black/30"
       ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/alert-dialog.tsx",
+      "matches": [
+        "dark:ring-foreground/10"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Frozen official shadcn Luma source uses a theme-specific ring alpha; the exact-match ratchet prevents local expansion.",
       "expires": "2026-09-30"
     },
     {
@@ -437,67 +448,38 @@
       "matches": [
         "dark:aria-invalid:border-destructive/50",
         "dark:aria-invalid:ring-destructive/40",
-        "dark:bg-background",
-        "dark:bg-input/30",
-        "dark:border-input",
+        "dark:bg-destructive/20",
+        "dark:bg-transparent",
         "dark:focus-visible:ring-destructive/40",
-        "dark:hover:bg-destructive/20",
-        "dark:hover:bg-input/50",
+        "dark:hover:bg-destructive/30",
+        "dark:hover:bg-input/30",
         "dark:hover:bg-muted/50"
       ],
-      "count": 9,
+      "count": 8,
       "owner": "frontend-platform",
-      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/components/ui/button.tsx",
-      "matches": [
-        "rounded-[min(var(--radius-md),10px)]",
-        "rounded-[min(var(--radius-md),12px)]",
-        "text-[0.8rem]"
-      ],
-      "count": 5,
-      "owner": "frontend-platform",
-      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "reason": "Frozen official shadcn Luma source uses theme-specific control states; the exact-match ratchet prevents local expansion.",
       "expires": "2026-09-30"
     },
     {
       "rule": "no-manual-dark-colors",
-      "file": "@/components/ui/field.tsx",
+      "file": "@/components/ui/card.tsx",
       "matches": [
-        "dark:has-data-checked:bg-primary/10",
-        "dark:has-data-checked:border-primary/20"
+        "dark:ring-foreground/10"
       ],
-      "count": 2,
+      "count": 1,
       "owner": "frontend-platform",
-      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "reason": "Frozen official shadcn Luma source uses a theme-specific ring alpha; the exact-match ratchet prevents local expansion.",
       "expires": "2026-09-30"
     },
     {
       "rule": "no-manual-dark-colors",
       "file": "@/components/ui/input-group.tsx",
       "matches": [
-        "dark:bg-input/30",
-        "dark:bg-transparent",
-        "dark:disabled:bg-transparent",
-        "dark:has-disabled:bg-input/80"
-      ],
-      "count": 6,
-      "owner": "frontend-platform",
-      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/components/ui/input-group.tsx",
-      "matches": [
-        "rounded-[calc(var(--radius)-3px)]"
+        "dark:bg-transparent"
       ],
       "count": 2,
       "owner": "frontend-platform",
-      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "reason": "Frozen official shadcn Luma source keeps nested controls transparent in dark mode; the exact-match ratchet prevents local expansion.",
       "expires": "2026-09-30"
     },
     {
@@ -505,11 +487,9 @@
       "file": "@/components/ui/input.tsx",
       "matches": [
         "dark:aria-invalid:border-destructive/50",
-        "dark:aria-invalid:ring-destructive/40",
-        "dark:bg-input/30",
-        "dark:disabled:bg-input/80"
+        "dark:aria-invalid:ring-destructive/40"
       ],
-      "count": 4,
+      "count": 2,
       "owner": "frontend-platform",
       "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
       "expires": "2026-09-30"
@@ -520,10 +500,9 @@
       "matches": [
         "dark:aria-invalid:border-destructive/50",
         "dark:aria-invalid:ring-destructive/40",
-        "dark:bg-input/30",
-        "dark:hover:bg-input/50"
+        "dark:ring-foreground/10"
       ],
-      "count": 4,
+      "count": 3,
       "owner": "frontend-platform",
       "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
       "expires": "2026-09-30"
@@ -532,7 +511,7 @@
       "rule": "no-raw-palette",
       "file": "@/components/ui/sheet.tsx",
       "matches": [
-        "bg-black/10"
+        "bg-black/30"
       ],
       "count": 1,
       "owner": "frontend-platform",
@@ -570,22 +549,31 @@
         "dark:aria-invalid:border-destructive/50",
         "dark:aria-invalid:ring-destructive/40",
         "dark:data-checked:bg-primary-foreground",
-        "dark:data-unchecked:bg-foreground",
-        "dark:data-unchecked:bg-input/80"
+        "dark:data-unchecked:bg-foreground"
       ],
-      "count": 5,
+      "count": 4,
       "owner": "frontend-platform",
       "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
       "expires": "2026-09-30"
     },
     {
       "rule": "no-arbitrary-utilities",
+      "file": "@/components/ui/switch.tsx",
+      "matches": [
+        "data-checked:translate-x-[calc(100%-8px)]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Frozen official shadcn Luma source uses a track-relative thumb translation; the exact-match ratchet prevents local expansion.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
       "file": "@/components/ui/tabs.tsx",
       "matches": [
-        "h-[calc(100%-1px)]",
-        "p-[3px]"
+        "h-[calc(100%-1px)]"
       ],
-      "count": 2,
+      "count": 1,
       "owner": "frontend-platform",
       "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
       "expires": "2026-09-30"
@@ -610,11 +598,9 @@
       "file": "@/components/ui/textarea.tsx",
       "matches": [
         "dark:aria-invalid:border-destructive/50",
-        "dark:aria-invalid:ring-destructive/40",
-        "dark:bg-input/30",
-        "dark:disabled:bg-input/80"
+        "dark:aria-invalid:ring-destructive/40"
       ],
-      "count": 4,
+      "count": 2,
       "owner": "frontend-platform",
       "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
       "expires": "2026-09-30"
@@ -648,18 +634,6 @@
         "dark:aria-invalid:ring-destructive/40"
       ],
       "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/components/ui/toggle.tsx",
-      "matches": [
-        "rounded-[min(var(--radius-md),12px)]",
-        "text-[0.8rem]"
-      ],
-      "count": 2,
       "owner": "frontend-platform",
       "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
       "expires": "2026-09-30"
@@ -785,17 +759,6 @@
       "file": "@/features/apps/app-dev.tsx",
       "matches": [
         "space-y-2"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-inline-style",
-      "file": "@/features/apps/app-identity.tsx",
-      "matches": [
-        "style={identityStyle(app.name)}"
       ],
       "count": 1,
       "owner": "frontend-platform",
