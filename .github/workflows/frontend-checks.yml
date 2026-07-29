@@ -45,14 +45,22 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+      - name: Install root dependencies
+        run: npm ci
+        working-directory: .
+      - name: Install frontend dependencies
+        run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run lint
       - run: npm run check:tokens
       - run: npm run check:design-system
       - run: npm run check:registry
       - run: npm run check:style-policy
+      - run: npm run check:content
+      - run: npm run test:content
       - run: npm run check:harness
       - run: npm run test:agent-battery
       - run: npm run typecheck
@@ -61,6 +69,9 @@ jobs:
         env:
           SV_REACT_SHELL_REVISION: ${{ github.sha }}
         run: npm run build
+      - name: Run authoritative root suite
+        run: npm test
+        working-directory: .
       - name: Test the prebuilt service worker
         env:
           CI: ""
@@ -89,12 +100,6 @@ jobs:
       - run: npm run check:bundle
       - run: npm run test:storybook
       - run: npm run check:storybook-build
-      - name: Hosted bridge relay contract
-        run: node --test tests/home-card-menu.test.js tests/usernode-bridge.test.js tests/usernode-bridge-relay.test.js
-        working-directory: .
-      - name: Legacy service-worker cache contract
-        run: node --test tests/pwa-sw-classify.test.js tests/pwa-sw-session-boundary.test.js
-        working-directory: .
       - name: Package verified React shell
         env:
           SOURCE_SHA: ${{ github.sha }}
