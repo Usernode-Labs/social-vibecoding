@@ -8,9 +8,10 @@ Scope is the Social Vibecoding platform shell as defined in
 `frontend/design-system/authority.json`. Hosted child apps, the app-factory
 scaffold, and `usernode-native/v1` are out of scope.
 
-Worker-facing decisions are consolidated in
-[`shell-refinement-guide.md`](shell-refinement-guide.md); parallel delivery and
-cutover gates are in [`shell-execution-plan.md`](shell-execution-plan.md).
+Worker-facing decisions, the frozen Create baseline and Luma merge impact, the
+semantic token and successor contract specifications, and the delivery plan
+with cutover gates are all consolidated in
+[`shell-refinement-guide.md`](shell-refinement-guide.md).
 
 Status legend for decisions: **proposed** (awaiting review), **accepted**,
 **superseded** (replaced by a later accepted decision; the record names it),
@@ -57,8 +58,8 @@ Amendments accepted during reconciliation:
 8. shadcn Create owns the upstream baseline. The current project resolves to
    Base UI + Nova `b2fA`; Base UI + Luma + Geist `b1VlIwYS` is the exact frozen
    target pending the explicit freeze gate. Adoption is a scratch comparison
-   and component-by-component merge, never a blanket overwrite. See
-   [`shadcn-create-baseline.md`](shadcn-create-baseline.md).
+   and component-by-component merge, never a blanket overwrite. See the
+   baseline part of [`shell-refinement-guide.md`](shell-refinement-guide.md).
 9. User-facing contribution labels use **Improve**. Technical routes
    (`/dev`), diagnostics, and historical evidence may retain **Dev**.
 10. Motion is deferred until static focused-app mount continuity and real

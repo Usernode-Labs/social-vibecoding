@@ -6,9 +6,8 @@
 
 **Scope:** React platform shell, platform-owned routes, and shell-side hosted-app frame
 
-Implementation authority:
-[`shell-refinement-guide.md`](shell-refinement-guide.md). Delivery waves:
-[`shell-execution-plan.md`](shell-execution-plan.md).
+Implementation authority, including the delivery waves:
+[`shell-refinement-guide.md`](shell-refinement-guide.md).
 
 ## Decision
 
@@ -471,9 +470,10 @@ The completed Flutter/WebView review establishes this boundary:
   viewport zoom, browser/native Back, drawer dismissal, offline/service-worker
   readiness, external-link handling, keyboard/focus, and safe-area behavior.
 
-These are parallel host-lane responsibilities in the
-[`shell-execution-plan.md`](shell-execution-plan.md). The static web shell may
-be reviewed before they finish, but cutover may not bypass their stop gates.
+These are parallel host-lane responsibilities in the execution plan inside
+[`shell-refinement-guide.md`](shell-refinement-guide.md). The static web shell
+may be reviewed before they finish, but cutover may not bypass their stop
+gates.
 
 ## Required implementation evidence
 
