@@ -147,7 +147,7 @@ export function GitHubIssueDetailContent({ attributeError, attributes = EMPTY_AT
           {issue.bounty_count ? <Badge variant="outline">{Number(issue.bounty_count)} kudos pledged</Badge> : null}
           {issue.my_bounty ? <Badge variant="secondary">Your pledge</Badge> : null}
         </div>
-        {canClearClaims ? <section aria-labelledby="github-issue-claims" className="flex flex-col gap-2"><h3 className="text-sm font-medium" id="github-issue-claims">In-progress claims</h3><div className="flex flex-wrap gap-2">{claims.map((claim) => {
+        {canClearClaims ? <section aria-labelledby="github-issue-claims" className="flex flex-col gap-2"><h2 className="text-sm font-medium" id="github-issue-claims">In-progress claims</h2><div className="flex flex-wrap gap-2">{claims.map((claim) => {
           if (claim.userId === null || claim.userId === undefined) return null
           const clearing = String(claimClearingUserId) === String(claim.userId)
           const username = claim.username || "Unknown collaborator"
