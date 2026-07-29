@@ -1,6 +1,6 @@
 # shadcn Luma merge impact
 
-**Status:** Read-only reconnaissance; no preset applied
+**Status:** Frozen-preset reconnaissance; no preset applied
 
 **Date:** 2026-07-29
 
@@ -17,7 +17,7 @@ authorize production adoption.
 
 Official shadcn CLI `4.16.0` reproduced both records:
 
-| Field | Current production | Exact proposal |
+| Field | Current production | Frozen target |
 | --- | --- | --- |
 | Code | `b2fA` | `b1VlIwYS` |
 | Style | Nova | Luma |
@@ -27,7 +27,7 @@ Official shadcn CLI `4.16.0` reproduced both records:
 | Radius | Default | Default |
 | Menu accent / color | Subtle / default | Subtle / default |
 
-The proposed URL is
+The frozen URL is
 [`https://ui.shadcn.com/create?preset=b1VlIwYS`](https://ui.shadcn.com/create?preset=b1VlIwYS).
 Base UI is retained by the existing project configuration; preset codes do not
 encode the primitive base.
@@ -45,13 +45,21 @@ or font-token migration in the Luma adoption.
 
 ## Probe summary
 
-The scratch project generated the same 29 official primitives as production:
+The fresh frozen-preset scratch project generated the same 29 official
+primitives as current production:
 
-- 3 are byte-identical;
-- 26 differ;
+- 2 are byte-identical;
+- 27 differ, including production's concurrent avatar contrast fix;
 - the Luma side contains 449 insertions and removes 183 production lines;
 - much of the large `select`, `alert-dialog`, and `tabs` delta is formatting,
   but their geometry and surface classes also change.
+
+Compared with the prior Inter probe, 25 component files are byte-identical.
+`field`, `input-group`, `message-scroller`, and `sheet` differ only by the
+presence or absence of `"use client"` after generation in a different add
+context. No component class, geometry, or disposition changed because of the
+font choice. This report uses the fresh frozen-preset output as the count
+baseline.
 
 Disposition meanings:
 
@@ -74,23 +82,23 @@ The delta column is Luma additions / production removals.
 | `alert-dialog` | +137 / −20 | Merge carefully | Mostly formatting plus larger radius, inset, media, shadow, and darker overlay. Preserve Base UI portal, title/description semantics, action/cancel API, focus trap, Escape, and focus return. |
 | `alert` | +2 / −2 | Take upstream | Radius, inset, gap, and action position only. Check destructive and default contrast. |
 | `attachment` | +3 / −3 | Take upstream | Radius and focus-ring alpha only; attachment state, orientation, and media behavior are unchanged. |
-| `avatar` | 0 / 0 | Identical | The primitive does not fix application fallback contrast by itself; retain the structural patch's consumer-level contrast evidence. |
+| `avatar` | +2 / −2 | Preserve local behavior | Production now uses `text-foreground` for fallback and group-count contrast. Frozen Luma still uses `text-muted-foreground`; retain the accepted contrast fix and its evidence. |
 | `badge` | +1 / −1 | Take upstream | Radius only. Product status still moves to `StatusDot`; do not create new status-badge semantics. |
 | `bubble` | +1 / −1 | Take upstream | Radius, padding, and focus-ring alpha only. Preserve chat alignment and link/button focus behavior. |
 | `button-group` | +4 / −4 | Take upstream | Luma adds pill geometry and outline-child border/focus coordination. Verify mixed input/select/button groups. |
 | `button` | +11 / −13 | Merge carefully | Central, high-fan-out change: all heights/padding/radii, outline dark surface, destructive treatment, and focus-ring alpha change. Keep variant/size names and Base UI `render` behavior; app-chrome 48px targets remain an owned-pattern contract. |
 | `card` | +4 / −7 | Merge carefully | Luma adds larger radius, spacing, and shadow and changes footer treatment. Audit consumers that rely on flush muted footers, `size="sm"`, image clipping, or skeleton geometry. Do not polish the superseded `AppCard`. |
 | `empty` | +4 / −4 | Take upstream | Larger inset, media, title, and content gaps match Luma. Content discipline still limits the owned state to one glyph, one line, and at most one action. |
-| `field` | +8 / −6 | Take upstream | Spacing and selected-field surface change; Luma adds a client directive. Preserve `fieldset`/`legend`, `data-invalid`, disabled, checkbox, and radio contracts. |
-| `input-group` | +11 / −14 | Merge carefully | Surface, height, radius, KBD styling, and block-addon inset change. Luma removes several explicit disabled background rules; prove disabled, invalid, textarea, button-addon, and combobox-nesting states before accepting. |
+| `field` | +6 / −6 | Take upstream | Spacing and selected-field surface change. Preserve `fieldset`/`legend`, `data-invalid`, disabled, checkbox, and radio contracts. |
+| `input-group` | +13 / −14 | Merge carefully | Surface, height, radius, KBD styling, block-addon inset, and official client boundary change. Luma removes several explicit disabled background rules; prove disabled, invalid, textarea, button-addon, and combobox-nesting states before accepting. |
 | `input` | +1 / −1 | Take upstream | Luma changes height, pill geometry, transparent border, filled surface, focus alpha, and disabled surface. Semantics and API are unchanged; verify autofill, file input, invalid, and disabled contrast. |
 | `label` | +2 / −0 | Take upstream | Only the official client directive is added. |
 | `marker` | 0 / 0 | Identical | No action. |
-| `message-scroller` | +3 / −1 | Take upstream | Adds the official client directive and increases message gap. Preserve scroll anchoring, streaming follow, and jump-to-latest behavior. |
+| `message-scroller` | +1 / −1 | Take upstream | Increases message gap. Preserve the production client boundary, scroll anchoring, streaming follow, and jump-to-latest behavior. |
 | `message` | +2 / −2 | Take upstream | Header/footer horizontal inset only. |
 | `select` | +148 / −49 | Merge carefully | Large generated diff plus trigger/menu geometry and density. Preserve Base UI portal/positioner, trigger sizing API, item indicator, scroll arrows, disabled/invalid behavior, keyboard typeahead, and focus return. Inspect a fresh CLI `--diff`; do not copy the scratch file wholesale. |
 | `separator` | 0 / 0 | Identical | No action. |
-| `sheet` | +5 / −7 | Merge carefully | Darker overlay, larger header/footer inset, secondary close surface, and shadow change; the probe removes production's client directive. Retain the directive, title contract, focus trap/return, Escape, side geometry, and accessible close label. |
+| `sheet` | +5 / −5 | Merge carefully | Darker overlay, larger header/footer inset, secondary close surface, and shadow change. Retain the client directive, title contract, focus trap/return, Escape, side geometry, and accessible close label. |
 | `sidebar` | +20 / −19 | Merge carefully | Luma changes menu density/radii and removes production's client directive. Retain the directive, `SidebarInset` as the shell's sole `main`, cookie/state behavior, keyboard shortcut, mobile Sheet semantics, and wide/mobile collapse behavior. This file cannot merge before the structural-integrity owner finishes. |
 | `skeleton` | +1 / −1 | Take upstream | Radius only. Successor skeletons must still derive from their real components. |
 | `switch` | +2 / −4 | Merge carefully | Geometry changes from a compact round thumb to Luma's wider track/thumb and removes production's client directive. Retain the directive and expanded pointer target; prove checked/unchecked, disabled, focus, invalid, and both themes. |
@@ -102,20 +110,20 @@ The delta column is Luma additions / production removals.
 
 Summary by disposition:
 
-- **Identical:** `avatar`, `marker`, `separator`.
+- **Identical:** `marker`, `separator`.
 - **Take upstream:** `alert`, `attachment`, `badge`, `bubble`, `button-group`,
   `empty`, `field`, `input`, `label`, `message-scroller`, `message`, `skeleton`,
   `toggle-group`, `toggle`, `tooltip`.
 - **Merge carefully:** `accordion`, `alert-dialog`, `button`, `card`,
   `input-group`, `select`, `sheet`, `sidebar`, `switch`, `tabs`.
-- **Preserve local behavior:** `textarea`.
+- **Preserve local behavior:** `avatar`, `textarea`.
 
 ## Exact production source impact
 
 ### Direct primitive files
 
-An accepted migration would edit the 26 non-identical files under
-`frontend/@/components/ui/`. The three identical files should remain untouched.
+An accepted migration would edit the 27 non-identical files under
+`frontend/@/components/ui/`. The two identical files should remain untouched.
 No owned feature component belongs in the primitive-migration commit.
 
 ### Configuration and global CSS
@@ -125,9 +133,9 @@ No owned feature component belongs in the primitive-migration commit.
 | `frontend/components.json` | Change the style only after the preset freeze; retain Base UI, aliases, RTL choice, and the `@usernode-shell` registry. Never replace the file with the scratch config. |
 | `frontend/src/index.css` | Merge manually. Preserve the Geist font import, generated-token import, `--font-sans-authority`, custom dark variant, token-to-Tailwind mappings, and explicit light/dark `color-scheme`. |
 | `frontend/design-system/tokens.json` | Remains canonical. Neutral colors, Geist, and `0.625rem` radius already match the frozen Luma preset; do not paste the probe's `:root`/`.dark` block into global CSS. |
-| `frontend/src/generated/design-tokens.css` | Regenerate from DTCG after any accepted font/token change; never hand-edit. |
+| `frontend/src/generated/design-tokens.css` | No preset-driven value change is needed. Regenerate only after a separately accepted token change; never hand-edit. |
 | `frontend/scripts/design-token-tools.mjs` and `build-design-tokens.mjs` | Preserve the generator contract. No Luma-specific change is currently justified. |
-| `frontend/package.json` and `frontend/package-lock.json` | No font dependency change is expected. Do not import the scratch project's unrelated React, Vite, TypeScript, Tailwind, Lucide, or formatter versions. |
+| `frontend/package.json` and `frontend/package-lock.json` | No font dependency change is needed. Preserve `@fontsource-variable/geist`; do not import the scratch project's unrelated React, Vite, TypeScript, Tailwind, Lucide, or formatter versions. |
 | `frontend/design-system/exceptions.json` | Re-inventory official-source exact matches after the merge. Remove resolved Nova exceptions, update still-required upstream exceptions with reviewed exact matches, and do not weaken the policy. |
 
 The generated `frontend/design-system/catalog.json`, root catalog, manifest, and
@@ -181,7 +189,7 @@ must not be hand-edited during the merge.
 | Successor contracts | Button/Card/Sidebar consumers, stories, authority/registry | Begin after the primitive milestone so screenshot geometry and interaction tests target final Luma primitives. |
 | Home/Explore and navigation | Route composition and fixture screenshots | May perform read-only design work, but source integration waits for successor contracts and Luma. |
 
-One Luma integration owner must exclusively control all 26 primitive files,
+One Luma integration owner must exclusively control all 27 primitive files,
 `components.json`, `src/index.css`, token/font changes, package metadata, lock
 file, and exception reconciliation for the duration of the merge.
 
@@ -192,7 +200,7 @@ Before production mutation:
 1. the exact frozen preset remains `b1VlIwYS`;
 2. Geist remains the accepted shell font;
 3. structural integrity is green and `sidebar.tsx` ownership is released;
-4. each of the 26 differing primitives has an assigned disposition and test;
+4. each of the 27 differing primitives has an assigned disposition and test;
 5. the Luma owner captures fresh CLI `--dry-run` and per-file `--diff` output;
 6. DTCG/global-CSS preservation is part of the merge review;
 7. no blanket `apply`, `--overwrite`, or scratch-file copy is used.
