@@ -55,7 +55,7 @@ Amendments accepted during reconciliation:
    go; the owned surface is limited to the iframe inert/focus contract and the
    attention indicator.
 8. shadcn Create owns the upstream baseline. The current project resolves to
-   Base UI + Nova `b2fA`; Base UI + Luma `b1VlIttI` is the exact proposed
+   Base UI + Nova `b2fA`; Base UI + Luma + Geist `b1VlIwYS` is the exact frozen
    target pending the explicit freeze gate. Adoption is a scratch comparison
    and component-by-component merge, never a blanket overwrite. See
    [`shadcn-create-baseline.md`](shadcn-create-baseline.md).

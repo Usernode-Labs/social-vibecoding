@@ -19,29 +19,29 @@ Official shadcn CLI `4.16.0` reproduced both records:
 
 | Field | Current production | Exact proposal |
 | --- | --- | --- |
-| Code | `b2fA` | `b1VlIttI` |
+| Code | `b2fA` | `b1VlIwYS` |
 | Style | Nova | Luma |
 | Base color / theme / charts | Neutral | Neutral |
-| Font / heading | Geist / inherit | Inter / inherit |
+| Font / heading | Geist / inherit | Geist / inherit |
 | Icons | Lucide | Lucide |
 | Radius | Default | Default |
 | Menu accent / color | Subtle / default | Subtle / default |
 
 The proposed URL is
-[`https://ui.shadcn.com/create?preset=b1VlIttI`](https://ui.shadcn.com/create?preset=b1VlIttI).
+[`https://ui.shadcn.com/create?preset=b1VlIwYS`](https://ui.shadcn.com/create?preset=b1VlIwYS).
 Base UI is retained by the existing project configuration; preset codes do not
 encode the primitive base.
 
 Reproduction commands, run from `frontend/`:
 
 ```sh
-npx shadcn@latest preset resolve --json
-npx shadcn@latest preset decode b1VlIttI --json
+npx shadcn@latest preset resolve
+npx shadcn@latest preset decode b1VlIwYS
 npx shadcn@latest --version
 ```
 
-The proposed code still requires the G0 user freeze. Inter is a real change,
-not an incidental output.
+The user froze this exact code with Geist preserved. There is no font-package
+or font-token migration in the Luma adoption.
 
 ## Probe summary
 
@@ -123,11 +123,11 @@ No owned feature component belongs in the primitive-migration commit.
 | Production file | Expected disposition |
 | --- | --- |
 | `frontend/components.json` | Change the style only after the preset freeze; retain Base UI, aliases, RTL choice, and the `@usernode-shell` registry. Never replace the file with the scratch config. |
-| `frontend/src/index.css` | Merge manually. Change the font import only if Inter is accepted. Retain the generated-token import, `--font-sans-authority`, custom dark variant, token-to-Tailwind mappings, and explicit light/dark `color-scheme`. |
-| `frontend/design-system/tokens.json` | Remains canonical. Neutral colors and `0.625rem` radius already match the Luma proposal. Only the canonical font family changes if Inter is accepted; do not paste the probe's `:root`/`.dark` block into global CSS. |
+| `frontend/src/index.css` | Merge manually. Preserve the Geist font import, generated-token import, `--font-sans-authority`, custom dark variant, token-to-Tailwind mappings, and explicit light/dark `color-scheme`. |
+| `frontend/design-system/tokens.json` | Remains canonical. Neutral colors, Geist, and `0.625rem` radius already match the frozen Luma preset; do not paste the probe's `:root`/`.dark` block into global CSS. |
 | `frontend/src/generated/design-tokens.css` | Regenerate from DTCG after any accepted font/token change; never hand-edit. |
 | `frontend/scripts/design-token-tools.mjs` and `build-design-tokens.mjs` | Preserve the generator contract. No Luma-specific change is currently justified. |
-| `frontend/package.json` and `frontend/package-lock.json` | If Inter is accepted, replace `@fontsource-variable/geist` with `@fontsource-variable/inter` using npm and review only the resulting dependency/lock delta. Do not import the scratch project's unrelated React, Vite, TypeScript, Tailwind, Lucide, or formatter versions. |
+| `frontend/package.json` and `frontend/package-lock.json` | No font dependency change is expected. Do not import the scratch project's unrelated React, Vite, TypeScript, Tailwind, Lucide, or formatter versions. |
 | `frontend/design-system/exceptions.json` | Re-inventory official-source exact matches after the merge. Remove resolved Nova exceptions, update still-required upstream exceptions with reviewed exact matches, and do not weaken the policy. |
 
 The generated `frontend/design-system/catalog.json`, root catalog, manifest, and
@@ -189,8 +189,8 @@ file, and exception reconciliation for the duration of the merge.
 
 Before production mutation:
 
-1. user explicitly freezes `b1VlIttI` or replaces it with another exact code;
-2. the Geist → Inter choice is accepted;
+1. the exact frozen preset remains `b1VlIwYS`;
+2. Geist remains the accepted shell font;
 3. structural integrity is green and `sidebar.tsx` ownership is released;
 4. each of the 26 differing primitives has an assigned disposition and test;
 5. the Luma owner captures fresh CLI `--dry-run` and per-file `--diff` output;

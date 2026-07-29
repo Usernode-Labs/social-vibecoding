@@ -59,11 +59,11 @@ official-shadcn, and token-driven.
 for the consumer shell. It chooses a coherent upstream system rather than
 serving as a theme swatch generator.
 
-The present project resolves to Base UI + Nova preset `b2fA`. The exact
-proposed target is the official Base UI + Luma preset `b1VlIttI`: rounded,
-breathable, consumer-facing, and close to official shadcn defaults. It remains
-a proposal until the G0 review explicitly freezes it; no production source may
-apply it before then. See
+The present project resolves to Base UI + Nova preset `b2fA`. The exact frozen
+target is the official Base UI + Luma + Geist preset `b1VlIwYS`: rounded,
+breathable, consumer-facing, and close to official shadcn defaults. The user
+accepted it at G0; production adoption still follows the reviewed merge-mode
+procedure. See
 [`shadcn-create-baseline.md`](shadcn-create-baseline.md).
 
 Do not reconstruct preset URLs or decode codes by hand. Use the project package
@@ -83,11 +83,9 @@ The frozen preset record must contain:
 - Base UI as the retained primitive base;
 - CLI version, adoption date, rationale, and deliberately deferred knobs.
 
-Preset `b1VlIttI` decodes to Luma, Neutral, Inter, Lucide, default radius,
-subtle menu accent, and default menu color. The current Nova preset uses Geist.
-Retaining Geist is a valid review choice, but it requires generating and
-recording a different exact Create code; it must not be patched into
-`b1VlIttI` by description.
+Preset `b1VlIwYS` decodes to Luma, Neutral, Geist, Lucide, default radius,
+subtle menu accent, and default menu color. It was generated in shadcn Create,
+not reconstructed from the earlier Inter-based proposal.
 
 ### Adoption rule
 

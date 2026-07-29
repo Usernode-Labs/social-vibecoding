@@ -1,6 +1,6 @@
 # shadcn Create baseline record
 
-**Status:** Exact proposal; user freeze required before application
+**Status:** Frozen by user; implementation may proceed through merge mode
 
 **Date:** 2026-07-29
 
@@ -13,30 +13,29 @@ selector. The current project and proposed Luma target resolve as follows:
 
 | Field | Current | Proposed target |
 | --- | --- | --- |
-| Preset code | `b2fA` | `b1VlIttI` |
+| Preset code | `b2fA` | `b1VlIwYS` |
 | Primitive base | Base UI | Base UI |
 | Style | Nova | Luma |
 | Base color | Neutral | Neutral |
-| Font | Geist | Inter |
+| Font | Geist | Geist |
 | Icons | Lucide | Lucide |
 | Radius | Default | Default |
 | Menu accent | Subtle | Subtle |
 | Menu color | Default | Default |
 
-`b1VlIttI` is the exact official Base UI + Luma proposal. It is not yet
-authorized for application. G0 in
-[`shell-execution-plan.md`](shell-execution-plan.md) requires explicit review
-of the decoded preset, including the intentional Geist → Inter change. If
-reviewers prefer Luma with Geist, Create must generate a new opaque code and
-this record must be replaced before implementation.
+`b1VlIwYS` is the exact official Base UI + Luma + Geist preset generated in
+shadcn Create and accepted by the user. G0 in
+[`shell-execution-plan.md`](shell-execution-plan.md) is satisfied. Geist stays
+the shell font; Luma changes upstream component style and geometry without
+creating an unrelated typography migration.
 
 Do not manually decode the code or construct its URL. Reproduce the record with
 the project package runner:
 
 ```sh
-pnpm dlx shadcn@latest preset resolve --json
-pnpm dlx shadcn@latest preset decode b1VlIttI
-pnpm dlx shadcn@latest preset url b1VlIttI
+npx shadcn@latest preset resolve
+npx shadcn@latest preset decode b1VlIwYS
+npx shadcn@latest preset url b1VlIwYS
 ```
 
 Record the CLI version and generated URL in the implementation PR evidence.
@@ -77,7 +76,7 @@ behavior. The content guidelines own words.
 
 Production adoption may begin only when:
 
-1. reviewers accept `b1VlIttI` or replace it with another exact code;
+1. the exact frozen preset remains `b1VlIwYS`;
 2. `preset decode` reproduces the reviewed fields;
 3. the font choice is explicit;
 4. all 26 differing primitives have a merge disposition;
