@@ -21,7 +21,10 @@
     "componentManifest": "design-system.manifest.json",
     "resolvedCatalog": "design-system/catalog.json",
     "registry": "registry.json",
-    "exceptionLedger": "design-system/exceptions.json"
+    "exceptionLedger": "design-system/exceptions.json",
+    "contentGuidelines": "design-system/content-guidelines.md",
+    "contentContractSchema": "design-system/content-contract.schema.json",
+    "contentExceptionLedger": "design-system/content-exceptions.json"
   },
   "maturity": {
     "candidate": "Available for shell migration work; contract changes require catalog and evidence updates.",
@@ -92,6 +95,13 @@
       "dataBoundary": {
         "kind": "props-only",
         "contract": "The card receives an AppRecord and callbacks; data loading, ordering and navigation remain route concerns."
+      },
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": ["dApp", "Improve"],
+        "requiredStates": ["unavailable"],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": ["context-restatement", "vague-link-text"]
       }
     },
     "dev-conversation": {
@@ -171,6 +181,13 @@
       }
     },
     "notifications-content": {
+      "content": {
+        "layer": "read",
+        "canonicalTerms": ["Notifications", "Dev", "Improve"],
+        "requiredStates": ["loading", "empty", "error"],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": ["mechanism-as-content", "vague-link-text"]
+      },
       "performance": {
         "expectedCollectionSize": {
           "category": "medium",

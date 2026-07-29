@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "policy": "Content exceptions are exact, owned, time-bounded inventory. They preserve current migration copy without silently ratcheting it into the next slice.",
+  "content": [
+    {
+      "rule": "dev-improve",
+      "file": "@/features/apps/hosted-app.tsx",
+      "matches": ["Open Dev"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "The self-hosted compatibility handoff still opens the legacy Dev URL. Replace its user-facing action with Improve when that destination has React parity.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "migration-visible-copy",
+      "file": "@/features/admin/activation-codes.tsx",
+      "matches": ["Create, copy, and revoke registration codes here. Account-role and deletion controls remain in legacy management.", "Open legacy management"],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "The React administration route intentionally hands unfinished write surfaces to the legacy management page. Replace this visible migration copy when those mutations have parity.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "migration-visible-copy",
+      "file": "@/features/admin/admin-features.tsx",
+      "matches": ["Open legacy view"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Feature-triage mutations remain at the legacy boundary during migration.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "migration-visible-copy",
+      "file": "@/features/admin/admin-users.tsx",
+      "matches": ["Inspect accounts and update app quotas or daily spend overrides. Role, deletion, password, and wallet administration remain in legacy management.", "Open legacy management"],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Only quota and spend edits have React parity; the remaining account mutations are deliberately handed off.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "migration-visible-copy",
+      "file": "@/features/admin/gallery.tsx",
+      "matches": ["Open legacy gallery"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "The older gallery remains the authoritative implementation for unsupported operations.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "migration-visible-copy",
+      "file": "@/features/admin/merge-debug.tsx",
+      "matches": ["Open legacy debug"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "The detailed merge debug controls are still legacy-owned.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "migration-visible-copy",
+      "file": "@/features/apps/apps-home.tsx",
+      "matches": [". Return to the legacy shell while this migration route is being diagnosed."],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "The existing error handoff predates the content authority and needs a separately reviewed retry-state replacement.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "visible-label-accessible-name",
+      "file": "@/features/dev/group-discussion.tsx",
+      "matches": ["Mark message notification as read <> Mark read"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "The longer accessible name disambiguates a repeated message-row control. Review it with the message action pattern instead of weakening the global accessible-name rule.",
+      "expires": "2026-09-30"
+    }
+  ]
+}

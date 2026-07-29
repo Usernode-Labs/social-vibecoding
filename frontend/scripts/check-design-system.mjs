@@ -74,6 +74,26 @@ function validatePerformance(value, label) {
   }
 }
 
+function validateContent(value, label) {
+  if (!isRecord(value)) {
+    violations.push(`${label} must be an object`)
+    return
+  }
+  const allowed = ["layer", "canonicalTerms", "requiredStates", "visibleLabelAccessibilityName", "reviewedFailureModes"]
+  for (const field of Object.keys(value)) {
+    if (!allowed.includes(field)) violations.push(`${label}.${field} is not a supported content field`)
+  }
+  if (!["glance", "read", "expert"].includes(value.layer)) violations.push(`${label}.layer is invalid`)
+  for (const field of ["canonicalTerms", "requiredStates", "reviewedFailureModes"]) {
+    if (!Array.isArray(value[field]) || value[field].some((item) => typeof item !== "string" || !item.trim())) {
+      violations.push(`${label}.${field} must contain only non-empty strings`)
+    }
+  }
+  if (value.visibleLabelAccessibilityName !== "match-or-prefix") {
+    violations.push(`${label}.visibleLabelAccessibilityName must be match-or-prefix`)
+  }
+}
+
 function sourcePath(manifestValue, label) {
   if (typeof manifestValue !== "string" || !manifestValue.startsWith("@/")) {
     violations.push(`${label} must be an @/ path`)
@@ -110,6 +130,7 @@ if (authority) {
   }
   for (const [id, override] of Object.entries(authority.overrides || {})) {
     if (override.performance !== undefined) validatePerformance(override.performance, `design-system authority overrides.${id}.performance`)
+    if (override.content !== undefined) validateContent(override.content, `design-system authority overrides.${id}.content`)
   }
 }
 

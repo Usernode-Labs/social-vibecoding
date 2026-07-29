@@ -14,7 +14,8 @@
       "items": {
         "type": "object",
         "properties": {
-          "performance": { "$ref": "#/$defs/performance" }
+          "performance": { "$ref": "#/$defs/performance" },
+          "content": { "$ref": "#/$defs/content" }
         },
         "required": [
           "id",
@@ -78,6 +79,18 @@
         "followUp": {
           "enum": ["none", "profile-before-stable", "profile-before-cutover"]
         }
+      }
+    },
+    "content": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layer", "canonicalTerms", "requiredStates", "visibleLabelAccessibilityName", "reviewedFailureModes"],
+      "properties": {
+        "layer": { "enum": ["glance", "read", "expert"] },
+        "canonicalTerms": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "requiredStates": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "visibleLabelAccessibilityName": { "const": "match-or-prefix" },
+        "reviewedFailureModes": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
       }
     }
   }

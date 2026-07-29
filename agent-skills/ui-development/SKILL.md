@@ -45,6 +45,15 @@ behavioural reference, never as a component import source.
 7. Run the narrowest relevant checks while working, then run the complete
    frontend gate before handoff.
 
+For a text-bearing owned pattern, read
+`frontend/design-system/content-guidelines.md` before inventing labels or
+empty/error copy. Reuse the optional `content` contract when the pattern has
+one; declare a new one only when its text behavior is a reusable authority
+surface. Run `npm run check:content` and `npm run test:content` for changed
+copy. The checker catches narrow static regressions, not prose quality: use
+the named failure modes in review and keep legitimate migration exceptions
+exact, owned, and expiring.
+
 When the executing agent has the `design` (ui.sh) or `taste` skill available,
 use it as a review aid for composition, responsive behaviour, and polish. Do
 not make either a prerequisite: this repository skill, its component registry,

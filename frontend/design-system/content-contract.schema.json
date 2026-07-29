@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://social-vibecoding.usernodelabs.org/react/design-system/content-contract.schema.json",
+  "title": "Optional shell content contract",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["layer", "canonicalTerms", "requiredStates", "visibleLabelAccessibilityName", "reviewedFailureModes"],
+  "properties": {
+    "layer": { "enum": ["glance", "read", "expert"] },
+    "canonicalTerms": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "requiredStates": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "visibleLabelAccessibilityName": { "const": "match-or-prefix" },
+    "reviewedFailureModes": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  }
+}

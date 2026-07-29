@@ -78,3 +78,18 @@ and follow-up point. Do not invent timing targets or add contracts to ordinary
 primitives. `review-later` marks components such as the Dev board for later
 profiling; it does not authorize speculative memoization or make performance a
 current CI timing gate.
+
+## Content authority
+
+`design-system/content-guidelines.md` is the human writing authority for the
+platform shell. Text-bearing registered patterns may opt into the small
+`content` contract in `design-system/authority.json`; the resolved metadata is
+published in `design-system/catalog.json`. It records layer, canonical terms,
+required states, accessible-name policy, and reviewed failure modes only.
+
+Run `npm run check:content` and `npm run test:content` when changing shell
+copy, labels, or text-bearing patterns. The checker is intentionally limited
+to static high-confidence regressions. Do not add a broad stylistic lint or
+apply it to child-app code. Existing migration copy belongs in the exact,
+owned, expiring `design-system/content-exceptions.json` ledger until the route
+gets a separately reviewed replacement.

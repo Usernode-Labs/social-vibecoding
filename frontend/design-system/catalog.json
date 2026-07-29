@@ -23,7 +23,10 @@
     "componentManifest": "design-system.manifest.json",
     "resolvedCatalog": "design-system/catalog.json",
     "registry": "registry.json",
-    "exceptionLedger": "design-system/exceptions.json"
+    "exceptionLedger": "design-system/exceptions.json",
+    "contentGuidelines": "design-system/content-guidelines.md",
+    "contentContractSchema": "design-system/content-contract.schema.json",
+    "contentExceptionLedger": "design-system/content-exceptions.json"
   },
   "components": [
     {
@@ -240,6 +243,21 @@
         "wide-desktop"
       ],
       "deprecation": null,
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": [
+          "dApp",
+          "Improve"
+        ],
+        "requiredStates": [
+          "unavailable"
+        ],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": [
+          "context-restatement",
+          "vague-link-text"
+        ]
+      },
       "evidence": {
         "story": "@/features/apps/app-card.stories.tsx",
         "states": [
@@ -1560,6 +1578,24 @@
           "Mark one or all visible notifications read without rebuilding unrelated shell regions."
         ],
         "followUp": "profile-before-cutover"
+      },
+      "content": {
+        "layer": "read",
+        "canonicalTerms": [
+          "Notifications",
+          "Dev",
+          "Improve"
+        ],
+        "requiredStates": [
+          "loading",
+          "empty",
+          "error"
+        ],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": [
+          "mechanism-as-content",
+          "vague-link-text"
+        ]
       },
       "evidence": {
         "story": "@/features/notifications/notifications.stories.tsx",

@@ -49,6 +49,7 @@ export function renderCatalog() {
       responsive: contract.responsive,
       deprecation: contract.deprecation,
       ...(contract.performance ? { performance: contract.performance } : {}),
+      ...(contract.content ? { content: contract.content } : {}),
       evidence: {
         story: pattern.story.module,
         states: pattern.story.states,

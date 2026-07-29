@@ -30,6 +30,12 @@ vendor's hook runtime.
    compatibility contracts.
 5. Add a harness rule only after a specific migration failure proves it is
    needed. Record the trigger, proof command and owner next to that rule.
+6. For a registered text-bearing pattern, use the optional content contract in
+   `frontend/design-system/authority.json`, read
+   `frontend/design-system/content-guidelines.md`, and run
+   `npm run check:content` from `frontend/`. The gate is deliberately narrow;
+   use its exact, expiring ledger for existing migration copy rather than
+   pretending subjective writing judgment is mechanically decidable.
 
 ## Design-authority scope
 
