@@ -34,6 +34,19 @@
 //                            presented to app B fails the audience
 //                            check. Never the slug — slugs are mutable
 //                            through the rename-PR flow.
+//   IFRAME_JWT_PUBLIC_KEY    the SAME public PEM again, under the
+//                            platform's own env-var name. Ordinary child
+//                            containers never read this name and USERNODE_
+//                            JWT_PUBLIC_KEY already covers them — this
+//                            copy exists for the platform's self-staging
+//                            clone, which runs platform code
+//                            (middleware/auth.js, app-llm-auth.js,
+//                            app-storage-auth.js) that calls
+//                            platform-jwt.js's iframePublicKey(), and that
+//                            reads process.env.IFRAME_JWT_PUBLIC_KEY
+//                            specifically. Harmless for every other
+//                            container: it's a public key, it only lets a
+//                            holder verify a signature, never produce one.
 //
 // What is deliberately NOT here: DATA_ENCRYPTION_KEY,
 // IFRAME_JWT_PRIVATE_KEY, WORKER_JWT_SECRET, EDGE_JWT_SECRET. No child
@@ -78,6 +91,7 @@ function appIdentityEnv(app, config = null) {
     USERNODE_JWT_PUBLIC_KEY: publicPem,
     JWT_SECRET: publicPem,
     USERNODE_APP_ID: String(appId),
+    IFRAME_JWT_PUBLIC_KEY: publicPem,
   };
 }
 

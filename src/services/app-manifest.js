@@ -118,6 +118,9 @@ const RESERVED_KEYS = new Set([
   // Deprecated alias of USERNODE_JWT_PUBLIC_KEY (holds the same public
   // PEM) kept so pre-cutover scaffolds verify unchanged.
   'JWT_SECRET',
+  // Same public PEM again, under the platform's own env-var name — see
+  // services/app-identity-env.js. Reserved for the same reason.
+  'IFRAME_JWT_PUBLIC_KEY',
   'PORT',
   'USERNODE_ENV',
   'USERNODE_MISSING_SECRETS',

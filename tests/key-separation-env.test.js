@@ -98,6 +98,8 @@ function assertNoLeak(where, env) {
 // ── 1. Behavioral: the shared identity-env helper ───────────────────────
 
 const { appIdentityEnv } = require('../src/services/app-identity-env');
+const platformJwt = require('../src/services/platform-jwt');
+const { keyPair } = require('./platform-keys');
 
 // A config object with EVERY platform key populated, forbidden ones
 // carrying their sentinel. This is what the real builders are handed.
@@ -111,11 +113,24 @@ function poisonedConfig() {
   };
 }
 
-test('appIdentityEnv emits only the public key, the shim and the app id', () => {
+test('appIdentityEnv emits only the public key (twice), the shim and the app id', () => {
   const env = appIdentityEnv({ id: 7 }, poisonedConfig());
   assert.deepEqual(Object.keys(env).sort(),
-    ['JWT_SECRET', 'USERNODE_APP_ID', 'USERNODE_JWT_PUBLIC_KEY']);
+    ['IFRAME_JWT_PUBLIC_KEY', 'JWT_SECRET', 'USERNODE_APP_ID', 'USERNODE_JWT_PUBLIC_KEY']);
   assertNoLeak('appIdentityEnv', env);
+});
+
+// The self-app's staging clone runs platform code, which reads the
+// public key under the platform's OWN env-var name (see
+// services/platform-jwt.js's iframePublicKey()) rather than the child
+// name every other container reads. Without this copy the self-staging
+// container's auth middleware throws on every request — see
+// middleware/auth.js's tryMintSessionFromIframeJwt.
+test('appIdentityEnv IFRAME_JWT_PUBLIC_KEY carries the same public PEM', () => {
+  const env = appIdentityEnv({ id: 7 }, poisonedConfig());
+  assert.equal(env.IFRAME_JWT_PUBLIC_KEY, env.USERNODE_JWT_PUBLIC_KEY);
+  assert.match(env.IFRAME_JWT_PUBLIC_KEY, /BEGIN PUBLIC KEY/);
+  assert.ok(!/PRIVATE/.test(env.IFRAME_JWT_PUBLIC_KEY));
 });
 
 // The key-confusion failure that would be worst of all: shipping the
@@ -151,6 +166,43 @@ test('appIdentityEnv does not fall back to a process-env private key', () => {
   }
 });
 
+// The regression this whole fix guards against: a token minted host-side
+// must verify inside a container whose env is EXACTLY appIdentityEnv's
+// output — nothing more. Before the fix, IFRAME_JWT_PUBLIC_KEY was simply
+// absent from that env, so platform-jwt.js's iframePublicKey() threw and
+// the self-app's staging clone rejected every user token (middleware/
+// auth.js's tryMintSessionFromIframeJwt).
+test("a token minted host-side verifies using only appIdentityEnv's own output", () => {
+  const { publicKey, privateKey } = keyPair();
+  const env = appIdentityEnv({ id: 42 }, { iframeJwtPublicKey: publicKey });
+
+  const savedPub = process.env.IFRAME_JWT_PUBLIC_KEY;
+  const savedPriv = process.env.IFRAME_JWT_PRIVATE_KEY;
+  try {
+    // Mint host-side, where the private key legitimately lives.
+    process.env.IFRAME_JWT_PRIVATE_KEY = privateKey;
+    const token = platformJwt.signAppIdentityToken({
+      appId: 42,
+      user: { id: 1, username: 'alice', usernode_pubkey: null, locale: 'en' },
+    });
+
+    // Verify as the container would: IFRAME_JWT_PRIVATE_KEY is never set
+    // there, and IFRAME_JWT_PUBLIC_KEY is exactly appIdentityEnv's output.
+    delete process.env.IFRAME_JWT_PRIVATE_KEY;
+    process.env.IFRAME_JWT_PUBLIC_KEY = env.IFRAME_JWT_PUBLIC_KEY;
+
+    const claims = platformJwt.verifyAppIdentityToken(token, { appId: 42 });
+    assert.equal(claims.id, 1);
+    assert.equal(claims.username, 'alice');
+    assert.equal(claims.pur, 'iframe');
+  } finally {
+    if (savedPub === undefined) delete process.env.IFRAME_JWT_PUBLIC_KEY;
+    else process.env.IFRAME_JWT_PUBLIC_KEY = savedPub;
+    if (savedPriv === undefined) delete process.env.IFRAME_JWT_PRIVATE_KEY;
+    else process.env.IFRAME_JWT_PRIVATE_KEY = savedPriv;
+  }
+});
+
 // ── 1b. Behavioral: the in-loop browser's app env ───────────────────────
 
 const inLoopBrowser = require('../src/services/in-loop-browser');
@@ -181,7 +233,7 @@ test('platformDefaultsFromEnv is an allowlist, not a process-env passthrough', (
 // would then hold a variable the platform's own code reads by that name.
 test('reserved keys cover the deprecated JWT_SECRET shim and the app-id pair', () => {
   const { RESERVED_KEYS } = require('../src/services/app-manifest');
-  for (const k of ['JWT_SECRET', 'USERNODE_JWT_PUBLIC_KEY', 'USERNODE_APP_ID']) {
+  for (const k of ['JWT_SECRET', 'USERNODE_JWT_PUBLIC_KEY', 'USERNODE_APP_ID', 'IFRAME_JWT_PUBLIC_KEY']) {
     assert.ok(RESERVED_KEYS.has(k), `${k} must be reserved against manifest shadowing`);
   }
 });
