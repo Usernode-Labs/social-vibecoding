@@ -59,6 +59,9 @@ authority under `frontend/design-system`, and the portable
 Historical documents are evidence of reasoning, not current instructions. When
 they conflict with current authority, current authority wins.
 
+The exact intent-based commit sequence and post-commit proof are recorded in
+[`MILESTONES.md`](MILESTONES.md).
+
 ## Scope boundary
 
 This branch governs the **Social Vibecoding platform shell**. It does not create
