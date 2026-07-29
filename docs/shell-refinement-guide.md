@@ -566,7 +566,8 @@ is the only state signal.
    lifecycle, challenges, Dev board/session, GitHub issue, node status,
    wallet linking, and administration. Introduce an owned status mapping
    pattern before changing feature-specific status strings.
-5. **Attention.** Start with the React Notifications destination and a
+5. **Attention.** Start with the React Activity destination, backed by the
+   existing notifications route/API compatibility contract, and a
    review-needed state. Do not retrospectively recolor all secondary badges.
 6. **Cleanup.** Replace the direct `text-emerald-500` wallet-link check only
    once the positive status role exists. Retire the `AppIdentity` inline-style
@@ -1073,10 +1074,12 @@ M0 accepted charter + frozen Create preset
                  │            │            │
                  └──────┬─────┘            │
                         │                  │
-                   M6 Home/Explore     M7 drawer/chrome
+                   M6 Home/Explore     M7a drawer/frame
                         └──────────┬────────┘
                                    │
                        M6c quiet pass (surviving surfaces)
+                                   │
+                       M7b/M11 chrome + route composition
                                    │
                          M8 host/static frame proof
                                    │
@@ -1098,10 +1101,31 @@ exist; uncommitted work remains in progress even when focused checks pass.
 | M2 content governance | Complete | `f12635a` |
 | Luma probe and reliability preparation | Complete | `521e926`, `aedb14d` |
 | M3 single-owner Luma merge | Complete | `4c5d93e` |
-| M4 semantic foundation | Complete | `565c5ff`; AppIdentity, StatusDot, Light/Dark/System parity, DTCG roles, contrast and forced-colors evidence, 165 Storybook states, production-review tests, and shell gates are green |
-| M5 successor contracts | Complete | `e2a8189`, `14ef98a`; six registered props-only patterns, 207 Storybook states/tests, both-theme evidence, interaction assertions, authority/catalog contracts, build, bundle and shell gates are green |
-| M6–M7 Home/Explore, navigation, app chrome, and quiet pass | Ready | route integration may begin with one owner for route tables, shell composition and shared fixtures |
-| M8–M10 host proof, optional Motion, and cutover | Not started | follow the gates below; do not collapse host proof or Motion into route integration |
+| M4 semantic foundation | Complete | `565c5ff`; AppIdentity, StatusDot, Light/Dark/System parity, DTCG roles, contrast and forced-colors evidence, 165 milestone-local Storybook states, production-review tests, and shell gates are green |
+| M5 successor contracts | Complete | `e2a8189`, `14ef98a`; six registered props-only patterns, 207 milestone-local Storybook states/tests, both-theme evidence, interaction assertions, authority/catalog contracts, build, bundle and shell gates are green |
+| M6 Home/Explore | Complete | `a989984`; personal launch and catalog discovery are separate jobs with focused route evidence |
+| M7a platform drawer and focused frame | Complete | `e6c05ab`; platform drawer and iframe mount-continuity evidence |
+| Activity unification | Complete | `0eb307f`, `1becfcb`; Activity is the visible product label over the existing notifications route/API/live-event compatibility contract and its design authority is aligned |
+| M6c quiet pass | Complete | `13f74d6`; named failure-mode deletions plus separately scoped contrast/integrity corrections and focused assertions |
+| M7b/M11 contextual chrome and route composition | Complete | `c0fb2c4`; M7 closes here, with shared contextual app chrome and route-wide `PageHeader`/available-width composition for the intended routes; `bd6e380` is the final duplicate-recovery-navigation sweep |
+| M8 host/static proof | Browser complete; host no-go | browser continuity is committed in `e6c05ab` and completed composition in `c0fb2c4`; `cc6d3d9` records G6 blockers in `shell-host-cutover-evidence.md` |
+| M9 optional Motion | Deferred / blocked | G6 is closed; no Motion implementation is authorized |
+| M10 cutover | No-go | production cutover and legacy retirement are not complete |
+
+Current authority verification: 44 manifest patterns, 12 component performance
+contracts, 2 registry entries, style-policy coverage over 163 modules, and
+47 Storybook files / 228 tests. The agent battery is 5/5 across T1–T5, with T4
+enforcement at 5/5. The full browser gate is 655 passed / 53 intentional skips /
+0 failed; production review is 40/40; native bridge is 8/8; build is 2,074
+modules; bundle is 142.2/160 KiB. The cutover contract is 9 verified / 0 failed
+with one `native-webview-e2e` blocker. Earlier Storybook counts in the milestone
+rows are preserved as evidence of those commits, not presented as current
+totals.
+
+The route-composition sweep intentionally excludes Login, Register,
+`HostedApp`, `StagingPreview`, and `NotFound`: authentication, iframe hosting,
+preview containment, and fallback semantics make them deliberate exceptions,
+not unfinished route-wide work.
 
 ### Wave 0 — Charter and preset freeze
 
@@ -1306,6 +1330,23 @@ for this lane — that belongs to a successor-contract or Luma wave, not here.
   incidentally touched.
 
 **Milestone commit:** `fix(content): remove restated and defensive copy from surviving shell routes`
+
+**Completion evidence:** M6c landed in `13f74d6`. The review mapped edits to
+the named failure modes instead of calling every deletion "cleanup":
+
+| Failure mode / rule | Applied evidence |
+| --- | --- |
+| Context restatement | Removed route ledes and section descriptions that repeated their heading |
+| Defensive reassurance | Removed safety explanations that did not change the user's next action |
+| Mechanism as content / internal-state leak | Replaced migration, legacy, server, cache, and bridge implementation language with task language |
+| Decorative-button-icon policy | Removed icons without direction, status, or externality meaning |
+| Context-aware badge/label discipline | Removed or simplified labels already conveyed by their section |
+
+`13f74d6` also contains an explicitly separate integrity/contrast follow-up:
+tokenized button contrast, avatar/identity contrast corrections, exception
+ledger cleanup, and matching browser assertions. Those additions do not relax
+G5c's deletion-only rule; the history records them as a distinct scope within
+the combined, accurately titled milestone commit.
 
 ### Wave 6 — Static focused-app and host verification
 

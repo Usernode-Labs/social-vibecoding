@@ -13,7 +13,7 @@ The product owner explicitly requested on 2026-07-29 that Candidate A's missing
 design authority and agent-lifecycle evidence be completed while narrowing the
 plan to the shell and deferring the app-factory boundary.
 
-## Evidence
+## Historical continuation evidence at `bb47cbe`
 
 - Canonical DTCG tokens: `frontend/design-system/tokens.json`
 - Resolved authority/catalog: `frontend/design-system/authority.json` and
@@ -37,6 +37,45 @@ plan to the shell and deferring the app-factory boundary.
   — 1,157,008 lifecycle input tokens, 291,980 ms known execution time,
   two retries, and two harness interventions
 
+The 37 Storybook files / 135 named states above are the preserved measurements
+from the `bb47cbe` continuation checkpoint. They are not current catalog totals.
+
+## Current refinement evidence
+
+- Home/Explore split: `a989984`
+- M7a platform drawer and focused-frame continuity: `e6c05ab`
+- M6c quiet refinement plus its separately scoped integrity/contrast follow-up:
+  `13f74d6`
+- Activity unification over the existing notifications transport:
+  `0eb307f`, with design-authority alignment in `1becfcb`
+- M7b/M11 contextual app chrome and route composition: `c0fb2c4`
+- M7 closure sweep removing duplicate recovery navigation: `bd6e380`
+- Host cutover no-go record: `cc6d3d9` and
+  `docs/shell-host-cutover-evidence.md`
+- Current authority: 44 manifest patterns, 12 component performance
+  contracts, 2 registry entries, and style-policy coverage over 163 modules
+- Agent lifecycle: T1–T5 passes 5/5, including deliberate T4 enforcement at
+  5/5
+- Current Storybook verification: 47 files / 228 tests
+- Browser verification: 655 passed, 53 intentional skips, 0 failed
+- Production-readonly review: 40/40 passed
+- Native bridge contract: 8/8 passed
+- Production build: 2,074 modules transformed
+- Initial React JavaScript: 142.2 KiB gzip against the 160 KiB budget
+- Cutover contract: 9 verified, 0 failed, with 1 explicit
+  `native-webview-e2e` blocker
+
+M6c is complete. M7 is complete only at `c0fb2c4`: `e6c05ab` supplied M7a,
+while `c0fb2c4` supplied M7b and the route-composition work recorded as M11;
+`bd6e380` is the final narrow source-sweep follow-up. The intended shell routes
+now use the shared `PageHeader` and available-width canvas. Login, Register,
+`HostedApp`, `StagingPreview`, and `NotFound` are explicit semantic/layout
+exceptions rather than unfinished bulk migration.
+
+Activity is the canonical product label. The `/react/notifications` route,
+notification API, live events, pagination, and internal module/type names are
+retained compatibility boundaries, not a separate product concept.
+
 ## Execution record
 
 - Branch: `codex/react-shadcn-migration`
@@ -55,6 +94,12 @@ app-factory design system. Native WebView, iframe/bridge, authentication,
 offline/service-worker, visual-baseline, and route-retirement proofs remain
 independent gates. New tokens, primitive categories, or exception categories
 require shell design-system approver review.
+
+The implemented browser/static portion of M8 is proven. The cutover contract
+still reports the explicit `native-webview-e2e` blocker, so G6 remains a host
+no-go. M9 Motion remains deferred and M10 cutover/legacy-shell retirement
+remain no-go. Do not interpret this continuation record as release
+authorization.
 
 Technical attestation: **Codex — 2026-07-29**
 

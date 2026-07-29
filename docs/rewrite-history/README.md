@@ -64,6 +64,37 @@ they conflict with current authority, current authority wins.
 The exact intent-based commit sequence and post-commit proof are recorded in
 [`MILESTONES.md`](MILESTONES.md).
 
+## Current refinement checkpoint
+
+The original verified checkpoint at `bb47cbe` remains historical evidence.
+The current shell authority has since grown to 44 manifest patterns,
+12 component performance contracts, 2 owned registry entries, and style-policy
+coverage over 163 modules. The fresh catalog run covers 47 Storybook files /
+228 tests. The T1–T5 agent battery passes 5/5, including T4 deliberate
+enforcement at 5/5.
+
+The current user-facing destination is **Activity**. The existing
+`/react/notifications` route, notification API, live events, pagination, and
+internal module names remain compatibility contracts; they do not define the
+product label.
+
+Home/Explore and the M6c quiet pass are complete. M7 closes only with M7a
+`e6c05ab` plus M7b/M11 `c0fb2c4`; platform navigation, contextual app chrome,
+and the intended route-wide `PageHeader`/available-width composition are now
+committed. The closure sweep in `bd6e380` removes the last duplicate recovery
+navigation control. Login, Register, `HostedApp`, `StagingPreview`, and
+`NotFound` are documented semantic/layout exceptions. Activity unification is
+committed and its authority is aligned in `1becfcb`.
+
+The current verification record is: 655 browser tests passed, 53 intentionally
+skipped, 0 failed; production-readonly review 40/40; native bridge contract
+8/8; production build 2,074 modules; and 142.2 KiB initial React JavaScript
+against the 160 KiB budget. The cutover contract is 9 verified, 0 failed, with
+one explicit `native-webview-e2e` blocker. Production cutover therefore remains
+a G6 no-go under
+[`../shell-host-cutover-evidence.md`](../shell-host-cutover-evidence.md);
+Motion is deferred and legacy-shell retirement is not authorized.
+
 ## Scope boundary
 
 This branch governs the **Social Vibecoding platform shell**. It does not create
@@ -77,21 +108,38 @@ From `frontend/`:
 
 ```bash
 npm ci
-npm run check:authority
-npm run check:architecture
-npm run check:styles
+npm run build:tokens
+npm run build:catalog
+npm run build:registry
+npm run lint
+npm run check:tokens
+npm run check:design-system
+npm run check:registry
+npm run check:style-policy
+npm run test:content
+npm run check:content
+npm run check:harness
+npm run test:agent-battery
 npm run typecheck
 npm run test:storybook
+npm run check:storybook-build
 npm run test:e2e
+npm run test:production-review
+npm run test:native-bridge-contract
 npm run build
-npm run agent:battery
+npm run check:bundle
+npm run check:cutover-contract
 ```
+
+`npm run check:cutover-ready` is deliberately not part of the passing replay
+set. It must fail while G6 remains closed; a later cutover candidate runs it as
+the final no-blocker assertion rather than weakening its requirements.
 
 For the guided agent workflow:
 
 ```bash
-node tool/ui-workflow.mjs start
-node tool/ui-workflow.mjs verify
+node tool/ui-workflow.mjs --task "<task>"
+node tool/ui-workflow.mjs --task "<task>" --json
 ```
 
 The branch history is intentionally split into intent-based commits: discovery
