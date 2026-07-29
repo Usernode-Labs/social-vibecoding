@@ -37,10 +37,8 @@ test("uses the OS preference on first boot and persists an explicit choice", asy
   await expect(page.locator("html")).toHaveClass(/dark/)
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark")
 
-  const switcher = page.getByRole("group", { name: "Color mode" }).first()
-  if (!await switcher.isVisible()) {
-    await page.getByRole("button", { name: "Toggle navigation" }).click()
-  }
+  await page.goto("/react/settings")
+  const switcher = page.getByTestId("settings-appearance").getByRole("group", { name: "Color mode" })
   await switcher.getByRole("button", { name: "Use light mode" }).click()
 
   await expect(page.locator("html")).not.toHaveClass(/dark/)
@@ -54,35 +52,30 @@ test("uses the OS preference on first boot and persists an explicit choice", asy
   await expect(page.locator("html")).toHaveCSS("color-scheme", "light")
 })
 
-test("keeps two mounted controls synchronized for explicit and System preferences", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "desktop", "Only desktop renders shell and Settings theme controls together.")
+test("keeps the Settings control synchronized for explicit and System preferences", async ({ page }) => {
   await page.addInitScript(() => window.localStorage.setItem("theme", "light"))
   await page.goto("/react/settings")
 
   const appearance = page.getByTestId("settings-appearance")
   const switchers = page.getByRole("group", { name: "Color mode" })
-  await expect(switchers).toHaveCount(2)
+  await expect(switchers).toHaveCount(1)
   await appearance.getByRole("button", { name: "Use dark mode" }).click()
 
   await expect(page.locator("html")).toHaveClass(/dark/)
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark")
   await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#0a0a0a")
-  for (const switcher of await switchers.all()) {
-    await expect(switcher.getByRole("button", { name: "Use dark mode" })).toHaveAttribute("aria-pressed", "true")
-  }
+  await expect(appearance.getByRole("button", { name: "Use dark mode" })).toHaveAttribute("aria-pressed", "true")
 
   await appearance.getByRole("button", { name: /Use system mode/ }).click()
   await expect.poll(() => page.evaluate(() => window.localStorage.getItem("theme"))).toBe("system")
-  for (const switcher of await switchers.all()) {
-    await expect(switcher.getByRole("button", { name: /Use system mode/ })).toHaveAttribute("aria-pressed", "true")
-  }
+  await expect(appearance.getByRole("button", { name: /Use system mode/ })).toHaveAttribute("aria-pressed", "true")
 })
 
 for (const mode of ["light", "dark"] as const) {
-  test(`has no serious accessibility violations on Apps home in ${mode} mode`, async ({ page }) => {
+  test(`has no serious accessibility violations on Home in ${mode} mode`, async ({ page }) => {
     await page.addInitScript((selectedMode) => window.localStorage.setItem("theme", selectedMode), mode)
     await page.goto("/react/")
-    await expect(page.getByRole("heading", { name: "Apps", exact: true })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible()
 
     const results = await new AxeBuilder({ page }).analyze()
     expect(results.violations.filter((violation) => ["serious", "critical"].includes(violation.impact || ""))).toEqual([])

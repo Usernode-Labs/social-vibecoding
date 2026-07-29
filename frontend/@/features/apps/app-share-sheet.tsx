@@ -1,10 +1,10 @@
-import { Copy, ExternalLink, Share2 } from "lucide-react"
+import { Copy, ExternalLink } from "lucide-react"
 import { useRef, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Field, FieldDescription, FieldLabel } from "@/components/ui/field"
+import { Field, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import {
   Sheet,
@@ -87,14 +87,13 @@ export function AppShareSheet({
           />
         }
       >
-        <PlatformIcon data-icon="inline-start" icon={Share2} />
         Share
       </SheetTrigger>
       <SheetContent className="w-[calc(100%-1rem)] sm:max-w-md">
         <SheetHeader>
           <SheetTitle>Share {appName}</SheetTitle>
           <SheetDescription>
-            Anyone with this link can open the app outside Usernode. The app decides whether an external visitor must sign in.
+            Anyone with this link can open the app outside Usernode. Some visitors may need to sign in.
           </SheetDescription>
         </SheetHeader>
         <div className="flex flex-1 flex-col gap-4 overflow-y-auto px-4">
@@ -107,9 +106,6 @@ export function AppShareSheet({
               ref={inputRef}
               value={shareUrl}
             />
-            <FieldDescription>
-              This is the app’s bare address. It does not contain your platform session or iframe token.
-            </FieldDescription>
           </Field>
           {copyState.kind === "copied" ? (
             <Alert role="status">
@@ -127,7 +123,6 @@ export function AppShareSheet({
         </div>
         <SheetFooter>
           <Button onClick={() => void copy()} type="button">
-            <PlatformIcon data-icon="inline-start" icon={Copy} />
             {copyState.kind === "copied" ? "Copied" : "Copy link"}
           </Button>
           <Button

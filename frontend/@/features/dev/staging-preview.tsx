@@ -66,7 +66,7 @@ export function StagingPreview() {
         setSession(initial.session)
         let resolved = initial.session
         if (isProductionReadOnlyReview) {
-          if (!resolved.staging_url) throw new Error("No live preview is available for this session. Production review mode never rebuilds staging previews.")
+          if (!resolved.staging_url) throw new Error("No preview is available for this session.")
         } else {
           const ensured = await ensureDevStaging(sessionId, controller.signal)
           if (ensured.status === "unavailable") throw new Error(ensured.reason === "demo" ? "Live previews can’t be rebuilt in this demo environment." : "This preview isn’t available right now.")
@@ -76,7 +76,7 @@ export function StagingPreview() {
             resolved = await waitForPreviewUrl(sessionId, resolved, () => !cancelled)
           }
         }
-        if (!resolved.staging_url) throw new Error("The preview could not be rebuilt. See legacy Dev for build details.")
+        if (!resolved.staging_url) throw new Error("The preview couldn’t be rebuilt.")
         if (cancelled) return
         setSession(resolved)
         setState("provisioning")
@@ -102,14 +102,13 @@ export function StagingPreview() {
   const testingInstructions = session?.testing_md?.trim() || null
   const back = `/apps/${encodeURIComponent(slug)}/dev/sessions/${encodeURIComponent(sessionId)}`
   if (error) return <div className="flex flex-1 items-center justify-center p-6"><Alert className="max-w-md" variant="destructive"><PlatformIcon icon={TriangleAlert} /><AlertTitle>Preview unavailable</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{error}<Button render={<Link to={back} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</Button></AlertDescription></Alert></div>
-  if (state !== "ready" || !source) return <div className="flex flex-1 items-center justify-center p-6"><Card className="w-full max-w-md"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={state === "rebuilding" ? RefreshCw : FlaskConical} size="sm" />{state === "rebuilding" ? "Spinning the preview back up…" : "Provisioning secure preview…"}</CardTitle></CardHeader><CardContent className="flex flex-col gap-4 text-muted-foreground"><p>{state === "rebuilding" ? "Rebuilding from this session’s latest changes. This usually takes 20–60 seconds." : "Preparing the staging host and its secure connection."}</p><Skeleton className="h-8 w-full" /><Button className="w-fit" render={<Link to={back} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</Button></CardContent></Card></div>
+  if (state !== "ready" || !source) return <div className="flex flex-1 items-center justify-center p-6"><Card className="w-full max-w-md"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={state === "rebuilding" ? RefreshCw : FlaskConical} size="sm" />{state === "rebuilding" ? "Spinning the preview back up…" : "Provisioning secure preview…"}</CardTitle></CardHeader><CardContent className="flex flex-col gap-4 text-muted-foreground"><p>{state === "rebuilding" ? "Rebuilding from this session’s latest changes. This usually takes 20–60 seconds." : "Preparing preview."}</p><Skeleton className="h-8 w-full" /><Button className="w-fit" render={<Link to={back} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</Button></CardContent></Card></div>
   return <div className="isolate flex min-h-0 flex-1 flex-col bg-background" data-testid="staging-preview">
     <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
       <Button render={<Link to={back} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Session</Button>
       <h1 className="truncate text-sm text-muted-foreground">Staging preview</h1>
       <Button render={<a href={source} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open externally</Button>
     </header>
-    {isProductionReadOnlyReview ? <Alert className="m-4 shrink-0"><PlatformIcon icon={FlaskConical} /><AlertTitle>Production review mode</AlertTitle><AlertDescription>This opens an existing staging preview only; this local workspace never rebuilds it.</AlertDescription></Alert> : null}
     {testingInstructions ? <div className="shrink-0 border-b px-4"><Accordion><AccordionItem value="testing"><AccordionTrigger>How to test this change</AccordionTrigger><AccordionContent><pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground">{testingInstructions}</pre></AccordionContent></AccordionItem></Accordion></div> : null}
     <iframe allow="clipboard-write; pointer-lock" className="min-h-0 flex-1 border-0" onLoad={() => setFrameRevision((revision) => revision + 1)} ref={iframe} sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock" src={source} title="Staging preview" />
   </div>

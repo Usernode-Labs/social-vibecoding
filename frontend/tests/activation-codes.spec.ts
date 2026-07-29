@@ -23,7 +23,7 @@ test("creates an activation code with the established POST contract", async ({ p
   await page.getByRole("button", { name: "Generate code" }).click()
   await expect(page.getByTestId("activation-codes")).toContainText("newcode123456")
   expect(creationRequests).toBe(1)
-  await expect(page.getByRole("link", { name: "Open legacy management" })).toHaveAttribute("href", "/#admin/codes")
+  await expect(page.getByRole("link", { name: "Manage codes" })).toHaveAttribute("href", "/#admin/codes")
 })
 
 test("copies an activation code locally without calling a server mutation", async ({ page }) => {
@@ -100,7 +100,7 @@ test("production review mode disables generation and revocation without mutation
     await route.fallback()
   })
   await page.goto("/react/admin/codes")
-  await expect(page.getByRole("alert")).toContainText("Production review mode")
+  await expect(page.getByRole("alert")).toContainText("Changes unavailable")
   await expect(page.getByRole("button", { name: "Generate code" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "Revoke activation code c82ea91f11ad" })).toBeDisabled()
   expect(mutationRequests).toBe(0)

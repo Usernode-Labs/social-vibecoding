@@ -17,25 +17,12 @@
       "rule": "no-space-utilities",
       "file": "@/features/platform/node-status.tsx",
       "matches": [
-        "space-y-1",
-        "space-y-2",
         "space-y-3",
         "space-y-4"
       ],
-      "count": 5,
+      "count": 3,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/features/platform/node-status.tsx",
-      "matches": [
-        "max-w-[56ch]"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "The readable-line-length value predates canonical layout variants.",
       "expires": "2026-09-30"
     },
     {
@@ -66,10 +53,9 @@
       "rule": "no-arbitrary-utilities",
       "file": "@/features/community/challenges.tsx",
       "matches": [
-        "max-w-[60ch]",
         "grid-cols-[auto_1fr_auto]"
       ],
-      "count": 2,
+      "count": 1,
       "owner": "frontend-platform",
       "reason": "Feed typography and leaderboard layout require named variants before removal.",
       "expires": "2026-09-30"
@@ -149,7 +135,7 @@
         "space-y-2",
         "space-y-3"
       ],
-      "count": 4,
+      "count": 3,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
       "expires": "2026-09-30"
@@ -169,10 +155,9 @@
       "rule": "no-space-utilities",
       "file": "@/features/admin/admin-overview.tsx",
       "matches": [
-        "space-y-2",
         "space-y-3"
       ],
-      "count": 2,
+      "count": 1,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
       "expires": "2026-09-30"
@@ -255,17 +240,6 @@
         "space-y-3"
       ],
       "count": 3,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-space-utilities",
-      "file": "@/features/dev/session-spec-viewer.tsx",
-      "matches": [
-        "space-y-2"
-      ],
-      "count": 1,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
       "expires": "2026-09-30"
@@ -447,14 +421,12 @@
       "matches": [
         "dark:aria-invalid:border-destructive/50",
         "dark:aria-invalid:ring-destructive/40",
-        "dark:bg-destructive/20",
         "dark:bg-transparent",
         "dark:focus-visible:ring-destructive/40",
-        "dark:hover:bg-destructive/30",
         "dark:hover:bg-input/30",
         "dark:hover:bg-muted/50"
       ],
-      "count": 8,
+      "count": 6,
       "owner": "frontend-platform",
       "reason": "Frozen official shadcn Luma source uses theme-specific control states; the exact-match ratchet prevents local expansion.",
       "expires": "2026-09-30"
@@ -651,46 +623,12 @@
     },
     {
       "rule": "no-space-utilities",
-      "file": "@/features/account/account.tsx",
-      "matches": [
-        "space-y-2"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/features/account/account.tsx",
-      "matches": [
-        "max-w-[56ch]"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-space-utilities",
       "file": "@/features/account/profile.tsx",
       "matches": [
-        "space-y-1",
         "space-y-2",
         "space-y-3"
       ],
-      "count": 6,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/features/account/settings.tsx",
-      "matches": [
-        "max-w-[60ch]"
-      ],
-      "count": 1,
+      "count": 4,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
       "expires": "2026-09-30"
@@ -736,28 +674,6 @@
       "file": "@/features/apps/app-dev.tsx",
       "matches": [
         "max-w-[1440px]"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-space-utilities",
-      "file": "@/features/apps/app-dev.tsx",
-      "matches": [
-        "space-y-2"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/features/apps/app-members.tsx",
-      "matches": [
-        "max-w-[65ch]"
       ],
       "count": 1,
       "owner": "frontend-platform",
@@ -835,17 +751,6 @@
       "expires": "2026-09-30"
     },
     {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/features/feedback/feedback.tsx",
-      "matches": [
-        "max-w-[60ch]"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
       "rule": "no-space-utilities",
       "file": "@/features/platform/status.tsx",
       "matches": [
@@ -871,10 +776,9 @@
       "rule": "no-space-utilities",
       "file": "@/features/work/work.tsx",
       "matches": [
-        "space-y-2",
         "space-y-3"
       ],
-      "count": 5,
+      "count": 4,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
       "expires": "2026-09-30"

@@ -553,14 +553,13 @@ export function GroupDiscussion() {
   }), [loadMessages])
 
   return <div className="isolate mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="group-discussion">
-    <Button className="w-fit" render={<Link to={appDevPath(slug)} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />App Dev</Button>
-    <header className="space-y-2">
+    <Button className="w-fit" render={<Link to={appDevPath(slug)} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Improve</Button>
+    <header>
       <h1 className="text-balance text-3xl font-semibold tracking-tight">App discussion</h1>
-      <p className="text-base text-muted-foreground text-pretty">The complete general discussion for this app.</p>
     </header>
-    {isProductionReadOnlyReview ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>Production review mode</AlertTitle><AlertDescription>Discussion can be reviewed here, but posting is disabled while this local React workspace reads production data.</AlertDescription></Alert> : null}
+    {isProductionReadOnlyReview ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>Read-only</AlertTitle><AlertDescription>Posting and reactions are unavailable.</AlertDescription></Alert> : null}
     {!isProductionReadOnlyReview && app && !app.can_collaborate ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>View-only discussion</AlertTitle><AlertDescription>You can read this app’s discussion, but collaboration access is required to post a message.</AlertDescription></Alert> : null}
-    {writable && connectionState !== "connected" ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>{connectionState === "unavailable" ? "Live discussion unavailable" : "Connecting to discussion"}</AlertTitle><AlertDescription>{connectionState === "unavailable" ? "Posting will be available when the live discussion connection can be restored." : "Messages will post once the existing live discussion connection is ready."}</AlertDescription></Alert> : null}
+    {writable && connectionState !== "connected" ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>{connectionState === "unavailable" ? "Discussion unavailable" : connectionState === "reconnecting" ? "Reconnecting to discussion" : "Connecting to discussion"}</AlertTitle>{connectionState === "unavailable" ? <AlertDescription>Refresh the page to reconnect.</AlertDescription> : null}</Alert> : null}
     {reactionError ? <Alert variant="destructive"><AlertTitle>Reaction was not updated</AlertTitle><AlertDescription>{reactionError}</AlertDescription></Alert> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Discussion unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {messages === null && !error ? <div className="space-y-3"><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></div> : null}

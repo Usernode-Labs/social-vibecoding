@@ -63,7 +63,7 @@ const columnLabels: Record<ColumnKey, string> = {
 const emptyFilter: FilterValue = { query: "", priority: "all", category: "all", assignee: "all", needsVote: false }
 
 function sessionTitle(session: AppSession | SharedBoardSession) {
-  return session.session_title || session.pr_title || "New development session"
+  return session.session_title || session.pr_title || "Session"
 }
 
 function propTop(value: { top?: string | null } | null | undefined) {
@@ -252,7 +252,7 @@ export function DevBoard({ slug, snapshot, canReorder, loadingMore = false, merg
     const source = findColumn(String(active.id))
     const target = findColumn(String(over.id))
     if (!source || !target || source !== target) {
-      setNotice("This lifecycle is server-owned. Cards can be reordered within Issues and In review, but cannot move between stages.")
+      setNotice("Cards can be reordered within Issues and In review, but cannot move between stages.")
       return
     }
     const persistedColumn: ReorderColumn | null = source === "issues" ? "issues" : source === "in-review" ? "review" : null
@@ -426,7 +426,7 @@ function DevPmView({
       })
     } catch (cause) {
       setGroups(previous)
-      setNotice(cause instanceof Error ? cause.message : "The PM board change could not be saved. Server order was restored.")
+      setNotice(cause instanceof Error ? cause.message : "The PM board change could not be saved. Previous order restored.")
     } finally {
       setSaving(false)
     }

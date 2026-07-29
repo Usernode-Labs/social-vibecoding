@@ -28,6 +28,18 @@ const recipeBot = {
   url: "https://recipebot.example.test",
 }
 
+async function expectPlatformAdminLink(page: import("@playwright/test").Page) {
+  const navigation = page.getByRole("navigation", { name: "Platform navigation" })
+  if (!await navigation.isVisible()) {
+    await page.getByRole("button", { name: "Toggle navigation" }).click()
+  }
+  await expect(navigation.getByRole("link", { exact: true, name: "Admin" })).toHaveAttribute("href", "/react/admin")
+  const dialog = page.getByRole("dialog", { name: "Sidebar" })
+  if (await dialog.isVisible()) {
+    await dialog.press("Escape")
+  }
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: admin } }))
   await page.route((url) => url.pathname === "/api/me/llm-grants", (route) => route.fulfill({ json: { grants: [] } }))
@@ -40,19 +52,19 @@ test("persists the administrator preview across routes and restores the full she
   await page.goto("/react/settings")
 
   await expect(page.getByTestId("settings-admin-preview")).toBeVisible()
-  await expect(page.getByRole("link", { name: "Admin operations" })).toBeVisible()
+  await expectPlatformAdminLink(page)
 
   await page.getByRole("switch", { name: "View as non-admin" }).click()
 
   await expect(page.getByTestId("admin-preview-banner")).toBeVisible()
   await expect(page.getByRole("switch", { name: "View as non-admin" })).toBeChecked()
-  await expect(page.getByRole("link", { name: "Admin operations" })).toHaveCount(0)
+  await expect(page.getByRole("navigation", { name: "Platform navigation" }).getByRole("link", { exact: true, name: "Admin" })).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => localStorage.getItem("viewAsNonAdmin"))).toBe("1")
 
   await page.getByRole("button", { name: "Switch back" }).click()
 
   await expect(page.getByTestId("admin-preview-banner")).toHaveCount(0)
-  await expect(page.getByRole("link", { name: "Admin operations" })).toBeVisible()
+  await expectPlatformAdminLink(page)
   await expect(page.getByRole("switch", { name: "View as non-admin" })).not.toBeChecked()
   await expect.poll(() => page.evaluate(() => localStorage.getItem("viewAsNonAdmin"))).toBeNull()
 })

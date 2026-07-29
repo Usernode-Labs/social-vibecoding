@@ -31,12 +31,10 @@ test("persists an explicit System preference while applying an effective mode", 
   await page.route("**/api/apps", (route) => route.fulfill({ json: apps }))
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { id: 7, username: "ava", canAdminWrite: false } } }))
 
-  await page.goto("/react/")
-  const systemMode = page.getByRole("button", { name: /Use system mode/ })
-  if (!await systemMode.isVisible()) {
-    await page.getByRole("button", { name: "Toggle navigation" }).click()
-  }
-  await page.getByRole("button", { name: "Use dark mode" }).click()
+  await page.goto("/react/settings")
+  const appearance = page.getByTestId("settings-appearance")
+  const systemMode = appearance.getByRole("button", { name: /Use system mode/ })
+  await appearance.getByRole("button", { name: "Use dark mode" }).click()
   await systemMode.click()
 
   await expect.poll(() => page.evaluate(() => localStorage.getItem("theme"))).toBe("system")

@@ -91,12 +91,12 @@ test("re-reads Work after a typed session_update instead of patching an incomple
   expect(reads).toBeGreaterThanOrEqual(2)
 })
 
-test("explains the periodic fallback when live session updates are unavailable", async ({ page }) => {
+test("explains the periodic fallback when live updates are unavailable", async ({ page }) => {
   await page.addInitScript(() => {
     Object.defineProperty(window, "WebSocket", { configurable: true, value: undefined })
   })
   await page.goto("/react/work")
-  await expect(page.getByRole("status")).toContainText("Live session updates are unavailable")
+  await expect(page.getByRole("status")).toHaveText("Live updates unavailable. Refreshing periodically.")
 })
 
 test("uses React route transitions for every migrated work detail", async ({ page }) => {

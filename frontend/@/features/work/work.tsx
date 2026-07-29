@@ -35,7 +35,7 @@ export function Work() {
       .then((next) => { if (!cancelled) setSnapshot(next) })
       .catch((cause: unknown) => {
         if (cancelled || (cause instanceof DOMException && cause.name === "AbortError")) return
-        setError(cause instanceof Error ? cause.message : "Unable to load your work")
+        setError(cause instanceof Error ? cause.message : "Work didn't load")
       })
     return () => { cancelled = true; controller.abort() }
   }, [refreshKey])
@@ -80,16 +80,16 @@ export function Work() {
   return (
     <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="work">
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Your work</h1><p className="text-base text-muted-foreground text-pretty">Sessions and proposals across the apps you build.</p></div>
-        <Button aria-label="Refresh your work" onClick={() => setRefreshKey((value) => value + 1)} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button>
+        <h1 className="text-balance text-3xl font-semibold tracking-tight">Work</h1>
+        <Button aria-label="Refresh work" onClick={() => setRefreshKey((value) => value + 1)} type="button" variant="outline">Refresh</Button>
       </header>
-      {sessionEventsState !== "connected" ? <p className="text-sm text-muted-foreground" role="status">{sessionEventsState === "connecting" ? "Connecting to live session updates." : sessionEventsState === "unavailable" ? "Live session updates are unavailable. This page will keep refreshing periodically." : "Live session updates are reconnecting. This page will keep refreshing periodically."}</p> : null}
-      {error ? <Alert variant="destructive"><AlertTitle>Your work is unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
+      {sessionEventsState !== "connected" ? <p className="text-sm text-muted-foreground" role="status">{sessionEventsState === "connecting" ? "Connecting to live updates" : sessionEventsState === "unavailable" ? "Live updates unavailable. Refreshing periodically." : "Reconnecting to live updates"}</p> : null}
+      {error ? <Alert variant="destructive"><AlertTitle>Work unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!snapshot && !error ? <WorkSkeleton /> : null}
-      {isEmpty ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={Gauge} /></EmptyMedia><EmptyTitle>No work in progress</EmptyTitle><EmptyDescription>Open an app and start a Dev session when you are ready to build.</EmptyDescription></EmptyHeader></Empty> : null}
-      {snapshot?.proposals.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Your proposals</h3>{snapshot.proposals.map((proposal) => <ProposalRow key={proposal.id} proposal={proposal} />)}</section> : null}
+      {isEmpty ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={Gauge} /></EmptyMedia><EmptyTitle>No work in progress</EmptyTitle><EmptyDescription>Open an app and start building.</EmptyDescription></EmptyHeader></Empty> : null}
+      {snapshot?.proposals.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Proposals</h3>{snapshot.proposals.map((proposal) => <ProposalRow key={proposal.id} proposal={proposal} />)}</section> : null}
       {snapshot?.governance.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Governance proposals</h3>{snapshot.governance.map((proposal) => <GovernanceRow key={proposal.id} proposal={proposal} />)}</section> : null}
-      {sessions.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Your sessions</h3>{sessions.map((session) => <SessionRow key={session.id} session={session} />)}</section> : null}
+      {sessions.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Sessions</h3>{sessions.map((session) => <SessionRow key={session.id} session={session} />)}</section> : null}
     </div>
   )
 }

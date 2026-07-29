@@ -3,7 +3,7 @@ import { useMemo } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { DevSessionMessage } from "@/lib/dev-chat-api"
 
 export type BuildSegment = { id: number; label: string; lines: string[]; active?: boolean }
@@ -29,5 +29,5 @@ export function buildSegments(messages: DevSessionMessage[], liveLines: string[]
 export function DevBuildTimeline({ estimate, liveLines = [], messages }: { estimate?: string | null; liveLines?: string[]; messages: DevSessionMessage[] }) {
   const segments = useMemo(() => buildSegments(messages, liveLines), [liveLines, messages])
   if (!segments.length && !estimate) return null
-  return <Card data-testid="dev-build-timeline"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={Hammer} size="sm" />Build timeline</CardTitle><CardDescription>Read-only owner session evidence from persisted worker output and the existing session stream.</CardDescription>{estimate ? <Badge variant="secondary"><PlatformIcon data-icon="inline-start" icon={Timer} size="xs" />{estimate}</Badge> : null}</CardHeader><CardContent className="space-y-2">{segments.map((segment) => <details className="rounded-md border" key={segment.id} open={segment.active}><summary className="flex cursor-pointer items-center gap-2 p-3 text-sm font-medium"><PlatformIcon icon={ChevronRight} size="xs" />{segment.label}<span className="ml-auto text-xs text-muted-foreground">{segment.lines.length} lines</span></summary><pre className="max-h-72 overflow-auto border-t bg-muted p-3 text-xs whitespace-pre-wrap">{segment.lines.join("\n")}</pre></details>)}</CardContent></Card>
+  return <Card data-testid="dev-build-timeline"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={Hammer} size="sm" />Build timeline</CardTitle>{estimate ? <Badge variant="secondary"><PlatformIcon data-icon="inline-start" icon={Timer} size="xs" />{estimate}</Badge> : null}</CardHeader><CardContent className="space-y-2">{segments.map((segment) => <details className="rounded-md border" key={segment.id} open={segment.active}><summary className="flex cursor-pointer items-center gap-2 p-3 text-sm font-medium"><PlatformIcon icon={ChevronRight} size="xs" />{segment.label}<span className="ml-auto text-xs text-muted-foreground">{segment.lines.length} lines</span></summary><pre className="max-h-72 overflow-auto border-t bg-muted p-3 text-xs whitespace-pre-wrap">{segment.lines.join("\n")}</pre></details>)}</CardContent></Card>
 }

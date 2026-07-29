@@ -138,6 +138,7 @@ test("shares the canonical bare app URL from the app detail action hub", async (
   await page.getByRole("button", { name: "Share RecipeBot" }).click()
 
   await expect(page.getByRole("heading", { name: "Share RecipeBot" })).toBeVisible()
+  await expect(page.getByText("Anyone with this link can open the app outside Usernode. Some visitors may need to sign in.", { exact: true })).toBeVisible()
   await expect(page.getByRole("textbox", { name: "App link" })).toHaveValue("https://recipebot.example.test")
   await expect(page.getByRole("link", { name: "Open in new tab" })).toHaveAttribute("href", "https://recipebot.example.test")
 
@@ -355,7 +356,8 @@ test("production review mode prevents saved-app requests", async ({ page }) => {
     await route.fulfill({ status: 500, json: { error: "This request must not be made." } })
   })
   await page.goto("/react/apps/recipebot")
-  await expect(page.getByText("Saving apps is disabled while reviewing production data.")).toBeVisible()
+  await expect(page.getByTestId("app-details-production-review")).toContainText("Read-only")
+  await expect(page.getByTestId("app-details-production-review")).toContainText("Saving to Your apps, renaming, and change-approval updates are unavailable.")
   await expect(page.getByRole("button", { name: "Remove from Your apps" })).toBeDisabled()
   await page.goto("/react/")
   await expect(page.getByRole("region", { name: "Your apps" }).getByRole("button", { name: "Reorder" })).toBeDisabled()
@@ -371,7 +373,8 @@ test("production review mode prevents change-lock writes", async ({ page }) => {
     await route.fulfill({ status: 500, json: { error: "This request must not be made." } })
   })
   await page.goto("/react/apps/recipebot")
-  await expect(page.getByText("Production review mode")).toBeVisible()
+  await expect(page.getByTestId("app-details-production-review")).toContainText("Read-only")
+  await expect(page.getByTestId("app-details-production-review")).toContainText("Saving to Your apps, renaming, and change-approval updates are unavailable.")
   await expect(page.getByRole("button", { name: "Require an admin approval" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "Rename" })).toBeDisabled()
   expect(lockRequests).toBe(0)

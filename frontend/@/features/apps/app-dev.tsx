@@ -1,4 +1,4 @@
-import { ArrowLeft, Columns3, List, MessageCircle, Plus, UsersRound } from "lucide-react"
+import { ArrowLeft } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 
@@ -67,7 +67,7 @@ export function AppDev() {
       const session = await createAppSession(app.slug)
       navigate(appDevSessionPath(app.slug, session.id))
     } catch (cause) {
-      setCreationError(cause instanceof Error ? cause.message : "Unable to create a Dev session")
+      setCreationError(cause instanceof Error ? cause.message : "Could not create a session")
     } finally {
       setCreating(false)
     }
@@ -80,7 +80,7 @@ export function AppDev() {
       .then(([appResponse, boardResponse]) => { if (!cancelled) { setApp(appResponse.app); setBoard(boardResponse) } })
       .catch((cause: unknown) => {
         if (cancelled || (cause instanceof DOMException && cause.name === "AbortError")) return
-        setError(cause instanceof Error ? cause.message : "Unable to load the Dev overview")
+        setError(cause instanceof Error ? cause.message : "Improve didn’t load")
       })
     return () => { cancelled = true; controller.abort() }
   }, [slug])
@@ -166,11 +166,11 @@ export function AppDev() {
 
   return <div className="isolate mx-auto flex w-full max-w-[1440px] flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6 lg:px-8" data-testid="app-dev">
     <Button className="w-fit" render={<Link to={appDetailsPath(slug)} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />App details</Button>
-    {error ? <Alert variant="destructive"><AlertTitle>Dev overview unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
+    {error ? <Alert variant="destructive"><AlertTitle>Improve didn’t load</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {!app && !error ? <Skeleton className="h-32 w-full" /> : null}
-    {app ? <header className="flex flex-col gap-4"><div className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">{app.name} Dev</h1><p className="text-base text-muted-foreground text-pretty">Your development sessions, work, and review activity for this app.</p></div><div className="flex flex-wrap gap-2"><Button render={<Link aria-label={`Open ${app.name} discussion`} to={appDevChatPath(app.slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={MessageCircle} />Discussion</Button><Button aria-label={`Create a session in ${app.name}`} disabled={creating || isProductionReadOnlyReview} onClick={createSession} type="button"><PlatformIcon data-icon="inline-start" icon={Plus} />{creating ? "Creating…" : "New session"}</Button></div></div><ToggleGroup aria-label="Dev workspace view" onValueChange={(values) => selectView(values[0] ?? null)} size="sm" spacing={0} value={[view]} variant="outline"><ToggleGroupItem aria-label="List view" value="list"><PlatformIcon data-icon="inline-start" icon={List} /><span className="hidden sm:inline">List</span></ToggleGroupItem><ToggleGroupItem aria-label="Kanban view" value="kanban"><PlatformIcon data-icon="inline-start" icon={Columns3} /><span className="hidden sm:inline">Board</span></ToggleGroupItem><ToggleGroupItem aria-label="Tasks by assignee view" value="pm"><PlatformIcon data-icon="inline-start" icon={UsersRound} /><span className="hidden sm:inline">By person</span></ToggleGroupItem></ToggleGroup></header> : null}
-    {isProductionReadOnlyReview ? <Alert><AlertTitle>Production review mode</AlertTitle><AlertDescription>Existing Dev sessions can be reviewed here, but creating a session is disabled.</AlertDescription></Alert> : null}
-    {creationError ? <Alert variant="destructive"><AlertTitle>Could not create a Dev session</AlertTitle><AlertDescription>{creationError}</AlertDescription></Alert> : null}
+    {app ? <header className="flex flex-col gap-4"><div className="flex flex-wrap items-start justify-between gap-4"><h1 className="text-balance text-3xl font-semibold tracking-tight">Improve {app.name}</h1><div className="flex flex-wrap gap-2"><Button render={<Link aria-label={`Open ${app.name} discussion`} to={appDevChatPath(app.slug)} />} variant="outline">Discussion</Button><Button aria-label={`Create a session in ${app.name}`} disabled={creating || isProductionReadOnlyReview} onClick={createSession} type="button">{creating ? "Creating…" : "New session"}</Button></div></div><ToggleGroup aria-label="Improve workspace view" onValueChange={(values) => selectView(values[0] ?? null)} size="sm" spacing={0} value={[view]} variant="outline"><ToggleGroupItem aria-label="List view" value="list">List</ToggleGroupItem><ToggleGroupItem aria-label="Kanban view" value="kanban">Board</ToggleGroupItem><ToggleGroupItem aria-label="Tasks by assignee view" value="pm">By person</ToggleGroupItem></ToggleGroup></header> : null}
+    {isProductionReadOnlyReview ? <Alert><AlertTitle>Read-only</AlertTitle><AlertDescription>Creating sessions and changing work order or assignees are unavailable.</AlertDescription></Alert> : null}
+    {creationError ? <Alert variant="destructive"><AlertTitle>Could not create a session</AlertTitle><AlertDescription>{creationError}</AlertDescription></Alert> : null}
     {board === null && !error ? <div className="flex flex-col gap-3"><Skeleton className="h-40 w-full" /><Skeleton className="h-40 w-full" /></div> : null}
     {board ? <DevBoard canReorder={Boolean(app?.can_collaborate) && !isProductionReadOnlyReview} loadingMore={loadingMerged} mergedError={mergedError} mode={view} onLoadMore={() => void loadMoreMerged()} onPersistOrder={persistBoardOrder} onPersistPmMove={persistPmMove} slug={slug} snapshot={board} /> : null}
   </div>

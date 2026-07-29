@@ -195,7 +195,7 @@ export function SpecSharingControls({
           </AlertDialogContent>
         </AlertDialog>
       </div>
-      {disabled ? <p className="text-sm text-muted-foreground">Sharing is disabled while this local workspace reviews production data.</p> : null}
+      {disabled ? <Alert><AlertTitle>Read-only</AlertTitle><AlertDescription>Sharing is unavailable.</AlertDescription></Alert> : null}
       {notice ? <p aria-live="polite" className="text-sm text-muted-foreground">{notice}</p> : null}
     </div>
   )
@@ -264,9 +264,8 @@ export function SessionSpecViewer() {
         <PlatformIcon data-icon="inline-start" icon={ArrowLeft} />
         Session
       </Button>
-      <header className="space-y-2">
+      <header>
         <h1 className="text-3xl font-semibold tracking-tight">Session spec</h1>
-        <p className="text-muted-foreground">Inspect and share immutable planning versions produced by this Dev session.</p>
       </header>
       {error ? <Alert variant="destructive"><AlertTitle>Spec unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {spec === null && !error ? <><Skeleton className="h-10 w-48" /><Skeleton className="h-96 w-full" /></> : null}

@@ -1,4 +1,4 @@
-import { Download, ExternalLink, ListTodo, RefreshCw, ShieldAlert } from "lucide-react"
+import { ExternalLink, ListTodo, ShieldAlert } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
@@ -99,15 +99,15 @@ export function AdminFeaturesPage() {
 
   return <div className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-features">
     <header className="flex flex-wrap items-start justify-between gap-4">
-      <div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Submitted features</h1><p className="text-base text-muted-foreground text-pretty">Cross-app general feature requests, ranked by community support. Governance proposals and moderation actions remain in the established console.</p></div>
-      {state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button> : null}
+      <div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Submitted features</h1><p className="text-base text-muted-foreground text-pretty">Cross-app feature requests ranked by community support.</p></div>
+      {state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : null}
     </header>
     {state.kind === "loading" ? <div className="space-y-3"><Skeleton className="h-10 w-40" /><Skeleton className="h-36 w-full" /><Skeleton className="h-36 w-full" /></div> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Submitted features unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "ready" ? <>
       {!state.user.canAdminWrite ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>View-only administrator</AlertTitle><AlertDescription>You can inspect ranked feature requests and download this read-only report.</AlertDescription></Alert> : null}
-      {isProductionReadOnlyReview ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Production review mode</AlertTitle><AlertDescription>This surface is already read-only, so filters and CSV export remain available.</AlertDescription></Alert> : null}
+      {isProductionReadOnlyReview ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Read-only</AlertTitle><AlertDescription>Feature requests cannot be changed here.</AlertDescription></Alert> : null}
       <section aria-label="Submitted feature controls" className="flex flex-wrap items-end justify-between gap-3">
         <label className="grid gap-1 text-sm font-medium" htmlFor="submitted-feature-status">Status
           <Select onValueChange={(value) => setStatus(value as SubmittedFeatureStatus)} value={status}>
@@ -115,10 +115,10 @@ export function AdminFeaturesPage() {
             <SelectContent>{statuses.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
           </Select>
         </label>
-        <div className="flex flex-wrap gap-2"><Button disabled={downloading} onClick={() => void exportCsv()} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={Download} />{downloading ? "Preparing CSV…" : "Download CSV"}</Button><Button render={<a href="/admin-features" />} variant="outline">Open legacy view<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button></div>
+        <div className="flex flex-wrap gap-2"><Button disabled={downloading} onClick={() => void exportCsv()} type="button" variant="outline">{downloading ? "Preparing CSV…" : "Download CSV"}</Button><Button render={<a href="/admin-features" />} variant="outline">Open feature requests<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button></div>
       </section>
       {downloadError ? <Alert variant="destructive"><AlertTitle>CSV unavailable</AlertTitle><AlertDescription>{downloadError}</AlertDescription></Alert> : null}
-      <p className="text-sm text-muted-foreground">{state.total} server-ranked {state.total === 1 ? "request" : "requests"}.</p>
+      <p className="text-sm text-muted-foreground">{state.total} {state.total === 1 ? "request" : "requests"}.</p>
       <SubmittedFeaturesList features={state.features} />
     </> : null}
   </div>

@@ -1,4 +1,4 @@
-import { Bell, CheckCheck, Handshake, RefreshCw, Scale, X } from "lucide-react"
+import { Bell, CheckCheck, Handshake, RefreshCw, Scale } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 
@@ -103,23 +103,23 @@ export function NotificationsContent({ data, error, inviteError, loadMoreError, 
         <Button disabled={!unread || markingAll || isProductionReadOnlyReview} onClick={onMarkAll} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={CheckCheck} />Mark all read</Button>
       </div>
     </header>
-    {isProductionReadOnlyReview ? <Alert><PlatformIcon icon={Bell} /><AlertTitle>Production review mode</AlertTitle><AlertDescription>Activity and invitations can be reviewed here, but no read, accept, or decline request is made.</AlertDescription></Alert> : null}
+    {isProductionReadOnlyReview ? <Alert><AlertTitle>Read-only</AlertTitle><AlertDescription>Marking activity as read and accepting or declining invitations are unavailable.</AlertDescription></Alert> : null}
     {liveState !== "connected" ? <div className="text-sm text-muted-foreground" role="status"><StatusDot detail={liveState === "unavailable" ? "Refresh to check for updates." : undefined} subject="Activity" {...connectionPresentationStatus(liveState)} /></div> : null}
     {error ? <Alert variant="destructive"><PlatformIcon icon={Bell} /><AlertTitle>Activity unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {inviteError ? <Alert variant="destructive"><PlatformIcon icon={Handshake} /><AlertTitle>Invitation was not updated</AlertTitle><AlertDescription>{inviteError}</AlertDescription></Alert> : null}
     {!data && !error ? <NotificationsSkeleton /> : null}
     {data?.invites.length ? <InviteSection invites={data.invites} mutatingInvite={mutatingInvite} onInviteAction={onInviteAction} /> : null}
-    {data && !bellItems.length && !data.invites.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={Bell} /></EmptyMedia><EmptyTitle>You are all caught up</EmptyTitle><EmptyDescription>New messages and community activity will appear here. Finished sessions are shown in Your work.</EmptyDescription></EmptyHeader></Empty> : null}
+    {data && !bellItems.length && !data.invites.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={Bell} /></EmptyMedia><EmptyTitle>You are all caught up</EmptyTitle><EmptyDescription>New messages and community activity will appear here.</EmptyDescription></EmptyHeader></Empty> : null}
     {groups.map((group) => <NotificationGroup group={group} key={group[0]?.appId ?? "general"} onOpen={onOpen} />)}
     {data?.hasMore ? <div className="flex flex-col items-center gap-2"><Button disabled={loadingMore} onClick={onLoadMore} type="button" variant="outline"><PlatformIcon className={loadingMore ? "animate-spin" : undefined} data-icon="inline-start" icon={RefreshCw} />{loadingMore ? "Loading older activity…" : "Show older activity"}</Button>{loadMoreError ? <p className="text-sm text-destructive" role="status">{loadMoreError}</p> : null}</div> : null}
   </div>
 }
 
 function InviteSection({ invites, mutatingInvite, onInviteAction }: { invites: PendingInvite[]; mutatingInvite: string | null; onInviteAction: (invite: PendingInvite, action: "accept" | "decline") => void }) {
-  return <section aria-labelledby="pending-invites-heading" className="flex flex-col gap-3"><div className="flex flex-col gap-1"><h2 className="text-lg font-medium" id="pending-invites-heading">Pending invitations</h2><p className="text-sm text-muted-foreground">These are still actionable membership invitations, not ordinary read messages.</p></div>{invites.map((invite) => {
+  return <section aria-labelledby="pending-invites-heading" className="flex flex-col gap-3"><h2 className="text-lg font-medium" id="pending-invites-heading">Pending invitations</h2>{invites.map((invite) => {
     const busy = mutatingInvite === inviteKey(invite)
     const approver = invite.kind === "approver"
-    return <Card key={inviteKey(invite)} size="sm"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={approver ? Scale : Handshake} />{approver ? "Approver invitation" : "Collaborator invitation"}</CardTitle><CardDescription>{invite.invitedBy ? `@${invite.invitedBy} invited you to ${approver ? "be an approver on" : "collaborate on"} ${invite.appName || invite.appSlug}.` : `You were invited to ${approver ? "be an approver on" : "collaborate on"} ${invite.appName || invite.appSlug}.`}</CardDescription></CardHeader><CardFooter className="flex flex-wrap gap-2"><Button disabled={busy || isProductionReadOnlyReview} onClick={() => onInviteAction(invite, "accept")} type="button"><PlatformIcon data-icon="inline-start" icon={Handshake} />{busy ? "Updating…" : "Accept"}</Button><Button disabled={busy || isProductionReadOnlyReview} onClick={() => onInviteAction(invite, "decline")} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={X} />Decline</Button></CardFooter></Card>
+    return <Card key={inviteKey(invite)} size="sm"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={approver ? Scale : Handshake} />{approver ? "Approver invitation" : "Collaborator invitation"}</CardTitle><CardDescription>{invite.invitedBy ? `@${invite.invitedBy} invited you to ${approver ? "be an approver on" : "collaborate on"} ${invite.appName || invite.appSlug}.` : `You were invited to ${approver ? "be an approver on" : "collaborate on"} ${invite.appName || invite.appSlug}.`}</CardDescription></CardHeader><CardFooter className="flex flex-wrap gap-2"><Button disabled={busy || isProductionReadOnlyReview} onClick={() => onInviteAction(invite, "accept")} type="button">{busy ? "Updating…" : "Accept"}</Button><Button disabled={busy || isProductionReadOnlyReview} onClick={() => onInviteAction(invite, "decline")} type="button" variant="outline">Decline</Button></CardFooter></Card>
   })}</section>
 }
 

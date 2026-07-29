@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, LoaderCircle, MailPlus, ShieldAlert, UserMinus, UsersRound } from "lucide-react"
+import { ArrowLeft, LoaderCircle, ShieldAlert, UsersRound } from "lucide-react"
 import { useEffect, useState, type FormEvent } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 
@@ -187,13 +187,13 @@ export function AppMembers() {
 
   return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-members">
     <Button className="w-fit" render={<Link to={appDetailsPath(slug)} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to app</Button>
-    <header className="flex flex-col gap-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Members and visibility</h1><p className="max-w-[65ch] text-base text-muted-foreground text-pretty">Review who can build this app, manage invitations, and propose changes to who can open it.</p></header>
+    <header><h1 className="text-balance text-3xl font-semibold tracking-tight">Members and visibility</h1></header>
     {state.kind === "loading" ? <MembersSkeleton /> : null}
     {state.kind === "not-found" ? <Empty data-testid="members-not-found"><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={UsersRound} /></EmptyMedia><EmptyTitle>Collaborators unavailable</EmptyTitle><EmptyDescription>This collaborators view is not available to this session.</EmptyDescription></EmptyHeader><Button render={<Link to="/" />} variant="outline">Back to apps</Button></Empty> : null}
     {state.kind === "forbidden" ? <Alert variant="destructive"><PlatformIcon icon={ShieldAlert} /><AlertTitle>Collaborator access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Could not load collaborators</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {ready ? <>
-      {isProductionReadOnlyReview ? <Alert data-testid="members-production-review"><PlatformIcon icon={ShieldAlert} /><AlertTitle>Production review mode</AlertTitle><AlertDescription>Collaborators and visibility can be reviewed here, but invitations, membership changes, and visibility proposals are disabled.</AlertDescription></Alert> : null}
+      {isProductionReadOnlyReview ? <Alert data-testid="members-production-review"><AlertTitle>Read-only</AlertTitle><AlertDescription>Invitations, collaborator changes, and visibility changes are unavailable.</AlertDescription></Alert> : null}
       <AppVisibilitySettings
         appName={ready.app.name}
         canManage={ready.app.can_manage === true}
@@ -215,20 +215,20 @@ export function AppMembers() {
             return <li className="flex flex-wrap items-center gap-3 rounded-lg border p-3" key={member.userId}>
               <Avatar><AvatarFallback>{initials(member.username)}</AvatarFallback></Avatar>
               <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><p className="truncate text-sm font-medium">@{member.username}</p>{member.isCreator ? <Badge variant="secondary">Creator</Badge> : null}{member.status === "invited" ? <Badge variant="outline">Invited</Badge> : null}</div>{member.status === "invited" && member.invitedBy ? <p className="text-sm text-muted-foreground">Invited by @{member.invitedBy}</p> : null}</div>
-              {canRemove ? <Button disabled={removing} onClick={() => setRemoveTarget(member)} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={UserMinus} />{action.label}</Button> : null}
+              {canRemove ? <Button disabled={removing} onClick={() => setRemoveTarget(member)} size="sm" type="button" variant="outline">{action.label}</Button> : null}
             </li>
           })}</ul>}
           {removeError ? <Alert className="mt-4" variant="destructive"><AlertTitle>Membership was not updated</AlertTitle><AlertDescription>{removeError}</AlertDescription></Alert> : null}
         </CardContent>
       </Card>
       {ready.roster.collabVisibility === "private" ? <Card>
-        <CardHeader><CardTitle>Invite a collaborator</CardTitle><CardDescription>Search by username. Existing members and pending invitees are omitted from the server’s suggestions.</CardDescription></CardHeader>
-        <CardContent><form onSubmit={(event) => void submitInvite(event)}><FieldGroup><Field data-invalid={!!inviteError}><FieldLabel htmlFor="invite-username">Username</FieldLabel><Input autoComplete="off" disabled={!canInvite || inviting} id="invite-username" onChange={(event) => setInviteQuery(event.target.value)} placeholder="Start typing a username" value={inviteQuery} />{searchError ? <FieldError>{searchError}</FieldError> : null}{inviteError ? <FieldError>{inviteError}</FieldError> : null}<FieldDescription>Type at least two characters to search eligible users.</FieldDescription></Field>{suggestions.length ? <ul aria-label="Invite suggestions" className="flex flex-col gap-1 rounded-lg border p-1">{suggestions.map((user) => <li key={user.id}><Button className="w-full justify-start" disabled={!canInvite || inviting} onClick={() => { setInviteQuery(user.username); setSuggestions([]) }} size="sm" type="button" variant="ghost"><PlatformIcon data-icon="inline-start" icon={Check} />@{user.username}</Button></li>)}</ul> : null}<Button disabled={!canInvite || inviting || !inviteQuery.trim()} type="submit"><PlatformIcon data-icon="inline-start" icon={inviting ? LoaderCircle : MailPlus} className={inviting ? "animate-spin" : undefined} />{inviting ? "Inviting…" : "Send invite"}</Button></FieldGroup></form></CardContent>
+        <CardHeader><CardTitle>Invite a collaborator</CardTitle><CardDescription>Search by username. Existing collaborators and pending invites won’t appear.</CardDescription></CardHeader>
+        <CardContent><form onSubmit={(event) => void submitInvite(event)}><FieldGroup><Field data-invalid={!!inviteError}><FieldLabel htmlFor="invite-username">Username</FieldLabel><Input autoComplete="off" disabled={!canInvite || inviting} id="invite-username" onChange={(event) => setInviteQuery(event.target.value)} placeholder="Start typing a username" value={inviteQuery} />{searchError ? <FieldError>{searchError}</FieldError> : null}{inviteError ? <FieldError>{inviteError}</FieldError> : null}<FieldDescription>Type at least two characters to search eligible users.</FieldDescription></Field>{suggestions.length ? <ul aria-label="Invite suggestions" className="flex flex-col gap-1 rounded-lg border p-1">{suggestions.map((user) => <li key={user.id}><Button className="w-full justify-start" disabled={!canInvite || inviting} onClick={() => { setInviteQuery(user.username); setSuggestions([]) }} size="sm" type="button" variant="ghost">@{user.username}</Button></li>)}</ul> : null}<Button disabled={!canInvite || inviting || !inviteQuery.trim()} type="submit">{inviting ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}{inviting ? "Inviting…" : "Send invite"}</Button></FieldGroup></form></CardContent>
         <CardFooter>{!canInvite && !isProductionReadOnlyReview ? <p className="text-sm text-muted-foreground">This app does not use collaborator invitations.</p> : <p aria-live="polite" className="text-sm text-muted-foreground">{inviteSuccess}</p>}</CardFooter>
       </Card> : null}
     </> : null}
     <AlertDialog onOpenChange={(open) => { if (!open && !removing) setRemoveTarget(null) }} open={removeTarget !== null}>
-      <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{removeTarget ? memberAction(removeTarget, currentUser).title : "Update collaborator"}</AlertDialogTitle><AlertDialogDescription>{removeTarget ? memberAction(removeTarget, currentUser).description : ""}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel><AlertDialogAction disabled={removing || isProductionReadOnlyReview} onClick={() => void confirmRemoval()} type="button" variant="destructive"><PlatformIcon data-icon="inline-start" icon={removing ? LoaderCircle : UserMinus} className={removing ? "animate-spin" : undefined} />{removing ? "Updating…" : removeTarget?.status === "invited" ? "Revoke invite" : removeTarget?.userId === currentUser?.id ? "Leave app" : "Remove collaborator"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
+      <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{removeTarget ? memberAction(removeTarget, currentUser).title : "Update collaborator"}</AlertDialogTitle><AlertDialogDescription>{removeTarget ? memberAction(removeTarget, currentUser).description : ""}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel><AlertDialogAction disabled={removing || isProductionReadOnlyReview} onClick={() => void confirmRemoval()} type="button" variant="destructive">{removing ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}{removing ? "Updating…" : removeTarget?.status === "invited" ? "Revoke invite" : removeTarget?.userId === currentUser?.id ? "Leave app" : "Remove collaborator"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
   </div>
 }

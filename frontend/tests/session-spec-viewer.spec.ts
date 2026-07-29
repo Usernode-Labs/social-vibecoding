@@ -116,6 +116,6 @@ test("production review mode exposes sharing states without mutations", async ({
   await page.goto("/react/apps/recipebot/dev/sessions/41/spec")
   await expect(page.getByRole("button", { name: "Share to group" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "Share privately" })).toBeDisabled()
-  await expect(page.getByText("Sharing is disabled while this local workspace reviews production data.")).toBeVisible()
+  await expect(page.getByRole("alert").filter({ hasText: "Read-only" })).toContainText("Sharing is unavailable.")
   expect(writes).toBe(0)
 })

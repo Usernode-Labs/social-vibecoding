@@ -1,6 +1,14 @@
 import { expect, test } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
 
+async function platformAdminLink(page: import("@playwright/test").Page) {
+  const navigation = page.getByRole("navigation", { name: "Platform navigation" })
+  if (!await navigation.isVisible()) {
+    await page.getByRole("button", { name: "Toggle navigation" }).click()
+  }
+  return navigation.getByRole("link", { exact: true, name: "Admin" })
+}
+
 test("gates operations to administrators", async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({ status: 403, json: { error: "Admin access required" } }))
   await page.goto("/react/admin")
@@ -21,11 +29,11 @@ test("renders the read-only operations snapshot and preserves legacy tools", asy
   await expect(page.getByRole("link", { name: "Screenshot gallery" })).toHaveAttribute("href", "/react/admin/gallery")
 })
 
-test("exposes the operations route from the platform header only to admins", async ({ page }) => {
+test("exposes the operations route from platform navigation only to admins", async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { isAdmin: true, canAdminWrite: true } } }))
   await page.route("**/api/apps", (route) => route.fulfill({ json: [] }))
   await page.goto("/react/")
-  await expect(page.getByRole("link", { name: "Admin operations" })).toHaveAttribute("href", "/react/admin")
+  await expect(await platformAdminLink(page)).toHaveAttribute("href", "/react/admin")
 })
 
 test("has no critical or serious accessibility violations", async ({ page }) => {

@@ -2,7 +2,7 @@ import { Activity, GitMerge, RefreshCw } from "lucide-react"
 
 import { PlatformIcon } from "@/components/platform-icon"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import type { DevSessionStatus } from "@/lib/dev-chat-api"
 
 function progressText(status: DevSessionStatus) {
@@ -19,5 +19,5 @@ function progressText(status: DevSessionStatus) {
 export function DevSessionActivity({ status }: { status: DevSessionStatus | null }) {
   if (!status?.busy && !status?.resolving && !status?.sync) return null
   const icon = status.resolving ? GitMerge : status.sync ? RefreshCw : Activity
-  return <Card size="sm"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={icon} size="sm" />Current Dev activity</CardTitle><Badge variant="secondary">In progress</Badge><CardDescription>{progressText(status)}</CardDescription></CardHeader><CardContent className="text-sm text-muted-foreground">The session stream is live below. Merge and recovery controls remain available in legacy Dev.</CardContent></Card>
+  return <Card size="sm"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={icon} size="sm" />Current activity</CardTitle><Badge variant="secondary">In progress</Badge><CardDescription>{progressText(status)}</CardDescription></CardHeader></Card>
 }

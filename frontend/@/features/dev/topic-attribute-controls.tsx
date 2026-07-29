@@ -82,7 +82,7 @@ export function TopicAttributeControls({ attributes, disabled = false, onChange,
   }
 
   return <section aria-labelledby="topic-attribute-heading" className="flex flex-col gap-3">
-    <div><h3 className="text-sm font-medium" id="topic-attribute-heading">Community signals</h3><p className="text-sm text-muted-foreground">These are shared suggestions, not private assignments or workflow commands.</p></div>
+    <div><h3 className="text-sm font-medium" id="topic-attribute-heading">Community signals</h3><p className="text-sm text-muted-foreground">Community suggestions, not assignments.</p></div>
     <FieldGroup className="grid gap-5 lg:grid-cols-3">
       {renderField("priority", "Priority", "Signal how urgently the community should consider this issue.", Flag)}
       {renderField("category", "Category", "Choose an app category or suggest a short new one.", Tags)}

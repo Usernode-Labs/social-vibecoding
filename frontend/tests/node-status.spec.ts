@@ -14,7 +14,7 @@ test("renders the public node status snapshot and its chain services", async ({ 
   await page.goto("/react/node-status")
 
   const status = page.getByTestId("node-status")
-  await expect(status).toContainText("Node status")
+  await expect(status.getByRole("heading", { level: 1, name: "Node" })).toBeVisible()
   await expect(status).toContainText("12,480 / 12,483")
   await expect(status).toContainText("testnet-explorer.usernodelabs.org")
   await expect(status).toContainText("Chain-dependent services")
@@ -27,8 +27,8 @@ test("makes probe failures explicit without hiding the other snapshot data", asy
 
   const status = page.getByTestId("node-status")
   await expect(status).toContainText("Partial UTXO database")
-  await expect(status).toContainText("Node probe failed")
-  await expect(status).toContainText("Explorer probe failed")
+  await expect(status).toContainText("Node unavailable")
+  await expect(status).toContainText("Explorer unavailable")
 })
 
 test("renders a request error when the public status service is unavailable", async ({ page }) => {
@@ -42,7 +42,7 @@ test("renders a request error when the public status service is unavailable", as
 test("has no critical or serious accessibility violations", async ({ page }) => {
   await page.route("**/api/node-status/full", (route) => route.fulfill({ json: snapshot }))
   await page.goto("/react/node-status")
-  await expect(page.getByTestId("node-status")).toContainText("Node status")
+  await expect(page.getByTestId("node-status").getByRole("heading", { level: 1, name: "Node" })).toBeVisible()
   const results = await new AxeBuilder({ page }).analyze()
   expect(results.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([])
 })

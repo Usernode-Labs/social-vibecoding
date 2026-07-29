@@ -131,7 +131,7 @@ test("production review mode keeps shared-session discussion read-only", async (
   test.skip(process.env.SV_PRODUCTION_READONLY !== "true", "This state is compiled only for the production-review profile.")
   await installFixture(page, [session], true)
   await page.goto("/react/apps/recipebot/dev/shared/41")
-  await expect(page.getByRole("alert").filter({ hasText: "Production review mode" })).toBeVisible()
+  await expect(page.getByRole("alert").filter({ hasText: "Read-only" })).toContainText("Posting and reactions are unavailable.")
   await expect(page.getByRole("form", { name: "Post a topic discussion message" })).toHaveCount(0)
   expect((await page.request.get("/ws/chat/recipebot")).status()).toBe(404)
 })

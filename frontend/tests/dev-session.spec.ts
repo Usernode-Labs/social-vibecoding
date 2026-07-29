@@ -41,12 +41,13 @@ test.beforeEach(async ({ page }) => {
   } }))
 })
 
-test("renders an existing Dev session with an explicit legacy action handoff", async ({ page }) => {
+test("renders an existing Dev session without a legacy action handoff", async ({ page }) => {
   await page.goto("/react/apps/recipebot/dev/sessions/9")
   await expect(page.getByTestId("dev-session")).toContainText("Improve pantry search")
   await expect(page.getByTestId("dev-budget-status")).toContainText("$1.25 / $5.00")
   await expect(page.getByLabel("Development session conversation")).toContainText("Add a pantry filter.")
-  await expect(page.getByRole("link", { name: "Continue this session in the legacy Dev workspace" })).toHaveAttribute("href", "/#app/recipebot/dev/sessions/9")
+  await expect(page.getByRole("link", { name: "Back to Improve" })).toHaveAttribute("href", "/react/apps/recipebot/dev")
+  await expect(page.getByRole("link", { name: /legacy Dev/i })).toHaveCount(0)
 })
 
 test("explains exhausted shared credits and links to the unified settings surface", async ({ page }) => {
@@ -214,8 +215,9 @@ test("surfaces a recoverable in-progress worker state", async ({ page }) => {
     busy: true, phase: "cc", progress: [{ text: "Builder is updating the pantry filter" }], estimate: null, resolving: false, sync: null,
   } }))
   await page.goto("/react/apps/recipebot/dev/sessions/9")
-  await expect(page.getByText("Current Dev activity")).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Improve pantry search", level: 1 })).toBeVisible()
   await expect(page.getByText("Builder is updating the pantry filter")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Stop turn" })).toBeEnabled()
 })
 
 test("stops an in-progress Dev turn through the owner-scoped server contract", async ({ page }) => {
@@ -474,6 +476,7 @@ test("production review mode disables the reversible lifecycle without a mutatio
     await route.fulfill({ status: 500, json: { error: "This request must not be made." } })
   })
   await page.goto("/react/apps/recipebot/dev/sessions/9")
+  await expect(page.getByRole("alert").filter({ hasText: "Read-only" })).toContainText("Session actions and messages are unavailable.")
   await expect(page.getByRole("button", { name: "Pause session" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "Archive session" })).toBeDisabled()
   expect(mutations).toBe(0)

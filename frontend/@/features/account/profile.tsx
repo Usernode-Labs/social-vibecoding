@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, Eye, ShieldCheck, Trophy } from "lucide-react"
+import { CheckCircle2, CircleAlert, ShieldCheck, Trophy } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -66,7 +66,7 @@ export function Profile() {
   }
 
   return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="profile">
-    <header className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Profile</h1><p className="text-base text-muted-foreground text-pretty">Your Usernode points, rank, and token allocation.</p></header>
+    <header><h1 className="text-balance text-3xl font-semibold tracking-tight">Profile</h1></header>
     {state.kind === "loading" ? <div className="space-y-3"><Skeleton className="h-40 w-full" /><Skeleton className="h-32 w-full" /></div> : null}
     {state.kind === "unavailable" ? <Alert><PlatformIcon icon={ShieldCheck} /><AlertTitle>Profile unavailable</AlertTitle><AlertDescription>Open Usernode and finish registration to see your points and rank here.</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Profile unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
@@ -80,7 +80,7 @@ function ProfileDetails({ ranking, seasonName, history, tokensRevealed, onReveal
   const title = ranking.season_name || seasonName
   return <>
     <Card><CardHeader className="items-center text-center"><PlatformIcon className="text-muted-foreground" icon={Trophy} size="lg" /><CardTitle className="text-4xl tabular-nums">{points.toLocaleString()}</CardTitle><CardDescription>points</CardDescription></CardHeader><CardContent className="text-center text-sm text-muted-foreground">{rankLine}{title ? ` · ${title}` : ""}</CardContent></Card>
-    <Card><CardHeader><CardTitle>Token allocation</CardTitle><CardDescription>Allocations are provisional and subject to the program terms.</CardDescription></CardHeader><CardContent>{ranking.terms_accepted === false ? <Alert><AlertTitle>Token allocation withheld</AlertTitle><AlertDescription>Review and accept the terms in Usernode to see your allocation.</AlertDescription></Alert> : <div className="flex flex-wrap items-center justify-between gap-3"><strong aria-hidden={!tokensRevealed} className={tokensRevealed ? "text-2xl tabular-nums" : "select-none text-2xl blur-md"}>{Number(ranking.total_tokens || 0).toLocaleString()}</strong>{!tokensRevealed ? <Button onClick={onReveal} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={Eye} />Reveal</Button> : null}</div>}</CardContent></Card>
+    <Card><CardHeader><CardTitle>Token allocation</CardTitle><CardDescription>Allocations are provisional and subject to the program terms.</CardDescription></CardHeader><CardContent>{ranking.terms_accepted === false ? <Alert><AlertTitle>Token allocation withheld</AlertTitle><AlertDescription>Review and accept the terms in Usernode to see your allocation.</AlertDescription></Alert> : <div className="flex flex-wrap items-center justify-between gap-3"><strong aria-hidden={!tokensRevealed} className={tokensRevealed ? "text-2xl tabular-nums" : "select-none text-2xl blur-md"}>{Number(ranking.total_tokens || 0).toLocaleString()}</strong>{!tokensRevealed ? <Button onClick={onReveal} type="button" variant="outline">Reveal</Button> : null}</div>}</CardContent></Card>
     <ChallengeHistory history={history} />
   </>
 }
@@ -96,7 +96,7 @@ function ChallengeHistory({ history }: { history: HistoryState }) {
   const items = history.kind === "ready" ? history.items.filter((item) => season === "all" || item.seasonId === season) : []
 
   return <section aria-labelledby="completed-challenges-heading" className="space-y-3">
-    <div className="flex flex-wrap items-end justify-between gap-3"><div className="space-y-1"><h3 className="text-xl font-semibold" id="completed-challenges-heading">Completed challenges</h3><p className="text-sm text-muted-foreground">Your earned challenge records are retained across available seasons.</p></div>{seasons.length > 1 ? <div aria-label="Challenge history season" className="flex flex-wrap gap-1"><Button aria-pressed={season === "all"} onClick={() => setSeason("all")} size="sm" type="button" variant={season === "all" ? "default" : "outline"}>All seasons</Button>{seasons.map(([id, name]) => <Button aria-pressed={season === id} key={id} onClick={() => setSeason(id)} size="sm" type="button" variant={season === id ? "default" : "outline"}>{name}</Button>)}</div> : null}</div>
+    <div className="flex flex-wrap items-end justify-between gap-3"><h3 className="text-xl font-semibold" id="completed-challenges-heading">Completed challenges</h3>{seasons.length > 1 ? <div aria-label="Challenge history season" className="flex flex-wrap gap-1"><Button aria-pressed={season === "all"} onClick={() => setSeason("all")} size="sm" type="button" variant={season === "all" ? "default" : "outline"}>All seasons</Button>{seasons.map(([id, name]) => <Button aria-pressed={season === id} key={id} onClick={() => setSeason(id)} size="sm" type="button" variant={season === id ? "default" : "outline"}>{name}</Button>)}</div> : null}</div>
     {history.kind === "loading" ? <div className="space-y-2" data-testid="profile-challenge-history-loading"><Skeleton className="h-20 w-full" /><Skeleton className="h-20 w-full" /></div> : null}
     {history.kind === "error" ? <Alert data-testid="profile-challenge-history-error" variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Completed challenges unavailable</AlertTitle><AlertDescription>{history.message}</AlertDescription></Alert> : null}
     {history.kind === "ready" && items.length === 0 ? <Alert data-testid="profile-challenge-history-empty"><AlertTitle>No completed challenges yet</AlertTitle><AlertDescription>Completed challenge rewards will appear here once they are reported.</AlertDescription></Alert> : null}

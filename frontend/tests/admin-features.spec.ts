@@ -11,12 +11,12 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/admin/submitted-features**", (route) => route.fulfill({ json: { features, total: features.length, limit: 200, offset: 0 } }))
 })
 
-test("shows the server-ranked read-only feature feed and legacy handoff", async ({ page }) => {
+test("shows the server-ranked read-only feature feed and feature-request destination", async ({ page }) => {
   await page.goto("/react/admin/features")
   await expect(page.getByTestId("admin-features")).toContainText("#1")
   await expect(page.getByTestId("admin-features")).toContainText("Share app templates")
   await expect(page.getByTestId("admin-features")).toContainText("28 up · 2 down")
-  await expect(page.getByRole("link", { name: "Open legacy view" })).toHaveAttribute("href", "/admin-features")
+  await expect(page.getByRole("link", { name: "Open feature requests" })).toHaveAttribute("href", "/admin-features")
 })
 
 test("uses the existing status query to filter server-ranked requests", async ({ page }) => {
@@ -77,7 +77,7 @@ test("remains legible on a narrow viewport", async ({ page }) => {
 test("production review mode keeps the already read-only surface usable", async ({ page }) => {
   test.skip(process.env.SV_PRODUCTION_READONLY !== "true", "This state is compiled only for the production-review profile.")
   await page.goto("/react/admin/features")
-  await expect(page.getByRole("alert")).toContainText("Production review mode")
+  await expect(page.getByRole("alert")).toContainText("Read-only")
   await expect(page.getByRole("button", { name: "Download CSV" })).toBeEnabled()
 })
 

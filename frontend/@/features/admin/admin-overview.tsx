@@ -1,4 +1,4 @@
-import { Activity, ExternalLink, RefreshCw, ShieldAlert } from "lucide-react"
+import { Activity, ExternalLink, ShieldAlert } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -60,8 +60,8 @@ export function AdminOverviewPage() {
 
   return <div className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-overview">
     <header className="flex flex-wrap items-start justify-between gap-4">
-      <div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Operations</h1><p className="text-base text-muted-foreground text-pretty">A read-only snapshot of platform health. Changes remain in the established admin console.</p></div>
-      {state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button> : null}
+      <h1 className="text-balance text-3xl font-semibold tracking-tight">Operations</h1>
+      {state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : null}
     </header>
     {state.kind === "loading" ? <Loading /> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
@@ -90,7 +90,7 @@ export function AdminOperationsOverview({ user, overview }: { user: AdminUser; o
       <ListCard title="Stuck apps" empty="No apps are stuck." items={stuckApps.map((app) => <div key={app.slug} className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-mono text-sm">{app.slug || "Unknown app"}</p><p className="text-sm text-muted-foreground">{app.dbStatus || "Unknown state"}{app.createdBy ? ` · created by ${app.createdBy}` : ""}</p></div><Badge variant="outline">{app.dbStatus || "Unknown"}</Badge></div>)} />
       <ListCard title="Orphan workers" empty="No orphan workers found." items={orphanWorkers.map((worker) => <div key={worker.name} className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-mono text-sm">{worker.name || "Unknown worker"}</p><p className="text-sm text-muted-foreground">{worker.appSlug ? `App ${worker.appSlug}` : "No associated app"}{worker.sessionArchived ? " · archived session" : ""}</p></div><Badge variant="outline">Up {formatUptime(worker.uptimeSeconds)}</Badge></div>)} />
       <ListCard title="Top LLM spenders today" empty="No LLM spend recorded today." items={spenders.slice(0, 5).map((spender, index) => <div key={`${spender.username}-${index}`} className="flex items-center justify-between gap-3"><span>{spender.username || "Unknown user"}</span><span className="font-mono text-sm text-muted-foreground">{formatMoney(spender.costCents)}</span></div>)} />
-      <Card><CardHeader><CardTitle>Admin tools</CardTitle><CardDescription>Existing full surfaces remain authoritative while their contracts migrate.</CardDescription></CardHeader><CardContent className="flex flex-wrap gap-2">{legacyTools.map((tool) => <Button key={tool.href} render={tool.react ? <Link to={tool.href.replace("/react", "")} /> : <a href={tool.href} />} size="sm" variant="outline">{tool.label}<PlatformIcon data-icon="inline-end" icon={ExternalLink} size="sm" /></Button>)}</CardContent></Card>
+      <Card><CardHeader><CardTitle>Admin tools</CardTitle></CardHeader><CardContent className="flex flex-wrap gap-2">{legacyTools.map((tool) => <Button key={tool.href} render={tool.react ? <Link to={tool.href.replace("/react", "")} /> : <a href={tool.href} />} size="sm" variant="outline">{tool.label}{tool.react ? null : <PlatformIcon data-icon="inline-end" icon={ExternalLink} size="sm" />}</Button>)}</CardContent></Card>
     </section>
   </>
 }

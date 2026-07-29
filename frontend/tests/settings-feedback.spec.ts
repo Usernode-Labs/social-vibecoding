@@ -20,15 +20,26 @@ test.beforeEach(async ({ page }) => {
   }))
 })
 
+async function platformNavigation(page: import("@playwright/test").Page) {
+  const navigation = page.getByRole("navigation", { name: "Platform navigation" })
+  if (!await navigation.isVisible()) {
+    await page.getByRole("button", { name: "Toggle navigation" }).click()
+  }
+  await expect(navigation).toBeVisible()
+  return navigation
+}
+
 test("replaces the dead shell hashes with React settings and feedback routes", async ({ page }) => {
   await page.goto("/react/")
 
-  await expect(page.getByRole("link", { name: "Settings" }).last()).toHaveAttribute("href", "/react/settings")
-  await expect(page.getByRole("link", { name: "Send feedback" })).toHaveAttribute("href", "/react/feedback")
+  let navigation = await platformNavigation(page)
+  await expect(navigation.getByRole("link", { name: "Settings" })).toHaveAttribute("href", "/react/settings")
+  await expect(navigation.getByRole("link", { name: "Send feedback" })).toHaveAttribute("href", "/react/feedback")
 
   await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: recipeBot } }))
   await page.goto("/react/apps/recipebot/dev")
-  await expect(page.getByRole("link", { name: "Send feedback" })).toHaveAttribute("href", "/react/feedback?app=recipebot")
+  navigation = await platformNavigation(page)
+  await expect(navigation.getByRole("link", { name: "Send feedback" })).toHaveAttribute("href", "/react/feedback")
 })
 
 test("makes the native-settings boundary explicit in a regular browser", async ({ page }) => {
@@ -793,7 +804,8 @@ test("production review mode prevents feedback and native settings actions", asy
   }))
 
   await page.goto("/react/settings")
-  await expect(page.getByTestId("settings-production-review")).toBeVisible()
+  await expect(page.getByTestId("settings-production-review")).toContainText("Read-only")
+  await expect(page.getByTestId("settings-production-review")).toContainText("Account, wallet, and device setting changes are unavailable. Appearance remains available in this browser.")
   await expect(page.getByLabel("Language")).toBeDisabled()
   await expect(page.getByRole("switch", { name: "AI progress estimate" })).toBeDisabled()
   await expect(page.getByLabel("Anthropic API key")).toBeDisabled()
@@ -806,7 +818,8 @@ test("production review mode prevents feedback and native settings actions", asy
   await expect.poll(() => page.evaluate(() => localStorage.getItem("unexpected-native-open"))).toBeNull()
 
   await page.goto("/react/feedback")
-  await expect(page.getByTestId("feedback-production-review")).toBeVisible()
+  await expect(page.getByTestId("feedback-production-review")).toContainText("Read-only")
+  await expect(page.getByTestId("feedback-production-review")).toContainText("Feedback submission is unavailable.")
   await expect(page.getByRole("button", { name: "Submit feedback" })).toBeDisabled()
   expect(feedbackRequests).toBe(0)
 })

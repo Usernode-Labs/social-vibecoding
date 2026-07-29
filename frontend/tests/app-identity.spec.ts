@@ -34,14 +34,14 @@ test("keeps fallback identity artwork stable when an app name changes", async ({
   await page.route("**/api/apps", (route) => route.fulfill({ json: { apps: [{ ...baseApp, name: appName }] } }))
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { id: 7, username: "ava", canAdminWrite: false } } }))
 
-  await page.goto("/react/")
-  const fallback = page.getByTestId("app-card-recipebot").first().locator("[data-identity-slot]")
+  await page.goto("/react/explore")
+  const fallback = page.getByTestId("explore-app-card-recipebot").locator("[data-identity-slot]")
   const slotBeforeRename = await fallback.getAttribute("data-identity-slot")
   await expect(fallback).toHaveClass(/app-identity/)
 
   appName = "Pantry Planner"
   await page.reload()
-  const slotAfterRename = await page.getByTestId("app-card-recipebot").first().locator("[data-identity-slot]").getAttribute("data-identity-slot")
+  const slotAfterRename = await page.getByTestId("explore-app-card-recipebot").locator("[data-identity-slot]").getAttribute("data-identity-slot")
   expect(slotAfterRename).toBe(slotBeforeRename)
 })
 
@@ -52,16 +52,16 @@ test("uses the frozen v1 slot mapping for the first and last palette slots", asy
   ]
   await routeAuthenticatedShell(page, apps)
 
-  await page.goto("/react/")
-  await expect(page.getByTestId("app-card-slot-one").first().locator("[data-identity-slot]")).toHaveAttribute("data-identity-slot", "1")
-  await expect(page.getByTestId("app-card-slot-eight").first().locator("[data-identity-slot]")).toHaveAttribute("data-identity-slot", "8")
+  await page.goto("/react/explore")
+  await expect(page.getByTestId("explore-app-card-slot-one").locator("[data-identity-slot]")).toHaveAttribute("data-identity-slot", "1")
+  await expect(page.getByTestId("explore-app-card-slot-eight").locator("[data-identity-slot]")).toHaveAttribute("data-identity-slot", "8")
 })
 
 test("keeps a complete grapheme as the fallback monogram", async ({ page }) => {
   await routeAuthenticatedShell(page, [{ ...baseApp, name: "👩‍🍳 RecipeBot" }])
 
-  await page.goto("/react/")
-  await expect(page.getByTestId("app-card-recipebot").first().locator("[data-identity-slot]")).toHaveText("👩‍🍳")
+  await page.goto("/react/explore")
+  await expect(page.getByTestId("explore-app-card-recipebot").locator("[data-identity-slot]")).toHaveText("👩‍🍳")
 })
 
 test("uses the legacy slug when the immutable app id is empty", () => {
@@ -80,10 +80,10 @@ test("keeps identity and status boundaries visible in forced colors", async ({ p
   await page.emulateMedia({ forcedColors: "active" })
   await routeAuthenticatedShell(page, [baseApp])
 
-  await page.goto("/react/")
+  await page.goto("/react/explore")
   await expect.poll(() => page.evaluate(() => matchMedia("(forced-colors: active)").matches)).toBe(true)
 
-  const identity = page.getByTestId("app-card-recipebot").first().locator(".app-identity")
+  const identity = page.getByTestId("explore-app-card-recipebot").locator(".app-identity")
   await expect(identity).toBeVisible()
   const identityBoundary = await identity.evaluate((element) => {
     const style = getComputedStyle(element)

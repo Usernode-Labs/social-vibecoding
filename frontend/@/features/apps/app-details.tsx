@@ -1,4 +1,4 @@
-import { ArrowLeft, ExternalLink, LoaderCircle, LockKeyhole, LockKeyholeOpen, PencilLine, ShieldAlert, Star, UsersRound } from "lucide-react"
+import { ArrowLeft, LoaderCircle, LockKeyhole, LockKeyholeOpen, UsersRound } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 
@@ -151,6 +151,7 @@ export function AppDetails() {
       </Button>
       {error ? <Alert variant="destructive"><AlertTitle>App unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!app && !error ? <DetailSkeleton /> : null}
+      {app && isProductionReadOnlyReview ? <Alert data-testid="app-details-production-review"><AlertTitle>Read-only</AlertTitle><AlertDescription>Saving to Your apps, renaming, and change-approval updates are unavailable.</AlertDescription></Alert> : null}
       {app ? (
         <Card>
           <CardHeader className="gap-5 sm:flex-row sm:items-start">
@@ -172,19 +173,18 @@ export function AppDetails() {
           <CardFooter className="flex flex-col items-start gap-3">
             <ButtonGroup aria-label={`${app.name} actions`} data-testid="app-actions" className="flex-wrap">
               <Button disabled={app.status !== "running" || (!app.self_hosted && !app.url)} render={<Link aria-label={`Open ${app.name}`} to={`${appDetailsPath(app.slug)}/open`} />}>
-                <PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open app
+                Open app
               </Button>
-              {app.can_collaborate !== false ? <><ButtonGroupSeparator /><Button render={<Link aria-label={`Improve ${app.name}`} to={appDevPath(app.slug)} />} variant="secondary"><PlatformIcon data-icon="inline-start" icon={PencilLine} />Improve app</Button></> : null}
-              {app.can_collaborate !== false ? <><ButtonGroupSeparator /><Button render={<Link aria-label={`Manage ${app.name} collaborators`} to={appMembersPath(app.slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={UsersRound} />Collaborators</Button></> : null}
-              {app.can_manage ? <><ButtonGroupSeparator /><Button disabled={isProductionReadOnlyReview} onClick={() => { setRenameValue(app.name); setRenameError(null); setRenameOpen(true) }} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={PencilLine} />Rename</Button></> : null}
+              {app.can_collaborate !== false ? <><ButtonGroupSeparator /><Button render={<Link aria-label={`Improve ${app.name}`} to={appDevPath(app.slug)} />} variant="secondary">Improve app</Button></> : null}
+              {app.can_collaborate !== false ? <><ButtonGroupSeparator /><Button render={<Link aria-label={`Manage ${app.name} collaborators`} to={appMembersPath(app.slug)} />} variant="outline">Collaborators</Button></> : null}
+              {app.can_manage ? <><ButtonGroupSeparator /><Button disabled={isProductionReadOnlyReview} onClick={() => { setRenameValue(app.name); setRenameError(null); setRenameOpen(true) }} type="button" variant="outline">Rename</Button></> : null}
               {app.url ? <><ButtonGroupSeparator /><AppShareSheet appName={app.name} url={app.url} /></> : null}
               <ButtonGroupSeparator />
               <Button disabled={savingFavorite || isProductionReadOnlyReview} onClick={() => void updateFavorite()} type="button" variant="outline">
-                <PlatformIcon data-icon="inline-start" icon={savingFavorite ? LoaderCircle : Star} className={savingFavorite ? "animate-spin" : undefined} />
+                {savingFavorite ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}
                 {savingFavorite ? "Saving…" : favoriteAction(app).label}
               </Button>
             </ButtonGroup>
-            {isProductionReadOnlyReview ? <p className="text-sm text-muted-foreground">Saving apps is disabled while reviewing production data.</p> : null}
             {favoriteError ? <Alert variant="destructive"><AlertTitle>Could not update Your apps</AlertTitle><AlertDescription>{favoriteError}</AlertDescription></Alert> : null}
             <p aria-live="polite" className="sr-only">{favoriteSuccess}</p>
           </CardFooter>
@@ -216,7 +216,6 @@ export function AppDetails() {
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            {isProductionReadOnlyReview ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Production review mode</AlertTitle><AlertDescription>Change-lock updates are disabled while reviewing production data.</AlertDescription></Alert> : null}
             {lockError ? <Alert variant="destructive"><AlertTitle>Could not update the change lock</AlertTitle><AlertDescription>{lockError}</AlertDescription></Alert> : null}
             <Button disabled={!canChangeLock || locking} onClick={() => setLockTarget(!app.locked)} type="button" variant={app.locked ? "outline" : "default"}>
               <PlatformIcon data-icon="inline-start" icon={app.locked ? LockKeyholeOpen : LockKeyhole} />

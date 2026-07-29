@@ -93,8 +93,8 @@ export function TopicDiscussionContent({
         {productionReview ? (
           <Alert>
             <PlatformIcon icon={Paperclip} />
-            <AlertTitle>Production review mode</AlertTitle>
-            <AlertDescription>This topic can be reviewed here, but posting and reactions are disabled.</AlertDescription>
+            <AlertTitle>Read-only</AlertTitle>
+            <AlertDescription>Posting and reactions are unavailable.</AlertDescription>
           </Alert>
         ) : null}
         {!productionReview && viewOnly ? (
@@ -107,12 +107,8 @@ export function TopicDiscussionContent({
         {writable && !connected ? (
           <Alert>
             <PlatformIcon icon={Paperclip} />
-            <AlertTitle>{connectionState === "unavailable" ? "Live discussion unavailable" : "Connecting to discussion"}</AlertTitle>
-            <AlertDescription>
-              {connectionState === "unavailable"
-                ? "Posting will be available when the live discussion connection can be restored."
-                : "Messages will post once the existing live discussion connection is ready."}
-            </AlertDescription>
+            <AlertTitle>{connectionState === "unavailable" ? "Discussion unavailable" : connectionState === "reconnecting" ? "Reconnecting to discussion" : "Connecting to discussion"}</AlertTitle>
+            {connectionState === "unavailable" ? <AlertDescription>Refresh the page to reconnect.</AlertDescription> : null}
           </Alert>
         ) : null}
         {error ? (

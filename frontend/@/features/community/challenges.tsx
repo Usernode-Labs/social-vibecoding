@@ -240,7 +240,6 @@ export function Challenges() {
   return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="challenges">
     <header className="space-y-2">
       <h1 className="text-balance text-3xl font-semibold tracking-tight">{data?.season?.name || "Challenges"}</h1>
-      <p className="max-w-[60ch] text-pretty text-base/7 text-muted-foreground sm:text-sm/6">Build, participate, and earn points this season.</p>
     </header>
     {error ? <Alert variant="destructive"><AlertTitle>Challenges unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {!data && !error ? <div className="space-y-3"><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /></div> : null}

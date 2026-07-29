@@ -4,8 +4,6 @@ import {
   KeyRound,
   Languages,
   LogOut,
-  RefreshCw,
-  ShieldAlert,
 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
@@ -231,31 +229,19 @@ export function Settings() {
       data-testid="settings"
     >
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-balance text-3xl font-semibold tracking-tight">Settings</h1>
-          <p className="max-w-[60ch] text-base text-muted-foreground text-pretty">
-            Manage Social Vibecoding preferences here. Usernode device controls remain protected by the native bridge.
-          </p>
-        </div>
+        <h1 className="text-balance text-3xl font-semibold tracking-tight">Settings</h1>
         <Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline">
-          <PlatformIcon data-icon="inline-start" icon={RefreshCw} />
           Refresh
         </Button>
       </header>
 
-      {isProductionReadOnlyReview ? (
-        <Alert data-testid="settings-production-review">
-          <PlatformIcon icon={ShieldAlert} />
-          <AlertTitle>Production review mode</AlertTitle>
-          <AlertDescription>Personal preferences and native settings are read-only in this local review.</AlertDescription>
-        </Alert>
-      ) : null}
-      {productionWriteAppSlug ? (
-        <Alert data-testid="settings-app-write-scope">
-          <PlatformIcon icon={ShieldAlert} />
-          <AlertTitle>App-scoped production review</AlertTitle>
+      {preferencesReadOnly ? (
+        <Alert data-testid={isProductionReadOnlyReview ? "settings-production-review" : "settings-app-write-scope"}>
+          <AlertTitle>Read-only</AlertTitle>
           <AlertDescription>
-            This local session permits writes only for {productionWriteAppSlug}. Personal preferences are visible but remain read-only.
+            {isProductionReadOnlyReview
+              ? "Account, wallet, and device setting changes are unavailable. Appearance remains available in this browser."
+              : "Account preference, AI permission, agent file, wallet, and password changes are unavailable. Appearance and device settings remain available."}
           </AlertDescription>
         </Alert>
       ) : null}
@@ -280,7 +266,6 @@ export function Settings() {
         <Card data-testid="settings-web-loading">
           <CardHeader>
             <CardTitle>Loading web preferences</CardTitle>
-            <CardDescription>Reading your Social Vibecoding account settings.</CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <Skeleton className="h-8 w-full" />
@@ -355,7 +340,7 @@ export function Settings() {
               <CardHeader>
                 <CardTitle>Admin preview</CardTitle>
                 <CardDescription>
-                  Hide administrator-only React UI to inspect the platform as a regular user.
+                  Preview the platform as a regular user. Your administrator permissions do not change; the page reloads to apply this view.
                 </CardDescription>
                 <CardAction>
                   <Badge variant="outline">
@@ -370,9 +355,6 @@ export function Settings() {
                       <PlatformIcon icon={EyeOff} />
                       View as non-admin
                     </FieldLabel>
-                    <FieldDescription>
-                      This changes only client-side presentation. Server permissions remain intact, and the page reloads so every route sees the same mask.
-                    </FieldDescription>
                   </FieldContent>
                   <Switch
                     checked={adminPreview}
@@ -436,7 +418,6 @@ export function Settings() {
                 onClick={() => void saveApiKey()}
                 type="button"
               >
-                <PlatformIcon data-icon="inline-start" icon={KeyRound} />
                 {apiKeyBusy === "save" ? "Verifying…" : webState.settings.hasApiKey ? "Replace key" : "Save key"}
               </Button>
               {webState.settings.hasApiKey ? (
@@ -493,13 +474,12 @@ export function Settings() {
             <PlatformIcon icon={LogOut} />
             <div>
               <CardTitle>Social Vibecoding session</CardTitle>
-              <CardDescription>End this website session and clear cached API data from this browser or WebView.</CardDescription>
+              <CardDescription>End this web session in this browser or WebView.</CardDescription>
             </div>
           </div>
         </CardHeader>
         <CardFooter>
           <Button onClick={() => setLogoutOpen(true)} type="button" variant="destructive">
-            <PlatformIcon data-icon="inline-start" icon={LogOut} />
             Log out
           </Button>
         </CardFooter>

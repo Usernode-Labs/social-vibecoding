@@ -12,11 +12,11 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/admin/users", (route) => route.fulfill({ json: users }))
 })
 
-test("shows user administration while retaining complex legacy management", async ({ page }) => {
+test("shows user administration with its account-management destination", async ({ page }) => {
   await page.goto("/react/admin/users")
   await expect(page.getByTestId("admin-users")).toContainText("ava (you)")
   await expect(page.getByTestId("admin-users")).toContainText("View-only admin")
-  await expect(page.getByRole("link", { name: "Open legacy management" })).toHaveAttribute("href", "/#admin/users")
+  await expect(page.getByRole("link", { name: "Manage accounts" })).toHaveAttribute("href", "/#admin/users")
 })
 
 test("updates an individual app quota through the existing write-admin contract", async ({ page }) => {
@@ -73,7 +73,7 @@ test("production review mode does not issue user mutations", async ({ page }) =>
     await route.fallback()
   })
   await page.goto("/react/admin/users")
-  await expect(page.getByRole("alert")).toContainText("Production review mode")
+  await expect(page.getByRole("alert")).toContainText("Changes unavailable")
   await expect(page.getByRole("button", { name: "Save app quota for sam" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "Save daily cap for sam" })).toBeDisabled()
   expect(mutations).toBe(0)

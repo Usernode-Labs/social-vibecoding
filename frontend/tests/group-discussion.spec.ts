@@ -61,9 +61,9 @@ async function installGroupChatSocket(page: import("@playwright/test").Page) {
 
 test("renders the complete view-authorized general discussion without a legacy handoff", async ({ page }) => {
   await page.goto("/react/apps/recipebot/dev/chat")
+  await expect(page.getByRole("heading", { name: "App discussion", level: 1 })).toBeVisible()
   await expect(page.getByTestId("group-discussion")).toContainText("Could dietary filters be easier to find?")
   await expect(page.getByLabel("App discussion messages")).toContainText("A proposal was promoted for review.")
-  await expect(page.getByText("The complete general discussion for this app.")).toBeVisible()
   await expect(page.getByRole("link", { name: "Open the full discussion in legacy Dev" })).toHaveCount(0)
   await expect(page.getByLabel("Open attachment filter-notes.md")).toHaveAttribute("href", "/api/apps/recipebot/chat-attachments/attachment-1")
 })
@@ -515,7 +515,7 @@ test("renders a recoverable API error", async ({ page }) => {
 test("production review mode keeps collaborator discussion read-only", async ({ page }) => {
   test.skip(process.env.SV_PRODUCTION_READONLY !== "true", "This state is compiled only for the production-review profile.")
   await page.goto("/react/apps/recipebot/dev/chat")
-  await expect(page.getByRole("alert").filter({ hasText: "Production review mode" })).toBeVisible()
+  await expect(page.getByRole("alert").filter({ hasText: "Read-only" })).toContainText("Posting and reactions are unavailable.")
   await expect(page.getByRole("form", { name: "Post a discussion message" })).toHaveCount(0)
   // The local review guard also rejects raw group-chat paths before Vite can
   // proxy them to production; the UI guard alone would be insufficient.

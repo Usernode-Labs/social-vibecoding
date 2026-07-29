@@ -71,6 +71,12 @@ function assertContrast(left, right, minimum, label) {
 
 function validateSemanticFoundation(tokens, mode) {
   const label = `semantic.${mode}`
+  assertContrast(
+    semanticToken(tokens, "destructive-foreground", label),
+    semanticToken(tokens, "destructive", label),
+    4.5,
+    `${label}.destructive foreground/background`
+  )
   for (const slot of identitySlots) {
     const surface = semanticToken(tokens, `identity-${slot}-surface`, label)
     const foreground = semanticToken(tokens, `identity-${slot}-foreground`, label)
