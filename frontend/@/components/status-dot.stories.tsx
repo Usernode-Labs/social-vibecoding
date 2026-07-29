@@ -59,8 +59,8 @@ export const NodeLifecycleAdapter: Story = {
   },
 }
 export const ConnectionLifecycleAdapter: Story = {
-  args: { subject: "Notifications", ...connectionPresentationStatus("reconnecting"), showLabel: false },
+  args: { subject: "Activity", ...connectionPresentationStatus("reconnecting"), showLabel: false },
   play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).getByRole("img", { name: "Notifications, reconnecting" })).toBeTruthy()
+    await expect(within(canvasElement).getByRole("img", { name: "Activity, reconnecting" })).toBeTruthy()
   },
 }

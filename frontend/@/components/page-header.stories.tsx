@@ -165,7 +165,7 @@ export const Narrow: Story = {
 
 export const NoDescription: Story = {
   args: {
-    title: "Notifications",
+    title: "Activity",
   },
   play: async ({ canvasElement }) => {
     const region = within(canvasElement).getByRole("region", {
