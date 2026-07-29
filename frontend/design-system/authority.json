@@ -454,7 +454,7 @@
     "notifications-content": {
       "content": {
         "layer": "read",
-        "canonicalTerms": ["Notifications", "Dev", "Improve"],
+        "canonicalTerms": ["Activity", "Improve", "Work"],
         "requiredStates": ["loading", "empty", "error"],
         "visibleLabelAccessibilityName": "match-or-prefix",
         "reviewedFailureModes": ["mechanism-as-content", "vague-link-text"]

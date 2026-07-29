@@ -2217,9 +2217,9 @@
       "content": {
         "layer": "read",
         "canonicalTerms": [
-          "Notifications",
-          "Dev",
-          "Improve"
+          "Activity",
+          "Improve",
+          "Work"
         ],
         "requiredStates": [
           "loading",
