@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://social-vibecoding.usernodelabs.org/react/design-system/authority.schema.json",
+  "title": "Usernode shell design-system authority",
+  "type": "object",
+  "required": ["version", "name", "scope", "authority", "maturity", "defaults", "overrides"],
+  "properties": {
+    "version": { "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "scope": {
+      "type": "object",
+      "required": ["include", "exclude"],
+      "properties": {
+        "include": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "exclude": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    },
+    "authority": { "type": "object" },
+    "maturity": { "type": "object" },
+    "defaults": { "$ref": "#/$defs/contract" },
+    "overrides": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/partialContract" }
+    }
+  },
+  "$defs": {
+    "accessibility": {
+      "type": "object",
+      "required": ["contract", "evidence"],
+      "properties": {
+        "contract": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "dataBoundary": {
+      "type": "object",
+      "required": ["kind", "contract"],
+      "properties": {
+        "kind": { "type": "string", "minLength": 1 },
+        "contract": { "type": "string", "minLength": 1 }
+      }
+    },
+    "contract": {
+      "type": "object",
+      "required": ["owner", "maturity", "distribution", "tokens", "accessibility", "dataBoundary", "responsive", "deprecation"],
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "maturity": { "enum": ["candidate", "stable", "deprecated"] },
+        "distribution": { "enum": ["registry", "shell-internal"] },
+        "tokens": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "accessibility": { "$ref": "#/$defs/accessibility" },
+        "dataBoundary": { "$ref": "#/$defs/dataBoundary" },
+        "responsive": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "deprecation": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["replacement", "removeAfter"],
+              "properties": {
+                "replacement": { "type": "string", "minLength": 1 },
+                "removeAfter": { "type": "string", "format": "date" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "partialContract": {
+      "type": "object",
+      "properties": {
+        "owner": { "type": "string", "minLength": 1 },
+        "maturity": { "enum": ["candidate", "stable", "deprecated"] },
+        "distribution": { "enum": ["registry", "shell-internal"] },
+        "tokens": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "accessibility": { "$ref": "#/$defs/accessibility" },
+        "dataBoundary": { "$ref": "#/$defs/dataBoundary" },
+        "responsive": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "deprecation": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["replacement", "removeAfter"],
+              "properties": {
+                "replacement": { "type": "string" },
+                "removeAfter": { "type": "string" }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

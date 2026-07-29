@@ -1,0 +1,45 @@
+<!doctype html>
+<html class="antialiased" lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <title>dApps</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#ffffff" />
+    <script>
+      (() => {
+        let storedTheme = null
+        try {
+          storedTheme = window.localStorage.getItem("theme")
+        } catch {
+          // Storage can be unavailable in hardened or ephemeral WebViews.
+        }
+        const theme = storedTheme === "light" || storedTheme === "dark"
+          ? storedTheme
+          : window.matchMedia("(prefers-color-scheme: dark)").matches
+            ? "dark"
+            : "light"
+        const root = document.documentElement
+        root.classList.add(theme)
+        root.dataset.theme = theme
+        root.style.colorScheme = theme
+        document.querySelector('meta[name="theme-color"]')?.setAttribute(
+          "content",
+          theme === "dark" ? "#0a0a0a" : "#ffffff",
+        )
+      })()
+    </script>
+    <script
+      crossorigin="anonymous"
+      integrity="sha384-3zSEDfvllQohrq0PHL1fOXJuC/jSOO34H46t6UQfobFOmxE5BpjjaIJY5F2/bMnU"
+      src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"
+    ></script>
+    <script src="/usernode-bridge.js"></script>
+    <script src="/js/dev-host.js"></script>
+    <script src="/js/offline.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

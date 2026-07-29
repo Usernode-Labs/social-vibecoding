@@ -450,6 +450,45 @@ function issueRoutes(config) {
     }
   });
 
+  // View-authorized single governance item. The open feed intentionally
+  // excludes resolved rows, but React completed-history cards and direct
+  // links still need the immutable discussion context after application.
+  router.get('/api/apps/:slug/governance/:id', async (req, res) => {
+    try {
+      const gatedApp = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!gatedApp) return res.status(404).json({ error: 'App not found' });
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(404).json({ error: 'Governance item not found' });
+
+      const { rows } = await pool.query(
+        `SELECT i.*, u.username as created_by_username,
+           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'up') as up_count,
+           (SELECT COUNT(*) FROM issue_votes WHERE issue_id = i.id AND vote = 'down') as down_count,
+           (SELECT vote FROM issue_votes WHERE issue_id = i.id AND user_id = $3) as my_vote,
+           (SELECT COUNT(*)::int FROM chat_messages cm
+             WHERE cm.app_id = i.app_id AND cm.thread_type = 'governance' AND cm.thread_ref = i.id
+               AND cm.msg_type = 'message') as chat_count
+         FROM issues i
+         LEFT JOIN users u ON i.created_by = u.id
+         WHERE i.app_id = $1 AND i.id = $2
+         LIMIT 1`,
+        [gatedApp.id, id, req.user.id]
+      );
+      const issue = rows[0] || null;
+      if (!issue) return res.status(404).json({ error: 'Governance item not found' });
+      if (issue.kind === 'secret_change' && issue.payload) {
+        const { valueEnc, ...rest } = issue.payload;
+        issue.payload = { ...rest, hasValue: !!valueEnc };
+      }
+      res.json({ issue });
+    } catch (err) {
+      log.error('issues', 'Failed to get governance item by id', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   // Create an issue / proposal — kinds per VALID_KINDS above (general is
   // the default). Rate-limited per kind: close_issue proposals draw from
   // their own bucket, everything else from issue-create.

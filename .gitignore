@@ -1,4 +1,10 @@
 node_modules/
+frontend/node_modules/
+public/react/
+frontend/storybook-static/
+frontend/test-results/
+frontend/playwright-report/
+frontend/src/stories/
 .env
 *.log
 data/
@@ -12,3 +18,9 @@ data/
 hackathon-data/
 .playwright-mcp/
 .superpowers/
+.agents/
+.claude/
+.codex/
+
+*storybook.log
+storybook-static

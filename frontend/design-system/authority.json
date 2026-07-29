@@ -1,0 +1,110 @@
+{
+  "$schema": "./authority.schema.json",
+  "version": 1,
+  "name": "Usernode Shell",
+  "scope": {
+    "include": [
+      "The Social Vibecoding React platform shell",
+      "Platform-owned routes and reusable shell patterns",
+      "The shell-side hosted-app frame and compatibility adapters"
+    ],
+    "exclude": [
+      "Child-app source code and visual identity",
+      "The app-factory scaffold and prompts",
+      "The hosted usernode-native/v1 compatibility contract"
+    ]
+  },
+  "authority": {
+    "owner": "frontend-platform",
+    "approverRole": "shell-design-system-approver",
+    "canonicalTokens": "design-system/tokens.json",
+    "componentManifest": "design-system.manifest.json",
+    "resolvedCatalog": "design-system/catalog.json",
+    "registry": "registry.json",
+    "exceptionLedger": "design-system/exceptions.json"
+  },
+  "maturity": {
+    "candidate": "Available for shell migration work; contract changes require catalog and evidence updates.",
+    "stable": "Approved for broad shell reuse; breaking changes require migration notes.",
+    "deprecated": "Existing uses may remain temporarily; no new uses are allowed."
+  },
+  "defaults": {
+    "owner": "frontend-platform",
+    "maturity": "candidate",
+    "distribution": "shell-internal",
+    "tokens": [
+      "foundation.font.sans",
+      "foundation.radius.base",
+      "semantic.light.*",
+      "semantic.dark.*"
+    ],
+    "accessibility": {
+      "contract": [
+        "Use semantic elements and accessible names for every interactive control.",
+        "Support keyboard operation and visible focus wherever the pattern is interactive.",
+        "Keep serious and critical Storybook accessibility violations at zero."
+      ],
+      "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+    },
+    "dataBoundary": {
+      "kind": "adapter-fed",
+      "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+    },
+    "responsive": [
+      "narrow-mobile",
+      "wide-desktop"
+    ],
+    "deprecation": null
+  },
+  "overrides": {
+    "platform-icon": {
+      "maturity": "stable",
+      "distribution": "registry",
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The icon receives a Lucide icon object, canonical size and accessible labelling props; it owns no application data."
+      },
+      "accessibility": {
+        "contract": [
+          "Decorative icons are hidden from assistive technology.",
+          "Standalone semantic icons require an aria-label.",
+          "All platform glyphs use the canonical icon size grid."
+        ],
+        "evidence": "PlatformIcon Storybook states and component tests."
+      }
+    },
+    "theme-switcher": {
+      "distribution": "registry",
+      "dataBoundary": {
+        "kind": "browser-preference-adapter",
+        "contract": "ThemeSwitcherView is props-only; ThemeSwitcher owns persistence exclusively through @/lib/theme."
+      },
+      "accessibility": {
+        "contract": [
+          "Expose one mutually exclusive light/dark choice set.",
+          "Communicate the selected mode programmatically.",
+          "Retain keyboard operation supplied by the official ToggleGroup."
+        ],
+        "evidence": "LightSelected and DarkSelected Storybook states plus the theme route test."
+      }
+    },
+    "app-card": {
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The card receives an AppRecord and callbacks; data loading, ordering and navigation remain route concerns."
+      }
+    },
+    "dev-conversation": {
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "Message history, connection state and callbacks arrive as props; MessageScroller owns scroll behavior."
+      }
+    },
+    "dev-board": {
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "Board records and mutation callbacks arrive through the dev-board adapter; the board does not call endpoints directly."
+      }
+    }
+  }
+}

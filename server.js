@@ -558,6 +558,17 @@ app.use(express.static(path.join(__dirname, 'public'), {
   },
 }));
 
+// React migration shell.  It deliberately lives at /react/ while routes are
+// migrated one at a time; legacy hashes and public/index.html remain the
+// production fallback until each route meets its parity checklist.  The
+// explicit fallback supports future React history routes without allowing the
+// legacy catch-all below to swallow them.
+app.get(['/react', '/react/*'], (req, res, next) => {
+  if (!req.accepts('html')) return next();
+  res.setHeader('Cache-Control', shellAssetCacheControl('react/index.html'));
+  res.sendFile(path.join(__dirname, 'public', 'react', 'index.html'));
+});
+
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });

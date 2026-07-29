@@ -8,6 +8,9 @@ RUN apk add --no-cache docker-cli git
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --production
+COPY frontend/package.json frontend/package-lock.json ./frontend/
+RUN npm ci --prefix frontend
 COPY . .
+RUN npm run build --prefix frontend
 EXPOSE 3000
 CMD ["node", "server.js"]

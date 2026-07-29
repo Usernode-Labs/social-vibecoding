@@ -1,0 +1,71 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry.json",
+  "name": "usernode-shell",
+  "namespace": "usernode-shell",
+  "homepage": "https://social-vibecoding.usernodelabs.org/react",
+  "items": [
+    {
+      "name": "platform-icon",
+      "type": "registry:component",
+      "title": "Platform Icon",
+      "description": "Canonical shell icon wrapper with governed size, alignment and accessibility behavior.",
+      "author": "Usernode Labs",
+      "dependencies": ["lucide-react"],
+      "files": [
+        {
+          "path": "@/components/platform-icon.tsx",
+          "type": "registry:component",
+          "target": "@components/platform-icon.tsx"
+        },
+        {
+          "path": "@/lib/utils.ts",
+          "type": "registry:lib",
+          "target": "@lib/utils.ts"
+        }
+      ],
+      "categories": ["shell", "foundation", "accessibility"],
+      "meta": {
+        "authority": "design-system/catalog.json#platform-icon",
+        "maturity": "stable",
+        "scope": "shell"
+      }
+    },
+    {
+      "name": "theme-switcher",
+      "type": "registry:component",
+      "title": "Theme Switcher",
+      "description": "Shell light/dark mode selector using the official ToggleGroup and canonical theme persistence adapter.",
+      "author": "Usernode Labs",
+      "registryDependencies": ["toggle-group"],
+      "dependencies": ["lucide-react"],
+      "files": [
+        {
+          "path": "@/components/theme-switcher.tsx",
+          "type": "registry:component",
+          "target": "@components/theme-switcher.tsx"
+        },
+        {
+          "path": "@/components/platform-icon.tsx",
+          "type": "registry:component",
+          "target": "@components/platform-icon.tsx"
+        },
+        {
+          "path": "@/lib/theme.ts",
+          "type": "registry:lib",
+          "target": "@lib/theme.ts"
+        },
+        {
+          "path": "@/lib/utils.ts",
+          "type": "registry:lib",
+          "target": "@lib/utils.ts"
+        }
+      ],
+      "categories": ["shell", "theme", "settings"],
+      "meta": {
+        "authority": "design-system/catalog.json#theme-switcher",
+        "maturity": "candidate",
+        "scope": "shell"
+      }
+    }
+  ]
+}

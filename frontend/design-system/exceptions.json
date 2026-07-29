@@ -1,0 +1,268 @@
+{
+  "version": 1,
+  "policy": "Exceptions are exact, owned and time-bounded. They preserve pre-authority shell behavior while preventing new debt.",
+  "style": [
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/account/native-device-summary.tsx",
+      "matches": ["space-y-3"],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/platform/node-status.tsx",
+      "matches": ["space-y-1", "space-y-2", "space-y-3", "space-y-4"],
+      "count": 5,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/platform/node-status.tsx",
+      "matches": ["max-w-[56ch]"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "The readable-line-length value predates canonical layout variants.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/apps/app-share-sheet.tsx",
+      "matches": ["w-[calc(100%-1rem)]"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "The mobile sheet inset predates a named shell overlay variant.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/community/challenges.tsx",
+      "matches": ["space-y-2", "space-y-3", "space-y-8"],
+      "count": 6,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/community/challenges.tsx",
+      "matches": ["max-w-[60ch]", "grid-cols-[auto_1fr_auto]"],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Feed typography and leaderboard layout require named variants before removal.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-inline-style",
+      "file": "@/features/community/challenges.tsx",
+      "matches": ["style={{ \"--challenge-fill\": `${fill}%`, width: \"var(--challenge-fill)\" } as CSSProperties}"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Runtime progress percentage is data, not visual choice; migrate to an owned Progress contract.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/community/challenge-detail.tsx",
+      "matches": ["space-y-1.5", "space-y-3", "space-y-5"],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/community/challenge-detail.tsx",
+      "matches": ["max-w-[65ch]"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Readable prose width requires a named typography variant.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-inline-style",
+      "file": "@/features/community/challenge-detail.tsx",
+      "matches": ["style={{ width: `${Math.round(current / target! * 100)}%` }}"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Runtime progress percentage is data, not visual choice; migrate to an owned Progress contract.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/dev/dev-board.tsx",
+      "matches": ["min-w-[70rem]"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "The board desktop canvas needs a named responsive layout contract.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-inline-style",
+      "file": "@/features/dev/dev-board.tsx",
+      "matches": ["style={style}"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "dnd-kit supplies runtime transform coordinates; no visual token is selected here.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/dev/group-discussion.tsx",
+      "matches": ["space-y-2", "space-y-3"],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/dev/group-discussion.tsx",
+      "matches": ["max-h-[60dvh]"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "The mention result viewport needs a named mobile keyboard-aware variant.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/admin/admin-overview.tsx",
+      "matches": ["space-y-2", "space-y-3"],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/admin/admin-users.tsx",
+      "matches": ["space-y-2", "space-y-3"],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/admin/admin-users.tsx",
+      "matches": ["grid-cols-[minmax(0,1fr)_auto]"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Dense admin row needs a named layout variant.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/admin/activation-codes.tsx",
+      "matches": ["space-y-2", "space-y-3"],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/admin/activation-codes.tsx",
+      "matches": ["grid-cols-[minmax(0,1fr)_auto]"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Dense admin row needs a named layout variant.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/admin/spend-limits.tsx",
+      "matches": ["space-y-2"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/admin/admin-features.tsx",
+      "matches": ["space-y-1", "space-y-2", "space-y-3"],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/admin/merge-debug.tsx",
+      "matches": ["space-y-2", "space-y-3"],
+      "count": 3,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/dev/session-spec-viewer.tsx",
+      "matches": ["space-y-2"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/dev/dev-build-timeline.tsx",
+      "matches": ["space-y-2"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/admin/gallery-visual-evidence.tsx",
+      "matches": ["rounded-[min(1vw,12px)]"],
+      "count": 3,
+      "owner": "frontend-platform",
+      "reason": "Screenshot frames preserve the source capture radius until a visual-evidence variant is approved.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/dev-console-panel.tsx",
+      "matches": ["grid-cols-[auto_1fr]"],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Console row needs a named dense-log layout variant.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/account/native-app-settings.tsx",
+      "matches": ["space-y-3", "space-y-4"],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-raw-colors",
+      "file": "@/features/account/wallet-link-settings.tsx",
+      "matches": ["#1a1a1a", "#ffffff"],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "QR foreground/background require fixed contrast independent of shell theme.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-raw-palette",
+      "file": "@/features/account/wallet-link-settings.tsx",
+      "matches": ["bg-white", "text-emerald-500"],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "QR contrast and wallet-success status predate semantic QR/status tokens.",
+      "expires": "2026-09-30"
+    }
+  ],
+  "architecture": []
+}

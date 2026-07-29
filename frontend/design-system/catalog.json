@@ -1,0 +1,1743 @@
+{
+  "$schema": "./catalog.schema.json",
+  "generatedFrom": [
+    "design-system.manifest.json",
+    "design-system/authority.json"
+  ],
+  "scope": {
+    "include": [
+      "The Social Vibecoding React platform shell",
+      "Platform-owned routes and reusable shell patterns",
+      "The shell-side hosted-app frame and compatibility adapters"
+    ],
+    "exclude": [
+      "Child-app source code and visual identity",
+      "The app-factory scaffold and prompts",
+      "The hosted usernode-native/v1 compatibility contract"
+    ]
+  },
+  "authority": {
+    "owner": "frontend-platform",
+    "approverRole": "shell-design-system-approver",
+    "canonicalTokens": "design-system/tokens.json",
+    "componentManifest": "design-system.manifest.json",
+    "resolvedCatalog": "design-system/catalog.json",
+    "registry": "registry.json",
+    "exceptionLedger": "design-system/exceptions.json"
+  },
+  "components": [
+    {
+      "id": "platform-icon",
+      "name": "PlatformIcon",
+      "module": "@/components/platform-icon.tsx",
+      "export": "PlatformIcon",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "registry",
+      "variants": [
+        "Default",
+        "SmallInline",
+        "Control",
+        "LargeFeature"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Decorative icons are hidden from assistive technology.",
+          "Standalone semantic icons require an aria-label.",
+          "All platform glyphs use the canonical icon size grid."
+        ],
+        "evidence": "PlatformIcon Storybook states and component tests."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The icon receives a Lucide icon object, canonical size and accessible labelling props; it owns no application data."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/platform-icon.stories.tsx",
+        "states": [
+          "Default",
+          "SmallInline",
+          "Control",
+          "LargeFeature"
+        ]
+      }
+    },
+    {
+      "id": "theme-switcher",
+      "name": "ThemeSwitcherView",
+      "module": "@/components/theme-switcher.tsx",
+      "export": "ThemeSwitcherView",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "registry",
+      "variants": [
+        "LightSelected",
+        "DarkSelected"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Expose one mutually exclusive light/dark choice set.",
+          "Communicate the selected mode programmatically.",
+          "Retain keyboard operation supplied by the official ToggleGroup."
+        ],
+        "evidence": "LightSelected and DarkSelected Storybook states plus the theme route test."
+      },
+      "dataBoundary": {
+        "kind": "browser-preference-adapter",
+        "contract": "ThemeSwitcherView is props-only; ThemeSwitcher owns persistence exclusively through @/lib/theme."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/theme-switcher.stories.tsx",
+        "states": [
+          "LightSelected",
+          "DarkSelected"
+        ]
+      }
+    },
+    {
+      "id": "native-device-summary",
+      "name": "NativeDeviceSummary",
+      "module": "@/features/account/native-device-summary.tsx",
+      "export": "NativeDeviceSummary",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Loading",
+        "OutsideUsernode",
+        "Ready"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/account/native-device-summary.stories.tsx",
+        "states": [
+          "Loading",
+          "OutsideUsernode",
+          "Ready"
+        ]
+      }
+    },
+    {
+      "id": "node-status-content",
+      "name": "NodeStatusContent",
+      "module": "@/features/platform/node-status.tsx",
+      "export": "NodeStatusContent",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Healthy",
+        "PartialAndOffline"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/platform/node-status.stories.tsx",
+        "states": [
+          "Healthy",
+          "PartialAndOffline"
+        ]
+      }
+    },
+    {
+      "id": "app-card",
+      "name": "AppCard",
+      "module": "@/features/apps/app-card.tsx",
+      "export": "AppCard",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Running",
+        "Unavailable",
+        "ReorderControls"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The card receives an AppRecord and callbacks; data loading, ordering and navigation remain route concerns."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/apps/app-card.stories.tsx",
+        "states": [
+          "Running",
+          "Unavailable",
+          "ReorderControls"
+        ]
+      }
+    },
+    {
+      "id": "app-visibility-settings",
+      "name": "AppVisibilitySettings",
+      "module": "@/features/apps/app-visibility-settings.tsx",
+      "export": "AppVisibilitySettings",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "PrivateCollaboration",
+        "PublicCollaboration",
+        "ProposalReady",
+        "ExistingProposal",
+        "ReadOnly"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/apps/app-visibility-settings.stories.tsx",
+        "states": [
+          "PrivateCollaboration",
+          "PublicCollaboration",
+          "ProposalReady",
+          "ExistingProposal",
+          "ReadOnly"
+        ]
+      }
+    },
+    {
+      "id": "app-share-sheet",
+      "name": "AppShareSheet",
+      "module": "@/features/apps/app-share-sheet.tsx",
+      "export": "AppShareSheet",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Trigger",
+        "Open"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/apps/app-share-sheet.stories.tsx",
+        "states": [
+          "Trigger",
+          "Open"
+        ]
+      }
+    },
+    {
+      "id": "challenge-feed",
+      "name": "ChallengeFeed",
+      "module": "@/features/community/challenges.tsx",
+      "export": "ChallengeFeed",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "FairRewardsContractMatrix"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/community/challenges.stories.tsx",
+        "states": [
+          "FairRewardsContractMatrix"
+        ]
+      }
+    },
+    {
+      "id": "challenge-detail-content",
+      "name": "ChallengeDetailContent",
+      "module": "@/features/community/challenge-detail.tsx",
+      "export": "ChallengeDetailContent",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "NativeInProgress",
+        "PublicOpen",
+        "Pending",
+        "Completed",
+        "Missed"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/community/challenge-detail.stories.tsx",
+        "states": [
+          "NativeInProgress",
+          "PublicOpen",
+          "Pending",
+          "Completed",
+          "Missed"
+        ]
+      }
+    },
+    {
+      "id": "dev-conversation",
+      "name": "DevConversation",
+      "module": "@/features/dev/dev-conversation.tsx",
+      "export": "DevConversation",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "History",
+        "Streaming",
+        "Disconnected"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "Message history, connection state and callbacks arrive as props; MessageScroller owns scroll behavior."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/dev-conversation.stories.tsx",
+        "states": [
+          "History",
+          "Streaming",
+          "Disconnected"
+        ]
+      }
+    },
+    {
+      "id": "dev-budget-status",
+      "name": "DevBudgetStatusView",
+      "module": "@/features/dev/dev-budget-status.tsx",
+      "export": "DevBudgetStatusView",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "SharedAllowance",
+        "PersonalKeySpillover",
+        "UserAllowanceExhausted",
+        "SharedAllowanceExhausted",
+        "AiUnavailable"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/dev-budget-status.stories.tsx",
+        "states": [
+          "SharedAllowance",
+          "PersonalKeySpillover",
+          "UserAllowanceExhausted",
+          "SharedAllowanceExhausted",
+          "AiUnavailable"
+        ]
+      }
+    },
+    {
+      "id": "dev-saved-drafts",
+      "name": "DevSavedDraftsView",
+      "module": "@/features/dev/dev-saved-drafts.tsx",
+      "export": "DevSavedDraftsView",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "ReadyToSend",
+        "BuilderWorking"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/dev-saved-drafts.stories.tsx",
+        "states": [
+          "ReadyToSend",
+          "BuilderWorking"
+        ]
+      }
+    },
+    {
+      "id": "dev-board",
+      "name": "DevBoard",
+      "module": "@/features/dev/dev-board.tsx",
+      "export": "DevBoard",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "LifecycleWithOrdering",
+        "LinearWorkFeed",
+        "TasksByPerson",
+        "TasksByPersonReadOnly",
+        "ReadOnly"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "Board records and mutation callbacks arrive through the dev-board adapter; the board does not call endpoints directly."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/dev-board.stories.tsx",
+        "states": [
+          "LifecycleWithOrdering",
+          "LinearWorkFeed",
+          "TasksByPerson",
+          "TasksByPersonReadOnly",
+          "ReadOnly"
+        ]
+      }
+    },
+    {
+      "id": "dev-vote-controls",
+      "name": "DevVoteControls",
+      "module": "@/features/dev/dev-vote-controls.tsx",
+      "export": "DevVoteControls",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "ProposalNeedsVote",
+        "GovernanceVoteSelected",
+        "Recording",
+        "ReadOnly"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/dev-vote-controls.stories.tsx",
+        "states": [
+          "ProposalNeedsVote",
+          "GovernanceVoteSelected",
+          "Recording",
+          "ReadOnly"
+        ]
+      }
+    },
+    {
+      "id": "github-issues",
+      "name": "GitHubIssues",
+      "module": "@/features/dev/github-issues.tsx",
+      "export": "GitHubIssues",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "WithActivity",
+        "Empty",
+        "Loading"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/github-issues.stories.tsx",
+        "states": [
+          "WithActivity",
+          "Empty",
+          "Loading"
+        ]
+      }
+    },
+    {
+      "id": "github-issue-detail-content",
+      "name": "GitHubIssueDetailContent",
+      "module": "@/features/dev/github-issue-detail.tsx",
+      "export": "GitHubIssueDetailContent",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "WithDiscussion",
+        "AlreadyPledged",
+        "ProposalGenerating",
+        "ProposalReadyToClone",
+        "LoadingComments",
+        "TruncatedDiscussion",
+        "CloseProposalAvailable",
+        "CloseProposalOpen",
+        "CloseProposalCreated",
+        "CloseProposalError",
+        "AdminClaimRecovery"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/github-issue-detail.stories.tsx",
+        "states": [
+          "WithDiscussion",
+          "AlreadyPledged",
+          "ProposalGenerating",
+          "ProposalReadyToClone",
+          "LoadingComments",
+          "TruncatedDiscussion",
+          "CloseProposalAvailable",
+          "CloseProposalOpen",
+          "CloseProposalCreated",
+          "CloseProposalError",
+          "AdminClaimRecovery"
+        ]
+      }
+    },
+    {
+      "id": "topic-attribute-controls",
+      "name": "TopicAttributeControls",
+      "module": "@/features/dev/topic-attribute-controls.tsx",
+      "export": "TopicAttributeControls",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Loaded",
+        "SavingCategory",
+        "PartialAvailability",
+        "ReadOnly"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/topic-attribute-controls.stories.tsx",
+        "states": [
+          "Loaded",
+          "SavingCategory",
+          "PartialAvailability",
+          "ReadOnly"
+        ]
+      }
+    },
+    {
+      "id": "shared-session-detail-content",
+      "name": "SharedSessionDetailContent",
+      "module": "@/features/dev/shared-session.tsx",
+      "export": "SharedSessionDetailContent",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Collaborator",
+        "ViewOnly"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/shared-session.stories.tsx",
+        "states": [
+          "Collaborator",
+          "ViewOnly"
+        ]
+      }
+    },
+    {
+      "id": "group-discussion-transcript",
+      "name": "GroupDiscussionTranscript",
+      "module": "@/features/dev/group-discussion.tsx",
+      "export": "GroupDiscussionTranscript",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "ReadOnly",
+        "CollaboratorReactions",
+        "CollaboratorReplies",
+        "CollaboratorEditing",
+        "UnreadNotification",
+        "Empty"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/group-discussion.stories.tsx",
+        "states": [
+          "ReadOnly",
+          "CollaboratorReactions",
+          "CollaboratorReplies",
+          "CollaboratorEditing",
+          "UnreadNotification",
+          "Empty"
+        ]
+      }
+    },
+    {
+      "id": "group-discussion-composer",
+      "name": "GroupDiscussionComposer",
+      "module": "@/features/dev/group-discussion.tsx",
+      "export": "GroupDiscussionComposer",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Ready",
+        "Replying",
+        "Reconnecting",
+        "CollaboratorsTyping"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/group-discussion-composer.stories.tsx",
+        "states": [
+          "Ready",
+          "Replying",
+          "Reconnecting",
+          "CollaboratorsTyping"
+        ]
+      }
+    },
+    {
+      "id": "admin-operations-overview",
+      "name": "AdminOperationsOverview",
+      "module": "@/features/admin/admin-overview.tsx",
+      "export": "AdminOperationsOverview",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Administrator",
+        "ViewOnly",
+        "AllClear"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/admin/admin-overview.stories.tsx",
+        "states": [
+          "Administrator",
+          "ViewOnly",
+          "AllClear"
+        ]
+      }
+    },
+    {
+      "id": "admin-users-list",
+      "name": "AdminUsersList",
+      "module": "@/features/admin/admin-users.tsx",
+      "export": "AdminUsersList",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "MixedRoles"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/admin/admin-users.stories.tsx",
+        "states": [
+          "MixedRoles"
+        ]
+      }
+    },
+    {
+      "id": "activation-codes-list",
+      "name": "ActivationCodesList",
+      "module": "@/features/admin/activation-codes.tsx",
+      "export": "ActivationCodesList",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "AvailableAndUsed",
+        "CopyReady",
+        "Empty"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/admin/activation-codes.stories.tsx",
+        "states": [
+          "AvailableAndUsed",
+          "CopyReady",
+          "Empty"
+        ]
+      }
+    },
+    {
+      "id": "spend-limits-cards",
+      "name": "SpendLimitsCards",
+      "module": "@/features/admin/spend-limits.tsx",
+      "export": "SpendLimitsCards",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Defaults"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/admin/spend-limits.stories.tsx",
+        "states": [
+          "Defaults"
+        ]
+      }
+    },
+    {
+      "id": "submitted-features-list",
+      "name": "SubmittedFeaturesList",
+      "module": "@/features/admin/admin-features.tsx",
+      "export": "SubmittedFeaturesList",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Ranked",
+        "Empty"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/admin/admin-features.stories.tsx",
+        "states": [
+          "Ranked",
+          "Empty"
+        ]
+      }
+    },
+    {
+      "id": "merge-run-list",
+      "name": "MergeRunList",
+      "module": "@/features/admin/merge-debug.tsx",
+      "export": "MergeRunList",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "MixedOutcomes",
+        "Empty"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/admin/merge-debug.stories.tsx",
+        "states": [
+          "MixedOutcomes",
+          "Empty"
+        ]
+      }
+    },
+    {
+      "id": "session-spec-document",
+      "name": "SpecDocument",
+      "module": "@/features/dev/session-spec-viewer.tsx",
+      "export": "SpecDocument",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "SplitSections",
+        "Empty"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/session-spec-viewer.stories.tsx",
+        "states": [
+          "SplitSections",
+          "Empty"
+        ]
+      }
+    },
+    {
+      "id": "session-spec-sharing",
+      "name": "SpecSharingControls",
+      "module": "@/features/dev/session-spec-viewer.tsx",
+      "export": "SpecSharingControls",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Available",
+        "SharedToGroup",
+        "ProductionReview"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/session-spec-sharing.stories.tsx",
+        "states": [
+          "Available",
+          "SharedToGroup",
+          "ProductionReview"
+        ]
+      }
+    },
+    {
+      "id": "dev-build-timeline",
+      "name": "DevBuildTimeline",
+      "module": "@/features/dev/dev-build-timeline.tsx",
+      "export": "DevBuildTimeline",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "ActiveAndPersisted"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/dev-build-timeline.stories.tsx",
+        "states": [
+          "ActiveAndPersisted"
+        ]
+      }
+    },
+    {
+      "id": "gallery-visual-evidence",
+      "name": "GalleryVisualEvidence",
+      "module": "@/features/admin/gallery-visual-evidence.tsx",
+      "export": "GalleryVisualEvidence",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Complete",
+        "CaptureWarnings",
+        "NoArtifacts"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/admin/gallery-visual-evidence.stories.tsx",
+        "states": [
+          "Complete",
+          "CaptureWarnings",
+          "NoArtifacts"
+        ]
+      }
+    },
+    {
+      "id": "topic-discussion",
+      "name": "TopicDiscussionContent",
+      "module": "@/features/dev/topic-discussion-transcript.tsx",
+      "export": "TopicDiscussionContent",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Collaborator",
+        "CollaboratorEditing",
+        "ReplyStaged",
+        "ViewOnly",
+        "Reconnecting",
+        "CollaboratorTyping",
+        "Empty",
+        "Loading",
+        "Error",
+        "ProductionReview"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/dev/topic-discussion-transcript.stories.tsx",
+        "states": [
+          "Collaborator",
+          "CollaboratorEditing",
+          "ReplyStaged",
+          "ViewOnly",
+          "Reconnecting",
+          "CollaboratorTyping",
+          "Empty",
+          "Loading",
+          "Error",
+          "ProductionReview"
+        ]
+      }
+    },
+    {
+      "id": "notifications-content",
+      "name": "NotificationsContent",
+      "module": "@/features/notifications/notifications.tsx",
+      "export": "NotificationsContent",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "WithInvitationAndPagination",
+        "Empty",
+        "Loading",
+        "Error"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/notifications/notifications.stories.tsx",
+        "states": [
+          "WithInvitationAndPagination",
+          "Empty",
+          "Loading",
+          "Error"
+        ]
+      }
+    },
+    {
+      "id": "dev-console-panel",
+      "name": "DevConsolePanel",
+      "module": "@/components/dev-console-panel.tsx",
+      "export": "DevConsolePanel",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "MixedMessages",
+        "ErrorsOnly",
+        "Empty"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/dev-console-panel.stories.tsx",
+        "states": [
+          "MixedMessages",
+          "ErrorsOnly",
+          "Empty"
+        ]
+      }
+    },
+    {
+      "id": "native-app-settings",
+      "name": "NativeAppSettings",
+      "module": "@/features/account/native-app-settings.tsx",
+      "export": "NativeAppSettings",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Ready",
+        "OutsideUsernode",
+        "ReadOnly"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/account/native-app-settings.stories.tsx",
+        "states": [
+          "Ready",
+          "OutsideUsernode",
+          "ReadOnly"
+        ]
+      }
+    },
+    {
+      "id": "wallet-link-settings",
+      "name": "WalletLinkSettingsView",
+      "module": "@/features/account/wallet-link-settings.tsx",
+      "export": "WalletLinkSettingsView",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "LinkAvailable",
+        "AwaitingQr",
+        "AwaitingNative",
+        "Linked",
+        "Error",
+        "ReadOnly"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/account/wallet-link-settings.stories.tsx",
+        "states": [
+          "LinkAvailable",
+          "AwaitingQr",
+          "AwaitingNative",
+          "Linked",
+          "Error",
+          "ReadOnly"
+        ]
+      }
+    },
+    {
+      "id": "password-settings",
+      "name": "PasswordSettings",
+      "module": "@/features/account/password-settings.tsx",
+      "export": "PasswordSettings",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "CurrentPassword",
+        "LinkedWallet",
+        "ReadOnly"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/account/password-settings.stories.tsx",
+        "states": [
+          "CurrentPassword",
+          "LinkedWallet",
+          "ReadOnly"
+        ]
+      }
+    },
+    {
+      "id": "wallet-access",
+      "name": "WalletAccessView",
+      "module": "@/features/auth/wallet-access.tsx",
+      "export": "WalletAccessView",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Checking",
+        "LinkedWallet",
+        "NewGenesisWallet",
+        "LinkExisting",
+        "Register",
+        "Recovery",
+        "Linking",
+        "Ineligible",
+        "LinkedNonGenesis"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
+      },
+      "dataBoundary": {
+        "kind": "adapter-fed",
+        "contract": "Presentation receives typed props or calls an owned @/lib adapter; direct endpoints and platform globals are forbidden."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/features/auth/wallet-access.stories.tsx",
+        "states": [
+          "Checking",
+          "LinkedWallet",
+          "NewGenesisWallet",
+          "LinkExisting",
+          "Register",
+          "Recovery",
+          "Linking",
+          "Ineligible",
+          "LinkedNonGenesis"
+        ]
+      }
+    }
+  ]
+}
