@@ -31,6 +31,9 @@ const apps = {
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { id: 7, username: "ava", canAdminWrite: true } } }))
   await page.route("**/api/apps", (route) => route.fulfill({ json: apps }))
+  await page.route((url) => url.pathname === "/api/notifications", (route) => route.fulfill({
+    json: { notifications: [], unread: 0, pendingInvites: [], hasMore: false, nextBefore: null },
+  }))
   await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: {
     app: { ...apps.apps[0], view_visibility: "public", can_manage: true, url: "https://recipebot.example.test" },
   } }))
@@ -44,13 +47,67 @@ test.beforeEach(async ({ page }) => {
   }))
 })
 
-test("renders the app catalogue and preserves the app-detail boundary", async ({ page }) => {
+test("keeps personal launching on Home and catalog discovery in Explore", async ({ page }) => {
   await page.goto("/react/")
 
-  await expect(page.getByRole("heading", { name: "Apps", exact: true })).toBeVisible()
-  await expect(page.getByRole("region", { name: "Your apps" }).getByTestId("app-card-recipebot")).toContainText("RecipeBot")
-  await expect(page.getByTestId("app-card-game-corner")).toContainText("Game Corner")
-  await expect(page.getByRole("region", { name: "Your apps" }).getByRole("link", { name: "View details RecipeBot" })).toHaveAttribute("href", "/react/apps/recipebot")
+  await expect(page.getByRole("heading", { name: "Home", exact: true })).toBeVisible()
+  const yours = page.getByRole("region", { name: "Your apps" })
+  await expect(yours.getByTestId("home-app-shortcut-recipebot")).toContainText("RecipeBot")
+  await expect(yours.getByTestId("home-app-shortcut-pantry-planner")).toContainText("Pantry Planner")
+  await expect(page.getByTestId("home-app-shortcut-game-corner")).toHaveCount(0)
+  await expect(yours.getByRole("link", { name: "Open RecipeBot" })).toHaveAttribute("href", "/react/apps/recipebot/open")
+
+  await page.goto("/react/explore")
+  await expect(page.getByRole("heading", { name: "Explore", exact: true })).toBeVisible()
+  await expect(page.getByTestId("explore-app-card-recipebot")).toContainText("RecipeBot")
+  await expect(page.getByTestId("explore-app-card-game-corner")).toContainText("Game Corner")
+  await expect(page.getByRole("link", { name: "View details for RecipeBot" })).toHaveAttribute("href", "/react/apps/recipebot")
+})
+
+test("previews at most three unresolved Activity items without duplicating Work", async ({ page }) => {
+  await page.unroute((url) => url.pathname === "/api/notifications")
+  await page.route((url) => url.pathname === "/api/notifications", (route) => route.fulfill({
+    json: {
+      pendingInvites: [{
+        kind: "collab",
+        appId: 11,
+        appSlug: "recipebot",
+        appName: "RecipeBot",
+        invitedBy: "lin",
+        createdAt: "2026-07-29T10:00:00Z",
+      }],
+      notifications: [
+        { id: 1, kind: "mention", readAt: null, appId: 11, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-29T09:00:00Z", messageContent: "Can we add pantry filters?", sourceUsername: "ava" },
+        { id: 2, kind: "reply", readAt: null, appId: 11, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-29T08:00:00Z", messageContent: "A reply worth reading", sourceUsername: "sam" },
+        { id: 3, kind: "reaction", readAt: null, appId: 11, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-29T07:00:00Z", messageContent: "A fourth bell item", sourceUsername: "tay" },
+        { id: 4, kind: "session_done", readAt: null, appId: 11, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-29T06:00:00Z", messageContent: "Builder session finished", sourceUsername: null },
+      ],
+      unread: 5,
+      hasMore: false,
+      nextBefore: null,
+    },
+  }))
+
+  await page.goto("/react/")
+
+  const activity = page.getByRole("region", { name: "Needs attention" })
+  await expect(activity.getByRole("listitem")).toHaveCount(3)
+  await expect(activity).toContainText("Collaborator invitation")
+  await expect(activity).toContainText("Can we add pantry filters?")
+  await expect(activity).not.toContainText("Builder session finished")
+  await expect(activity.getByRole("link", { name: "View all activity" })).toHaveAttribute("href", "/react/notifications")
+})
+
+test("keeps Home shortcuts available when Activity cannot load", async ({ page }) => {
+  await page.unroute((url) => url.pathname === "/api/notifications")
+  await page.route((url) => url.pathname === "/api/notifications", (route) =>
+    route.fulfill({ status: 503, json: { error: "Activity is unavailable" } }),
+  )
+
+  await page.goto("/react/")
+
+  await expect(page.getByRole("region", { name: "Your apps" }).getByRole("link", { name: "Open RecipeBot" })).toBeVisible()
+  await expect(page.getByRole("alert")).toContainText("Activity couldn’t load")
 })
 
 test("uses the detail view for primary app destinations", async ({ page }) => {
@@ -181,10 +238,10 @@ test("keeps detail actions usable on a phone-sized viewport", async ({ page }) =
   await expect(page.getByRole("button", { name: "Remove from Your apps" })).toBeVisible()
 })
 
-test("hosts a running child app with the legacy iframe safety contract", async ({ page }) => {
+test("hosts a running child app with the preserved iframe safety contract", async ({ page }) => {
   await page.goto("/react/apps/recipebot/open?path=/recipes?query=tomato")
 
-  const frame = page.getByTestId("hosted-app-frame")
+  const frame = page.getByTestId("focused-app-frame")
   await expect(frame).toBeVisible()
   await expect(frame).toHaveAttribute("sandbox", "allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock")
   const source = await frame.getAttribute("src")
@@ -228,23 +285,24 @@ test("shows the lazy developer console only for messages from the active child f
 test("rejects an unsafe child-app deep link before it reaches the iframe", async ({ page }) => {
   await page.goto("/react/apps/recipebot/open?path=//untrusted.example.test")
 
-  const source = await page.getByTestId("hosted-app-frame").getAttribute("src")
+  const source = await page.getByTestId("focused-app-frame").getAttribute("src")
   expect(source).toBe("https://recipebot.example.test/?token=header.payload.signature")
 })
 
 test("filters by a user-facing app name", async ({ page }) => {
-  await page.goto("/react/")
-  await page.getByRole("textbox", { name: "Search apps" }).fill("recipe")
+  await page.goto("/react/explore")
+  await page.getByRole("searchbox", { name: "Search dApps" }).fill("recipe")
 
-  await expect(page.getByRole("region", { name: "Your apps" }).getByTestId("app-card-recipebot")).toBeVisible()
-  await expect(page.getByTestId("app-card-game-corner")).not.toBeVisible()
+  await expect(page.getByTestId("explore-app-card-recipebot")).toBeVisible()
+  await expect(page.getByTestId("explore-app-card-game-corner")).not.toBeVisible()
 })
 
-test("keeps saved apps in both the quick-access and all-apps catalogue sections", async ({ page }) => {
+test("does not duplicate the catalog on Home", async ({ page }) => {
   await page.goto("/react/")
-  await expect(page.getByRole("region", { name: "Your apps" }).getByTestId("app-card-recipebot")).toBeVisible()
-  await expect(page.getByRole("region", { name: "All apps" }).getByTestId("app-card-recipebot")).toBeVisible()
-  await expect(page.getByRole("button", { name: /Your apps/ })).toHaveCount(0)
+  await expect(page.getByRole("region", { name: "Your apps" }).getByTestId("home-app-shortcut-recipebot")).toBeVisible()
+  await expect(page.getByRole("heading", { name: "All dApps" })).toHaveCount(0)
+  await expect(page.getByRole("searchbox", { name: "Search dApps" })).toHaveCount(0)
+  await expect(page.getByRole("link", { name: "Explore dApps" })).toHaveAttribute("href", "/react/explore")
 })
 
 test("reorders the complete personal app rail through the canonical order contract", async ({ page }) => {
@@ -260,7 +318,7 @@ test("reorders the complete personal app rail through the canonical order contra
   await yours.getByRole("button", { name: "Move Pantry Planner earlier" }).click()
 
   await expect.poll(() => orderRequest).toEqual({ order: ["pantry-planner", "recipebot"] })
-  await expect(yours.getByTestId("app-card-pantry-planner")).toHaveText(/Pantry Planner/)
+  await expect(yours.getByTestId("home-app-shortcut-pantry-planner")).toHaveText(/Pantry Planner/)
   await expect(yours.getByRole("button", { name: "Move Pantry Planner earlier" })).toBeDisabled()
 })
 

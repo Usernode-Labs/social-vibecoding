@@ -719,17 +719,6 @@
       "expires": "2026-09-30"
     },
     {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/features/apps/app-card.stories.tsx",
-      "matches": [
-        "w-[22rem]"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Story-only viewport evidence predates a named evidence-layout variant; the exact-match ratchet prevents expansion.",
-      "expires": "2026-09-30"
-    },
-    {
       "rule": "no-space-utilities",
       "file": "@/features/apps/app-details.tsx",
       "matches": [

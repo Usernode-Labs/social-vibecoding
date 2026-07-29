@@ -25,7 +25,7 @@ function runNode(script, args = []) {
   })
 }
 
-const appCard = catalog.components.find((component) => component.id === "app-card")
+const appCard = catalog.components.find((component) => component.id === "home-app-shortcut")
 result("T1", Boolean(
   appCard
   && appCard.owner
@@ -41,7 +41,7 @@ result("T1", Boolean(
   maturity: appCard.maturity,
   variants: appCard.variants,
   dataBoundary: appCard.dataBoundary,
-} : { error: "app-card was not discoverable" })
+} : { error: "home-app-shortcut was not discoverable" })
 
 const buttonSource = fs.readFileSync(path.join(frontendRoot, "@", "components", "ui", "button.tsx"), "utf8")
 const destructive = /destructive/.test(buttonSource) && /(bg-destructive|text-destructive-foreground)/.test(buttonSource)

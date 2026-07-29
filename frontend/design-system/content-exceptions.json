@@ -3,15 +3,6 @@
   "policy": "Content exceptions are exact, owned, time-bounded inventory. They preserve current migration copy without silently ratcheting it into the next slice.",
   "content": [
     {
-      "rule": "dev-improve",
-      "file": "@/features/apps/hosted-app.tsx",
-      "matches": ["Open Dev"],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "The self-hosted compatibility handoff still opens the legacy Dev URL. Replace its user-facing action with Improve when that destination has React parity.",
-      "expires": "2026-09-30"
-    },
-    {
       "rule": "migration-visible-copy",
       "file": "@/features/admin/activation-codes.tsx",
       "matches": ["Create, copy, and revoke registration codes here. Account-role and deletion controls remain in legacy management.", "Open legacy management"],
@@ -54,15 +45,6 @@
       "count": 1,
       "owner": "frontend-platform",
       "reason": "The detailed merge debug controls are still legacy-owned.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "migration-visible-copy",
-      "file": "@/features/apps/apps-home.tsx",
-      "matches": [". Return to the legacy shell while this migration route is being diagnosed."],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "The existing error handoff predates the content authority and needs a separately reviewed retry-state replacement.",
       "expires": "2026-09-30"
     },
     {

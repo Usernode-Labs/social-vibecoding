@@ -26,7 +26,7 @@ export type HomeAppShortcutProps = {
 
 /**
  * Personal, direct-launch representation of a known dApp. Collection policy,
- * filtering, and optimistic reorder persistence stay with AppsHome.
+ * filtering, and optimistic reorder persistence stay with the Home route.
  */
 export function HomeAppShortcut({ app, href, reorder, status }: HomeAppShortcutProps) {
   const presentation = appPresentationStatus(status)

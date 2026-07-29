@@ -84,16 +84,16 @@ export function checkSource(source, file = "@/fixture.tsx") {
       }
 
       const href = attributeValue(opening, "href")
-      if (href?.includes("/notifications") && normalize(visible) === "activity") {
-        add("notifications-destination", opening, "Activity -> /notifications", "Name the attention destination Notifications; reserve Activity for event history.")
+      if (href?.includes("/notifications") && normalize(visible) === "notifications") {
+        add("activity-destination", opening, "Notifications -> /notifications", "Name the product destination Activity; the existing /notifications URL remains a compatibility detail.")
       }
     }
 
     if (ts.isObjectLiteralExpression(node)) {
       const label = node.properties.find((property) => ts.isPropertyAssignment(property) && property.name.getText(sourceFile).replace(/["']/g, "") === "label")
       const href = node.properties.find((property) => ts.isPropertyAssignment(property) && property.name.getText(sourceFile).replace(/["']/g, "") === "href")
-      if (label && href && staticValue(label.initializer)?.toLowerCase() === "activity" && staticValue(href.initializer)?.includes("/notifications")) {
-        add("notifications-destination", label, "Activity -> /notifications", "Name the attention destination Notifications; reserve Activity for event history.")
+      if (label && href && staticValue(label.initializer)?.toLowerCase() === "notifications" && staticValue(href.initializer)?.includes("/notifications")) {
+        add("activity-destination", label, "Notifications -> /notifications", "Name the product destination Activity; the existing /notifications URL remains a compatibility detail.")
       }
     }
 

@@ -6,11 +6,12 @@ import "./index.css"
 import { PlatformShell } from "@/components/platform-shell"
 import { RouteFallback } from "@/components/route-fallback"
 import { NotFound } from "@/features/platform/not-found"
-import { AppsHome } from "@/features/apps/apps-home"
 import { registerReactServiceWorker } from "./react-service-worker"
 
 const Login = lazy(async () => import("@/features/auth/login").then(({ Login: Component }) => ({ default: Component })))
 const Register = lazy(async () => import("@/features/auth/register").then(({ Register: Component }) => ({ default: Component })))
+const Home = lazy(async () => import("@/features/apps/home").then(({ Home: Component }) => ({ default: Component })))
+const Explore = lazy(async () => import("@/features/apps/explore").then(({ Explore: Component }) => ({ default: Component })))
 const AppDetails = lazy(async () => import("@/features/apps/app-details").then(({ AppDetails: Component }) => ({ default: Component })))
 const AppMembers = lazy(async () => import("@/features/apps/app-members").then(({ AppMembers: Component }) => ({ default: Component })))
 const CreateApp = lazy(async () => import("@/features/apps/create-app").then(({ CreateApp: Component }) => ({ default: Component })))
@@ -54,7 +55,8 @@ createRoot(document.getElementById("root")!).render(
           <Routes>
             <Route element={<Login />} path="/login" />
             <Route element={<Register />} path="/register" />
-            <Route element={<AppsHome />} path="/" />
+            <Route element={<Home />} path="/" />
+            <Route element={<Explore />} path="/explore" />
             <Route element={<CreateApp />} path="/create" />
             <Route element={<AppDetails />} path="/apps/:slug" />
             <Route element={<AppMembers />} path="/apps/:slug/members" />

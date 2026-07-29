@@ -66,14 +66,14 @@ function previousTask(id) {
   return previous?.tasks?.find((task) => task.id === id) || null
 }
 
-const t1 = previousTask("T1") || runCodex("T1", `${common("T1: discover an app card before creating one")}
-Run: node tool/ui-workflow.mjs --task "Discover and reuse the existing shell app card" --json
-Then from frontend run: npm run query:design-system -- "app card"
+const t1 = previousTask("T1") || runCodex("T1", `${common("T1: discover a personal Home app shortcut before creating one")}
+Run: node tool/ui-workflow.mjs --task "Discover and reuse the existing personal Home app shortcut" --json
+Then from frontend run: npm run query:design-system -- "Home app shortcut"
 Return keys task, classification, decision, component, owner, maturity, variants, dataBoundary, commandsRun, interventions.`, repoRoot)
 t1.pass = t1.exitCode === 0
   && t1.answer?.classification === "component"
   && /reuse/i.test(t1.answer?.decision || "")
-  && /app-card|AppCard/.test(t1.answer?.component || "")
+  && /home-app-shortcut|HomeAppShortcut/.test(t1.answer?.component || "")
 results.push(t1)
 
 const t2 = previousTask("T2") || runCodex("T2", `${common("T2: decide how to add a destructive button")}

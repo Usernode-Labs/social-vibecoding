@@ -154,16 +154,6 @@
       }
     },
     {
-      "id": "app-card",
-      "name": "AppCard",
-      "module": "@/features/apps/app-card.tsx",
-      "export": "AppCard",
-      "story": {
-        "module": "@/features/apps/app-card.stories.tsx",
-        "states": ["Running", "Unavailable", "ReorderControls"]
-      }
-    },
-    {
       "id": "app-visibility-settings",
       "name": "AppVisibilitySettings",
       "module": "@/features/apps/app-visibility-settings.tsx",

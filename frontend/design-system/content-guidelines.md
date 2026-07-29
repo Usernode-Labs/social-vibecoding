@@ -14,7 +14,7 @@ visible-label/accessibility-name rule, and named failure modes reviewed.
 
 Run `npm run check:content` for a narrow ratchet. It catches only static,
 high-confidence failures: shell dApp casing, a customer-facing Dev action
-where Improve is required, an Activity label targeting Notifications, banned
+where Improve is required, a Notifications label targeting Activity, banned
 filler, button ellipses outside an in-progress label, static visible-label /
 accessible-name mismatches, and visible migration/legacy-shell copy. It does
 not judge tone, intent, hierarchy, or technical Expert copy. Exact temporary
@@ -93,8 +93,7 @@ chose to be here. One canonical name per concept — no synonyms across surfaces
 | Catalog and discovery | Explore | App Store, All apps |
 | Sessions and proposals | Work | Your work (as a label) |
 | Community competition | Challenges | Community |
-| Attention destination | Notifications | Activity |
-| Chronological event history | Activity | Notifications (when the destination is meant) |
+| Attention and event history | Activity | Notifications (as a product label) |
 | Infrastructure health | Node | Status |
 | Using an app | Use, Open | Launch, View |
 | Contributing to an app | Improve | Dev (as a user-facing label), Edit, Contribute |

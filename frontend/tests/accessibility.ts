@@ -20,7 +20,12 @@ export async function expectAccessibleShellStructure(page: Page) {
   if ((await navigation.count()) === 0) {
     await page.getByRole("button", { name: "Toggle navigation" }).click();
     await expect(navigation).toHaveCount(1);
-    await page.keyboard.press("Escape");
+    const dialog = page.getByRole("dialog", { name: "Sidebar" });
+    await dialog.press("Escape");
+    // Base UI keeps the Sheet mounted during its exit transition. Waiting for
+    // the dialog to become hidden prevents axe from measuring partially faded
+    // foreground text against the page behind the overlay.
+    await expect(dialog).toBeHidden();
   } else {
     await expect(navigation).toHaveCount(1);
   }

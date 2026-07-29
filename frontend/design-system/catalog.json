@@ -903,66 +903,6 @@
       }
     },
     {
-      "id": "app-card",
-      "name": "AppCard",
-      "module": "@/features/apps/app-card.tsx",
-      "export": "AppCard",
-      "owner": "frontend-platform",
-      "maturity": "deprecated",
-      "distribution": "shell-internal",
-      "variants": [
-        "Running",
-        "Unavailable",
-        "ReorderControls"
-      ],
-      "tokens": [
-        "foundation.font.sans",
-        "foundation.radius.base",
-        "semantic.light.*",
-        "semantic.dark.*"
-      ],
-      "accessibility": {
-        "contract": [
-          "Use semantic elements and accessible names for every interactive control.",
-          "Support keyboard operation and visible focus wherever the pattern is interactive.",
-          "Keep serious and critical Storybook accessibility violations at zero."
-        ],
-        "evidence": "Named Storybook states plus the Storybook accessibility test gate."
-      },
-      "dataBoundary": {
-        "kind": "props-only",
-        "contract": "The card receives an AppRecord and callbacks; data loading, ordering and navigation remain route concerns."
-      },
-      "responsive": [
-        "narrow-mobile",
-        "wide-desktop"
-      ],
-      "deprecation": "Replaced by HomeAppShortcut for personal direct launch and ExploreAppCard for catalog discovery. Existing AppsHome use remains only until the Wave 5 route split; no new use is allowed.",
-      "content": {
-        "layer": "glance",
-        "canonicalTerms": [
-          "dApp",
-          "Improve"
-        ],
-        "requiredStates": [
-          "unavailable"
-        ],
-        "visibleLabelAccessibilityName": "match-or-prefix",
-        "reviewedFailureModes": [
-          "context-restatement",
-          "vague-link-text"
-        ]
-      },
-      "evidence": {
-        "story": "@/features/apps/app-card.stories.tsx",
-        "states": [
-          "Running",
-          "Unavailable",
-          "ReorderControls"
-        ]
-      }
-    },
-    {
       "id": "app-visibility-settings",
       "name": "AppVisibilitySettings",
       "module": "@/features/apps/app-visibility-settings.tsx",

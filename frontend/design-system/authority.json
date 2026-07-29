@@ -375,21 +375,6 @@
         "evidence": "TokenUnavailable, OfflineRetry, UnsafeDestination, SelfHosted and NotRunning Storybook states plus the required Wave 6 browser host-contract matrix."
       }
     },
-    "app-card": {
-      "maturity": "deprecated",
-      "deprecation": "Replaced by HomeAppShortcut for personal direct launch and ExploreAppCard for catalog discovery. Existing AppsHome use remains only until the Wave 5 route split; no new use is allowed.",
-      "dataBoundary": {
-        "kind": "props-only",
-        "contract": "The card receives an AppRecord and callbacks; data loading, ordering and navigation remain route concerns."
-      },
-      "content": {
-        "layer": "glance",
-        "canonicalTerms": ["dApp", "Improve"],
-        "requiredStates": ["unavailable"],
-        "visibleLabelAccessibilityName": "match-or-prefix",
-        "reviewedFailureModes": ["context-restatement", "vague-link-text"]
-      }
-    },
     "dev-conversation": {
       "dataBoundary": {
         "kind": "props-only",

@@ -11,9 +11,9 @@ test("allows canonical shell dApp casing and an in-progress button ellipsis", ()
 })
 
 test("rejects the narrow mechanical content failures", () => {
-  const source = '<><a href="/notifications">Activity</a><Button>Open Dev</Button><Button>Continue...</Button><Button aria-label="Create app">Save</Button><p>Please use DApps.</p><p>Open the legacy shell</p></>'
+  const source = '<><a href="/notifications">Notifications</a><Button>Open Dev</Button><Button>Continue...</Button><Button aria-label="Create app">Save</Button><p>Please use DApps.</p><p>Open the legacy shell</p></>'
   assert.deepEqual(rules(source, "@/features/apps/example.tsx"), [
-    "notifications-destination",
+    "activity-destination",
     "dev-improve",
     "button-ellipsis",
     "visible-label-accessible-name",
