@@ -1,9 +1,9 @@
 'use strict';
 
 const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
 const { isPrivateIp } = require('./anthropic-proxy-auth');
 const log = require('../services/logger');
+const platformJwt = require('../services/platform-jwt');
 
 // Authenticates dapp → platform app-storage requests (#752):
 // POST/DELETE/GET under /api/app-storage/.
@@ -64,11 +64,14 @@ function appStorageAuth(pool, config) {
       return res.status(401).json({ ok: false, code: 'missing_user_token' });
     }
 
-    if (!config.jwtSecret) {
-      log.error('app-storage-auth', 'JWT_SECRET not configured');
+    if (!process.env.IFRAME_JWT_PUBLIC_KEY) {
+      log.error('app-storage-auth', 'IFRAME_JWT_PUBLIC_KEY not configured');
       return res.status(500).json({ ok: false, code: 'server_misconfigured' });
     }
 
+    // Resolve the app FIRST — the user token is verified against THIS
+    // app's audience below, so the app identity has to be known before
+    // the token is trusted.
     let app;
     try {
       app = await resolveApp(pool, appToken);
@@ -80,15 +83,17 @@ function appStorageAuth(pool, config) {
       return res.status(401).json({ ok: false, code: 'bad_app_token' });
     }
 
+    // Verify against the RESOLVED app's audience — closes the same
+    // cross-app replay hole described in app-llm-auth.js: app B could
+    // otherwise present a user token minted for app A and write files (or
+    // burn that user's storage quota) as them.
     let claims;
     try {
-      claims = jwt.verify(userToken, config.jwtSecret);
+      claims = platformJwt.verifyAppIdentityToken(userToken, { appId: app.id });
     } catch (err) {
       return res.status(401).json({ ok: false, code: 'bad_user_token', message: err.message });
     }
-    // Require the iframe-token shape (a plain user identity). Reject
-    // any scoped platform JWT (e.g. worker:session) — those identify
-    // infrastructure, not a consenting user.
+    // Belt-and-braces on the identity shape (see app-llm-auth.js).
     if (!claims || typeof claims.id !== 'number' || claims.scope) {
       return res.status(403).json({ ok: false, code: 'bad_user_token' });
     }

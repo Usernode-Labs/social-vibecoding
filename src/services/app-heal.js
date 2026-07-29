@@ -129,7 +129,7 @@ async function recoverFromScratch(config, pool, app) {
 // swallowed a GitHub repo-creation failure and fell back to a local build
 // (the failure is fatal at create time now, but existing apps need
 // healing). Provision the repo — create it under the bot account, push
-// the template (getTemplateFiles never embeds dbUrl/jwtSecret in file
+// the template (getTemplateFiles never embeds dbUrl or any key in file
 // contents, so nothing secret lands on GitHub), persist repo_url — then
 // rebuildProduction so prod converges with the new repo. A repo-less app
 // can never have merged any change (no repo → no PRs), so the current
@@ -154,7 +154,7 @@ async function provisionMissingRepo(config, pool, app) {
   const repoUrl = repo.html_url;
 
   const dbUrl = dbManager.connectionUrl(dbManager.appDbName(app.slug), app.db_password);
-  const files = getTemplateFiles(app.name, app.slug, dbUrl, config.jwtSecret);
+  const files = getTemplateFiles(app.name, app.slug, dbUrl);
   await github.pushFiles(botUsername, app.slug, files, {
     message: `Initialize ${app.name} from Usernode template (repo heal)`,
   });

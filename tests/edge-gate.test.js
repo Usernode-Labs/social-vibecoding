@@ -11,11 +11,15 @@ const express = require('express');
 const cookieParser = require('cookie-parser');
 const jwt = require('jsonwebtoken');
 
-// The iframe token (step 5 of the gate) still rides the legacy shared
-// secret; the grant and the scoped cookie moved to EDGE_JWT_SECRET.
-const JWT_SECRET = 'edge-gate-test-secret';
+// Three authorities meet at this gate since the RSA cutover: the iframe
+// token (step 5) is RS256 under the app-identity key and scoped to the
+// app whose host is being gated; the grant and the scoped cookie are
+// HS256 under EDGE_JWT_SECRET. The retired shared secret buys nothing.
+const LEGACY_SECRET = 'edge-gate-test-legacy-shared-secret';
 const EDGE_SECRET = 'edge-gate-test-edge-secret';
 process.env.EDGE_JWT_SECRET = EDGE_SECRET;
+const keys = require('./platform-keys').setPlatformKeys();
+const platformJwt = require('../src/services/platform-jwt');
 // USERNODE_DOMAIN env is unset in tests → services/caddy.js default.
 const DOMAIN = 'social-vibecoding.usernodelabs.org';
 const PUB_HOST = `pubapp.${DOMAIN}`;
@@ -67,7 +71,7 @@ let baseUrl;
 test.before(async () => {
   const app = express();
   app.use(cookieParser());
-  app.use(internalRoutes({ jwtSecret: JWT_SECRET }));
+  app.use(internalRoutes({}));
   await new Promise((resolve) => {
     server = app.listen(0, '127.0.0.1', resolve);
   });
@@ -104,7 +108,11 @@ function gate({ host, uri = '/', method = 'GET', cookie, usernodeToken, secFetch
   });
 }
 
-const iframeToken = (id) => jwt.sign({ id, username: `u${id}` }, JWT_SECRET, { expiresIn: '1h' });
+// A platform-minted identity for the app being gated. `appId` is
+// overridable so the cross-app case can be exercised.
+const iframeToken = (id, appId = PRIV_APP_ID) => platformJwt.signAppIdentityToken({
+  appId, user: { id, username: `u${id}` },
+});
 
 // Edge credentials as platform-jwt mints them: HS256 on EDGE_JWT_SECRET,
 // `usernode` issuer, `usernode:edge` audience, distinguished by `pur`.
@@ -272,29 +280,70 @@ test('grant for the wrong host restarts the authorize dance', async () => {
   assert.ok(r.headers.location.startsWith(`https://${DOMAIN}/__access/authorize?`));
 });
 
-test('iframe token signed with the wrong secret is rejected', async () => {
-  const bad = jwt.sign({ id: MEMBER_ID }, 'wrong-secret', { expiresIn: '1h' });
+test('iframe token signed with the wrong key is rejected', async () => {
+  const bad = jwt.sign({ id: MEMBER_ID, pur: 'iframe' }, 'wrong-secret', { expiresIn: '1h' });
   const r = await gate({ host: PRIV_HOST, uri: `/?token=${bad}` });
   assert.equal(r.status, 302);
   assert.ok(r.headers.location.startsWith(`https://${DOMAIN}/__access/authorize?`));
 });
 
-// ── key separation ─────────────────────────────────────────────────────
-//
-// The edge authority is EDGE_JWT_SECRET. The legacy shared secret is
-// still live for the iframe path (and is inside every child container),
-// so anything minted with it must not buy an edge credential.
+// An HS256 token forged with the PUBLIC PEM — which every app container
+// holds — must not open the gate. Only the algorithm pin stops this.
+test('HS256 token forged with the public PEM is rejected', async () => {
+  const forged = jwt.sign(
+    { id: MEMBER_ID, pur: 'iframe' },
+    keys.IFRAME_JWT_PUBLIC_KEY,
+    { algorithm: 'HS256', issuer: 'usernode', audience: `usernode:app:${PRIV_APP_ID}`, expiresIn: '1h' }
+  );
+  const r = await gate({ host: PRIV_HOST, uri: `/?token=${forged}` });
+  assert.equal(r.status, 302);
+});
 
-test('scoped cookie signed with the legacy shared secret is rejected', async () => {
+// The token is per-app. A member's identity minted for some OTHER app
+// they can see must not unlock this host.
+test('iframe token minted for a different app is rejected', async () => {
+  const other = iframeToken(MEMBER_ID, PRIV_APP_ID + 1);
+  const r = await gate({ host: PRIV_HOST, uri: `/?token=${other}` });
+  assert.equal(r.status, 302);
+});
+
+// The same identity, but as a capture token (15m) rather than an iframe
+// token — same authority, same audience, so it is accepted. Pinned so a
+// later purpose split does not silently break screenshot capture of
+// view-private apps.
+test('a capture-TTL identity for this app still opens the gate', async () => {
+  const tok = platformJwt.signAppIdentityToken({
+    appId: PRIV_APP_ID,
+    user: { id: MEMBER_ID, username: `u${MEMBER_ID}` },
+    ttl: platformJwt.CAPTURE_TTL,
+  });
+  const r = await gate({ host: PRIV_HOST, usernodeToken: tok });
+  assert.equal(r.status, 200);
+});
+
+// A worker token is a different authority with a different `pur`.
+test('a worker token does not open the edge gate', async () => {
   const r = await gate({
-    host: PRIV_HOST,
-    cookie: accessCookie(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { secret: JWT_SECRET }),
+    host: PRIV_HOST, usernodeToken: platformJwt.signWorkerToken({ sessionId: 3 }),
   });
   assert.equal(r.status, 302);
 });
 
-test('grant signed with the legacy shared secret restarts the authorize dance', async () => {
-  const grant = grantToken(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { secret: JWT_SECRET });
+// ── key separation ─────────────────────────────────────────────────────
+//
+// The edge authority is EDGE_JWT_SECRET, and it is the ONLY thing that
+// mints edge credentials. The retired shared secret is dead everywhere.
+
+test('scoped cookie signed with the retired shared secret is rejected', async () => {
+  const r = await gate({
+    host: PRIV_HOST,
+    cookie: accessCookie(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { secret: LEGACY_SECRET }),
+  });
+  assert.equal(r.status, 302);
+});
+
+test('grant signed with the retired shared secret restarts the authorize dance', async () => {
+  const grant = grantToken(MEMBER_ID, PRIV_HOST, PRIV_APP_ID, { secret: LEGACY_SECRET });
   const r = await gate({
     host: PRIV_HOST,
     uri: `/__usernode_access?grant=${encodeURIComponent(grant)}&next=%2F`,

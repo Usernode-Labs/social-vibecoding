@@ -12,6 +12,7 @@ const prMetadata = require('../services/pr-metadata');
 const sessionTitles = require('../services/session-title');
 const testingNotes = require('../services/testing-notes');
 const staging = require('../services/staging');
+const { appIdentityEnv } = require('../services/app-identity-env');
 const visuals = require('../services/visuals');
 const docker = require('../services/docker');
 const caddy = require('../services/caddy');
@@ -7930,7 +7931,7 @@ CMD ["node", "server.js"]
     image: imageName,
     env: {
       DATABASE_URL: stagingDbUrl,
-      JWT_SECRET: config.jwtSecret,
+      ...appIdentityEnv(app, config),
       PORT: '3000',
     },
     port: 3000,

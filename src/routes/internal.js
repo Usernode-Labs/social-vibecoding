@@ -2,7 +2,6 @@
 
 const { Router } = require('express');
 const { rateLimit } = require('express-rate-limit');
-const jwt = require('jsonwebtoken');
 const { getPool } = require('../db/pool');
 const { internalAuth } = require('../middleware/internal-auth');
 const log = require('../services/logger');
@@ -111,8 +110,9 @@ async function isKnownHost(pool, rawDomain) {
 // authority that exists nowhere but the platform process (see
 // src/services/platform-jwt.js). They are distinguished by their `pur`
 // claim, so a 120s grant cannot be replayed as a 12h cookie even though
-// they share a key. Step 5's iframe token is still verified with the
-// legacy shared secret — the iframe authority moves in the next phase.
+// they share a key. Step 5's iframe token is a third authority again —
+// the RS256 app-identity key, verified against the app whose host is
+// being gated, so a token minted for another app cannot open this one.
 
 const ACCESS_COOKIE = '__usernode_access';
 // 12h, re-minted via authorize after expiry. The signer owns the TTL;
@@ -123,12 +123,6 @@ const ACCESS_COOKIE_TTL_S = platformJwt.EDGE_COOKIE_TTL_S;
 // serve the page anyway rather than redirect-looping — the app itself
 // still auths via the token, only same-host asset caching degrades.
 const RETRY_MARKER = '__ua';
-
-// Legacy shared-secret verify, still used only by step 5's iframe token
-// (that authority moves in the iframe cutover).
-function verifyJwt(token, secret) {
-  try { return jwt.verify(token, secret); } catch { return null; }
-}
 
 function authorizeUrl(host, next) {
   return `https://${USERNODE_DOMAIN}/__access/authorize`
@@ -210,7 +204,11 @@ function internalRoutes(_config) {
       const headerToken = typeof req.headers['x-usernode-token'] === 'string'
         ? req.headers['x-usernode-token'] : null;
       const queryToken = query.get('token');
-      const iframeJwt = verifyJwt(queryToken || headerToken || '', _config.jwtSecret);
+      const iframeJwt = platformJwt.orNull(
+        () => platformJwt.verifyAppIdentityToken(
+          queryToken || headerToken || '', { appId: vis.appId }
+        )
+      );
       if (iframeJwt && Number.isInteger(iframeJwt.id)
           && await appAccess.isViewMember(pool, vis.appId, iframeJwt.id)) {
         // WebSocket handshakes can't follow redirects — the 302 cookie-set

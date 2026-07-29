@@ -1,8 +1,8 @@
 const http = require('http');
 const { WebSocketServer } = require('ws');
-const jwt = require('jsonwebtoken');
 const { getPool } = require('../db/pool');
 const log = require('./logger');
+const platformJwt = require('./platform-jwt');
 const notifications = require('./notifications');
 const events = require('./events');
 const appAccess = require('./app-access');
@@ -182,11 +182,16 @@ async function authenticateWsStagingJwt(req, pool, config) {
     } catch {
       return null;
     }
-    if (!token || !config?.jwtSecret) return null;
+    if (!token) return null;
 
+    // App-scoped identity token (RS256, audience `usernode:app:<id>`).
+    // USERNODE_APP_ID is injected by services/app-identity-env.js; when
+    // it's absent this fails closed, same as middleware/auth.js.
     let payload;
     try {
-      payload = jwt.verify(token, config.jwtSecret);
+      payload = platformJwt.verifyAppIdentityToken(token, {
+        appId: process.env.USERNODE_APP_ID,
+      });
     } catch (err) {
       log.warn('ws', 'Staging iframe-JWT verification failed', { err: err.message });
       return null;

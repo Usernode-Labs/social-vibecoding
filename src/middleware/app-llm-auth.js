@@ -1,9 +1,9 @@
 'use strict';
 
 const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
 const { isPrivateIp } = require('./anthropic-proxy-auth');
 const log = require('../services/logger');
+const platformJwt = require('../services/platform-jwt');
 
 // Authenticates dapp → platform LLM-proxy requests (issue #34):
 // POST /api/app-llm/v1/messages etc.
@@ -135,11 +135,14 @@ function appLlmAuth(pool, config) {
       return res.status(401).json({ ok: false, code: 'missing_user_token' });
     }
 
-    if (!config.jwtSecret) {
-      log.error('app-llm-auth', 'JWT_SECRET not configured');
+    if (!process.env.IFRAME_JWT_PUBLIC_KEY) {
+      log.error('app-llm-auth', 'IFRAME_JWT_PUBLIC_KEY not configured');
       return res.status(500).json({ ok: false, code: 'server_misconfigured' });
     }
 
+    // Resolve the app FIRST — the user token is verified against THIS
+    // app's audience below, so the app identity has to be known before
+    // the token is trusted.
     let app;
     try {
       app = await resolveApp(pool, appToken);
@@ -151,15 +154,21 @@ function appLlmAuth(pool, config) {
       return res.status(401).json({ ok: false, code: 'bad_app_token' });
     }
 
+    // Verify against the RESOLVED app's audience. This is what closes the
+    // cross-app replay hole: under the old shared secret, app B's server
+    // could take a user token minted for app A (any app the user visited)
+    // and spend that user's AI budget through B's own app token. Now a
+    // token minted for A carries audience `usernode:app:<A>` and is
+    // rejected here when presented alongside B's app token.
     let claims;
     try {
-      claims = jwt.verify(userToken, config.jwtSecret);
+      claims = platformJwt.verifyAppIdentityToken(userToken, { appId: app.id });
     } catch (err) {
       return res.status(401).json({ ok: false, code: 'bad_user_token', message: err.message });
     }
-    // Require the iframe-token shape (a plain user identity). Reject
-    // any scoped platform JWT (e.g. worker:session) — those identify
-    // infrastructure, not a consenting user.
+    // Belt-and-braces on the identity shape. `pur`/audience/algorithm are
+    // already pinned by the verifier; this still rejects an infrastructure
+    // token that somehow carried a scope claim.
     if (!claims || typeof claims.id !== 'number' || claims.scope) {
       return res.status(403).json({ ok: false, code: 'bad_user_token' });
     }

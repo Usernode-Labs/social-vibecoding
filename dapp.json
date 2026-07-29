@@ -43,12 +43,6 @@
       "description": "Bootstrap admin password. Hashed at first boot — rotating only takes effect on a fresh DB or via direct SQL update. `private` keeps a self-app-staging container from receiving the prod admin password (would let any PR reviewer log in as admin to prod). `staging_default` is a config.js boot-sentinel only — never used to authenticate. Self-app staging containers expose no usable password login: the cloned `users.password` column is replaced with `__staging_redacted__` by db-manager.scrubPrivateColumns, and staging admins authenticate via the parent-issued iframe JWT instead (see SELF-HOSTING.md \"Self-staging — iframe-auth login flow\" and middleware/auth.js)."
     },
     {
-      "key": "JWT_SECRET",
-      "required": true,
-      "private": true,
-      "description": "TRANSITIONAL. This used to sign every platform token AND double as the at-rest encryption key AND get handed verbatim to every child container. Key separation (phase 1) moved the worker, edge and at-rest jobs onto their own keys — see the `platform_env` \"Platform keys\" group — leaving JWT_SECRET as the signer for iframe / capture / WebSocket / app-file identity tokens only, still injected into child containers as `JWT_SECRET` (see app-conventions.md). It is no longer required at boot: config.js falls back to DATA_ENCRYPTION_KEY, and the two hold the SAME bytes, which is why renaming the deploy's variable did not orphan any stored ciphertext. Do not rotate it — it is still the data key's twin until the phase-2 iframe cutover retires this field. `private` ensures a self-app-staging container could not mint valid prod JWTs. NOTE: this entry is silently skipped by app-manifest.read() because JWT_SECRET is on the reserved-keys list (services/app-manifest.js); the platform injects the parent's value into staging containers explicitly via services/staging.js. Listed here for documentation only — no runtime effect."
-    },
-    {
       "key": "SESSION_SECRET",
       "required": true,
       "private": true,

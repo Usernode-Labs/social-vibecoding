@@ -160,8 +160,15 @@ test('app-view.js builds the iframe src via the URL API with origin check and to
     'inner path composes against the app origin; no path → root (backward compat)');
   assert.ok(src.includes('if (url.origin !== new URL(appUrl).origin) url = new URL(appUrl);'),
     'a path that escapes the app origin falls back to the root');
-  assert.ok(src.includes("url.searchParams.set('token', AppView.iframeToken)"),
+  assert.ok(src.includes("url.searchParams.set('token', token)"),
     'token is set via searchParams so a smuggled ?token= is clobbered');
+  // Tokens are per-app since the RSA cutover: the builder must read the
+  // cached token through tokenForSlug, which returns null unless the
+  // cached token was minted for the app now being framed. Otherwise a
+  // stale token for the previously-open app rides along and the child
+  // rejects it on audience.
+  assert.ok(src.includes("const token = AppView.tokenForSlug(AppView.appData && AppView.appData.slug);"),
+    'builder reads the token through the per-app slug guard');
   assert.ok(src.includes('const iframeSrc = AppView.buildAppIframeSrc();'),
     'renderAppTab uses the shared builder');
   // The 45-min token refresh must reuse it too, so a mid-session refresh

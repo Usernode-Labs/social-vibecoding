@@ -32,8 +32,16 @@ frontend and its own PostgreSQL database. Containers are built from a
 Required env vars at runtime (provided by the harness):
 
 - `DATABASE_URL` — Postgres connection string for this app's DB.
-- `JWT_SECRET` — shared with the platform; used to verify iframe-issued
-  session tokens.
+- `USERNODE_JWT_PUBLIC_KEY` — the platform's RSA **public** key (PEM).
+  Verifies iframe-issued user tokens. The private half never leaves the
+  platform, so your app can check who a user is but cannot mint an
+  identity — and no other app can mint one for yours.
+- `USERNODE_APP_ID` — this app's numeric platform id. User tokens are
+  minted with audience `usernode:app:<USERNODE_APP_ID>`, which is what
+  stops a token issued for another app from authenticating here.
+- `JWT_SECRET` — **deprecated alias** of `USERNODE_JWT_PUBLIC_KEY`,
+  carrying the same public PEM so pre-cutover apps keep working
+  unchanged. New code should read `USERNODE_JWT_PUBLIC_KEY`.
 - `PORT` — always `3000`.
 - `USERNODE_ENV` — either `production` or `staging`. See "Staging vs
   production" below.
@@ -44,16 +52,28 @@ see "Per-app secrets" below.
 
 ## Auth — iframe token injection
 
-Apps run inside an iframe on the Usernode shell. The shell mints a
-JWT for the logged-in Usernode user and injects it as a `?token=…`
-query param on the initial iframe load. The app's own frontend
-forwards that token on subsequent fetches via the
+Apps run inside an iframe on the Usernode shell. The shell mints an
+RS256 JWT for the logged-in Usernode user, scoped to **your app**, and
+injects it as a `?token=…` query param on the initial iframe load. The
+app's own frontend forwards that token on subsequent fetches via the
 `x-usernode-token` request header.
+
+Tokens are asymmetric and per-app: you hold only the public key, and
+the token's audience names your `USERNODE_APP_ID`. Verification must
+therefore pin three things — algorithm, issuer, audience — plus the
+`pur` (purpose) claim. **Pinning `algorithms: ['RS256']` is not
+optional:** every app knows the public PEM, so a verifier that also
+accepts HS256 would treat that PEM as an HMAC secret and let any caller
+forge any user.
 
 Server-side the pattern (already present in the scaffold) is:
 
 ```js
-const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_PUBLIC_KEY = (process.env.USERNODE_JWT_PUBLIC_KEY || process.env.JWT_SECRET || '')
+  .replace(/\\n/g, '\n');
+const APP_AUDIENCE = process.env.USERNODE_APP_ID
+  ? 'usernode:app:' + process.env.USERNODE_APP_ID
+  : null;
 const PUBLIC_API_PATHS = new Set(['/health']);
 // Public path prefixes that bypass the JWT gate. `/explorer-api/*`
 // is a transparent proxy to the public block explorer — gating it
@@ -64,8 +84,15 @@ const PUBLIC_PREFIXES = ['/explorer-api/'];
 
 app.use((req, res, next) => {
   const token = req.query.token || req.headers['x-usernode-token'];
-  if (token && JWT_SECRET) {
-    try { req.user = jwt.verify(token, JWT_SECRET); } catch {}
+  if (token && JWT_PUBLIC_KEY && APP_AUDIENCE) {
+    try {
+      const claims = jwt.verify(token, JWT_PUBLIC_KEY, {
+        algorithms: ['RS256'],       // never omit — see above
+        issuer: 'usernode',
+        audience: APP_AUDIENCE,
+      });
+      if (claims && claims.pur === 'iframe') req.user = claims;
+    } catch {}
   }
   if (req.method !== 'GET' || req.path.startsWith('/api/')) {
     if (PUBLIC_API_PATHS.has(req.path)) return next();
@@ -769,7 +796,8 @@ Per-field rules:
   clear error pointing at the remediation.
 
 **Reserved keys** the platform owns and rejects from the manifest:
-`DATABASE_URL`, `JWT_SECRET`, `PORT`, `USERNODE_ENV`,
+`DATABASE_URL`, `USERNODE_JWT_PUBLIC_KEY`, `USERNODE_APP_ID`,
+`JWT_SECRET`, `PORT`, `USERNODE_ENV`,
 `USERNODE_MISSING_SECRETS`. Don't list these.
 
 **Platform-managed keys** the platform supplies a default for at
@@ -896,8 +924,10 @@ Mark **private** when the secret unlocks:
   bank API tokens).
 - OAuth client secrets that mint *prod* user tokens (Google, GitHub,
   Slack OAuth `client_secret`).
-- Signing keys used for prod user sessions (`JWT_SECRET`,
-  `SESSION_SECRET`).
+- Signing keys used for prod user sessions (`SESSION_SECRET`, your own
+  app-issued cookie keys). Note the platform's own
+  `USERNODE_JWT_PUBLIC_KEY` / `JWT_SECRET` are *public* keys and not
+  secrets at all — they are platform-managed either way.
 - Wallet / on-chain secret keys that hold real funds.
 - Database superuser passwords.
 - Push-notification keys (FCM, APNS) that fan out to real devices.
@@ -921,7 +951,7 @@ Leave **non-private** (the default) for:
   only acceptable failure mode — empty-string-by-default would let
   bugs propagate silently into PR reviews.
 - **A non-private secret MUST NOT be derived from a private one
-  in code.** If your app reads `JWT_SECRET` (private) and uses it
+  in code.** If your app reads a private key and uses it
   to compute `BUILD_FINGERPRINT` (non-private) which it then
   exposes, the fingerprint is now a side-channel for the secret.
   Either mark the derived value private too, or use a

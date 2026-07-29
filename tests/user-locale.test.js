@@ -168,15 +168,23 @@ test('iframe-token payload gains the locale claim additively', () => {
   const src = read('server.js');
   const mintStart = src.indexOf("app.get('/api/iframe-token'");
   assert.ok(mintStart !== -1, 'mint route must exist');
-  const mint = src.slice(mintStart, src.indexOf('});', src.indexOf('jwt.sign', mintStart)) + 3);
+  const signAt = src.indexOf('signAppIdentityToken', mintStart);
+  assert.notStrictEqual(signAt, -1, 'mint must delegate to platform-jwt');
+  const mint = src.slice(mintStart, src.indexOf('});', signAt) + 3);
   // New claim present…
   assert.match(mint, /locale: userLocale/);
-  // …and every pre-existing part of the mint unchanged.
+  // …and every pre-existing claim unchanged across the RSA cutover.
   assert.match(mint, /id: req\.user\.id/);
   assert.match(mint, /username: req\.user\.username/);
   assert.match(mint, /usernode_pubkey: usernodePubkey/);
-  assert.match(mint, /config\.jwtSecret/);
-  assert.match(mint, /expiresIn: '1h'/);
+  // The signing key and the TTL moved into services/platform-jwt.js when
+  // the shared config.jwtSecret was retired; the route now names the app
+  // it is minting for instead, which is what scopes the audience.
+  assert.match(mint, /appId: appRow\.id/);
+  assert.ok(!/config\.jwtSecret/.test(src),
+    'the retired shared secret must have no reader left in server.js');
+  const pj = read('src/services/platform-jwt.js');
+  assert.match(pj, /IFRAME_TTL = '1h'/, 'the 1h iframe TTL is preserved');
 });
 
 // ── 3. Chain source guards ──────────────────────────────────────────────

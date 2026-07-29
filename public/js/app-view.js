@@ -1,6 +1,8 @@
 const AppView = {
   appData: null,
   iframeToken: null,
+  // Slug the held iframeToken was minted for (app-scoped RS256 audience).
+  iframeTokenSlug: null,
   // #743: validated inner app path (path+query, wire-encoded) from a
   // chromeless deep link (#app/<slug>/full?path=/t/123). Written by
   // App.restoreFromHash on every pass (null when the hash carries none),
@@ -373,7 +375,7 @@ const AppView = {
     const devTabBtn = document.querySelector('.app-tab[data-tab="dev"]');
     if (devTabBtn) devTabBtn.classList.remove('hidden');
 
-    await AppView.refreshToken();
+    await AppView.refreshToken(slug);
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
@@ -440,6 +442,7 @@ const AppView = {
     if (window.DevChat) DevChat.reset();
     AppView.appData = null;
     AppView.iframeToken = null;
+    AppView.iframeTokenSlug = null;
     if (window.DevConsole) {
       DevConsole.hide();
       DevConsole.setCurrentApp(null);
@@ -452,14 +455,41 @@ const AppView = {
     if (forkSlot) forkSlot.innerHTML = '';
   },
 
-  async refreshToken() {
+  // Iframe tokens are APP-SCOPED since the RSA cutover: each one carries
+  // audience `usernode:app:<id>` and verifies against exactly one app, so
+  // the mint call must name the app it is for. `iframeTokenSlug` records
+  // which app the held token belongs to — both iframe-src builders check
+  // it before attaching the token, so a token left over from a previously
+  // opened app is never sent to a different app's iframe (it would fail
+  // that app's audience check anyway; omitting it keeps the failure mode
+  // "no token" rather than "rejected token").
+  async refreshToken(slug) {
+    const target = slug || (AppView.appData && AppView.appData.slug) || null;
+    if (!target) {
+      AppView.iframeToken = null;
+      AppView.iframeTokenSlug = null;
+      return;
+    }
     try {
-      const res = await fetch('/api/iframe-token');
+      const res = await fetch(`/api/iframe-token?app=${encodeURIComponent(target)}`);
       if (res.ok) {
         const { token } = await res.json();
         AppView.iframeToken = token;
+        AppView.iframeTokenSlug = target;
+      } else {
+        // 404 (unknown app / no view access) or 400 — drop any stale token
+        // rather than keeping one that no longer matches the open app.
+        AppView.iframeToken = null;
+        AppView.iframeTokenSlug = null;
       }
     } catch {}
+  },
+
+  // The token to attach for `slug`, or null when the held token was minted
+  // for a different app (or there is none).
+  tokenForSlug(slug) {
+    if (!slug || !AppView.iframeToken) return null;
+    return AppView.iframeTokenSlug === slug ? AppView.iframeToken : null;
   },
 
   // Compose the production iframe src from the app origin, the pending
@@ -478,20 +508,22 @@ const AppView = {
     } catch {
       try { url = new URL(appUrl); } catch { return appUrl; }
     }
-    if (AppView.iframeToken) url.searchParams.set('token', AppView.iframeToken);
+    const token = AppView.tokenForSlug(AppView.appData && AppView.appData.slug);
+    if (token) url.searchParams.set('token', token);
     return url.toString();
   },
 
   startTokenRefresh() {
     AppView.stopTokenRefresh();
     AppView.tokenRefreshInterval = setInterval(async () => {
-      await AppView.refreshToken();
+      await AppView.refreshToken(AppView.appData && AppView.appData.slug);
       // Rewrite the iframe src so the child app picks up the fresh token.
       // Only when the App tab is the visible one; other tabs re-fetch on
       // next render anyway. Reuses the inner deep link so a mid-session
       // refresh doesn't yank the viewer back to the app root (#743).
       const iframe = document.getElementById('app-iframe');
-      if (iframe && AppView.appData?.url && AppView.iframeToken) {
+      if (iframe && AppView.appData?.url
+          && AppView.tokenForSlug(AppView.appData.slug)) {
         iframe.src = AppView.buildAppIframeSrc();
       }
     }, AppView.TOKEN_REFRESH_MS);
@@ -8719,7 +8751,7 @@ const AppView = {
       const { app: updated } = await res.json();
       AppView.appData = updated;
       if (updated.status === 'running') {
-        await AppView.refreshToken();
+        await AppView.refreshToken(AppView.appData.slug);
         AppView.renderAppTab();
       } else if (updated.status === 'creating') {
         setTimeout(() => AppView.pollStatus(), 3000);
@@ -8977,7 +9009,10 @@ const AppView = {
         : path;
       let url;
       try { url = new URL(visit || '/', resolved); } catch { return resolved; }
-      if (AppView.iframeToken) url.searchParams.set('token', AppView.iframeToken);
+      // App-scoped token (see refreshToken): only attach it when it was
+      // minted for the app this staging preview belongs to.
+      const token = AppView.tokenForSlug(AppView.appData && AppView.appData.slug);
+      if (token) url.searchParams.set('token', token);
       return url.toString();
     };
     const jump = !!(opts && opts.jump) && !!safePath;
