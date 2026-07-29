@@ -69,7 +69,7 @@ The exact intent-based commit sequence and post-commit proof are recorded in
 The original verified checkpoint at `bb47cbe` remains historical evidence.
 The current shell authority has since grown to 44 manifest patterns,
 12 component performance contracts, 2 owned registry entries, and style-policy
-coverage over 163 modules. The fresh catalog run covers 47 Storybook files /
+coverage over 162 modules. The fresh catalog run covers 47 Storybook files /
 228 tests. The T1–T5 agent battery passes 5/5, including T4 deliberate
 enforcement at 5/5.
 
@@ -86,12 +86,19 @@ navigation control. Login, Register, `HostedApp`, `StagingPreview`, and
 `NotFound` are documented semantic/layout exceptions. Activity unification is
 committed and its authority is aligned in `1becfcb`.
 
-The current verification record is: 655 browser tests passed, 53 intentionally
-skipped, 0 failed; production-readonly review 40/40; native bridge contract
-8/8; production build 2,074 modules; and 142.2 KiB initial React JavaScript
-against the 160 KiB budget. The cutover contract is 9 verified, 0 failed, with
-one explicit `native-webview-e2e` blocker. Production cutover therefore remains
-a G6 no-go under
+Host-cutover preparation now continues through `0e5617c`: relay provenance and
+host contracts, service-worker/session isolation, exact-artifact deployment,
+deliberate legacy-shortcut deferral, complete CI authority gates, a sanitized
+physical-device runbook, and trusted-frame external navigation are committed.
+These are browser and pipeline contracts; they do not close physical G6.
+
+The current verification record is: 727 browser tests passed, 53 intentionally
+skipped, 0 failed; the complete root suite passed 3,277/3,277;
+production-readonly review passed 40/40; native bridge contract passed 8/8;
+Storybook passed 228/228; and the initial React JavaScript is 4.1 KiB gzip
+against the 160 KiB budget. The cutover contract reports 10 verified, 0 failed,
+with one explicit `native-webview-e2e` blocker. Production cutover therefore
+remains a G6 no-go under
 [`../shell-host-cutover-evidence.md`](../shell-host-cutover-evidence.md);
 Motion is deferred and legacy-shell retirement is not authorized.
 
@@ -107,6 +114,7 @@ Those are recorded as later work rather than being hidden inside this example.
 From `frontend/`:
 
 ```bash
+(cd .. && npm ci)
 npm ci
 npm run build:tokens
 npm run build:catalog
@@ -128,6 +136,7 @@ npm run test:production-review
 npm run test:native-bridge-contract
 npm run test:service-worker-contract
 npm run build
+(cd .. && npm test)
 npm run check:bundle
 npm run check:cutover-contract
 ```

@@ -18,6 +18,14 @@ physical safe areas, or service-worker readiness inside a shipped WebView.
   `6785617` (`feat(host): harden WebView shell contracts`), including
   `public/usernode-bridge.js` and its byte-identical
   `public/usernode-bridge/v1/bridge.js`
+- Trusted-frame external-navigation follow-up:
+  `0e5617c` (`fix(host): keep external navigation in trusted frame`), which
+  supplies the validated hosted `openExternal` wrapper and forces special
+  same-origin activations to remain in the trusted top frame
+- Legacy shortcut rollout boundary:
+  `aad39af` (`fix(shortcuts): defer legacy route cutover`). The portable React
+  contract exists, but the legacy Home continues emitting its established
+  route until Flutter adoption and G6 proof
 - React service-worker readiness and logout-isolation implementation:
   `2eca16f` (`feat(pwa): verify readiness and isolate sessions`) in
   `frontend/src/react-service-worker.ts`,
@@ -27,7 +35,8 @@ physical safe areas, or service-worker readiness inside a shipped WebView.
   verified CI supplies the exact source SHA. The page, worker, and
   revision-scoped cache share that value
 - Exact-artifact check/deploy chain:
-  `db0ea79` (`ci(cutover): deploy exact verified shell artifacts`)
+  `db0ea79` (`ci(cutover): deploy exact verified shell artifacts`), with the
+  full root, content, and frontend authority gate completed by `ab2034d`
 - Flutter host audited: `1e11a8a7998330e71894885369ec8f6297bea63e`
   from `origin/develop`
 - Deployment path: **not locked**. Flutter still defaults to the legacy shell
@@ -85,6 +94,9 @@ the child that initiated a request:
 
 Focused evidence:
 
+- after `0e5617c`, the external-link browser surface passes 14/14, including
+  the real hosted wrapper over a fake raw Flutter channel and same-origin
+  `_blank`/modifier/middle-click containment;
 - the focused root bridge/cache command passes 104/104 across the legacy Home
   shortcut, bridge, relay, service-worker classifier, and delayed-session
   boundary suites;

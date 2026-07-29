@@ -233,6 +233,39 @@ The final source sweep found one duplicate recovery navigation control;
 `bd6e380` removes it and strengthens the focused route assertion without
 changing the milestone boundary.
 
+## 11. Host contracts and cutover preparation
+
+Commits:
+
+- `bea0b56` — `fix(content): finish Activity story rename`
+- `6785617` — `feat(host): harden WebView shell contracts`
+- `2eca16f` — `feat(pwa): verify readiness and isolate sessions`
+- `db0ea79` — `ci(cutover): deploy exact verified shell artifacts`
+- `0770c36` — `docs(cutover): record verified shell evidence`
+- `aad39af` — `fix(shortcuts): defer legacy route cutover`
+- `ab2034d` — `ci(cutover): require complete authority gates`
+- `587e6e3` — `docs(cutover): sanitize physical proof runbook`
+- `0e5617c` — `fix(host): keep external navigation in trusted frame`
+
+Intent:
+
+- finish the Activity naming closure without renaming compatibility transport;
+- define deny-by-default child relay provenance and bounded native work;
+- establish exact worker readiness, immediate-offline and logout-isolation
+  contracts;
+- preserve one exact-SHA tested artifact through deployment;
+- keep legacy shortcut routing unchanged until Flutter adopts and proves the
+  versioned React route contract;
+- require the complete root and frontend authority gates before packaging;
+- keep same-origin special activations in the trusted top frame and expose the
+  validated hosted `openExternal` wrapper;
+- turn remaining physical-device questions into a sanitized reproducible
+  two-platform runbook.
+
+These commits close browser, static, and pipeline gaps only. They do not provide
+a deployed immutable candidate or physical iOS/Android evidence, so G6 remains
+closed.
+
 ## Current verification snapshot
 
 These current measurements supersede the historical `bb47cbe` catalog counts
@@ -241,16 +274,17 @@ without rewriting that checkpoint:
 - design authority: 44 manifest patterns and 12 component performance
   contracts;
 - owned shadcn registry: 2 installable entries;
-- style policy: 163 governed modules;
+- style policy: 162 governed modules;
 - agent battery: T1–T5 pass 5/5, including T4 deliberate enforcement at 5/5;
 - Storybook: 47 files / 228 tests passed;
-- full browser route/contract suite: 655 passed, 53 intentionally skipped,
+- full browser route/contract suite: 727 passed, 53 intentionally skipped,
   0 failed;
+- complete root suite: 3,277/3,277 passed;
 - production-readonly mutation suite: 40/40 passed;
 - native bridge contract: 8/8 passed;
-- production build: 2,074 modules transformed;
-- initial React JavaScript: 142.2 KiB gzip against a 160 KiB budget;
-- cutover contract: 9 verified, 0 failed, 1 explicit
+- production build and Storybook build: pass;
+- initial React JavaScript: 4.1 KiB gzip against a 160 KiB budget;
+- cutover contract: 10 verified, 0 failed, 1 explicit
   `native-webview-e2e` blocker;
 - production cutover: G6 no-go.
 
