@@ -226,13 +226,13 @@ export function Settings() {
   }
 
   return (
-    <main
+    <div
       className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6"
       data-testid="settings"
     >
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div className="flex flex-col gap-2">
-          <h2 className="text-balance text-3xl font-semibold tracking-tight">Settings</h2>
+          <h1 className="text-balance text-3xl font-semibold tracking-tight">Settings</h1>
           <p className="max-w-[60ch] text-base text-muted-foreground text-pretty">
             Manage Social Vibecoding preferences here. Usernode device controls remain protected by the native bridge.
           </p>
@@ -553,6 +553,6 @@ export function Settings() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </main>
+    </div>
   )
 }

@@ -117,12 +117,12 @@ export function GitHubIssueDetailContent({ attributeError, attributes = EMPTY_AT
     void onCloseProposal?.(closeReason)
   }
 
-  return <main className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="github-issue-detail">
+  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="github-issue-detail">
     <Button className="w-fit" render={<Link to={back} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />App Dev</Button>
     <Card>
       <CardHeader className="gap-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          {editing ? <div className="flex min-w-0 flex-1 flex-col gap-2"><Input aria-label="Issue title" disabled={renaming} maxLength={200} onChange={(event) => setTitle(event.target.value)} value={title} /><div className="flex flex-wrap gap-2"><Button disabled={renaming || !title.trim()} onClick={save} size="sm" type="button"><PlatformIcon data-icon="inline-start" icon={Save} />{renaming ? "Saving…" : "Save title"}</Button><Button disabled={renaming} onClick={() => { setTitle(issue.title); setEditing(false) }} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={X} />Cancel</Button></div></div> : <CardTitle className="text-balance text-2xl font-semibold tracking-tight">{issue.title}</CardTitle>}
+          {editing ? <div className="flex min-w-0 flex-1 flex-col gap-2"><Input aria-label="Issue title" disabled={renaming} maxLength={200} onChange={(event) => setTitle(event.target.value)} value={title} /><div className="flex flex-wrap gap-2"><Button disabled={renaming || !title.trim()} onClick={save} size="sm" type="button"><PlatformIcon data-icon="inline-start" icon={Save} />{renaming ? "Saving…" : "Save title"}</Button><Button disabled={renaming} onClick={() => { setTitle(issue.title); setEditing(false) }} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={X} />Cancel</Button></div></div> : <CardTitle className="text-balance text-2xl font-semibold tracking-tight"><h1>{issue.title}</h1></CardTitle>}
           {canRename && !editing ? <Button aria-label="Edit issue title" onClick={() => setEditing(true)} size="icon-sm" type="button" variant="ghost"><PlatformIcon icon={Pencil} /></Button> : null}
         </div>
         <CardDescription>GitHub issue #{issue.number}{issue.created_by_username ? ` · opened by ${issue.created_by_username}` : ""}</CardDescription>
@@ -171,7 +171,7 @@ export function GitHubIssueDetailContent({ attributeError, attributes = EMPTY_AT
     </Card>
     <section className="flex flex-col gap-3" aria-labelledby="github-issue-comments"><header className="flex items-center gap-2"><PlatformIcon icon={MessageCircle} /><h2 className="text-xl font-semibold" id="github-issue-comments">GitHub discussion</h2></header><Comments comments={comments} truncated={truncated} /></section>
     {children}
-  </main>
+  </div>
 }
 
 export function GitHubIssueDetail() {
@@ -427,9 +427,9 @@ export function GitHubIssueDetail() {
     }
   }
 
-  if (error) return <main className="flex flex-1 items-center justify-center p-6" data-testid="github-issue-detail-error"><Alert className="max-w-md" variant="destructive"><AlertTitle>GitHub issue unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></main>
-  if (issue === undefined) return <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-64 w-full" /></main>
-  if (issue === null) return <main className="flex flex-1 items-center justify-center p-6" data-testid="github-issue-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={MessageCircle} /></EmptyMedia><EmptyTitle>GitHub issue not found</EmptyTitle><EmptyDescription>It may have been closed, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><Button render={<Link to={appDevPath(slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</Button></Empty></main>
+  if (error) return <div className="flex flex-1 items-center justify-center p-6" data-testid="github-issue-detail-error"><Alert className="max-w-md" variant="destructive"><AlertTitle>GitHub issue unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>
+  if (issue === undefined) return <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-64 w-full" /></div>
+  if (issue === null) return <div className="flex flex-1 items-center justify-center p-6" data-testid="github-issue-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={MessageCircle} /></EmptyMedia><EmptyTitle>GitHub issue not found</EmptyTitle><EmptyDescription>It may have been closed, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><Button render={<Link to={appDevPath(slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</Button></Empty></div>
   return <GitHubIssueDetailContent attributeError={attributeError} attributes={attributes} attributeUpdating={attributeUpdating} bountyError={bountyError} bountyNotice={bountyNotice} bountyUpdating={bountyUpdating} canAdminWrite={canAdminWrite} claiming={claiming} claimClearingUserId={claimClearingUserId} claimError={claimError} closeProposal={closeProposal} closeProposalError={closeProposalError} closeProposalNotice={closeProposalNotice} closeProposalOpen={closeProposalOpen} closeProposalSubmitting={closeProposalSubmitting} comments={comments} creatingSession={creatingSession} currentUsername={currentUsername} headlessCloning={headlessCloning} headlessError={headlessError} headlessNotice={headlessNotice} headlessOpen={headlessOpen} headlessStarting={headlessStarting} issue={issue} modelError={modelError} models={models} onAttribute={updateAttribute} onBounty={giveBounty} onClaim={updateClaim} onClearClaim={clearClaimAsAdmin} onCloneHeadless={cloneHeadless} onCloseProposal={proposeClose} onCloseProposalOpenChange={setCloseProposalOpen} onCreateSession={createSession} onHeadlessOpenChange={setHeadlessOpen} onRename={rename} onSelectedModelChange={selectHeadlessModel} onStartHeadless={startHeadless} renaming={renaming} renameError={renameError} selectedModel={selectedModel} sessionError={sessionError} slug={slug} truncated={truncated}>
     <TopicDiscussionTranscript slug={slug} threadRef={issue.number} threadType="issue" />
   </GitHubIssueDetailContent>

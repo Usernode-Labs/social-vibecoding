@@ -110,7 +110,7 @@ export function AppsHome() {
   }
 
   return (
-    <main className="isolate mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-4 py-8 antialiased sm:px-6" data-testid="apps-home">
+    <div className="isolate mx-auto flex w-full max-w-6xl flex-1 flex-col gap-8 px-4 py-8 antialiased sm:px-6" data-testid="apps-home">
       <section className="flex flex-col gap-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -166,6 +166,6 @@ export function AppsHome() {
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{filtered.map((app) => <AppCard app={app} key={app.id} />)}</div>
         </AppSection>
       ) : null}
-    </main>
+    </div>
   )
 }

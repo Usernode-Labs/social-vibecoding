@@ -552,10 +552,10 @@ export function GroupDiscussion() {
     onNotificationChange: () => { void loadMessages() },
   }), [loadMessages])
 
-  return <main className="isolate mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="group-discussion">
+  return <div className="isolate mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="group-discussion">
     <Button className="w-fit" render={<Link to={appDevPath(slug)} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />App Dev</Button>
     <header className="space-y-2">
-      <h2 className="text-balance text-3xl font-semibold tracking-tight">App discussion</h2>
+      <h1 className="text-balance text-3xl font-semibold tracking-tight">App discussion</h1>
       <p className="text-base text-muted-foreground text-pretty">The complete general discussion for this app.</p>
     </header>
     {isProductionReadOnlyReview ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>Production review mode</AlertTitle><AlertDescription>Discussion can be reviewed here, but posting is disabled while this local React workspace reads production data.</AlertDescription></Alert> : null}
@@ -580,5 +580,5 @@ export function GroupDiscussion() {
       typingUsers={typingUsers}
       writable={writable}
     />
-  </main>
+  </div>
 }

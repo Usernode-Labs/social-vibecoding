@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test"
-import AxeBuilder from "@axe-core/playwright"
+
+import { expectAccessibleShellStructure } from "./accessibility"
 
 const apps = {
   apps: [
@@ -274,10 +275,13 @@ test("restores the personal order when the server rejects it", async ({ page }) 
   await expect(yours.getByRole("button", { name: "Move RecipeBot earlier" })).toBeDisabled()
 })
 
-test("has no critical or serious accessibility violations", async ({ page }) => {
+test("has one accessible shell structure on Home and app details", async ({ page }) => {
   await page.goto("/react/")
-  const results = await new AxeBuilder({ page }).analyze()
-  expect(results.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([])
+  await expectAccessibleShellStructure(page)
+
+  await page.goto("/react/apps/recipebot")
+  await expect(page.getByRole("heading", { name: "RecipeBot", level: 1 })).toBeVisible()
+  await expectAccessibleShellStructure(page)
 })
 
 test("production review mode prevents saved-app requests", async ({ page }) => {

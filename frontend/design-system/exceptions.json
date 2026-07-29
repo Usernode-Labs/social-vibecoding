@@ -5,7 +5,9 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/account/native-device-summary.tsx",
-      "matches": ["space-y-3"],
+      "matches": [
+        "space-y-3"
+      ],
       "count": 2,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
@@ -14,7 +16,12 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/platform/node-status.tsx",
-      "matches": ["space-y-1", "space-y-2", "space-y-3", "space-y-4"],
+      "matches": [
+        "space-y-1",
+        "space-y-2",
+        "space-y-3",
+        "space-y-4"
+      ],
       "count": 5,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
@@ -23,7 +30,9 @@
     {
       "rule": "no-arbitrary-utilities",
       "file": "@/features/platform/node-status.tsx",
-      "matches": ["max-w-[56ch]"],
+      "matches": [
+        "max-w-[56ch]"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "The readable-line-length value predates canonical layout variants.",
@@ -32,7 +41,9 @@
     {
       "rule": "no-arbitrary-utilities",
       "file": "@/features/apps/app-share-sheet.tsx",
-      "matches": ["w-[calc(100%-1rem)]"],
+      "matches": [
+        "w-[calc(100%-1rem)]"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "The mobile sheet inset predates a named shell overlay variant.",
@@ -41,7 +52,11 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/community/challenges.tsx",
-      "matches": ["space-y-2", "space-y-3", "space-y-8"],
+      "matches": [
+        "space-y-2",
+        "space-y-3",
+        "space-y-8"
+      ],
       "count": 6,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
@@ -50,7 +65,10 @@
     {
       "rule": "no-arbitrary-utilities",
       "file": "@/features/community/challenges.tsx",
-      "matches": ["max-w-[60ch]", "grid-cols-[auto_1fr_auto]"],
+      "matches": [
+        "max-w-[60ch]",
+        "grid-cols-[auto_1fr_auto]"
+      ],
       "count": 2,
       "owner": "frontend-platform",
       "reason": "Feed typography and leaderboard layout require named variants before removal.",
@@ -59,7 +77,9 @@
     {
       "rule": "no-inline-style",
       "file": "@/features/community/challenges.tsx",
-      "matches": ["style={{ \"--challenge-fill\": `${fill}%`, width: \"var(--challenge-fill)\" } as CSSProperties}"],
+      "matches": [
+        "style={{ \"--challenge-fill\": `${fill}%`, width: \"var(--challenge-fill)\" } as CSSProperties}"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "Runtime progress percentage is data, not visual choice; migrate to an owned Progress contract.",
@@ -68,7 +88,11 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/community/challenge-detail.tsx",
-      "matches": ["space-y-1.5", "space-y-3", "space-y-5"],
+      "matches": [
+        "space-y-1.5",
+        "space-y-3",
+        "space-y-5"
+      ],
       "count": 4,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
@@ -77,7 +101,9 @@
     {
       "rule": "no-arbitrary-utilities",
       "file": "@/features/community/challenge-detail.tsx",
-      "matches": ["max-w-[65ch]"],
+      "matches": [
+        "max-w-[65ch]"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "Readable prose width requires a named typography variant.",
@@ -86,7 +112,9 @@
     {
       "rule": "no-inline-style",
       "file": "@/features/community/challenge-detail.tsx",
-      "matches": ["style={{ width: `${Math.round(current / target! * 100)}%` }}"],
+      "matches": [
+        "style={{ width: `${Math.round(current / target! * 100)}%` }}"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "Runtime progress percentage is data, not visual choice; migrate to an owned Progress contract.",
@@ -95,7 +123,9 @@
     {
       "rule": "no-arbitrary-utilities",
       "file": "@/features/dev/dev-board.tsx",
-      "matches": ["min-w-[70rem]"],
+      "matches": [
+        "min-w-[70rem]"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "The board desktop canvas needs a named responsive layout contract.",
@@ -104,7 +134,9 @@
     {
       "rule": "no-inline-style",
       "file": "@/features/dev/dev-board.tsx",
-      "matches": ["style={style}"],
+      "matches": [
+        "style={style}"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "dnd-kit supplies runtime transform coordinates; no visual token is selected here.",
@@ -113,7 +145,10 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/dev/group-discussion.tsx",
-      "matches": ["space-y-2", "space-y-3"],
+      "matches": [
+        "space-y-2",
+        "space-y-3"
+      ],
       "count": 4,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
@@ -122,7 +157,9 @@
     {
       "rule": "no-arbitrary-utilities",
       "file": "@/features/dev/group-discussion.tsx",
-      "matches": ["max-h-[60dvh]"],
+      "matches": [
+        "max-h-[60dvh]"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "The mention result viewport needs a named mobile keyboard-aware variant.",
@@ -131,7 +168,10 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/admin/admin-overview.tsx",
-      "matches": ["space-y-2", "space-y-3"],
+      "matches": [
+        "space-y-2",
+        "space-y-3"
+      ],
       "count": 2,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
@@ -140,7 +180,10 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/admin/admin-users.tsx",
-      "matches": ["space-y-2", "space-y-3"],
+      "matches": [
+        "space-y-2",
+        "space-y-3"
+      ],
       "count": 4,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
@@ -149,7 +192,9 @@
     {
       "rule": "no-arbitrary-utilities",
       "file": "@/features/admin/admin-users.tsx",
-      "matches": ["grid-cols-[minmax(0,1fr)_auto]"],
+      "matches": [
+        "grid-cols-[minmax(0,1fr)_auto]"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "Dense admin row needs a named layout variant.",
@@ -158,7 +203,10 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/admin/activation-codes.tsx",
-      "matches": ["space-y-2", "space-y-3"],
+      "matches": [
+        "space-y-2",
+        "space-y-3"
+      ],
       "count": 2,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
@@ -167,7 +215,9 @@
     {
       "rule": "no-arbitrary-utilities",
       "file": "@/features/admin/activation-codes.tsx",
-      "matches": ["grid-cols-[minmax(0,1fr)_auto]"],
+      "matches": [
+        "grid-cols-[minmax(0,1fr)_auto]"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "Dense admin row needs a named layout variant.",
@@ -176,7 +226,9 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/admin/spend-limits.tsx",
-      "matches": ["space-y-2"],
+      "matches": [
+        "space-y-2"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
@@ -185,7 +237,11 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/admin/admin-features.tsx",
-      "matches": ["space-y-1", "space-y-2", "space-y-3"],
+      "matches": [
+        "space-y-1",
+        "space-y-2",
+        "space-y-3"
+      ],
       "count": 4,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
@@ -194,7 +250,10 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/admin/merge-debug.tsx",
-      "matches": ["space-y-2", "space-y-3"],
+      "matches": [
+        "space-y-2",
+        "space-y-3"
+      ],
       "count": 3,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
@@ -203,7 +262,9 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/dev/session-spec-viewer.tsx",
-      "matches": ["space-y-2"],
+      "matches": [
+        "space-y-2"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
@@ -212,7 +273,9 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/dev/dev-build-timeline.tsx",
-      "matches": ["space-y-2"],
+      "matches": [
+        "space-y-2"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
@@ -221,7 +284,9 @@
     {
       "rule": "no-arbitrary-utilities",
       "file": "@/features/admin/gallery-visual-evidence.tsx",
-      "matches": ["rounded-[min(1vw,12px)]"],
+      "matches": [
+        "rounded-[min(1vw,12px)]"
+      ],
       "count": 3,
       "owner": "frontend-platform",
       "reason": "Screenshot frames preserve the source capture radius until a visual-evidence variant is approved.",
@@ -230,7 +295,9 @@
     {
       "rule": "no-arbitrary-utilities",
       "file": "@/components/dev-console-panel.tsx",
-      "matches": ["grid-cols-[auto_1fr]"],
+      "matches": [
+        "grid-cols-[auto_1fr]"
+      ],
       "count": 1,
       "owner": "frontend-platform",
       "reason": "Console row needs a named dense-log layout variant.",
@@ -239,7 +306,10 @@
     {
       "rule": "no-space-utilities",
       "file": "@/features/account/native-app-settings.tsx",
-      "matches": ["space-y-3", "space-y-4"],
+      "matches": [
+        "space-y-3",
+        "space-y-4"
+      ],
       "count": 2,
       "owner": "frontend-platform",
       "reason": "Pre-authority shell migration debt.",
@@ -248,7 +318,10 @@
     {
       "rule": "no-raw-colors",
       "file": "@/features/account/wallet-link-settings.tsx",
-      "matches": ["#1a1a1a", "#ffffff"],
+      "matches": [
+        "#1a1a1a",
+        "#ffffff"
+      ],
       "count": 2,
       "owner": "frontend-platform",
       "reason": "QR foreground/background require fixed contrast independent of shell theme.",
@@ -257,10 +330,613 @@
     {
       "rule": "no-raw-palette",
       "file": "@/features/account/wallet-link-settings.tsx",
-      "matches": ["bg-white", "text-emerald-500"],
+      "matches": [
+        "bg-white",
+        "text-emerald-500"
+      ],
       "count": 2,
       "owner": "frontend-platform",
       "reason": "QR contrast and wallet-success status predate semantic QR/status tokens.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/dev-console-panel.stories.tsx",
+      "matches": [
+        "h-[32rem]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Story-only viewport evidence predates a named evidence-layout variant; the exact-match ratchet prevents expansion.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/dev-console-sheet.tsx",
+      "matches": [
+        "h-[min(70dvh,42rem)]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/platform-shell.tsx",
+      "matches": [
+        "after:size-[max(100%,3rem)]",
+        "size-[max(100%,3rem)]"
+      ],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-raw-palette",
+      "file": "@/components/ui/alert-dialog.tsx",
+      "matches": [
+        "bg-black/10"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/ui/alert-dialog.tsx",
+      "matches": [
+        "grid-rows-[auto_1fr]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/badge.tsx",
+      "matches": [
+        "dark:aria-invalid:ring-destructive/40",
+        "dark:bg-destructive/20",
+        "dark:focus-visible:ring-destructive/40",
+        "dark:hover:bg-muted/50"
+      ],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/ui/bubble.tsx",
+      "matches": [
+        "max-w-[80%]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-raw-colors",
+      "file": "@/components/ui/bubble.tsx",
+      "matches": [
+        "oklch("
+      ],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/button.tsx",
+      "matches": [
+        "dark:aria-invalid:border-destructive/50",
+        "dark:aria-invalid:ring-destructive/40",
+        "dark:bg-background",
+        "dark:bg-input/30",
+        "dark:border-input",
+        "dark:focus-visible:ring-destructive/40",
+        "dark:hover:bg-destructive/20",
+        "dark:hover:bg-input/50",
+        "dark:hover:bg-muted/50"
+      ],
+      "count": 9,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/ui/button.tsx",
+      "matches": [
+        "rounded-[min(var(--radius-md),10px)]",
+        "rounded-[min(var(--radius-md),12px)]",
+        "text-[0.8rem]"
+      ],
+      "count": 5,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/field.tsx",
+      "matches": [
+        "dark:has-data-checked:bg-primary/10",
+        "dark:has-data-checked:border-primary/20"
+      ],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/input-group.tsx",
+      "matches": [
+        "dark:bg-input/30",
+        "dark:bg-transparent",
+        "dark:disabled:bg-transparent",
+        "dark:has-disabled:bg-input/80"
+      ],
+      "count": 6,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/ui/input-group.tsx",
+      "matches": [
+        "rounded-[calc(var(--radius)-3px)]"
+      ],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/input.tsx",
+      "matches": [
+        "dark:aria-invalid:border-destructive/50",
+        "dark:aria-invalid:ring-destructive/40",
+        "dark:bg-input/30",
+        "dark:disabled:bg-input/80"
+      ],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/select.tsx",
+      "matches": [
+        "dark:aria-invalid:border-destructive/50",
+        "dark:aria-invalid:ring-destructive/40",
+        "dark:bg-input/30",
+        "dark:hover:bg-input/50"
+      ],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-raw-palette",
+      "file": "@/components/ui/sheet.tsx",
+      "matches": [
+        "bg-black/10"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-inline-style",
+      "file": "@/components/ui/sidebar.tsx",
+      "matches": [
+        "style={ { \"--sidebar-width\": SIDEBAR_WIDTH, \"--sidebar-width-icon\": SIDEBAR_WIDTH_ICON, ...style, } as React.CSSProperties }",
+        "style={ { \"--sidebar-width\": SIDEBAR_WIDTH_MOBILE, } as React.CSSProperties }",
+        "style={ { \"--skeleton-width\": width, } as React.CSSProperties }"
+      ],
+      "count": 3,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/ui/sidebar.tsx",
+      "matches": [
+        "after:w-[2px]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/switch.tsx",
+      "matches": [
+        "dark:aria-invalid:border-destructive/50",
+        "dark:aria-invalid:ring-destructive/40",
+        "dark:data-checked:bg-primary-foreground",
+        "dark:data-unchecked:bg-foreground",
+        "dark:data-unchecked:bg-input/80"
+      ],
+      "count": 5,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/ui/tabs.tsx",
+      "matches": [
+        "h-[calc(100%-1px)]",
+        "p-[3px]"
+      ],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/tabs.tsx",
+      "matches": [
+        "dark:data-active:bg-input/30",
+        "dark:data-active:border-input",
+        "dark:data-active:text-foreground",
+        "dark:hover:text-foreground",
+        "dark:text-muted-foreground"
+      ],
+      "count": 5,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/textarea.tsx",
+      "matches": [
+        "dark:aria-invalid:border-destructive/50",
+        "dark:aria-invalid:ring-destructive/40",
+        "dark:bg-input/30",
+        "dark:disabled:bg-input/80"
+      ],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-inline-style",
+      "file": "@/components/ui/toggle-group.tsx",
+      "matches": [
+        "style={{ \"--gap\": spacing } as React.CSSProperties}"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/ui/toggle-group.tsx",
+      "matches": [
+        "gap-[--spacing(var(--gap))]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-manual-dark-colors",
+      "file": "@/components/ui/toggle.tsx",
+      "matches": [
+        "dark:aria-invalid:ring-destructive/40"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/ui/toggle.tsx",
+      "matches": [
+        "rounded-[min(var(--radius-md),12px)]",
+        "text-[0.8rem]"
+      ],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/components/ui/tooltip.tsx",
+      "matches": [
+        "rounded-[2px]",
+        "translate-y-[calc(-50%-2px)]"
+      ],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/account/account.tsx",
+      "matches": [
+        "space-y-2"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/account/account.tsx",
+      "matches": [
+        "max-w-[56ch]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/account/profile.tsx",
+      "matches": [
+        "space-y-1",
+        "space-y-2",
+        "space-y-3"
+      ],
+      "count": 6,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/account/settings.tsx",
+      "matches": [
+        "max-w-[60ch]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/admin/gallery.tsx",
+      "matches": [
+        "max-w-[64ch]",
+        "sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"
+      ],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/admin/gallery.tsx",
+      "matches": [
+        "space-y-2"
+      ],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/apps/app-card.stories.tsx",
+      "matches": [
+        "w-[22rem]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Story-only viewport evidence predates a named evidence-layout variant; the exact-match ratchet prevents expansion.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/apps/app-details.tsx",
+      "matches": [
+        "space-y-2",
+        "space-y-3",
+        "space-y-4"
+      ],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/apps/app-dev.tsx",
+      "matches": [
+        "max-w-[1440px]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/apps/app-dev.tsx",
+      "matches": [
+        "space-y-2"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-inline-style",
+      "file": "@/features/apps/app-identity.tsx",
+      "matches": [
+        "style={identityStyle(app.name)}"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/apps/app-members.tsx",
+      "matches": [
+        "max-w-[65ch]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/apps/app-recovery.tsx",
+      "matches": [
+        "space-y-2",
+        "space-y-3"
+      ],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/apps/create-app.tsx",
+      "matches": [
+        "space-y-2"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/community/leaderboard.tsx",
+      "matches": [
+        "space-y-1",
+        "space-y-2",
+        "space-y-3"
+      ],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/community/leaderboard.tsx",
+      "matches": [
+        "grid-cols-[1fr_auto]",
+        "grid-cols-[auto_1fr_auto]"
+      ],
+      "count": 4,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/dev/dev-conversation.stories.tsx",
+      "matches": [
+        "w-[min(42rem,calc(100vw-2rem))]"
+      ],
+      "count": 2,
+      "owner": "frontend-platform",
+      "reason": "Story-only viewport evidence predates a named evidence-layout variant; the exact-match ratchet prevents expansion.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/dev/dev-session.tsx",
+      "matches": [
+        "space-y-2"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/feedback/feedback.tsx",
+      "matches": [
+        "max-w-[60ch]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/platform/status.tsx",
+      "matches": [
+        "space-y-2"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/platform/status.tsx",
+      "matches": [
+        "max-w-[62ch]"
+      ],
+      "count": 1,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-space-utilities",
+      "file": "@/features/work/work.tsx",
+      "matches": [
+        "space-y-2",
+        "space-y-3"
+      ],
+      "count": 5,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "expires": "2026-09-30"
+    },
+    {
+      "rule": "no-arbitrary-utilities",
+      "file": "@/features/work/work.tsx",
+      "matches": [
+        "grid-cols-[1fr_auto]"
+      ],
+      "count": 3,
+      "owner": "frontend-platform",
+      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
       "expires": "2026-09-30"
     }
   ],

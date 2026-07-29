@@ -78,9 +78,9 @@ export function Work() {
   const isEmpty = snapshot && sessions.length === 0 && snapshot.proposals.length === 0 && snapshot.governance.length === 0
 
   return (
-    <main className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="work">
+    <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="work">
       <header className="flex flex-wrap items-start justify-between gap-4">
-        <div className="space-y-2"><h2 className="text-balance text-3xl font-semibold tracking-tight">Your work</h2><p className="text-base text-muted-foreground text-pretty">Sessions and proposals across the apps you build.</p></div>
+        <div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Your work</h1><p className="text-base text-muted-foreground text-pretty">Sessions and proposals across the apps you build.</p></div>
         <Button aria-label="Refresh your work" onClick={() => setRefreshKey((value) => value + 1)} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button>
       </header>
       {sessionEventsState !== "connected" ? <p className="text-sm text-muted-foreground" role="status">{sessionEventsState === "connecting" ? "Connecting to live session updates." : sessionEventsState === "unavailable" ? "Live session updates are unavailable. This page will keep refreshing periodically." : "Live session updates are reconnecting. This page will keep refreshing periodically."}</p> : null}
@@ -90,7 +90,7 @@ export function Work() {
       {snapshot?.proposals.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Your proposals</h3>{snapshot.proposals.map((proposal) => <ProposalRow key={proposal.id} proposal={proposal} />)}</section> : null}
       {snapshot?.governance.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Governance proposals</h3>{snapshot.governance.map((proposal) => <GovernanceRow key={proposal.id} proposal={proposal} />)}</section> : null}
       {sessions.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Your sessions</h3>{sessions.map((session) => <SessionRow key={session.id} session={session} />)}</section> : null}
-    </main>
+    </div>
   )
 }
 

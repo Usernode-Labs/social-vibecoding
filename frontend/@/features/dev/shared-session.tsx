@@ -36,7 +36,7 @@ export function SharedSessionDetailContent({ children, session, slug }: { childr
   const sharedAt = formatSharedAt(session.shared_at)
   const linkedIssues = session.linked_issues || []
 
-  return <main className="isolate mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="shared-session-detail">
+  return <div className="isolate mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="shared-session-detail">
     <Button className="w-fit" render={<Link to={appDevPath(slug)} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />App Dev</Button>
     <header className="flex flex-col gap-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Shared Dev session</h1><p className="text-base text-muted-foreground text-pretty">Follow the work and join its session-scoped discussion.</p></header>
     <Card>
@@ -49,7 +49,7 @@ export function SharedSessionDetailContent({ children, session, slug }: { childr
       {session.staging_url ? <CardFooter><Button render={<a href={session.staging_url} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><PlatformIcon data-icon="inline-start" icon={Eye} />Open live preview</Button></CardFooter> : null}
     </Card>
     {children}
-  </main>
+  </div>
 }
 
 export function SharedSessionDetail() {
@@ -68,9 +68,9 @@ export function SharedSessionDetail() {
     return () => controller.abort()
   }, [id, slug])
 
-  if (error) return <main className="flex flex-1 items-center justify-center p-6" data-testid="shared-session-detail-error"><Alert className="max-w-md" variant="destructive"><AlertTitle>Shared session unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></main>
-  if (result === undefined) return <main className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-56 w-full" /><Skeleton className="h-28 w-full" /></main>
-  if (result.session === null) return <main className="flex flex-1 items-center justify-center p-6" data-testid="shared-session-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={RadioTower} /></EmptyMedia><EmptyTitle>Shared session not found</EmptyTitle><EmptyDescription>It may no longer be shared, may have been archived, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><Button render={<Link to={appDevPath(slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</Button></Empty></main>
+  if (error) return <div className="flex flex-1 items-center justify-center p-6" data-testid="shared-session-detail-error"><Alert className="max-w-md" variant="destructive"><AlertTitle>Shared session unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>
+  if (result === undefined) return <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-56 w-full" /><Skeleton className="h-28 w-full" /></div>
+  if (result.session === null) return <div className="flex flex-1 items-center justify-center p-6" data-testid="shared-session-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={RadioTower} /></EmptyMedia><EmptyTitle>Shared session not found</EmptyTitle><EmptyDescription>It may no longer be shared, may have been archived, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><Button render={<Link to={appDevPath(slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</Button></Empty></div>
   return <SharedSessionDetailContent session={result.session} slug={slug}>
     <TopicDiscussionTranscript slug={slug} threadRef={id} threadType="session" />
   </SharedSessionDetailContent>

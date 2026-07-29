@@ -41,7 +41,9 @@ authority under `frontend/design-system`, and the portable
 - `AGENTS.md` — repository-wide migration boundaries.
 - `frontend/AGENTS.md` — frontend-specific working rules.
 - `frontend/design-system/tokens.json` — canonical token source.
-- `frontend/design-system/components.json` — component ownership and contracts.
+- `frontend/design-system.manifest.json` →
+  `frontend/design-system/authority.json` →
+  `frontend/design-system/catalog.json` — component ownership and contracts.
 - `frontend/registry.json` — owned shadcn registry index.
 - `agent-skills/ui-development/SKILL.md` — portable agent workflow.
 - `docs/candidate-a-shell-continuation.md` — continuation decision and remaining

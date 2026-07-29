@@ -94,9 +94,9 @@ export function NotificationsContent({ data, error, inviteError, loadMoreError, 
     return [...buckets.values()]
   }, [bellItems])
 
-  return <main className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="notifications">
+  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="notifications">
     <header className="flex flex-wrap items-start justify-between gap-4">
-      <div className="flex flex-col gap-2"><h2 className="text-balance text-3xl font-semibold tracking-tight">Notifications</h2><p className="text-base text-muted-foreground text-pretty">Mentions, replies, votes, and invitations. Finished Dev work stays in Your work.</p></div>
+      <div className="flex flex-col gap-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Notifications</h1><p className="text-base text-muted-foreground text-pretty">Mentions, replies, votes, and invitations. Finished Dev work stays in Your work.</p></div>
       <div className="flex gap-2">
         <Button aria-label="Refresh notifications" onClick={onRefresh} size="icon" type="button" variant="outline"><PlatformIcon icon={RefreshCw} /></Button>
         <Button disabled={!unread || markingAll || isProductionReadOnlyReview} onClick={onMarkAll} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={CheckCheck} />Mark all read</Button>
@@ -111,7 +111,7 @@ export function NotificationsContent({ data, error, inviteError, loadMoreError, 
     {data && !bellItems.length && !data.invites.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={Bell} /></EmptyMedia><EmptyTitle>You are all caught up</EmptyTitle><EmptyDescription>New messages and community activity will appear here. Finished sessions are shown in Your work.</EmptyDescription></EmptyHeader></Empty> : null}
     {groups.map((group) => <NotificationGroup group={group} key={group[0]?.appId ?? "general"} onOpen={onOpen} />)}
     {data?.hasMore ? <div className="flex flex-col items-center gap-2"><Button disabled={loadingMore} onClick={onLoadMore} type="button" variant="outline"><PlatformIcon className={loadingMore ? "animate-spin" : undefined} data-icon="inline-start" icon={RefreshCw} />{loadingMore ? "Loading older notifications…" : "Show older notifications"}</Button>{loadMoreError ? <p className="text-sm text-destructive" role="status">{loadMoreError}</p> : null}</div> : null}
-  </main>
+  </div>
 }
 
 function InviteSection({ invites, mutatingInvite, onInviteAction }: { invites: PendingInvite[]; mutatingInvite: string | null; onInviteAction: (invite: PendingInvite, action: "accept" | "decline") => void }) {

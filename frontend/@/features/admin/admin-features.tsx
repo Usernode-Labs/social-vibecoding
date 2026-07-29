@@ -97,9 +97,9 @@ export function AdminFeaturesPage() {
     }
   }, [status])
 
-  return <main className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-features">
+  return <div className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-features">
     <header className="flex flex-wrap items-start justify-between gap-4">
-      <div className="space-y-2"><h2 className="text-balance text-3xl font-semibold tracking-tight">Submitted features</h2><p className="text-base text-muted-foreground text-pretty">Cross-app general feature requests, ranked by community support. Governance proposals and moderation actions remain in the established console.</p></div>
+      <div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Submitted features</h1><p className="text-base text-muted-foreground text-pretty">Cross-app general feature requests, ranked by community support. Governance proposals and moderation actions remain in the established console.</p></div>
       {state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button> : null}
     </header>
     {state.kind === "loading" ? <div className="space-y-3"><Skeleton className="h-10 w-40" /><Skeleton className="h-36 w-full" /><Skeleton className="h-36 w-full" /></div> : null}
@@ -121,7 +121,7 @@ export function AdminFeaturesPage() {
       <p className="text-sm text-muted-foreground">{state.total} server-ranked {state.total === 1 ? "request" : "requests"}.</p>
       <SubmittedFeaturesList features={state.features} />
     </> : null}
-  </main>
+  </div>
 }
 
 export function SubmittedFeaturesList({ features }: { features: SubmittedFeature[] }) {

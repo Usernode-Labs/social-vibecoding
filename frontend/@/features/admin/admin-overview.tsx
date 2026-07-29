@@ -58,16 +58,16 @@ export function AdminOverviewPage() {
     return () => { cancelled = true; controller.abort() }
   }, [reloadToken])
 
-  return <main className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-overview">
+  return <div className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-overview">
     <header className="flex flex-wrap items-start justify-between gap-4">
-      <div className="space-y-2"><h2 className="text-balance text-3xl font-semibold tracking-tight">Operations</h2><p className="text-base text-muted-foreground text-pretty">A read-only snapshot of platform health. Changes remain in the established admin console.</p></div>
+      <div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Operations</h1><p className="text-base text-muted-foreground text-pretty">A read-only snapshot of platform health. Changes remain in the established admin console.</p></div>
       {state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button> : null}
     </header>
     {state.kind === "loading" ? <Loading /> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Operations unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "ready" ? <AdminOperationsOverview user={state.user} overview={state.overview} /> : null}
-  </main>
+  </div>
 }
 
 function Loading() {

@@ -46,18 +46,18 @@ export function Login() {
 
   if (mode === "wallet") {
     return (
-      <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
+      <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
         <WalletAccess onAuthenticated={authenticated} onDetected={walletReady} onUnavailable={showPassword} />
-      </main>
+      </div>
     )
   }
 
   if (mode === "recovery") {
     return (
-      <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
+      <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
         <Card className="w-full max-w-sm">
           <CardHeader>
-            <CardTitle>Reset your password</CardTitle>
+            <CardTitle><h1>Reset your password</h1></CardTitle>
             <CardDescription>Social Vibecoding accounts do not store an email address.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
@@ -80,15 +80,15 @@ export function Login() {
             </Button>
           </CardContent>
         </Card>
-      </main>
+      </div>
     )
   }
 
   return (
-    <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
+    <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Welcome back</CardTitle>
+          <CardTitle><h1>Welcome back</h1></CardTitle>
           <CardDescription>Log in to Social Vibecoding.</CardDescription>
         </CardHeader>
         <CardContent>
@@ -131,6 +131,6 @@ export function Login() {
           </p>
         </CardContent>
       </Card>
-    </main>
+    </div>
   )
 }

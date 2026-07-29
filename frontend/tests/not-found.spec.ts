@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test"
-import AxeBuilder from "@axe-core/playwright"
+
+import { expectAccessibleShellStructure } from "./accessibility"
 
 test("turns an unmatched React deep link into a recoverable page", async ({ page }) => {
   await page.goto("/react/no-such-route")
@@ -9,6 +10,5 @@ test("turns an unmatched React deep link into a recoverable page", async ({ page
 
 test("has no critical or serious accessibility violations", async ({ page }) => {
   await page.goto("/react/no-such-route")
-  const results = await new AxeBuilder({ page }).analyze()
-  expect(results.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([])
+  await expectAccessibleShellStructure(page)
 })

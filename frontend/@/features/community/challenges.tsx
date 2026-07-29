@@ -237,14 +237,14 @@ export function Challenges() {
     return () => { cancelled = true; controller.abort() }
   }, [])
 
-  return <main className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="challenges">
+  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="challenges">
     <header className="space-y-2">
-      <h2 className="text-balance text-3xl font-semibold tracking-tight">{data?.season?.name || "Challenges"}</h2>
+      <h1 className="text-balance text-3xl font-semibold tracking-tight">{data?.season?.name || "Challenges"}</h1>
       <p className="max-w-[60ch] text-pretty text-base/7 text-muted-foreground sm:text-sm/6">Build, participate, and earn points this season.</p>
     </header>
     {error ? <Alert variant="destructive"><AlertTitle>Challenges unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {!data && !error ? <div className="space-y-3"><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /></div> : null}
     {data ? <ChallengeFeed snapshot={data} /> : null}
     {data?.entries.length ? <section className="space-y-3"><h3 className="text-xl font-semibold">Season leaderboard</h3>{data.entries.map((entry) => <Card key={entry.rank} size="sm"><CardHeader className="grid-cols-[auto_1fr_auto] gap-3"><span className="tabular-nums text-muted-foreground">#{entry.rank}</span><CardTitle>{entry.display_name || `Participant ${entry.participant_id}`}</CardTitle><Badge><PlatformIcon data-icon="inline-start" icon={Award} size="xs" />{pointsFormatter.format(Number(entry.total_points || 0))}</Badge></CardHeader></Card>)}</section> : null}
-  </main>
+  </div>
 }

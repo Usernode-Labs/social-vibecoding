@@ -145,7 +145,7 @@ export function AppDetails() {
   }
 
   return (
-    <main className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-details">
+    <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-details">
       <Button className="w-fit" render={<Link to="/" />} variant="ghost">
         <PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to apps
       </Button>
@@ -157,7 +157,7 @@ export function AppDetails() {
             <AppIdentity app={app} />
             <div className="min-w-0 space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-balance text-2xl tracking-tight">{app.name}</CardTitle>
+                <CardTitle className="text-balance text-2xl tracking-tight"><h1>{app.name}</h1></CardTitle>
                 <Badge variant={app.status === "running" ? "secondary" : "outline"}>{app.status.replaceAll("_", " ")}</Badge>
               </div>
               <CardDescription className="text-base text-pretty">{app.tagline || app.description || "Open this app in Usernode."}</CardDescription>
@@ -258,6 +258,6 @@ export function AppDetails() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </main>
+    </div>
   )
 }

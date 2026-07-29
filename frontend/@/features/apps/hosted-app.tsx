@@ -122,16 +122,17 @@ export function HostedApp() {
 
   const source = useMemo(() => app ? iframeSource(app, token, innerPath) : null, [app, token, innerPath])
   useDevConsoleFrame(slug, iframe, Boolean(source && !offline), frameRevision)
-  if (error) return <main className="flex flex-1 items-center justify-center p-6"><Alert className="max-w-md" variant="destructive"><AlertTitle>App unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></main>
-  if (!app) return <main className="flex flex-1 p-4"><Skeleton className="h-full w-full" /></main>
-  if (app.self_hosted) return <main className="flex flex-1 items-center justify-center p-6"><Alert className="max-w-md"><AlertTitle>{app.name} opens in Dev</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">This platform app has no child-app host.<Button render={<a aria-label={`Open ${app.name} in Dev`} href={appHash(app.slug, "dev")} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open Dev</Button></AlertDescription></Alert></main>
-  if (app.status !== "running" || !app.url) return <main className="flex flex-1 items-center justify-center p-6"><Alert className="max-w-md"><AlertTitle>App is not ready</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">Current status: {app.status.replaceAll("_", " ")}.<Button render={<Link to={appDetailsPath(app.slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />App details</Button></AlertDescription></Alert></main>
+  if (error) return <div className="flex flex-1 items-center justify-center p-6"><Alert className="max-w-md" variant="destructive"><AlertTitle>App unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>
+  if (!app) return <div className="flex flex-1 p-4"><Skeleton className="h-full w-full" /></div>
+  if (app.self_hosted) return <div className="flex flex-1 items-center justify-center p-6"><Alert className="max-w-md"><AlertTitle>{app.name} opens in Dev</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">This platform app has no child-app host.<Button render={<a aria-label={`Open ${app.name} in Dev`} href={appHash(app.slug, "dev")} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open Dev</Button></AlertDescription></Alert></div>
+  if (app.status !== "running" || !app.url) return <div className="flex flex-1 items-center justify-center p-6"><Alert className="max-w-md"><AlertTitle>App is not ready</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">Current status: {app.status.replaceAll("_", " ")}.<Button render={<Link to={appDetailsPath(app.slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />App details</Button></AlertDescription></Alert></div>
   if (offline) return <OfflineNotice onRetry={retryHostedApp} />
-  if (!token) return <main className="flex flex-1 p-4"><Skeleton className="h-full w-full" /></main>
-  if (!source) return <main className="flex flex-1 items-center justify-center p-6"><Alert className="max-w-md" variant="destructive"><AlertTitle>Unsafe app destination</AlertTitle><AlertDescription>Return to the app details and try again.</AlertDescription></Alert></main>
+  if (!token) return <div className="flex flex-1 p-4"><Skeleton className="h-full w-full" /></div>
+  if (!source) return <div className="flex flex-1 items-center justify-center p-6"><Alert className="max-w-md" variant="destructive"><AlertTitle>Unsafe app destination</AlertTitle><AlertDescription>Return to the app details and try again.</AlertDescription></Alert></div>
 
   return (
-    <main className="isolate flex min-h-0 flex-1 bg-background" data-testid="hosted-app">
+    <div className="isolate flex min-h-0 flex-1 bg-background" data-testid="hosted-app">
+      <h1 className="sr-only">{app.name}</h1>
       {/* This exact cross-origin iframe contract is shared with the legacy shell.
           allow-same-origin is required for child-app session and token behavior. */}
       <iframe
@@ -144,6 +145,6 @@ export function HostedApp() {
         src={source}
         title={app.name}
       />
-    </main>
+    </div>
   )
 }

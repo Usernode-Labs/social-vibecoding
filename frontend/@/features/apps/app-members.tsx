@@ -185,9 +185,9 @@ export function AppMembers() {
     }
   }
 
-  return <main className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-members">
+  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-members">
     <Button className="w-fit" render={<Link to={appDetailsPath(slug)} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to app</Button>
-    <header className="flex flex-col gap-2"><h2 className="text-balance text-3xl font-semibold tracking-tight">Members and visibility</h2><p className="max-w-[65ch] text-base text-muted-foreground text-pretty">Review who can build this app, manage invitations, and propose changes to who can open it.</p></header>
+    <header className="flex flex-col gap-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Members and visibility</h1><p className="max-w-[65ch] text-base text-muted-foreground text-pretty">Review who can build this app, manage invitations, and propose changes to who can open it.</p></header>
     {state.kind === "loading" ? <MembersSkeleton /> : null}
     {state.kind === "not-found" ? <Empty data-testid="members-not-found"><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={UsersRound} /></EmptyMedia><EmptyTitle>Collaborators unavailable</EmptyTitle><EmptyDescription>This collaborators view is not available to this session.</EmptyDescription></EmptyHeader><Button render={<Link to="/" />} variant="outline">Back to apps</Button></Empty> : null}
     {state.kind === "forbidden" ? <Alert variant="destructive"><PlatformIcon icon={ShieldAlert} /><AlertTitle>Collaborator access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
@@ -230,5 +230,5 @@ export function AppMembers() {
     <AlertDialog onOpenChange={(open) => { if (!open && !removing) setRemoveTarget(null) }} open={removeTarget !== null}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{removeTarget ? memberAction(removeTarget, currentUser).title : "Update collaborator"}</AlertDialogTitle><AlertDialogDescription>{removeTarget ? memberAction(removeTarget, currentUser).description : ""}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel><AlertDialogAction disabled={removing || isProductionReadOnlyReview} onClick={() => void confirmRemoval()} type="button" variant="destructive"><PlatformIcon data-icon="inline-start" icon={removing ? LoaderCircle : UserMinus} className={removing ? "animate-spin" : undefined} />{removing ? "Updating…" : removeTarget?.status === "invited" ? "Revoke invite" : removeTarget?.userId === currentUser?.id ? "Leave app" : "Remove collaborator"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
-  </main>
+  </div>
 }

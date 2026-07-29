@@ -259,13 +259,13 @@ export function SessionSpecViewer() {
   const back = appDevSessionPath(slug, sessionId)
 
   return (
-    <main className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="session-spec">
+    <div className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="session-spec">
       <Button className="w-fit" render={<Link to={back} />} variant="ghost">
         <PlatformIcon data-icon="inline-start" icon={ArrowLeft} />
         Session
       </Button>
       <header className="space-y-2">
-        <h2 className="text-3xl font-semibold tracking-tight">Session spec</h2>
+        <h1 className="text-3xl font-semibold tracking-tight">Session spec</h1>
         <p className="text-muted-foreground">Inspect and share immutable planning versions produced by this Dev session.</p>
       </header>
       {error ? <Alert variant="destructive"><AlertTitle>Spec unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
@@ -288,7 +288,7 @@ export function SessionSpecViewer() {
           ) : null}
         </>
       ) : null}
-    </main>
+    </div>
   )
 }
 

@@ -86,10 +86,10 @@ export function NodeStatusPage() {
     return () => { cancelled = true; controller.abort(); window.clearInterval(interval) }
   }, [refreshKey])
 
-  return <main className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="node-status">
-    <header className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-2"><h2 className="text-balance text-3xl font-semibold tracking-tight">Node status</h2><p className="max-w-[56ch] text-base text-muted-foreground text-pretty">A read-only view of cached platform, node, and explorer health. It refreshes every two seconds.</p></div><Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button></header>
+  return <div className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="node-status">
+    <header className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Node status</h1><p className="max-w-[56ch] text-base text-muted-foreground text-pretty">A read-only view of cached platform, node, and explorer health. It refreshes every two seconds.</p></div><Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button></header>
     {state.kind === "loading" ? <div className="grid gap-4 sm:grid-cols-3"><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-56 sm:col-span-3" /></div> : null}
     {state.kind === "error" ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Status unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "ready" ? <NodeStatusContent snapshot={state.snapshot} /> : null}
-  </main>
+  </div>
 }

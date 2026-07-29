@@ -65,13 +65,13 @@ export function Profile() {
     setTokensRevealed(true)
   }
 
-  return <main className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="profile">
-    <header className="space-y-2"><h2 className="text-balance text-3xl font-semibold tracking-tight">Profile</h2><p className="text-base text-muted-foreground text-pretty">Your Usernode points, rank, and token allocation.</p></header>
+  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="profile">
+    <header className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Profile</h1><p className="text-base text-muted-foreground text-pretty">Your Usernode points, rank, and token allocation.</p></header>
     {state.kind === "loading" ? <div className="space-y-3"><Skeleton className="h-40 w-full" /><Skeleton className="h-32 w-full" /></div> : null}
     {state.kind === "unavailable" ? <Alert><PlatformIcon icon={ShieldCheck} /><AlertTitle>Profile unavailable</AlertTitle><AlertDescription>Open Usernode and finish registration to see your points and rank here.</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Profile unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "ready" ? <ProfileDetails history={state.history} ranking={state.ranking} seasonName={state.seasonName} tokensRevealed={tokensRevealed} onReveal={revealTokens} /> : null}
-  </main>
+  </div>
 }
 
 function ProfileDetails({ ranking, seasonName, history, tokensRevealed, onReveal }: { ranking: ProfileRanking; seasonName?: string; history: HistoryState; tokensRevealed: boolean; onReveal: () => void }) {

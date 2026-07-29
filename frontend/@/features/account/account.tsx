@@ -40,8 +40,8 @@ export function Account() {
     if (device.kind === "ready") void openNativeScreen(device.info, "settings")
   }
 
-  return <main className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="account">
-    <header className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-2"><h2 className="text-balance text-3xl font-semibold tracking-tight">Account</h2><p className="max-w-[56ch] text-base text-muted-foreground text-pretty">Your Usernode profile, device, and wallet status.</p></div><Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button></header>
+  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="account">
+    <header className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Account</h1><p className="max-w-[56ch] text-base text-muted-foreground text-pretty">Your Usernode profile, device, and wallet status.</p></div><Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button></header>
     <Card><CardHeader><div className="flex items-start gap-2"><PlatformIcon icon={UserRound} /><div><CardTitle>Profile and rewards</CardTitle><CardDescription>Points, rank, allocation, and completed challenge history are available in Usernode.</CardDescription></div></div></CardHeader><CardContent className="text-base text-muted-foreground sm:text-sm">This profile requires the native bridge to identify your participant record. It never derives or creates a participant identifier in the web shell.</CardContent><CardFooter><Button render={<Link to="/account/profile" />} size="sm" variant="outline">View profile<PlatformIcon data-icon="inline-end" icon={ArrowRight} /></Button></CardFooter></Card>
     <NativeDeviceSummary onOpenNativeSettings={openSettings} state={device} />
     <Card>
@@ -51,5 +51,5 @@ export function Account() {
       <CardContent className="text-base text-muted-foreground sm:text-sm">This is separate from your device and wallet. It never reads a bridge capability or exposes an operator action.</CardContent>
       <CardFooter><Button render={<Link to="/node-status" />} size="sm" variant="outline">View node status<PlatformIcon data-icon="inline-end" icon={ArrowRight} /></Button></CardFooter>
     </Card>
-  </main>
+  </div>
 }

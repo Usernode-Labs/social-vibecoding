@@ -85,9 +85,9 @@ export function CreateApp() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to create this app.") } finally { setSubmitting(false) }
   }
 
-  return <main className="isolate mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="create-app">
+  return <div className="isolate mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="create-app">
     <Button className="w-fit" render={<Link to="/" />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to apps</Button>
-    <header className="space-y-2"><h2 className="text-balance text-3xl font-semibold tracking-tight">Create an app</h2><p className="text-base text-muted-foreground text-pretty">Start a new app, or import a GitHub repository that the platform bot can build.</p></header>
+    <header className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Create an app</h1><p className="text-base text-muted-foreground text-pretty">Start a new app, or import a GitHub repository that the platform bot can build.</p></header>
     {isProductionReadOnlyReview ? <Alert><AlertTitle>Production review mode</AlertTitle><AlertDescription>App creation is disabled while this local React workspace reviews production data.</AlertDescription></Alert> : null}
     {canCreate === false && !isProductionReadOnlyReview ? <Alert><AlertTitle>App creation unavailable</AlertTitle><AlertDescription>Sign in with an account that has an available app-creation slot.</AlertDescription></Alert> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Could not create app</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
@@ -105,5 +105,5 @@ export function CreateApp() {
         <Button disabled={disabled || !name.trim() || (mode === "import" && !access)} type="submit"><PlatformIcon data-icon="inline-start" icon={submitting ? LoaderCircle : Plus} className={submitting ? "animate-spin" : undefined} />{submitting ? "Creating…" : mode === "import" ? "Import app" : "Create app"}</Button>
       </FieldGroup></form>
     </CardContent></Card>
-  </main>
+  </div>
 }

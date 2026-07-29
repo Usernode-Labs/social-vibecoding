@@ -71,8 +71,20 @@ export function scanStyleFiles(frontendRoot, fileNames) {
 }
 
 export function governedStyleFiles(frontendRoot) {
-  const manifest = JSON.parse(fs.readFileSync(path.join(frontendRoot, "design-system.manifest.json"), "utf8"))
-  return [...new Set(manifest.patterns.map((pattern) => path.join(frontendRoot, "@", pattern.module.slice(2))))]
+  const roots = [
+    path.join(frontendRoot, "@", "components"),
+    path.join(frontendRoot, "@", "features"),
+  ]
+  const files = []
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const fileName = path.join(directory, entry.name)
+      if (entry.isDirectory()) visit(fileName)
+      else if (entry.isFile() && /\.(?:ts|tsx)$/.test(entry.name)) files.push(fileName)
+    }
+  }
+  for (const root of roots) visit(root)
+  return files.sort()
 }
 
 export function applyStyleExceptions(frontendRoot, violations) {

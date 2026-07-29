@@ -8,7 +8,7 @@ function identityStyle(name: string): CSSProperties {
     hash = (hash * 31 + character.charCodeAt(0)) >>> 0
   }
   const hue = hash % 360
-  return { backgroundColor: `hsl(${hue} 45% 22%)`, color: `hsl(${hue} 70% 70%)` }
+  return { backgroundColor: `hsl(${hue} 45% 18%)`, color: `hsl(${hue} 70% 92%)` }
 }
 
 export function AppIdentity({ app }: { app: AppRecord }) {
