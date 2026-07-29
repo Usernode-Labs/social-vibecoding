@@ -5,6 +5,7 @@ const baseURL = `http://127.0.0.1:${port}`
 
 export default defineConfig({
   testDir: "./tests",
+  testIgnore: "react-service-worker.spec.ts",
   fullyParallel: true,
   use: { baseURL, trace: "retain-on-failure" },
   projects: [

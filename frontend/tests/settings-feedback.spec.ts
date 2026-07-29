@@ -59,6 +59,45 @@ test("makes the native-settings boundary explicit in a regular browser", async (
 })
 
 test("ends the web session after explicit confirmation", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        controller: {
+          scriptURL: "http://127.0.0.1/react/react-sw.js",
+          postMessage(message: unknown, ports: MessagePort[]) {
+            const type = (message as { type?: string })?.type
+            if (type === "clear-react-session-cache") {
+              localStorage.setItem("logout-cache-message", JSON.stringify(message))
+              localStorage.setItem("logout-cache-cleared-at", "101")
+              ports[0]?.postMessage({
+                ok: true,
+                type,
+                version: "v1",
+                buildRevision: "__USERNODE_REACT_SHELL_BUILD_REVISION__",
+                clearedAt: 101,
+              })
+            } else if (type === "get-react-shell-status") {
+              ports[0]?.postMessage({
+                ok: true,
+                version: "v1",
+                buildRevision: "__USERNODE_REACT_SHELL_BUILD_REVISION__",
+                scope: `${location.origin}/react/`,
+                cacheName: "usernode-react-shell-v1-__USERNODE_REACT_SHELL_BUILD_REVISION__",
+                cacheReady: true,
+                bootAssetsReady: true,
+                bootAssets: ["/react/"],
+                bootAssetCount: 1,
+                missingBootAssets: [],
+                retainedCaches: [],
+                lastSessionClearAt: Number(localStorage.getItem("logout-cache-cleared-at")),
+              })
+            }
+          },
+        },
+      },
+    })
+  })
   let logoutRequests = 0
   await page.route("**/api/auth/logout", async (route) => { logoutRequests += 1; await route.fulfill({ json: { ok: true } }) })
   await page.goto("/react/settings")
@@ -66,7 +105,130 @@ test("ends the web session after explicit confirmation", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Log out of Social Vibecoding?" })).toBeVisible()
   await page.getByRole("button", { name: "Log out" }).last().click()
   await expect.poll(() => logoutRequests).toBe(1)
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("logout-cache-message"))).toBe(
+    JSON.stringify({ type: "clear-react-session-cache" })
+  )
   await expect(page).toHaveURL(/\/react\/login$/)
+})
+
+test("logs out on an uncontrolled first load after directly verifying user cache deletion", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { controller: null },
+    })
+  })
+  await page.route("**/api/auth/logout", (route) => route.fulfill({ json: { ok: true } }))
+  await page.goto("/react/settings")
+  await page.evaluate(async () => {
+    await caches.open("usernode-api-uncontrolled")
+  })
+
+  await page.getByRole("button", { name: "Log out" }).click()
+  await page.getByRole("button", { name: "Log out" }).last().click()
+
+  await expect(page).toHaveURL(/\/react\/login$/)
+  await expect.poll(() => page.evaluate(async () =>
+    (await caches.keys()).filter((name) => name.startsWith("usernode-api-"))
+  )).toEqual([])
+})
+
+test("moves to a signed-out cleanup boundary when the worker returns an invalid acknowledgment", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        controller: {
+          scriptURL: "http://127.0.0.1/react/react-sw.js",
+          postMessage(_message: unknown, ports: MessagePort[]) {
+            ports[0]?.postMessage({ ok: true })
+          },
+        },
+      },
+    })
+  })
+  await page.route("**/api/auth/logout", (route) => route.fulfill({ json: { ok: true } }))
+  await page.goto("/react/settings")
+
+  await page.getByRole("button", { name: "Log out" }).click()
+  await page.getByRole("button", { name: "Log out" }).last().click()
+
+  await expect(page).toHaveURL(/\/react\/login\?cleanup=pending$/)
+  await expect(page.getByRole("heading", { name: "Finish signing out" })).toBeVisible()
+  await expect(page.getByRole("alert")).toContainText("Clear offline session data before signing in again")
+  await expect(page.getByLabel("Username")).toHaveCount(0)
+})
+
+test("retries pending local cleanup before allowing another sign-in", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("usernode-session-cleanup-pending-v1", "101")
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: {
+        controller: {
+          scriptURL: "http://127.0.0.1/react/react-sw.js",
+          postMessage(message: unknown, ports: MessagePort[]) {
+            const type = (message as { type?: string })?.type
+            if (type === "clear-react-session-cache") {
+              localStorage.setItem("logout-cache-cleared-at", "202")
+              ports[0]?.postMessage({
+                ok: true,
+                type,
+                version: "v1",
+                buildRevision: "__USERNODE_REACT_SHELL_BUILD_REVISION__",
+                clearedAt: 202,
+              })
+            } else if (type === "get-react-shell-status") {
+              ports[0]?.postMessage({
+                ok: true,
+                version: "v1",
+                buildRevision: "__USERNODE_REACT_SHELL_BUILD_REVISION__",
+                scope: `${location.origin}/react/`,
+                cacheName: "usernode-react-shell-v1-__USERNODE_REACT_SHELL_BUILD_REVISION__",
+                cacheReady: true,
+                bootAssetsReady: true,
+                bootAssets: ["/react/"],
+                bootAssetCount: 1,
+                missingBootAssets: [],
+                retainedCaches: [],
+                lastSessionClearAt: 202,
+              })
+            }
+          },
+        },
+      },
+    })
+  })
+
+  await page.goto("/react/login?cleanup=pending")
+  await expect(page.getByRole("heading", { name: "Finish signing out" })).toBeVisible()
+  await page.getByRole("button", { name: "Finish cleanup" }).click()
+
+  await expect(page.getByRole("heading", { name: "Finish signing out" })).toHaveCount(0)
+  await expect.poll(() =>
+    page.evaluate(() => localStorage.getItem("usernode-session-cleanup-pending-v1"))
+  ).toBeNull()
+})
+
+test("fails closed and recovers when Web Storage is unavailable", async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "localStorage", {
+      configurable: true,
+      get() {
+        throw new DOMException("Storage is unavailable", "SecurityError")
+      },
+    })
+    Object.defineProperty(navigator, "serviceWorker", {
+      configurable: true,
+      value: { controller: null },
+    })
+  })
+
+  await page.goto("/react/login")
+  await expect(page.getByRole("heading", { name: "Finish signing out" })).toBeVisible()
+  await page.getByRole("button", { name: "Finish cleanup" }).click()
+
+  await expect(page.getByRole("heading", { name: "Finish signing out" })).toHaveCount(0)
 })
 
 test("loads and saves the web-owned platform preferences", async ({ page }) => {
@@ -195,9 +357,23 @@ test("routes an unread completion from the shared event socket to a background n
   })
   await page.goto("/react/settings")
 
+  await expect.poll(() => page.evaluate(() => {
+    const sockets = (window as typeof window & {
+      __notificationSockets: Array<{ onmessage: ((event: { data: string }) => void) | null }>
+    }).__notificationSockets
+    return sockets.some((socket) => typeof socket.onmessage === "function")
+  })).toBe(true)
+
   await page.evaluate(() => {
-    const sockets = (window as typeof window & { __notificationSockets: Array<{ emit: (payload: unknown) => void }> }).__notificationSockets
-    sockets[0]?.emit({
+    const sockets = (window as typeof window & {
+      __notificationSockets: Array<{
+        emit: (payload: unknown) => void
+        onmessage: ((event: { data: string }) => void) | null
+      }>
+    }).__notificationSockets
+    const socket = sockets.find((candidate) => typeof candidate.onmessage === "function")
+    if (!socket) throw new Error("Notification event socket was not ready")
+    socket.emit({
       type: "notification_new",
       notification: {
         id: 91,

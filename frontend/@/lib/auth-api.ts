@@ -1,6 +1,80 @@
 import { maskAdminIdentity } from "@/lib/admin-preview"
+import { isExpectedReactShellWorkerStatus } from "@/lib/react-worker-status-contract"
+import { advanceWebSessionEpoch } from "@/lib/session-boundary"
+
+const SESSION_CLEANUP_PENDING_KEY = "usernode-session-cleanup-pending-v1"
+const SESSION_CLEANUP_STATE_EVENT = "usernode:session-cleanup-state"
+let memorySessionCleanupState: "clear" | "pending" | "unknown" = "unknown"
+
+function notifySessionCleanupState() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SESSION_CLEANUP_STATE_EVENT))
+  }
+}
+
+function sessionCleanupStorage() {
+  if (typeof window === "undefined") return null
+  try {
+    return window.localStorage
+  } catch {
+    return null
+  }
+}
+
+function markSessionCleanupPending() {
+  memorySessionCleanupState = "pending"
+  try {
+    sessionCleanupStorage()?.setItem(SESSION_CLEANUP_PENDING_KEY, String(Date.now()))
+  } catch {
+    // The in-memory state keeps this document fail-closed when Web Storage is
+    // unavailable in a hardened or ephemeral WebView.
+  }
+  notifySessionCleanupState()
+}
+
+function clearSessionCleanupPending() {
+  memorySessionCleanupState = "clear"
+  try {
+    sessionCleanupStorage()?.removeItem(SESSION_CLEANUP_PENDING_KEY)
+  } catch {
+    // A successful cache cleanup is authoritative for this document even when
+    // the browser refuses persistent Web Storage.
+  }
+  notifySessionCleanupState()
+}
+
+export function hasPendingSessionCleanup() {
+  if (memorySessionCleanupState === "pending") return true
+  const storage = sessionCleanupStorage()
+  if (!storage) return memorySessionCleanupState !== "clear"
+  try {
+    return storage.getItem(SESSION_CLEANUP_PENDING_KEY) !== null
+  } catch {
+    return memorySessionCleanupState !== "clear"
+  }
+}
+
+export function subscribeSessionCleanup(listener: () => void) {
+  if (typeof window === "undefined") return () => {}
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === null || event.key === SESSION_CLEANUP_PENDING_KEY) listener()
+  }
+  window.addEventListener("storage", onStorage)
+  window.addEventListener(SESSION_CLEANUP_STATE_EVENT, listener)
+  return () => {
+    window.removeEventListener("storage", onStorage)
+    window.removeEventListener(SESSION_CLEANUP_STATE_EVENT, listener)
+  }
+}
+
+function requireCompletedSessionCleanup() {
+  if (hasPendingSessionCleanup()) {
+    throw new Error("Finish clearing local session data before signing in again.")
+  }
+}
 
 export async function loginWithPassword(input: { username: string; password: string }) {
+  requireCompletedSessionCleanup()
   const response = await fetch("/api/auth/login", {
     method: "POST",
     credentials: "same-origin",
@@ -56,6 +130,7 @@ export async function loginWithWallet(input: {
   challenge: string
   signature: string
 }) {
+  requireCompletedSessionCleanup()
   const response = await fetch("/api/auth/wallet-verify", {
     method: "POST",
     credentials: "same-origin",
@@ -95,6 +170,7 @@ async function walletAccountRequest(
   path: "/api/auth/wallet-link-login" | "/api/auth/wallet-register",
   input: { username: string; password: string; pubkey: string }
 ) {
+  requireCompletedSessionCleanup()
   const response = await fetch(path, {
     method: "POST",
     credentials: "same-origin",
@@ -113,20 +189,118 @@ export function registerWithWallet(input: { username: string; password: string; 
   return walletAccountRequest("/api/auth/wallet-register", input)
 }
 
-async function clearServiceWorkerApiCache() {
-  const controller = navigator.serviceWorker?.controller
-  if (!controller) return
-  await new Promise<void>((resolve) => {
-    const timer = window.setTimeout(resolve, 1000)
-    try {
-      const channel = new MessageChannel()
-      channel.port1.onmessage = () => { window.clearTimeout(timer); resolve() }
-      controller.postMessage({ type: "clear-api-cache" }, [channel.port2])
-    } catch {
+function logoutCacheMessage(controller: ServiceWorker) {
+  const path = new URL(controller.scriptURL, window.location.origin).pathname
+  return path.endsWith("/react-sw.js") ? "clear-react-session-cache" : "clear-api-cache"
+}
+
+type ReactSessionClearReply = {
+  buildRevision: string
+  clearedAt: number
+  ok: true
+  type: "clear-react-session-cache"
+  version: string
+}
+
+function postServiceWorkerMessage(controller: ServiceWorker, type: string) {
+  return new Promise<unknown>((resolve, reject) => {
+    const channel = new MessageChannel()
+    const timer = window.setTimeout(
+      () => reject(new Error("The offline session cache did not acknowledge cleanup.")),
+      3000,
+    )
+    channel.port1.onmessage = (event) => {
       window.clearTimeout(timer)
-      resolve()
+      resolve(event.data)
+    }
+    try {
+      controller.postMessage({ type }, [channel.port2])
+    } catch (error) {
+      window.clearTimeout(timer)
+      reject(error)
     }
   })
+}
+
+function validReactClearReply(value: unknown): value is ReactSessionClearReply {
+  if (!value || typeof value !== "object") return false
+  const reply = value as Record<string, unknown>
+  return reply.ok === true
+    && reply.type === "clear-react-session-cache"
+    && typeof reply.version === "string"
+    && typeof reply.buildRevision === "string"
+    && typeof reply.clearedAt === "number"
+}
+
+async function clearCurrentServiceWorkerCache(expectedEpoch: number) {
+  const controller = navigator.serviceWorker?.controller
+  // An uncontrolled first load has no worker-owned authenticated cache to
+  // acknowledge. Direct CacheStorage deletion below remains authoritative.
+  if (!controller) return
+  const message = logoutCacheMessage(controller)
+  const reply = await postServiceWorkerMessage(controller, message)
+  if (message === "clear-react-session-cache") {
+    if (!validReactClearReply(reply)) {
+      throw new Error("The offline session cache returned an invalid cleanup acknowledgment.")
+    }
+    const status = await postServiceWorkerMessage(controller, "get-react-shell-status")
+    const expectedWorker = {
+      buildRevision: import.meta.env.VITE_REACT_SHELL_REVISION,
+      scope: new URL(import.meta.env.BASE_URL, window.location.origin).href,
+    }
+    if (
+      !isExpectedReactShellWorkerStatus(status, expectedWorker)
+      || status.buildRevision !== reply.buildRevision
+      || status.version !== reply.version
+      || status.lastSessionClearAt !== reply.clearedAt
+    ) {
+      throw new Error("The offline session cache did not confirm the cleanup transition.")
+    }
+    return
+  }
+  const row = reply && typeof reply === "object" ? reply as Record<string, unknown> : null
+  if (
+    row?.done !== true
+    || typeof row.epoch !== "number"
+    || !Number.isSafeInteger(row.epoch)
+    || row.epoch < expectedEpoch
+  ) {
+    throw new Error("The legacy offline cache returned an invalid cleanup acknowledgment.")
+  }
+}
+
+async function clearLegacyApiCaches() {
+  if (!("caches" in window)) return
+  const names = await window.caches.keys()
+  const userCaches = names.filter((name) => name.startsWith("usernode-api-"))
+  const deleted = await Promise.all(userCaches.map((name) => window.caches.delete(name)))
+  const failed = userCaches.filter((_, index) => !deleted[index])
+  const remaining = (await window.caches.keys()).filter((name) => name.startsWith("usernode-api-"))
+  if (failed.length || remaining.length) {
+    throw new Error("Cached session data could not be cleared from this browser.")
+  }
+}
+
+async function clearServiceWorkerSessionCache() {
+  // A /react/ client is controlled by the React-scoped worker, so the root
+  // worker never observes its logout POST. Advance the shared epoch before
+  // deletion so a delayed response in any legacy tab is ineligible to write
+  // after the boundary, then clear every legacy per-user cache family.
+  const epoch = await advanceWebSessionEpoch()
+  await Promise.all([
+    clearLegacyApiCaches(),
+    clearCurrentServiceWorkerCache(epoch),
+  ])
+}
+
+export async function retryPendingSessionCleanup() {
+  await clearServiceWorkerSessionCache()
+  clearSessionCleanupPending()
+}
+
+export type LogoutResult = {
+  cleanup: "complete" | "pending"
+  sessionEnded: true
 }
 
 /**
@@ -134,12 +308,33 @@ async function clearServiceWorkerApiCache() {
  * cache before another person can use this browser/WebView profile. This is
  * intentionally separate from the native Usernode wallet logout.
  */
-export async function logoutCurrentSession() {
+export async function logoutCurrentSession(): Promise<LogoutResult> {
+  let requestFailure: unknown = null
   try {
-    await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" })
-  } finally {
-    await clearServiceWorkerApiCache().catch(() => undefined)
+    const response = await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" })
+    if (!response.ok) throw new Error(`Logout failed (${response.status})`)
+  } catch (error) {
+    requestFailure = error
   }
+
+  let cleanupFailure: unknown = null
+  try {
+    await clearServiceWorkerSessionCache()
+    clearSessionCleanupPending()
+  } catch (error) {
+    cleanupFailure = error
+    markSessionCleanupPending()
+  }
+
+  if (requestFailure && cleanupFailure) {
+    throw new AggregateError(
+      [requestFailure, cleanupFailure],
+      "The web session ended with request and offline-cache cleanup failures.",
+    )
+  }
+  if (requestFailure) throw requestFailure
+  if (cleanupFailure) return { cleanup: "pending", sessionEnded: true }
+  return { cleanup: "complete", sessionEnded: true }
 }
 
 /**
@@ -148,6 +343,7 @@ export async function logoutCurrentSession() {
  * password handling, and the HttpOnly session cookie it issues on success.
  */
 export async function registerWithActivationCode(input: { code: string; username: string; password: string }) {
+  requireCompletedSessionCleanup()
   const response = await fetch("/api/auth/register", {
     method: "POST",
     credentials: "same-origin",

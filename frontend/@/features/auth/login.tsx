@@ -1,5 +1,5 @@
 import { ArrowLeft, KeyRound, LogIn, WalletCards } from "lucide-react"
-import { useCallback, useState, type FormEvent } from "react"
+import { useCallback, useState, useSyncExternalStore, type FormEvent } from "react"
 import { Link, useLocation, useNavigate } from "react-router-dom"
 
 import { PlatformIcon } from "@/components/platform-icon"
@@ -9,7 +9,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { WalletAccess } from "@/features/auth/wallet-access"
-import { loginWithPassword } from "@/lib/auth-api"
+import {
+  hasPendingSessionCleanup,
+  loginWithPassword,
+  retryPendingSessionCleanup,
+  subscribeSessionCleanup,
+} from "@/lib/auth-api"
 
 type LoginMode = "wallet" | "password" | "recovery"
 
@@ -20,6 +25,12 @@ export function Login() {
   const [walletDetected, setWalletDetected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
+  const cleanupPending = useSyncExternalStore(
+    subscribeSessionCleanup,
+    hasPendingSessionCleanup,
+    () => false,
+  )
+  const [cleanupError, setCleanupError] = useState<string | null>(null)
   const authenticated = useCallback(() => {
     navigate({ pathname: "/", hash: location.hash }, { replace: true })
   }, [location.hash, navigate])
@@ -42,6 +53,43 @@ export function Login() {
     } finally {
       setPending(false)
     }
+  }
+
+  async function finishSessionCleanup() {
+    if (pending) return
+    setPending(true)
+    setCleanupError(null)
+    try {
+      await retryPendingSessionCleanup()
+    } catch (cause) {
+      setCleanupError(cause instanceof Error ? cause.message : "Local session data could not be cleared.")
+    } finally {
+      setPending(false)
+    }
+  }
+
+  if (cleanupPending) {
+    return (
+      <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle><h1>Finish signing out</h1></CardTitle>
+            <CardDescription>Your web session has ended.</CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            <Alert variant={cleanupError ? "destructive" : "default"}>
+              <AlertTitle>Local cleanup required</AlertTitle>
+              <AlertDescription>
+                {cleanupError || "Clear offline session data before signing in again on this device."}
+              </AlertDescription>
+            </Alert>
+            <Button disabled={pending} onClick={() => void finishSessionCleanup()} type="button">
+              {pending ? "Clearing…" : "Finish cleanup"}
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   if (mode === "wallet") {

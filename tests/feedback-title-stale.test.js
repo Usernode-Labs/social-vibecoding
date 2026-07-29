@@ -105,6 +105,10 @@ function makeHarness({ previewTitle = 'Partial Title' } = {}) {
     // time — a permissive stub keeps the wiring alive; appData stays
     // undefined so the feedback target resolves to 'platform'.
     AppView: new Proxy({}, { get: (t, p) => (p === 'appData' ? undefined : () => {}) }),
+    // Pull-to-refresh is platform presentation owned by PlatformUI. This
+    // harness exercises feedback title wiring only, so keep that independent
+    // production dependency inert rather than omitting the global entirely.
+    PlatformUI: { pullToRefresh: () => {} },
     alert: () => {},
   };
   sandbox.window = sandbox;

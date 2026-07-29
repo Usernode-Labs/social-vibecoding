@@ -99,4 +99,4 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>,
 )
 
-registerReactServiceWorker()
+void registerReactServiceWorker()

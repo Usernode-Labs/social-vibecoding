@@ -18,10 +18,12 @@ const server = source("server.js")
 const vite = frontendSource("vite.config.ts")
 const entry = frontendSource("src/main.tsx")
 const reactServiceWorkerRegistration = frontendSource("src/react-service-worker.ts")
+const reactWorkerStatusContract = frontendSource("@/lib/react-worker-status-contract.ts")
 const hostedApp = frontendSource("@/features/apps/hosted-app.tsx")
 const focusedAppFrame = frontendSource("@/features/apps/focused-app-frame.tsx")
 const focusedHostContract = `${hostedApp}\n${focusedAppFrame}`
 const bridge = frontendSource("@/lib/native-bridge.ts")
+const authApi = frontendSource("@/lib/auth-api.ts")
 const serviceWorker = source("public/sw.js")
 const reactServiceWorker = frontendSource("public/react-sw.js")
 const nativeBridgeFixture = frontendSource("tests/native-bridge-contract.spec.ts")
@@ -38,7 +40,21 @@ const checks = [
     detail: "React registers a separately-versioned /react/-scoped, shell-only worker without expanding the legacy worker's cache scope.",
     ok: /navigator\.serviceWorker\.register/.test(reactServiceWorkerRegistration)
       && /scope:\s*import\.meta\.env\.BASE_URL/.test(reactServiceWorkerRegistration)
+      && /get-react-shell-status/.test(reactServiceWorkerRegistration)
+      && /REACT_SHELL_READY_EVENT/.test(reactServiceWorkerRegistration)
+      && /EXPECTED_REACT_SHELL_REVISION/.test(reactServiceWorkerRegistration)
+      && /isExpectedReactShellWorkerStatus/.test(reactServiceWorkerRegistration)
+      && /expectedReactShellCacheName/.test(reactWorkerStatusContract)
+      && /status\.cacheReady !== true/.test(reactWorkerStatusContract)
+      && /status\.bootAssetsReady !== true/.test(reactWorkerStatusContract)
+      && /status\.missingBootAssets\.length !== 0/.test(reactWorkerStatusContract)
+      && /updateViaCache:\s*["']none["']/.test(reactServiceWorkerRegistration)
+      && /registration\.update\(\)/.test(reactServiceWorkerRegistration)
       && /CACHE_PREFIX = "usernode-react-shell-"/.test(reactServiceWorker)
+      && /BUILD_REVISION/.test(reactServiceWorker)
+      && /BOOT_ASSETS/.test(reactServiceWorker)
+      && /clear-react-session-cache/.test(reactServiceWorker)
+      && /get-react-shell-status/.test(reactServiceWorker)
       && /authenticated API responses, iframe[\s\S]*credentials, event streams/.test(reactServiceWorker)
       && /request\.mode === "navigate"/.test(reactServiceWorker),
   },
@@ -61,7 +77,7 @@ const checks = [
   {
     id: "hosted-deep-link-validation",
     detail: "The host refuses an unsafe inner iframe path before assigning src.",
-    ok: /function validInnerPath/.test(focusedHostContract)
+    ok: /safeAppInnerPath/.test(focusedHostContract)
       && /source\.origin !== origin/.test(focusedHostContract),
   },
   {
@@ -82,7 +98,21 @@ const checks = [
     ok: /p === '\/api\/iframe-token'/.test(serviceWorker)
       && /text\\\/event-stream/.test(serviceWorker)
       && /clear-api-cache/.test(serviceWorker)
+      && /isStaleLegacyCache/.test(serviceWorker)
+      && /LEGACY_CACHE_PREFIXES/.test(serviceWorker)
       && /api\/auth\/logout/.test(serviceWorker),
+  },
+  {
+    id: "cross-worker-logout-isolation",
+    detail: "React logout clears every legacy per-user API cache without discarding the offline React shell or unrelated cache families.",
+    ok: /startsWith\(["']usernode-api-["']\)/.test(authApi)
+      && /clear-react-session-cache/.test(authApi)
+      && /validReactClearReply/.test(authApi)
+      && /lastSessionClearAt/.test(authApi)
+      && /Promise\.all\(/.test(authApi)
+      && /Cached session data could not be cleared/.test(authApi)
+      && /clear-react-session-cache/.test(reactServiceWorker)
+      && /stores no authenticated API data/.test(reactServiceWorker),
   },
 ]
 

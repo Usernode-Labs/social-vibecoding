@@ -12,7 +12,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { classifyRequest, NO_FALLBACK_PAGES } = require('../public/sw.js');
+const { classifyRequest, isStaleLegacyCache, NO_FALLBACK_PAGES } = require('../public/sw.js');
 
 const ORIGIN = 'https://social-vibecoding.example';
 const classify = (method, path, accept = null, mode = 'no-cors') =>
@@ -96,4 +96,12 @@ test('standalone server pages never fall back to the SPA shell', () => {
 
 test('unparseable URLs are bypassed', () => {
   assert.equal(classifyRequest('GET', 'not a url', null, 'no-cors', undefined), 'bypass');
+});
+
+test('legacy cleanup retires only legacy-owned cache families', () => {
+  assert.equal(isStaleLegacyCache('usernode-api-v0'), true);
+  assert.equal(isStaleLegacyCache('usernode-shell-v0'), true);
+  assert.equal(isStaleLegacyCache('usernode-api-v1'), false);
+  assert.equal(isStaleLegacyCache('usernode-react-shell-v1'), false);
+  assert.equal(isStaleLegacyCache('usernode-unrelated-v1'), false);
 });

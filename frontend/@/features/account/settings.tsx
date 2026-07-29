@@ -209,9 +209,10 @@ export function Settings() {
     setLoggingOut(true)
     setLogoutError(null)
     try {
-      await logoutCurrentSession()
-      navigate("/login", { replace: true })
+      const result = await logoutCurrentSession()
+      navigate(result.cleanup === "pending" ? "/login?cleanup=pending" : "/login", { replace: true })
     } catch (cause) {
+      setLogoutOpen(false)
       setLogoutError(messageFrom(cause, "Could not log out"))
     } finally {
       setLoggingOut(false)

@@ -22,11 +22,27 @@ const API_CACHE = `usernode-api-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
 const CDN_CACHE = `usernode-cdn-${SW_VERSION}`;
 const ALL_CACHES = [SHELL_CACHE, API_CACHE, IMMUTABLE_CACHE, CDN_CACHE];
+const LEGACY_CACHE_PREFIXES = [
+  'usernode-shell-',
+  'usernode-api-',
+  'usernode-immutable-',
+  'usernode-cdn-',
+];
+
+// Cache ownership is explicit: the root worker may retire only its own cache
+// families. The separately-scoped React worker owns usernode-react-shell-*.
+function isStaleLegacyCache(name) {
+  return LEGACY_CACHE_PREFIXES.some((prefix) => name.startsWith(prefix))
+    && !ALL_CACHES.includes(name);
+}
 
 // API-cache hygiene knobs.
 const API_CACHE_MAX_ENTRIES = 300;
 const API_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 const CACHED_AT_HEADER = 'sw-cached-at';
+const SESSION_EPOCH_HEADER = 'x-usernode-session-epoch';
+const SESSION_BOUNDARY_CACHE = 'usernode-session-boundary-v1';
+const SESSION_BOUNDARY_PATH = '/__usernode/session-boundary';
 
 // Cross-origin script URLs the shell's <script> tags load. Kept in sync
 // with index.html / login.html by tests/pwa-shell-wiring.test.js.
@@ -48,6 +64,7 @@ const SHELL_ASSETS = [
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',
+  '/react/app-shortcut-contract.js',
   '/js/admin-console.js',
   '/js/admin-topochain.js',
   '/js/app-secrets.js',
@@ -163,27 +180,78 @@ if (typeof module !== 'undefined' && module.exports) {
     classifyRequest,
     SHELL_ASSETS,
     CDN_ASSETS,
+    isStaleLegacyCache,
     NO_FALLBACK_PAGES,
+    SESSION_BOUNDARY_CACHE,
+    SESSION_BOUNDARY_PATH,
+    SESSION_EPOCH_HEADER,
     SW_VERSION,
   };
 } else {
   const ORIGIN = self.location.origin;
+  const SESSION_BOUNDARY_URL = new URL(SESSION_BOUNDARY_PATH, ORIGIN).href;
+
+  async function readSessionEpoch() {
+    try {
+      const boundary = await caches.open(SESSION_BOUNDARY_CACHE);
+      const response = await boundary.match(SESSION_BOUNDARY_URL);
+      const value = Number(response && await response.text());
+      return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+    } catch {
+      // Failing closed here means the response will not be cached: callers
+      // compare this sentinel with a second read before and after writing.
+      return -1;
+    }
+  }
+
+  async function advanceSessionEpoch() {
+    const boundary = await caches.open(SESSION_BOUNDARY_CACHE);
+    const current = await readSessionEpoch();
+    const next = Math.max(
+      Number.isSafeInteger(current) ? current + 1 : 1,
+      Date.now()
+    );
+    await boundary.put(
+      SESSION_BOUNDARY_URL,
+      new Response(String(next), {
+        headers: {
+          'Cache-Control': 'no-store',
+          'Content-Type': 'text/plain',
+        },
+      })
+    );
+    return next;
+  }
 
   // Stamp a response copy with the cached-at time so activate() can prune
   // stale entries. Only used for the API cache. Takes an already-cloned
   // response (cloning must happen synchronously, before the page starts
   // consuming the original body).
-  async function stampAndPut(cache, request, response) {
+  async function stampAndPut(cache, request, response, expectedEpoch) {
     try {
+      if (await readSessionEpoch() !== expectedEpoch) return false;
       const headers = new Headers(response.headers);
       headers.set(CACHED_AT_HEADER, String(Date.now()));
+      headers.set(SESSION_EPOCH_HEADER, String(expectedEpoch));
       const body = await response.arrayBuffer();
+      if (await readSessionEpoch() !== expectedEpoch) return false;
       await cache.put(request, new Response(body, {
         status: response.status,
         statusText: response.statusText,
         headers,
       }));
-    } catch { /* quota or clone failure — offline copy just isn't saved */ }
+      if (await readSessionEpoch() !== expectedEpoch) {
+        const stored = await cache.match(request);
+        if (stored && stored.headers.get(SESSION_EPOCH_HEADER) === String(expectedEpoch)) {
+          await cache.delete(request);
+        }
+        return false;
+      }
+      return true;
+    } catch {
+      // Quota, body, or boundary failure: offline copy just is not saved.
+      return false;
+    }
   }
 
   // Oldest-first eviction keeps the API cache bounded. Cache keys iterate
@@ -240,6 +308,7 @@ if (typeof module !== 'undefined' && module.exports) {
 
   async function networkFirstApi(event) {
     const cache = await caches.open(API_CACHE);
+    const requestEpoch = await readSessionEpoch();
     try {
       const res = await fetch(event.request);
       // Only genuine successes are worth replaying offline; 401/403/500
@@ -248,14 +317,21 @@ if (typeof module !== 'undefined' && module.exports) {
       if (res && res.status === 200) {
         const copy = res.clone();
         event.waitUntil((async () => {
-          await stampAndPut(cache, event.request, copy);
-          await trimApiCache(cache);
+          if (await stampAndPut(cache, event.request, copy, requestEpoch)) {
+            await trimApiCache(cache);
+          }
         })());
       }
       return res;
     } catch (err) {
       const hit = await cache.match(event.request);
-      if (hit) return hit;
+      const currentEpoch = await readSessionEpoch();
+      if (
+        hit &&
+        currentEpoch >= 0 &&
+        hit.headers.get(SESSION_EPOCH_HEADER) === String(currentEpoch)
+      ) return hit;
+      if (hit) await cache.delete(event.request);
       throw err;
     }
   }
@@ -313,7 +389,7 @@ if (typeof module !== 'undefined' && module.exports) {
       // Drop caches from older SW versions.
       const names = await caches.keys();
       await Promise.all(names
-        .filter((n) => n.startsWith('usernode-') && !ALL_CACHES.includes(n))
+        .filter(isStaleLegacyCache)
         .map((n) => caches.delete(n)));
       await pruneStaleApiEntries();
       await self.clients.claim();
@@ -324,9 +400,10 @@ if (typeof module !== 'undefined' && module.exports) {
     const type = event.data && event.data.type;
     if (type === 'clear-api-cache') {
       event.waitUntil((async () => {
+        const epoch = await advanceSessionEpoch();
         await caches.delete(API_CACHE);
         const port = event.ports && event.ports[0];
-        if (port) port.postMessage({ done: true });
+        if (port) port.postMessage({ done: true, epoch });
       })());
     }
   });
@@ -337,7 +414,10 @@ if (typeof module !== 'undefined' && module.exports) {
     // Belt-and-braces logout isolation: a logout passing through (never
     // intercepted — it's a POST) still wipes the per-user API cache.
     if (req.method === 'POST' && new URL(req.url).pathname === '/api/auth/logout') {
-      event.waitUntil(caches.delete(API_CACHE));
+      event.waitUntil((async () => {
+        await advanceSessionEpoch();
+        await caches.delete(API_CACHE);
+      })());
       return;
     }
 
