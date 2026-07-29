@@ -1310,6 +1310,8 @@ for this lane — that belongs to a successor-contract or Luma wave, not here.
 ### Wave 6 — Static focused-app and host verification
 
 Run web and host lanes in parallel; do not add JS motion.
+The current evidence and no-go decision are recorded in
+[`shell-host-cutover-evidence.md`](shell-host-cutover-evidence.md).
 
 **Web lane.** Prove drawer open/close does not remount the iframe. Preserve
 form, scroll, and JavaScript state. Make the shifted app inert while the
