@@ -59,6 +59,24 @@
 //      back everything written so far in the same transaction) — matching
 //      "the whole batch rolls back" (SPEC 1541) without relying on a single
 //      giant statement.
+//   5. `user_id` is resolved SERVER-SIDE from `wallet_address` via
+//      `onchain_accounts` — the payload's `participant_id` is accepted (so
+//      deployed receivers keep passing validation) but NEVER consumed. Two
+//      reasons, both surfaced by the topochain cutover: (a) the id namespace
+//      broke — mobile nodes self-report the topochain participant_id cached
+//      in their pre-migration sessions, while the §8 load renumbered every
+//      migrated user (the platform's native users already held the low ids),
+//      so a stale id either FK-fails or, worse, silently attributes stats to
+//      an unrelated platform-native user; (b) even post-cutover the field is
+//      node-self-reported and therefore untrustworthy for attribution, while
+//      the wallet address is proven by the block production being reported
+//      and resolves against the platform's own key registry. Keys are
+//      reassigned across season events (85 addresses in the migrated data
+//      map to >1 user), so resolution is "latest assignment wins" — correct
+//      for live ingest, which only ever reports on the current holder.
+//      An unresolvable address yields user_id NULL (slot-outcomes) / an
+//      omitted user_id (epoch-stats, whose sparse update then preserves any
+//      previously stored attribution).
 'use strict';
 
 const { Router } = require('express');
@@ -177,7 +195,9 @@ const SLOT_OUTCOME_FIELDS = [
   { field: 'outcome', column: 'outcome', type: 'string', required: true, maxLen: 32 },
   { field: 'chain_id', column: null, type: 'string', maxLen: 64 },
   { field: 'wallet_address', column: null, type: 'string' },
-  { field: 'participant_id', column: 'user_id', type: 'int', min: 1 },
+  // Accepted for wire-compat with deployed receivers, never consumed:
+  // user_id comes from wallet_address resolution (judgment call #5).
+  { field: 'participant_id', column: null, type: 'int', min: 1 },
   { field: 'epoch', column: 'epoch', type: 'int', min: 0 },
   { field: 'slot_in_epoch', column: 'slot_in_epoch', type: 'int', min: 0 },
   { field: 'slot_time_ms', column: 'slot_time_ms', type: 'int', min: 0 },
@@ -216,28 +236,51 @@ const SLOT_OUTCOME_FIELDS = [
   { field: 'monitoring_started_at_ms', column: 'monitoring_started_at_ms', type: 'int', min: 0 },
 ];
 const SLOT_OUTCOME_MUTABLE = SLOT_OUTCOME_FIELDS.filter((f) => f.column);
-const SLOT_OUTCOME_COLUMNS = ['report_uid', 'chain_id', 'wallet_address', ...SLOT_OUTCOME_MUTABLE.map((f) => f.column)];
+const SLOT_OUTCOME_COLUMNS = ['report_uid', 'chain_id', 'wallet_address', 'user_id', ...SLOT_OUTCOME_MUTABLE.map((f) => f.column)];
 
 // Full-row upsert (SPEC: "Upsert on (chain_id, wallet_address, report_uid) —
 // re-posting the same report id overwrites the stored row"). Unlike
 // epoch-stats, slot-outcomes has no sparse-update rule — every mutable
-// column is written every time, so this SQL is a fixed constant built once
-// at module load rather than assembled per row.
+// column is written every time (user_id included: a re-post refreshes the
+// attribution to the key's current holder, consistent with "overwrites the
+// stored row"), so this SQL is a fixed constant built once at module load
+// rather than assembled per row.
 const SLOT_OUTCOME_INSERT_SQL = `
   INSERT INTO slot_outcome_reports (${SLOT_OUTCOME_COLUMNS.join(', ')}, created_at, updated_at)
   VALUES (${SLOT_OUTCOME_COLUMNS.map((_, i) => `$${i + 1}`).join(', ')}, NOW(), NOW())
   ON CONFLICT (chain_id, wallet_address, report_uid) DO UPDATE SET
+    user_id = EXCLUDED.user_id,
     ${SLOT_OUTCOME_MUTABLE.map((f) => `${f.column} = EXCLUDED.${f.column}`).join(', ')},
     updated_at = NOW()
 `;
 
-function slotOutcomeParams(row) {
+function slotOutcomeParams(row, userId) {
   return [
     String(row.id),
     row.chain_id,
     row.wallet_address,
+    userId ?? null,
     ...SLOT_OUTCOME_MUTABLE.map((f) => coerce(row[f.field], f.type)),
   ];
+}
+
+// ─── wallet_address -> user_id resolution (judgment call #5) ─────────────
+//
+// One query per batch: the DISTINCT ON picks each address's LATEST
+// assignment (keys are reassigned across season events — used_at, then id,
+// breaks ties), which is the current holder and therefore the right
+// attribution for live ingest. Addresses with no user-assigned registry row
+// are simply absent from the map.
+async function resolveUserIdsByWallet(client, addresses) {
+  if (addresses.length === 0) return new Map();
+  const { rows } = await client.query(
+    `SELECT DISTINCT ON (address) address, user_id
+       FROM onchain_accounts
+      WHERE address = ANY($1) AND user_id IS NOT NULL
+      ORDER BY address, used_at DESC NULLS LAST, id DESC`,
+    [addresses]
+  );
+  return new Map(rows.map((r) => [r.address, Number(r.user_id)]));
 }
 
 // ─── POST /epoch-stats: field spec + sparse-update query builder (SPEC 1560-1583) ─
@@ -245,6 +288,8 @@ const EPOCH_STATS_FIELDS = [
   { field: 'chain_id', type: 'string', maxLen: 64 },
   { field: 'wallet_address', type: 'string' },
   { field: 'epoch', type: 'int', min: 0 },
+  // Accepted for wire-compat with deployed receivers, never consumed:
+  // user_id comes from wallet_address resolution (judgment call #5).
   { field: 'participant_id', type: 'int', min: 1 },
   { field: 'epoch_won_slots', type: 'int', min: 0 },
   { field: 'epoch_produced_blocks', type: 'int', min: 0 },
@@ -270,8 +315,11 @@ function isKeyPresent(row, field) {
 // (and user_id, same treatment) actually present on that row — this is
 // what makes the sparse update possible: a counter absent from `row` never
 // appears in the column list, VALUES list, or ON CONFLICT SET clause.
-function buildEpochStatsUpsert(row) {
-  const hasUserId = isKeyPresent(row, 'participant_id');
+// `userId` is the wallet_address resolution result (judgment call #5):
+// undefined means the address didn't resolve, so user_id stays out of the
+// SQL entirely — an update then preserves any previously stored attribution.
+function buildEpochStatsUpsert(row, userId) {
+  const hasUserId = userId !== undefined;
   const presentCounters = EPOCH_STATS_COUNTERS.filter((c) => isKeyPresent(row, c));
 
   const dynamicCols = [...(hasUserId ? ['user_id'] : []), ...presentCounters];
@@ -280,7 +328,7 @@ function buildEpochStatsUpsert(row) {
     row.chain_id,
     coerce(row.epoch, 'int'),
     row.wallet_address,
-    ...(hasUserId ? [coerce(row.participant_id, 'int')] : []),
+    ...(hasUserId ? [userId] : []),
     ...presentCounters.map((c) => coerce(row[c], 'int')),
   ];
   const placeholders = values.map((_, i) => `$${i + 1}`);
@@ -426,10 +474,11 @@ function topochainIngestRoutes(config) {
 
       const client = await pool.connect();
       try {
+        const userIds = await resolveUserIdsByWallet(client, [...new Set(toWrite.map((r) => r.wallet_address))]);
         await client.query('BEGIN');
         try {
           for (const row of toWrite) {
-            await client.query(SLOT_OUTCOME_INSERT_SQL, slotOutcomeParams(row));
+            await client.query(SLOT_OUTCOME_INSERT_SQL, slotOutcomeParams(row, userIds.get(row.wallet_address)));
           }
           await client.query('COMMIT');
         } catch (err) {
@@ -496,10 +545,11 @@ function topochainIngestRoutes(config) {
       // key naturally overwrites an earlier one via ON CONFLICT.
       const client = await pool.connect();
       try {
+        const userIds = await resolveUserIdsByWallet(client, [...new Set(kept.map((r) => r.wallet_address))]);
         await client.query('BEGIN');
         try {
           for (const row of kept) {
-            const { sql, values } = buildEpochStatsUpsert(row);
+            const { sql, values } = buildEpochStatsUpsert(row, userIds.get(row.wallet_address));
             await client.query(sql, values);
           }
           await client.query('COMMIT');
