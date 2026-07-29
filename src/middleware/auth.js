@@ -46,8 +46,9 @@ const PUBLIC_PATHS = [
 // SELF-HOSTING.md "Self-staging — iframe-auth login flow":
 // In a staging container spawned for the self-app (USERNODE_ENV === 'staging'),
 // the cloned users table has every prod row but with `password` scrubbed to
-// the literal sentinel `__staging_redacted__` by db-manager.scrubPrivateColumns
-// — so no cloned account can authenticate against /api/auth/login. Rather than
+// a per-row-unique `__staging_redacted__...` placeholder by
+// db-manager.scrubPrivateColumns — so no cloned account can authenticate
+// against /api/auth/login. Rather than
 // copying password hashes across the prod/staging boundary, we accept the same
 // platform-issued JWT every child app already verifies (see app-conventions.md
 // "Auth — iframe token injection") and exchange it for a real session row on

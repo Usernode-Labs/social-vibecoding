@@ -717,15 +717,22 @@ async function scrubPrivateColumns(targetDb) {
   // Discovery query mirrors truncatePrivateTables but at the column
   // level. col_description is the column-comment counterpart of
   // obj_description. attnum > 0 filters out system columns; attisdropped
-  // skips logically-removed columns that pg keeps as zombies. Output is
-  // pipe-separated triples: <schema.table>|<column>|<not_null t/f>.
+  // skips logically-removed columns that pg keeps as zombies. The
+  // information_schema.columns join adds character_maximum_length so we
+  // can size the per-row placeholder to fit (e.g. VARCHAR(64)). Output is
+  // pipe-separated quadruples: <schema.table>|<column>|<not_null t/f>|<max_length or empty>.
   const discoverySql = `
 SELECT n.nspname || '.' || c.relname,
        a.attname,
-       a.attnotnull
+       a.attnotnull,
+       COALESCE(ic.character_maximum_length::text, '')
   FROM pg_attribute a
   JOIN pg_class    c ON c.oid = a.attrelid
   JOIN pg_namespace n ON n.oid = c.relnamespace
+  LEFT JOIN information_schema.columns ic
+    ON ic.table_schema = n.nspname
+   AND ic.table_name = c.relname
+   AND ic.column_name = a.attname
  WHERE col_description(a.attrelid, a.attnum) = 'staging:private'
    AND c.relkind = 'r'
    AND a.attnum > 0
@@ -750,10 +757,13 @@ SELECT n.nspname || '.' || c.relname,
     .map((s) => s.trim())
     .filter(Boolean)
     .map((line) => {
-      // psql -At with the default field separator '|'. Three fields
-      // and the third is exactly 't' or 'f' from a bool column.
-      const [qualified, column, notNullRaw] = line.split('|');
-      return { qualified, column, notNull: notNullRaw === 't' };
+      // psql -At with the default field separator '|'. Four fields;
+      // the third is exactly 't' or 'f' from a bool column, the fourth
+      // is a character_maximum_length integer or '' when unbounded
+      // (e.g. TEXT).
+      const [qualified, column, notNullRaw, maxLengthRaw] = line.split('|');
+      const maxLength = maxLengthRaw ? Number(maxLengthRaw) : null;
+      return { qualified, column, notNull: notNullRaw === 't', maxLength };
     });
 
   if (targets.length === 0) {
@@ -769,7 +779,7 @@ SELECT n.nspname || '.' || c.relname,
 
   const failures = [];
   const scrubbed = [];
-  for (const { qualified, column, notNull } of targets) {
+  for (const { qualified, column, notNull, maxLength } of targets) {
     if (!SAFE_QUALIFIED_IDENT.test(qualified) || !SAFE_IDENT.test(column)) {
       log.warn('db-manager', 'Refusing to UPDATE non-standard identifier', {
         targetDb, qualified, column,
@@ -777,14 +787,32 @@ SELECT n.nspname || '.' || c.relname,
       failures.push({ target: `${qualified}.${column}`, error: 'unsafe identifier' });
       continue;
     }
-    // NOT NULL columns can't accept NULL; substitute a sentinel that's
-    // safe to store and obviously non-functional. Auth code should
-    // never accept this literal in any code path — bcrypt.compare
-    // against it returns false for every plaintext, which is the only
-    // place today that meaningfully reads users.password.
-    const value = notNull
-      ? `'${STAGING_REDACTED_SENTINEL}'`
-      : 'NULL';
+    let value;
+    if (!notNull) {
+      value = 'NULL';
+    } else if (maxLength != null && (!Number.isInteger(maxLength) || maxLength < 1)) {
+      // Unexpected metadata shape — fail closed rather than guess at a
+      // placeholder that might not fit the column.
+      log.error('db-manager', 'staging:private column has unusable max length', {
+        targetDb, qualified, column, maxLength,
+      });
+      failures.push({ target: `${qualified}.${column}`, error: `unusable max length ${maxLength}` });
+      continue;
+    } else {
+      // NOT NULL columns can't accept NULL, and a single literal
+      // sentinel breaks any UNIQUE constraint on the column (the
+      // production incident: onchain_accounts.registration_code is
+      // NOT NULL UNIQUE, so writing '__staging_redacted__' into every
+      // row failed the whole clone). Derive a per-row-unique value from
+      // ctid — unique within the table for the life of this single
+      // UPDATE — sized to the column's max length when it has one (e.g.
+      // VARCHAR(64)) so it never overflows. Auth code should never
+      // accept this literal in any code path — bcrypt.compare against
+      // it returns false for every plaintext, which is the only place
+      // today that meaningfully reads users.password.
+      const base = `'${STAGING_REDACTED_SENTINEL}' || ctid::text`;
+      value = maxLength != null ? `left(${base}, ${maxLength})` : base;
+    }
     try {
       await execInTarget(targetDb, `UPDATE ${qualified} SET ${column} = ${value}`);
       scrubbed.push(`${qualified}.${column}`);
