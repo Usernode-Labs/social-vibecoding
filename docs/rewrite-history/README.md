@@ -126,6 +126,7 @@ npm run check:storybook-build
 npm run test:e2e
 npm run test:production-review
 npm run test:native-bridge-contract
+npm run test:service-worker-contract
 npm run build
 npm run check:bundle
 npm run check:cutover-contract

@@ -90,6 +90,7 @@ const workflows = {
     checks: [
       "npm run check:harness",
       "npm run test:native-bridge-contract",
+      "npm run test:service-worker-contract",
       "npm run test:e2e",
       "npm run check:cutover-contract",
     ],

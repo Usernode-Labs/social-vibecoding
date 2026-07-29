@@ -50,9 +50,12 @@ npm run test:agent-battery
 npm run typecheck
 npm run test:e2e
 npm run test:production-review
+npm run test:native-bridge-contract
+npm run test:service-worker-contract
 npm run build
 npm run check:bundle
 npm run test:storybook
+npm run check:cutover-contract
 ```
 
 `npm run test:e2e` is a fixture-driven parity check, not proof of live native
