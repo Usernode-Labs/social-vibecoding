@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI Development"
+  short_description: "Build and verify Social Vibecoding React UI slices."
+  default_prompt: "Use $ui-development to implement or review a React UI slice with shadcn, evidence, and checks."

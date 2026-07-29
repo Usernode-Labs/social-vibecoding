@@ -1,0 +1,154 @@
+{
+  "schemaVersion": 1,
+  "candidate": "A",
+  "decisionScope": "Social Vibecoding React shell only",
+  "excludes": [
+    "child-app source",
+    "app-factory design system",
+    "hosted usernode-native/v1 consumers"
+  ],
+  "taskDefinition": "design-system/agent-battery.tasks.json",
+  "authority": "design-system/authority.json",
+  "actor": "codex-current-task",
+  "model": "not-exposed-by-host",
+  "tokenAccounting": {
+    "status": "not-exposed-by-host",
+    "tokens": null
+  },
+  "startedAt": "2026-07-29T09:24:09.748Z",
+  "finishedAt": "2026-07-29T09:24:11.409Z",
+  "wallTimeMs": 1662,
+  "toolCalls": 13,
+  "retries": 0,
+  "interventions": [],
+  "result": "5/5",
+  "pass": true,
+  "tasks": [
+    {
+      "id": "T1",
+      "pass": true,
+      "evidence": {
+        "decision": "reuse",
+        "component": "app-card",
+        "owner": "frontend-platform",
+        "maturity": "candidate",
+        "variants": [
+          "Running",
+          "Unavailable",
+          "ReorderControls"
+        ],
+        "dataBoundary": {
+          "kind": "props-only",
+          "contract": "The card receives an AppRecord and callbacks; data loading, ordering and navigation remain route concerns."
+        }
+      },
+      "retries": 0,
+      "interventions": []
+    },
+    {
+      "id": "T2",
+      "pass": true,
+      "evidence": {
+        "decision": "reuse-official-button-destructive-variant",
+        "source": "@/components/ui/button.tsx"
+      },
+      "retries": 0,
+      "interventions": []
+    },
+    {
+      "id": "T3",
+      "pass": true,
+      "evidence": {
+        "decision": "reuse-owned-compound",
+        "component": "dev-board",
+        "variants": [
+          "LifecycleWithOrdering",
+          "LinearWorkFeed",
+          "TasksByPerson",
+          "TasksByPersonReadOnly",
+          "ReadOnly"
+        ],
+        "story": "@/features/dev/dev-board.stories.tsx",
+        "dataBoundary": {
+          "kind": "props-only",
+          "contract": "Board records and mutation callbacks arrive through the dev-board adapter; the board does not call endpoints directly."
+        }
+      },
+      "retries": 0,
+      "interventions": []
+    },
+    {
+      "id": "T4",
+      "pass": true,
+      "evidence": {
+        "enforcement": "5/5",
+        "attempts": [
+          {
+            "attempt": 1,
+            "fixture": "tests/harness/style-raw-color.tsx",
+            "rejected": true,
+            "actionable": true,
+            "output": "Shell style policy failed:\n\n- tests/harness/style-raw-color.tsx:2:25 no-raw-colors (#ff0000) — Use a semantic token from design-system/tokens.json."
+          },
+          {
+            "attempt": 2,
+            "fixture": "tests/harness/style-arbitrary-utility.tsx",
+            "rejected": true,
+            "actionable": true,
+            "output": "Shell style policy failed:\n\n- tests/harness/style-arbitrary-utility.tsx:2:25 no-arbitrary-utilities (max-w-[47rem]) — Use a canonical utility, named variant or semantic token."
+          },
+          {
+            "attempt": 3,
+            "fixture": "tests/harness/style-raw-color.tsx",
+            "rejected": true,
+            "actionable": true,
+            "output": "Shell style policy failed:\n\n- tests/harness/style-raw-color.tsx:2:25 no-raw-colors (#ff0000) — Use a semantic token from design-system/tokens.json."
+          },
+          {
+            "attempt": 4,
+            "fixture": "tests/harness/style-arbitrary-utility.tsx",
+            "rejected": true,
+            "actionable": true,
+            "output": "Shell style policy failed:\n\n- tests/harness/style-arbitrary-utility.tsx:2:25 no-arbitrary-utilities (max-w-[47rem]) — Use a canonical utility, named variant or semantic token."
+          },
+          {
+            "attempt": 5,
+            "fixture": "tests/harness/style-raw-color.tsx",
+            "rejected": true,
+            "actionable": true,
+            "output": "Shell style policy failed:\n\n- tests/harness/style-raw-color.tsx:2:25 no-raw-colors (#ff0000) — Use a semantic token from design-system/tokens.json."
+          }
+        ]
+      },
+      "retries": 0,
+      "interventions": []
+    },
+    {
+      "id": "T5",
+      "pass": true,
+      "evidence": {
+        "workflow": {
+          "classification": "component",
+          "context": [
+            "frontend/design-system/catalog.json",
+            "frontend/design-system.manifest.json",
+            "frontend/@/components/ui",
+            "frontend/registry.json"
+          ],
+          "checks": [
+            "npm run check:design-system",
+            "npm run check:style-policy",
+            "npm run check:harness",
+            "npm run test:storybook",
+            "npm run typecheck"
+          ],
+          "stop": "Stop if the interaction cannot be represented by an official primitive or an existing owned pattern; record the gap for approval."
+        },
+        "compliantFixturePassed": true,
+        "architectureViolations": []
+      },
+      "retries": 0,
+      "interventions": []
+    }
+  ]
+}

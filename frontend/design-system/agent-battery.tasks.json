@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "scope": "Usernode React shell only",
+  "tasks": [
+    {
+      "id": "T1",
+      "name": "Discover before creating",
+      "intent": "Find the existing app-card contract and decide reuse versus creation.",
+      "expected": "Reuse app-card; report its owner, maturity, variants, token authority, accessibility evidence and props-only data boundary."
+    },
+    {
+      "id": "T2",
+      "name": "Extend an official primitive",
+      "intent": "Determine whether a destructive action needs a new button component.",
+      "expected": "Reuse the destructive variant of the official local Button; do not create a competing button."
+    },
+    {
+      "id": "T3",
+      "name": "Compose a domain pattern",
+      "intent": "Locate the development-board compound pattern and its deterministic states.",
+      "expected": "Reuse dev-board as an owned props-only compound; keep endpoint access in adapters and preserve its named Storybook states."
+    },
+    {
+      "id": "T4",
+      "name": "Reject design-authority violations",
+      "intent": "Attempt deliberate raw-color and arbitrary-utility violations five times.",
+      "expected": "All five attempts fail with an actionable rule, source location and remediation."
+    },
+    {
+      "id": "T5",
+      "name": "Resolve and verify a workflow",
+      "intent": "Classify a reusable component task and verify the portable workflow supplies authority context, checks, evidence and a stop condition.",
+      "expected": "The component workflow is selected; a compliant fixture passes style policy and the architecture boundary has zero violations."
+    }
+  ]
+}

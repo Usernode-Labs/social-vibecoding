@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "purpose": "Preserve every fresh-agent execution used to reach the signed Candidate A shell battery result, including failed harness setup and evaluator retries.",
+  "attempts": [
+    {
+      "kind": "T1 classifier pilot",
+      "result": "Agent reached the correct reuse decision, but the workflow resolver misclassified the task and source discovery was excessively broad.",
+      "usage": {
+        "inputTokens": 193857,
+        "cachedInputTokens": 129792,
+        "outputTokens": 1277,
+        "reasoningOutputTokens": 201
+      },
+      "wallTimeMs": null,
+      "intervention": "Added card/reuse/extend/primitive classification and a concise catalog query command."
+    },
+    {
+      "kind": "Initial T1-T5 recorded run",
+      "result": "T1-T4 answers were correct; evaluator predicates were too literal and T5 was rejected before execution because its isolated directory was not a Git checkout.",
+      "usage": {
+        "inputTokens": 668692,
+        "cachedInputTokens": 552192,
+        "outputTokens": 4845,
+        "reasoningOutputTokens": 1225
+      },
+      "wallTimeMs": 200687,
+      "intervention": "Corrected semantic result parsing and enabled the explicit non-repository flag for the isolated T5 workspace."
+    },
+    {
+      "kind": "First writable T5 retry",
+      "result": "The agent repaired and passed the accessibility fixture, but reported that progressive-disclosure references and the workflow helper were absent.",
+      "usage": {
+        "inputTokens": 164561,
+        "cachedInputTokens": 135680,
+        "outputTokens": 1236,
+        "reasoningOutputTokens": 288
+      },
+      "wallTimeMs": 46506,
+      "intervention": "Copied the complete skill references, workflow resolver, and catalog into the isolated evaluation workspace."
+    },
+    {
+      "kind": "Final complete-harness T5 retry",
+      "result": "Passed with the complete isolated Candidate A harness.",
+      "usage": {
+        "inputTokens": 129898,
+        "cachedInputTokens": 104192,
+        "outputTokens": 952,
+        "reasoningOutputTokens": 174
+      },
+      "wallTimeMs": 44787,
+      "intervention": null
+    }
+  ],
+  "lifecycleTotals": {
+    "inputTokens": 1157008,
+    "cachedInputTokens": 921856,
+    "outputTokens": 8310,
+    "reasoningOutputTokens": 1888,
+    "knownWallTimeMs": 291980,
+    "wallTimeCaveat": "The Codex CLI JSONL exposed token usage but the separately launched T1 pilot did not return a trustworthy wall-time field, so knownWallTimeMs excludes that pilot rather than estimating it.",
+    "retries": 2,
+    "humanInterventions": 2
+  }
+}

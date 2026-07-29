@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "candidate": "A",
+  "decisionScope": "Social Vibecoding React shell only",
+  "runner": "Codex CLI fresh tasks",
+  "retryLedger": "design-system/evidence/candidate-a-shell-live-agent-retries.json",
+  "model": "Codex CLI default; model id is not emitted in JSONL",
+  "recordedAt": "2026-07-29T09:26:48.897Z",
+  "executionWindow": "Non-contiguous selected task results; see retryLedger for the complete attempt history.",
+  "wallTimeMs": null,
+  "wallTimeCaveat": "A single selected-task wall time cannot be reconstructed without double-counting retries. knownLifecycleWallTimeMs preserves the measured attempt total instead.",
+  "knownLifecycleWallTimeMs": 291980,
+  "result": "5/5",
+  "pass": true,
+  "retries": 2,
+  "interventions": [
+    "The T1 pilot classified an app-card discovery task as route work and consumed 193857 input tokens. The classifier gained card/reuse/extend/primitive terms and the catalog gained a concise query command before the recorded rerun.",
+    "The first isolated T5 fixture omitted the workflow helper and skill references. The repair still passed its executable accessibility check; the reusable runner now copies the complete progressive-disclosure harness."
+  ],
+  "totals": {
+    "inputTokens": 798590,
+    "cachedInputTokens": 656384,
+    "outputTokens": 5797,
+    "reasoningOutputTokens": 1399
+  },
+  "tasks": [
+    {
+      "id": "T1",
+      "exitCode": 0,
+      "usage": {
+        "input_tokens": 188773,
+        "cached_input_tokens": 153088,
+        "output_tokens": 1143,
+        "reasoning_output_tokens": 338
+      },
+      "answer": {
+        "task": "Discover and reuse the existing shell app card",
+        "classification": "component",
+        "decision": "reuse",
+        "component": "app-card",
+        "owner": "frontend-platform",
+        "maturity": "candidate",
+        "variants": [
+          "Running",
+          "Unavailable",
+          "ReorderControls"
+        ],
+        "dataBoundary": {
+          "kind": "props-only",
+          "contract": "The card receives an AppRecord and callbacks; data loading, ordering and navigation remain route concerns."
+        },
+        "commandsRun": [
+          "sed AGENTS.md agent-skills/ui-development/SKILL.md",
+          "node tool/ui-workflow.mjs --task \"Discover and reuse the existing shell app card\" --json",
+          "cd frontend && npm run query:design-system -- \"app card\"",
+          "rg/sed precise AppCard catalog, manifest, source, and story inspection"
+        ],
+        "interventions": []
+      },
+      "stderr": [
+        "2026-07-29T09:05:32.595357Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file:///Users/lukasimrich/.codex/plugins/cache/openai-primary-runtime/template-creator/26.727.11326/.codex-plugin/plugin.json",
+        "2026-07-29T09:05:32.595975Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file:///Users/lukasimrich/.codex/plugins/cache/openai-primary-runtime/template-creator/26.727.11326/.codex-plugin/plugin.json",
+        "2026-07-29T09:05:44.854139Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:05:51.531429Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:05:54.777196Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:06:02.996273Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:06:09.698497Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:06:14.676634Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5"
+      ],
+      "pass": true
+    },
+    {
+      "id": "T2",
+      "exitCode": 0,
+      "usage": {
+        "input_tokens": 205510,
+        "cached_input_tokens": 170240,
+        "output_tokens": 1298,
+        "reasoning_output_tokens": 431
+      },
+      "answer": {
+        "task": "Extend a shell Button for a destructive action",
+        "classification": "component",
+        "decision": "Reuse the existing official local Button; do not create a competing component.",
+        "source": "frontend/@/components/ui/button.tsx",
+        "variant": "destructive",
+        "rationale": "The Base UI-backed local Button already defines a destructive variant using design-system destructive tokens; the resolved catalog contains no competing owned Button pattern.",
+        "commandsRun": [
+          "sed -n '1,240p' AGENTS.md && sed -n '1,320p' agent-skills/ui-development/SKILL.md",
+          "node tool/ui-workflow.mjs --task \"Extend a shell Button for a destructive action\" --json",
+          "cd frontend && npm run query:design-system -- \"destructive button\"",
+          "cd frontend && npm run query:design-system -- \"Button\"",
+          "targeted rg/sed queries of frontend/design-system/catalog.json and frontend/@/components/ui/button.tsx"
+        ],
+        "interventions": []
+      },
+      "stderr": [
+        "2026-07-29T09:06:26.739053Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file:///Users/lukasimrich/.codex/plugins/cache/openai-primary-runtime/template-creator/26.727.11326/.codex-plugin/plugin.json",
+        "2026-07-29T09:06:36.659171Z ERROR codex_core::tools::router: error=failed to spawn code-mode host /opt/homebrew/bin/codex-code-mode-host: No such file or directory (os error 2)",
+        "2026-07-29T09:06:43.061765Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:06:52.485114Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:06:59.414895Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:07:04.368092Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:07:10.609924Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:07:16.331968Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5"
+      ],
+      "pass": true
+    },
+    {
+      "id": "T3",
+      "exitCode": 0,
+      "usage": {
+        "input_tokens": 148950,
+        "cached_input_tokens": 115456,
+        "output_tokens": 1020,
+        "reasoning_output_tokens": 250
+      },
+      "answer": {
+        "task": "Reuse the existing development board pattern and its Storybook states",
+        "classification": "component",
+        "decision": "Reuse the existing owned DevBoard pattern; no new primitive or pattern is needed.",
+        "component": {
+          "name": "DevBoard",
+          "module": "@/features/dev/dev-board.tsx",
+          "owner": "frontend-platform",
+          "maturity": "candidate",
+          "distribution": "shell-internal"
+        },
+        "variants": [
+          "LifecycleWithOrdering",
+          "LinearWorkFeed",
+          "TasksByPerson",
+          "TasksByPersonReadOnly",
+          "ReadOnly"
+        ],
+        "dataBoundary": {
+          "kind": "props-only",
+          "contract": "Board records and mutation callbacks arrive through the dev-board adapter; DevBoard does not call endpoints directly."
+        },
+        "story": {
+          "module": "@/features/dev/dev-board.stories.tsx",
+          "states": [
+            "LifecycleWithOrdering",
+            "LinearWorkFeed",
+            "TasksByPerson",
+            "TasksByPersonReadOnly",
+            "ReadOnly"
+          ]
+        },
+        "commandsRun": [
+          "node tool/ui-workflow.mjs --task \"Reuse the existing development board pattern and its Storybook states\" --json",
+          "cd frontend && npm run query:design-system -- \"dev board\"",
+          "precise sed/rg inspection of AGENTS.md, the manifest, DevBoard source, API boundary, and stories"
+        ],
+        "interventions": []
+      },
+      "stderr": [
+        "2026-07-29T09:07:33.995270Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/",
+        "2026-07-29T09:07:33.995463Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file:///Users/lukasimrich/.codex/plugins/cache/openai-primary-runtime/template-creator/26.727.11326/.codex-plugin/plugin.json",
+        "2026-07-29T09:07:33.996202Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file:///Users/lukasimrich/.codex/plugins/cache/openai-primary-runtime/template-creator/26.727.11326/.codex-plugin/plugin.json",
+        "2026-07-29T09:07:35.423817Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:07:40.947548Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:07:44.796288Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:07:50.895545Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:07:58.744080Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5"
+      ],
+      "pass": true
+    },
+    {
+      "id": "T4",
+      "exitCode": 0,
+      "usage": {
+        "input_tokens": 125459,
+        "cached_input_tokens": 113408,
+        "output_tokens": 1384,
+        "reasoning_output_tokens": 206
+      },
+      "answer": {
+        "task": "T4: prove deliberate style violations are rejected",
+        "enforcement": "5/5 rejected with non-zero exit",
+        "attempts": [
+          {
+            "fixture": "style-raw-color.tsx",
+            "exit": 1,
+            "rule": "no-raw-colors",
+            "location": "tests/harness/style-raw-color.tsx:2:25",
+            "remediation": "Use a semantic token from design-system/tokens.json."
+          },
+          {
+            "fixture": "style-arbitrary-utility.tsx",
+            "exit": 1,
+            "rule": "no-arbitrary-utilities",
+            "location": "tests/harness/style-arbitrary-utility.tsx:2:25",
+            "remediation": "Use a canonical utility, named variant or semantic token."
+          },
+          {
+            "fixture": "style-raw-color.tsx",
+            "exit": 1,
+            "rule": "no-raw-colors",
+            "location": "tests/harness/style-raw-color.tsx:2:25",
+            "remediation": "Use a semantic token from design-system/tokens.json."
+          },
+          {
+            "fixture": "style-arbitrary-utility.tsx",
+            "exit": 1,
+            "rule": "no-arbitrary-utilities",
+            "location": "tests/harness/style-arbitrary-utility.tsx:2:25",
+            "remediation": "Use a canonical utility, named variant or semantic token."
+          },
+          {
+            "fixture": "style-raw-color.tsx",
+            "exit": 1,
+            "rule": "no-raw-colors",
+            "location": "tests/harness/style-raw-color.tsx:2:25",
+            "remediation": "Use a semantic token from design-system/tokens.json."
+          }
+        ],
+        "actionable": true,
+        "commandsRun": [
+          "read AGENTS.md and agent-skills/ui-development/SKILL.md",
+          "node tool/ui-workflow.mjs --task \"prove deliberate style violations are rejected\"",
+          "npm run query:design-system -- \"raw color arbitrary utility style policy remediation\"",
+          "rg targeted style-policy fixture sources",
+          "node scripts/check-style-policy.mjs --fixture tests/harness/style-raw-color.tsx (3 times)",
+          "node scripts/check-style-policy.mjs --fixture tests/harness/style-arbitrary-utility.tsx (2 times)"
+        ],
+        "interventions": []
+      },
+      "stderr": [
+        "2026-07-29T09:08:08.380169Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/",
+        "2026-07-29T09:08:08.380185Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/",
+        "2026-07-29T09:08:08.380391Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file:///Users/lukasimrich/.codex/plugins/cache/openai-primary-runtime/template-creator/26.727.11326/.codex-plugin/plugin.json",
+        "2026-07-29T09:08:08.381100Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file:///Users/lukasimrich/.codex/plugins/cache/openai-primary-runtime/template-creator/26.727.11326/.codex-plugin/plugin.json",
+        "2026-07-29T09:08:15.390149Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:08:21.949230Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:08:29.423413Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:08:40.620456Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5"
+      ],
+      "pass": true
+    },
+    {
+      "id": "T5",
+      "exitCode": 0,
+      "usage": {
+        "input_tokens": 129898,
+        "cached_input_tokens": 104192,
+        "output_tokens": 952,
+        "reasoning_output_tokens": 174
+      },
+      "answer": {
+        "task": "Repair a Storybook accessibility failure",
+        "decision": "Repaired the existing control with an accessible name",
+        "changedFile": "component.tsx",
+        "initialFailure": "Icon-only button needs an accessible aria-label",
+        "finalResult": "Accessibility check passed",
+        "retries": 1,
+        "commandsRun": [
+          "node tool/ui-workflow.mjs --task \"Repair a Storybook accessibility failure\"",
+          "node check-a11y.mjs (failed)",
+          "node check-a11y.mjs (passed)"
+        ],
+        "interventions": [
+          "Added aria-label=\"Settings\" to the button"
+        ]
+      },
+      "stderr": [
+        "2026-07-29T09:12:33.371996Z  WARN codex_core_skills::loader: ignoring interface.icon_large: icon path with '..' must resolve under plugin assets/",
+        "2026-07-29T09:12:33.372229Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file:///Users/lukasimrich/.codex/plugins/cache/openai-primary-runtime/template-creator/26.727.11326/.codex-plugin/plugin.json",
+        "2026-07-29T09:12:33.373038Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt: maximum of 3 prompts is supported path=file:///Users/lukasimrich/.codex/plugins/cache/openai-primary-runtime/template-creator/26.727.11326/.codex-plugin/plugin.json",
+        "2026-07-29T09:12:38.389358Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:12:43.639340Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:12:54.819817Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:13:00.468633Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5",
+        "2026-07-29T09:13:08.351295Z ERROR codex_models_manager::manager: failed to renew cache TTL: missing field `supports_reasoning_summaries` at line 86 column 5"
+      ],
+      "pass": true,
+      "fixtureOutput": "Story accessibility check passed: icon-only button has an accessible name."
+    }
+  ]
+}
