@@ -900,6 +900,14 @@ const App = {
             // state immediately, no extra server round-trip.
             App.handleAppRedeployStatus(data);
             break;
+          case 'admin_rollover_status':
+            // Bulk container rollover progress (admin-only broadcast — see
+            // ws.broadcastToAdmins). Only the admin console's rollover
+            // section cares; it no-ops when that section isn't mounted.
+            if (window.AdminConsole?.handleRolloverStatus) {
+              AdminConsole.handleRolloverStatus(data);
+            }
+            break;
         }
       } catch {}
     };
@@ -929,6 +937,10 @@ const App = {
     }
     if (window.Notifications) Notifications.refresh?.();
     if (window.WorkDrawer) WorkDrawer.refresh?.();
+    // Admin console's container-rollover section: its live table is driven
+    // by `admin_rollover_status`, so a dropped socket means missed
+    // transitions. The loader no-ops unless that section is mounted.
+    if (window.AdminConsole?.isOpen?.()) AdminConsole.loadRollover?.();
     App.loadVersion();
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       AppView.refreshVersionPill();

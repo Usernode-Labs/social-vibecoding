@@ -954,6 +954,25 @@ function pushBoardOrderUpdate(data) {
     { appId: data.appId, appSlug: data.appSlug });
 }
 
+// Send a payload to every ADMIN /ws/events socket. Same `client.user.isAdmin`
+// filter broadcastGlobalScoped applies for view-private apps, in the loop
+// shape of pushNotificationToUser below. Used by the bulk container
+// rollover (services/app-rollover.js): its progress payload is an
+// operational inventory of every app on the box, so it must not go out over
+// broadcastGlobal, which reaches every connected client. View-only admins
+// are included deliberately — they can watch, they just can't start one.
+function broadcastToAdmins(payload) {
+  const json = JSON.stringify(payload);
+  let sent = 0;
+  for (const client of globalClients) {
+    if (client.user && client.user.isAdmin && client.ws.readyState === 1) {
+      client.ws.send(json);
+      sent++;
+    }
+  }
+  return sent;
+}
+
 // Send a payload to every /ws/events socket belonging to `userId`. Used for
 // @mention delivery — a single user may have multiple tabs open.
 function pushNotificationToUser(userId, payload) {
@@ -968,4 +987,4 @@ function pushNotificationToUser(userId, payload) {
   return sent;
 }
 
-module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };
+module.exports = { attach, broadcast, broadcastGlobal, broadcastGlobalScoped, broadcastToAdmins, sendSystemMessage, getOnlineUsers, pushAppStatusUpdate, pushSessionUpdate, pushVoteUpdate, pushKudosUpdate, pushAppUpdate, pushIssueUpdate, pushBoardOrderUpdate, pushNotificationToUser, getReactionsForMessages, validateThread, handleMessage, MAX_CHAT_LEN };

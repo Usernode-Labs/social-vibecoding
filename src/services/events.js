@@ -74,6 +74,13 @@ const EVENT_TYPES = Object.freeze({
   // No backfill: before this shipped, changing a platform variable meant
   // editing deploy.yml, which leaves its trace in git, not here.
   PLATFORM_ENV_CHANGED: 'platform_env_changed',
+  // An admin ran the bulk container rollover (src/services/app-rollover.js
+  // via POST /api/admin/rollover): every running child-app container
+  // recreated with freshly assembled env. Metadata carries the tally
+  // { jobId, total, rolled, rebuilt, skipped, failed, failedSlugs,
+  // durationMs }. Emitted once, at job end — the job record itself is
+  // in-memory, so this is its only durable trace. No backfill.
+  CONTAINERS_ROLLED_OVER: 'containers_rolled_over',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

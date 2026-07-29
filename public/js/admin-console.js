@@ -36,6 +36,7 @@ const AdminConsole = {
     { key: 'codes', label: 'Activation codes' },
     { key: 'limits', label: 'Spend limits' },
     { key: 'features', label: 'Submitted features' },
+    { key: 'rollover', label: 'Container rollover' },
     { key: 'db-export', label: 'Database export' },
     // Topochain (Task 15, migration plan Global Constraint #8): ONE
     // section, its own sub-nav under #admin/topochain/<sub> — see
@@ -260,6 +261,7 @@ const AdminConsole = {
       case 'codes': return AdminConsole.renderCodesSection(host);
       case 'limits': return AdminConsole.renderLimitsSection(host);
       case 'features': return AdminConsole.renderFeaturesSection(host);
+      case 'rollover': return AdminConsole.renderRolloverSection(host);
       case 'db-export': return AdminConsole.renderDbExportSection(host);
       case 'topochain': return AdminConsole.renderTopochainSection(host);
       default: return AdminConsole.renderOverviewSection(host);
@@ -280,6 +282,220 @@ const AdminConsole = {
       return;
     }
     AdminTopochain.render(host);
+  },
+
+  // ── Container rollover ────────────────────────────────────────────────
+  //
+  // One press recreates every running child-app container with freshly
+  // assembled env. Progress arrives on the shell's existing /ws/events
+  // socket as `admin_rollover_status` (admin-only broadcast) and is routed
+  // here by App's onmessage; GET /api/admin/rollover covers first paint and
+  // WS reconnect. See src/services/app-rollover.js for why an env change
+  // needs a container recreate at all.
+
+  // Per-app outcome → chip. Mirrors the outcome vocabulary in
+  // src/services/app-rollover.js; an unknown state falls back to the raw
+  // string so a new outcome shows up rather than disappearing.
+  ROLLOVER_STATES: {
+    pending: { label: 'Queued', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    running: { label: 'Rolling over…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300' },
+    rolled: { label: 'Done', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
+    rebuilt: { label: 'Rebuilt', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
+    skipped_deploying: { label: 'Skipped — deploying', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    skipped_missing_secrets: { label: 'Skipped — missing secrets', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    skipped_no_db_password: { label: 'Skipped — no DB role', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    skipped_deleted: { label: 'Skipped — app gone', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
+  },
+
+  renderRolloverSection(host) {
+    const canWrite = AdminConsole.canWrite();
+    host.innerHTML = `
+      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">Container rollover</h2>
+          <button id="admin-refresh-rollover" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+        </div>
+        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
+          Recreates every running app container so it picks up the environment
+          this platform build hands out. Needed after a platform change to what
+          gets injected into containers — a restart is not enough, because a
+          restarted container keeps the environment it was created with.
+        </p>
+        <p class="text-xs text-zinc-500 mb-4">
+          This re-runs each app's existing build: it changes the environment and
+          nothing else — no new code is shipped, unlike a per-app redeploy. Each
+          app blinks offline for a few seconds as its turn comes up. The platform
+          app itself is never touched.
+        </p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">Eligible apps</div>
+            <div id="admin-rollover-eligible" class="text-2xl font-bold mt-1">—</div>
+          </div>
+          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">At a time</div>
+            <div id="admin-rollover-concurrency" class="text-2xl font-bold mt-1">—</div>
+          </div>
+          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">Failed</div>
+            <div id="admin-rollover-failed" class="text-2xl font-bold mt-1">—</div>
+          </div>
+        </div>
+        ${canWrite ? `
+        <button id="admin-rollover-btn"
+          class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:hover:bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors">
+          Roll over all app containers
+        </button>` : `
+        <p class="text-xs text-zinc-500">View-only admin — you can watch a rollover, but not start one.</p>`}
+        <p id="admin-rollover-summary" class="text-sm text-zinc-500 mt-3">Loading…</p>
+        <div id="admin-rollover-list" class="space-y-2 mt-3"></div>
+      </div>`;
+
+    document.getElementById('admin-refresh-rollover')
+      ?.addEventListener('click', () => AdminConsole.loadRollover());
+    document.getElementById('admin-rollover-btn')
+      ?.addEventListener('click', () => AdminConsole._startRollover());
+
+    AdminConsole.loadRollover();
+  },
+
+  async loadRollover() {
+    // The page's ?demo=1 rides along on the status read so a staging
+    // preview renders the demo job (routes/admin.js serves it only behind
+    // IS_STAGING && ?demo=1) — same pass-through home.js and settings.js
+    // use for their own demo-injected endpoints.
+    const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+    const { data } = await AdminConsole.fetchJson(`/api/admin/rollover${demoQS}`);
+    if (!data || typeof data !== 'object') return;
+    if (AdminConsole._section !== 'rollover') return; // navigated away mid-fetch
+    AdminConsole._rolloverEligible = typeof data.eligible === 'number' ? data.eligible : null;
+    AdminConsole._rolloverConcurrency = data.concurrency || null;
+    AdminConsole._rolloverDemo = !!data.demo;
+    AdminConsole._paintRollover(data.job || null);
+  },
+
+  // Routed here from App's /ws/events onmessage. The section may not be
+  // mounted (an admin can be anywhere in the shell while a sweep runs) —
+  // in that case there is nothing to repaint and the next mount picks the
+  // state up from the GET.
+  handleRolloverStatus(data) {
+    if (!data || !AdminConsole._open) return;
+    if (AdminConsole._section !== 'rollover') return;
+    if (!document.getElementById('admin-rollover-list')) return;
+    AdminConsole._paintRollover(data.job || null);
+  },
+
+  async _startRollover() {
+    const btn = document.getElementById('admin-rollover-btn');
+    const count = AdminConsole._rolloverEligible;
+    const many = typeof count === 'number' ? `${count} app container${count === 1 ? '' : 's'}` : 'every running app container';
+    const ok = await AdminConsole._confirm({
+      title: 'Roll over all app containers?',
+      message: `This recreates ${many} with the environment this platform build injects. `
+        + 'Each app is briefly unavailable (a few seconds) as its turn comes up, '
+        + 'and only the environment changes — no new code is shipped. '
+        + 'The platform app itself is not touched.',
+      confirmLabel: 'Roll over',
+    });
+    if (!ok) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    try {
+      const res = await fetch('/api/admin/rollover', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        // Singleton job: a second press is a no-op, not an error.
+        window.PlatformUI?.toast?.('A rollover is already in progress.');
+        if (data && data.job) AdminConsole._paintRollover(data.job);
+        return;
+      }
+      if (!res.ok) {
+        AdminConsole._alert((data && data.error) || `Rollover failed to start (HTTP ${res.status})`);
+        return;
+      }
+      window.PlatformUI?.toast?.('Rollover started.');
+      if (data && data.job) AdminConsole._paintRollover(data.job);
+    } catch (err) {
+      AdminConsole._alert(`Rollover failed to start: ${err.message}`);
+    } finally {
+      AdminConsole.loadRollover();
+    }
+  },
+
+  _paintRollover(job) {
+    const esc = AdminConsole.esc;
+    const eligibleEl = document.getElementById('admin-rollover-eligible');
+    const concEl = document.getElementById('admin-rollover-concurrency');
+    const failedEl = document.getElementById('admin-rollover-failed');
+    const summary = document.getElementById('admin-rollover-summary');
+    const list = document.getElementById('admin-rollover-list');
+    if (!summary || !list) return;
+
+    const running = !!(job && !job.finishedAt && !job.stale);
+
+    if (eligibleEl) {
+      eligibleEl.textContent = AdminConsole._rolloverEligible == null
+        ? '—' : String(AdminConsole._rolloverEligible);
+    }
+    if (concEl) {
+      concEl.textContent = job ? String(job.concurrency)
+        : (AdminConsole._rolloverConcurrency ? String(AdminConsole._rolloverConcurrency) : '—');
+    }
+    if (failedEl) failedEl.textContent = job ? String(job.failed) : '—';
+
+    const btn = document.getElementById('admin-rollover-btn');
+    if (btn) {
+      // A staging preview has no production containers to recreate, and the
+      // route refuses the POST there — say so on the button rather than
+      // letting a reviewer press it into a 400.
+      const demo = !!AdminConsole._rolloverDemo;
+      btn.disabled = running || demo;
+      btn.textContent = demo
+        ? 'Unavailable in previews'
+        : (running ? 'Rollover in progress…' : 'Roll over all app containers');
+    }
+    const summaryPrefix = AdminConsole._rolloverDemo
+      ? '<span class="text-violet-500">Staging demo data</span> — ' : '';
+
+    if (!job) {
+      summary.textContent = 'No rollover has run since this platform process started.';
+      list.innerHTML = '';
+      return;
+    }
+    if (!job.total) {
+      summary.textContent = job.finishedAt
+        ? 'Finished — no eligible app containers were found.'
+        : 'Starting…';
+      list.innerHTML = '';
+      return;
+    }
+
+    const parts = [`${job.done} of ${job.total} done`];
+    if (job.failed) parts.push(`${job.failed} failed`);
+    const when = job.finishedAt ? 'Finished' : (job.stale ? 'Stalled' : 'Running');
+    const by = job.startedBy ? ` · started by ${esc(job.startedBy)}` : '';
+    summary.innerHTML = `${summaryPrefix}<span class="font-medium">${when}</span> — ${esc(parts.join(', '))}${by}`;
+
+    list.innerHTML = '';
+    for (const app of job.apps || []) {
+      const chip = AdminConsole.ROLLOVER_STATES[app.state]
+        || { label: app.state, cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' };
+      const el = document.createElement('div');
+      el.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
+      el.setAttribute('data-rollover-slug', app.slug);
+      el.setAttribute('data-rollover-state', app.state);
+      const secs = app.ms == null ? '' : `${(app.ms / 1000).toFixed(1)}s`;
+      el.innerHTML = `
+        <span class="flex-1 min-w-0">
+          <code class="font-mono text-sm">${esc(app.slug)}</code>
+          ${app.error ? `<span class="block text-xs text-red-500 mt-0.5">${esc(app.error)}</span>` : ''}
+        </span>
+        <span class="flex items-center gap-2 shrink-0">
+          ${secs ? `<span class="text-xs text-zinc-500">${esc(secs)}</span>` : ''}
+          <span class="text-xs px-2 py-0.5 rounded-full ${chip.cls}">${esc(chip.label)}</span>
+        </span>`;
+      list.appendChild(el);
+    }
   },
 
   // ── Overview (operations snapshot) ─────────────────────────────────────
