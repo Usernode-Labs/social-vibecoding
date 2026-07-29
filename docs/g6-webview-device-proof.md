@@ -37,29 +37,36 @@ Read-only inventory on 2026-07-29:
 
 - Flutter `3.41.4`, Android SDK `36.1.0`, and Xcode `26.4` are installed and
   healthy.
-- iPhone 16 / iOS 26.0 simulator
-  `69D97807-8D1E-4028-8BFD-54E1109049A7` is booted. It is useful for rehearsal
-  only.
-- Physical `Lukas' iPhone` / iOS 27.0 is visible to Xcode but offline. Unlock,
-  cable-pair, and enable Developer Mode before the proof.
-- Android has three AVD definitions (`Pixel6_API36`, `Pixel_6_API_34`,
-  `Pixel_9a`) but no connected physical device. Attach an unlocked,
-  developer-enabled Android device before the proof.
-- Flutter host checkout:
-  `/Users/lukasimrich/.codex/worktrees/5563/flutter-mobile-app` at the pinned
-  revision. Its untracked `artifacts/` directory is not candidate source.
+- A booted iOS simulator is available for rehearsal only. Record its model,
+  OS version, and identifier in the private raw preflight inventory, not in
+  this source file.
+- One physical iOS device was visible to Xcode but offline. Unlock, cable-pair,
+  and enable Developer Mode before the proof.
+- Android virtual devices are available, but no physical Android device was
+  connected. Attach an unlocked, developer-enabled physical device before the
+  proof.
+- A Flutter host checkout was present at the pinned revision. Its untracked
+  `artifacts/` directory is not candidate source.
+
+Set task-specific absolute paths for the two checkouts before running the
+preflight. Keep device names and identifiers in the retained raw output, and
+redact them from review summaries when they are not required to distinguish
+test devices:
 
 Re-run and retain the raw output before testing:
 
 ```sh
+export G6_FLUTTER_HOST_REPO="/absolute/path/to/flutter-mobile-app"
+export G6_REACT_SHELL_REPO="/absolute/path/to/social-vibecoding-react-shadcn"
+
 flutter doctor -v
 flutter devices --machine
 xcrun xctrace list devices
-/Users/lukasimrich/Library/Android/sdk/platform-tools/adb devices -l
-git -C /Users/lukasimrich/.codex/worktrees/5563/flutter-mobile-app status --short --branch
-git -C /Users/lukasimrich/.codex/worktrees/5563/flutter-mobile-app rev-parse HEAD
-git -C /Users/lukasimrich/Code/GitHub/worktrees/social-vibecoding-react-shadcn status --short --branch
-git -C /Users/lukasimrich/Code/GitHub/worktrees/social-vibecoding-react-shadcn rev-parse HEAD
+adb devices -l
+git -C "$G6_FLUTTER_HOST_REPO" status --short --branch
+git -C "$G6_FLUTTER_HOST_REPO" rev-parse HEAD
+git -C "$G6_REACT_SHELL_REPO" status --short --branch
+git -C "$G6_REACT_SHELL_REPO" rev-parse HEAD
 ```
 
 ## Fixture and instrumentation
