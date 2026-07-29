@@ -56,6 +56,8 @@ test("keeps bell, pending-invitation, and Work completion responsibilities disti
   await expect(page.getByRole("heading", { name: "Pending invitations" })).toBeVisible()
   await expect(page.getByTestId("notifications")).not.toContainText("collab invite")
   await expect(page.getByRole("link", { name: "Open notification: Can we add a pantry filter?" })).toHaveAttribute("href", "/react/apps/recipebot/dev/chat")
+  await expect(page.getByTestId("notifications").locator('[data-status-role="attention"]')).toHaveCount(2)
+  await expect(page.getByRole("img", { name: "RecipeBot, unread" })).toHaveCount(2)
 })
 
 test("routes identified proposal notifications into the owned React detail", async ({ page }) => {

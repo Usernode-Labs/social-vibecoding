@@ -86,7 +86,8 @@
       "distribution": "registry",
       "variants": [
         "LightSelected",
-        "DarkSelected"
+        "DarkSelected",
+        "SystemSelected"
       ],
       "tokens": [
         "foundation.font.sans",
@@ -96,11 +97,11 @@
       ],
       "accessibility": {
         "contract": [
-          "Expose one mutually exclusive light/dark choice set.",
+          "Expose one mutually exclusive light/dark/system preference choice set.",
           "Communicate the selected mode programmatically.",
           "Retain keyboard operation supplied by the official ToggleGroup."
         ],
-        "evidence": "LightSelected and DarkSelected Storybook states plus the theme route test."
+        "evidence": "LightSelected, DarkSelected and SystemSelected Storybook states plus route tests proving stored preference behavior and System semantic-token parity with explicit Light/Dark."
       },
       "dataBoundary": {
         "kind": "browser-preference-adapter",
@@ -115,7 +116,192 @@
         "story": "@/components/theme-switcher.stories.tsx",
         "states": [
           "LightSelected",
-          "DarkSelected"
+          "DarkSelected",
+          "SystemSelected"
+        ]
+      }
+    },
+    {
+      "id": "app-identity",
+      "name": "AppIdentity",
+      "module": "@/features/apps/app-identity.tsx",
+      "export": "AppIdentity",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "FallbackSlot1",
+        "FallbackSlot8",
+        "RemoteImage",
+        "Small",
+        "Medium",
+        "Large",
+        "RenameStable",
+        "UnicodeMonogram",
+        "NamedArtwork",
+        "Light",
+        "Dark"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Fallback artwork and supplied app images are decorative because the adjacent app name is the accessible label.",
+          "Identity foreground, border and surrounding focus treatment meet the semantic-token contrast matrix in both modes.",
+          "Forced-colors mode preserves a visible artwork boundary and fallback glyph."
+        ],
+        "evidence": "AppIdentity Storybook states, deterministic mapping tests, semantic token contrast checks, and forced-colors browser evidence."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "AppIdentity receives immutable app id/slug, display name and optional image. It derives its v1 finite palette slot locally and owns no route data or persistence."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "medium",
+          "rationale": "AppIdentity can repeat across a discovery collection, but the identity itself renders one image or one monogram and owns no collection."
+        },
+        "updateFrequency": "occasional",
+        "stateScope": "local",
+        "virtualization": "not-required",
+        "mountPolicy": "Keep each identity mounted with its owning app row or card; collection virtualization remains the route's responsibility.",
+        "sensitiveInteractions": [
+          "Remote artwork failure must fall back without changing the surrounding app layout."
+        ],
+        "followUp": "none"
+      },
+      "evidence": {
+        "story": "@/features/apps/app-identity.stories.tsx",
+        "states": [
+          "FallbackSlot1",
+          "FallbackSlot8",
+          "RemoteImage",
+          "Small",
+          "Medium",
+          "Large",
+          "RenameStable",
+          "UnicodeMonogram",
+          "NamedArtwork",
+          "Light",
+          "Dark"
+        ]
+      }
+    },
+    {
+      "id": "status-dot",
+      "name": "StatusDot",
+      "module": "@/components/status-dot.tsx",
+      "export": "StatusDot",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "PositiveLight",
+        "PositiveDark",
+        "InfoLight",
+        "InfoDark",
+        "WarningLight",
+        "WarningDark",
+        "NegativeLight",
+        "NegativeDark",
+        "AttentionLight",
+        "AttentionDark",
+        "NeutralLight",
+        "NeutralDark",
+        "DotOnly",
+        "WithLabel",
+        "WithDetail",
+        "AppLifecycleAdapter",
+        "NodeLifecycleAdapter",
+        "ConnectionLifecycleAdapter"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Color is never the only status signal; visible labels or an accessible dot label are required.",
+          "StatusDot owns the '<subject>, <state>' accessible phrase.",
+          "Dot-only status is exposed as a named image to assistive technology.",
+          "Forced-colors mode preserves a visible non-color state boundary."
+        ],
+        "evidence": "StatusDot role and App/Node/Connection adapter stories, semantic token contrast checks, and forced-colors browser evidence."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "StatusDot receives a non-empty subject, finite semantic role, and human state label. Explicit App, Node, and Connection adapters map raw domain values; raw API strings never choose colors."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "medium",
+          "rationale": "StatusDot may repeat in app, notification, or operational lists while each instance renders one compact state."
+        },
+        "updateFrequency": "streaming",
+        "stateScope": "local",
+        "virtualization": "not-required",
+        "mountPolicy": "Preserve the status node while its adapter-fed state changes so live updates do not rebuild the surrounding row.",
+        "sensitiveInteractions": [
+          "A live state change updates only the dot and its text or accessible name."
+        ],
+        "followUp": "profile-before-cutover"
+      },
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": [
+          "Running",
+          "Building",
+          "Configuration required",
+          "Unavailable",
+          "Paused",
+          "Unknown"
+        ],
+        "requiredStates": [
+          "unknown"
+        ],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": [
+          "internal-state leak",
+          "vague state"
+        ]
+      },
+      "evidence": {
+        "story": "@/components/status-dot.stories.tsx",
+        "states": [
+          "PositiveLight",
+          "PositiveDark",
+          "InfoLight",
+          "InfoDark",
+          "WarningLight",
+          "WarningDark",
+          "NegativeLight",
+          "NegativeDark",
+          "AttentionLight",
+          "AttentionDark",
+          "NeutralLight",
+          "NeutralDark",
+          "DotOnly",
+          "WithLabel",
+          "WithDetail",
+          "AppLifecycleAdapter",
+          "NodeLifecycleAdapter",
+          "ConnectionLifecycleAdapter"
         ]
       }
     },

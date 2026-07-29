@@ -95,6 +95,7 @@ test("keeps the four lifecycle columns and uses a single mobile column selector"
   await expect(page.getByRole("tablist", { name: "Development board columns" })).toBeVisible()
   await page.getByRole("tab", { name: /In review/ }).click()
   await expect(page.locator('section[aria-label="In review column"]')).toBeVisible()
+  await expect(page.getByRole("img", { name: "Filter pantry staples, needs vote" })).toBeVisible()
 })
 
 test("routes completed proposals and governance changes to owned React details", async ({ page }, testInfo) => {
@@ -191,7 +192,7 @@ test("reassigns and orders a PM task through the established community-vote cont
   })
 
   await page.goto("/react/apps/recipebot/dev?view=pm")
-  const source = page.getByRole("link", { name: "View Add pantry shortcuts" })
+  const source = page.getByRole("button", { name: "Reorder Add pantry shortcuts" })
   const target = page.getByRole("link", { name: "View Review ingredient substitutions" })
   const sourceBox = await source.boundingBox()
   const targetBox = await target.boundingBox()
@@ -404,7 +405,7 @@ test("gives and retracts direct proposal kudos through the existing reversible c
   await page.goto("/react/apps/recipebot/dev/proposals/19")
   await page.getByRole("button", { name: /Give kudos 2/ }).click()
   await expect.poll(() => requests).toEqual(["POST"])
-  await expect(page.getByRole("alert")).toContainText("4 of 5 weekly recognition slots remain")
+  await expect(page.getByRole("alert").filter({ hasText: "Recognition updated" })).toContainText("4 of 5 weekly recognition slots remain")
   await expect(page.getByRole("button", { name: /Retract kudos 3/ })).toBeVisible()
   await page.getByRole("button", { name: /Retract kudos 3/ }).click()
   await expect.poll(() => requests).toEqual(["POST", "DELETE"])

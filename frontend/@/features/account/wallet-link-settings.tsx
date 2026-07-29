@@ -1,7 +1,8 @@
-import { CheckCircle2, Clock3, Copy, Link2, LoaderCircle, QrCode, Smartphone } from "lucide-react"
+import { Clock3, Copy, Link2, LoaderCircle, QrCode, Smartphone } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -208,9 +209,8 @@ export function WalletLinkSettingsView({
       {phase.kind === "linked" ? (
         <CardContent>
           <div className="flex items-center gap-3 rounded-lg border bg-muted/40 p-3">
-            <PlatformIcon className="text-emerald-500" icon={CheckCircle2} />
             <div className="min-w-0">
-              <p className="font-medium">Wallet linked</p>
+              <StatusDot className="font-medium" label="Wallet linked" role="positive" subject="Wallet" />
               <p className="truncate font-mono text-sm text-muted-foreground" title={phase.pubkey}>
                 {shortAddress(phase.pubkey)}
               </p>

@@ -2,11 +2,13 @@ import { CircleAlert, RadioTower, RefreshCw, Server, TriangleAlert } from "lucid
 import { useEffect, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { nodePresentationStatus } from "@/features/platform/node-presentation-status"
 import { getNodeStatusSnapshot, type ExplorerStatusSnapshot, type NodeStatusSnapshot, type NodeStatusSnapshotFull } from "@/lib/node-status-api"
 
 type State =
@@ -39,7 +41,7 @@ function statusTitle(status?: string | null) {
 function NodeSnapshot({ node }: { node: NodeStatusSnapshot | null | undefined }) {
   if (!node) return <Card><CardHeader><CardTitle>Node</CardTitle><CardDescription>No sidecar probe data is currently available.</CardDescription></CardHeader></Card>
   const height = node.bestTipHeight == null ? "Not reported" : node.peerBestTipHeight == null ? node.bestTipHeight.toLocaleString() : `${node.bestTipHeight.toLocaleString()} / ${node.peerBestTipHeight.toLocaleString()}`
-  return <Card><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-2"><PlatformIcon icon={Server} /><div><CardTitle>Node</CardTitle><CardDescription>Local sidecar status, read from the platform cache.</CardDescription></div></div><Badge variant={statusVariant(node.status)}>{statusTitle(node.status)}</Badge></div></CardHeader><CardContent className="space-y-4"><dl className="grid gap-3 text-base sm:grid-cols-2 sm:text-sm"><Metric label="Peers" value={String(node.peers ?? "Not reported")} /><Metric label="Chain height" value={height} numeric /><Metric label="First synced" value={node.hasBeenSynced ? "Yes" : "Not yet"} /><Metric label="UTXO database" value={node.hasFullUtxoDb === true ? "Full" : node.hasFullUtxoDb === false ? "Partial" : "Not reported"} /></dl>{node.hasFullUtxoDb === false ? <Alert><PlatformIcon icon={TriangleAlert} /><AlertTitle>Partial UTXO database</AlertTitle><AlertDescription>The node may not observe every incoming transaction. This status is reported by the sidecar; resolving it remains an operator action.</AlertDescription></Alert> : null}{node.error ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Node probe failed</AlertTitle><AlertDescription>{node.error}</AlertDescription></Alert> : null}</CardContent></Card>
+  return <Card><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-2"><PlatformIcon icon={Server} /><div><CardTitle>Node</CardTitle><CardDescription>Local sidecar status, read from the platform cache.</CardDescription></div></div><StatusDot subject="Node" {...nodePresentationStatus(node.status)} /></div></CardHeader><CardContent className="space-y-4"><dl className="grid gap-3 text-base sm:grid-cols-2 sm:text-sm"><Metric label="Peers" value={String(node.peers ?? "Not reported")} /><Metric label="Chain height" value={height} numeric /><Metric label="First synced" value={node.hasBeenSynced ? "Yes" : "Not yet"} /><Metric label="UTXO database" value={node.hasFullUtxoDb === true ? "Full" : node.hasFullUtxoDb === false ? "Partial" : "Not reported"} /></dl>{node.hasFullUtxoDb === false ? <Alert><PlatformIcon icon={TriangleAlert} /><AlertTitle>Partial UTXO database</AlertTitle><AlertDescription>The node may not observe every incoming transaction. This status is reported by the sidecar; resolving it remains an operator action.</AlertDescription></Alert> : null}{node.error ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Node probe failed</AlertTitle><AlertDescription>{node.error}</AlertDescription></Alert> : null}</CardContent></Card>
 }
 
 function ExplorerSnapshot({ explorer }: { explorer: ExplorerStatusSnapshot | null | undefined }) {

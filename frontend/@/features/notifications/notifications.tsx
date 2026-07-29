@@ -1,14 +1,15 @@
-import { Bell, CheckCheck, CircleDot, Handshake, RefreshCw, Scale, X } from "lucide-react"
+import { Bell, CheckCheck, Handshake, RefreshCw, Scale, X } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
+import { connectionPresentationStatus } from "@/features/platform/connection-presentation-status"
 import { subscribeNotificationEvents, type NotificationEventsConnectionState } from "@/lib/notification-events"
 import { acceptInvite, declineInvite, getNotificationsPage, isBellNotification, markBellNotificationsRead, markNotificationRead, type Notification, type NotificationCursor, type PendingInvite } from "@/lib/notifications-api"
 import { appDevChatPath, appDevGitHubIssuePath, appDevGovernancePath, appDevPath, appDevProposalPath, appDevSessionPath } from "@/lib/routes"
@@ -103,7 +104,7 @@ export function NotificationsContent({ data, error, inviteError, loadMoreError, 
       </div>
     </header>
     {isProductionReadOnlyReview ? <Alert><PlatformIcon icon={Bell} /><AlertTitle>Production review mode</AlertTitle><AlertDescription>Notifications and invitations can be reviewed here, but no read, accept, or decline request is made.</AlertDescription></Alert> : null}
-    {liveState !== "connected" ? <p className="text-sm text-muted-foreground" role="status">{liveState === "connecting" ? "Connecting to live notifications." : liveState === "unavailable" ? "Live notifications are unavailable. Use refresh to re-read the latest updates." : "Live notifications are reconnecting."}</p> : null}
+    {liveState !== "connected" ? <div className="text-sm text-muted-foreground" role="status"><StatusDot detail={liveState === "unavailable" ? "Refresh to check for updates." : undefined} subject="Notifications" {...connectionPresentationStatus(liveState)} /></div> : null}
     {error ? <Alert variant="destructive"><PlatformIcon icon={Bell} /><AlertTitle>Notifications unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {inviteError ? <Alert variant="destructive"><PlatformIcon icon={Handshake} /><AlertTitle>Invitation was not updated</AlertTitle><AlertDescription>{inviteError}</AlertDescription></Alert> : null}
     {!data && !error ? <NotificationsSkeleton /> : null}
@@ -127,7 +128,7 @@ function NotificationGroup({ group, onOpen }: { group: Notification[]; onOpen: (
   return <section aria-labelledby={`notification-group-${group[0]?.appId ?? "general"}`} className="flex flex-col gap-2"><h2 className="text-lg font-medium" id={`notification-group-${group[0]?.appId ?? "general"}`}>{heading}</h2>{group.map((notification) => {
     const href = notificationHref(notification)
     const label = `Open notification: ${notificationCopy(notification)}`
-    return <Card key={notification.id} size="sm"><CardHeader><CardTitle className="truncate text-base">{notificationCopy(notification)}</CardTitle><CardDescription>{notification.sourceUsername ? `@${notification.sourceUsername} · ` : ""}{notification.kind.replaceAll("_", " ")}</CardDescription><CardAction>{!notification.readAt ? <Badge><PlatformIcon data-icon="inline-start" icon={CircleDot} size="xs" />New</Badge> : null}</CardAction></CardHeader><CardFooter><Button onClick={() => onOpen(notification)} render={<Link aria-label={label} to={href} />} size="sm" variant="outline">Open</Button></CardFooter></Card>
+    return <Card key={notification.id} size="sm"><CardHeader><CardTitle className="truncate text-base">{notificationCopy(notification)}</CardTitle><CardDescription>{notification.sourceUsername ? `@${notification.sourceUsername} · ` : ""}{notification.kind.replaceAll("_", " ")}</CardDescription><CardAction>{!notification.readAt ? <StatusDot label="Unread" role="attention" subject={notification.appName || "Notification"} /> : null}</CardAction></CardHeader><CardFooter><Button onClick={() => onOpen(notification)} render={<Link aria-label={label} to={href} />} size="sm" variant="outline">Open</Button></CardFooter></Card>
   })}</section>
 }
 

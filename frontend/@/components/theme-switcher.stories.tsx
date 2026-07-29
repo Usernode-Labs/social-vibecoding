@@ -13,9 +13,13 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const LightSelected: Story = {
-  args: { mode: "light", onModeChange: () => undefined },
+  args: { preference: "light", effectiveMode: "light", onPreferenceChange: () => undefined },
 }
 
 export const DarkSelected: Story = {
-  args: { mode: "dark", onModeChange: () => undefined },
+  args: { preference: "dark", effectiveMode: "dark", onPreferenceChange: () => undefined },
+}
+
+export const SystemSelected: Story = {
+  args: { preference: "system", effectiveMode: "dark", onPreferenceChange: () => undefined },
 }

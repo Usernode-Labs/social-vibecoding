@@ -1,28 +1,33 @@
-import type { CSSProperties } from "react"
+import { cn } from "@/lib/utils"
+import { appIdentitySlot, appMonogram, type AppIdentityApp } from "./app-identity-contract"
 
-import type { AppRecord } from "@/lib/apps-api"
+const identitySizes = {
+  sm: "size-8 text-sm",
+  md: "size-12 text-lg",
+  lg: "size-16 text-xl",
+} as const
 
-function identityStyle(name: string): CSSProperties {
-  let hash = 0
-  for (const character of name || "?") {
-    hash = (hash * 31 + character.charCodeAt(0)) >>> 0
-  }
-  const hue = hash % 360
-  return { backgroundColor: `hsl(${hue} 45% 18%)`, color: `hsl(${hue} 70% 92%)` }
+export type AppIdentityProps = {
+  app: AppIdentityApp
+  size?: keyof typeof identitySizes
+  decorative?: boolean
 }
 
-export function AppIdentity({ app }: { app: AppRecord }) {
+export function AppIdentity({ app, decorative = true, size = "md" }: AppIdentityProps) {
+  const sizeClass = identitySizes[size]
   if (app.icon_url) {
-    return <img alt="" className="size-12 shrink-0 rounded-md object-cover" src={app.icon_url} />
+    return <img alt={decorative ? "" : app.name} className={cn("shrink-0 rounded-md object-cover", sizeClass)} src={app.icon_url} />
   }
 
   return (
     <div
-      aria-hidden="true"
-      className="flex size-12 shrink-0 items-center justify-center rounded-md text-lg font-semibold"
-      style={identityStyle(app.name)}
+      aria-hidden={decorative ? true : undefined}
+      aria-label={decorative ? undefined : app.name}
+      className={cn("app-identity flex shrink-0 items-center justify-center rounded-md border font-semibold", sizeClass)}
+      data-identity-slot={appIdentitySlot(app)}
+      role={decorative ? undefined : "img"}
     >
-      {app.name.slice(0, 1).toUpperCase()}
+      {appMonogram(app.name)}
     </div>
   )
 }

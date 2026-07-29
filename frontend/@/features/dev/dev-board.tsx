@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PlatformIcon } from "@/components/platform-icon"
+import { StatusDot } from "@/components/status-dot"
 import type { AppSession } from "@/lib/apps-api"
 import type { BoardOrderEntry, DevBoardSnapshot, MergedBoardItem, PmOrder, PmOrderEntry, SharedBoardSession } from "@/lib/dev-board-api"
 import type { DevIssue, DevProposal } from "@/lib/dev-forum-api"
@@ -311,7 +312,7 @@ function WorkCard({ card }: { card: BoardCard }) {
     <CardHeader className="gap-2 p-4 pb-3">
       <div className="flex items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="line-clamp-2 text-base font-medium">{card.title}</CardTitle><CardDescription className="mt-1 line-clamp-2 text-base leading-6 sm:text-sm sm:leading-5">{card.description}</CardDescription></div>{card.status ? <Badge className="shrink-0" variant={card.status === "Working" ? "secondary" : "outline"}>{card.status}</Badge> : null}</div>
     </CardHeader>
-    {metadata.length || card.needsVote ? <CardContent className="flex flex-wrap gap-2 px-4 pb-3">{metadata.map((value) => <Badge key={value} variant="secondary">{value}</Badge>)}{card.needsVote ? <Badge variant="outline">Needs vote</Badge> : null}</CardContent> : null}
+    {metadata.length || card.needsVote ? <CardContent className="flex flex-wrap gap-2 px-4 pb-3">{metadata.map((value) => <Badge key={value} variant="secondary">{value}</Badge>)}{card.needsVote ? <StatusDot label="Needs vote" role="attention" subject={card.title} /> : null}</CardContent> : null}
     <CardFooter className="border-t p-3"><Button className="w-full" render={<Link aria-label={session ? `Open ${card.title}` : `View ${card.title}`} to={card.href} />} size="sm" variant="outline">{action}</Button></CardFooter>
   </Card>
 }
@@ -490,7 +491,7 @@ function BoardCardView({ card, draggable }: { card: BoardCard; draggable: boolea
     <Link aria-label={card.kind === "session" ? `Open ${card.title}` : `View ${card.title}`} className="block rounded-xl p-3 outline-none focus-visible:ring-3 focus-visible:ring-ring/50" to={card.href}>
       <CardTitle className="min-w-0 pr-7 line-clamp-2 text-base font-medium sm:text-sm">{card.title}</CardTitle>
       <CardDescription className="mt-2 line-clamp-2 text-base leading-6 sm:text-sm sm:leading-5">{card.description}</CardDescription>
-      {card.status ? <Badge className="mt-3" variant={card.status === "Working" ? "secondary" : "outline"}>{card.status}</Badge> : null}
+      {card.status || card.needsVote ? <div className="mt-3 flex flex-wrap items-center gap-2">{card.status ? <Badge variant={card.status === "Working" ? "secondary" : "outline"}>{card.status}</Badge> : null}{card.needsVote ? <StatusDot label="Needs vote" role="attention" subject={card.title} /> : null}</div> : null}
     </Link>{draggable ? <Button aria-label={`Reorder ${card.title}`} className="absolute top-2 right-2 text-muted-foreground hover:text-foreground" ref={sortable.setActivatorNodeRef} size="icon-xs" type="button" variant="ghost" {...sortable.attributes} {...sortable.listeners}><PlatformIcon icon={GripVertical} /></Button> : null}
   </Card></div>
 }

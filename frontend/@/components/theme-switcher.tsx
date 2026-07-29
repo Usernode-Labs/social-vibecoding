@@ -1,28 +1,29 @@
-import { Moon, Sun } from "lucide-react"
+import { Monitor, Moon, Sun } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { getThemeMode, applyThemeMode, setThemeMode, subscribeThemeMode, type ThemeMode } from "@/lib/theme"
+import { getThemeMode, getThemePreference, applyThemeMode, setThemePreference, subscribeThemeMode, subscribeThemePreference, type ThemeMode, type ThemePreference } from "@/lib/theme"
 import { cn } from "@/lib/utils"
 
 type ThemeSwitcherViewProps = {
   className?: string
-  mode: ThemeMode
-  onModeChange: (mode: ThemeMode) => void
+  preference: ThemePreference
+  effectiveMode: ThemeMode
+  onPreferenceChange: (preference: ThemePreference) => void
 }
 
-export function ThemeSwitcherView({ className, mode, onModeChange }: ThemeSwitcherViewProps) {
+export function ThemeSwitcherView({ className, effectiveMode, onPreferenceChange, preference }: ThemeSwitcherViewProps) {
   return (
     <ToggleGroup
       aria-label="Color mode"
       className={cn("w-full", className)}
       onValueChange={(values) => {
         const next = values[0]
-        if (next === "light" || next === "dark") onModeChange(next)
+        if (next === "light" || next === "dark" || next === "system") onPreferenceChange(next)
       }}
       spacing={0}
-      value={[mode]}
+      value={[preference]}
       variant="outline"
     >
       <ToggleGroupItem aria-label="Use light mode" className="flex-1" value="light">
@@ -33,25 +34,34 @@ export function ThemeSwitcherView({ className, mode, onModeChange }: ThemeSwitch
         <PlatformIcon data-icon="inline-start" icon={Moon} />
         Dark
       </ToggleGroupItem>
+      <ToggleGroupItem aria-label={`Use system mode, currently ${effectiveMode}`} className="flex-1" value="system">
+        <PlatformIcon data-icon="inline-start" icon={Monitor} />
+        System
+      </ToggleGroupItem>
     </ToggleGroup>
   )
 }
 
 export function ThemeSwitcher({ className }: { className?: string }) {
-  const [mode, setMode] = useState<ThemeMode>(() => getThemeMode())
+  const [preference, setPreference] = useState<ThemePreference>(() => getThemePreference())
+  const [effectiveMode, setEffectiveMode] = useState<ThemeMode>(() => getThemeMode())
 
   useEffect(() => {
-    applyThemeMode(mode)
-    return subscribeThemeMode(setMode)
-  }, [mode])
+    applyThemeMode(effectiveMode)
+    return subscribeThemeMode(setEffectiveMode)
+  }, [effectiveMode])
+
+  useEffect(() => subscribeThemePreference(setPreference), [])
 
   return (
     <ThemeSwitcherView
       className={className}
-      mode={mode}
-      onModeChange={(nextMode) => {
-        setMode(nextMode)
-        setThemeMode(nextMode)
+      effectiveMode={effectiveMode}
+      preference={preference}
+      onPreferenceChange={(nextPreference) => {
+        setPreference(nextPreference)
+        setThemePreference(nextPreference)
+        setEffectiveMode(nextPreference === "system" ? getThemeMode() : nextPreference)
       }}
     />
   )

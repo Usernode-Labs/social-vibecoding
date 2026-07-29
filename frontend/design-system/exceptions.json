@@ -331,12 +331,11 @@
       "rule": "no-raw-palette",
       "file": "@/features/account/wallet-link-settings.tsx",
       "matches": [
-        "bg-white",
-        "text-emerald-500"
+        "bg-white"
       ],
-      "count": 2,
+      "count": 1,
       "owner": "frontend-platform",
-      "reason": "QR contrast and wallet-success status predate semantic QR/status tokens.",
+      "reason": "The QR canvas requires a fixed white surface independent of shell theme.",
       "expires": "2026-09-30"
     },
     {

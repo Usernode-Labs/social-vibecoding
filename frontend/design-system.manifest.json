@@ -19,7 +19,58 @@
       "export": "ThemeSwitcherView",
       "story": {
         "module": "@/components/theme-switcher.stories.tsx",
-        "states": ["LightSelected", "DarkSelected"]
+        "states": ["LightSelected", "DarkSelected", "SystemSelected"]
+      }
+    },
+    {
+      "id": "app-identity",
+      "name": "AppIdentity",
+      "module": "@/features/apps/app-identity.tsx",
+      "export": "AppIdentity",
+      "story": {
+        "module": "@/features/apps/app-identity.stories.tsx",
+        "states": [
+          "FallbackSlot1",
+          "FallbackSlot8",
+          "RemoteImage",
+          "Small",
+          "Medium",
+          "Large",
+          "RenameStable",
+          "UnicodeMonogram",
+          "NamedArtwork",
+          "Light",
+          "Dark"
+        ]
+      }
+    },
+    {
+      "id": "status-dot",
+      "name": "StatusDot",
+      "module": "@/components/status-dot.tsx",
+      "export": "StatusDot",
+      "story": {
+        "module": "@/components/status-dot.stories.tsx",
+        "states": [
+          "PositiveLight",
+          "PositiveDark",
+          "InfoLight",
+          "InfoDark",
+          "WarningLight",
+          "WarningDark",
+          "NegativeLight",
+          "NegativeDark",
+          "AttentionLight",
+          "AttentionDark",
+          "NeutralLight",
+          "NeutralDark",
+          "DotOnly",
+          "WithLabel",
+          "WithDetail",
+          "AppLifecycleAdapter",
+          "NodeLifecycleAdapter",
+          "ConnectionLifecycleAdapter"
+        ]
       }
     },
     {

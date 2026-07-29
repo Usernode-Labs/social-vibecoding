@@ -54,17 +54,28 @@ test("uses the OS preference on first boot and persists an explicit choice", asy
   await expect(page.locator("html")).toHaveCSS("color-scheme", "light")
 })
 
-test("keeps the Settings control and shell control synchronized", async ({ page }) => {
+test("keeps two mounted controls synchronized for explicit and System preferences", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "Only desktop renders shell and Settings theme controls together.")
   await page.addInitScript(() => window.localStorage.setItem("theme", "light"))
   await page.goto("/react/settings")
 
   const appearance = page.getByTestId("settings-appearance")
+  const switchers = page.getByRole("group", { name: "Color mode" })
+  await expect(switchers).toHaveCount(2)
   await appearance.getByRole("button", { name: "Use dark mode" }).click()
 
   await expect(page.locator("html")).toHaveClass(/dark/)
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark")
   await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", "#0a0a0a")
-  await expect(page.getByRole("button", { name: "Use dark mode" }).first()).toHaveAttribute("aria-pressed", "true")
+  for (const switcher of await switchers.all()) {
+    await expect(switcher.getByRole("button", { name: "Use dark mode" })).toHaveAttribute("aria-pressed", "true")
+  }
+
+  await appearance.getByRole("button", { name: /Use system mode/ }).click()
+  await expect.poll(() => page.evaluate(() => window.localStorage.getItem("theme"))).toBe("system")
+  for (const switcher of await switchers.all()) {
+    await expect(switcher.getByRole("button", { name: /Use system mode/ })).toHaveAttribute("aria-pressed", "true")
+  }
 })
 
 for (const mode of ["light", "dark"] as const) {
