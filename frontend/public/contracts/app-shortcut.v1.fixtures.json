@@ -1,0 +1,32 @@
+{
+  "$comment": "Adversarial fixtures applied to a valid numeric-id envelope. expected_schema_valid is present where structural JSON Schema validation intentionally cannot prove the runtime's derived semantic fields.",
+  "cases": [
+    { "name": "valid hosted bridge request id", "expected_valid": true },
+    { "name": "silent refresh", "path": "args.silent", "value": true, "expected_valid": true },
+    { "name": "safe nested app path", "path": "args.url", "value": "https://social.example/react/apps/numeric/open?path=%2Frecipes%2F42%3Fview%3Dfull", "expected_valid": true },
+    { "name": "request id must use the timestamp-random wire format", "path": "id", "value": "42", "expected_valid": false },
+    { "name": "request id is not the numeric app API id", "path": "id", "value": 42, "expected_valid": false },
+    { "name": "unknown methods are outside v1", "path": "method", "value": "unknown", "expected_valid": false },
+    { "name": "silent policy is mandatory", "path": "args.silent", "remove": true, "expected_valid": false },
+    { "name": "silent policy is boolean", "path": "args.silent", "value": "true", "expected_valid": false },
+    { "name": "react compatibility alias is explicit", "path": "args.url", "value": "https://social.example/apps/numeric/open", "expected_valid": false },
+    { "name": "inner path must be absolute", "path": "args.url", "value": "https://social.example/react/apps/numeric/open?path=relative", "expected_valid": false },
+    { "name": "inner path must not be protocol relative", "path": "args.url", "value": "https://social.example/react/apps/numeric/open?path=%2F%2Fevil.example", "expected_valid": false },
+    { "name": "inner path must not contain encoded whitespace", "path": "args.url", "value": "https://social.example/react/apps/numeric/open?path=%2Frecipes%20private", "expected_valid": false },
+    { "name": "inner path must be the only query parameter", "path": "args.url", "value": "https://social.example/react/apps/numeric/open?path=%2Frecipes&debug=1", "expected_valid": false },
+    { "name": "route contract is pinned", "path": "args.route_contract", "value": "usernode.app-open.v2", "expected_valid": false },
+    { "name": "hash width is frozen", "path": "args.identity.identity_hash", "value": "fnv1a32:12345678", "expected_valid": false },
+    { "name": "identity hash is recomputed", "path": "args.identity.identity_hash", "value": "fnv1a64:0000000000000000", "expected_valid": false, "expected_schema_valid": true },
+    { "name": "palette slot is recomputed from the frozen v1 mapping", "path": "args.identity.slot", "value": 3, "expected_valid": false, "expected_schema_valid": true },
+    { "name": "monogram is derived from the full display name", "path": "args.identity.monogram", "value": "X", "expected_valid": false, "expected_schema_valid": true },
+    { "name": "appearance hash is recomputed", "path": "args.identity.appearance_hash", "value": "fnv1a64:0000000000000000", "expected_valid": false, "expected_schema_valid": true },
+    { "name": "native label is derived from the full display name", "path": "args.name", "value": "Recipe shortcut", "expected_valid": false, "expected_schema_valid": true },
+    { "name": "identity tuple namespace is mandatory", "path": "args.identity.identity_key", "value": "900001", "expected_valid": false },
+    { "name": "arbitrary same-origin artwork is rejected", "path": "args.icon_url", "value": "https://social.example/uploads/icon.png", "expected_valid": false },
+    { "name": "artwork URL must match the identity artwork reference", "path": "args.icon_url", "value": "https://social.example/app-icons/fedcba9876543210fedcba9876543210", "expected_valid": false, "expected_schema_valid": true },
+    { "name": "identity artwork is content addressed", "path": "args.identity.artwork_ref", "value": "/uploads/icon.png", "expected_valid": false },
+    { "name": "SVG data artwork is rejected", "path": "args.icon_url", "value": "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=", "expected_valid": false },
+    { "name": "unknown envelope keys are rejected", "path": "debug", "value": true, "expected_valid": false },
+    { "name": "unknown args keys are rejected", "path": "args.confirm", "value": true, "expected_valid": false }
+  ]
+}

@@ -35,3 +35,78 @@ test("exposes the developer console only from the active preview chrome", async 
   await trigger.click()
   await expect(page.getByRole("heading", { name: "Developer console" })).toBeVisible()
 })
+
+test("keeps preview chrome and its iframe inside web-owned safe-area slots", async ({ page }) => {
+  await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
+  const preview = page.locator('[data-slot="staging-preview-surface"][data-state="ready"]')
+  const header = page.locator('[data-slot="staging-preview-header"]')
+  const frame = page.locator('[data-slot="staging-preview-frame"]')
+  await expect(preview).toBeVisible()
+  await page.evaluate(() => {
+    const root = document.documentElement
+    root.style.setProperty("--safe-area-bottom", "17px")
+    root.style.setProperty("--safe-area-left", "21px")
+    root.style.setProperty("--safe-area-right", "25px")
+  })
+
+  await expect.poll(() => preview.evaluate((node) => getComputedStyle(node).paddingBottom)).toBe("17px")
+  await expect.poll(() => header.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { left: style.paddingLeft, right: style.paddingRight }
+  })).toEqual({ left: "21px", right: "25px" })
+  await expect.poll(() => frame.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { left: style.marginLeft, right: style.marginRight }
+  })).toEqual({ left: "21px", right: "25px" })
+})
+
+test("preserves the preview loading gutter while allowing a larger device inset", async ({ page }) => {
+  await page.unroute("**/api/sessions/9")
+  await page.route("**/api/sessions/9", () => new Promise(() => {}))
+  await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
+  const loading = page.locator('[data-slot="staging-preview-surface"][data-state="loading"]')
+  await expect(loading).toBeVisible()
+  await page.evaluate(() => {
+    const root = document.documentElement
+    root.style.setProperty("--safe-area-bottom", "9px")
+    root.style.setProperty("--safe-area-left", "31px")
+    root.style.setProperty("--safe-area-right", "7px")
+  })
+
+  await expect.poll(() => loading.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return {
+      top: style.paddingTop,
+      bottom: style.paddingBottom,
+      left: style.paddingLeft,
+      right: style.paddingRight,
+    }
+  })).toEqual({ top: "24px", bottom: "24px", left: "31px", right: "24px" })
+})
+
+test("preserves the preview error gutter while allowing a larger device inset", async ({ page }) => {
+  await page.unroute("**/api/sessions/9")
+  await page.route("**/api/sessions/9", (route) => route.fulfill({
+    status: 503,
+    json: { error: "Preview unavailable" },
+  }))
+  await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
+  const error = page.locator('[data-slot="staging-preview-surface"][data-state="error"]')
+  await expect(error).toBeVisible()
+  await page.evaluate(() => {
+    const root = document.documentElement
+    root.style.setProperty("--safe-area-bottom", "29px")
+    root.style.setProperty("--safe-area-left", "11px")
+    root.style.setProperty("--safe-area-right", "27px")
+  })
+
+  await expect.poll(() => error.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return {
+      top: style.paddingTop,
+      bottom: style.paddingBottom,
+      left: style.paddingLeft,
+      right: style.paddingRight,
+    }
+  })).toEqual({ top: "24px", bottom: "29px", left: "24px", right: "27px" })
+})

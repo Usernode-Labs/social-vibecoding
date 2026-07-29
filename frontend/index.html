@@ -2,7 +2,7 @@
 <html class="antialiased" lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <title>dApps</title>
     <link rel="manifest" href="/manifest.webmanifest" />
     <meta name="theme-color" content="#ffffff" />
@@ -35,11 +35,19 @@
       src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"
     ></script>
     <script src="/usernode-bridge.js"></script>
+    <script src="/app-shortcut-contract.js"></script>
     <script src="/js/dev-host.js"></script>
     <script src="/js/offline.js"></script>
   </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <script type="module">
+      import { installExternalLinkDelegation } from "@/lib/external-links"
+      import { installViewportContract } from "@/lib/viewport-contract"
+
+      installViewportContract()
+      void installExternalLinkDelegation()
+      import("/src/main.tsx")
+    </script>
   </body>
 </html>

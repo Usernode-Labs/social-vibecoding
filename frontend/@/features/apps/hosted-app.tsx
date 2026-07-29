@@ -8,18 +8,9 @@ import { FocusedAppFrame } from "@/features/apps/focused-app-frame"
 import { getApp, getIframeToken, type AppDetail } from "@/lib/apps-api"
 import { useDevConsoleContext } from "@/lib/dev-console-context"
 import { syncNativeTitle } from "@/lib/native-bridge"
-import { appDevPath } from "@/lib/routes"
+import { appDevPath, safeAppInnerPath } from "@/lib/routes"
 
 const TOKEN_REFRESH_MS = 45 * 60 * 1000
-
-function validInnerPath(value: string | null) {
-  if (!value || value.length > 512 || !value.startsWith("/") || value.startsWith("//")) return null
-  const hasUnsafeCharacter = [...value].some((character) => {
-    const code = character.charCodeAt(0)
-    return /[\s\\`'"<>]/.test(character) || code < 32 || code === 127
-  })
-  return hasUnsafeCharacter ? null : value
-}
 
 function chromeState({
   app,
@@ -55,7 +46,7 @@ export function HostedApp() {
   const [offline, setOffline] = useState(() => navigator.onLine === false)
   const [loadedFrameKey, setLoadedFrameKey] = useState<string | null>(null)
   const devConsole = useDevConsoleContext()
-  const innerPath = validInnerPath(searchParams.get("path"))
+  const innerPath = safeAppInnerPath(searchParams.get("path"))
   const currentApp = app?.slug === slug ? app : null
   const loadError = loadErrorState?.slug === slug ? loadErrorState.message : null
   const token = tokenState?.slug === slug ? tokenState.value : null
@@ -146,7 +137,7 @@ export function HostedApp() {
 
   if (loadError) {
     return (
-      <div className="flex flex-1 items-center justify-center p-6">
+      <div className="flex flex-1 items-center justify-center" data-slot="hosted-app-surface" data-state="error">
         <Alert className="max-w-md" variant="destructive">
           <AlertTitle>App unavailable</AlertTitle>
           <AlertDescription>{loadError}</AlertDescription>
@@ -157,7 +148,7 @@ export function HostedApp() {
 
   if (!currentApp) {
     return (
-      <div className="flex flex-1 p-4">
+      <div className="flex flex-1" data-slot="hosted-app-surface" data-state="loading">
         <Skeleton className="h-full w-full" />
       </div>
     )
@@ -172,7 +163,7 @@ export function HostedApp() {
   })
 
   return (
-    <div className="relative isolate flex min-h-0 flex-1 bg-background" data-testid="hosted-app">
+    <div className="relative isolate flex min-h-0 flex-1 bg-background" data-slot="hosted-app-surface" data-state="ready" data-testid="hosted-app">
       <AppChrome
         app={currentApp}
         consoleError={devConsole.unseenErrors > 0}
@@ -183,7 +174,7 @@ export function HostedApp() {
         state={state}
       />
       {tokenError ? (
-        <div className="flex flex-1 items-center justify-center p-6">
+        <div className="flex flex-1 items-center justify-center" data-slot="focused-app-surface" data-state="error">
           <Alert className="max-w-md" variant="destructive">
             <AlertTitle>App unavailable</AlertTitle>
             <AlertDescription>{tokenError}</AlertDescription>

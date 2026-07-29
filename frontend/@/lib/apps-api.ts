@@ -1,5 +1,5 @@
 export type AppRecord = {
-  id: string
+  id: string | number
   slug: string
   name: string
   status: "running" | "error" | "awaiting_secrets" | "building" | string

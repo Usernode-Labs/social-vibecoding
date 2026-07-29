@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://social-vibecoding.usernodelabs.org/react/contracts/app-shortcut.v1.schema.json",
+  "$comment": "Exact Flutter JavaScript-channel envelope. Unknown methods and malformed/missing ids are silently dropped by the current native host. Schema validation is structural; the browser runtime also recomputes every derived identity field, checks the native label derivation, and correlates artwork_ref with icon_url.",
+  "title": "Usernode add-home-screen-shortcut native envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["method", "id", "args"],
+  "properties": {
+    "method": { "const": "addHomeScreenShortcut" },
+    "id": {
+      "type": "string",
+      "pattern": "^\\d+-[0-9a-f]+$"
+    },
+    "args": { "$ref": "#/$defs/appShortcutArgsV1" }
+  },
+  "$defs": {
+    "appShortcutArgsV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "contract_version",
+        "route_contract",
+        "name",
+        "url",
+        "icon_url",
+        "identity",
+        "silent"
+      ],
+      "properties": {
+        "contract": { "const": "usernode.app-shortcut" },
+        "contract_version": { "const": 1 },
+        "route_contract": { "const": "usernode.react-app-open.v1" },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48,
+          "$comment": "The runtime measures the native limit in UTF-16 code units and never splits a grapheme."
+        },
+        "url": {
+          "type": "string",
+          "pattern": "^https?://[^/@]+/react/apps/[^/]+/open(?:\\?path=%2F(?!%2F)(?![^#]*(?:%09|%0A|%0B|%0C|%0D|%20|%5C|%60|%27|%22|%3C|%3E|%7F))[A-Za-z0-9._~%-]*)?$"
+        },
+        "icon_url": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "pattern": "^https?://[^/@]+/app-icons/[0-9a-f]{32}$"
+            },
+            {
+              "type": "string",
+              "pattern": "^data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$",
+              "maxLength": 2796241
+            }
+          ]
+        },
+        "identity": { "$ref": "#/$defs/appIdentityV1" },
+        "silent": { "type": "boolean" }
+      }
+    },
+    "appIdentityV1": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "contract_version",
+        "hash_algorithm",
+        "identity_key",
+        "identity_hash",
+        "appearance_hash",
+        "slot",
+        "display_name",
+        "monogram",
+        "artwork_ref"
+      ],
+      "properties": {
+        "contract": { "const": "usernode.app-identity" },
+        "contract_version": { "const": 1 },
+        "hash_algorithm": { "const": "fnv1a64" },
+        "identity_key": {
+          "type": "string",
+          "pattern": "^(?:id|slug):.+$"
+        },
+        "identity_hash": {
+          "type": "string",
+          "pattern": "^fnv1a64:[0-9a-f]{16}$"
+        },
+        "appearance_hash": {
+          "type": "string",
+          "pattern": "^fnv1a64:[0-9a-f]{16}$"
+        },
+        "slot": { "type": "integer", "minimum": 1, "maximum": 8 },
+        "display_name": { "type": "string", "minLength": 1 },
+        "monogram": { "type": "string", "minLength": 1 },
+        "artwork_ref": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "string",
+              "pattern": "^/app-icons/[0-9a-f]{32}$"
+            },
+            {
+              "type": "string",
+              "pattern": "^data:image/(?:png|jpeg|webp);base64,[A-Za-z0-9+/]+={0,2}$",
+              "maxLength": 2796241
+            }
+          ]
+        }
+      }
+    }
+  }
+}

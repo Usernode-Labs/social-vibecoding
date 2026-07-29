@@ -26,7 +26,7 @@ import {
 import { HomeAppShortcut } from "@/features/apps/home-app-shortcut"
 import { listApps, setFavoriteOrder, type AppRecord } from "@/lib/apps-api"
 import { getNotificationsPage } from "@/lib/notifications-api"
-import { appDetailsPath } from "@/lib/routes"
+import { appOpenPath } from "@/lib/routes"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
 
 function HomeLoading() {
@@ -251,7 +251,7 @@ export function HomeView({
               <li className="min-w-0" key={app.id}>
                 <HomeAppShortcut
                   app={app}
-                  href={`${appDetailsPath(app.slug)}/open`}
+                  href={appOpenPath(app.slug)}
                   reorder={
                     reordering
                       ? {

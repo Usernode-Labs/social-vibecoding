@@ -1,4 +1,6 @@
-import { expect, test } from "@playwright/test"
+import { readFileSync } from "node:fs"
+
+import { expect, test, type Page } from "@playwright/test"
 
 import { expectAccessibleShellStructure } from "./accessibility"
 
@@ -26,6 +28,52 @@ const apps = {
       active_sessions: 0, open_issues: 0, icon_url: null,
     },
   ],
+}
+
+async function installShortcutBridge(
+  page: Page,
+  result: { added: true; mechanism: "pinned-shortcut" | "widget" } | { error: string }
+) {
+  const shortcutResult = JSON.stringify(result).replaceAll("<", "\\u003c")
+  const hostedBridge = readFileSync(new URL("../../public/usernode-bridge.js", import.meta.url), "utf8")
+  await page.addInitScript({ content: `
+    {
+    const shortcutResult = ${shortcutResult};
+    Object.defineProperty(window, "Usernode", {
+      configurable: true,
+      value: {
+        postMessage(message) {
+          const envelope = JSON.parse(message);
+          window.__shortcutNativeEnvelopes = [
+            ...(window.__shortcutNativeEnvelopes || []),
+            envelope,
+          ];
+          let value = null;
+          let error = null;
+          if (envelope.method === "getBridgeInfo") {
+            value = {
+              version: 3,
+              capabilities: ["getHomeScreenShortcutSupport", "addHomeScreenShortcut"],
+            };
+          } else if (envelope.method === "getHomeScreenShortcutSupport") {
+            value = {
+              mechanism: "error" in shortcutResult ? "pinned-shortcut" : shortcutResult.mechanism,
+            };
+          } else if (envelope.method === "addHomeScreenShortcut") {
+            window.__shortcutNativeResult = shortcutResult;
+            if ("error" in shortcutResult) error = shortcutResult.error;
+            else value = shortcutResult;
+          }
+          window.setTimeout(
+            () => window.__usernodeResolve?.(envelope.id, value, error),
+            0
+          );
+        },
+      },
+    });
+    }
+    ${hostedBridge}
+  ` })
 }
 
 test.beforeEach(async ({ page }) => {
@@ -129,6 +177,64 @@ test("uses the detail view for primary app destinations", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Remove from Your apps" })).toBeVisible()
   await expect(page.getByRole("list", { name: "RecipeBot contributors" })).toContainText("@ava")
   await expect(page.getByRole("list", { name: "RecipeBot contributors" })).toContainText("@lin")
+})
+
+test("posts the exact v1 shortcut envelope from App Details and reports the native result", async ({ page }) => {
+  await installShortcutBridge(page, { added: true, mechanism: "pinned-shortcut" })
+  await page.goto("/react/apps/recipebot")
+
+  await expect(page.getByRole("button", { name: "Add to phone home screen" })).toBeVisible()
+  await page.getByRole("button", { name: "Add to phone home screen" }).click()
+  await expect(page.getByRole("status")).toContainText("RecipeBot was added to your phone home screen.")
+
+  const evidence = await page.evaluate(() => {
+    const state = window as Window & {
+      __shortcutNativeEnvelopes?: Array<Record<string, unknown>>
+      __shortcutNativeResult?: unknown
+    }
+    return {
+      envelope: state.__shortcutNativeEnvelopes?.find(({ method }) => method === "addHomeScreenShortcut"),
+      result: state.__shortcutNativeResult,
+      origin: window.location.origin,
+    }
+  })
+  expect(evidence.envelope).toEqual({
+    method: "addHomeScreenShortcut",
+    id: expect.stringMatching(/^\d+-[0-9a-f]+$/),
+    args: {
+      contract: "usernode.app-shortcut",
+      contract_version: 1,
+      route_contract: "usernode.react-app-open.v1",
+      name: "RecipeBot",
+      url: `${evidence.origin}/react/apps/recipebot/open`,
+      icon_url: null,
+      identity: {
+        contract: "usernode.app-identity",
+        contract_version: 1,
+        hash_algorithm: "fnv1a64",
+        identity_key: "id:recipebot",
+        identity_hash: "fnv1a64:3d56ed8b0c8b03e7",
+        appearance_hash: "fnv1a64:ffa6992d62eba3de",
+        slot: 3,
+        display_name: "RecipeBot",
+        monogram: "R",
+        artwork_ref: null,
+      },
+      silent: false,
+    },
+  })
+  expect(evidence.result).toEqual({ added: true, mechanism: "pinned-shortcut" })
+})
+
+test("gates the shortcut action on native capability and reports native failure", async ({ page }) => {
+  await page.goto("/react/apps/recipebot")
+  await expect(page.getByRole("button", { name: /Add to .*home screen|Add to Usernode widget/ })).toHaveCount(0)
+
+  await installShortcutBridge(page, { error: "The shortcut request was denied." })
+  await page.reload()
+  await page.getByRole("button", { name: "Add to phone home screen" }).click()
+  await expect(page.getByRole("alert").filter({ hasText: "Shortcut wasn't added" }))
+    .toContainText("The shortcut request was denied.")
 })
 
 test("routes the detail chrome to Improve and closes its app context to Home", async ({ page }) => {

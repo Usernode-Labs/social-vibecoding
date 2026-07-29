@@ -1,13 +1,21 @@
 import { LoaderCircle, LockKeyhole, LockKeyholeOpen, UsersRound } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 
 import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
 import { AppIdentity } from "@/features/apps/app-identity"
 import { AppShareSheet } from "@/features/apps/app-share-sheet"
 import { getApp, getPublicAppContributors, proposeAppRename, setAppChangeLock, setAppFavorite, type AppDetail, type PublicAppContributor } from "@/lib/apps-api"
+import { createAppShortcutRequest } from "@/lib/app-shortcut-contract"
 import { getCurrentUser } from "@/lib/auth-api"
-import { appDetailsPath, appDevPath, appDevSessionPath, appMembersPath } from "@/lib/routes"
+import {
+  addNativeHomeScreenShortcut,
+  getNativeBridgeInfo,
+  getNativeHomeScreenShortcutSupport,
+  type NativeBridgeInfo,
+  type NativeHomeScreenShortcutSupport,
+} from "@/lib/native-bridge"
+import { appDevPath, appDevSessionPath, appMembersPath, appOpenPath } from "@/lib/routes"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
@@ -55,6 +63,11 @@ export function AppDetails() {
   const [renameValue, setRenameValue] = useState("")
   const [renaming, setRenaming] = useState(false)
   const [renameError, setRenameError] = useState<string | null>(null)
+  const shortcutBridgeInfo = useRef<NativeBridgeInfo | null>(null)
+  const [shortcutSupport, setShortcutSupport] = useState<NativeHomeScreenShortcutSupport | null>(null)
+  const [addingShortcut, setAddingShortcut] = useState(false)
+  const [shortcutError, setShortcutError] = useState<string | null>(null)
+  const [shortcutSuccess, setShortcutSuccess] = useState<string | null>(null)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -90,6 +103,18 @@ export function AppDetails() {
         if (!cancelled) setCanAdminWrite(false)
       })
     return () => { cancelled = true; controller.abort() }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    void getNativeBridgeInfo().then(async (info) => {
+      if (!info || cancelled) return
+      const support = await getNativeHomeScreenShortcutSupport(info)
+      if (cancelled || !support) return
+      shortcutBridgeInfo.current = info
+      setShortcutSupport(support)
+    })
+    return () => { cancelled = true }
   }, [])
 
   const canChangeLock = canAdminWrite && !isProductionReadOnlyReview
@@ -145,6 +170,28 @@ export function AppDetails() {
     }
   }
 
+  const addShortcut = async () => {
+    if (!app || !shortcutBridgeInfo.current || !shortcutSupport || addingShortcut) return
+    setAddingShortcut(true)
+    setShortcutError(null)
+    setShortcutSuccess(null)
+    try {
+      const request = createAppShortcutRequest(app, { origin: window.location.origin })
+      await addNativeHomeScreenShortcut(shortcutBridgeInfo.current, request)
+      setShortcutSuccess(
+        shortcutSupport.mechanism === "widget"
+          ? `${app.name} was added to the Usernode widget.`
+          : `${app.name} was added to your phone home screen.`
+      )
+    } catch (cause) {
+      setShortcutError(
+        cause instanceof Error ? cause.message : "Usernode could not add this app shortcut."
+      )
+    } finally {
+      setAddingShortcut(false)
+    }
+  }
+
   return (
     <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-details">
       {error ? <Alert variant="destructive"><AlertTitle>App unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
@@ -171,13 +218,31 @@ export function AppDetails() {
           </CardContent>
           <CardFooter className="flex flex-col items-start gap-3">
             <ButtonGroup aria-label={`${app.name} actions`} data-testid="app-actions" className="flex-wrap">
-              <Button disabled={app.status !== "running" || (!app.self_hosted && !app.url)} render={<Link aria-label={`Open ${app.name}`} to={`${appDetailsPath(app.slug)}/open`} />}>
+              <Button disabled={app.status !== "running" || (!app.self_hosted && !app.url)} render={<Link aria-label={`Open ${app.name}`} to={appOpenPath(app.slug)} />}>
                 Open app
               </Button>
               {app.can_collaborate !== false ? <><ButtonGroupSeparator /><Button render={<Link aria-label={`Improve ${app.name}`} to={appDevPath(app.slug)} />} variant="secondary">Improve app</Button></> : null}
               {app.can_collaborate !== false ? <><ButtonGroupSeparator /><Button render={<Link aria-label={`Manage ${app.name} collaborators`} to={appMembersPath(app.slug)} />} variant="outline">Collaborators</Button></> : null}
               {app.can_manage ? <><ButtonGroupSeparator /><Button disabled={isProductionReadOnlyReview} onClick={() => { setRenameValue(app.name); setRenameError(null); setRenameOpen(true) }} type="button" variant="outline">Rename</Button></> : null}
               {app.url ? <><ButtonGroupSeparator /><AppShareSheet appName={app.name} url={app.url} /></> : null}
+              {shortcutSupport ? (
+                <>
+                  <ButtonGroupSeparator />
+                  <Button
+                    disabled={addingShortcut}
+                    onClick={() => void addShortcut()}
+                    type="button"
+                    variant="outline"
+                  >
+                    {addingShortcut ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}
+                    {addingShortcut
+                      ? "Adding…"
+                      : shortcutSupport.mechanism === "widget"
+                        ? "Add to Usernode widget"
+                        : "Add to phone home screen"}
+                  </Button>
+                </>
+              ) : null}
               <ButtonGroupSeparator />
               <Button disabled={savingFavorite || isProductionReadOnlyReview} onClick={() => void updateFavorite()} type="button" variant="outline">
                 {savingFavorite ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}
@@ -185,6 +250,8 @@ export function AppDetails() {
               </Button>
             </ButtonGroup>
             {favoriteError ? <Alert variant="destructive"><AlertTitle>Could not update Your apps</AlertTitle><AlertDescription>{favoriteError}</AlertDescription></Alert> : null}
+            {shortcutError ? <Alert variant="destructive"><AlertTitle>Shortcut wasn't added</AlertTitle><AlertDescription>{shortcutError}</AlertDescription></Alert> : null}
+            {shortcutSuccess ? <Alert role="status"><AlertTitle>Shortcut added</AlertTitle><AlertDescription>{shortcutSuccess}</AlertDescription></Alert> : null}
             <p aria-live="polite" className="sr-only">{favoriteSuccess}</p>
           </CardFooter>
         </Card>

@@ -14,7 +14,7 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 const fallbackApp = { id: "identity-4", slug: "recipebot", name: "RecipeBot", icon_url: null }
-const deterministicArtwork = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='128' height='128' viewBox='0 0 128 128'%3E%3Crect width='128' height='128' rx='24' fill='%23262626'/%3E%3Cpath d='M38 35h52v58H38z' fill='%23fafafa'/%3E%3Ccircle cx='64' cy='64' r='12' fill='%23262626'/%3E%3C/svg%3E"
+const deterministicArtwork = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl2gAAAAASUVORK5CYII="
 
 export const FallbackSlot1: Story = {
   args: { app: fallbackApp },
@@ -36,7 +36,7 @@ export const RemoteImage: Story = {
     const image = canvasElement.querySelector("img")
     await expect(image).toHaveAttribute("src", deterministicArtwork)
     await expect(image?.complete).toBe(true)
-    await expect(image?.naturalWidth).toBe(128)
+    await expect(image?.naturalWidth).toBe(1)
   },
 }
 

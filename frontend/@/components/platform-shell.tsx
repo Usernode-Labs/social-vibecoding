@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 import { Bell, BriefcaseBusiness, Compass, EyeOff, House, MessageCircle, Server, Settings, Shield, Trophy, UserRound } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useLocation } from "react-router-dom"
 
 import { DevCompletionAlerts } from "@/components/dev-completion-alerts"
@@ -14,6 +14,12 @@ import { SidebarInset, SidebarMenuBadge, SidebarProvider, SidebarTrigger, useSid
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { usePlatformShellNavigationState } from "@/components/platform-shell-navigation"
 import { isAdminPreviewEnabled, setAdminPreviewEnabled } from "@/lib/admin-preview"
+import {
+  clearExternalLinkFailure,
+  EXTERNAL_LINK_FAILURE_EVENT,
+  getExternalLinkFailure,
+  type ExternalLinkFailureDetail,
+} from "@/lib/external-links"
 
 function route(path: string) {
   return (pathname: string) => pathname === path || pathname.startsWith(`${path}/`)
@@ -36,6 +42,69 @@ function AdminPreviewBanner() {
         <Button onClick={restore} size="sm" type="button" variant="outline">Switch back</Button>
       </AlertDescription>
     </Alert>
+  )
+}
+
+function ExternalLinkFeedback() {
+  const [failure, setFailure] = useState<ExternalLinkFailureDetail | null>(null)
+  const [retrying, setRetrying] = useState(false)
+
+  useEffect(() => {
+    const receiveFailure = (event: Event) => {
+      setRetrying(false)
+      setFailure((event as CustomEvent<ExternalLinkFailureDetail>).detail)
+    }
+    document.addEventListener(EXTERNAL_LINK_FAILURE_EVENT, receiveFailure)
+    setFailure(getExternalLinkFailure())
+    return () => document.removeEventListener(EXTERNAL_LINK_FAILURE_EVENT, receiveFailure)
+  }, [])
+
+  if (!failure) return null
+  const unsupported = failure.reason === "native-link-unsupported"
+  const retry = failure.retry
+
+  const retryOpen = async () => {
+    if (!retry || retrying) return
+    setRetrying(true)
+    const opened = await retry()
+    setRetrying(false)
+    if (opened) {
+      clearExternalLinkFailure()
+      setFailure(null)
+    }
+  }
+
+  return (
+    <div data-slot="external-link-feedback">
+      <Alert>
+        <AlertTitle>{unsupported ? "Link isn’t supported here" : "Link didn’t open"}</AlertTitle>
+        <AlertDescription className="flex flex-col items-start gap-3">
+          <span>
+            {unsupported
+              ? "Open this link from a regular browser."
+              : "Try again. If it still doesn’t open, use a regular browser."}
+          </span>
+          <span className="flex flex-wrap gap-2">
+            {retry ? (
+              <Button disabled={retrying} onClick={() => void retryOpen()} size="sm" type="button">
+                {retrying ? "Trying again…" : "Try again"}
+              </Button>
+            ) : null}
+            <Button
+              onClick={() => {
+                clearExternalLinkFailure()
+                setFailure(null)
+              }}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              Dismiss
+            </Button>
+          </span>
+        </AlertDescription>
+      </Alert>
+    </div>
   )
 }
 
@@ -75,6 +144,9 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
   const closeNavigation = () => {
     if (isMobile) setOpenMobile(false)
   }
+  const fullBleedRoute =
+    /^\/apps\/[^/]+\/open\/?$/.test(location.pathname) ||
+    /^\/apps\/[^/]+\/dev\/sessions\/[^/]+\/preview\/?$/.test(location.pathname)
 
   return (
     <>
@@ -85,7 +157,7 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
         pathname={location.pathname}
       />
       <SidebarInset className="min-h-dvh bg-background">
-        <header className="flex min-h-16 shrink-0 items-center gap-2 border-b px-4">
+        <header className="flex min-h-16 shrink-0 items-center gap-2 border-b px-4" data-slot="platform-header">
           <SidebarTrigger
             aria-label="Toggle navigation"
             className="relative size-[max(100%,3rem)] after:pointer-fine:hidden after:absolute after:top-1/2 after:left-1/2 after:size-[max(100%,3rem)] after:-translate-1/2 after:content-['']"
@@ -95,7 +167,10 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
           <div className="min-w-0 flex-1 truncate font-semibold">dApps</div>
         </header>
         <AdminPreviewBanner />
-        {children}
+        <div data-slot="route-viewport" data-viewport-mode={fullBleedRoute ? "full-bleed" : "content"}>
+          {children}
+        </div>
+        <ExternalLinkFeedback />
       </SidebarInset>
     </>
   )

@@ -233,71 +233,225 @@
     } catch (_) { /* parent unreachable, stay non-native */ }
   }
 
+  /* __USERNODE_NATIVE_RELAY_SERVER_BEGIN__ */
   // ── Iframe-relay server: forward child-iframe requests to native ──────
   //
   // When this bridge runs in the top frame and the native channel is
   // available, respond to `discover` pings with a `discover-ack`, and
-  // forward `request` payloads straight through to the Flutter JS
-  // channel. This deliberately bypasses the parent page's own dispatch
-  // wrappers (mock detection, QR fallback) — the iframe already runs
-  // its own copy of this bridge and is responsible for those decisions
-  // in its own origin. The parent only relays raw Usernode.postMessage
-  // payloads, which keeps cross-origin behaviour predictable.
+  // forward explicitly permitted `request` payloads to the Flutter JS
+  // channel. The relay is a separate caller class from the trusted top
+  // frame: it binds a direct child WindowProxy to the origin that completed
+  // discovery, applies a deny-by-default method policy, and filters
+  // getBridgeInfo so a child never sees privileged capabilities advertised.
+  //
+  // This deliberately bypasses the parent page's own dispatch wrappers
+  // (mock detection, QR fallback) — the iframe already runs its own copy of
+  // this bridge and is responsible for those decisions in its own origin.
+  // It does NOT bypass the child capability policy below.
+  var _CHILD_NATIVE_RELAY_METHODS = {
+    getBridgeInfo: true,
+    getNodeAddress: true,
+    getNodeStatus: true,
+    getWalletState: true,
+    sendTransaction: true,
+    signMessage: true,
+  };
+  var _CHILD_NATIVE_RELAY_CAPABILITIES = Object.keys(
+    _CHILD_NATIVE_RELAY_METHODS
+  );
+  var _CHILD_NATIVE_RELAY_INTERACTIVE_METHODS = {
+    sendTransaction: true,
+    signMessage: true,
+  };
+  var _CHILD_NATIVE_RELAY_MAX_PENDING = 8;
+  var _CHILD_NATIVE_RELAY_MAX_INTERACTIVE_PENDING = 1;
+  var _childNativeRelayCallers = [];
+
+  function isDirectChildFrame(source) {
+    if (!source || source === window) return false;
+    try {
+      for (var i = 0; i < window.frames.length; i++) {
+        if (window.frames[i] === source) return true;
+      }
+    } catch (_) {
+      return false;
+    }
+    return false;
+  }
+
+  function relayTargetOrigin(origin) {
+    return typeof origin === "string" && origin && origin !== "null"
+      ? origin
+      : "*";
+  }
+
+  function rememberChildRelayCaller(source, origin) {
+    for (var i = 0; i < _childNativeRelayCallers.length; i++) {
+      if (_childNativeRelayCallers[i].source === source) {
+        var existing = _childNativeRelayCallers[i];
+        if (existing.origin !== origin) {
+          var staleIds = existing.pendingIds.slice();
+          existing.origin = origin;
+          for (var j = 0; j < staleIds.length; j++) {
+            window.__usernodeResolve(
+              staleIds[j],
+              null,
+              "Child native relay origin changed"
+            );
+          }
+        }
+        return existing;
+      }
+    }
+    var caller = {
+      source: source,
+      origin: origin,
+      pendingIds: [],
+      interactivePending: 0,
+    };
+    _childNativeRelayCallers.push(caller);
+    return caller;
+  }
+
+  function discoveredChildRelayCaller(source, origin) {
+    for (var i = 0; i < _childNativeRelayCallers.length; i++) {
+      var caller = _childNativeRelayCallers[i];
+      if (caller.source === source && caller.origin === origin) return caller;
+    }
+    return null;
+  }
+
+  function isDiscoveredChildRelayCaller(source, origin) {
+    return !!discoveredChildRelayCaller(source, origin);
+  }
+
+  function filterChildBridgeInfo(value) {
+    var sourceCapabilities =
+      value && Array.isArray(value.capabilities) ? value.capabilities : [];
+    return {
+      version:
+        value && typeof value.version === "number" ? value.version : 0,
+      capabilities: _CHILD_NATIVE_RELAY_CAPABILITIES.filter(function (name) {
+        return sourceCapabilities.indexOf(name) !== -1;
+      }),
+    };
+  }
+
   if (_hasNativeChannel) {
     console.log(_BRIDGE_TAG, "native channel available, relay listener installed");
     window.addEventListener("message", function (e) {
       var data = e.data;
       if (!data || !e.source) return;
-      var origin = e.origin || "*";
+      var origin = typeof e.origin === "string" ? e.origin : "";
       var source = e.source;
       if (data.__usernode_relay === "discover") {
+        if (!isDirectChildFrame(source)) {
+          console.warn(_BRIDGE_TAG,
+            "ignoring native relay discovery from non-child caller", origin);
+          return;
+        }
+        rememberChildRelayCaller(source, origin);
         console.log(_BRIDGE_TAG, "← discover from", origin, "→ acking");
         try {
-          source.postMessage({ __usernode_relay: "discover-ack" }, origin);
+          source.postMessage({
+            __usernode_relay: "discover-ack",
+            policyVersion: 1,
+            allowedMethods: _CHILD_NATIVE_RELAY_CAPABILITIES.slice(),
+          }, relayTargetOrigin(origin));
         } catch (_) { /* iframe gone, ignore */ }
         return;
       }
       if (data.__usernode_relay !== "request") return;
       var origId = data.id;
-      // Homescreen-shortcut management is top-frame-only: the app auto-
-      // approves these calls based on the top frame's origin, so relaying
-      // them for a child iframe would let any embedded sub-app piggyback
-      // on the parent's trust. Refuse here instead of forwarding.
-      if (typeof data.method === "string" &&
-          data.method.indexOf("HomeScreenShortcut") !== -1) {
-        console.warn(_BRIDGE_TAG, "refusing to relay", data.method,
-          "for child iframe", origin);
+      function reply(value, error) {
         try {
           source.postMessage(
-            { __usernode_relay: "response", id: origId, value: null,
-              error: "Homescreen shortcuts can only be managed by the top-level page" },
-            origin
+            { __usernode_relay: "response", id: origId, value: value,
+              error: error },
+            relayTargetOrigin(origin)
           );
         } catch (_) { /* iframe gone, ignore */ }
+      }
+      if (!isDirectChildFrame(source) ||
+          !isDiscoveredChildRelayCaller(source, origin)) {
+        console.warn(_BRIDGE_TAG,
+          "refusing native relay request without matching child provenance",
+          origin);
+        if (isDirectChildFrame(source)) {
+          reply(null, "Child native relay handshake required");
+        }
+        return;
+      }
+      if (typeof origId !== "string" || !origId ||
+          typeof data.method !== "string" || !data.method) {
+        console.warn(_BRIDGE_TAG,
+          "refusing malformed native relay request from child iframe", origin);
+        reply(null, "Malformed child native relay request");
+        return;
+      }
+      if (_CHILD_NATIVE_RELAY_METHODS[data.method] !== true) {
+        console.warn(_BRIDGE_TAG, "refusing to relay", data.method,
+          "for child iframe", origin);
+        reply(null,
+          "Native capability is not available to embedded child apps");
+        return;
+      }
+      var relayCaller = discoveredChildRelayCaller(source, origin);
+      var isInteractive =
+        _CHILD_NATIVE_RELAY_INTERACTIVE_METHODS[data.method] === true;
+      if (!relayCaller ||
+          relayCaller.pendingIds.length >= _CHILD_NATIVE_RELAY_MAX_PENDING) {
+        reply(null, "Too many pending native requests from this child app");
+        return;
+      }
+      if (isInteractive &&
+          relayCaller.interactivePending >=
+            _CHILD_NATIVE_RELAY_MAX_INTERACTIVE_PENDING) {
+        reply(null, "Another interactive native request is already pending");
         return;
       }
       var nativeId = "relay-" + String(Date.now()) + "-" +
         Math.random().toString(16).slice(2);
+      relayCaller.pendingIds.push(nativeId);
+      if (isInteractive) relayCaller.interactivePending += 1;
+      var relaySettled = false;
+      var relayTimer = null;
+      function releaseRelayRequest() {
+        if (relaySettled) return;
+        relaySettled = true;
+        if (relayTimer !== null) clearTimeout(relayTimer);
+        var pendingIndex = relayCaller.pendingIds.indexOf(nativeId);
+        if (pendingIndex !== -1) relayCaller.pendingIds.splice(pendingIndex, 1);
+        if (isInteractive && relayCaller.interactivePending > 0) {
+          relayCaller.interactivePending -= 1;
+        }
+      }
       console.log(_BRIDGE_TAG, "← relay request",
         data.method, "id", origId, "→ native id", nativeId);
-      function reply(value, error) {
-        try {
-          source.postMessage(
-            { __usernode_relay: "response", id: origId, value: value, error: error },
-            origin
-          );
-        } catch (_) { /* iframe gone, ignore */ }
-      }
       window.__usernodeBridge.pending[nativeId] = {
         resolve: function (v) {
+          releaseRelayRequest();
           console.log(_BRIDGE_TAG, "native resolve →", nativeId);
-          reply(v, null);
+          reply(
+            data.method === "getBridgeInfo" ? filterChildBridgeInfo(v) : v,
+            null
+          );
         },
         reject: function (err) {
+          releaseRelayRequest();
           console.log(_BRIDGE_TAG, "native reject →", nativeId, err);
           reply(null, (err && err.message) || String(err));
         },
       };
+      relayTimer = setTimeout(function () {
+        if (!window.__usernodeBridge.pending[nativeId]) {
+          releaseRelayRequest();
+          return;
+        }
+        delete window.__usernodeBridge.pending[nativeId];
+        releaseRelayRequest();
+        reply(null, "Native relay request timed out");
+      }, _RELAY_TIMEOUT_MS);
       try {
         window.Usernode.postMessage(JSON.stringify({
           method: data.method,
@@ -306,10 +460,12 @@
         }));
       } catch (err) {
         delete window.__usernodeBridge.pending[nativeId];
+        releaseRelayRequest();
         reply(null, (err && err.message) || String(err));
       }
     });
   }
+  /* __USERNODE_NATIVE_RELAY_SERVER_END__ */
 
   function sleep(ms) {
     return new Promise(function (resolve) { setTimeout(resolve, ms); });
@@ -3686,7 +3842,9 @@
     });
   };
 
-  // addHomeScreenShortcut({ name, url, icon_url }) asks the app to add a
+  // addHomeScreenShortcut({ contract, contract_version, route_contract,
+  //   name, url, icon_url, identity, silent })
+  // asks the app to add a
   // homescreen entry that reopens `url` inside the Usernode app. The app
   // shows its own native confirmation UI. Resolves the app's result
   // object ({ added: bool, mechanism, ... }); rejects when the user
@@ -3704,9 +3862,17 @@
       ));
     }
     return callNative("addHomeScreenShortcut", {
+      contract: opts.contract || null,
       name: opts.name,
       url: opts.url,
       icon_url: opts.icon_url || null,
+      // Additive web-owned contract metadata. Native builds that predate the
+      // identity contract ignore these keys and continue using name/url/icon.
+      // Native adoption is complete only once Flutter persists and compares
+      // identity.appearance_hash when refreshing its cached artwork.
+      contract_version: opts.contract_version || null,
+      route_contract: opts.route_contract || null,
+      identity: opts.identity || null,
       // Background refresh (e.g. re-sending a missing widget icon): the
       // app skips user-facing follow-ups like the add-the-widget
       // walkthrough.

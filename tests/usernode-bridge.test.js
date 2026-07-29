@@ -48,18 +48,32 @@ test('hosted bridge exposes the LLM-access consent API', () => {
   assert.match(bridge, /_LLM_DECISION_TIMEOUT_MS/);
 });
 
-// Homescreen shortcuts are trust-gated by the app on the TOP frame's
-// origin (no per-add confirmation screen anymore), so the parent relay
-// must refuse to forward shortcut calls for child iframes — otherwise
-// any embedded sub-app could piggyback on the parent's trust.
-test('hosted bridge relay refuses homescreen-shortcut calls from iframes', () => {
+// Flutter sees only the trusted top-frame origin. The hosted bridge therefore
+// treats child iframes as a separate caller class with an explicit allowlist;
+// source/origin binding and behavioral rejection coverage live in
+// usernode-bridge-relay.test.js.
+test('hosted bridge relay is deny-by-default for child iframes', () => {
   const bridge = readBridge(versionedBridgePath);
+  assert.match(bridge, /_CHILD_NATIVE_RELAY_METHODS/);
+  assert.match(bridge, /isDirectChildFrame/);
+  assert.match(bridge, /isDiscoveredChildRelayCaller/);
+  assert.match(bridge, /filterChildBridgeInfo/);
   assert.match(bridge, /refusing to relay/);
-  assert.match(bridge, /indexOf\("HomeScreenShortcut"\)/);
   assert.match(
     bridge,
-    /Homescreen shortcuts can only be managed by the top-level page/
+    /Native capability is not available to embedded child apps/
   );
+});
+
+test('hosted bridge forwards the versioned app identity shortcut contract', () => {
+  const bridge = readBridge(versionedBridgePath);
+  assert.match(bridge, /var id = String\(Date\.now\(\)\) \+ "-" \+ Math\.random\(\)\.toString\(16\)\.slice\(2\)/);
+  assert.match(bridge, /var payload = \{ method: method, id: id, args: args \|\| \{\} \}/);
+  assert.match(bridge, /contract: opts\.contract \|\| null/);
+  assert.match(bridge, /contract_version: opts\.contract_version \|\| null/);
+  assert.match(bridge, /route_contract: opts\.route_contract \|\| null/);
+  assert.match(bridge, /identity: opts\.identity \|\| null/);
+  assert.match(bridge, /identity\.appearance_hash/);
 });
 
 // User locale (issue #757) — additive within v1. The shell

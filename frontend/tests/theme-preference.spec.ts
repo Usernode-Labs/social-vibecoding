@@ -24,6 +24,10 @@ async function computedFoundationSnapshot(page: import("@playwright/test").Page,
   await page.reload()
   const expectedMode = preference === "system" ? colorScheme : preference
   await expect(page.locator("html")).toHaveAttribute("data-theme", expectedMode)
+  await expect.poll(() => page.evaluate(
+    (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim(),
+    semanticFoundationVariables[0],
+  )).not.toBe("")
   return page.evaluate((names) => Object.fromEntries(names.map((name) => [name, getComputedStyle(document.documentElement).getPropertyValue(name).trim()])), semanticFoundationVariables)
 }
 

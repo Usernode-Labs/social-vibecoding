@@ -51,11 +51,23 @@
 }
 
 @layer base {
+  :root {
+    --safe-area-top: env(safe-area-inset-top, 0px);
+    --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+    --safe-area-left: env(safe-area-inset-left, 0px);
+    --safe-area-right: env(safe-area-inset-right, 0px);
+    --safe-area-bottom-active: var(--safe-area-bottom);
+    --keyboard-inset-height: 0px;
+  }
+  :root[data-keyboard-visible="true"] {
+    --safe-area-bottom-active: 0px;
+  }
   * {
     @apply border-border outline-ring/50;
     }
   body {
     @apply bg-background text-foreground;
+    min-height: 100dvh;
     }
   html {
     @apply font-sans;
@@ -64,4 +76,122 @@
   html.dark {
     color-scheme: dark;
     }
+  #root {
+    min-height: 100dvh;
+  }
+}
+
+/* The shell owns device insets. Route content keeps its existing padding.
+ * These selectors deliberately sit above Tailwind's layered utilities so a
+ * device inset can widen, but never compound, the route's ordinary padding. */
+[data-slot="platform-header"] {
+  min-height: calc(4rem + var(--safe-area-top));
+  padding-top: var(--safe-area-top);
+  padding-inline-start: max(1rem, var(--safe-area-left));
+  padding-inline-end: max(1rem, var(--safe-area-right));
+}
+[data-slot="sidebar-inner"] {
+  padding-top: var(--safe-area-top);
+  padding-bottom: var(--safe-area-bottom-active);
+}
+[data-slot="route-viewport"] {
+  --route-content-gutter: 1rem;
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+[data-slot="route-viewport"][data-viewport-mode="content"] {
+  padding-bottom: var(--safe-area-bottom-active);
+  padding-inline-start: max(0px, calc(var(--safe-area-left) - var(--route-content-gutter)));
+  padding-inline-end: max(0px, calc(var(--safe-area-right) - var(--route-content-gutter)));
+}
+@media (min-width: 40rem) {
+  [data-slot="route-viewport"] {
+    --route-content-gutter: 1.5rem;
+  }
+}
+[data-slot="sheet-content"][data-side="left"],
+[data-slot="sheet-content"][data-side="right"] {
+  padding-top: var(--safe-area-top);
+  padding-bottom: var(--safe-area-bottom-active);
+}
+[data-slot="sheet-content"][data-side="left"] {
+  padding-inline-start: var(--safe-area-left);
+}
+[data-slot="sheet-content"][data-side="right"] {
+  padding-inline-end: var(--safe-area-right);
+}
+[data-slot="sheet-content"][data-side="top"],
+[data-slot="sheet-content"][data-side="bottom"] {
+  padding-inline-start: var(--safe-area-left);
+  padding-inline-end: var(--safe-area-right);
+}
+[data-slot="sheet-content"][data-side="top"] {
+  padding-top: var(--safe-area-top);
+}
+[data-slot="sheet-content"][data-side="bottom"] {
+  padding-bottom: var(--safe-area-bottom-active);
+}
+[data-slot="sheet-close-control"] {
+  top: max(1rem, var(--safe-area-top));
+  right: max(1rem, var(--safe-area-right));
+}
+[data-slot="external-link-feedback"] {
+  position: fixed;
+  z-index: 50;
+  right: max(1rem, var(--safe-area-right));
+  bottom: max(1rem, var(--safe-area-bottom-active));
+  left: max(1rem, var(--safe-area-left));
+}
+@media (min-width: 40rem) {
+  [data-slot="external-link-feedback"] {
+    left: auto;
+    width: 24rem;
+  }
+}
+[data-slot="hosted-app-surface"],
+[data-slot="focused-app-surface"],
+[data-slot="staging-preview-surface"] {
+  --surface-gutter: 0px;
+}
+[data-slot="hosted-app-surface"][data-state="loading"] {
+  --surface-gutter: 1rem;
+}
+[data-slot="hosted-app-surface"][data-state="error"],
+[data-slot="focused-app-surface"]:not([data-state="ready"]),
+[data-slot="staging-preview-surface"]:not([data-state="ready"]) {
+  --surface-gutter: 1.5rem;
+}
+[data-slot="hosted-app-surface"]:not([data-state="ready"]),
+[data-slot="focused-app-surface"],
+[data-slot="staging-preview-surface"]:not([data-state="ready"]) {
+  padding-top: var(--surface-gutter);
+  padding-bottom: max(var(--surface-gutter), var(--safe-area-bottom-active));
+  padding-inline-start: max(var(--surface-gutter), var(--safe-area-left));
+  padding-inline-end: max(var(--surface-gutter), var(--safe-area-right));
+}
+[data-slot="focused-app-surface"][data-state="loading"] {
+  --surface-gutter: 1rem;
+}
+[data-slot="focused-app-surface"][data-state="ready"] {
+  padding-bottom: var(--safe-area-bottom-active);
+  padding-inline-start: var(--safe-area-left);
+  padding-inline-end: var(--safe-area-right);
+}
+[data-slot="hosted-app-surface"] [data-slot="app-chrome"][data-placement="overlay"] {
+  left: max(0.75rem, var(--safe-area-left));
+  right: max(0.75rem, var(--safe-area-right));
+}
+[data-slot="staging-preview-surface"][data-state="ready"] {
+  padding-bottom: var(--safe-area-bottom-active);
+}
+[data-slot="staging-preview-header"],
+[data-slot="staging-preview-instructions"] {
+  padding-inline-start: max(1rem, var(--safe-area-left));
+  padding-inline-end: max(1rem, var(--safe-area-right));
+}
+[data-slot="staging-preview-frame"] {
+  margin-inline-start: var(--safe-area-left);
+  margin-inline-end: var(--safe-area-right);
 }

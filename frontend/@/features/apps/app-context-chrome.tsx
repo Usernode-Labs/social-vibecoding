@@ -1,7 +1,7 @@
 import { useNavigate } from "react-router-dom"
 
 import { AppChrome, type AppChromeProps } from "@/features/apps/app-chrome"
-import { appDetailsPath, appDevPath } from "@/lib/routes"
+import { appDevPath, appOpenPath } from "@/lib/routes"
 
 type AppContextRootMode = {
   mode: "improve" | "use"
@@ -45,7 +45,7 @@ export function AppContextChrome(props: AppContextChromeProps) {
         onImprove={props.mode === "use" ? () => navigate(appDevPath(props.app.slug)) : undefined}
         onOpenOverflow={props.onOpenOverflow}
         onRetry={props.onRetry}
-        onUse={props.mode === "improve" ? () => navigate(`${appDetailsPath(props.app.slug)}/open`) : undefined}
+        onUse={props.mode === "improve" ? () => navigate(appOpenPath(props.app.slug)) : undefined}
         placement="flow"
         state={props.state}
       />

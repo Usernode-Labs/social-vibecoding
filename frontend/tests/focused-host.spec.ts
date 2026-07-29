@@ -144,3 +144,99 @@ test("routes Improve and Close with their accepted focused-app meanings", async 
   await page.getByRole("button", { name: "Close RecipeBot" }).click()
   await expect(page).toHaveURL(/\/react\/?$/)
 })
+
+test("keeps ready child-app content and overlay chrome inside one web-owned safe area", async ({ page }) => {
+  await page.goto("/react/apps/recipebot/open")
+  const routeViewport = page.locator('[data-slot="route-viewport"]')
+  const host = page.locator('[data-slot="hosted-app-surface"][data-state="ready"]')
+  const focused = page.locator('[data-slot="focused-app-surface"][data-state="ready"]')
+  const chrome = page.locator('[data-slot="app-chrome"][data-placement="overlay"]')
+  await expect(focused).toBeVisible()
+  await page.evaluate(() => {
+    const root = document.documentElement
+    root.style.setProperty("--safe-area-bottom", "19px")
+    root.style.setProperty("--safe-area-left", "21px")
+    root.style.setProperty("--safe-area-right", "25px")
+  })
+
+  await expect(routeViewport).toHaveAttribute("data-viewport-mode", "full-bleed")
+  await expect.poll(() => routeViewport.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { bottom: style.paddingBottom, left: style.paddingLeft, right: style.paddingRight }
+  })).toEqual({ bottom: "0px", left: "0px", right: "0px" })
+  await expect.poll(() => host.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { bottom: style.paddingBottom, left: style.paddingLeft, right: style.paddingRight, top: style.paddingTop }
+  })).toEqual({ bottom: "0px", left: "0px", right: "0px", top: "0px" })
+  await expect.poll(() => focused.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { bottom: style.paddingBottom, left: style.paddingLeft, right: style.paddingRight }
+  })).toEqual({ bottom: "19px", left: "21px", right: "25px" })
+  await expect.poll(async () => {
+    const hostBox = await host.boundingBox()
+    const chromeBox = await chrome.boundingBox()
+    if (!hostBox || !chromeBox) return null
+    return {
+      left: Math.round(chromeBox.x - hostBox.x),
+      right: Math.round(hostBox.x + hostBox.width - chromeBox.x - chromeBox.width),
+    }
+  }).toEqual({ left: 21, right: 25 })
+
+  await page.evaluate(() => {
+    document.documentElement.dataset.keyboardVisible = "true"
+  })
+  await expect.poll(() => focused.evaluate((node) =>
+    getComputedStyle(node).paddingBottom
+  )).toBe("0px")
+})
+
+test("preserves the loading gutter while allowing a larger device inset", async ({ page }) => {
+  await page.unroute("**/api/apps/recipebot")
+  await page.route("**/api/apps/recipebot", () => new Promise(() => {}))
+  await page.goto("/react/apps/recipebot/open")
+  const loading = page.locator('[data-slot="hosted-app-surface"][data-state="loading"]')
+  await expect(loading).toBeVisible()
+  await page.evaluate(() => {
+    const root = document.documentElement
+    root.style.setProperty("--safe-area-bottom", "9px")
+    root.style.setProperty("--safe-area-left", "27px")
+    root.style.setProperty("--safe-area-right", "7px")
+  })
+
+  await expect.poll(() => loading.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return {
+      top: style.paddingTop,
+      bottom: style.paddingBottom,
+      left: style.paddingLeft,
+      right: style.paddingRight,
+    }
+  })).toEqual({ top: "16px", bottom: "16px", left: "27px", right: "16px" })
+})
+
+test("preserves the error gutter while allowing a larger device inset", async ({ page }) => {
+  await page.unroute("**/api/apps/recipebot")
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({
+    status: 503,
+    json: { error: "App unavailable" },
+  }))
+  await page.goto("/react/apps/recipebot/open")
+  const error = page.locator('[data-slot="hosted-app-surface"][data-state="error"]')
+  await expect(error).toBeVisible()
+  await page.evaluate(() => {
+    const root = document.documentElement
+    root.style.setProperty("--safe-area-bottom", "31px")
+    root.style.setProperty("--safe-area-left", "11px")
+    root.style.setProperty("--safe-area-right", "29px")
+  })
+
+  await expect.poll(() => error.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return {
+      top: style.paddingTop,
+      bottom: style.paddingBottom,
+      left: style.paddingLeft,
+      right: style.paddingRight,
+    }
+  })).toEqual({ top: "24px", bottom: "31px", left: "24px", right: "29px" })
+})

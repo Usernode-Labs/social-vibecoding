@@ -39,6 +39,14 @@ detect with `getBridgeInfo`.
 `getHomeScreenShortcuts`, `removeHomeScreenShortcut`,
 `reorderHomeScreenShortcuts` — see the comments in `usernode-bridge.js`.
 
+New shell callers send `addHomeScreenShortcut` through the versioned
+`usernode.app-shortcut` v1 envelope. It retains the legacy
+`name`/`url`/`icon_url` fields native builds already consume and adds the
+web-owned stable identity, mutable appearance hash, full display name, and
+canonical `/react/apps/<slug>/open` target. Native adoption of those additional
+identity fields is tracked separately; their presence does not imply that an
+existing Flutter build persists or compares them.
+
 ### Chrome data (v2 — the app-as-SV-chrome surface)
 
 #### `getBridgeInfo()` → `{ version, capabilities }`
@@ -186,16 +194,41 @@ start; the bridge wrapper uses a longer (12s) timeout for this method.
 
 - The native transaction confirm sheet remains the sole native chrome over
   SV content (Apple Pay model). Nothing in this contract bypasses it.
-- `openNativeScreen` and the shortcut-management methods are gated to the
-  configured SV origin on the native side.
+- Native privileged-method origin checks see the current **top frame**, not
+  the initiating child frame. The hosted bridge therefore treats the iframe
+  relay as a separate caller class instead of inheriting top-frame trust:
+  discovery binds a direct child `WindowProxy` to its observed origin, every
+  request must match that provenance, and a deny-by-default policy is applied
+  before `Usernode.postMessage`.
+- Embedded child apps may relay only `getBridgeInfo`, `getNodeAddress`,
+  `getNodeStatus`, `getWalletState`, `sendTransaction`, and `signMessage`.
+  `getBridgeInfo` is filtered to that supported subset before it is returned
+  to the child.
+- Relay work is bounded **per discovered child**: at most eight native
+  requests may be pending, and at most one interactive
+  `sendTransaction`/`signMessage` request may be pending. Additional calls
+  receive an explicit error without native dispatch.
+- Every relayed native request has a 15-second parent/native response timeout.
+  Resolution, rejection, timeout, post failure, and a discovered origin change
+  all release the corresponding pending/interactive slot. An origin change
+  rejects the old outstanding calls; the new origin must rediscover before it
+  can dispatch.
+- Profile/settings data and mutations, transaction-record history,
+  `openNativeScreen`, permission/battery actions, ZK reset, logout, homescreen
+  shortcut operations, and unknown future methods are top-frame-only. A
+  forbidden child call receives an explicit relay error and is never
+  dispatched to Flutter.
+- Native origin gating remains defense in depth for privileged top-frame
+  calls; it is not used as evidence of child-frame provenance.
 - `openExternal` accepts http/https only.
 
 ## Offline / App-Bound Domains
 
 The app's iOS webview opts into App-Bound Domains
 (`WKAppBoundDomains` = `usernodelabs.org`, `evanshapiro.dev`, `localhost`),
-which unlocks service workers — SV's PWA offline mode works inside the app.
-Consequences:
+which makes service workers available to the bound SV origin. This static
+capability is not physical-device proof that a particular shell worker is
+ready or offline-capable inside the shipped app. Consequences:
 
 - The webview cannot navigate to non-bound domains; external links must go
   through `openExternal`.

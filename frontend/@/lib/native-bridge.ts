@@ -1,7 +1,20 @@
+import {
+  isAppShortcutRequestV1,
+  type AppShortcutRequestV1,
+} from "@/lib/app-shortcut-contract"
+
 type NativeChannel = { postMessage: (message: string) => void }
 
 export type NativeProfileInfo = { participantId?: number | null }
 export type NativeBridgeInfo = { version: number; capabilities: string[] }
+export type NativeHomeScreenShortcutSupport = {
+  mechanism: "pinned-shortcut" | "widget"
+  widgetInstalled?: boolean
+}
+export type NativeHomeScreenShortcutResult = {
+  added: true
+  mechanism?: "pinned-shortcut" | "widget"
+}
 export type NativeNodeStatus = {
   status?: "synced" | "syncing" | "connecting" | "offline" | string
   localBestHeight?: number | null
@@ -55,6 +68,9 @@ type NativeProfileClient = {
   getBridgeInfo?: () => Promise<NativeBridgeInfo>
   getNodeStatus?: () => Promise<NativeNodeStatus | null>
   getWalletState?: () => Promise<NativeWalletState | null>
+  getHomeScreenShortcutSupport?: () => Promise<unknown>
+  addHomeScreenShortcut?: (request: AppShortcutRequestV1) => Promise<unknown>
+  openExternal?: (url: string) => Promise<boolean>
   openNativeScreen?: (screen: "settings" | "profile" | "benchmark" | "httpLogs" | "terms") => Promise<boolean>
   getSettingsState?: () => Promise<unknown>
   setNodeSleepEnabled?: (enabled: boolean) => Promise<unknown>
@@ -134,6 +150,76 @@ export async function getNativeBridgeInfo(): Promise<NativeBridgeInfo | null> {
 
 export function hasNativeCapability(info: NativeBridgeInfo | null, capability: string) {
   return info?.capabilities.includes(capability) === true
+}
+
+export async function getNativeHomeScreenShortcutSupport(
+  info: NativeBridgeInfo | null
+): Promise<NativeHomeScreenShortcutSupport | null> {
+  const client = nativeClient()
+  if (
+    !hasNativeCapability(info, "getHomeScreenShortcutSupport")
+    || !hasNativeCapability(info, "addHomeScreenShortcut")
+    || typeof client?.getHomeScreenShortcutSupport !== "function"
+  ) return null
+  try {
+    const value = await client.getHomeScreenShortcutSupport()
+    if (!value || typeof value !== "object") return null
+    const row = value as Record<string, unknown>
+    if (row.mechanism !== "pinned-shortcut" && row.mechanism !== "widget") return null
+    return {
+      mechanism: row.mechanism,
+      ...(typeof row.widgetInstalled === "boolean" ? { widgetInstalled: row.widgetInstalled } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Sends the versioned web-owned shortcut request through the existing native
+ * capability. Current native builds consume name/url/icon_url; Flutter must
+ * explicitly adopt contract_version and identity before host evidence may
+ * claim cross-platform identity/cache parity.
+ */
+export async function addNativeHomeScreenShortcut(
+  info: NativeBridgeInfo | null,
+  request: AppShortcutRequestV1
+): Promise<NativeHomeScreenShortcutResult> {
+  const client = nativeClient()
+  if (!hasNativeCapability(info, "addHomeScreenShortcut") || typeof client?.addHomeScreenShortcut !== "function") {
+    throw new Error("Home-screen shortcuts are not available in this Usernode build.")
+  }
+  if (!isAppShortcutRequestV1(request)) {
+    throw new Error("The app shortcut request does not satisfy the web-owned v1 contract.")
+  }
+  const value = await client.addHomeScreenShortcut(request)
+  if (!value || typeof value !== "object" || (value as Record<string, unknown>).added !== true) {
+    throw new Error("Usernode did not add the app shortcut.")
+  }
+  const mechanism = (value as Record<string, unknown>).mechanism
+  if (mechanism !== undefined && mechanism !== "pinned-shortcut" && mechanism !== "widget") {
+    throw new Error("Usernode returned an unsupported shortcut mechanism.")
+  }
+  return {
+    added: true,
+    ...(mechanism ? { mechanism } : {}),
+  }
+}
+
+export async function openNativeExternalUrl(info: NativeBridgeInfo | null, url: string) {
+  const client = nativeClient()
+  if (!hasNativeCapability(info, "openExternal") || typeof client?.openExternal !== "function") return false
+  try {
+    const parsed = new URL(url, window.location.href)
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      parsed.username ||
+      parsed.password
+    ) return false
+    return await client.openExternal(parsed.toString()) === true
+  } catch {
+    return false
+  }
 }
 
 function nativeWalletGlobals() {

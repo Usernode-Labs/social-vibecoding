@@ -60,6 +60,7 @@ export function AppChrome({
         placement === "overlay" ? "absolute inset-x-3 top-3 z-10" : "relative w-full"
       )}
       data-placement={placement}
+      data-slot="app-chrome"
       data-state={state}
       role="group"
     >

@@ -10,6 +10,45 @@ export function appDetailsPath(slug: string) {
   return `/apps/${encodeURIComponent(slug)}`
 }
 
+const appInnerPathLimit = 512
+
+/**
+ * The hosted app owns its inner route. The shell accepts only an absolute
+ * path on that app's existing origin; schemes, protocol-relative paths,
+ * whitespace and URL-delimiter injection are rejected.
+ */
+export function safeAppInnerPath(value: string | null | undefined) {
+  if (!value || value.length > appInnerPathLimit || !value.startsWith("/") || value.startsWith("//")) return null
+  const hasUnsafeCharacter = [...value].some((character) => {
+    const code = character.charCodeAt(0)
+    return /[\s\\`'"<>]/.test(character) || code < 32 || code === 127
+  })
+  return hasUnsafeCharacter ? null : value
+}
+
+/** Basename-relative route used by React Router links. */
+export function appOpenPath(slug: string, innerPath?: string | null) {
+  if (!slug.trim()) throw new Error("App open route requires a non-empty slug")
+  const route = `${appDetailsPath(slug)}/open`
+  if (innerPath === null || innerPath === undefined) return route
+  const safePath = safeAppInnerPath(innerPath)
+  if (!safePath) throw new Error("App open route received an unsafe inner path")
+  return `${route}?${new URLSearchParams({ path: safePath })}`
+}
+
+/** Full history-fallback pathname used outside React Router, including native shortcuts. */
+export function reactAppOpenPath(slug: string, innerPath?: string | null) {
+  return `/react${appOpenPath(slug, innerPath)}`
+}
+
+export function appShortcutTarget(origin: string | URL, slug: string, innerPath?: string | null) {
+  const base = new URL(String(origin))
+  if (!["http:", "https:"].includes(base.protocol) || base.username || base.password) {
+    throw new Error("App shortcut origin must be an HTTP(S) origin without credentials")
+  }
+  return new URL(reactAppOpenPath(slug, innerPath), base.origin).href
+}
+
 export function appDevPath(slug: string) {
   return `${appDetailsPath(slug)}/dev`
 }
