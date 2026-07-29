@@ -1123,13 +1123,9 @@ const Home = {
   // Image icons: the absolute URL (matches _shortcutPayloadFor). Canvas
   // tiles: an opaque marker keyed by emoji + rendering generation.
   _desiredIconSrcFor(app) {
-    if (!app.icon_url) return `tile:${Home.WIDGET_ICON_GEN}:${app.icon_emoji || ''}`;
-    try {
-      return window.UsernodeAppShortcutContract
-        .normalizeArtwork(app.icon_url, location.origin).url;
-    } catch (_) {
-      return `tile:${Home.WIDGET_ICON_GEN}:${app.icon_emoji || ''}`;
-    }
+    return app.icon_url
+      ? new URL(app.icon_url, location.origin).href
+      : `tile:${Home.WIDGET_ICON_GEN}:${app.icon_emoji || ''}`;
   },
   _loadIconSrcMap() {
     try {
@@ -1161,7 +1157,10 @@ const Home = {
       if (!needsIcon && !stale) continue;
       tried.add(item.id);
       try {
-        await bridge.addHomeScreenShortcut(Home._shortcutPayloadFor(app, { silent: true }));
+        await bridge.addHomeScreenShortcut({
+          ...Home._shortcutPayloadFor(app),
+          silent: true,
+        });
         healed = true;
         srcMap[item.id] = desired;
         mapDirty = true;
@@ -1197,20 +1196,14 @@ const Home = {
       && Array.isArray(Home._widgetItems);
   },
 
-  // New widget entries deep-link to the canonical React app host. Existing
-  // `/#app/<slug>` items remain readable so users can remove/reorder/heal
-  // shortcuts pinned before the React route contract landed.
+  // Widget entries deep-link `origin/#app/<slug>`; anything else in the
+  // grid was pinned by a different dapp. Returns the SV slug or null.
   _widgetSlugFor(item) {
     const url = String(item?.url || '');
+    const prefix = `${location.origin}/#app/`;
+    if (!url.startsWith(prefix)) return null;
     try {
-      const target = new URL(url);
-      if (target.origin !== location.origin) return null;
-      const match = target.pathname.match(/^\/react\/apps\/([^/]+)\/open$/);
-      if (match) return decodeURIComponent(match[1]);
-      const legacyPrefix = `${location.origin}/#app/`;
-      return url.startsWith(legacyPrefix)
-        ? decodeURIComponent(url.slice(legacyPrefix.length))
-        : null;
+      return decodeURIComponent(url.slice(prefix.length));
     } catch (_) {
       return null;
     }
@@ -1612,30 +1605,18 @@ const Home = {
   },
 
   // The addHomeScreenShortcut payload for an SV app — shared by the add
-  // flows and the icon-heal pass so every new shortcut opens the canonical
-  // React host route. React owns the versioned identity payload; this legacy
-  // compatibility path still supplies the native icon field until retirement.
-  _shortcutPayloadFor(app, options = {}) {
-    const contract = window.UsernodeAppShortcutContract;
-    if (!contract) throw new Error('App shortcut contract runtime unavailable');
-    return contract.createShortcutArgs({
-      ...app,
-      // Native shortcut artwork is restricted to content-addressed app icons
-      // or a locally rendered image. Unsafe API artwork falls back to the
-      // same deterministic tile used by apps without artwork.
-      icon_url: (() => {
-        if (app.icon_url) {
-          try {
-            contract.normalizeArtwork(app.icon_url, location.origin);
-            return app.icon_url;
-          } catch (_) { /* use the generated tile below */ }
-        }
-        return Home._widgetIconDataUrl(app);
-      })(),
-    }, {
-      origin: location.origin,
-      silent: options.silent === true,
-    });
+  // flows and the icon-heal pass so every path sends the same icon.
+  _shortcutPayloadFor(app) {
+    return {
+      name: app.name,
+      url: `${location.origin}/#app/${encodeURIComponent(app.slug)}`,
+      // Real icon image: absolute URL the app downloads. Emoji/letter
+      // tiles: canvas-rendered PNG data URI so the widget matches the
+      // in-app tile exactly.
+      icon_url: app.icon_url
+        ? new URL(app.icon_url, location.origin).href
+        : Home._widgetIconDataUrl(app),
+    };
   },
 
   // Shared by the hamburger item and the drag-onto-strip drop. On iOS a

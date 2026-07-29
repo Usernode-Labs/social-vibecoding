@@ -64,7 +64,6 @@ const SHELL_ASSETS = [
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',
-  '/react/app-shortcut-contract.js',
   '/js/admin-console.js',
   '/js/admin-topochain.js',
   '/js/app-secrets.js',

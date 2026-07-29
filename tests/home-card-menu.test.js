@@ -31,10 +31,6 @@ const HOME_SRC = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'home.js'),
   'utf8'
 );
-const SHORTCUT_CONTRACT_SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'frontend', 'public', 'app-shortcut-contract.js'),
-  'utf8'
-);
 
 function makeHome(user) {
   return makeHomeEnv(user).Home;
@@ -75,7 +71,7 @@ function makeHomeEnv(user) {
     alert: () => {},
     confirm: () => true,
     setTimeout, clearTimeout, setInterval, clearInterval,
-    URL, URLSearchParams, TextEncoder,
+    URL,
     location: { search: '', origin: 'https://sv.test' },
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -83,7 +79,6 @@ function makeHomeEnv(user) {
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(SHORTCUT_CONTRACT_SRC, sandbox);
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   return { Home: sandbox.__Home, sandbox };
 }
@@ -624,31 +619,7 @@ test('menu click: reveals the section and auto-adds when there is room', async (
   await Home._menuAddShortcut(baseApp({ is_favorited: true }));
   assert.equal(Home._widgetSectionVisible, true, 'click reveals the section');
   assert.equal(added.length, 1, 'app auto-added when the widget has room');
-  assert.deepEqual(
-    JSON.parse(JSON.stringify(added[0])),
-    {
-      contract: 'usernode.app-shortcut',
-      contract_version: 1,
-      route_contract: 'usernode.react-app-open.v1',
-      name: 'Demo App',
-      url: 'https://sv.test/react/apps/demo-app/open',
-      icon_url: null,
-      identity: {
-        contract: 'usernode.app-identity',
-        contract_version: 1,
-        hash_algorithm: 'fnv1a64',
-        identity_key: 'id:1',
-        identity_hash: 'fnv1a64:e104f5fe118e188b',
-        appearance_hash: 'fnv1a64:9d4844b0d10a9046',
-        slot: 3,
-        display_name: 'Demo App',
-        monogram: 'D',
-        artwork_ref: null,
-      },
-      silent: false,
-    },
-    'legacy Home emits the same exact v1 args as the React serializer'
-  );
+  assert.match(added[0].url, /#app\/demo-app/);
 });
 
 test('menu click: full widget shakes instead of adding', async () => {
@@ -731,26 +702,8 @@ test('shortcut icons: emoji/letter apps get a canvas data URI, image apps a URL'
   Home._shortcutSupport = { mechanism: 'widget' };
   await Home._addShortcutForApp(baseApp({ icon_emoji: '\u{1F3AF}' }));
   assert.equal(added[0].icon_url, 'data:image/png;base64,FAKE', 'emoji tile rendered to data URI');
-  await Home._addShortcutForApp(baseApp({ icon_url: '/app-icons/0123456789abcdef0123456789abcdef' }));
-  assert.equal(
-    added[1].icon_url,
-    'https://sv.test/app-icons/0123456789abcdef0123456789abcdef',
-    'content-addressed app icons pass through as absolute URLs'
-  );
-});
-
-test('shortcut icons: unsafe API artwork falls back to a locally generated data image', () => {
-  const { Home, sandbox } = makeHomeEnv({ id: ME });
-  sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
-    toDataURL: () => 'data:image/png;base64,FAKE',
-  });
-
-  const payload = Home._shortcutPayloadFor(baseApp({
-    icon_url: 'https://127.0.0.1/private.png',
-  }));
-  assert.equal(payload.icon_url, 'data:image/png;base64,FAKE');
-  assert.equal(payload.identity.artwork_ref, 'data:image/png;base64,FAKE');
+  await Home._addShortcutForApp(baseApp({ icon_url: '/icons/x.png' }));
+  assert.equal(added[1].icon_url, 'https://sv.test/icons/x.png', 'real icons pass through as absolute URLs');
 });
 
 test('icon heal: has_icon:false entries are silently re-added once', async () => {
@@ -776,18 +729,18 @@ test('icon heal: has_icon:false entries are silently re-added once', async () =>
   // with has_icon:true nothing re-sends it.
   Home._apps = [
     baseApp(),
-    baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/app-icons/0123456789abcdef0123456789abcdef' }),
+    baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/icons/x.png' }),
   ];
   sandbox.localStorage.setItem(
     'sv:widget_icon_src',
-    JSON.stringify({ w2: 'https://sv.test/app-icons/0123456789abcdef0123456789abcdef' })
+    JSON.stringify({ w2: 'https://sv.test/icons/x.png' })
   );
   await Home._refreshWidgetItems();
   // Only the SV app missing its icon is re-added; the healthy entry and
   // the foreign shortcut are left alone. The re-add is marked silent so
   // the app skips the add-the-widget walkthrough.
   assert.equal(added.length, 1);
-  assert.equal(added[0].url, 'https://sv.test/react/apps/demo-app/open');
+  assert.match(added[0].url, /#app\/demo-app/);
   assert.equal(added[0].silent, true);
   // Second refresh: already tried — no repeat even though the mock
   // still reports has_icon:false.
@@ -840,7 +793,7 @@ test('icon heal: unknown last-sent source re-sends once, then settles', async ()
   Home._shortcutSupport = { mechanism: 'widget' };
   Home._apps = [
     baseApp(),
-    baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/app-icons/0123456789abcdef0123456789abcdef' }),
+    baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/icons/x.png' }),
   ];
   // Fresh env: no recorded sources → both re-sent once (the recorded
   // source is unknown, so the stored PNG can't be trusted).
@@ -848,11 +801,7 @@ test('icon heal: unknown last-sent source re-sends once, then settles', async ()
   assert.equal(added.length, 2, 'both entries refreshed when sources are unknown');
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
   assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:`, 'canvas tile source recorded');
-  assert.equal(
-    srcMap.w2,
-    'https://sv.test/app-icons/0123456789abcdef0123456789abcdef',
-    'image icon source recorded'
-  );
+  assert.equal(srcMap.w2, 'https://sv.test/icons/x.png', 'image icon source recorded');
   // Sources now recorded → later refreshes send nothing.
   Home._iconHealTried = null; // even across a fresh page load
   await Home._refreshWidgetItems();
@@ -887,18 +836,14 @@ test('icon heal: app gaining an icon after pinning re-sends the new icon', async
   assert.equal(added.length, 0, 'up-to-date tile is left alone');
   // An icon proposal passes: the app now has an icon_url. The widget
   // PNG (still the letter tile) is stale even though has_icon:true.
-  Home._apps = [baseApp({ icon_url: '/app-icons/fedcba9876543210fedcba9876543210' })];
+  Home._apps = [baseApp({ icon_url: '/icons/new.png' })];
   Home._iconHealTried = null; // fresh page load
   await Home._refreshWidgetItems();
   assert.equal(added.length, 1, 'stale tile re-sent after the app gained an icon');
-  assert.equal(added[0].icon_url, 'https://sv.test/app-icons/fedcba9876543210fedcba9876543210');
+  assert.equal(added[0].icon_url, 'https://sv.test/icons/new.png');
   assert.equal(added[0].silent, true);
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
-  assert.equal(
-    srcMap.w1,
-    'https://sv.test/app-icons/fedcba9876543210fedcba9876543210',
-    'new source recorded'
-  );
+  assert.equal(srcMap.w1, 'https://sv.test/icons/new.png', 'new source recorded');
 });
 
 test('icon heal: unpinned shortcut records are pruned from the source map', async () => {
