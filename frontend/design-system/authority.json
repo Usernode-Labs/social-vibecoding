@@ -98,12 +98,93 @@
       "dataBoundary": {
         "kind": "props-only",
         "contract": "Message history, connection state and callbacks arrive as props; MessageScroller owns scroll behavior."
+      },
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "unbounded",
+          "rationale": "A long-running Dev session can accumulate an open-ended transcript even when history is loaded incrementally."
+        },
+        "updateFrequency": "streaming",
+        "stateScope": "mixed",
+        "virtualization": "review-later",
+        "mountPolicy": "Keep the transcript scroller mounted while tokens stream, connection state changes, and the composer updates.",
+        "sensitiveInteractions": [
+          "Append streaming content without rerendering unrelated shell regions.",
+          "Preserve scroll anchoring and jump-to-latest behavior as history grows."
+        ],
+        "followUp": "profile-before-stable"
       }
     },
     "dev-board": {
       "dataBoundary": {
         "kind": "props-only",
         "contract": "Board records and mutation callbacks arrive through the dev-board adapter; the board does not call endpoints directly."
+      },
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "large",
+          "rationale": "Active issues, reviews, and completed history can create long columns even though the adapter pages older work."
+        },
+        "updateFrequency": "interactive",
+        "stateScope": "mixed",
+        "virtualization": "review-later",
+        "mountPolicy": "Keep board columns and the active card mounted across filtering, view changes, and supported reorder operations.",
+        "sensitiveInteractions": [
+          "Filter the visible work set without blocking input.",
+          "Drag and reorder supported cards while preserving pointer feedback and column state."
+        ],
+        "followUp": "profile-before-stable"
+      }
+    },
+    "group-discussion-transcript": {
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "unbounded",
+          "rationale": "General and scoped discussions grow continuously and retain paged history."
+        },
+        "updateFrequency": "streaming",
+        "stateScope": "mixed",
+        "virtualization": "review-later",
+        "mountPolicy": "Keep the transcript mounted while socket state, reactions, replies, edits, and composer state change.",
+        "sensitiveInteractions": [
+          "Append or reconcile live messages without resetting scroll position.",
+          "Update reactions and authored edits without rebuilding unrelated message rows."
+        ],
+        "followUp": "profile-before-stable"
+      }
+    },
+    "admin-users-list": {
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "large",
+          "rationale": "The administration surface can contain the complete platform user set and filters it interactively."
+        },
+        "updateFrequency": "interactive",
+        "stateScope": "local",
+        "virtualization": "review-later",
+        "mountPolicy": "Preserve search focus and the current filtered result set while individual user records update.",
+        "sensitiveInteractions": [
+          "Filter a large user set on each search change.",
+          "Update one user record without rebuilding unaffected rows."
+        ],
+        "followUp": "profile-before-cutover"
+      }
+    },
+    "notifications-content": {
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "medium",
+          "rationale": "The visible feed is cursor-paged but live events may refresh and deduplicate the first page."
+        },
+        "updateFrequency": "streaming",
+        "stateScope": "mixed",
+        "virtualization": "review-later",
+        "mountPolicy": "Keep loaded pages and the active notification mounted while live events refresh the authoritative first page.",
+        "sensitiveInteractions": [
+          "Prepend and deduplicate live notifications without discarding older pages.",
+          "Mark one or all visible notifications read without rebuilding unrelated shell regions."
+        ],
+        "followUp": "profile-before-cutover"
       }
     }
   }

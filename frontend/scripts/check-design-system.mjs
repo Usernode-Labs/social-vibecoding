@@ -21,6 +21,59 @@ function isRecord(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+function validatePerformance(value, label) {
+  if (!isRecord(value)) {
+    violations.push(`${label} must be an object`)
+    return
+  }
+  const expectedFields = [
+    "expectedCollectionSize",
+    "updateFrequency",
+    "stateScope",
+    "virtualization",
+    "mountPolicy",
+    "sensitiveInteractions",
+    "followUp",
+  ]
+  for (const field of Object.keys(value)) {
+    if (!expectedFields.includes(field)) violations.push(`${label}.${field} is not a supported performance field`)
+  }
+  const size = value.expectedCollectionSize
+  if (!isRecord(size)) {
+    violations.push(`${label}.expectedCollectionSize must be an object`)
+  } else {
+    const allowedSizeFields = ["category", "rationale"]
+    for (const field of Object.keys(size)) {
+      if (!allowedSizeFields.includes(field)) violations.push(`${label}.expectedCollectionSize.${field} is not supported`)
+    }
+    if (!["single", "small", "medium", "large", "unbounded"].includes(size.category)) {
+      violations.push(`${label}.expectedCollectionSize.category is invalid`)
+    }
+    if (typeof size.rationale !== "string" || !size.rationale.trim()) {
+      violations.push(`${label}.expectedCollectionSize.rationale must explain the assumption`)
+    }
+  }
+  if (!["static", "occasional", "interactive", "streaming"].includes(value.updateFrequency)) {
+    violations.push(`${label}.updateFrequency is invalid`)
+  }
+  if (!["local", "shared", "global", "mixed"].includes(value.stateScope)) {
+    violations.push(`${label}.stateScope is invalid`)
+  }
+  if (!["not-required", "review-later", "required"].includes(value.virtualization)) {
+    violations.push(`${label}.virtualization is invalid`)
+  }
+  if (typeof value.mountPolicy !== "string" || !value.mountPolicy.trim()) {
+    violations.push(`${label}.mountPolicy must describe what should remain mounted`)
+  }
+  if (!Array.isArray(value.sensitiveInteractions) || value.sensitiveInteractions.length === 0
+    || value.sensitiveInteractions.some((item) => typeof item !== "string" || !item.trim())) {
+    violations.push(`${label}.sensitiveInteractions must contain one or more non-empty descriptions`)
+  }
+  if (!["none", "profile-before-stable", "profile-before-cutover"].includes(value.followUp)) {
+    violations.push(`${label}.followUp is invalid`)
+  }
+}
+
 function sourcePath(manifestValue, label) {
   if (typeof manifestValue !== "string" || !manifestValue.startsWith("@/")) {
     violations.push(`${label} must be an @/ path`)
@@ -54,6 +107,9 @@ if (authority) {
   const requiredDefaults = ["owner", "maturity", "distribution", "tokens", "accessibility", "dataBoundary", "responsive", "deprecation"]
   for (const field of requiredDefaults) {
     if (!(field in (authority.defaults || {}))) violations.push(`design-system authority defaults.${field} is required`)
+  }
+  for (const [id, override] of Object.entries(authority.overrides || {})) {
+    if (override.performance !== undefined) validatePerformance(override.performance, `design-system authority overrides.${id}.performance`)
   }
 }
 
@@ -124,4 +180,5 @@ if (violations.length) {
   process.exit(1)
 }
 
-console.log(`Design-system authority check passed: ${manifest.patterns.length} shell patterns resolve ownership, maturity, variants, tokens, accessibility, data boundaries, deprecation and Storybook evidence.`)
+const performanceContracts = Object.values(authority.overrides || {}).filter((override) => override.performance).length
+console.log(`Design-system authority check passed: ${manifest.patterns.length} shell patterns resolve ownership, maturity, variants, tokens, accessibility, data boundaries, deprecation and Storybook evidence; ${performanceContracts} patterns have scoped performance contracts.`)

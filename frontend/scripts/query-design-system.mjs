@@ -17,6 +17,7 @@ const matches = catalog.components.filter((component) => {
     ...component.variants,
     component.dataBoundary.kind,
     component.dataBoundary.contract,
+    component.performance ? JSON.stringify(component.performance) : "",
   ].join(" ").toLowerCase()
   return query.split(/\s+/).every((term) => searchable.includes(term))
 })
@@ -35,6 +36,7 @@ console.log(JSON.stringify({
     tokens: component.tokens,
     accessibility: component.accessibility,
     dataBoundary: component.dataBoundary,
+    performance: component.performance ?? null,
     responsive: component.responsive,
     deprecation: component.deprecation,
     evidence: component.evidence,

@@ -38,6 +38,10 @@ behavioural reference, never as a component import source.
    When creating or changing an owned reusable platform pattern, update
    `frontend/design-system.manifest.json` with its export and named story
    states; the manifest is an explicit registry, not automatic discovery.
+   Add a scoped performance contract only when the pattern owns a collection,
+   streaming updates, a high-frequency interaction, or mount continuity.
+   Record assumptions and flag later profiling; do not invent render-count,
+   frame-rate, or timing thresholds during ordinary component work.
 7. Run the narrowest relevant checks while working, then run the complete
    frontend gate before handoff.
 

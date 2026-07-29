@@ -32,25 +32,29 @@ export function renderCatalog() {
   for (const id of Object.keys(authority.overrides)) {
     if (!knownIds.has(id)) throw new Error(`authority override references unknown pattern: ${id}`)
   }
-  const components = manifest.patterns.map((pattern) => ({
-    id: pattern.id,
-    name: pattern.name,
-    module: pattern.module,
-    export: pattern.export,
-    owner: mergeContract(authority.defaults, authority.overrides[pattern.id]).owner,
-    maturity: mergeContract(authority.defaults, authority.overrides[pattern.id]).maturity,
-    distribution: mergeContract(authority.defaults, authority.overrides[pattern.id]).distribution,
-    variants: pattern.story.states,
-    tokens: mergeContract(authority.defaults, authority.overrides[pattern.id]).tokens,
-    accessibility: mergeContract(authority.defaults, authority.overrides[pattern.id]).accessibility,
-    dataBoundary: mergeContract(authority.defaults, authority.overrides[pattern.id]).dataBoundary,
-    responsive: mergeContract(authority.defaults, authority.overrides[pattern.id]).responsive,
-    deprecation: mergeContract(authority.defaults, authority.overrides[pattern.id]).deprecation,
-    evidence: {
-      story: pattern.story.module,
-      states: pattern.story.states,
-    },
-  }))
+  const components = manifest.patterns.map((pattern) => {
+    const contract = mergeContract(authority.defaults, authority.overrides[pattern.id])
+    return {
+      id: pattern.id,
+      name: pattern.name,
+      module: pattern.module,
+      export: pattern.export,
+      owner: contract.owner,
+      maturity: contract.maturity,
+      distribution: contract.distribution,
+      variants: pattern.story.states,
+      tokens: contract.tokens,
+      accessibility: contract.accessibility,
+      dataBoundary: contract.dataBoundary,
+      responsive: contract.responsive,
+      deprecation: contract.deprecation,
+      ...(contract.performance ? { performance: contract.performance } : {}),
+      evidence: {
+        story: pattern.story.module,
+        states: pattern.story.states,
+      },
+    }
+  })
   return JSON.stringify({
     $schema: "./catalog.schema.json",
     generatedFrom: [

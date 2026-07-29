@@ -40,6 +40,50 @@
         "contract": { "type": "string", "minLength": 1 }
       }
     },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "expectedCollectionSize",
+        "updateFrequency",
+        "stateScope",
+        "virtualization",
+        "mountPolicy",
+        "sensitiveInteractions",
+        "followUp"
+      ],
+      "properties": {
+        "expectedCollectionSize": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["category", "rationale"],
+          "properties": {
+            "category": {
+              "enum": ["single", "small", "medium", "large", "unbounded"]
+            },
+            "rationale": { "type": "string", "minLength": 1 }
+          }
+        },
+        "updateFrequency": {
+          "enum": ["static", "occasional", "interactive", "streaming"]
+        },
+        "stateScope": {
+          "enum": ["local", "shared", "global", "mixed"]
+        },
+        "virtualization": {
+          "enum": ["not-required", "review-later", "required"]
+        },
+        "mountPolicy": { "type": "string", "minLength": 1 },
+        "sensitiveInteractions": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "followUp": {
+          "enum": ["none", "profile-before-stable", "profile-before-cutover"]
+        }
+      }
+    },
     "contract": {
       "type": "object",
       "required": ["owner", "maturity", "distribution", "tokens", "accessibility", "dataBoundary", "responsive", "deprecation"],
@@ -50,6 +94,7 @@
         "tokens": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "accessibility": { "$ref": "#/$defs/accessibility" },
         "dataBoundary": { "$ref": "#/$defs/dataBoundary" },
+        "performance": { "$ref": "#/$defs/performance" },
         "responsive": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "deprecation": {
           "oneOf": [
@@ -75,6 +120,7 @@
         "tokens": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "accessibility": { "$ref": "#/$defs/accessibility" },
         "dataBoundary": { "$ref": "#/$defs/dataBoundary" },
+        "performance": { "$ref": "#/$defs/performance" },
         "responsive": { "type": "array", "minItems": 1, "items": { "type": "string" } },
         "deprecation": {
           "oneOf": [

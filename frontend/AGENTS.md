@@ -69,3 +69,12 @@ CLI distribution surface. Update the appropriate authority source with a
 pattern's public export or deterministic state evidence, regenerate its
 derived artifact, and run the full authority checks. These files validate
 listed shell contracts; they do not infer or govern child-app components.
+
+Add an optional `performance` authority override only for a collection,
+streaming surface, high-frequency interaction, or component with meaningful
+mount continuity. Record the expected collection class, update frequency,
+state scope, virtualization decision, mount policy, sensitive interactions,
+and follow-up point. Do not invent timing targets or add contracts to ordinary
+primitives. `review-later` marks components such as the Dev board for later
+profiling; it does not authorize speculative memoization or make performance a
+current CI timing gate.
