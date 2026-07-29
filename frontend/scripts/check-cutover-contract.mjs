@@ -19,6 +19,8 @@ const vite = frontendSource("vite.config.ts")
 const entry = frontendSource("src/main.tsx")
 const reactServiceWorkerRegistration = frontendSource("src/react-service-worker.ts")
 const hostedApp = frontendSource("@/features/apps/hosted-app.tsx")
+const focusedAppFrame = frontendSource("@/features/apps/focused-app-frame.tsx")
+const focusedHostContract = `${hostedApp}\n${focusedAppFrame}`
 const bridge = frontendSource("@/lib/native-bridge.ts")
 const serviceWorker = source("public/sw.js")
 const reactServiceWorker = frontendSource("public/react-sw.js")
@@ -48,7 +50,8 @@ const checks = [
   {
     id: "hosted-iframe-sandbox",
     detail: "Hosted child apps retain the legacy iframe sandbox allowances.",
-    ok: /sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"/.test(hostedApp),
+    ok: /sandbox=\{frameSandbox\}/.test(focusedAppFrame)
+      && /allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock/.test(focusedAppFrame),
   },
   {
     id: "hosted-iframe-token-refresh",
@@ -58,7 +61,8 @@ const checks = [
   {
     id: "hosted-deep-link-validation",
     detail: "The host refuses an unsafe inner iframe path before assigning src.",
-    ok: /function validInnerPath/.test(hostedApp) && /source\.origin !== origin/.test(hostedApp),
+    ok: /function validInnerPath/.test(focusedHostContract)
+      && /source\.origin !== origin/.test(focusedHostContract),
   },
   {
     id: "native-title-bridge",
