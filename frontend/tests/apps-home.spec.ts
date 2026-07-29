@@ -113,13 +113,43 @@ test("keeps Home shortcuts available when Activity cannot load", async ({ page }
 test("uses the detail view for primary app destinations", async ({ page }) => {
   await page.goto("/react/apps/recipebot")
 
-  await expect(page.getByTestId("app-details")).toContainText("RecipeBot")
+  const details = page.getByTestId("app-details")
+  const chrome = page.getByTestId("app-context-chrome")
+  await expect(details).toContainText("RecipeBot")
+  await expect(chrome.getByRole("group", { name: "RecipeBot controls" })).toHaveAttribute("data-placement", "flow")
+  await expect(details.locator("h1")).toHaveCount(1)
+  await expect(details.getByRole("heading", { level: 1, name: "RecipeBot" })).toBeVisible()
+  await expect.poll(() => details.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
+  await expect(chrome.getByRole("button", { name: "Improve" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Use" })).toHaveCount(0)
+  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
   await expect(page.getByRole("link", { name: "Open RecipeBot" })).toHaveAttribute("href", "/react/apps/recipebot/open")
   await expect(page.getByRole("link", { name: "Improve RecipeBot" })).toHaveAttribute("href", "/react/apps/recipebot/dev")
   await expect(page.getByTestId("app-actions")).toHaveAttribute("role", "group")
   await expect(page.getByRole("button", { name: "Remove from Your apps" })).toBeVisible()
   await expect(page.getByRole("list", { name: "RecipeBot contributors" })).toContainText("@ava")
   await expect(page.getByRole("list", { name: "RecipeBot contributors" })).toContainText("@lin")
+})
+
+test("routes the detail chrome to Improve and closes its app context to Home", async ({ page }) => {
+  await page.goto("/react/apps/recipebot")
+  await page.getByTestId("app-context-chrome").getByRole("button", { name: "Improve" }).click()
+  await expect(page).toHaveURL("/react/apps/recipebot/dev")
+
+  await page.goto("/react/apps/recipebot")
+  await page.getByTestId("app-context-chrome").getByRole("button", { name: "Close RecipeBot" }).click()
+  await expect(page).toHaveURL(/\/react\/?$/)
+})
+
+test("does not invent app identity when app detail access fails", async ({ page }) => {
+  await page.unroute("**/api/apps/recipebot")
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ status: 404, json: { error: "App not found" } }))
+  await page.goto("/react/apps/recipebot")
+
+  const details = page.getByTestId("app-details")
+  await expect(details.getByRole("alert")).toContainText("App unavailable")
+  await expect(details.getByTestId("app-context-chrome")).toHaveCount(0)
+  await expect(details.locator("h1")).toHaveCount(0)
 })
 
 test("shares the canonical bare app URL from the app detail action hub", async ({ page }) => {
@@ -275,12 +305,19 @@ test("shows the lazy developer console only for messages from the active child f
     ts: Date.now(),
   }, "*"))
 
-  await page.getByRole("button", { name: "Open developer console" }).click()
+  await expect(page.getByRole("button", { name: "Open developer console, errors" })).toBeVisible()
+  await page.getByRole("button", { name: "Open developer console, errors" }).click()
   await expect(page.getByRole("heading", { name: "Developer console" })).toBeVisible()
   await expect(page.getByText("Recipe query failed")).toBeVisible()
   await expect(page.getByText("spoofed top-frame error")).toHaveCount(0)
   await page.getByRole("button", { name: "Clear", exact: true }).click()
   await expect(page.getByText("No console messages yet")).toBeVisible()
+})
+
+test("does not expose the developer console without an active frame", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("usernode:devConsoleMode", "always"))
+  await page.goto("/react/")
+  await expect(page.getByRole("button", { name: "Open developer console" })).toHaveCount(0)
 })
 
 test("rejects an unsafe child-app deep link before it reaches the iframe", async ({ page }) => {

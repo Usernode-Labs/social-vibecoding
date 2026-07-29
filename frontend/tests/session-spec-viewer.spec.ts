@@ -8,6 +8,23 @@ const versions = [
 ]
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: {
+    app: {
+      id: "recipebot",
+      slug: "recipebot",
+      name: "RecipeBot",
+      status: "running",
+      active_users: 24,
+      is_favorited: false,
+      is_collaborator: true,
+      your_apps_hidden: false,
+      favorite_order: null,
+      open_prs: 0,
+      active_sessions: 1,
+      open_issues: 0,
+      can_collaborate: true,
+    },
+  } }))
   await page.route("**/api/sessions/41/spec", (route) => route.fulfill({ json: { spec: content, versions } }))
   await page.route("**/api/sessions/41/specs/1", (route) => route.fulfill({ json: { spec: { version: 1, content: "# Earlier plan\n\nLegacy detail." } } }))
   await page.route("**/api/apps/recipebot/mention-suggestions", (route) => route.fulfill({ json: { users: [{ username: "Mira" }, { username: "Sam" }] } }))
@@ -16,10 +33,23 @@ test.beforeEach(async ({ page }) => {
 test("renders the owner-authorized latest spec with accessible content tabs", async ({ page }) => {
   await page.goto("/react/apps/recipebot/dev/sessions/41/spec")
   const spec = page.getByTestId("session-spec")
+  const chrome = spec.getByTestId("app-context-chrome")
+  await expect(spec.getByRole("heading", { name: /RecipeBot.*Session spec/, level: 1 })).toBeVisible()
+  await expect(spec.locator("h1")).toHaveCount(1)
+  await expect(chrome.getByRole("button", { name: "Back" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
+  expect(await spec.getAttribute("class")).not.toMatch(/\b(?:mx-auto|max-w-)/)
+  const chromeBox = await chrome.boundingBox()
+  const contentBox = await spec.locator(":scope > :not([data-testid='app-context-chrome'])").first().boundingBox()
+  expect(chromeBox).not.toBeNull()
+  expect(contentBox).not.toBeNull()
+  expect(contentBox!.y).toBeGreaterThanOrEqual(chromeBox!.y + chromeBox!.height)
   await expect(spec).toContainText("Filter recipes by pantry items.")
   await spec.getByRole("tab", { name: "Technical" }).click()
   await expect(spec).toContainText("Index ingredients by normalized name.")
   await expect(spec.getByRole("link", { name: /legacy Dev/i })).toHaveCount(0)
+  await chrome.getByRole("button", { name: "Back" }).click()
+  await expect(page).toHaveURL(/\/react\/apps\/recipebot\/dev\/sessions\/41$/)
 })
 
 test("loads an immutable historical version and can return to the latest content", async ({ page }) => {

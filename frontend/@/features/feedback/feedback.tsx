@@ -1,7 +1,8 @@
-import { ArrowLeft, ExternalLink, Lightbulb } from "lucide-react"
+import { ExternalLink, Lightbulb } from "lucide-react"
 import { useEffect, useRef, useState, type FormEvent } from "react"
-import { Link, useSearchParams } from "react-router-dom"
+import { useSearchParams } from "react-router-dom"
 
+import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -90,8 +91,8 @@ export function Feedback() {
     }
   }
 
-  return <div className="isolate mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="feedback">
-    <header className="flex flex-col gap-3"><Button className="w-fit" render={<Link to={requestedApp ? `/apps/${encodeURIComponent(requestedApp)}` : "/"} />} size="sm" variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back</Button><h1 className="text-balance text-3xl font-semibold tracking-tight">Send feedback</h1></header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="feedback">
+    <PageHeader title="Send feedback" />
     {isProductionReadOnlyReview ? <Alert data-testid="feedback-production-review"><AlertTitle>Read-only</AlertTitle><AlertDescription>Feedback submission is unavailable.</AlertDescription></Alert> : null}
     {appContext.kind === "loading" ? <Card><CardHeader><CardTitle>Checking feedback context</CardTitle></CardHeader><CardContent><Skeleton className="h-8 w-full" /></CardContent></Card> : null}
     {appContext.kind === "unavailable" ? <Alert><PlatformIcon icon={Lightbulb} /><AlertTitle>Sending platform feedback</AlertTitle><AlertDescription>The requested app is not available here, so feedback will be filed against Social Vibecoding instead.</AlertDescription></Alert> : null}

@@ -1,6 +1,6 @@
-import { ArrowLeft, File as FileIcon, FileText, Image as ImageIcon, MessageCircle, MessagesSquare, Paperclip, Pencil, Reply, SendHorizontal, Vote, X } from "lucide-react"
+import { File as FileIcon, FileText, Image as ImageIcon, MessageCircle, MessagesSquare, Paperclip, Pencil, Reply, SendHorizontal, Vote, X } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { useParams } from "react-router-dom"
 
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/message-scroller"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
+import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
 import { getApp, type AppDetail } from "@/lib/apps-api"
 import { getCurrentUser } from "@/lib/auth-api"
 import { subscribeNotificationEvents } from "@/lib/notification-events"
@@ -552,11 +553,8 @@ export function GroupDiscussion() {
     onNotificationChange: () => { void loadMessages() },
   }), [loadMessages])
 
-  return <div className="isolate mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="group-discussion">
-    <Button className="w-fit" render={<Link to={appDevPath(slug)} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Improve</Button>
-    <header>
-      <h1 className="text-balance text-3xl font-semibold tracking-tight">App discussion</h1>
-    </header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="group-discussion">
+    {app ? <AppContextChrome app={app} backTo={appDevPath(slug)} label="Discussion" mode="nested" state={appContextState(app)} /> : null}
     {isProductionReadOnlyReview ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>Read-only</AlertTitle><AlertDescription>Posting and reactions are unavailable.</AlertDescription></Alert> : null}
     {!isProductionReadOnlyReview && app && !app.can_collaborate ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>View-only discussion</AlertTitle><AlertDescription>You can read this app’s discussion, but collaboration access is required to post a message.</AlertDescription></Alert> : null}
     {writable && connectionState !== "connected" ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>{connectionState === "unavailable" ? "Discussion unavailable" : connectionState === "reconnecting" ? "Reconnecting to discussion" : "Connecting to discussion"}</AlertTitle>{connectionState === "unavailable" ? <AlertDescription>Refresh the page to reconnect.</AlertDescription> : null}</Alert> : null}

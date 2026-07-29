@@ -2,6 +2,7 @@ import { Bell, CheckCheck, Handshake, RefreshCw, Scale } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 
+import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
 import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -95,14 +96,15 @@ export function NotificationsContent({ data, error, inviteError, loadMoreError, 
     return [...buckets.values()]
   }, [bellItems])
 
-  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="notifications">
-    <header className="flex flex-wrap items-start justify-between gap-4">
-      <div className="flex flex-col gap-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Activity</h1><p className="text-base text-muted-foreground text-pretty">Mentions, replies, votes, and invitations.</p></div>
-      <div className="flex gap-2">
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="notifications">
+    <PageHeader
+      action={<div className="flex gap-2">
         <Button aria-label="Refresh activity" onClick={onRefresh} size="icon" type="button" variant="outline"><PlatformIcon icon={RefreshCw} /></Button>
         <Button disabled={!unread || markingAll || isProductionReadOnlyReview} onClick={onMarkAll} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={CheckCheck} />Mark all read</Button>
-      </div>
-    </header>
+      </div>}
+      description="Mentions, replies, votes, and invitations."
+      title="Activity"
+    />
     {isProductionReadOnlyReview ? <Alert><AlertTitle>Read-only</AlertTitle><AlertDescription>Marking activity as read and accepting or declining invitations are unavailable.</AlertDescription></Alert> : null}
     {liveState !== "connected" ? <div className="text-sm text-muted-foreground" role="status"><StatusDot detail={liveState === "unavailable" ? "Refresh to check for updates." : undefined} subject="Activity" {...connectionPresentationStatus(liveState)} /></div> : null}
     {error ? <Alert variant="destructive"><PlatformIcon icon={Bell} /><AlertTitle>Activity unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}

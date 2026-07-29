@@ -6,10 +6,12 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { AppIdentity } from "@/features/apps/app-identity"
 import type { AppDetail } from "@/lib/apps-api"
+import { cn } from "@/lib/utils"
 
 export type AppChromeProps = {
   app: AppDetail
   mode: "use" | "improve" | "nested"
+  placement?: "flow" | "overlay"
   state: "loading" | "ready" | "offline" | "unavailable" | "self-hosted"
   onClose: () => void
   onBack?: () => void
@@ -30,8 +32,9 @@ const statePresentation = {
 } satisfies Record<AppChromeProps["state"], { label: string; role: StatusDotRole }>
 
 /**
- * Compact focused-app controls. The absolute overlay does not reserve iframe
- * space, and all domain decisions remain with the host adapter.
+ * Compact focused-app controls. Overlay placement preserves iframe estate;
+ * flow placement lets route content reserve the chrome's measured height.
+ * All domain decisions remain with the host adapter.
  */
 export function AppChrome({
   app,
@@ -44,6 +47,7 @@ export function AppChrome({
   onOpenOverflow,
   onRetry,
   onUse,
+  placement = "overlay",
   state,
 }: AppChromeProps) {
   const status = statePresentation[state]
@@ -51,7 +55,11 @@ export function AppChrome({
   return (
     <Card
       aria-label={`${app.name} controls`}
-      className="absolute inset-x-3 top-3 z-10 min-h-12 flex-row flex-wrap items-center gap-2 p-2"
+      className={cn(
+        "min-h-12 flex-row flex-wrap items-center gap-2 p-2",
+        placement === "overlay" ? "absolute inset-x-3 top-3 z-10" : "relative w-full"
+      )}
+      data-placement={placement}
       data-state={state}
       role="group"
     >
@@ -100,10 +108,10 @@ export function AppChrome({
         ) : null}
         {onOpenOverflow ? (
           <Button
-            aria-label={consoleError ? "App actions, developer console has errors" : "App actions"}
+            aria-label={consoleError ? "Open developer console, errors" : "Open developer console"}
             className="relative size-12"
             onClick={onOpenOverflow}
-            title="App actions"
+            title="Developer console"
             type="button"
             variant="ghost"
           >

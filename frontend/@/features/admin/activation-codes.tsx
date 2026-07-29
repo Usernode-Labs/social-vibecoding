@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { PlatformIcon } from "@/components/platform-icon"
+import { PageHeader } from "@/components/page-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AdminAccessError, createActivationCode, getActivationCodes, getAdminUser, revokeActivationCode, type ActivationCode, type AdminUser } from "@/lib/admin-api"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
@@ -94,8 +95,8 @@ export function ActivationCodesPage() {
       setCopyError(cause instanceof Error ? cause.message : "Could not copy this activation code.")
     }
   }
-  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="activation-codes">
-    <header className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Activation codes</h1><p className="text-base text-muted-foreground text-pretty">Create, copy, and revoke registration codes.</p></div>{state.kind === "ready" ? <div className="flex flex-wrap gap-2"><Button disabled={!canCreate || creating} onClick={() => void create()} type="button">{creating ? "Generating…" : "Generate code"}</Button><Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button></div> : null}</header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="activation-codes">
+    <PageHeader action={state.kind === "ready" ? <div className="flex flex-wrap gap-2"><Button disabled={!canCreate || creating} onClick={() => void create()} type="button">{creating ? "Generating…" : "Generate code"}</Button><Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button></div> : undefined} description="Create, copy, and revoke registration codes." title="Activation codes" />
     {state.kind === "loading" ? <><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /></> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Activation codes unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}

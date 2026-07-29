@@ -1,4 +1,4 @@
-import { Archive, ArrowLeft, CheckCircle2, Eye, EyeOff, MessagesSquare, OctagonX, Pause, Play, RefreshCw, RotateCcw, Send } from "lucide-react"
+import { Archive, CheckCircle2, Eye, EyeOff, MessagesSquare, OctagonX, Pause, Play, RefreshCw, RotateCcw, Send } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 
@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
+import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
 import { DevConversation, type ConversationMessage } from "@/features/dev/dev-conversation"
 import { DevComposer, type DevSuggestionGroup } from "@/features/dev/dev-composer"
 import { DevSessionActivity } from "@/features/dev/dev-session-activity"
@@ -17,6 +18,7 @@ import { DevVisualEvidence } from "@/features/dev/dev-visual-evidence"
 import { devSessionFixture } from "@/features/dev/dev-session-fixture"
 import { useDevSessionStream } from "@/features/dev/use-dev-session-stream"
 import { useDevSessionStatus } from "@/features/dev/use-dev-session-status"
+import { getApp, type AppDetail } from "@/lib/apps-api"
 import { changeDevSessionLifecycle, getDevSession, promoteDevSession, recheckDevSession, setDevSessionVisibility, stopDevTurn, type DevSessionLifecycleAction, type DevSessionResponse } from "@/lib/dev-chat-api"
 import { appDevPath } from "@/lib/routes"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
@@ -92,6 +94,7 @@ export function DevSession() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [data, setData] = useState<DevSessionResponse | null>(null)
+  const [app, setApp] = useState<AppDetail | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [lifecycleError, setLifecycleError] = useState<string | null>(null)
   const [lifecycleNotice, setLifecycleNotice] = useState<string | null>(null)
@@ -247,6 +250,19 @@ export function DevSession() {
     return () => { cancelled = true; controller.abort() }
   }, [sessionId, slug, useFixture])
 
+  useEffect(() => {
+    const controller = new AbortController()
+    setApp(null)
+    void getApp(slug, controller.signal)
+      .then(({ app: nextApp }) => {
+        if (!controller.signal.aborted) setApp(nextApp)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setApp(null)
+      })
+    return () => controller.abort()
+  }, [slug])
+
   const canPause = data?.session.status === "active" || data?.session.status === "promoted"
   const canResume = data?.session.status === "paused"
   const canArchive = data?.session.status === "active" || data?.session.status === "paused" || data?.session.status === "promoted"
@@ -269,14 +285,14 @@ export function DevSession() {
   const quickReplies = currentQuickReplies(liveMessages, data?.session.status, streamState === "streaming")
   const suggestions = currentSuggestions(liveMessages, data?.session.status, streamState === "streaming")
 
-  return <div className="isolate mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="dev-session">
-    <Button className="w-fit" render={<Link to={`/apps/${encodeURIComponent(slug)}/dev`} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Improve</Button>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="dev-session">
+    {app && data ? <AppContextChrome app={app} backTo={appDevPath(slug)} label={sessionTitle(data.session)} mode="nested" state={appContextState(app)} /> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Session unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {!data && !error ? <><Skeleton className="h-20 w-full" /><Skeleton className="min-h-96 w-full" /></> : null}
     {data ? <>
       {useFixture ? <Alert><AlertTitle>Fixture data</AlertTitle></Alert> : null}
       {isProductionReadOnlyReview ? <Alert><AlertTitle>Read-only</AlertTitle><AlertDescription>Session actions and messages are unavailable.</AlertDescription></Alert> : null}
-      <header className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0 space-y-2"><div className="flex flex-wrap items-center gap-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">{sessionTitle(data.session)}</h1><Badge variant={data.session.status === "active" ? "secondary" : "outline"}>{data.session.status}</Badge>{isShared ? <Badge variant="outline">Visible to everyone</Badge> : null}</div><p className="text-base text-muted-foreground">{data.session.branch_name || "No branch"}</p></div><div className="flex flex-wrap gap-2"><Button render={<Link to={`/apps/${encodeURIComponent(slug)}/dev/sessions/${encodeURIComponent(sessionId)}/spec`} />} variant="outline">Spec</Button><Button render={<Link to={`/apps/${encodeURIComponent(slug)}/dev/sessions/${encodeURIComponent(sessionId)}/preview`} />} variant="outline">Preview</Button>{!canUnarchive ? <Button disabled={isProductionReadOnlyReview || visibilityUpdating} onClick={() => void updateVisibility()} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={isShared ? EyeOff : Eye} />{visibilityUpdating ? "Updating…" : isShared ? "Make private" : "Make visible"}</Button> : null}{canPromote ? <AlertDialog open={promoteOpen} onOpenChange={setPromoteOpen}><AlertDialogTrigger disabled={isProductionReadOnlyReview || promoting} render={<Button />}><PlatformIcon data-icon="inline-start" icon={Send} />Propose change</AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Propose these changes for voting?</AlertDialogTitle><AlertDialogDescription>This publishes the current session as a proposal and starts the normal review lifecycle.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={promoting}>Cancel</AlertDialogCancel><AlertDialogAction disabled={promoting} onClick={() => void promote()}>{promoting ? "Proposing…" : "Propose change"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog> : null}{canStop ? <Button disabled={isProductionReadOnlyReview || stopping} onClick={() => void stopTurn()} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={OctagonX} />{stopping ? "Stopping…" : "Stop turn"}</Button> : null}{canPause ? <Button disabled={isProductionReadOnlyReview || Boolean(lifecycleAction)} onClick={() => void updateLifecycle("pause")} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={Pause} />{lifecycleAction === "pause" ? (data.session.status === "promoted" ? "Freeing…" : "Pausing…") : pauseLabel}</Button> : null}{canResume ? <Button disabled={isProductionReadOnlyReview || Boolean(lifecycleAction)} onClick={() => void updateLifecycle("resume")} type="button"><PlatformIcon data-icon="inline-start" icon={Play} />{lifecycleAction === "resume" ? "Resuming…" : "Resume session"}</Button> : null}{canArchive ? <AlertDialog open={archiveOpen} onOpenChange={setArchiveOpen}><AlertDialogTrigger disabled={isProductionReadOnlyReview || Boolean(lifecycleAction)} render={<Button variant="destructive" />}><PlatformIcon data-icon="inline-start" icon={Archive} />Archive session</AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Archive this session?</AlertDialogTitle><AlertDialogDescription>This stops its worker, closes its pull request, and frees the session slot. You can restore it here for a limited time.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={lifecycleAction === "archive"}>Cancel</AlertDialogCancel><AlertDialogAction disabled={lifecycleAction === "archive"} onClick={() => void updateLifecycle("archive")} variant="destructive">{lifecycleAction === "archive" ? "Archiving…" : "Archive session"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog> : null}</div></header>
+      <header className="flex flex-wrap items-start justify-between gap-4"><div className="min-w-0 space-y-2"><div className="flex flex-wrap items-center gap-2"><Badge variant={data.session.status === "active" ? "secondary" : "outline"}>{data.session.status}</Badge>{isShared ? <Badge variant="outline">Visible to everyone</Badge> : null}</div><p className="text-base text-muted-foreground">{data.session.branch_name || "No branch"}</p></div><div className="flex flex-wrap gap-2"><Button render={<Link to={`/apps/${encodeURIComponent(slug)}/dev/sessions/${encodeURIComponent(sessionId)}/spec`} />} variant="outline">Spec</Button><Button render={<Link to={`/apps/${encodeURIComponent(slug)}/dev/sessions/${encodeURIComponent(sessionId)}/preview`} />} variant="outline">Preview</Button>{!canUnarchive ? <Button disabled={isProductionReadOnlyReview || visibilityUpdating} onClick={() => void updateVisibility()} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={isShared ? EyeOff : Eye} />{visibilityUpdating ? "Updating…" : isShared ? "Make private" : "Make visible"}</Button> : null}{canPromote ? <AlertDialog open={promoteOpen} onOpenChange={setPromoteOpen}><AlertDialogTrigger disabled={isProductionReadOnlyReview || promoting} render={<Button />}><PlatformIcon data-icon="inline-start" icon={Send} />Propose change</AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Propose these changes for voting?</AlertDialogTitle><AlertDialogDescription>This publishes the current session as a proposal and starts the normal review lifecycle.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={promoting}>Cancel</AlertDialogCancel><AlertDialogAction disabled={promoting} onClick={() => void promote()}>{promoting ? "Proposing…" : "Propose change"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog> : null}{canStop ? <Button disabled={isProductionReadOnlyReview || stopping} onClick={() => void stopTurn()} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={OctagonX} />{stopping ? "Stopping…" : "Stop turn"}</Button> : null}{canPause ? <Button disabled={isProductionReadOnlyReview || Boolean(lifecycleAction)} onClick={() => void updateLifecycle("pause")} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={Pause} />{lifecycleAction === "pause" ? (data.session.status === "promoted" ? "Freeing…" : "Pausing…") : pauseLabel}</Button> : null}{canResume ? <Button disabled={isProductionReadOnlyReview || Boolean(lifecycleAction)} onClick={() => void updateLifecycle("resume")} type="button"><PlatformIcon data-icon="inline-start" icon={Play} />{lifecycleAction === "resume" ? "Resuming…" : "Resume session"}</Button> : null}{canArchive ? <AlertDialog open={archiveOpen} onOpenChange={setArchiveOpen}><AlertDialogTrigger disabled={isProductionReadOnlyReview || Boolean(lifecycleAction)} render={<Button variant="destructive" />}><PlatformIcon data-icon="inline-start" icon={Archive} />Archive session</AlertDialogTrigger><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Archive this session?</AlertDialogTitle><AlertDialogDescription>This stops its worker, closes its pull request, and frees the session slot. You can restore it here for a limited time.</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={lifecycleAction === "archive"}>Cancel</AlertDialogCancel><AlertDialogAction disabled={lifecycleAction === "archive"} onClick={() => void updateLifecycle("archive")} variant="destructive">{lifecycleAction === "archive" ? "Archiving…" : "Archive session"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog> : null}</div></header>
       {canRecheck ? <Alert>
         <PlatformIcon icon={data.session.check_state === "failing" || data.session.check_state === "error" ? OctagonX : RefreshCw} />
         <AlertTitle>{data.session.check_state === "pending" ? "Checks are still running" : "Checks need attention"}</AlertTitle>

@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
 
+async function expectFullCanvasRoute(page: import("@playwright/test").Page, testId: string, title: string) {
+  const route = page.getByTestId(testId)
+  await expect(route.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible()
+  await expect(route.locator("h1")).toHaveCount(1)
+  expect(await route.getAttribute("class")).not.toMatch(/\b(?:mx-auto|max-w-)/)
+}
+
 const prs = {
   window: "all",
   weekStart: null,
@@ -101,6 +108,7 @@ test.beforeEach(async ({ page }) => {
 test("renders public proposal recognition with React detail and explicit GitHub destinations", async ({ page }) => {
   await page.goto("/react/community/leaderboard")
 
+  await expectFullCanvasRoute(page, "leaderboard", "Kudos leaderboard")
   await expect(page.getByTestId("leaderboard")).toContainText("Make recipes easier to find")
   await expect(page.getByRole("link", { name: "View Make recipes easier to find" })).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/42")
   await expect(page.getByRole("link", { name: "Open Make recipes easier to find on GitHub" })).toHaveAttribute("href", "https://github.com/Usernode-Labs/social-vibecoding/pull/18")
@@ -116,20 +124,23 @@ test("preserves the user and period choices in browser-visible route state", asy
   await expect(page.getByText("Active on RecipeBot")).toBeVisible()
 })
 
-test("uses a public profile deep link with a browser-visible back path and keeps the private route signed in", async ({ page }) => {
+test("uses a public profile deep link with browser-visible route state and keeps the private route signed in", async ({ page }) => {
   await page.goto("/react/community/leaderboard?tab=users&window=week")
   await expect(page.getByRole("link", { name: "My history" })).toHaveAttribute("href", "/react/community/leaderboard/history")
   await page.getByRole("link", { name: "View @ava's profile" }).click()
 
   await expect(page).toHaveURL(/\/community\/leaderboard\/users\/ava\?window=week/)
+  await expectFullCanvasRoute(page, "leaderboard-profile", "@ava")
   await expect(page.getByTestId("leaderboard-profile")).toContainText("12 kudos on merged")
   await expect(page.getByRole("link", { name: "View Make recipes easier to find" })).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/42")
-  await expect(page.getByRole("link", { name: "Top users" })).toHaveAttribute("href", "/react/community/leaderboard?tab=users&window=week")
+  await expect(page.getByRole("link", { name: "Top users" })).toHaveCount(0)
 })
 
 test("renders the private give-side history with typed React source destinations", async ({ page }) => {
   await page.goto("/react/community/leaderboard/history")
 
+  await expectFullCanvasRoute(page, "leaderboard-history", "My history")
+  await expect(page.getByRole("link", { name: "Kudos leaderboard" })).toHaveCount(0)
   await expect(page.getByTestId("leaderboard-history")).toContainText("Everything you’ve given")
   await expect(page.getByTestId("leaderboard-history")).toContainText("Make recipes easier to find")
   await expect(page.getByTestId("leaderboard-history")).toContainText("Pledged kudos on issue #12")
@@ -186,6 +197,7 @@ test("loads another public-profile page without losing earlier proposals", async
 test("makes a missing public profile explicit", async ({ page }) => {
   await page.route("**/api/leaderboard/users/missing/prs?limit=50", (route) => route.fulfill({ status: 404, json: { error: "User not found" } }))
   await page.goto("/react/community/leaderboard/users/missing")
+  await expectFullCanvasRoute(page, "leaderboard-profile", "@missing")
   await expect(page.getByRole("alert")).toContainText("User not found")
 })
 

@@ -8,6 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
 import { PlatformIcon } from "@/components/platform-icon"
+import { PageHeader } from "@/components/page-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AdminAccessError, getAdminUser, getAdminUsers, updateAdminUserDailyLimit, updateAdminUserQuota, type AdminUser, type AdminUserRecord } from "@/lib/admin-api"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
@@ -55,8 +56,8 @@ export function AdminUsersPage() {
   const users = useMemo(() => state.kind === "ready" ? state.users.filter((user) => user.username.toLowerCase().includes(query.trim().toLowerCase())) : [], [query, state])
   const updateUser = (id: number, updates: Partial<AdminUserRecord>) => setState((current) => current.kind === "ready" ? { ...current, users: current.users.map((user) => user.id === id ? { ...user, ...updates } : user) } : current)
   const canWrite = state.kind === "ready" && state.user.canAdminWrite && !isProductionReadOnlyReview
-  return <div className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-users">
-    <header className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Users</h1><p className="text-base text-muted-foreground text-pretty">Inspect accounts and update app quotas or daily spend overrides.</p></div>{state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : null}</header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-users">
+    <PageHeader action={state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : undefined} description="Inspect accounts and update app quotas or daily spend overrides." title="Users" />
     {state.kind === "loading" ? <div className="space-y-3"><Skeleton className="h-10 w-full" /><Skeleton className="h-32 w-full" /><Skeleton className="h-32 w-full" /></div> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Users unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}

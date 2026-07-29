@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Page } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
 
 const users = [
@@ -12,10 +12,21 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/admin/users", (route) => route.fulfill({ json: users }))
 })
 
-test("shows user administration with its account-management destination", async ({ page }) => {
+async function openAdminUsers(page: Page) {
   await page.goto("/react/admin/users")
-  await expect(page.getByTestId("admin-users")).toContainText("ava (you)")
-  await expect(page.getByTestId("admin-users")).toContainText("View-only admin")
+  const route = page.getByTestId("admin-users")
+  await expect(route).toContainText("ava (you)")
+  await expect(page.getByRole("button", { name: "Save app quota for sam" })).toBeEnabled()
+  await expect(page).toHaveURL(/\/react\/admin\/users$/)
+  return route
+}
+
+test("shows user administration with its account-management destination", async ({ page }) => {
+  const route = await openAdminUsers(page)
+  await expect(route).not.toHaveClass(/(?:mx-auto|max-w-)/)
+  await expect(page.getByRole("heading", { exact: true, level: 1, name: "Users" })).toHaveCount(1)
+  await expect(route).toContainText("ava (you)")
+  await expect(route).toContainText("View-only admin")
   await expect(page.getByRole("link", { name: "Manage accounts" })).toHaveAttribute("href", "/#admin/users")
 })
 
@@ -26,9 +37,11 @@ test("updates an individual app quota through the existing write-admin contract"
     request = route.request().postDataJSON()
     await route.fulfill({ json: { ok: true, app_quota: 7 } })
   })
-  await page.goto("/react/admin/users")
+  await openAdminUsers(page)
   await page.getByRole("spinbutton", { name: "App quota for sam", exact: true }).fill("7")
+  const response = page.waitForResponse((candidate) => candidate.url().endsWith("/api/admin/users/3/app-quota") && candidate.request().method() === "PUT")
   await page.getByRole("button", { name: "Save app quota for sam" }).click()
+  await response
   await expect.poll(() => request).toEqual({ quota: 7 })
   await expect(page.getByTestId("admin-users")).toContainText("1 / 7")
 })
@@ -40,26 +53,35 @@ test("updates and clears the per-user daily override through the existing contra
     const cents = route.request().postDataJSON().cents as number | null
     await route.fulfill({ json: { ok: true, daily_limit_cents: cents } })
   })
-  await page.goto("/react/admin/users")
+  await openAdminUsers(page)
   await page.getByRole("spinbutton", { name: "Daily cap for sam", exact: true }).fill("1200")
+  const saveResponse = page.waitForResponse((candidate) => candidate.url().endsWith("/api/admin/users/3/daily-limit") && candidate.request().method() === "PUT")
   await page.getByRole("button", { name: "Save daily cap for sam" }).click()
+  await saveResponse
+  await expect.poll(() => updates).toEqual([{ cents: 1200 }])
   await expect(page.getByTestId("admin-users")).toContainText("$12.00")
   await page.getByRole("spinbutton", { name: "Daily cap for sam", exact: true }).fill("")
+  const clearResponse = page.waitForResponse((candidate) => candidate.url().endsWith("/api/admin/users/3/daily-limit") && candidate.request().method() === "PUT")
   await page.getByRole("button", { name: "Save daily cap for sam" }).click()
+  await clearResponse
   await expect.poll(() => updates).toEqual([{ cents: 1200 }, { cents: null }])
   await expect(page.getByTestId("admin-users")).toContainText("Platform default")
 })
 
 test("keeps server mutation errors visible", async ({ page }) => {
   await page.route("**/api/admin/users/3/app-quota", (route) => route.fulfill({ status: 400, json: { error: "quota must be a non-negative integer" } }))
-  await page.goto("/react/admin/users")
+  await openAdminUsers(page)
+  const response = page.waitForResponse((candidate) => candidate.url().endsWith("/api/admin/users/3/app-quota") && candidate.status() === 400)
   await page.getByRole("button", { name: "Save app quota for sam" }).click()
+  await response
+  await expect(page).toHaveURL(/\/react\/admin\/users$/)
   await expect(page.getByRole("alert")).toContainText("quota must be a non-negative integer")
 })
 
 test("view-only administrators cannot mutate individual limits", async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { isAdmin: true, canAdminWrite: false } } }))
   await page.goto("/react/admin/users")
+  await expect(page.getByTestId("admin-users")).toContainText("ava (you)")
   await expect(page.getByRole("alert")).toContainText("View-only administrator")
   await expect(page.getByRole("button", { name: "Save app quota for sam" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "Save daily cap for sam" })).toBeDisabled()
@@ -73,6 +95,7 @@ test("production review mode does not issue user mutations", async ({ page }) =>
     await route.fallback()
   })
   await page.goto("/react/admin/users")
+  await expect(page.getByTestId("admin-users")).toContainText("ava (you)")
   await expect(page.getByRole("alert")).toContainText("Changes unavailable")
   await expect(page.getByRole("button", { name: "Save app quota for sam" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "Save daily cap for sam" })).toBeDisabled()
@@ -80,14 +103,14 @@ test("production review mode does not issue user mutations", async ({ page }) =>
 })
 
 test("filters the read-only list by user name", async ({ page }) => {
-  await page.goto("/react/admin/users")
+  await openAdminUsers(page)
   await page.getByLabel("Filter users").fill("milo")
   await expect(page.getByTestId("admin-users")).toContainText("milo")
   await expect(page.getByTestId("admin-users")).not.toContainText("ava (you)")
 })
 
 test("has no critical or serious accessibility violations", async ({ page }) => {
-  await page.goto("/react/admin/users")
+  await openAdminUsers(page)
   const results = await new AxeBuilder({ page }).analyze()
   expect(results.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([])
 })

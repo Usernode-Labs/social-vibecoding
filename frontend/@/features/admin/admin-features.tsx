@@ -2,6 +2,7 @@ import { ExternalLink, ListTodo, ShieldAlert } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -97,11 +98,8 @@ export function AdminFeaturesPage() {
     }
   }, [status])
 
-  return <div className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-features">
-    <header className="flex flex-wrap items-start justify-between gap-4">
-      <div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Submitted features</h1><p className="text-base text-muted-foreground text-pretty">Cross-app feature requests ranked by community support.</p></div>
-      {state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : null}
-    </header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-features">
+    <PageHeader action={state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : undefined} description="Cross-app feature requests ranked by community support." title="Submitted features" />
     {state.kind === "loading" ? <div className="space-y-3"><Skeleton className="h-10 w-40" /><Skeleton className="h-36 w-full" /><Skeleton className="h-36 w-full" /></div> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Submitted features unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}

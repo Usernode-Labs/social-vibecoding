@@ -6,6 +6,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { AppChrome, type AppChromeProps } from "@/features/apps/app-chrome"
 import { FocusedAppFrame } from "@/features/apps/focused-app-frame"
 import { getApp, getIframeToken, type AppDetail } from "@/lib/apps-api"
+import { useDevConsoleContext } from "@/lib/dev-console-context"
 import { syncNativeTitle } from "@/lib/native-bridge"
 import { appDevPath } from "@/lib/routes"
 
@@ -53,6 +54,7 @@ export function HostedApp() {
   const [tokenState, setTokenState] = useState<{ slug: string; value: string } | null>(null)
   const [offline, setOffline] = useState(() => navigator.onLine === false)
   const [loadedFrameKey, setLoadedFrameKey] = useState<string | null>(null)
+  const devConsole = useDevConsoleContext()
   const innerPath = validInnerPath(searchParams.get("path"))
   const currentApp = app?.slug === slug ? app : null
   const loadError = loadErrorState?.slug === slug ? loadErrorState.message : null
@@ -173,9 +175,11 @@ export function HostedApp() {
     <div className="relative isolate flex min-h-0 flex-1 bg-background" data-testid="hosted-app">
       <AppChrome
         app={currentApp}
+        consoleError={devConsole.unseenErrors > 0}
         mode="use"
         onClose={closeApp}
         onImprove={currentApp.can_collaborate !== false ? improveApp : undefined}
+        onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined}
         state={state}
       />
       {tokenError ? (

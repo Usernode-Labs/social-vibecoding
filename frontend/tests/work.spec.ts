@@ -66,8 +66,11 @@ async function installSessionEventsSocket(page: import("@playwright/test").Page)
 test("keeps active sessions and proposals distinct while handing read paths to React", async ({ page }) => {
   await page.goto("/react/work")
 
-  await expect(page.getByTestId("work")).toContainText("Improve pantry search")
-  await expect(page.getByTestId("work")).toContainText("Improve matching")
+  const work = page.getByTestId("work")
+  await expect(work.getByRole("heading", { level: 1 })).toHaveCount(1)
+  await expect(work).toHaveCSS("max-width", "none")
+  await expect(work).toContainText("Improve pantry search")
+  await expect(work).toContainText("Improve matching")
   await expect(page.getByRole("link", { name: "View Improve pantry search session" })).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/23")
   await expect(page.getByRole("link", { name: "View Improve matching proposal" })).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/24")
   await expect(page.getByRole("link", { name: "View Rotate a development secret governance item" })).toHaveAttribute("href", "/react/apps/recipebot/dev/governance/5")

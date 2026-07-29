@@ -101,3 +101,38 @@ test("temporary navigation preserves focused-app state and restores trigger focu
     )
     .toEqual(before)
 })
+
+test("opening the contextual developer console preserves the focused app frame", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("usernode:devConsoleMode", "always"))
+  await page.goto("/react/apps/recipebot/open")
+
+  const child = page.frameLocator('[data-testid="focused-app-frame"]')
+  const draft = child.getByRole("textbox", { name: "Recipe draft" })
+  await expect(draft).toBeVisible()
+  await draft.fill("tomatoes and chickpeas")
+
+  const frame = page
+    .frames()
+    .find((candidate) => candidate.url().startsWith("https://recipebot.example.test/"))
+  if (!frame) throw new Error("RecipeBot child frame did not load")
+
+  await frame.evaluate(() => window.scrollTo(0, 720))
+  const before = await frame.evaluate(() => ({
+    marker: (window as Window & { __continuityMarker?: string }).__continuityMarker,
+    scrollY: window.scrollY,
+  }))
+
+  await page.getByRole("button", { name: "Open developer console" }).click()
+  await expect(page.getByRole("heading", { name: "Developer console" })).toBeVisible()
+  await page.getByRole("button", { name: "Close" }).click()
+
+  await expect(draft).toHaveValue("tomatoes and chickpeas")
+  await expect
+    .poll(() =>
+      frame.evaluate(() => ({
+        marker: (window as Window & { __continuityMarker?: string }).__continuityMarker,
+        scrollY: window.scrollY,
+      })),
+    )
+    .toEqual(before)
+})

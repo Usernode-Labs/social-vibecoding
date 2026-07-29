@@ -8,8 +8,11 @@ test.beforeEach(async ({ page }) => {
 
 test("shows the platform caps and allows only the established write-admin control", async ({ page }) => {
   await page.goto("/react/admin/limits")
-  await expect(page.getByTestId("spend-limits")).toContainText("$25.00")
-  await expect(page.getByTestId("spend-limits")).toContainText("$200.00")
+  const route = page.getByTestId("spend-limits")
+  await expect(route).not.toHaveClass(/(?:mx-auto|max-w-)/)
+  await expect(page.getByRole("heading", { exact: true, level: 1, name: "Spend limits" })).toHaveCount(1)
+  await expect(route).toContainText("$25.00")
+  await expect(route).toContainText("$200.00")
   await expect(page.getByRole("button", { name: "Save limits" })).toBeEnabled()
 })
 

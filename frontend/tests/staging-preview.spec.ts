@@ -25,3 +25,13 @@ test("has no critical or serious accessibility violations", async ({ page }) => 
   const results = await new AxeBuilder({ page }).analyze()
   expect(results.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([])
 })
+
+test("exposes the developer console only from the active preview chrome", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("usernode:devConsoleMode", "always"))
+  await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
+
+  const trigger = page.getByRole("button", { name: "Open developer console" })
+  await expect(trigger).toBeVisible()
+  await trigger.click()
+  await expect(page.getByRole("heading", { name: "Developer console" })).toBeVisible()
+})

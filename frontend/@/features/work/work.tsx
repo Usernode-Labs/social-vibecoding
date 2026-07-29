@@ -2,10 +2,11 @@ import { Gauge, RefreshCw, Vote } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 
+import { PageHeader } from "@/components/page-header"
+import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { PlatformIcon } from "@/components/platform-icon"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -78,11 +79,11 @@ export function Work() {
   const isEmpty = snapshot && sessions.length === 0 && snapshot.proposals.length === 0 && snapshot.governance.length === 0
 
   return (
-    <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="work">
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <h1 className="text-balance text-3xl font-semibold tracking-tight">Work</h1>
-        <Button aria-label="Refresh work" onClick={() => setRefreshKey((value) => value + 1)} type="button" variant="outline">Refresh</Button>
-      </header>
+    <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="work">
+      <PageHeader
+        action={<Button aria-label="Refresh work" onClick={() => setRefreshKey((value) => value + 1)} type="button" variant="outline">Refresh</Button>}
+        title="Work"
+      />
       {sessionEventsState !== "connected" ? <p className="text-sm text-muted-foreground" role="status">{sessionEventsState === "connecting" ? "Connecting to live updates" : sessionEventsState === "unavailable" ? "Live updates unavailable. Refreshing periodically." : "Reconnecting to live updates"}</p> : null}
       {error ? <Alert variant="destructive"><AlertTitle>Work unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!snapshot && !error ? <WorkSkeleton /> : null}

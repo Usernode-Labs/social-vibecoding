@@ -51,8 +51,11 @@ test.beforeEach(async ({ page }) => {
 
 test("keeps bell, pending-invitation, and Work completion responsibilities distinct", async ({ page }) => {
   await page.goto("/react/notifications")
-  await expect(page.getByTestId("notifications")).toContainText("Can we add a pantry filter?")
-  await expect(page.getByTestId("notifications")).not.toContainText("Finish recipe search")
+  const notifications = page.getByTestId("notifications")
+  await expect(notifications.getByRole("heading", { level: 1 })).toHaveCount(1)
+  await expect(notifications).toHaveCSS("max-width", "none")
+  await expect(notifications).toContainText("Can we add a pantry filter?")
+  await expect(notifications).not.toContainText("Finish recipe search")
   await expect(page.getByRole("heading", { name: "Pending invitations" })).toBeVisible()
   await expect(page.getByTestId("notifications")).not.toContainText("collab invite")
   await expect(page.getByRole("link", { name: "Open activity: Can we add a pantry filter?" })).toHaveAttribute("href", "/react/apps/recipebot/dev/chat")

@@ -14,10 +14,11 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { PlatformIcon } from "@/components/platform-icon"
+import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
 import { TopicAttributeControls } from "@/features/dev/topic-attribute-controls"
 import { TopicDiscussionTranscript } from "@/features/dev/topic-discussion-transcript"
 import { getCurrentUser } from "@/lib/auth-api"
-import { createAppSession } from "@/lib/apps-api"
+import { createAppSession, getApp, type AppDetail } from "@/lib/apps-api"
 import { readBrowserPreference, writeBrowserPreference } from "@/lib/browser-preferences"
 import { getDevModels, type DevModel } from "@/lib/dev-chat-api"
 import { issueKickoffDraft, saveDevSessionDraft } from "@/lib/dev-session-draft"
@@ -39,6 +40,7 @@ function Comments({ comments, truncated }: { comments: GitHubIssueComment[] | nu
 }
 
 type GitHubIssueDetailContentProps = {
+  app: AppDetail
   attributeError?: string | null
   attributes?: Partial<Record<TopicAttributeField, TopicAttributeOptions | null>>
   attributeUpdating?: TopicAttributeField | null
@@ -86,7 +88,7 @@ type GitHubIssueDetailContentProps = {
   children?: ReactNode
 }
 
-export function GitHubIssueDetailContent({ attributeError, attributes = EMPTY_ATTRIBUTES, attributeUpdating = null, bountyError, bountyNotice, bountyUpdating = false, canAdminWrite = false, children, claiming = false, claimClearingUserId = null, claimError, closeProposal, closeProposalError, closeProposalNotice, closeProposalOpen = false, closeProposalSubmitting = false, comments, creatingSession = false, currentUsername, headlessCloning = false, headlessError, headlessNotice, headlessOpen = false, headlessStarting = false, issue, modelError, models = EMPTY_MODELS, onAttribute, onBounty, onClearClaim, onCloneHeadless, onClaim, onCloseProposal, onCloseProposalOpenChange, onCreateSession, onHeadlessOpenChange, onRename, onSelectedModelChange, onStartHeadless, renaming = false, renameError, selectedModel = "", sessionError, slug, truncated = false }: GitHubIssueDetailContentProps) {
+export function GitHubIssueDetailContent({ app, attributeError, attributes = EMPTY_ATTRIBUTES, attributeUpdating = null, bountyError, bountyNotice, bountyUpdating = false, canAdminWrite = false, children, claiming = false, claimClearingUserId = null, claimError, closeProposal, closeProposalError, closeProposalNotice, closeProposalOpen = false, closeProposalSubmitting = false, comments, creatingSession = false, currentUsername, headlessCloning = false, headlessError, headlessNotice, headlessOpen = false, headlessStarting = false, issue, modelError, models = EMPTY_MODELS, onAttribute, onBounty, onClearClaim, onCloneHeadless, onClaim, onCloseProposal, onCloseProposalOpenChange, onCreateSession, onHeadlessOpenChange, onRename, onSelectedModelChange, onStartHeadless, renaming = false, renameError, selectedModel = "", sessionError, slug, truncated = false }: GitHubIssueDetailContentProps) {
   const back = appDevPath(slug)
   const [editing, setEditing] = useState(false)
   const [title, setTitle] = useState(issue.title)
@@ -117,12 +119,12 @@ export function GitHubIssueDetailContent({ attributeError, attributes = EMPTY_AT
     void onCloseProposal?.(closeReason)
   }
 
-  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="github-issue-detail">
-    <Button className="w-fit" render={<Link to={back} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />App Dev</Button>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="github-issue-detail">
+    <AppContextChrome app={app} backTo={back} label={issue.title} mode="nested" state={appContextState(app)} />
     <Card>
       <CardHeader className="gap-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          {editing ? <div className="flex min-w-0 flex-1 flex-col gap-2"><Input aria-label="Issue title" disabled={renaming} maxLength={200} onChange={(event) => setTitle(event.target.value)} value={title} /><div className="flex flex-wrap gap-2"><Button disabled={renaming || !title.trim()} onClick={save} size="sm" type="button"><PlatformIcon data-icon="inline-start" icon={Save} />{renaming ? "Saving…" : "Save title"}</Button><Button disabled={renaming} onClick={() => { setTitle(issue.title); setEditing(false) }} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={X} />Cancel</Button></div></div> : <CardTitle className="text-balance text-2xl font-semibold tracking-tight"><h1>{issue.title}</h1></CardTitle>}
+          {editing ? <div className="flex min-w-0 flex-1 flex-col gap-2"><Input aria-label="Issue title" disabled={renaming} maxLength={200} onChange={(event) => setTitle(event.target.value)} value={title} /><div className="flex flex-wrap gap-2"><Button disabled={renaming || !title.trim()} onClick={save} size="sm" type="button"><PlatformIcon data-icon="inline-start" icon={Save} />{renaming ? "Saving…" : "Save title"}</Button><Button disabled={renaming} onClick={() => { setTitle(issue.title); setEditing(false) }} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={X} />Cancel</Button></div></div> : <CardTitle className="text-balance text-2xl font-semibold tracking-tight">{issue.title}</CardTitle>}
           {canRename && !editing ? <Button aria-label="Edit issue title" onClick={() => setEditing(true)} size="icon-sm" type="button" variant="ghost"><PlatformIcon icon={Pencil} /></Button> : null}
         </div>
         <CardDescription>GitHub issue #{issue.number}{issue.created_by_username ? ` · opened by ${issue.created_by_username}` : ""}</CardDescription>
@@ -178,6 +180,7 @@ export function GitHubIssueDetail() {
   const { issueNumber = "", slug = "" } = useParams()
   const navigate = useNavigate()
   const number = Number(issueNumber)
+  const [app, setApp] = useState<AppDetail | undefined>(undefined)
   const [issue, setIssue] = useState<GitHubIssue | null | undefined>(undefined)
   const [comments, setComments] = useState<GitHubIssueComment[] | null>(null)
   const [truncated, setTruncated] = useState(false)
@@ -214,8 +217,9 @@ export function GitHubIssueDetail() {
   useEffect(() => {
     if (!Number.isSafeInteger(number) || number <= 0) { setIssue(null); return }
     const controller = new AbortController()
-    setIssue(undefined); setComments(null); setTruncated(false); setError(null)
-    getGitHubIssues(slug, controller.signal).then((result) => {
+    setApp(undefined); setIssue(undefined); setComments(null); setTruncated(false); setError(null)
+    Promise.all([getApp(slug, controller.signal), getGitHubIssues(slug, controller.signal)]).then(([{ app: loadedApp }, result]) => {
+      setApp(loadedApp)
       const match = result.issues.find((candidate) => candidate.number === number) || null
       setIssue(match)
       if (!match) return null
@@ -428,9 +432,9 @@ export function GitHubIssueDetail() {
   }
 
   if (error) return <div className="flex flex-1 items-center justify-center p-6" data-testid="github-issue-detail-error"><Alert className="max-w-md" variant="destructive"><AlertTitle>GitHub issue unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>
-  if (issue === undefined) return <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-64 w-full" /></div>
   if (issue === null) return <div className="flex flex-1 items-center justify-center p-6" data-testid="github-issue-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={MessageCircle} /></EmptyMedia><EmptyTitle>GitHub issue not found</EmptyTitle><EmptyDescription>It may have been closed, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><Button render={<Link to={appDevPath(slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</Button></Empty></div>
-  return <GitHubIssueDetailContent attributeError={attributeError} attributes={attributes} attributeUpdating={attributeUpdating} bountyError={bountyError} bountyNotice={bountyNotice} bountyUpdating={bountyUpdating} canAdminWrite={canAdminWrite} claiming={claiming} claimClearingUserId={claimClearingUserId} claimError={claimError} closeProposal={closeProposal} closeProposalError={closeProposalError} closeProposalNotice={closeProposalNotice} closeProposalOpen={closeProposalOpen} closeProposalSubmitting={closeProposalSubmitting} comments={comments} creatingSession={creatingSession} currentUsername={currentUsername} headlessCloning={headlessCloning} headlessError={headlessError} headlessNotice={headlessNotice} headlessOpen={headlessOpen} headlessStarting={headlessStarting} issue={issue} modelError={modelError} models={models} onAttribute={updateAttribute} onBounty={giveBounty} onClaim={updateClaim} onClearClaim={clearClaimAsAdmin} onCloneHeadless={cloneHeadless} onCloseProposal={proposeClose} onCloseProposalOpenChange={setCloseProposalOpen} onCreateSession={createSession} onHeadlessOpenChange={setHeadlessOpen} onRename={rename} onSelectedModelChange={selectHeadlessModel} onStartHeadless={startHeadless} renaming={renaming} renameError={renameError} selectedModel={selectedModel} sessionError={sessionError} slug={slug} truncated={truncated}>
+  if (issue === undefined || app === undefined) return <div className="flex w-full flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-64 w-full" /></div>
+  return <GitHubIssueDetailContent app={app} attributeError={attributeError} attributes={attributes} attributeUpdating={attributeUpdating} bountyError={bountyError} bountyNotice={bountyNotice} bountyUpdating={bountyUpdating} canAdminWrite={canAdminWrite} claiming={claiming} claimClearingUserId={claimClearingUserId} claimError={claimError} closeProposal={closeProposal} closeProposalError={closeProposalError} closeProposalNotice={closeProposalNotice} closeProposalOpen={closeProposalOpen} closeProposalSubmitting={closeProposalSubmitting} comments={comments} creatingSession={creatingSession} currentUsername={currentUsername} headlessCloning={headlessCloning} headlessError={headlessError} headlessNotice={headlessNotice} headlessOpen={headlessOpen} headlessStarting={headlessStarting} issue={issue} modelError={modelError} models={models} onAttribute={updateAttribute} onBounty={giveBounty} onClaim={updateClaim} onClearClaim={clearClaimAsAdmin} onCloneHeadless={cloneHeadless} onCloseProposal={proposeClose} onCloseProposalOpenChange={setCloseProposalOpen} onCreateSession={createSession} onHeadlessOpenChange={setHeadlessOpen} onRename={rename} onSelectedModelChange={selectHeadlessModel} onStartHeadless={startHeadless} renaming={renaming} renameError={renameError} selectedModel={selectedModel} sessionError={sessionError} slug={slug} truncated={truncated}>
     <TopicDiscussionTranscript slug={slug} threadRef={issue.number} threadType="issue" />
   </GitHubIssueDetailContent>
 }

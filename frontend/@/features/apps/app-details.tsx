@@ -1,7 +1,8 @@
-import { ArrowLeft, LoaderCircle, LockKeyhole, LockKeyholeOpen, UsersRound } from "lucide-react"
+import { LoaderCircle, LockKeyhole, LockKeyholeOpen, UsersRound } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 
+import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
 import { AppIdentity } from "@/features/apps/app-identity"
 import { AppShareSheet } from "@/features/apps/app-share-sheet"
 import { getApp, getPublicAppContributors, proposeAppRename, setAppChangeLock, setAppFavorite, type AppDetail, type PublicAppContributor } from "@/lib/apps-api"
@@ -145,12 +146,10 @@ export function AppDetails() {
   }
 
   return (
-    <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-details">
-      <Button className="w-fit" render={<Link to="/" />} variant="ghost">
-        <PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to apps
-      </Button>
+    <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-details">
       {error ? <Alert variant="destructive"><AlertTitle>App unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!app && !error ? <DetailSkeleton /> : null}
+      {app ? <AppContextChrome app={app} mode="use" state={appContextState(app)} /> : null}
       {app && isProductionReadOnlyReview ? <Alert data-testid="app-details-production-review"><AlertTitle>Read-only</AlertTitle><AlertDescription>Saving to Your apps, renaming, and change-approval updates are unavailable.</AlertDescription></Alert> : null}
       {app ? (
         <Card>
@@ -158,7 +157,7 @@ export function AppDetails() {
             <AppIdentity app={app} />
             <div className="min-w-0 space-y-2">
               <div className="flex flex-wrap items-center gap-2">
-                <CardTitle className="text-balance text-2xl tracking-tight"><h1>{app.name}</h1></CardTitle>
+                <CardTitle className="text-balance text-2xl tracking-tight">{app.name}</CardTitle>
                 <Badge variant={app.status === "running" ? "secondary" : "outline"}>{app.status.replaceAll("_", " ")}</Badge>
               </div>
               <CardDescription className="text-base text-pretty">{app.tagline || app.description || "Open this app in Usernode."}</CardDescription>

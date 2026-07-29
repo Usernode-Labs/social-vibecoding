@@ -8,6 +8,7 @@ import {
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 
+import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -225,15 +226,15 @@ export function Settings() {
 
   return (
     <div
-      className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6"
+      className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6"
       data-testid="settings"
     >
-      <header className="flex flex-wrap items-start justify-between gap-4">
-        <h1 className="text-balance text-3xl font-semibold tracking-tight">Settings</h1>
-        <Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline">
+      <PageHeader
+        action={<Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline">
           Refresh
-        </Button>
-      </header>
+        </Button>}
+        title="Settings"
+      />
 
       {preferencesReadOnly ? (
         <Alert data-testid={isProductionReadOnlyReview ? "settings-production-review" : "settings-app-write-scope"}>

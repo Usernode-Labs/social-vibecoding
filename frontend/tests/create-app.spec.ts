@@ -5,6 +5,13 @@ async function allowCreation(page: import("@playwright/test").Page) {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { id: 7, username: "ava", canCreateApps: true } } }))
 }
 
+async function expectCreateAppStructure(page: import("@playwright/test").Page) {
+  const route = page.getByTestId("create-app")
+  await expect(route.getByRole("heading", { level: 1, name: "Create an app" })).toBeVisible()
+  await expect(route.locator("h1")).toHaveCount(1)
+  await expect.poll(() => route.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
+}
+
 test("creates a new app through the established server contract", async ({ page }) => {
   await allowCreation(page)
   let request: { method: string; body: unknown } | null = null
@@ -15,6 +22,7 @@ test("creates a new app through the established server contract", async ({ page 
   })
 
   await page.goto("/react/create")
+  await expectCreateAppStructure(page)
   await page.getByLabel("App name").fill("Pantry Pal")
   await page.getByRole("radio", { name: /Invite-only/ }).click()
   await page.getByRole("radio", { name: /Members/ }).click()
@@ -98,6 +106,8 @@ test("is usable at a narrow mobile viewport and has no critical accessibility vi
   await allowCreation(page)
   await page.setViewportSize({ width: 390, height: 844 })
   await page.goto("/react/create")
+  await expectCreateAppStructure(page)
+  await expect(page.getByRole("link", { name: "Back to apps" })).toHaveCount(0)
   await expect(page.getByRole("tab", { name: "Create new" })).toBeVisible()
   await expect(page.getByRole("radio", { name: /Invite-only/ })).toBeVisible()
   const results = await new AxeBuilder({ page }).analyze()

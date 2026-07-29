@@ -1,13 +1,14 @@
-import { ArrowLeft, Award, CalendarClock, CheckCircle2, CircleDashed, Clock3, ExternalLink, Gift, ShieldCheck, XCircle } from "lucide-react"
+import { Award, CalendarClock, CheckCircle2, CircleDashed, Clock3, ExternalLink, Gift, ShieldCheck, XCircle } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { useParams } from "react-router-dom"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
-import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
+import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
 import { getChallengeSnapshot, type Challenge, type ChallengeProgress, type ChallengeSnapshot } from "@/lib/challenges-api"
 import { getNativeProfileInfo } from "@/lib/native-bridge"
@@ -62,9 +63,10 @@ function format(value: number) { return Number.isInteger(value) ? new Intl.Numbe
 export function ChallengeDetailContent({ challenge, progress, native, season }: { challenge: Challenge; progress?: ChallengeProgress; native: boolean; season?: string }) {
   const title = challenge.goal || challenge.task || "Challenge"
   const task = challenge.task && challenge.task !== title ? challenge.task : undefined
-  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="challenge-detail">
-    <Button className="w-fit" render={<Link to="/community/challenges" />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />All challenges</Button>
-    <header className="space-y-3"><div className="flex flex-wrap items-center gap-2">{season ? <Badge variant="outline">{season}</Badge> : null}<Badge variant="secondary"><PlatformIcon data-icon="inline-start" icon={native ? ShieldCheck : CalendarClock} size="xs" />{native ? "Personal progress available" : "Public challenge data"}</Badge></div><h1 className="text-balance text-3xl font-semibold tracking-tight">{title}</h1>{task ? <p className="max-w-[65ch] text-pretty text-base/7 text-muted-foreground sm:text-sm/6">{task}</p> : null}</header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="challenge-detail">
+    <div className="flex flex-wrap items-center gap-2">{season ? <Badge variant="outline">{season}</Badge> : null}<Badge variant="secondary"><PlatformIcon data-icon="inline-start" icon={native ? ShieldCheck : CalendarClock} size="xs" />{native ? "Personal progress available" : "Public challenge data"}</Badge></div>
+    <PageHeader title={title} />
+    {task ? <p className="max-w-[65ch] text-pretty text-base/7 text-muted-foreground sm:text-sm/6">{task}</p> : null}
     <Status challenge={challenge} progress={progress} />
     <section aria-labelledby="challenge-details" className="space-y-3"><h2 className="text-xl font-semibold" id="challenge-details">Challenge details</h2><Card><CardContent className="space-y-5 pt-6">{challenge.description ? <Detail label="Description" value={challenge.description} /> : null}{challenge.requirements ? <Detail label="Requirements" value={challenge.requirements} /> : null}{challenge.reward ? <Detail icon={Gift} label="Reward" value={challenge.reward} /> : null}{challenge.reward_logic ? <Detail icon={Award} label="Reward logic" value={challenge.reward_logic} /> : null}{!challenge.description && !challenge.requirements && !challenge.reward && !challenge.reward_logic ? <p className="text-sm text-muted-foreground">Challenge details will be added by the season organizer.</p> : null}</CardContent></Card></section>
     {challenge.cta_link ? <Button className="w-fit" render={<a href={challenge.cta_link} rel="noreferrer" target="_self" />} variant="outline">{challenge.cta_label || "Open challenge action"}<PlatformIcon data-icon="inline-end" icon={ExternalLink} size="sm" /></Button> : null}
@@ -88,8 +90,8 @@ export function ChallengeDetail() {
     }).then((next) => { if (!cancelled) setState(next) }).catch((cause: unknown) => { if (!cancelled && !(cause instanceof DOMException && cause.name === "AbortError")) setState({ kind: "error", message: cause instanceof Error ? cause.message : "Unable to load this challenge" }) })
     return () => { cancelled = true; controller.abort() }
   }, [challengeId])
-  if (state.kind === "loading") return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-8 sm:px-6" data-testid="challenge-detail-loading"><Skeleton className="h-8 w-36" /><Skeleton className="h-12 w-3/4" /><Skeleton className="h-36 w-full" /></div>
-  if (state.kind === "error") return <div className="mx-auto flex w-full max-w-3xl flex-1 p-6" data-testid="challenge-detail-error"><Alert variant="destructive"><AlertTitle>Challenge unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert></div>
-  if (state.kind === "not-found") return <div className="flex flex-1 items-center justify-center p-6" data-testid="challenge-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={CalendarClock} /></EmptyMedia><EmptyTitle>Challenge not found</EmptyTitle><EmptyDescription>This challenge may have ended or is not available in the current season.</EmptyDescription></EmptyHeader><EmptyContent><Button render={<Link to="/community/challenges" />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />All challenges</Button></EmptyContent></Empty></div>
+  if (state.kind === "loading") return <div className="isolate flex w-full flex-1 flex-col gap-4 px-4 py-8 sm:px-6" data-testid="challenge-detail-loading"><PageHeader title="Challenge" /><Skeleton className="h-12 w-3/4" /><Skeleton className="h-36 w-full" /></div>
+  if (state.kind === "error") return <div className="flex w-full flex-1 flex-col gap-4 p-6" data-testid="challenge-detail-error"><PageHeader title="Challenge unavailable" /><Alert variant="destructive"><AlertDescription>{state.message}</AlertDescription></Alert></div>
+  if (state.kind === "not-found") return <div className="flex w-full flex-1 flex-col p-6" data-testid="challenge-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={CalendarClock} /></EmptyMedia><PageHeader title="Challenge not found" /><EmptyDescription>This challenge may have ended or is not available in the current season.</EmptyDescription></EmptyHeader></Empty></div>
   return <ChallengeDetailContent challenge={state.challenge} native={state.native} progress={state.progress} season={state.snapshot.season?.name} />
 }

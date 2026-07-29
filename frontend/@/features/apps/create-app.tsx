@@ -1,13 +1,14 @@
-import { ArrowLeft, Check, Github, LoaderCircle, Plus } from "lucide-react"
+import { Check, Github, LoaderCircle, Plus } from "lucide-react"
 import { useEffect, useState, type FormEvent } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 
+import { PageHeader } from "@/components/page-header"
+import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { PlatformIcon } from "@/components/platform-icon"
 import { getCurrentUser } from "@/lib/auth-api"
 import { createApp, verifyRepositoryAccess, type AppVisibility, type VerifyRepoAccess } from "@/lib/apps-api"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
@@ -85,13 +86,12 @@ export function CreateApp() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to create this app.") } finally { setSubmitting(false) }
   }
 
-  return <div className="isolate mx-auto flex w-full max-w-2xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="create-app">
-    <Button className="w-fit" render={<Link to="/" />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to apps</Button>
-    <header className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Create an app</h1><p className="text-base text-muted-foreground text-pretty">Start a new app, or import a GitHub repository that the platform bot can build.</p></header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="create-app">
+    <PageHeader description="Start a new app, or import a GitHub repository that the platform bot can build." title="Create an app" />
     {isProductionReadOnlyReview ? <Alert><AlertTitle>Production review mode</AlertTitle><AlertDescription>App creation is disabled while this local React workspace reviews production data.</AlertDescription></Alert> : null}
     {canCreate === false && !isProductionReadOnlyReview ? <Alert><AlertTitle>App creation unavailable</AlertTitle><AlertDescription>Sign in with an account that has an available app-creation slot.</AlertDescription></Alert> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Could not create app</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
-    <Card><CardHeader><CardTitle>App source</CardTitle><CardDescription>The server remains authoritative for quotas, visibility, repository access, and creation.</CardDescription></CardHeader><CardContent>
+    <Card className="w-full max-w-2xl"><CardHeader><CardTitle>App source</CardTitle><CardDescription>The server remains authoritative for quotas, visibility, repository access, and creation.</CardDescription></CardHeader><CardContent>
       <form onSubmit={(event) => void submit(event)}><FieldGroup>
         <div className="grid grid-cols-2 gap-2" role="tablist" aria-label="App source">
           <Button aria-selected={mode === "new"} onClick={() => changeMode("new")} role="tab" type="button" variant={mode === "new" ? "default" : "outline"}>Create new</Button>

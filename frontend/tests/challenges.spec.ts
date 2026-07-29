@@ -110,6 +110,8 @@ test("renders the backend-driven challenges feed in perceived-time bands", async
   await page.goto("/react/community/challenges")
   const challenges = page.getByTestId("challenges")
 
+  await expect(challenges.getByRole("heading", { level: 1 })).toHaveCount(1)
+  await expect(challenges).toHaveCSS("max-width", "none")
   await expect(challenges.getByRole("heading", { name: "Featured" })).toBeVisible()
   await expect(challenges.getByRole("heading", { name: "Today" })).toBeVisible()
   await expect(challenges.getByRole("heading", { name: "This week" })).toBeVisible()

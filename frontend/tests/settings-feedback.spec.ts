@@ -29,6 +29,13 @@ async function platformNavigation(page: import("@playwright/test").Page) {
   return navigation
 }
 
+async function expectFullCanvasRoute(page: import("@playwright/test").Page, testId: string, title: string) {
+  const route = page.getByTestId(testId)
+  await expect(route.getByRole("heading", { level: 1, name: title })).toBeVisible()
+  await expect(route.locator("h1")).toHaveCount(1)
+  await expect.poll(() => route.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
+}
+
 test("replaces the dead shell hashes with React settings and feedback routes", async ({ page }) => {
   await page.goto("/react/")
 
@@ -45,6 +52,7 @@ test("replaces the dead shell hashes with React settings and feedback routes", a
 test("makes the native-settings boundary explicit in a regular browser", async ({ page }) => {
   await page.goto("/react/settings")
 
+  await expectFullCanvasRoute(page, "settings", "Settings")
   await expect(page.getByTestId("settings-unavailable")).toContainText("Native controls need Usernode")
   await expect(page.getByTestId("settings-unavailable")).toContainText("native permissions, wallet controls")
   await expect(page.getByTestId("settings-web-session")).toContainText("Social Vibecoding session")
@@ -749,6 +757,9 @@ test("keeps platform feedback available when no compatible app context exists", 
   })
   await page.goto("/react/feedback")
 
+  const feedback = page.getByTestId("feedback")
+  await expectFullCanvasRoute(page, "feedback", "Send feedback")
+  await expect(feedback.getByRole("link", { name: "Back" })).toHaveCount(0)
   await expect(page.getByRole("button", { name: "This app" })).toBeDisabled()
   await page.getByLabel("Title (optional)").fill("Navigation feedback")
   await page.getByRole("textbox", { name: "Feedback" }).fill("The platform navigation needs a clearer active state.")

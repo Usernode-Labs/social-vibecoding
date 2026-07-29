@@ -22,9 +22,17 @@ async function mockNativeProfile(page: import("@playwright/test").Page) {
     : { challenge_progress: [{ challenge_id: 1, event_id: 4, state: "earned", earned_points: 300 }, { challenge_id: 2, event_id: 4, state: "in_progress" }] } }))
 }
 
+async function expectFullCanvasProfile(page: import("@playwright/test").Page) {
+  const profile = page.getByTestId("profile")
+  await expect(profile.getByRole("heading", { level: 1, name: "Profile" })).toBeVisible()
+  await expect(profile.locator("h1")).toHaveCount(1)
+  await expect.poll(() => profile.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
+}
+
 test("makes the native-profile capability boundary explicit outside Usernode", async ({ page }) => {
   await page.goto("/react/account/profile")
 
+  await expectFullCanvasProfile(page)
   await expect(page.getByTestId("profile")).toContainText("Profile unavailable")
   await expect(page.getByTestId("profile")).toContainText("finish registration")
 })

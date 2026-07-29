@@ -15,6 +15,8 @@ test("renders the public node status snapshot and its chain services", async ({ 
 
   const status = page.getByTestId("node-status")
   await expect(status.getByRole("heading", { level: 1, name: "Node" })).toBeVisible()
+  await expect(status.getByRole("heading", { level: 1 })).toHaveCount(1)
+  await expect(status).toHaveCSS("max-width", "none")
   await expect(status).toContainText("12,480 / 12,483")
   await expect(status).toContainText("testnet-explorer.usernodelabs.org")
   await expect(status).toContainText("Chain-dependent services")

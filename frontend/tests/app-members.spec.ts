@@ -44,13 +44,21 @@ test("links App Detail to the collaboration manager and renders member/pending-i
   await expect(page.getByRole("link", { name: "Manage RecipeBot collaborators" })).toHaveAttribute("href", "/react/apps/recipebot/members")
   await page.getByRole("link", { name: "Manage RecipeBot collaborators" }).click()
 
-  await expect(page.getByTestId("app-members")).toContainText("RecipeBot collaborators")
+  const members = page.getByTestId("app-members")
+  const chrome = members.getByTestId("app-context-chrome")
+  await expect(members).toContainText("RecipeBot collaborators")
+  await expect(chrome.getByRole("group", { name: "RecipeBot controls" })).toHaveAttribute("data-placement", "flow")
+  await expect(members.locator("h1")).toHaveCount(1)
+  await expect(members.getByRole("heading", { level: 1, name: "RecipeBot · Members and visibility" })).toBeVisible()
+  await expect.poll(() => members.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
   await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("@ava")
   await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("Creator")
   await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("@max")
   await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("Invited")
   await expect(page.getByRole("button", { name: "Remove @lin" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Revoke @max" })).toBeVisible()
+  await chrome.getByRole("button", { name: "Back" }).click()
+  await expect(page).toHaveURL("/react/apps/recipebot")
 })
 
 test("uses the canonical typeahead and invite endpoints, then reloads the canonical roster", async ({ page }) => {
@@ -161,8 +169,11 @@ test("keeps visibility read-only for a collaborator without manage authority", a
 test("keeps private existence hidden for a non-disclosing collaborator 404", async ({ page }) => {
   await page.route("**/api/apps/recipebot/collaborators", (route) => route.fulfill({ status: 404, json: { error: "App not found" } }))
   await page.goto("/react/apps/recipebot/members")
+  const members = page.getByTestId("app-members")
   await expect(page.getByTestId("members-not-found")).toContainText("This collaborators view is not available to this session.")
   await expect(page.getByTestId("members-not-found")).not.toContainText("RecipeBot")
+  await expect(members.getByTestId("app-context-chrome")).toHaveCount(0)
+  await expect(members.locator("h1")).toHaveCount(0)
 })
 
 test("makes a 403, empty roster, mobile layout, and accessibility explicit", async ({ page }) => {

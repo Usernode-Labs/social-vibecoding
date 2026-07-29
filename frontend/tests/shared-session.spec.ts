@@ -9,7 +9,21 @@ const messages = [
 
 async function installFixture(page: import("@playwright/test").Page, sessions = [session], canCollaborate = false) {
   await page.route("**/api/apps/recipebot/shared-sessions", (route) => route.fulfill({ json: { sessions } }))
-  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: { id: "recipebot", slug: "recipebot", name: "RecipeBot", can_collaborate: canCollaborate } } }))
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: {
+    id: "recipebot",
+    slug: "recipebot",
+    name: "RecipeBot",
+    status: "running",
+    active_users: 24,
+    is_favorited: false,
+    is_collaborator: canCollaborate,
+    your_apps_hidden: false,
+    favorite_order: null,
+    open_prs: 0,
+    active_sessions: 1,
+    open_issues: 0,
+    can_collaborate: canCollaborate,
+  } } }))
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { id: 5, username: "sam" } } }))
   await page.route("**/api/apps/recipebot/messages**", (route) => route.fulfill({ json: { messages } }))
 }
@@ -64,6 +78,17 @@ test("renders view-authorized shared metadata and its public session discussion"
   })
   await page.goto("/react/apps/recipebot/dev/shared/41")
   const detail = page.getByTestId("shared-session-detail")
+  const chrome = detail.getByTestId("app-context-chrome")
+  await expect(detail.getByRole("heading", { name: /RecipeBot.*Shared Dev session/, level: 1 })).toBeVisible()
+  await expect(detail.locator("h1")).toHaveCount(1)
+  await expect(chrome.getByRole("button", { name: "Back" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
+  expect(await detail.getAttribute("class")).not.toMatch(/\b(?:mx-auto|max-w-)/)
+  const chromeBox = await chrome.boundingBox()
+  const contentBox = await detail.locator(":scope > :not([data-testid='app-context-chrome'])").first().boundingBox()
+  expect(chromeBox).not.toBeNull()
+  expect(contentBox).not.toBeNull()
+  expect(contentBox!.y).toBeGreaterThanOrEqual(chromeBox!.y + chromeBox!.height)
   await expect(detail).toContainText("Improve pantry search")
   await expect(detail).toContainText("Shared by mira")
   await expect(detail).toContainText(messages[0].content)
@@ -72,6 +97,8 @@ test("renders view-authorized shared metadata and its public session discussion"
   await expect(detail.getByRole("link", { name: /legacy Dev/i })).toHaveCount(0)
   await expect(detail.getByRole("link", { name: "Open live preview" })).toHaveAttribute("href", session.staging_url)
   await expect.poll(() => discussionUrls.join(" ")).toContain("thread_type=session&thread_ref=41")
+  await chrome.getByRole("button", { name: "Back" }).click()
+  await expect(page).toHaveURL(/\/react\/apps\/recipebot\/dev$/)
 })
 
 test("does not request a public thread for a session that is no longer shared", async ({ page }) => {

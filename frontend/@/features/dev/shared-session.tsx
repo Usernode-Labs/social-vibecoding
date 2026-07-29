@@ -9,7 +9,9 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
+import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
 import { TopicDiscussionTranscript } from "@/features/dev/topic-discussion-transcript"
+import { getApp, type AppDetail } from "@/lib/apps-api"
 import { appDevGitHubIssuePath, appDevPath } from "@/lib/routes"
 import { getSharedSessionDetail, type SharedSession } from "@/lib/shared-session-api"
 
@@ -36,9 +38,8 @@ export function SharedSessionDetailContent({ children, session, slug }: { childr
   const sharedAt = formatSharedAt(session.shared_at)
   const linkedIssues = session.linked_issues || []
 
-  return <div className="isolate mx-auto flex w-full max-w-4xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="shared-session-detail">
-    <Button className="w-fit" render={<Link to={appDevPath(slug)} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />App Dev</Button>
-    <header className="flex flex-col gap-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Shared Dev session</h1><p className="text-base text-muted-foreground text-pretty">Follow the work and join its session-scoped discussion.</p></header>
+  return <div className="flex w-full flex-col gap-6">
+    <p className="text-base text-muted-foreground text-pretty">Follow the work and join its session-scoped discussion.</p>
     <Card>
       <CardHeader className="gap-3"><CardTitle className="text-balance text-2xl font-semibold tracking-tight">{title}</CardTitle><CardDescription>Shared by {session.username || "a collaborator"}{sharedAt ? ` · ${sharedAt}` : ""}</CardDescription></CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -57,6 +58,7 @@ export function SharedSessionDetail() {
   const id = Number(sessionId)
   const [result, setResult] = useState<{ session: SharedSession | null } | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
+  const [app, setApp] = useState<AppDetail | null>(null)
 
   useEffect(() => {
     if (!Number.isSafeInteger(id) || id <= 0) { setResult({ session: null }); return }
@@ -68,10 +70,26 @@ export function SharedSessionDetail() {
     return () => controller.abort()
   }, [id, slug])
 
+  useEffect(() => {
+    const controller = new AbortController()
+    setApp(null)
+    void getApp(slug, controller.signal)
+      .then(({ app: nextApp }) => {
+        if (!controller.signal.aborted) setApp(nextApp)
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setApp(null)
+      })
+    return () => controller.abort()
+  }, [slug])
+
   if (error) return <div className="flex flex-1 items-center justify-center p-6" data-testid="shared-session-detail-error"><Alert className="max-w-md" variant="destructive"><AlertTitle>Shared session unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>
   if (result === undefined) return <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-56 w-full" /><Skeleton className="h-28 w-full" /></div>
   if (result.session === null) return <div className="flex flex-1 items-center justify-center p-6" data-testid="shared-session-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={RadioTower} /></EmptyMedia><EmptyTitle>Shared session not found</EmptyTitle><EmptyDescription>It may no longer be shared, may have been archived, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><Button render={<Link to={appDevPath(slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</Button></Empty></div>
-  return <SharedSessionDetailContent session={result.session} slug={slug}>
-    <TopicDiscussionTranscript slug={slug} threadRef={id} threadType="session" />
-  </SharedSessionDetailContent>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="shared-session-detail">
+    {app ? <AppContextChrome app={app} backTo={appDevPath(slug)} label="Shared Dev session" mode="nested" state={appContextState(app)} /> : null}
+    <SharedSessionDetailContent session={result.session} slug={slug}>
+      <TopicDiscussionTranscript slug={slug} threadRef={id} threadType="session" />
+    </SharedSessionDetailContent>
+  </div>
 }

@@ -4,7 +4,7 @@ import { useMemo, useState } from "react"
 import { useLocation } from "react-router-dom"
 
 import { DevCompletionAlerts } from "@/components/dev-completion-alerts"
-import { DevConsoleLayer, DevConsoleProvider, DevConsoleTrigger } from "@/components/dev-console-provider"
+import { DevConsoleLayer, DevConsoleProvider } from "@/components/dev-console-provider"
 import { PlatformIcon } from "@/components/platform-icon"
 import { PlatformNavigation, type PlatformNavItem } from "@/components/platform-navigation"
 import { StatusDot } from "@/components/status-dot"
@@ -93,7 +93,6 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
             {navigation.attentionCount > 0 ? <StatusDot className="pointer-events-none absolute top-1 right-1" label="Needs attention" role="attention" showLabel={false} size="sm" subject="Activity" /> : null}
           </SidebarTrigger>
           <div className="min-w-0 flex-1 truncate font-semibold">dApps</div>
-          <DevConsoleTrigger />
         </header>
         <AdminPreviewBanner />
         {children}

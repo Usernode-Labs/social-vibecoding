@@ -13,9 +13,12 @@ test.beforeEach(async ({ page }) => {
 
 test("shows the server-ranked read-only feature feed and feature-request destination", async ({ page }) => {
   await page.goto("/react/admin/features")
-  await expect(page.getByTestId("admin-features")).toContainText("#1")
-  await expect(page.getByTestId("admin-features")).toContainText("Share app templates")
-  await expect(page.getByTestId("admin-features")).toContainText("28 up · 2 down")
+  const route = page.getByTestId("admin-features")
+  await expect(route).not.toHaveClass(/(?:mx-auto|max-w-)/)
+  await expect(page.getByRole("heading", { exact: true, level: 1, name: "Submitted features" })).toHaveCount(1)
+  await expect(route).toContainText("#1")
+  await expect(route).toContainText("Share app templates")
+  await expect(route).toContainText("28 up · 2 down")
   await expect(page.getByRole("link", { name: "Open feature requests" })).toHaveAttribute("href", "/admin-features")
 })
 

@@ -73,6 +73,8 @@ test("renders the any-admin metadata index without proxying visual bytes", async
   await page.goto("/react/admin/gallery")
 
   const gallery = page.getByTestId("admin-gallery")
+  await expect(gallery).not.toHaveClass(/(?:mx-auto|max-w-)/)
+  await expect(page.getByRole("heading", { exact: true, level: 1, name: "Screenshot gallery" })).toHaveCount(1)
   await expect(gallery).toContainText("Make recipe search more useful")
   await expect(gallery).toContainText("Complete")
   await expect(gallery).toContainText("Matching proposals")

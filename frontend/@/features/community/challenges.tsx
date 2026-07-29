@@ -3,12 +3,13 @@ import { Award, CheckCircle2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 
+import { PageHeader } from "@/components/page-header"
+import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
-import { PlatformIcon } from "@/components/platform-icon"
 import { getChallengeSnapshot, type Challenge, type ChallengeSnapshot } from "@/lib/challenges-api"
 import { getNativeProfileInfo } from "@/lib/native-bridge"
 import { challengeDetailPath } from "@/lib/routes"
@@ -237,10 +238,8 @@ export function Challenges() {
     return () => { cancelled = true; controller.abort() }
   }, [])
 
-  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="challenges">
-    <header className="space-y-2">
-      <h1 className="text-balance text-3xl font-semibold tracking-tight">{data?.season?.name || "Challenges"}</h1>
-    </header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="challenges">
+    <PageHeader title={data?.season?.name || "Challenges"} />
     {error ? <Alert variant="destructive"><AlertTitle>Challenges unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {!data && !error ? <div className="space-y-3"><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /></div> : null}
     {data ? <ChallengeFeed snapshot={data} /> : null}

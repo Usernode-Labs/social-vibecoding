@@ -28,7 +28,7 @@ async function installDevOverviewFixture(page: import("@playwright/test").Page, 
 
 async function installIssueFixture(page: import("@playwright/test").Page, issues = [issue], priority = { field: "priority", options: [], myValue: null }, onPriorityMutation?: (route: import("@playwright/test").Route) => Promise<void>) {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { id: 7, username: "mira", canCreateApps: true } } }))
-  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: { id: "recipebot", slug: "recipebot", name: "RecipeBot", can_collaborate: false } } }))
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: { id: "recipebot", slug: "recipebot", name: "RecipeBot", status: "running", can_collaborate: false } } }))
   await page.route("**/api/apps/recipebot/messages?thread_type=issue&thread_ref=84&limit=50", (route) => route.fulfill({ json: { messages: [] } }))
   await page.route("**/api/models", (route) => route.fulfill({ json: {
     default: "claude-sonnet-5",
@@ -473,14 +473,28 @@ test("links the Dev board issue card to the owned GitHub issue detail", async ({
 
 test("renders a loading skeleton before resolving the GitHub issue and its comments", async ({ page }) => {
   let resolveIssues: (() => void) | undefined
+  let markIssuesRequested: (() => void) | undefined
   const issuesReady = new Promise<void>((resolve) => { resolveIssues = resolve })
+  const issuesRequested = new Promise<void>((resolve) => { markIssuesRequested = resolve })
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: {
+    app: {
+      id: "recipebot",
+      slug: "recipebot",
+      name: "RecipeBot",
+      status: "running",
+      can_collaborate: false,
+    },
+  } }))
   await page.route("**/api/apps/recipebot/github-issues", async (route) => {
+    markIssuesRequested?.()
     await issuesReady
     await route.fulfill({ json: { issues: [issue] } })
   })
   await page.route("**/api/apps/recipebot/github-issues/84/comments", (route) => route.fulfill({ json: { comments } }))
   await page.goto("/react/apps/recipebot/dev/issues/84", { waitUntil: "domcontentloaded" })
+  await issuesRequested
   await expect(page.locator('[data-slot="skeleton"]')).toHaveCount(2)
+  await expect(page.getByTestId("app-context-chrome")).toHaveCount(0)
   resolveIssues?.()
   await expect(page.getByTestId("github-issue-detail")).toContainText(issue.title)
 })
@@ -493,8 +507,15 @@ test("renders the issue and comments without a legacy action handoff", async ({ 
   await expect(detail).toContainText("Proposal ready")
   await expect(detail).toContainText(comments[0].body)
   await expect(detail).toContainText("Only the newest GitHub comments are shown here.")
+  await expect(detail.getByTestId("app-context-chrome").getByRole("button", { name: "Back" })).toBeVisible()
+  await expect(detail.getByTestId("app-context-chrome").getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
+  await expect(detail.getByRole("heading", { level: 1 })).toHaveText(`RecipeBot · ${issue.title}`)
+  await expect(detail.getByRole("heading", { level: 1 })).toHaveCount(1)
+  await expect(detail).toHaveCSS("max-width", "none")
   await expect(detail.getByRole("link", { name: "View on GitHub" })).toHaveAttribute("href", issue.htmlUrl)
   await expect(detail.getByRole("link", { name: /legacy Dev/i })).toHaveCount(0)
+  await detail.getByTestId("app-context-chrome").getByRole("button", { name: "Back" }).click()
+  await expect(page).toHaveURL(/\/react\/apps\/recipebot\/dev$/)
 })
 
 test("renders recoverable unavailable and not-found states", async ({ page }) => {
@@ -505,6 +526,7 @@ test("renders recoverable unavailable and not-found states", async ({ page }) =>
   await installIssueFixture(page, [])
   await page.goto("/react/apps/recipebot/dev/issues/999")
   await expect(page.getByTestId("github-issue-detail-not-found")).toContainText("GitHub issue not found")
+  await expect(page.getByTestId("app-context-chrome")).toHaveCount(0)
   await expect(page.getByRole("link", { name: "Back to Dev" })).toHaveAttribute("href", "/react/apps/recipebot/dev")
 })
 

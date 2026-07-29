@@ -1,6 +1,7 @@
 import { CheckCircle2, CircleAlert, ShieldCheck, Trophy } from "lucide-react"
 import { useEffect, useState } from "react"
 
+import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -65,8 +66,8 @@ export function Profile() {
     setTokensRevealed(true)
   }
 
-  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="profile">
-    <header><h1 className="text-balance text-3xl font-semibold tracking-tight">Profile</h1></header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="profile">
+    <PageHeader title="Profile" />
     {state.kind === "loading" ? <div className="space-y-3"><Skeleton className="h-40 w-full" /><Skeleton className="h-32 w-full" /></div> : null}
     {state.kind === "unavailable" ? <Alert><PlatformIcon icon={ShieldCheck} /><AlertTitle>Profile unavailable</AlertTitle><AlertDescription>Open Usernode and finish registration to see your points and rank here.</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Profile unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}

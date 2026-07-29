@@ -22,10 +22,33 @@ test("starts the existing failed-app retry and returns to the app detail route",
     await route.fulfill({ json: { ok: true } })
   })
   await page.goto("/react/apps/pantry-pal/recovery")
-  await expect(page.getByTestId("app-recovery")).toContainText("The initial container could not start.")
+  const recovery = page.getByTestId("app-recovery")
+  const chrome = recovery.getByTestId("app-context-chrome")
+  await expect(recovery).toContainText("The initial container could not start.")
+  await expect(chrome.getByRole("group", { name: "Pantry Pal controls" })).toHaveAttribute("data-placement", "flow")
+  await expect(recovery.locator("h1")).toHaveCount(1)
+  await expect(recovery.getByRole("heading", { level: 1, name: "Pantry Pal · Repair app setup" })).toBeVisible()
+  await expect.poll(() => recovery.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
   await page.getByRole("button", { name: "Retry setup" }).click()
   await expect(page).toHaveURL(/\/react\/apps\/pantry-pal$/)
   expect(retryRequests).toBe(1)
+})
+
+test("returns from setup repair through the explicit nested app context", async ({ page }) => {
+  await page.goto("/react/apps/pantry-pal/recovery")
+  await page.getByTestId("app-context-chrome").getByRole("button", { name: "Back" }).click()
+  await expect(page).toHaveURL("/react/apps/pantry-pal")
+})
+
+test("does not invent app identity when recovery access fails", async ({ page }) => {
+  await page.unroute("**/api/apps/pantry-pal")
+  await page.route("**/api/apps/pantry-pal", (route) => route.fulfill({ status: 404, json: { error: "App not found" } }))
+  await page.goto("/react/apps/pantry-pal/recovery")
+
+  const recovery = page.getByTestId("app-recovery")
+  await expect(recovery.getByRole("alert")).toContainText("App unavailable")
+  await expect(recovery.getByTestId("app-context-chrome")).toHaveCount(0)
+  await expect(recovery.locator("h1")).toHaveCount(0)
 })
 
 test("shows the server retry cap error and stays on the recovery route", async ({ page }) => {

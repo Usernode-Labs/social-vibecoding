@@ -23,8 +23,11 @@ test("renders the read-only operations snapshot and preserves legacy tools", asy
     llmToday: { totalSpendCents: 1234, users: [{ username: "ava", costCents: 999 }] },
   } }))
   await page.goto("/react/admin")
-  await expect(page.getByTestId("admin-overview")).toContainText("View-only administrator")
-  await expect(page.getByTestId("admin-overview")).toContainText("recipebot")
+  const overview = page.getByTestId("admin-overview")
+  await expect(overview).not.toHaveClass(/(?:mx-auto|max-w-)/)
+  await expect(page.getByRole("heading", { exact: true, level: 1, name: "Operations" })).toHaveCount(1)
+  await expect(overview).toContainText("View-only administrator")
+  await expect(overview).toContainText("recipebot")
   await expect(page.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/react/admin/users")
   await expect(page.getByRole("link", { name: "Screenshot gallery" })).toHaveAttribute("href", "/react/admin/gallery")
 })

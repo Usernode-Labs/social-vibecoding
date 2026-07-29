@@ -39,6 +39,8 @@ test("renders the public operational snapshot without admin diagnostics or contr
   await page.goto("/react/status")
 
   const status = page.getByTestId("operational-status")
+  await expect(status.getByRole("heading", { level: 1 })).toHaveCount(1)
+  await expect(status).toHaveCSS("max-width", "none")
   await expect(status).toContainText("Platform status")
   await expect(status).toContainText("2 / 3")
   await expect(status).toContainText("RecipeBot")

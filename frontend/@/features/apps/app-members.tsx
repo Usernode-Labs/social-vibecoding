@@ -1,4 +1,4 @@
-import { ArrowLeft, LoaderCircle, ShieldAlert, UsersRound } from "lucide-react"
+import { LoaderCircle, ShieldAlert, UsersRound } from "lucide-react"
 import { useEffect, useState, type FormEvent } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 
@@ -13,6 +13,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
+import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
 import { AppVisibilitySettings, type AppVisibilityProposalState, type AppVisibilitySelection } from "@/features/apps/app-visibility-settings"
 import { getApp, proposeAppVisibility, type AppDetail } from "@/lib/apps-api"
 import { CollaboratorRequestError, getCollaborators, inviteCollaborator, removeCollaborator, searchInviteUsers, type Collaborator, type CollaboratorRoster, type UserSearchResult } from "@/lib/collaborators-api"
@@ -185,14 +186,13 @@ export function AppMembers() {
     }
   }
 
-  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-members">
-    <Button className="w-fit" render={<Link to={appDetailsPath(slug)} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to app</Button>
-    <header><h1 className="text-balance text-3xl font-semibold tracking-tight">Members and visibility</h1></header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-members">
     {state.kind === "loading" ? <MembersSkeleton /> : null}
     {state.kind === "not-found" ? <Empty data-testid="members-not-found"><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={UsersRound} /></EmptyMedia><EmptyTitle>Collaborators unavailable</EmptyTitle><EmptyDescription>This collaborators view is not available to this session.</EmptyDescription></EmptyHeader><Button render={<Link to="/" />} variant="outline">Back to apps</Button></Empty> : null}
     {state.kind === "forbidden" ? <Alert variant="destructive"><PlatformIcon icon={ShieldAlert} /><AlertTitle>Collaborator access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Could not load collaborators</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {ready ? <>
+      <AppContextChrome app={ready.app} backTo={appDetailsPath(ready.app.slug)} label="Members and visibility" mode="nested" state={appContextState(ready.app)} />
       {isProductionReadOnlyReview ? <Alert data-testid="members-production-review"><AlertTitle>Read-only</AlertTitle><AlertDescription>Invitations, collaborator changes, and visibility changes are unavailable.</AlertDescription></Alert> : null}
       <AppVisibilitySettings
         appName={ready.app.name}

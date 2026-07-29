@@ -61,11 +61,24 @@ async function installGroupChatSocket(page: import("@playwright/test").Page) {
 
 test("renders the complete view-authorized general discussion without a legacy handoff", async ({ page }) => {
   await page.goto("/react/apps/recipebot/dev/chat")
-  await expect(page.getByRole("heading", { name: "App discussion", level: 1 })).toBeVisible()
-  await expect(page.getByTestId("group-discussion")).toContainText("Could dietary filters be easier to find?")
+  const route = page.getByTestId("group-discussion")
+  const chrome = route.getByTestId("app-context-chrome")
+  await expect(route.getByRole("heading", { name: /RecipeBot.*Discussion/, level: 1 })).toBeVisible()
+  await expect(route.locator("h1")).toHaveCount(1)
+  await expect(chrome.getByRole("button", { name: "Back" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
+  expect(await route.getAttribute("class")).not.toMatch(/\b(?:mx-auto|max-w-)/)
+  const chromeBox = await chrome.boundingBox()
+  const transcriptBox = await page.getByLabel("App discussion messages").boundingBox()
+  expect(chromeBox).not.toBeNull()
+  expect(transcriptBox).not.toBeNull()
+  expect(transcriptBox!.y).toBeGreaterThanOrEqual(chromeBox!.y + chromeBox!.height)
+  await expect(route).toContainText("Could dietary filters be easier to find?")
   await expect(page.getByLabel("App discussion messages")).toContainText("A proposal was promoted for review.")
   await expect(page.getByRole("link", { name: "Open the full discussion in legacy Dev" })).toHaveCount(0)
   await expect(page.getByLabel("Open attachment filter-notes.md")).toHaveAttribute("href", "/api/apps/recipebot/chat-attachments/attachment-1")
+  await chrome.getByRole("button", { name: "Back" }).click()
+  await expect(page).toHaveURL(/\/react\/apps\/recipebot\/dev$/)
 })
 
 test("renders and canonically clears a per-message unread notification", async ({ page }) => {

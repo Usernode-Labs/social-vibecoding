@@ -1,4 +1,4 @@
-import { ArrowLeft, Award, ChevronRight, ExternalLink, HandHeart, History, ThumbsUp, UsersRound, Vote } from "lucide-react"
+import { Award, ChevronRight, ExternalLink, HandHeart, History, ThumbsUp, UsersRound, Vote } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 
@@ -6,6 +6,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { PlatformIcon } from "@/components/platform-icon"
+import { PageHeader } from "@/components/page-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -52,11 +53,8 @@ export function Leaderboard() {
   }
 
   return (
-    <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="leaderboard">
-      <header className="space-y-2">
-        <h1 className="text-balance text-3xl font-semibold tracking-tight">Kudos leaderboard</h1>
-        <p className="max-w-2xl text-base text-muted-foreground text-pretty">Recognize proposals and the people building the platform.</p>
-      </header>
+    <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="leaderboard">
+      <PageHeader description="Recognize proposals and the people building the platform." title="Kudos leaderboard" />
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
         <div aria-label="Leaderboard view" className="flex gap-1" role="group">
           <Button aria-pressed={tab === "prs"} onClick={() => select("prs", window)} type="button" variant={tab === "prs" ? "secondary" : "ghost"}>Top PRs</Button>
@@ -184,11 +182,8 @@ export function LeaderboardHistory() {
     }
   }
 
-  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="leaderboard-history">
-    <header className="flex flex-col gap-3">
-      <Button className="w-fit" render={<Link to="/community/leaderboard" />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Kudos leaderboard</Button>
-      <div className="flex flex-col gap-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">My history</h1><p className="max-w-2xl text-base text-muted-foreground text-pretty">Everything you’ve given — kudos, bounty pledges, and votes — newest first. Only you can see this.</p></div>
-    </header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="leaderboard-history">
+    <PageHeader description="Everything you’ve given — kudos, bounty pledges, and votes — newest first. Only you can see this." title="My history" />
     <div aria-label="History filters" className="flex flex-wrap gap-2" role="group">
       <Button aria-pressed={kudosEnabled} onClick={() => toggle("kudos")} size="sm" type="button" variant={kudosEnabled ? "secondary" : "outline"}><PlatformIcon data-icon="inline-start" icon={ThumbsUp} size="sm" />Kudos</Button>
       <Button aria-pressed={votesEnabled} onClick={() => toggle("votes")} size="sm" type="button" variant={votesEnabled ? "secondary" : "outline"}><PlatformIcon data-icon="inline-start" icon={Vote} size="sm" />Votes</Button>
@@ -258,8 +253,6 @@ function ProfilePrRow({ item }: { item: LeaderboardUserProfilePr }) {
 
 export function LeaderboardUserProfile() {
   const { username = "" } = useParams()
-  const [params] = useSearchParams()
-  const window = validWindow(params.get("window"))
   const [profile, setProfile] = useState<Awaited<ReturnType<typeof getLeaderboardUserProfile>> | null>(null)
   const [error, setError] = useState<{ message: string; notFound: boolean } | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
@@ -291,11 +284,10 @@ export function LeaderboardUserProfile() {
     }
   }
 
-  const back = `/community/leaderboard?tab=users&window=${window}`
-  return <div className="isolate mx-auto flex w-full max-w-3xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="leaderboard-profile">
-    <Button className="w-fit" render={<Link to={back} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Top users</Button>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="leaderboard-profile">
+    <PageHeader description={profile ? "Public proposals this contributor has made, newest first." : undefined} title={`@${profile?.user.username || username}`} />
     {error ? <Alert variant={error.notFound ? "default" : "destructive"}><AlertTitle>{error.notFound ? "User not found" : "Profile unavailable"}</AlertTitle><AlertDescription>{error.notFound ? "This public profile may have been removed or renamed." : error.message}</AlertDescription></Alert> : null}
     {!profile && !error ? <PaneSkeleton /> : null}
-    {profile ? <><header className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">@{profile.user.username}</h1><p className="max-w-2xl text-base text-muted-foreground text-pretty">Public proposals this contributor has made, newest first.</p></header><div aria-label="Contributor recognition" className="flex flex-wrap gap-2"><Badge><PlatformIcon data-icon="inline-start" icon={Award} size="xs" />{profile.stats.kudos_merged} kudos on merged</Badge><Badge variant="secondary">{profile.stats.prs_merged} merged</Badge><Badge variant="outline">{profile.stats.prs_total} proposed</Badge></div>{profile.items.length === 0 ? <Alert><AlertTitle>No public proposals yet</AlertTitle><AlertDescription>Public proposals will appear here when this contributor creates one.</AlertDescription></Alert> : <section aria-label={`${profile.user.username}'s proposals`} className="space-y-3">{profile.items.map((item) => <ProfilePrRow item={item} key={item.session_id} />)}</section>}{profile.nextBefore ? <Button className="self-center" disabled={loadingMore} onClick={() => void loadMore()} variant="outline">{loadingMore ? "Loading…" : "Load more"}</Button> : null}</> : null}
+    {profile ? <><div aria-label="Contributor recognition" className="flex flex-wrap gap-2"><Badge><PlatformIcon data-icon="inline-start" icon={Award} size="xs" />{profile.stats.kudos_merged} kudos on merged</Badge><Badge variant="secondary">{profile.stats.prs_merged} merged</Badge><Badge variant="outline">{profile.stats.prs_total} proposed</Badge></div>{profile.items.length === 0 ? <Alert><AlertTitle>No public proposals yet</AlertTitle><AlertDescription>Public proposals will appear here when this contributor creates one.</AlertDescription></Alert> : <section aria-label={`${profile.user.username}'s proposals`} className="space-y-3">{profile.items.map((item) => <ProfilePrRow item={item} key={item.session_id} />)}</section>}{profile.nextBefore ? <Button className="self-center" disabled={loadingMore} onClick={() => void loadMore()} variant="outline">{loadingMore ? "Loading…" : "Load more"}</Button> : null}</> : null}
   </div>
 }

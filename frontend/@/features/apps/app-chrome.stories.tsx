@@ -45,7 +45,6 @@ const meta = {
     onClose: fn(),
     onBack: fn(),
     onImprove: fn(),
-    onOpenOverflow: fn(),
     onRetry: fn(),
     onUse: fn(),
   },
@@ -133,8 +132,10 @@ export const NestedRoute: Story = {
 }
 
 export const ConsoleError: Story = {
-  args: { consoleError: true, mode: "use", state: "ready" },
-  play: async ({ canvasElement }) => {
-    await expect(light(canvasElement).getByRole("button", { name: "App actions, developer console has errors" })).toBeTruthy()
+  args: { consoleError: true, mode: "use", onOpenOverflow: fn(), state: "ready" },
+  play: async ({ args, canvasElement }) => {
+    const trigger = light(canvasElement).getByRole("button", { name: "Open developer console, errors" })
+    await userEvent.click(trigger)
+    await expect(args.onOpenOverflow).toHaveBeenCalled()
   },
 }

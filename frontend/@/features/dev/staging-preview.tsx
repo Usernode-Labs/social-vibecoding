@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 
 import { useDevConsoleFrame } from "@/hooks/use-dev-console-frame"
+import { DevConsoleTrigger } from "@/components/dev-console-provider"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
@@ -107,7 +108,10 @@ export function StagingPreview() {
     <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3">
       <Button render={<Link to={back} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Session</Button>
       <h1 className="truncate text-sm text-muted-foreground">Staging preview</h1>
-      <Button render={<a href={source} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open externally</Button>
+      <div className="flex items-center gap-1">
+        <DevConsoleTrigger />
+        <Button render={<a href={source} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open externally</Button>
+      </div>
     </header>
     {testingInstructions ? <div className="shrink-0 border-b px-4"><Accordion><AccordionItem value="testing"><AccordionTrigger>How to test this change</AccordionTrigger><AccordionContent><pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground">{testingInstructions}</pre></AccordionContent></AccordionItem></Accordion></div> : null}
     <iframe allow="clipboard-write; pointer-lock" className="min-h-0 flex-1 border-0" onLoad={() => setFrameRevision((revision) => revision + 1)} ref={iframe} sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock" src={source} title="Staging preview" />

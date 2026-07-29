@@ -1,6 +1,13 @@
 import { expect, test } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
 
+async function expectFullCanvasRoute(page: import("@playwright/test").Page, testId: string, title: string) {
+  const route = page.getByTestId(testId)
+  await expect(route.getByRole("heading", { level: 1, name: title, exact: true })).toBeVisible()
+  await expect(route.locator("h1")).toHaveCount(1)
+  expect(await route.getAttribute("class")).not.toMatch(/\b(?:mx-auto|max-w-)/)
+}
+
 function fixture() {
   return {
     season: { season_id: 8, name: "Summer build", is_active: true },
@@ -24,7 +31,8 @@ test("renders the native-aware read-only challenge detail and legacy action hand
   await installFixture(page)
   await page.goto("/react/community/challenges/12")
   const detail = page.getByTestId("challenge-detail")
-  await expect(detail.getByRole("heading", { name: "Review three app proposals" })).toBeVisible()
+  await expectFullCanvasRoute(page, "challenge-detail", "Review three app proposals")
+  await expect(detail.getByRole("link", { name: "All challenges" })).toHaveCount(0)
   await expect(detail).toContainText("1.5 / 3 reviews")
   await expect(detail).toContainText("Personal progress available")
   await expect(detail).toContainText("Points are awarded after review approval.")
@@ -55,14 +63,30 @@ test("loads the full season list when an active list omits a deep-linked complet
 })
 
 test("renders loading, missing, and error states", async ({ page }) => {
+  let releaseChallenges!: () => void
+  const challengesReady = new Promise<void>((resolve) => {
+    releaseChallenges = resolve
+  })
+  await installFixture(page)
+  await page.route("**/challenges-api/challenges**", async (route) => {
+    await challengesReady
+    await route.fulfill({ json: fixture().challenges })
+  })
+  await page.goto("/react/community/challenges/12")
+  await expectFullCanvasRoute(page, "challenge-detail-loading", "Challenge")
+  releaseChallenges()
+  await expectFullCanvasRoute(page, "challenge-detail", "Review three app proposals")
+
   await installFixture(page)
   await page.route("**/challenges-api/challenges**", (route) => route.fulfill({ status: 500, json: { error: "offline" } }))
   await page.goto("/react/community/challenges/12")
-  await expect(page.getByTestId("challenge-detail-error")).toBeVisible()
+  await expectFullCanvasRoute(page, "challenge-detail-error", "Challenge unavailable")
 
   await installFixture(page)
   await page.goto("/react/community/challenges/999")
-  await expect(page.getByTestId("challenge-detail-not-found")).toBeVisible()
+  const notFound = page.getByTestId("challenge-detail-not-found")
+  await expectFullCanvasRoute(page, "challenge-detail-not-found", "Challenge not found")
+  await expect(notFound.getByRole("link", { name: "All challenges" })).toHaveCount(0)
 })
 
 test("remains usable at mobile width and has no serious accessibility violations", async ({ page }) => {

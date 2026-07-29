@@ -1,9 +1,17 @@
 import { expect, test } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
 
+async function expectFullCanvasRoute(page: import("@playwright/test").Page, testId: string, title: string) {
+  const route = page.getByTestId(testId)
+  await expect(route.getByRole("heading", { level: 1, name: title })).toBeVisible()
+  await expect(route.locator("h1")).toHaveCount(1)
+  await expect.poll(() => route.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
+}
+
 test("explains the native capability boundary outside Usernode", async ({ page }) => {
   await page.goto("/react/account")
 
+  await expectFullCanvasRoute(page, "account", "Account")
   await expect(page.getByTestId("account")).toContainText("Profile and rewards")
   await expect(page.getByTestId("native-device-unavailable")).toContainText("Open in Usernode")
   await expect(page.getByRole("link", { name: "View node status" })).toHaveAttribute("href", "/react/node-status")

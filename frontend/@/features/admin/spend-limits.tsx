@@ -7,6 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { PlatformIcon } from "@/components/platform-icon"
+import { PageHeader } from "@/components/page-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AdminAccessError, getAdminLimits, getAdminUser, updateAdminLimits, type AdminLimits, type AdminUser } from "@/lib/admin-api"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
@@ -77,8 +78,8 @@ export function SpendLimitsPage() {
       setSaving(false)
     }
   }
-  return <div className="isolate mx-auto flex w-full max-w-5xl flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="spend-limits">
-    <header className="flex flex-wrap items-start justify-between gap-4"><div className="space-y-2"><h1 className="text-balance text-3xl font-semibold tracking-tight">Spend limits</h1><p className="text-base text-muted-foreground text-pretty">Platform-wide LLM budgets.</p></div>{state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : null}</header>
+  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="spend-limits">
+    <PageHeader action={state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : undefined} description="Platform-wide LLM budgets." title="Spend limits" />
     {state.kind === "loading" ? <div className="grid gap-4 sm:grid-cols-3"><Skeleton className="h-36" /><Skeleton className="h-36" /><Skeleton className="h-36" /></div> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Spend limits unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
