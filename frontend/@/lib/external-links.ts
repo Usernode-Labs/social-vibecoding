@@ -37,7 +37,7 @@ function isNativeRuntime() {
 }
 
 type LinkClassification =
-  | { kind: "internal" }
+  | { kind: "internal"; url: URL }
   | { kind: "external"; url: URL }
   | { kind: "unsupported-native"; url: string }
 
@@ -67,7 +67,7 @@ function classifyLink(anchor: HTMLAnchorElement): LinkClassification {
     ) {
       return { kind: "unsupported-native", url: safeFailureUrl(url) }
     }
-    if (url.origin === window.location.origin) return { kind: "internal" }
+    if (url.origin === window.location.origin) return { kind: "internal", url }
     return { kind: "external", url }
   } catch {
     return { kind: "unsupported-native", url: "" }
@@ -156,7 +156,25 @@ export function installExternalLinkDelegation(documentRoot: Document = document)
     if (!anchor) return
     if (mode === "browser") return
     const link = classifyLink(anchor)
-    if (link.kind === "internal") return
+    if (link.kind === "internal") {
+      const requestsAnotherContext = (
+        anchor.target.trim().toLowerCase() === "_blank"
+        || isMiddleClick
+        || event.altKey
+        || event.ctrlKey
+        || event.metaKey
+        || event.shiftKey
+      )
+      if (!requestsAnotherContext) return
+      event.preventDefault()
+      event.stopPropagation()
+      // Flutter injects the privileged channel only into the trusted top
+      // frame. Preserve same-origin navigation while refusing a modifier,
+      // middle click, or `_blank` target the chance to create a second
+      // browsing context outside that origin boundary.
+      window.location.assign(link.url.href)
+      return
+    }
     if (link.kind === "unsupported-native") {
       event.preventDefault()
       event.stopPropagation()

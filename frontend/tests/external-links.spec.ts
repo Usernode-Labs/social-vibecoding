@@ -1,4 +1,11 @@
+import { readFileSync } from "node:fs"
+
 import { expect, test, type Page } from "@playwright/test"
+
+const hostedBridge = readFileSync(
+  new URL("../../public/usernode-bridge.js", import.meta.url),
+  "utf8"
+)
 
 async function routeShellReads(page: Page) {
   await page.route("**/api/notifications?**", (route) => route.fulfill({
@@ -11,6 +18,46 @@ async function routeShellReads(page: Page) {
     status: 403,
     json: { error: "Admin access required" },
   }))
+}
+
+async function installHostedNativeBridge(page: Page) {
+  await page.addInitScript({ content: `
+    Object.defineProperty(window, "Usernode", {
+      configurable: true,
+      value: {
+        postMessage(message) {
+          const envelope = JSON.parse(message);
+          const envelopes = JSON.parse(
+            sessionStorage.getItem("raw-native-envelopes") || "[]"
+          );
+          envelopes.push(envelope);
+          sessionStorage.setItem(
+            "raw-native-envelopes",
+            JSON.stringify(envelopes)
+          );
+
+          let value = null;
+          let error = null;
+          if (envelope.method === "getBridgeInfo") {
+            value = { version: 3, capabilities: ["openExternal"] };
+          } else if (envelope.method === "openExternal") {
+            value = true;
+            sessionStorage.setItem(
+              "raw-channel-opened",
+              envelope.args && envelope.args.url
+            );
+          } else {
+            error = "Unexpected native method: " + envelope.method;
+          }
+          window.setTimeout(
+            () => window.__usernodeResolve?.(envelope.id, value, error),
+            0
+          );
+        },
+      },
+    });
+    ${hostedBridge}
+  ` })
 }
 
 async function appendLink(page: Page, options: {
@@ -267,25 +314,49 @@ test("suppresses unmasked modified and middle-click navigation in native mode", 
   await expect(page).toHaveURL(/\/react\/missing$/)
 })
 
-test("treats the raw Flutter channel as native even when the wrapper omits isNative", async ({ page }) => {
+test("keeps special same-origin activations in the trusted native top frame", async ({ page }) => {
   await routeShellReads(page)
-  await page.addInitScript(() => {
-    ;(window as Window & { Usernode?: { postMessage: (message: string) => void } }).Usernode = {
-      postMessage() {},
-    }
-  })
   await page.route("**/usernode-bridge.js", (route) => route.fulfill({
     contentType: "application/javascript",
     body: `
       window.usernode = {
+        isNative: true,
         getBridgeInfo: async () => ({ version: 3, capabilities: ["openExternal"] }),
-        openExternal: async (url) => {
-          sessionStorage.setItem("raw-channel-opened", url)
-          return true
-        },
       }
     `,
   }))
+
+  const cases = [
+    { label: "Internal blank", target: "_blank" },
+    { label: "Internal modified", metaKey: true },
+    { label: "Internal middle", middle: true },
+  ] as const
+
+  for (const testCase of cases) {
+    await page.goto("/react/missing")
+    await expect(page.locator("html")).toHaveAttribute("data-external-link-mode", "native")
+    await appendLink(page, {
+      href: "/react/settings",
+      label: testCase.label,
+      ...("target" in testCase ? { target: testCase.target } : {}),
+    })
+
+    if ("middle" in testCase) {
+      await activateMiddleLink(page, testCase.label)
+    } else {
+      await activateLink(
+        page,
+        testCase.label,
+        "metaKey" in testCase ? { metaKey: testCase.metaKey } : {}
+      )
+    }
+    await expect(page).toHaveURL(/\/react\/settings$/)
+  }
+})
+
+test("uses the real hosted wrapper with the raw Flutter channel", async ({ page }) => {
+  await routeShellReads(page)
+  await installHostedNativeBridge(page)
 
   await page.goto("/react/missing")
   await expect(page.locator("html")).toHaveAttribute("data-external-link-mode", "native")
@@ -293,6 +364,37 @@ test("treats the raw Flutter channel as native even when the wrapper omits isNat
   expect(await activateLink(page, "Raw channel external")).toBe(true)
   await expect.poll(() => page.evaluate(() => sessionStorage.getItem("raw-channel-opened")))
     .toBe("https://example.test/Raw%20channel%20external")
+  await expect(page).toHaveURL(/\/react\/missing$/)
+
+  const openEnvelope = await page.evaluate(() => {
+    const envelopes = JSON.parse(
+      sessionStorage.getItem("raw-native-envelopes") || "[]"
+    ) as Array<{ args?: { url?: string }; method?: string }>
+    return envelopes.find((envelope) => envelope.method === "openExternal")
+  })
+  expect(openEnvelope).toMatchObject({
+    args: { url: "https://example.test/Raw%20channel%20external" },
+    method: "openExternal",
+  })
+
+  const invalidResults = await page.evaluate(async () => {
+    const wrapper = (window as Window & {
+      usernode?: { openExternal?: (url: string) => Promise<boolean> }
+    }).usernode?.openExternal
+    if (!wrapper) return []
+    return Promise.all([
+      wrapper("").then(() => "resolved", () => "rejected"),
+      wrapper("mailto:security@example.test").then(() => "resolved", () => "rejected"),
+      wrapper("https://user:pass@example.test/private").then(() => "resolved", () => "rejected"),
+    ])
+  })
+  expect(invalidResults).toEqual(["rejected", "rejected", "rejected"])
+  expect(await page.evaluate(() => {
+    const envelopes = JSON.parse(
+      sessionStorage.getItem("raw-native-envelopes") || "[]"
+    ) as Array<{ method?: string }>
+    return envelopes.filter((envelope) => envelope.method === "openExternal").length
+  })).toBe(1)
 })
 
 test("reports a recoverable failure without an async popup or WebView navigation", async ({ page }) => {

@@ -26,6 +26,21 @@ test('hosted bridge keeps server-cache inclusion support', () => {
   assert.match(bridge, /attachMatchedTx/);
 });
 
+test('hosted bridge exposes the validated native external-link wrapper', () => {
+  const bridge = readBridge(versionedBridgePath);
+
+  assert.match(bridge, /window\.usernode\.openExternal = function \(url\)/);
+  assert.match(bridge, /typeof url !== "string" \|\| !url\.trim\(\)/);
+  assert.match(bridge, /parsed\.protocol !== "http:"/);
+  assert.match(bridge, /parsed\.protocol !== "https:"/);
+  assert.match(bridge, /parsed\.username/);
+  assert.match(bridge, /parsed\.password/);
+  assert.match(
+    bridge,
+    /"openExternal", \{ url: parsed\.href \}, _CHROME_PROBE_TIMEOUT_MS/
+  );
+});
+
 // LLM-access consent flow (issue #34) — additive within v1. The shell
 // (public/js/app-view.js) answers the `__usernode_llm` message family;
 // these assertions pin the message shape both sides agree on, plus

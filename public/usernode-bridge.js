@@ -4051,6 +4051,41 @@
     );
   };
 
+  // openExternal(url) → true when Flutter opened the system browser.
+  // Keep URL validation at this public wrapper as well as in Flutter so
+  // callers cannot accidentally smuggle credentials or non-web schemes
+  // across the native boundary. Embedded child apps are still subject to
+  // the relay's deny-by-default method policy above.
+  window.usernode.openExternal = function (url) {
+    if (typeof url !== "string" || !url.trim()) {
+      return Promise.reject(new Error(
+        "openExternal requires a valid HTTP(S) URL"
+      ));
+    }
+    var parsed;
+    try {
+      parsed = new URL(url, window.location.href);
+    } catch (_) {
+      return Promise.reject(new Error(
+        "openExternal requires a valid HTTP(S) URL"
+      ));
+    }
+    if (
+      (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+      parsed.username ||
+      parsed.password
+    ) {
+      return Promise.reject(new Error(
+        "openExternal requires an HTTP(S) URL without credentials"
+      ));
+    }
+    return callNativeChromeAction(
+      "openExternal", { url: parsed.href }, _CHROME_PROBE_TIMEOUT_MS
+    ).then(function (value) {
+      return value === true;
+    });
+  };
+
   // openNativeScreen(screen) → true. Pushes an allowlisted native route
   // ("settings" | "profile"). Unlike the reads above this REJECTS on old
   // builds / non-native — a silent no-op would strand the user's tap.
