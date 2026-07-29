@@ -323,6 +323,17 @@ function mapBackfillRow(origin, row, ctx) {
 // DB helpers
 // ═════════════════════════════════════════════════════════════════════
 
+// Serialize a value read from a source json/jsonb column for use as a
+// query parameter targeting a json/jsonb column. node-postgres encodes
+// plain JS objects with JSON.stringify, but encodes JS *arrays* as
+// Postgres array literals (`{...}`), which is invalid JSON — and prod
+// has top-level-array values in leaderboard_snapshots.challenge_details,
+// phases.scoring_formula, and offchain_activities.metadata. Stringifying
+// here makes every jsonb passthrough shape-proof.
+function jsonParam(value) {
+  return value == null ? null : JSON.stringify(value);
+}
+
 // THE only place `sourcePool.query` is ever called — see the header
 // comment for why. Every string passed as `sql` MUST be a SELECT or WITH
 // (enforced by the static test in tests/topochain-load.test.js).
@@ -436,7 +447,7 @@ async function writeMigratedMarker(client) {
 // users <- participants (merged). SPEC §8.3-8.5.
 async function loadUsers(client, sourcePool, opts) {
   const rows = await fetchAll(sourcePool, 'participants');
-  const { canonicalRows } = mergeParticipants(rows);
+  const { canonicalRows, idMap } = mergeParticipants(rows);
 
   if (canonicalRows.length !== opts.expectUsers) {
     throw new Error(
@@ -468,12 +479,12 @@ async function loadUsers(client, sourcePool, opts) {
       is_in_waitlist: canonical.is_in_waitlist ?? false,
       waitlist_submitted_at: canonical.waitlist_submitted_at ?? null,
       waitlist_ip: canonical.waitlist_ip ?? null,
-      waitlist_answers: canonical.waitlist_answers ?? null,
+      waitlist_answers: jsonParam(canonical.waitlist_answers),
       referrer: canonical.referrer ?? null,
       referrer_handle: canonical.referrer_handle ?? null,
       country: canonical.country ?? null,
       city: canonical.city ?? null,
-      device_info: canonical.device_info ?? null,
+      device_info: jsonParam(canonical.device_info),
       exclude_podium: canonical.exclude_podium ?? false,
       accept_logs: canonical.accept_logs ?? true,
       updated_at: canonical.updated_at ?? null,
@@ -484,7 +495,12 @@ async function loadUsers(client, sourcePool, opts) {
 
   await createMapTable(client, '_mig_map_participants');
   await persistMapEntries(client, '_mig_map_participants', [...participantMap.entries()]);
-  return { participantMap, userCount: canonicalRows.length, sourceParticipantCount: rows.length };
+  return {
+    participantMap,
+    canonicalSourceMap: idMap,
+    userCount: canonicalRows.length,
+    sourceParticipantCount: rows.length,
+  };
 }
 
 // seasons <- seasons (unchanged shape, fresh ids — SPEC §8.2).
@@ -533,7 +549,7 @@ async function loadSeasonEvents(client, sourcePool, seasonsMap) {
       starts_at: row.starts_at,
       ends_at: row.ends_at,
       is_active: row.is_active ?? true,
-      scoring_formula: row.scoring_formula,
+      scoring_formula: jsonParam(row.scoring_formula),
       created_at: row.created_at ?? null,
       updated_at: row.updated_at ?? null,
       start_epoch: row.start_epoch ?? null,
@@ -759,7 +775,7 @@ async function loadUserActivities(client, sourcePool, participantMap, phasesMap,
       activity_type: row.activity_type,
       points: row.points ?? 0,
       description: row.description ?? null,
-      metadata: row.metadata ?? null,
+      metadata: jsonParam(row.metadata),
       activity_at: row.activity_at,
       added_by: null, // admins are not migrated, SPEC §8.1
       source: row.source || 'admin_ui',
@@ -970,7 +986,7 @@ async function backfillAwards(client, sourcePool, participantMap, challengesMap,
       reconciled++;
     } else {
       try {
-        await insertRow(client, 'user_activities', mapped.row);
+        await insertRow(client, 'user_activities', { ...mapped.row, metadata: jsonParam(mapped.row.metadata) });
       } catch (err) {
         throw diagnoseUniqueViolation(err, origin, sourceId);
       }
@@ -1029,7 +1045,31 @@ async function loadAccountDelegationPeriods(client, sourcePool) {
 // SPEC §8.7 names `season_id` as a column to verify at every occurrence,
 // not only where a database FK happens to exist (the same reasoning
 // behind that gate also covering slot_outcome_reports.user_id).
-async function loadLeaderboardSnapshots(client, sourcePool, participantMap, phasesMap, seasonsMap) {
+//
+// The §8.4 identity merge can fold two same-email participants into ONE
+// target user. The source snapshotter writes a row per participant per
+// tick, so when both merged accounts were enrolled in the same phase
+// they have rows at IDENTICAL (phase_id, snapshot_at) — which collide on
+// the target's (season_event_id, user_id, snapshot_at) unique key.
+//
+// Colliding rows are COMBINED, not dropped: the merged user earned the
+// points on every merged account, and both the §8.7 per-event-sum gate
+// and the all-time-vs-global_leaderboard gate (whose source numbers
+// count both accounts) hold only if no points vanish. The CANONICAL
+// source participant's row is the base (earliest-row-is-canonical, same
+// rule as the merge itself); every additive column — points, produced
+// blocks, won slots — gets the other account's value added; positional /
+// instantaneous columns (rank, success rates, challenge_details,
+// timestamps) stay the canonical row's. Rows at non-colliding ticks
+// migrate untouched from every merged account.
+// Positions (in loadLeaderboardSnapshots's `values` array) of the columns
+// that are per-account tallies and therefore ADD when two merged accounts'
+// rows combine: total_points, extra_points, last_epoch/event produced
+// blocks, the seven *_points components, and the four won-slot /
+// produced-block counters.
+const ADDITIVE_SNAPSHOT_COLUMNS = [3, 4, 8, 9, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23];
+
+async function loadLeaderboardSnapshots(client, sourcePool, participantMap, phasesMap, seasonsMap, canonicalSourceMap) {
   const rows = await fetchAll(sourcePool, 'leaderboard_snapshots');
   const columns = [
     'season_event_id', 'user_id', 'rank', 'total_points', 'extra_points', 'snapshot_at', 'created_at', 'updated_at',
@@ -1040,7 +1080,8 @@ async function loadLeaderboardSnapshots(client, sourcePool, participantMap, phas
     'canonical_won_slots_up_to_current', 'canonical_produced_blocks_up_to_current',
     'max_bp_success_rate_up_to_current', 'season_id', 'challenge_details',
   ];
-  const batch = [];
+  const byKey = new Map(); // "seasonEventId:userId:snapshotMs" -> { participantId, values }
+  let mergedDupes = 0;
   for (const row of rows) {
     const seasonEventId = phasesMap.get(row.phase_id);
     if (seasonEventId === undefined) throw new Error(`leaderboard_snapshots: unmapped phase_id ${row.phase_id}`);
@@ -1051,41 +1092,96 @@ async function loadLeaderboardSnapshots(client, sourcePool, participantMap, phas
       seasonId = seasonsMap.get(row.season_id);
       if (seasonId === undefined) throw new Error(`leaderboard_snapshots: unmapped season_id ${row.season_id}`);
     }
-    batch.push([
-      seasonEventId, userId, row.rank, row.total_points ?? 0, row.offchain_points ?? 0, row.snapshot_at,
+    const values = [
+      seasonEventId, userId, row.rank, Number(row.total_points ?? 0), Number(row.offchain_points ?? 0), row.snapshot_at,
       row.created_at ?? null, row.updated_at ?? null,
-      row.last_epoch_total_produced_blocks ?? 0, row.phase_total_produced_blocks ?? 0,
+      Number(row.last_epoch_total_produced_blocks ?? 0), Number(row.phase_total_produced_blocks ?? 0),
       row.phase_success_rate ?? null, row.epoch_success_rate ?? null,
-      row.first_block_points ?? 0, row.produced_half_blocks_points ?? 0, row.top_3_points ?? 0,
-      row.success_50_percent_points ?? 0, row.bug_report_points ?? 0, row.inviting_new_participant_points ?? 0,
-      row.community_contribution_points ?? 0, row.vrf_total_won_slots ?? 0, row.canonical_total_won_slots ?? 0,
-      row.canonical_total_produced_blocks ?? 0, row.canonical_won_slots_up_to_current ?? 0,
-      row.canonical_produced_blocks_up_to_current ?? 0, row.max_bp_success_rate_up_to_current ?? 0,
-      seasonId, row.challenge_details ?? null,
-    ]);
+      Number(row.first_block_points ?? 0), Number(row.produced_half_blocks_points ?? 0), Number(row.top_3_points ?? 0),
+      Number(row.success_50_percent_points ?? 0), Number(row.bug_report_points ?? 0),
+      Number(row.inviting_new_participant_points ?? 0),
+      Number(row.community_contribution_points ?? 0), Number(row.vrf_total_won_slots ?? 0),
+      Number(row.canonical_total_won_slots ?? 0),
+      Number(row.canonical_total_produced_blocks ?? 0), Number(row.canonical_won_slots_up_to_current ?? 0),
+      Number(row.canonical_produced_blocks_up_to_current ?? 0), Number(row.max_bp_success_rate_up_to_current ?? 0),
+      seasonId, jsonParam(row.challenge_details),
+    ];
+    const key = `${seasonEventId}:${userId}:${new Date(row.snapshot_at).getTime()}`;
+    const prev = byKey.get(key);
+    if (prev === undefined) {
+      byKey.set(key, { participantId: row.participant_id, values });
+      continue;
+    }
+    mergedDupes++;
+    const rowIsCanonical = canonicalSourceMap.get(row.participant_id) === row.participant_id;
+    const prevIsCanonical = canonicalSourceMap.get(prev.participantId) === prev.participantId;
+    const rowIsBase = rowIsCanonical !== prevIsCanonical
+      ? rowIsCanonical
+      : Number(row.participant_id) < Number(prev.participantId);
+    const base = rowIsBase ? { participantId: row.participant_id, values } : prev;
+    const other = rowIsBase ? prev.values : values;
+    // Additive columns by position: total_points, extra_points, the block/
+    // slot counters, and every *_points component.
+    for (const i of ADDITIVE_SNAPSHOT_COLUMNS) base.values[i] += other[i];
+    // max_bp_success_rate_up_to_current is a running MAX, so merge as max.
+    base.values[24] = Math.max(base.values[24], other[24]);
+    byKey.set(key, base);
   }
-  await insertBatch(client, 'leaderboard_snapshots', columns, batch);
+  if (mergedDupes > 0) {
+    log.warn(
+      'topochain-load',
+      `Combined ${mergedDupes} post-merge duplicate leaderboard snapshot(s) into their canonical row (points summed)`
+    );
+  }
+  await insertBatch(client, 'leaderboard_snapshots', columns, [...byKey.values()].map((e) => e.values));
 }
 
+// The §8.4 identity merge can fold two same-email participants into ONE
+// target user; if both had a token_allocation row for the same season,
+// a naive copy violates token_allocation_user_id_season_id_key. Unlike
+// snapshots (per-tick history, canonical row wins), an allocation is an
+// entitlement DERIVED from points — and the merged user keeps the points
+// earned on every merged account — so colliding rows are SUMMED
+// (total_points, allocated_tokens). total_season_tokens is a per-season
+// constant (kept from the first row); timestamps take earliest
+// created_at / latest updated_at.
 async function loadTokenAllocation(client, sourcePool, participantMap, seasonsMap) {
   const rows = await fetchAll(sourcePool, 'token_allocation');
   const columns = [
     'user_id', 'season_id', 'total_points', 'total_season_tokens', 'allocated_tokens',
     'description', 'created_at', 'updated_at', 'updated_by',
   ];
-  const batch = [];
+  const byKey = new Map(); // "userId:seasonId" -> values array
+  let mergedDupes = 0;
   for (const row of rows) {
     const userId = participantMap.get(row.participant_id);
     if (userId === undefined) throw new Error(`token_allocation: unmapped participant_id ${row.participant_id}`);
     const seasonId = seasonsMap.get(row.season_id);
     if (seasonId === undefined) throw new Error(`token_allocation: unmapped season_id ${row.season_id}`);
-    batch.push([
-      userId, seasonId, row.total_points ?? 0, row.total_season_tokens ?? 0, row.allocated_tokens ?? 0,
-      row.description ?? null, row.created_at ?? null, row.updated_at ?? null,
-      null, // updated_by referenced a source admin; admins are not migrated, SPEC §8.1
-    ]);
+    const key = `${userId}:${seasonId}`;
+    const prev = byKey.get(key);
+    if (prev === undefined) {
+      byKey.set(key, [
+        userId, seasonId, Number(row.total_points ?? 0), row.total_season_tokens ?? 0,
+        Number(row.allocated_tokens ?? 0),
+        row.description ?? null, row.created_at ?? null, row.updated_at ?? null,
+        null, // updated_by referenced a source admin; admins are not migrated, SPEC §8.1
+      ]);
+      continue;
+    }
+    mergedDupes++;
+    prev[2] += Number(row.total_points ?? 0);
+    prev[4] += Number(row.allocated_tokens ?? 0);
+    if (row.created_at && (!prev[6] || new Date(row.created_at) < new Date(prev[6]))) prev[6] = row.created_at;
+    if (row.updated_at && (!prev[7] || new Date(row.updated_at) > new Date(prev[7]))) prev[7] = row.updated_at;
   }
-  await insertBatch(client, 'token_allocation', columns, batch);
+  if (mergedDupes > 0) {
+    log.warn(
+      'topochain-load',
+      `Summed ${mergedDupes} post-merge duplicate token allocation(s) into their canonical user's row`
+    );
+  }
+  await insertBatch(client, 'token_allocation', columns, [...byKey.values()]);
 }
 
 // point_settings folds into platform_settings (SPEC §8.2, §3.5). Only
@@ -1170,7 +1266,7 @@ async function loadVrfObligations(client, sourcePool) {
       row.status, row.produced_count ?? 0, row.out_of_window_produced_count ?? 0, row.dropped_count ?? 0,
       row.evidence_run_id ?? null, row.evidence_event_id ?? null, row.evidence_timestamp_ms ?? null,
       row.observed_first_seen_ms ?? null, row.observed_last_seen_ms ?? null, row.epoch, row.epoch_slot ?? null,
-      row.slot_time_ms ?? null, row.raw ?? null, row.synced_at || new Date(), row.created_at ?? null,
+      row.slot_time_ms ?? null, jsonParam(row.raw), row.synced_at || new Date(), row.created_at ?? null,
       row.updated_at ?? null, row.vrf_output_truncated ?? null, row.vrf_output_be_bytes ?? null,
     ]);
     await insertBatch(client, 'vrf_obligations', columns, batch, 1000);
@@ -1241,7 +1337,7 @@ async function loadMobileLogs(client, sourcePool, participantMap) {
   for (const row of rows) {
     const userId = participantMap.get(row.participant_id);
     if (userId === undefined) throw new Error(`mobile_logs: unmapped participant_id ${row.participant_id}`);
-    batch.push([userId, row.payload ?? null, row.created_at ?? null, row.updated_at ?? null]);
+    batch.push([userId, jsonParam(row.payload), row.created_at ?? null, row.updated_at ?? null]);
   }
   await insertBatch(client, 'mobile_logs', columns, batch);
 }
@@ -1313,7 +1409,8 @@ async function loadUserTermsConsents(client, sourcePool, participantMap, termsMa
 async function runLoad(client, sourcePool, opts) {
   const summary = {};
 
-  const { participantMap, userCount, sourceParticipantCount } = await loadUsers(client, sourcePool, opts);
+  const { participantMap, canonicalSourceMap, userCount, sourceParticipantCount } =
+    await loadUsers(client, sourcePool, opts);
   summary.users = { count: userCount, sourceParticipantCount };
 
   const seasonsMap = await loadSeasons(client, sourcePool);
@@ -1333,7 +1430,7 @@ async function runLoad(client, sourcePool, opts) {
 
   await loadOnchainAccounts(client, sourcePool, participantMap, phasesMap, seasonEventToSeasonMap);
   await loadAccountDelegationPeriods(client, sourcePool);
-  await loadLeaderboardSnapshots(client, sourcePool, participantMap, phasesMap, seasonsMap);
+  await loadLeaderboardSnapshots(client, sourcePool, participantMap, phasesMap, seasonsMap, canonicalSourceMap);
   await loadTokenAllocation(client, sourcePool, participantMap, seasonsMap);
   summary.settings = await foldPlatformSettings(client, sourcePool);
   await loadEpochStats(client, sourcePool, participantMap);
