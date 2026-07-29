@@ -70,8 +70,10 @@ The original verified checkpoint at `bb47cbe` remains historical evidence.
 The current shell authority has since grown to 44 manifest patterns,
 12 component performance contracts, 2 owned registry entries, and style-policy
 coverage over 162 modules. The fresh catalog run covers 47 Storybook files /
-228 tests. The T1–T5 agent battery passes 5/5, including T4 deliberate
-enforcement at 5/5.
+228 tests. The original T1–T5 decision battery remains 5/5 and T4 deliberate
+enforcement remains 5/5. The current T1–T8 extension passes 8/8, adding
+semantic consolidation, composable routing, and harness self-integrity without
+rewriting the historical benchmark.
 
 The current user-facing destination is **Activity**. The existing
 `/react/notifications` route, notification API, live events, pagination, and

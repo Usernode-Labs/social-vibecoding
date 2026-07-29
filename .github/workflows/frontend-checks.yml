@@ -57,11 +57,14 @@ jobs:
       - run: npm run lint
       - run: npm run check:tokens
       - run: npm run check:design-system
+      - run: npm run check:relationships
       - run: npm run check:registry
       - run: npm run check:style-policy
       - run: npm run check:content
       - run: npm run test:content
+      - run: npm run check:harness-integrity
       - run: npm run check:harness
+      - run: npm run test:harness
       - run: npm run test:agent-battery
       - run: npm run typecheck
       - run: npm run test:native-bridge-contract

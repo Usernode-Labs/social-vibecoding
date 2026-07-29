@@ -2,10 +2,13 @@ import fs from "node:fs"
 import path from "node:path"
 import { checkCatalog } from "./design-system-catalog-tools.mjs"
 import { checkDesignTokens } from "./design-token-tools.mjs"
+import { relationshipViolations } from "./component-relationship-tools.mjs"
 
 const frontendRoot = process.cwd()
 const manifestPath = path.join(frontendRoot, "design-system.manifest.json")
 const authorityPath = path.join(frontendRoot, "design-system", "authority.json")
+const relationshipsPath = path.join(frontendRoot, "design-system", "relationships.json")
+const catalogPath = path.join(frontendRoot, "design-system", "catalog.json")
 const violations = []
 
 function readJson(fileName) {
@@ -118,6 +121,8 @@ function hasNamedExport(source, name) {
 
 const manifest = readJson(manifestPath)
 const authority = readJson(authorityPath)
+const relationships = readJson(relationshipsPath)
+const resolvedCatalog = readJson(catalogPath)
 
 if (authority) {
   if (authority.version !== 1) violations.push("design-system authority version must be 1")
@@ -182,6 +187,10 @@ if (manifest) {
       }
     }
   }
+}
+
+if (relationships && resolvedCatalog) {
+  violations.push(...relationshipViolations(resolvedCatalog, relationships))
 }
 
 try {

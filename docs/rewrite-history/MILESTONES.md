@@ -275,7 +275,8 @@ without rewriting that checkpoint:
   contracts;
 - owned shadcn registry: 2 installable entries;
 - style policy: 162 governed modules;
-- agent battery: T1–T5 pass 5/5, including T4 deliberate enforcement at 5/5;
+- agent battery: historical T1–T5 pass 5/5 and the current T1–T8 extension
+  passes 8/8, including T4 deliberate enforcement at 5/5;
 - Storybook: 47 files / 228 tests passed;
 - full browser route/contract suite: 727 passed, 53 intentionally skipped,
   0 failed;

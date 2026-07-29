@@ -1,0 +1,397 @@
+{
+  "version": 2,
+  "scope": "social-vibecoding-react-shell",
+  "fallback": "route",
+  "excludes": [
+    "child-app source",
+    "app-factory scaffold",
+    "hosted usernode-native/v1 consumers"
+  ],
+  "changedFileScope": [
+    "AGENTS.md",
+    "NATIVE-BRIDGE.md",
+    "agent-skills/ui-development/",
+    "frontend/",
+    "public/",
+    "server.js",
+    "tests/",
+    "tool/"
+  ],
+  "workflows": {
+    "authority": {
+      "priority": 100,
+      "description": "Change tokens, component contracts, registry distribution, or design-system policy.",
+      "terms": [
+        "token",
+        "registry",
+        "design-system",
+        "design system",
+        "authority",
+        "primitive",
+        "exception"
+      ],
+      "paths": [
+        "frontend/design-system/",
+        "frontend/design-system.manifest.json",
+        "frontend/registry.json"
+      ],
+      "context": [
+        "agent-skills/ui-development/references/authority.md",
+        "frontend/design-system/authority.json",
+        "frontend/design-system/tokens.json",
+        "frontend/design-system/catalog.json",
+        "frontend/registry.json",
+        "frontend/design-system/exceptions.json"
+      ],
+      "checks": [
+        "npm run check:tokens",
+        "npm run check:design-system",
+        "npm run check:registry",
+        "npm run check:style-policy",
+        "npm run check:harness-integrity",
+        "npm run test:agent-battery"
+      ],
+      "evidence": [
+        "Generated token CSS, catalog, and CLI registry remain reproducible.",
+        "Every exception is exact, owned, justified, expiring, and count-bounded.",
+        "The deterministic agent battery records complete enforcement."
+      ],
+      "stop": "Stop for design-system approver review before adding a new token, primitive, relationship category, or exception category."
+    },
+    "contract": {
+      "priority": 90,
+      "description": "Change native bridge, iframe, auth, service-worker, offline, or history contracts.",
+      "terms": [
+        "bridge",
+        "iframe",
+        "service worker",
+        "service-worker",
+        "offline",
+        "cookie",
+        "auth",
+        "history",
+        "deep link",
+        "deep-link",
+        "native"
+      ],
+      "paths": [
+        "frontend/@/lib/native-bridge",
+        "frontend/@/lib/auth",
+        "frontend/@/lib/external-links",
+        "frontend/src/react-service-worker",
+        "frontend/public/react-sw",
+        "public/usernode-bridge",
+        "public/sw.js"
+      ],
+      "context": [
+        "frontend/AGENTS.md",
+        "NATIVE-BRIDGE.md",
+        "docs/react-migration.md",
+        "frontend/scripts/check-cutover-contract.mjs"
+      ],
+      "checks": [
+        "npm run check:harness",
+        "npm run test:native-bridge-contract",
+        "npm run test:service-worker-contract",
+        "npm run test:e2e",
+        "npm run check:cutover-contract"
+      ],
+      "evidence": [
+        "Compatibility behavior is tested at the adapter and browser boundary.",
+        "Security, origin, cookie, cache, and history assumptions are documented.",
+        "Any skipped host proof remains explicit."
+      ],
+      "stop": "Stop before deployment or legacy retirement when required host evidence is absent."
+    },
+    "consolidation": {
+      "priority": 85,
+      "description": "Compare overlapping component semantics and decide keep, extend, supersede, or remove without forcing unrelated jobs together.",
+      "terms": [
+        "consolidate",
+        "consolidation",
+        "duplicate component",
+        "overlap",
+        "similar component",
+        "supersede",
+        "deprecate",
+        "remove component",
+        "component audit"
+      ],
+      "paths": [
+        "frontend/design-system/relationships.json"
+      ],
+      "context": [
+        "agent-skills/ui-development/references/authority.md",
+        "agent-skills/ui-development/references/consolidation.md",
+        "frontend/design-system/catalog.json",
+        "frontend/design-system/relationships.json"
+      ],
+      "checks": [
+        "npm run check:design-system",
+        "npm run check:relationships",
+        "npm run test:storybook",
+        "npm run test:e2e"
+      ],
+      "evidence": [
+        "The decision is based on user job and behavior, not appearance or markup alone.",
+        "Substitution boundaries and distinct responsibilities are recorded.",
+        "Every removal or supersession has usage evidence and a migration path."
+      ],
+      "stop": "Stop for collaborative review before merging, superseding, or removing patterns whose user jobs are not demonstrably equivalent."
+    },
+    "content": {
+      "priority": 80,
+      "description": "Create or review user-facing labels, states, instructions, errors, and accessibility names.",
+      "terms": [
+        "copy",
+        "content",
+        "wording",
+        "label",
+        "microcopy",
+        "empty state",
+        "error message",
+        "accessibility name",
+        "rename"
+      ],
+      "paths": [
+        "frontend/design-system/content-guidelines.md",
+        "frontend/design-system/content-exceptions.json"
+      ],
+      "context": [
+        "frontend/design-system/content-guidelines.md",
+        "frontend/design-system/content-exceptions.json",
+        "frontend/design-system/catalog.json"
+      ],
+      "checks": [
+        "npm run check:content",
+        "npm run test:content",
+        "npm run test:storybook"
+      ],
+      "evidence": [
+        "Copy is reviewed by named content failure mode and information layer.",
+        "Visible labels and accessibility names satisfy the registered contract.",
+        "Exceptions are exact, owned, justified, expiring, and count-bounded."
+      ],
+      "stop": "Stop before adding reusable terminology or a new content exception without authority review."
+    },
+    "component": {
+      "priority": 70,
+      "description": "Create or change a reusable shell component or platform pattern.",
+      "terms": [
+        "component",
+        "story",
+        "storybook",
+        "variant",
+        "pattern",
+        "card",
+        "reuse",
+        "extend"
+      ],
+      "paths": [
+        "frontend/@/components/",
+        ".stories.tsx"
+      ],
+      "context": [
+        "agent-skills/ui-development/references/authority.md",
+        "frontend/design-system/catalog.json",
+        "frontend/design-system.manifest.json",
+        "frontend/@/components/ui",
+        "frontend/registry.json"
+      ],
+      "checks": [
+        "npm run check:design-system",
+        "npm run check:style-policy",
+        "npm run check:harness",
+        "npm run test:storybook",
+        "npm run typecheck"
+      ],
+      "evidence": [
+        "Reuse, extension, or new-pattern decision is stated.",
+        "Named Storybook states cover variants and responsive/accessibility states.",
+        "Catalog metadata names ownership, maturity, tokens, data boundary, and deprecation."
+      ],
+      "stop": "Stop if an unsupported interaction requires a new owned pattern; record the gap for approval."
+    },
+    "review": {
+      "priority": 60,
+      "description": "Review, polish, or release a completed shell slice.",
+      "terms": [
+        "review",
+        "polish",
+        "release",
+        "handoff",
+        "final",
+        "audit",
+        "taste",
+        "ui.sh"
+      ],
+      "paths": [],
+      "context": [
+        "agent-skills/ui-development/references/evidence.md",
+        "agent-skills/ui-development/references/review.md",
+        "frontend/design-system/catalog.json",
+        "frontend/design-system/exceptions.json",
+        "docs/react-migration.md"
+      ],
+      "checks": [
+        "npm run check:ui"
+      ],
+      "evidence": [
+        "Automated checks pass independently of agent instructions.",
+        "Storybook and browser evidence cover the changed states.",
+        "Optional taste findings are recorded without overriding mechanical authority."
+      ],
+      "stop": "Stop if required evidence is missing; optional polish tools cannot waive a mechanical gate."
+    },
+    "route": {
+      "priority": 10,
+      "description": "Migrate or change a platform-owned shell route.",
+      "terms": [
+        "route",
+        "page",
+        "screen",
+        "navigation",
+        "responsive"
+      ],
+      "paths": [
+        "frontend/@/features/"
+      ],
+      "context": [
+        "frontend/AGENTS.md",
+        "frontend/design-system/catalog.json",
+        "docs/react-migration.md",
+        "frontend/@/lib/routes.ts"
+      ],
+      "checks": [
+        "npm run check:style-policy",
+        "npm run check:harness",
+        "npm run typecheck",
+        "npm run test:e2e",
+        "npm run test:production-review"
+      ],
+      "evidence": [
+        "Applicable loading, success, empty/error, permission/capability, mobile, and desktop states are exercised.",
+        "Route, hash, history, and back behavior remain compatible.",
+        "The route uses owned adapters rather than endpoints or platform globals."
+      ],
+      "stop": "Stop before retiring a legacy route until the route-parity record is complete and reviewed."
+    }
+  },
+  "fullGate": [
+    {
+      "cwd": "root",
+      "command": "npm test",
+      "ciEvidence": "name: Run authoritative root suite"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run lint",
+      "ciEvidence": "npm run lint"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:tokens",
+      "ciEvidence": "npm run check:tokens"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:design-system",
+      "ciEvidence": "npm run check:design-system"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:relationships",
+      "ciEvidence": "npm run check:relationships"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:registry",
+      "ciEvidence": "npm run check:registry"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:style-policy",
+      "ciEvidence": "npm run check:style-policy"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:content",
+      "ciEvidence": "npm run check:content"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run test:content",
+      "ciEvidence": "npm run test:content"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:harness-integrity",
+      "ciEvidence": "npm run check:harness-integrity"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:harness",
+      "ciEvidence": "npm run check:harness"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run test:harness",
+      "ciEvidence": "npm run test:harness"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run test:agent-battery",
+      "ciEvidence": "npm run test:agent-battery"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run typecheck",
+      "ciEvidence": "npm run typecheck"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run test:native-bridge-contract",
+      "ciEvidence": "npm run test:native-bridge-contract"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run build",
+      "ciEvidence": "name: Build immutable React shell"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run test:service-worker-contract",
+      "ciEvidence": "react-service-worker.spec.ts"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run test:e2e",
+      "ciEvidence": "npm run test:e2e"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run test:production-review",
+      "ciEvidence": "npm run test:production-review"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:cutover-contract",
+      "ciEvidence": "npm run check:cutover-contract"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:bundle",
+      "ciEvidence": "npm run check:bundle"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run test:storybook",
+      "ciEvidence": "npm run test:storybook"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:storybook-build",
+      "ciEvidence": "npm run check:storybook-build"
+    }
+  ]
+}

@@ -24,8 +24,10 @@ The authority is executable:
   access unless an exact, owned, expiring exception exists;
 - one portable skill and workflow resolver give every supported agent the same
   task-specific context and gates;
-- the Candidate A shell battery records T1–T5 and 5/5 deliberate-violation
-  enforcement.
+- the original Candidate A shell battery records T1–T5 and 5/5
+  deliberate-violation enforcement; the current T1–T8 extension also proves
+  semantic keep-distinct decisions, composable workflow routing, and harness
+  self-integrity/CI parity.
 
 The signed continuation record is
 [candidate-a-shell-continuation.md](candidate-a-shell-continuation.md).

@@ -1114,8 +1114,9 @@ exist; uncommitted work remains in progress even when focused checks pass.
 
 Current authority verification: 44 manifest patterns, 12 component performance
 contracts, 2 registry entries, style-policy coverage over 163 modules, and
-47 Storybook files / 228 tests. The agent battery is 5/5 across T1–T5, with T4
-enforcement at 5/5. The full browser gate is 655 passed / 53 intentional skips /
+47 Storybook files / 228 tests. The historical T1–T5 battery remains 5/5 and
+the current T1–T8 harness extension passes 8/8, with T4 enforcement at 5/5.
+The full browser gate is 655 passed / 53 intentional skips /
 0 failed; production review is 40/40; native bridge is 8/8; build is 2,074
 modules; bundle is 142.2/160 KiB. The cutover contract is 9 verified / 0 failed
 with one `native-webview-e2e` blocker. Earlier Storybook counts in the milestone

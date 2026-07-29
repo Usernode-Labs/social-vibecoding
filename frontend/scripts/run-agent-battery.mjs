@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { harnessFingerprint } from "./harness-fingerprint.mjs"
 
 const frontendRoot = process.cwd()
 const repoRoot = path.resolve(frontendRoot, "..")
@@ -98,7 +99,7 @@ const compliant = runNode("scripts/check-style-policy.mjs", ["--fixture", "tests
 const architecture = runNode("scripts/check-harness-policy.mjs", ["--report-json"])
 const architectureViolations = architecture.status === 0 ? JSON.parse(architecture.stdout) : [{ error: architecture.stderr }]
 result("T5", Boolean(
-  workflow.classification === "component"
+  workflow.classifications.includes("component")
   && workflow.context?.length
   && workflow.checks?.length
   && workflow.evidence?.length
@@ -116,10 +117,47 @@ result("T5", Boolean(
   architectureViolations,
 })
 
+const related = JSON.parse(execFileSync(process.execPath, [
+  "scripts/query-design-system.mjs",
+  "--related",
+  "home app",
+], { cwd: frontendRoot, encoding: "utf8" }))
+const homeDecision = related.decisions?.find((decision) => decision.id === "home-shortcut-and-explore-card")
+result("T6", Boolean(
+  homeDecision
+  && homeDecision.decision === "keep-distinct"
+  && homeDecision.jobs?.length === 2
+  && homeDecision.substitutionBoundary,
+), homeDecision || { error: "reviewed Home/Explore relationship was not discoverable" })
+
+const composedRaw = execFileSync(process.execPath, [
+  path.join(repoRoot, "tool", "ui-workflow.mjs"),
+  "--task",
+  "Polish Activity feed component copy and add Storybook state",
+  "--files",
+  "",
+  "--json",
+], { cwd: repoRoot, encoding: "utf8" })
+const composed = JSON.parse(composedRaw)
+result("T7", Boolean(
+  ["content", "component", "review"].every((workflowId) => composed.classifications.includes(workflowId))
+  && composed.checks.includes("npm run check:content")
+  && composed.checks.includes("npm run check:ui"),
+), {
+  classifications: composed.classifications,
+  checks: composed.checks,
+})
+
+const integrity = runNode("scripts/check-harness-integrity.mjs", ["--skip-evidence-freshness"])
+result("T8", integrity.status === 0, {
+  command: "npm run check:harness-integrity -- --skip-evidence-freshness",
+  output: `${integrity.stdout}\n${integrity.stderr}`.trim(),
+})
+
 const passed = results.filter((item) => item.pass).length
 const finishedAt = new Date()
 const evidence = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   candidate: "A",
   decisionScope: "Social Vibecoding React shell only",
   excludes: ["child-app source", "app-factory design system", "hosted usernode-native/v1 consumers"],
@@ -127,6 +165,12 @@ const evidence = {
   authority: "design-system/authority.json",
   actor: process.env.AGENT_ACTOR || "codex-current-task",
   model: process.env.AGENT_MODEL || "not-exposed-by-host",
+  harnessFingerprint: harnessFingerprint().value,
+  gitRevision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim(),
+  gitWorktreeDirty: Boolean(execFileSync("git", ["status", "--porcelain=v1"], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  }).trim()),
   tokenAccounting: process.env.AGENT_TOKENS_USED
     ? { status: "reported", tokens: Number(process.env.AGENT_TOKENS_USED) }
     : { status: "not-exposed-by-host", tokens: null },
@@ -171,7 +215,10 @@ if (record) {
       "",
     ]),
   ]
-  fs.writeFileSync(path.join(evidenceDirectory, "candidate-a-shell-battery.md"), `${lines.join("\n")}\n`)
+  fs.writeFileSync(
+    path.join(evidenceDirectory, "candidate-a-shell-battery.md"),
+    `${lines.join("\n").trimEnd()}\n`,
+  )
 }
 
 console.log(`Candidate A shell agent battery: ${passed}/${results.length} tasks passed; T4 ${results.find((item) => item.id === "T4")?.evidence.enforcement}.`)

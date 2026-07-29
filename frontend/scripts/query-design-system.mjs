@@ -2,13 +2,16 @@ import fs from "node:fs"
 import path from "node:path"
 
 const frontendRoot = process.cwd()
-const query = process.argv.slice(2).join(" ").trim().toLowerCase()
+const related = process.argv.includes("--related")
+const query = process.argv.slice(2).filter((value) => value !== "--related").join(" ").trim().toLowerCase()
 if (!query) {
-  console.error("Usage: npm run query:design-system -- <component name, id, variant, or job>")
+  console.error("Usage: npm run query:design-system -- [--related] <component name, id, variant, or job>")
   process.exit(1)
 }
 
 const catalog = JSON.parse(fs.readFileSync(path.join(frontendRoot, "design-system", "catalog.json"), "utf8"))
+const relationships = JSON.parse(fs.readFileSync(path.join(frontendRoot, "design-system", "relationships.json"), "utf8"))
+const terms = query.split(/\s+/)
 const matches = catalog.components.filter((component) => {
   const searchable = [
     component.id,
@@ -19,13 +22,10 @@ const matches = catalog.components.filter((component) => {
     component.dataBoundary.contract,
     component.performance ? JSON.stringify(component.performance) : "",
   ].join(" ").toLowerCase()
-  return query.split(/\s+/).every((term) => searchable.includes(term))
+  return terms.every((term) => searchable.includes(term))
 })
 
-console.log(JSON.stringify({
-  query,
-  count: matches.length,
-  components: matches.map((component) => ({
+const summarize = (component) => ({
     id: component.id,
     name: component.name,
     module: component.module,
@@ -40,5 +40,26 @@ console.log(JSON.stringify({
     responsive: component.responsive,
     deprecation: component.deprecation,
     evidence: component.evidence,
-  })),
-}, null, 2))
+  })
+
+if (related) {
+  const relatedDecisions = relationships.decisions.filter((decision) => {
+    const searchable = JSON.stringify(decision).toLowerCase()
+    return terms.every((term) => searchable.includes(term))
+  })
+  const componentIds = new Set(relatedDecisions.flatMap((decision) => decision.components))
+  console.log(JSON.stringify({
+    query,
+    mode: "relationships",
+    count: relatedDecisions.length,
+    decisions: relatedDecisions,
+    components: catalog.components.filter((component) => componentIds.has(component.id)).map(summarize),
+  }, null, 2))
+} else {
+  console.log(JSON.stringify({
+    query,
+    mode: "components",
+    count: matches.length,
+    components: matches.map(summarize),
+  }, null, 2))
+}

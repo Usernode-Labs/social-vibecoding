@@ -1,10 +1,10 @@
 # Candidate A shell agent battery
 
-- Result: **5/5**
+- Result: **8/8**
 - Actor: codex-current-task
 - Model: not-exposed-by-host
 - Token accounting: not-exposed-by-host
-- Wall time: 1662 ms
+- Wall time: 1599 ms
 - Retries: 0
 - Interventions: none
 - T4 enforcement: 5/5
@@ -30,5 +30,17 @@ PASS
 PASS
 
 ## T5
+
+PASS
+
+## T6
+
+PASS
+
+## T7
+
+PASS
+
+## T8
 
 PASS

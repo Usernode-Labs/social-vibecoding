@@ -43,9 +43,12 @@ This directory is the staged React replacement for the legacy static shell.
 npm run lint
 npm run check:tokens
 npm run check:design-system
+npm run check:relationships
 npm run check:registry
 npm run check:style-policy
 npm run check:harness
+npm run check:harness-integrity
+npm run test:harness
 npm run test:agent-battery
 npm run typecheck
 npm run test:e2e
@@ -56,6 +59,7 @@ npm run build
 npm run check:bundle
 npm run test:storybook
 npm run check:cutover-contract
+npm run check:ui
 ```
 
 `npm run test:e2e` is a fixture-driven parity check, not proof of live native
@@ -68,7 +72,10 @@ safe-area, history, authentication, or offline behavior.
 `design-system.manifest.json` lists reusable owned platform patterns and named
 Storybook states; `design-system/authority.json` resolves that manifest into
 the governed `design-system/catalog.json`. `registry.json` is the owned shadcn
-CLI distribution surface. Update the appropriate authority source with a
+CLI distribution surface. `design-system/relationships.json` records reviewed
+keep-distinct, extend, supersede, and remove decisions by user job and
+substitution boundary; visual similarity alone is not a consolidation reason.
+Update the appropriate authority source with a
 pattern's public export or deterministic state evidence, regenerate its
 derived artifact, and run the full authority checks. These files validate
 listed shell contracts; they do not infer or govern child-app components.
@@ -96,3 +103,14 @@ to static high-confidence regressions. Do not add a broad stylistic lint or
 apply it to child-app code. Existing migration copy belongs in the exact,
 owned, expiring `design-system/content-exceptions.json` ledger until the route
 gets a separately reviewed replacement.
+
+## Portable agent harness
+
+`agent-skills/ui-development/workflows.json` is the canonical composable task
+router and full-gate authority. `node tool/ui-workflow.mjs --task "<task>"`
+may select several workflows; follow all of them. `npm run check:ui` executes
+the same full gate CI is required to expose. `npm run
+check:harness-integrity` validates the skill package, context paths, package
+scripts, CI parity, `.agents`/`.claude`/`.codex` adapters, and live-battery
+fingerprint. `check:harness` remains the source architecture boundary and is
+not a substitute for harness self-integrity.

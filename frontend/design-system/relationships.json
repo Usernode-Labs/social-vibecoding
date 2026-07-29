@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "description": "Reviewed semantic relationships between shell patterns. Decisions are based on user job and behavior, not visual similarity or a target component count.",
+  "decisions": [
+    {
+      "id": "platform-icon-and-app-identity",
+      "decision": "keep-distinct",
+      "components": [
+        "platform-icon",
+        "app-identity"
+      ],
+      "jobs": [
+        {
+          "component": "platform-icon",
+          "job": "Communicate a platform navigation, action, status, or inline control glyph on the canonical interface grid."
+        },
+        {
+          "component": "app-identity",
+          "job": "Represent one hosted application through artwork or a deterministic, theme-aware monogram."
+        }
+      ],
+      "rationale": "Both render compact visual marks, but one labels shell controls while the other carries application identity and a deliberately larger colorful treatment.",
+      "substitutionBoundary": "Never use AppIdentity as a generic action icon or PlatformIcon as hosted-app artwork."
+    },
+    {
+      "id": "home-shortcut-and-explore-card",
+      "decision": "keep-distinct",
+      "components": [
+        "home-app-shortcut",
+        "explore-app-card"
+      ],
+      "jobs": [
+        {
+          "component": "home-app-shortcut",
+          "job": "Launch an application the current user already saved or built with minimum decision cost."
+        },
+        {
+          "component": "explore-app-card",
+          "job": "Evaluate an unfamiliar application before opening its detail surface."
+        }
+      ],
+      "rationale": "Both present applications, but Home optimizes repeat launch while Explore carries discovery information and a different primary navigation contract.",
+      "substitutionBoundary": "Share AppIdentity and status primitives, but do not add discovery metadata or detail-first behavior to HomeAppShortcut."
+    },
+    {
+      "id": "page-header-and-app-chrome",
+      "decision": "keep-distinct",
+      "components": [
+        "page-header",
+        "app-chrome"
+      ],
+      "jobs": [
+        {
+          "component": "page-header",
+          "job": "Name and orient a platform-owned route with optional supporting context and one route action."
+        },
+        {
+          "component": "app-chrome",
+          "job": "Control the focused hosted-app context, including returning to the platform and switching between use and development."
+        }
+      ],
+      "rationale": "Both occupy a leading route region, but one structures platform content while the other preserves a focused iframe and its contextual controls.",
+      "substitutionBoundary": "Do not wrap focused apps in PageHeader or add hosted-app lifecycle controls to PageHeader."
+    }
+  ]
+}

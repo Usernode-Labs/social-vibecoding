@@ -20,6 +20,7 @@
     "canonicalTokens": "design-system/tokens.json",
     "componentManifest": "design-system.manifest.json",
     "resolvedCatalog": "design-system/catalog.json",
+    "relationshipAuthority": "design-system/relationships.json",
     "registry": "registry.json",
     "exceptionLedger": "design-system/exceptions.json",
     "contentGuidelines": "design-system/content-guidelines.md",

@@ -1,12 +1,12 @@
 {
-  "version": 1,
+  "version": 2,
   "scope": "Usernode React shell only",
   "tasks": [
     {
       "id": "T1",
       "name": "Discover before creating",
-      "intent": "Find the existing app-card contract and decide reuse versus creation.",
-      "expected": "Reuse app-card; report its owner, maturity, variants, token authority, accessibility evidence and props-only data boundary."
+      "intent": "Find the existing personal Home app shortcut and decide reuse versus creation.",
+      "expected": "Reuse home-app-shortcut; report its owner, maturity, variants, token authority, accessibility evidence and props-only data boundary."
     },
     {
       "id": "T2",
@@ -31,6 +31,24 @@
       "name": "Resolve and verify a workflow",
       "intent": "Classify a reusable component task and verify the portable workflow supplies authority context, checks, evidence and a stop condition.",
       "expected": "The component workflow is selected; a compliant fixture passes style policy and the architecture boundary has zero violations."
+    },
+    {
+      "id": "T6",
+      "name": "Keep similar semantics distinct",
+      "intent": "Compare Home app shortcuts and Explore app cards before consolidation.",
+      "expected": "Discover the reviewed keep-distinct decision, both user jobs, and the substitution boundary."
+    },
+    {
+      "id": "T7",
+      "name": "Compose workflows",
+      "intent": "Resolve a copy-bearing component review rather than choosing one task bucket.",
+      "expected": "Select content, component, and review together and include content plus full-review gates."
+    },
+    {
+      "id": "T8",
+      "name": "Prove portable harness integrity",
+      "intent": "Verify the skill package, workflow authority, adapter discovery, package scripts, and CI parity.",
+      "expected": "The deterministic self-integrity check passes independently of live-evidence freshness."
     }
   ]
 }

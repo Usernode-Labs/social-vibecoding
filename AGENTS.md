@@ -18,7 +18,10 @@ expose that same canonical skill through local `.agents`, `.claude`, and
 `.codex` discovery paths; those generated adapters are intentionally ignored.
 Begin UI work with `node tool/ui-workflow.mjs --task "<task>"`; it provides
 progressive, task-specific context and gates without depending on one agent
-vendor's hook runtime.
+vendor's hook runtime. Its classifications compose: follow every selected
+workflow, not only the first label. Run `cd frontend && npm run check:ui`
+before handoff; harness integrity proves that authority still matches package
+scripts, CI, adapters, and current live-agent evidence.
 
 1. Preserve a working legacy route until its React replacement has parity
    evidence for loading, error, empty, permission, narrow and desktop states.

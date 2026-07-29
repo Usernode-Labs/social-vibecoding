@@ -56,6 +56,15 @@ from the `bb47cbe` continuation checkpoint. They are not current catalog totals.
   contracts, 2 registry entries, and style-policy coverage over 163 modules
 - Agent lifecycle: T1–T5 passes 5/5, including deliberate T4 enforcement at
   5/5
+- Current harness extension: T1–T8 passes 8/8. T6 discovers reviewed component
+  relationships, T7 composes content/component/review workflows, and T8 proves
+  skill/adapters/package-script/CI integrity. The live run records the exact
+  harness fingerprint and does not claim Claude behavioral execution.
+- Fresh Codex behavioral run: 7/7 tasks pass within the pre-registered 275,000
+  input-token ceiling per task (1,028,847 total; exact cached-token detail is
+  retained in the JSON evidence). The
+  deterministic T8 supplies self-integrity proof rather than spending another
+  model turn on a mechanical check.
 - Current Storybook verification: 47 files / 228 tests
 - Browser verification: 655 passed, 53 intentional skips, 0 failed
 - Production-readonly review: 40/40 passed
