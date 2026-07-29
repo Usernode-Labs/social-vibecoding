@@ -55,7 +55,7 @@ test("keeps bell, pending-invitation, and Work completion responsibilities disti
   await expect(page.getByTestId("notifications")).not.toContainText("Finish recipe search")
   await expect(page.getByRole("heading", { name: "Pending invitations" })).toBeVisible()
   await expect(page.getByTestId("notifications")).not.toContainText("collab invite")
-  await expect(page.getByRole("link", { name: "Open notification: Can we add a pantry filter?" })).toHaveAttribute("href", "/react/apps/recipebot/dev/chat")
+  await expect(page.getByRole("link", { name: "Open activity: Can we add a pantry filter?" })).toHaveAttribute("href", "/react/apps/recipebot/dev/chat")
   await expect(page.getByTestId("notifications").locator('[data-status-role="attention"]')).toHaveCount(2)
   await expect(page.getByRole("img", { name: "RecipeBot, unread" })).toHaveCount(2)
 })
@@ -69,7 +69,7 @@ test("routes identified proposal notifications into the owned React detail", asy
     notifications: [{ id: 18, kind: "pr_proposed", readAt: null, appId: 4, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-28T12:00:00.000Z", sessionId: 42, prTitle: "Add pantry filters" }],
   } }))
   await page.goto("/react/notifications")
-  await expect(page.getByRole("link", { name: "Open notification: Add pantry filters" })).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/42")
+  await expect(page.getByRole("link", { name: "Open activity: Add pantry filters" })).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/42")
 })
 
 test("routes a scoped discussion notification to its existing React detail", async ({ page }) => {
@@ -81,7 +81,7 @@ test("routes a scoped discussion notification to its existing React detail", asy
     notifications: [{ id: 20, kind: "reply", readAt: null, appId: 4, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-28T12:00:00.000Z", threadType: "governance", threadRef: 13, messageContent: "A governance reply" }],
   } }))
   await page.goto("/react/notifications")
-  await expect(page.getByRole("link", { name: "Open notification: A governance reply" })).toHaveAttribute("href", "/react/apps/recipebot/dev/governance/13")
+  await expect(page.getByRole("link", { name: "Open activity: A governance reply" })).toHaveAttribute("href", "/react/apps/recipebot/dev/governance/13")
 })
 
 test("keeps an incomplete proposal notification inside the owned React workspace", async ({ page }) => {
@@ -93,7 +93,7 @@ test("keeps an incomplete proposal notification inside the owned React workspace
     notifications: [{ id: 19, kind: "pr_proposed", readAt: null, appId: 4, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-28T12:00:00.000Z", prTitle: "Proposal needs attention" }],
   } }))
   await page.goto("/react/notifications")
-  await expect(page.getByRole("link", { name: "Open notification: Proposal needs attention" })).toHaveAttribute("href", "/react/apps/recipebot/dev")
+  await expect(page.getByRole("link", { name: "Open activity: Proposal needs attention" })).toHaveAttribute("href", "/react/apps/recipebot/dev")
 })
 
 test("marks only the opened bell notification as read in a normal environment", async ({ page }) => {
@@ -103,7 +103,7 @@ test("marks only the opened bell notification as read in a normal environment", 
     await route.fulfill({ json: { unread: 1 } })
   })
   await page.goto("/react/notifications")
-  await page.getByRole("link", { name: "Open notification: Can we add a pantry filter?" }).click()
+  await page.getByRole("link", { name: "Open activity: Can we add a pantry filter?" }).click()
   await expect.poll(() => markReadBodies).toEqual([{ id: 1 }])
 })
 
@@ -126,10 +126,10 @@ test("uses the canonical cursor and dedupes an older page", async ({ page }) => 
     nextBefore: null,
   } }))
   await page.goto("/react/notifications")
-  await page.getByRole("button", { name: "Show older notifications" }).click()
+  await page.getByRole("button", { name: "Show older activity" }).click()
   await expect(page.getByTestId("notifications")).toContainText("A new reaction")
   await expect(page.getByText("A reply worth reading")).toHaveCount(1)
-  await expect(page.getByRole("button", { name: "Show older notifications" })).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Show older activity" })).toHaveCount(0)
 })
 
 test("re-reads the first authoritative page on notification websocket events", async ({ page }) => {
@@ -171,7 +171,7 @@ test("declines approver invites through their distinct existing contract", async
 test("shows a recoverable loading error", async ({ page }) => {
   await page.route("**/api/notifications?limit=20", (route) => route.fulfill({ status: 503, json: { error: "Temporarily unavailable" } }))
   await page.goto("/react/notifications")
-  await expect(page.getByRole("alert")).toContainText("Notifications unavailable")
+  await expect(page.getByRole("alert")).toContainText("Activity unavailable")
   await expect(page.getByRole("alert")).toContainText("Request failed (503)")
 })
 

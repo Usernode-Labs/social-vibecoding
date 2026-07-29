@@ -15,7 +15,7 @@ const data = {
 }
 
 const meta = {
-  title: "Platform/Notifications",
+  title: "Platform/Activity",
   component: NotificationsContent,
   parameters: { layout: "fullscreen" },
   decorators: [(Story) => <Story />],
