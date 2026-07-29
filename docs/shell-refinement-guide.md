@@ -1099,8 +1099,9 @@ exist; uncommitted work remains in progress even when focused checks pass.
 | Luma probe and reliability preparation | Complete | `521e926`, `aedb14d` |
 | M3 single-owner Luma merge | Complete | `4c5d93e` |
 | M4 semantic foundation | Complete | `565c5ff`; AppIdentity, StatusDot, Light/Dark/System parity, DTCG roles, contrast and forced-colors evidence, 165 Storybook states, production-review tests, and shell gates are green |
-| M5 successor contracts | In progress | Storybook-first contracts may now proceed without route integration |
-| M6–M10 route integration, host proof, optional Motion, and cutover | Not started | follow the gates below; do not collapse them into the current milestone |
+| M5 successor contracts | Complete | `e2a8189`, `14ef98a`; six registered props-only patterns, 207 Storybook states/tests, both-theme evidence, interaction assertions, authority/catalog contracts, build, bundle and shell gates are green |
+| M6–M7 Home/Explore, navigation, app chrome, and quiet pass | Ready | route integration may begin with one owner for route tables, shell composition and shared fixtures |
+| M8–M10 host proof, optional Motion, and cutover | Not started | follow the gates below; do not collapse host proof or Motion into route integration |
 
 ### Wave 0 — Charter and preset freeze
 
