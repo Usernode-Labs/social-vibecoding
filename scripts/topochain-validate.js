@@ -54,8 +54,9 @@ const ROW_COUNT_TABLE_MAP = {
   phase_available_activities: 'challenges',
   onchain_accounts: 'onchain_accounts',
   account_delegation_periods: 'account_delegation_periods',
-  leaderboard_snapshots: 'leaderboard_snapshots',
-  token_allocation: 'token_allocation',
+  // leaderboard_snapshots and token_allocation are NOT 1:1 (the §8.4 merge
+  // combines colliding rows) — they get dedicated merge-aware checks in
+  // gateRowCounts below, next to the user_enrollments one.
   epoch_stats: 'epoch_stats',
   chains: 'chains',
   vrf_obligations: 'vrf_obligations',
@@ -247,6 +248,68 @@ async function gateRowCounts(ctx) {
     results.push(skip('row-count: phase_participants -> user_enrollments', 'target table or id-map tables missing'));
   }
 
+  // `leaderboard_snapshots` and `token_allocation` are merge-combined the
+  // same way (the loader folds colliding post-merge rows into one), so
+  // their expected counts are DISTINCT key tuples after pushing every
+  // source row through the id maps — not the raw source row count.
+  const mergeAwareCounts = [
+    {
+      name: 'row-count: leaderboard_snapshots -> leaderboard_snapshots',
+      targetTable: 'leaderboard_snapshots',
+      fetchSource: () =>
+        querySource(sourcePool, 'SELECT participant_id, phase_id, snapshot_at FROM leaderboard_snapshots'),
+      mapTables: ['_mig_map_participants', '_mig_map_phases'],
+      keyOf: (row, maps) => {
+        const userId = maps._mig_map_participants.get(String(row.participant_id));
+        const eventId = maps._mig_map_phases.get(String(row.phase_id));
+        if (!userId || !eventId) return null;
+        return `${userId}:${eventId}:${new Date(row.snapshot_at).getTime()}`;
+      },
+    },
+    {
+      name: 'row-count: token_allocation -> token_allocation',
+      targetTable: 'token_allocation',
+      fetchSource: () => querySource(sourcePool, 'SELECT participant_id, season_id FROM token_allocation'),
+      mapTables: ['_mig_map_participants', '_mig_map_seasons'],
+      keyOf: (row, maps) => {
+        const userId = maps._mig_map_participants.get(String(row.participant_id));
+        const seasonId = maps._mig_map_seasons.get(String(row.season_id));
+        if (!userId || !seasonId) return null;
+        return `${userId}:${seasonId}`;
+      },
+    },
+  ];
+  for (const check of mergeAwareCounts) {
+    const mapsPresent = (await Promise.all(check.mapTables.map((t) => tableExists(targetClient, t)))).every(Boolean);
+    if (!(await tableExists(targetClient, check.targetTable)) || !mapsPresent) {
+      results.push(skip(check.name, 'target table or id-map tables missing'));
+      continue;
+    }
+    try {
+      const { rows: srcRows } = await check.fetchSource();
+      const maps = {};
+      for (const mapTable of check.mapTables) {
+        const { rows } = await targetClient.query(`SELECT source_id, target_id FROM ${mapTable}`);
+        maps[mapTable] = new Map(rows.map((r) => [String(r.source_id), String(r.target_id)]));
+      }
+      const distinctKeys = new Set();
+      for (const row of srcRows) {
+        const key = check.keyOf(row, maps);
+        if (key !== null) distinctKeys.add(key);
+      }
+      const expected = distinctKeys.size;
+      const { rows: targetRows } = await targetClient.query(`SELECT COUNT(*)::int AS n FROM ${check.targetTable}`);
+      const targetCount = targetRows[0].n;
+      results.push(
+        targetCount === expected
+          ? pass(check.name, `${targetCount} rows (${srcRows.length} source rows, merge-combined)`)
+          : fail(check.name, `expected ${expected} distinct post-merge keys from ${srcRows.length} source rows, got ${targetCount}`)
+      );
+    } catch (err) {
+      results.push(skip(check.name, `source table unreadable: ${err.message}`));
+    }
+  }
+
   for (const [sourceTable, targetTable] of Object.entries(ROW_COUNT_TABLE_MAP)) {
     const exists = await tableExists(targetClient, targetTable);
     if (!exists) {
@@ -364,7 +427,7 @@ async function gateAwardBackfillCount(ctx) {
 // row or attributes it to the wrong event, this sum stops matching.
 // ─────────────────────────────────────────────────────────────────────
 async function gateRecomputationSafety(ctx) {
-  const { targetClient } = ctx;
+  const { targetClient, sourcePool } = ctx;
   const sql = `
     WITH latest AS (
       SELECT DISTINCT ON (season_event_id, user_id) season_event_id, user_id, extra_points
@@ -382,12 +445,94 @@ async function gateRecomputationSafety(ctx) {
      WHERE l.extra_points <> COALESCE(r.recomputed_extra, 0)
   `;
   const { rows } = await targetClient.query(sql);
+  if (rows.length === 0) return [pass('recomputation-safety: extra_points')];
+
+  // A mismatch here is NOT automatically a loader bug: the source itself
+  // holds "orphaned" activity points — activities awarded to a
+  // participant in a phase where that participant has NO snapshot row at
+  // the phase's final tick (verified in prod: points admin-awarded to a
+  // human's OLD account after they switched to a new one; the old
+  // account never snapshotted in that phase, so the points are invisible
+  // in every source leaderboard AND absent from global_leaderboard). The
+  // §8.4 merge unifies the ledger under one user, which surfaces exactly
+  // that residue. The migration deliberately does NOT rewrite snapshot
+  // totals to include it (that would silently change user-visible
+  // points — a product decision, not a load step), so this gate
+  // tolerates a mismatch IFF it equals the residue measured from the
+  // source: the activities of merged-group members not represented at
+  // the group's latest snapshot tick for that phase. Anything else
+  // still fails.
+  if (!sourcePool) {
+    return [
+      fail(
+        'recomputation-safety: extra_points',
+        `${rows.length} (user, event) pairs where SUM(user_activities.points) != stored extra_points (no source connection to check the orphaned-points allowance)`
+      ),
+    ];
+  }
+  // _mig_map_participants already encodes the §8.4 merge (every source
+  // participant id -> its canonical user's target id), so no re-derivation
+  // of the email grouping is needed here.
+  const { rows: pMap } = await targetClient.query('SELECT source_id, target_id FROM _mig_map_participants');
+  const { rows: phMap } = await targetClient.query('SELECT source_id, target_id FROM _mig_map_phases');
+  const participantToUser = new Map(pMap.map((r) => [String(r.source_id), String(r.target_id)]));
+  const phaseToEvent = new Map(phMap.map((r) => [String(r.source_id), String(r.target_id)]));
+
+  // Latest snapshot tick per (participant, phase), and the group max.
+  const { rows: lastTicks } = await querySource(
+    sourcePool,
+    'SELECT participant_id, phase_id, MAX(snapshot_at) AS last_at FROM leaderboard_snapshots GROUP BY 1, 2'
+  );
+  const lastTickByPair = new Map(); // "pid:phase" -> ms
+  const maxTickByUserEvent = new Map(); // "userId:eventId" -> ms
+  for (const r of lastTicks) {
+    const ms = new Date(r.last_at).getTime();
+    lastTickByPair.set(`${r.participant_id}:${r.phase_id}`, ms);
+    const key = `${participantToUser.get(String(r.participant_id))}:${phaseToEvent.get(String(r.phase_id))}`;
+    maxTickByUserEvent.set(key, Math.max(maxTickByUserEvent.get(key) ?? -Infinity, ms));
+  }
+
+  // Residue per (user, event): activity + extra points of source accounts
+  // NOT present at the group's final tick.
+  const residueByUserEvent = new Map();
+  const addResidue = (participantId, phaseId, points) => {
+    const userId = participantToUser.get(String(participantId));
+    const eventId = phaseToEvent.get(String(phaseId));
+    if (!userId || !eventId) return;
+    const key = `${userId}:${eventId}`;
+    const own = lastTickByPair.get(`${participantId}:${phaseId}`);
+    const groupMax = maxTickByUserEvent.get(key);
+    if (groupMax !== undefined && own === groupMax) return; // represented at final tick
+    residueByUserEvent.set(key, (residueByUserEvent.get(key) ?? 0) + (Number(points) || 0));
+  };
+  const { rows: acts } = await querySource(
+    sourcePool,
+    'SELECT participant_id, phase_id, COALESCE(SUM(points), 0) AS pts FROM offchain_activities GROUP BY 1, 2'
+  );
+  for (const r of acts) addResidue(r.participant_id, r.phase_id, r.pts);
+  const { rows: extras } = await querySource(
+    sourcePool,
+    'SELECT participant_id, phase_id, COALESCE(SUM(points), 0) AS pts FROM activity_extra_points GROUP BY 1, 2'
+  );
+  for (const r of extras) addResidue(r.participant_id, r.phase_id, r.pts);
+
+  const unexplained = [];
+  let explainedPoints = 0;
+  for (const row of rows) {
+    const gap = Number(row.recomputed_extra) - Number(row.extra_points);
+    const residue = residueByUserEvent.get(`${row.user_id}:${row.season_event_id}`) ?? 0;
+    if (Math.abs(gap - residue) > 0.01) unexplained.push(row);
+    else explainedPoints += residue;
+  }
   return [
-    rows.length === 0
-      ? pass('recomputation-safety: extra_points')
+    unexplained.length === 0
+      ? pass(
+          'recomputation-safety: extra_points',
+          `${rows.length} mismatch(es) fully explained by ${explainedPoints} orphaned source points (activities on merged accounts absent from their phase's final snapshot tick)`
+        )
       : fail(
           'recomputation-safety: extra_points',
-          `${rows.length} (user, event) pairs where SUM(user_activities.points) != stored extra_points`
+          `${unexplained.length} (user, event) pairs where SUM(user_activities.points) != stored extra_points beyond the orphaned-points allowance`
         ),
   ];
 }
@@ -468,9 +613,15 @@ async function gatePointsInvariants(ctx) {
   // `global_leaderboard` has no offchain_points column (verified against
   // the real schema: participant_id, total_points, phases_participated,
   // rank, ...) — and only total_points is consumed below anyway.
+  //
+  // season_id IS NULL is load-bearing: the real table keeps one row per
+  // (participant, season) PLUS a season-less all-time row (see the
+  // partial unique index global_leaderboard_participant_global_unique).
+  // §8.7 says to compare against "the source's season-less rows" —
+  // reading all rows double-counts every participant's total.
   const { rows: glRows } = await querySource(
     sourcePool,
-    'SELECT participant_id, total_points FROM global_leaderboard'
+    'SELECT participant_id, total_points FROM global_leaderboard WHERE season_id IS NULL'
   );
   const { rows: mapRows } = await targetClient.query('SELECT source_id, target_id FROM _mig_map_participants');
   const participantToUser = new Map(mapRows.map((r) => [String(r.source_id), String(r.target_id)]));
