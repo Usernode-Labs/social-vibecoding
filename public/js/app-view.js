@@ -1606,6 +1606,9 @@ const AppView = {
 
   // Open a topic full-screen. Called by the cards' tap handler, the
   // Discussion buttons, and chat reference chips (revealInDrawer).
+  // Returns switchTab's promise so callers that must not act until the
+  // destination has painted (e.g. submitImportPr, which closes its dialog
+  // afterwards) can await it. Fire-and-forget callers are unaffected.
   openTopic(kind, id) {
     if (!kind || !id) return;
     // Drop any on-demand proposal cached for a previous topic so its row
@@ -1615,7 +1618,7 @@ const AppView = {
     // flag here would freeze the next issue's header repaints.
     AppView._editingIssueTitle = null;
     if (typeof App !== 'undefined' && App.switchTab) {
-      App.switchTab('dev', { kind, id }, 'topic');
+      return App.switchTab('dev', { kind, id }, 'topic');
     }
   },
 
@@ -8377,12 +8380,25 @@ const AppView = {
   },
 
   // #687 — PR-import picker. Lists open PRs (not already imported) from
-  // GET /pr-import/candidates; importing one POSTs /pr-import and lands the
-  // user on the resulting proposal thread — the same navigation
-  // createProposal() performs. Mirrors the promptFork / submitFork /
-  // closeForkModal shape. A 404 from the candidates endpoint degrades to
-  // the GitHub-off/empty message rather than crashing.
+  // GET /pr-import/candidates; importing one POSTs /pr-import.
+  //
+  // #846: the POST is awaited IN PLACE (progress row, dimmed list, frozen
+  // buttons — see _importPrBusy) and only a server-confirmed import routes
+  // the user, to the new proposal's DISCUSSION page (openTopic('proposal'))
+  // — never the dev-chat session view. An imported proposal has no dev
+  // session by design (see the sessionBtn / importedNote branches in
+  // _renderProposalCard / _proposalDetailsHtml), and that view renders an
+  // empty transcript with a live composer until the minutes-long staging
+  // build lands. The proposal page is complete on arrival and refreshes
+  // itself on checks_ready / staging_ready. Mirrors the promptFork /
+  // submitFork / closeForkModal shape. A 404 from the candidates endpoint
+  // degrades to the GitHub-off/empty message rather than crashing.
   _importPrSelected: null,
+  // True while the import POST is in flight — freezes the dialog and makes
+  // the backdrop-dismiss handler a no-op (a dismiss mid-request would strand
+  // the user with an import they can't see the outcome of).
+  _importPrBusy: false,
+  _importPrSlowTimer: null,
 
   async openImportPrModal() {
     if (!AppView.appData || !AppView.appData.slug) return;
@@ -8396,6 +8412,20 @@ const AppView = {
     if (submitBtn) submitBtn.disabled = true;
     list.innerHTML = '<div class="text-sm text-zinc-500 dark:text-zinc-400 py-6 text-center">Loading open pull requests…</div>';
     AppView.revealModal(modal);
+    await AppView._loadImportPrCandidates();
+  },
+
+  // Fetch + render the candidate rows into the (already open) picker.
+  // Split out of openImportPrModal so a 409 "already imported" can refresh
+  // the list in place, dropping the stale row the user just tried.
+  async _loadImportPrCandidates() {
+    if (!AppView.appData || !AppView.appData.slug) return;
+    const list = document.getElementById('import-pr-list');
+    const err = document.getElementById('import-pr-error');
+    const submitBtn = document.getElementById('import-pr-submit');
+    if (!list) return;
+    AppView._importPrSelected = null;
+    if (submitBtn) submitBtn.disabled = true;
     let data = {};
     let ok = false;
     try {
@@ -8444,6 +8474,9 @@ const AppView = {
   },
 
   closeImportPrModal() {
+    // Never dismiss out from under an in-flight import — the user would be
+    // left with no idea whether the proposal was created.
+    if (AppView._importPrBusy) return;
     const modal = document.getElementById('import-pr-modal');
     const err = document.getElementById('import-pr-error');
     if (modal) modal.classList.add('hidden');
@@ -8451,17 +8484,75 @@ const AppView = {
     if (err) { err.classList.add('hidden'); err.textContent = ''; }
   },
 
+  // #846: freeze / unfreeze the picker around the import POST. `on` shows
+  // the progress row (naming the PR), dims the list so a second choice
+  // can't be made mid-request, disables BOTH buttons (Cancel is disabled
+  // rather than hidden so the footer doesn't reflow), and arms the ~8s
+  // "still working" line. Every exit path calls it with `false` so the slow
+  // timer can't outlive the request.
+  _setImportPrBusy(on, prNumber) {
+    AppView._importPrBusy = !!on;
+    const list = document.getElementById('import-pr-list');
+    const progress = document.getElementById('import-pr-progress');
+    const progressText = document.getElementById('import-pr-progress-text');
+    const slow = document.getElementById('import-pr-progress-slow');
+    const cancelBtn = document.getElementById('import-pr-cancel');
+    const submitBtn = document.getElementById('import-pr-submit');
+    if (AppView._importPrSlowTimer) {
+      clearTimeout(AppView._importPrSlowTimer);
+      AppView._importPrSlowTimer = null;
+    }
+    if (slow) slow.classList.add('hidden');
+    if (on) {
+      if (progressText) {
+        progressText.textContent =
+          `Importing PR #${prNumber} — checking it on GitHub and creating the proposal…`;
+      }
+      if (progress) progress.classList.remove('hidden');
+      if (list) list.classList.add('pointer-events-none', 'opacity-50');
+      if (cancelBtn) cancelBtn.disabled = true;
+      if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Importing…'; }
+      AppView._importPrSlowTimer = setTimeout(() => {
+        if (AppView._importPrBusy && slow) slow.classList.remove('hidden');
+      }, 8000);
+      return;
+    }
+    if (progress) progress.classList.add('hidden');
+    if (list) list.classList.remove('pointer-events-none', 'opacity-50');
+    if (cancelBtn) cancelBtn.disabled = false;
+    if (submitBtn) {
+      submitBtn.textContent = 'Import';
+      // A selection may have been dropped by a list refresh (409 already
+      // imported) — re-enable only when something is still picked.
+      submitBtn.disabled = AppView._importPrSelected == null;
+    }
+  },
+
+  // Turn an import failure into copy the user can act on. The server's own
+  // 404/409 strings are already user-grade (PR not found / not open /
+  // already imported / GitHub not configured), so they win; the status-code
+  // branches cover the ones that aren't (503 = drainGuard mid-deploy).
+  _importPrErrorMessage(status, serverError, prNumber) {
+    if (serverError) return serverError;
+    if (status === 404) return `PR #${prNumber} wasn’t found on GitHub — it may have been deleted.`;
+    if (status === 409) return `PR #${prNumber} can’t be imported right now.`;
+    if (status === 503) return 'The platform is restarting — try the import again in a few seconds.';
+    return 'Something went wrong importing this PR. Please try again.';
+  },
+
   async submitImportPr(e) {
     if (e) e.preventDefault();
     if (!AppView.appData || !AppView.appData.slug) return;
+    if (AppView._importPrBusy) return;
     const pr = AppView._importPrSelected;
     const err = document.getElementById('import-pr-error');
-    const submitBtn = document.getElementById('import-pr-submit');
     const showErr = (msg) => {
       if (err) { err.textContent = msg; err.classList.remove('hidden'); }
     };
     if (pr == null) return showErr('Pick a pull request to import.');
-    if (submitBtn) { submitBtn.disabled = true; submitBtn.textContent = 'Importing…'; }
+    if (err) { err.classList.add('hidden'); err.textContent = ''; }
+    AppView._setImportPrBusy(true, pr);
+    let sessionId = null;
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(AppView.appData.slug)}/pr-import`, {
         method: 'POST',
@@ -8470,19 +8561,36 @@ const AppView = {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        // Keep the list open so the user can pick another PR.
-        showErr(data.error || `Import failed (HTTP ${res.status}).`);
+        const msg = AppView._importPrErrorMessage(res.status, data.error, pr);
+        // Keep the dialog open so the user can pick another PR. An
+        // already-imported 409 means the list is stale — reload it so the
+        // row they just tried disappears.
+        const alreadyImported = res.status === 409
+          && /already been imported/i.test(String(data.error || ''));
+        AppView._setImportPrBusy(false);
+        if (alreadyImported) await AppView._loadImportPrCandidates();
+        showErr(msg);
         return;
       }
-      AppView.closeImportPrModal();
-      if (typeof App !== 'undefined' && App.switchTab) {
-        await App.switchTab('dev', data.sessionId, 'sessions');
-      }
+      sessionId = data.sessionId;
     } catch (_) {
+      AppView._setImportPrBusy(false);
       showErr('Network error — please try again.');
-    } finally {
-      if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Import'; }
+      return;
     }
+    // Import confirmed. Land on the proposal's discussion page, THEN close
+    // the dialog — so it covers the transition instead of flashing the
+    // screen the user came from.
+    AppView._setImportPrBusy(false);
+    try {
+      await AppView.openTopic('proposal', sessionId);
+    } catch (_) {
+      // The proposal exists regardless; say so rather than swallowing it.
+      if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) {
+        PlatformUI.toast(`PR #${pr} was imported — find it in the Dev proposals list.`);
+      }
+    }
+    AppView.closeImportPrModal();
   },
 
   // Share modal — exposes the app's bare subdomain URL so users can pass
@@ -8668,6 +8776,21 @@ const AppView = {
     // than stranding an empty view.
     if (!DevChat.currentSession || String(DevChat.currentSession.id) !== String(restoreSessionId)) {
       if (typeof App !== 'undefined' && App.switchTab) App.switchTab('dev');
+      return;
+    }
+
+    // #846: an imported PR has NO dev chat — its code lives on GitHub and
+    // this view would render an empty transcript with a live composer (see
+    // the importedNote in _proposalDetailsHtml). Any route that still
+    // reaches it (old bookmark, Back button, pasted link) lands on the
+    // proposal's discussion page instead. Nulling currentSession is enough
+    // teardown: the heartbeat interval openSession armed no-ops without it,
+    // and the outer switchTab's trailing updateHash() reads the topic state
+    // the redirect just set, so the URL follows.
+    if (DevChat.currentSession.source === 'imported') {
+      const importedId = Number(restoreSessionId);
+      DevChat.currentSession = null;
+      AppView.openTopic('proposal', importedId);
       return;
     }
 

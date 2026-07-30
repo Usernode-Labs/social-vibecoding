@@ -55,6 +55,8 @@ function mockHeadSha(prNumber, rev = 0) {
 const FIXTURE_HEADS = {
   9310: 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0',
   9311: 'f0e9d8c7b6a5049382716f5e4d3c2b1a09f8e7d6',
+  // #846: the "just imported, preview still building" fixture.
+  9312: 'c4d3b2a1908f7e6d5c4b3a29180f7e6d5c4b3a29',
 };
 
 // Importable candidates surfaced by listOpenPulls (not tied to any DB row

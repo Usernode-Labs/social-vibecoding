@@ -789,6 +789,18 @@
       <h2 class="text-lg font-bold mb-1">Import a PR as a proposal</h2>
       <p class="text-xs text-zinc-500 mb-4">Pick an open pull request to turn into a proposal people can vote on. It goes straight into voting, just like a native proposal.</p>
       <div id="import-pr-list" class="max-h-80 overflow-y-auto overscroll-contain -mx-1 px-1 space-y-2"></div>
+      <!-- #846: in-flight progress row. The import POST talks to GitHub, so
+           the dialog stays put (list dimmed, buttons disabled) until the
+           server confirms — only then does the user get routed to the new
+           proposal's page. The slow line appears after ~8s so a slow GitHub
+           reads as "still working", not as a hung dialog. -->
+      <div id="import-pr-progress" class="hidden mt-3 text-sm text-zinc-500 dark:text-zinc-400">
+        <div class="flex items-center gap-2">
+          <span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>
+          <span id="import-pr-progress-text"></span>
+        </div>
+        <div id="import-pr-progress-slow" class="hidden mt-1 text-xs opacity-80">Still working — GitHub is being slow. Don’t close this window.</div>
+      </div>
       <div id="import-pr-error" class="text-red-400 text-sm hidden mt-3"></div>
       <div class="flex gap-3 mt-5">
         <button type="button" id="import-pr-cancel" class="flex-1 rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>

@@ -2279,10 +2279,27 @@ function sessionRoutes(config) {
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.user_id = $2
            AND cs.status IN ('active', 'promoted')
-           AND cs.is_headless = FALSE`,
+           AND cs.is_headless = FALSE
+           -- #846: an imported PR has no dev chat — its branch belongs to an
+           -- external author on GitHub. Excluded here so a stray client can
+           -- never dispatch an AI dev turn onto someone else's branch; the
+           -- 409 below names the reason rather than a bare 404.
+           AND cs.source IS DISTINCT FROM 'imported'`,
         [req.params.id, req.user.id]
       );
-      if (!sessionRows.length) return res.status(404).json({ error: 'Active session not found' });
+      if (!sessionRows.length) {
+        const { rows: importedRows } = await pool.query(
+          `SELECT 1 FROM chat_sessions
+            WHERE id = $1 AND user_id = $2 AND source = 'imported'`,
+          [req.params.id, req.user.id]
+        );
+        if (importedRows.length) {
+          return res.status(409).json({
+            error: 'This proposal was imported from GitHub — it has no dev chat. Discuss it on the proposal page instead.',
+          });
+        }
+        return res.status(404).json({ error: 'Active session not found' });
+      }
       const session = sessionRows[0];
 
       // Resolve who pays for this turn once up front (#212): the shared

@@ -249,10 +249,98 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
     }));
 }
 
+// #687 Slice 1 / #846 — the IMPORT-TIME checks kick. Called (un-awaited) by
+// POST /api/apps/:slug/pr-import once the proposal row exists, so the route
+// can answer immediately while the SHA-pinned staging build runs behind it.
+// Sibling of rerunChecksForNewHead above — same sequence, same mock-mode
+// short-circuit — kept here rather than inline in the route so it is
+// testable on its own.
+//
+// #846: the staging_ready broadcast at the end is what makes an open
+// proposal page grow its Preview pill the moment the build lands, instead of
+// waiting minutes for the checks verdict to arrive and trigger a refetch.
+// It must fire AFTER the staging_url persist: Caddy's on-demand TLS gate
+// only approves a host once chat_sessions.staging_url equals it.
+//
+// Never throws — every failure is logged, and a genuine build failure is
+// recorded as a terminal 'error' verdict by recordStagingBootFailure so the
+// merge gate doesn't dead-end on a NULL/pending state.
+async function kickImportedChecks({ config, pool, session, app, headSha }) {
+  const visuals = require('./visuals');
+  const staging = require('./staging');
+  try {
+    await visuals.setChecksPending(pool, session.id, headSha || null)
+      .catch((err) => log.warn('pr-import-sync', 'import setChecksPending failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      }));
+    visuals.notifyChecksPending(session.id, headSha || null);
+
+    // #687 Slice 6: in mock-GitHub mode there is no real repo to clone, so
+    // skip the staging build entirely and record a gate-passing 'skipped'
+    // verdict — the imported proposal shows a neutral (mergeable) check so
+    // the whole preview flow (import → vote → merge) is exercisable.
+    if (usesMockGithubForImports()) {
+      await visuals.storeChecksSkipped(pool, session.id, headSha || null,
+        'mock GitHub preview — automated checks not run')
+        .catch((err) => log.warn('pr-import-sync', 'import mock storeChecksSkipped failed (non-fatal)', {
+          sessionId: session.id, err: err.message,
+        }));
+      return;
+    }
+
+    let result;
+    try {
+      result = await staging.buildAndDeployStaging(config, session, app, headSha || 'latest');
+    } catch (err) {
+      const stagingRecovery = require('./staging-recovery');
+      await stagingRecovery.recordStagingBootFailure({
+        config, pool, session, commitHash: headSha || null, err,
+      }).catch((e) => log.warn('pr-import-sync', 'import recordStagingBootFailure failed (non-fatal)', {
+        sessionId: session.id, err: e.message,
+      }));
+      throw err;
+    }
+
+    await pool.query(
+      `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
+      [result.containerId, result.stagingUrl, session.id]
+    );
+    await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+
+    // Tell any open proposal page the preview is live (see above for why
+    // this is ordered after the persist). No chat_session_messages row: an
+    // imported proposal has no transcript surface to render it.
+    try {
+      const { broadcastGlobal, pushSessionUpdate } = require('./ws');
+      broadcastGlobal({
+        type: 'session_event', sessionId: session.id,
+        event: 'staging_ready', url: result.stagingUrl,
+      });
+      pushSessionUpdate({
+        action: 'staging_ready', sessionId: session.id, appSlug: app.slug,
+      });
+    } catch (err) {
+      log.warn('pr-import-sync', 'import staging_ready notify failed (non-fatal)', {
+        sessionId: session.id, err: err.message,
+      });
+    }
+
+    visuals.captureForSession(config, session, app, headSha || null, result)
+      .catch((err) => log.warn('pr-import-sync', 'import visuals capture failed', {
+        sessionId: session.id, err: err.message,
+      }));
+  } catch (err) {
+    log.warn('pr-import-sync', 'import staging build failed', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+}
+
 module.exports = {
   syncImportedProposal,
   applyHeadChange,
   refreshDriftState,
   rerunChecksForNewHead,
+  kickImportedChecks,
   parseRepo,
 };
