@@ -709,6 +709,147 @@ async function run(config, job) {
   });
 }
 
+// ─── Orphaned staging-DATABASE sweep ────────────────────────────────────
+//
+// The container-driven passes above only drop a staging database while
+// tearing down a matching CONTAINER. Historically, when the container was
+// already gone the database was deliberately left behind ("a leaked staging
+// DB is inert and cheap" — reapOne below). At scale that assumption failed:
+// by 2026-07-30 production had accumulated 3,479 staging databases (198 GB,
+// >1/3 of the disk) of which 8 were live. Every one bloats the cluster
+// catalog, feeds autovacuum churn, and slows anything that enumerates
+// pg_database.
+//
+// This pass reconciles the other direction: enumerate `%_staging_%`
+// databases and drop the ones nothing can ever reach again. A database is
+// ORPHANED iff ALL of:
+//   - its name parses as a staging clone (app_<slug>_staging_s<id>_<tag>);
+//   - the embedded session has no live preview (staging_url IS NULL, or the
+//     session row is gone entirely);
+//   - no staging build is in flight for that session (staging.js
+//     hasInFlightBuild — a build's clone exists before staging_url points
+//     at it);
+//   - no client backend is currently connected to it (belt-and-braces for
+//     anything the in-flight check doesn't model; autovacuum workers don't
+//     count or an orphan being vacuumed would be immortal).
+//
+// Deliberately NOT keyed on the staging_url-derived hash: a session with a
+// live preview keeps ALL its clone DBs until the preview itself is torn
+// down. Stale siblings of a live preview are rare and small; mis-dropping
+// the live clone is not recoverable. Conservative wins.
+const DEFAULT_ORPHAN_DB_SWEEP_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6h
+const DEFAULT_ORPHAN_DB_SWEEP_LIMIT = 200;
+
+// app_<slug>_staging_s<sessionId>_<tag>, where tag is a 6-hex commit prefix
+// or the literal 'latest' (unpinned builds flow 'latest' into stagingDbName
+// verbatim). Anchored parse; anything else is left alone.
+const STAGING_DB_NAME_RE = /^app_[a-z0-9_]+_staging_s(\d+)_([0-9a-f]{6}|latest)$/;
+
+function orphanDbSweepIntervalMs() {
+  const raw = parseInt(process.env.STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS || '', 10);
+  if (!Number.isFinite(raw) || raw < 0) return DEFAULT_ORPHAN_DB_SWEEP_INTERVAL_MS;
+  return raw;   // 0 disables
+}
+
+function orphanDbSweepLimit() {
+  const raw = parseInt(process.env.STAGING_ORPHAN_DB_SWEEP_LIMIT || '', 10);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_ORPHAN_DB_SWEEP_LIMIT;
+  return raw;
+}
+
+let _lastOrphanDbSweepStartedAt = 0;
+
+function orphanDbSweepDue(nowMs = Date.now()) {
+  const interval = orphanDbSweepIntervalMs();
+  if (interval <= 0) return false;
+  return nowMs - _lastOrphanDbSweepStartedAt >= interval;
+}
+
+/**
+ * Pure classification, extracted for testability. Returns the subset of
+ * `dbNames` that are safe to drop.
+ *
+ * @param dbNames           all datnames to consider
+ * @param liveSessionIds    Set<number> of sessions with staging_url set
+ * @param connectedDbNames  Set<string> of datnames with client backends
+ * @param hasInFlightBuild  (sessionId: number) => boolean
+ */
+function selectOrphanDbs({ dbNames, liveSessionIds, connectedDbNames, hasInFlightBuild }) {
+  const orphans = [];
+  for (const name of dbNames) {
+    const m = STAGING_DB_NAME_RE.exec(name);
+    if (!m) continue;                                // not a staging clone — never touch
+    const sessionId = Number(m[1]);
+    if (liveSessionIds.has(sessionId)) continue;     // live preview
+    if (hasInFlightBuild && hasInFlightBuild(sessionId)) continue; // mid-build clone
+    if (connectedDbNames.has(name)) continue;        // someone is using it
+    orphans.push(name);
+  }
+  return orphans;
+}
+
+/**
+ * The automatic orphan-DB pass. Drops up to `limit` orphaned staging
+ * databases per pass. NEVER THROWS — the caller is the same sweeper tick
+ * that runs sweepStale.
+ */
+async function sweepOrphanDbs(config, { limit = null } = {}) {
+  const cap = limit || orphanDbSweepLimit();
+  const summary = { examined: 0, orphaned: 0, dropped: 0, failed: 0 };
+  _lastOrphanDbSweepStartedAt = Date.now();
+  try {
+    // A staging preview's clone contains a (scrubbed, stale) copy of the
+    // platform's chat_sessions table: computing "live" from it would be
+    // fiction, and it has no docker socket to drop with anyway.
+    if (isStagingEnv()) return summary;
+
+    const pool = getPool(config);
+    const staging = require('./staging');
+
+    const [dbs, live, connected] = await Promise.all([
+      pool.query(`SELECT datname FROM pg_database WHERE datname LIKE '%\\_staging\\_%'`),
+      pool.query(`SELECT id FROM chat_sessions WHERE staging_url IS NOT NULL`),
+      pool.query(`SELECT DISTINCT datname FROM pg_stat_activity
+                  WHERE backend_type = 'client backend' AND datname IS NOT NULL`),
+    ]);
+    summary.examined = dbs.rows.length;
+
+    const orphans = selectOrphanDbs({
+      dbNames: dbs.rows.map((r) => r.datname),
+      liveSessionIds: new Set(live.rows.map((r) => Number(r.id))),
+      connectedDbNames: new Set(connected.rows.map((r) => r.datname)),
+      hasInFlightBuild: staging.hasInFlightBuild,
+    });
+    summary.orphaned = orphans.length;
+    if (!orphans.length) return summary;
+
+    const batch = orphans.slice(0, cap);
+    log.info('staging-reap', 'Orphan staging-DB pass started', {
+      examined: summary.examined, orphaned: orphans.length,
+      acting: batch.length, deferred: orphans.length - batch.length,
+    });
+
+    // Serial on purpose: DROP DATABASE forces WAL/checkpoint work, and this
+    // pass must stay invisible in host I/O next to live staging restores.
+    for (const dbName of batch) {
+      try {
+        await dbManager.dropDatabase(dbName);
+        summary.dropped++;
+      } catch (err) {
+        summary.failed++;
+        log.warn('staging-reap', 'Orphan staging-DB drop failed', {
+          dbName, err: err.message,
+        });
+      }
+    }
+    log.info('staging-reap', 'Orphan staging-DB pass finished', summary);
+    return summary;
+  } catch (err) {
+    log.warn('staging-reap', 'Orphan staging-DB pass errored', { err: err.message });
+    return summary;
+  }
+}
+
 /**
  * One preview's unit of work. Never throws — every path resolves to an
  * outcome string so a single stuck container can't take the sweep down.
@@ -835,6 +976,10 @@ module.exports = {
   staleSweepDue,
   staleSweepIntervalMs,
   staleSweepLimit,
+  sweepOrphanDbs,
+  selectOrphanDbs,
+  orphanDbSweepDue,
+  STAGING_DB_NAME_RE,
   reapOne,
   CONTAINER_NAME_RE,
   VOTE_BACKED_STATUSES,
