@@ -22,6 +22,16 @@ if (!frontmatter) {
   if (!/^name:\s*ui-development$/m.test(frontmatter[1])) violations.push("SKILL.md name must match its directory")
 }
 
+const claudeAdapterPath = path.join(repoRoot, "CLAUDE.md")
+if (!fs.existsSync(claudeAdapterPath)) {
+  violations.push("CLAUDE.md must import the canonical AGENTS.md instructions")
+} else {
+  const claudeAdapter = fs.readFileSync(claudeAdapterPath, "utf8")
+  if (!/^@AGENTS\.md$/m.test(claudeAdapter)) {
+    violations.push("CLAUDE.md must import the canonical AGENTS.md instructions")
+  }
+}
+
 const openaiYaml = fs.readFileSync(path.join(repoRoot, "agent-skills/ui-development/agents/openai.yaml"), "utf8")
 for (const key of ["display_name", "short_description", "default_prompt"]) {
   if (!new RegExp(`^\\s+${key}:`, "m").test(openaiYaml)) violations.push(`agents/openai.yaml is missing ${key}`)

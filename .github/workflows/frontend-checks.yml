@@ -20,6 +20,7 @@ on:
       - ".github/workflows/deploy.yml"
       - "server.js"
       - "AGENTS.md"
+      - "CLAUDE.md"
       - "agent-skills/ui-development/**"
       - "docs/react-migration.md"
       - "tool/**"

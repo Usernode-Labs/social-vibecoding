@@ -40,6 +40,20 @@ scripts, CI, adapters, and current live-agent evidence.
    use its exact, expiring ledger for existing migration copy rather than
    pretending subjective writing judgment is mechanically decidable.
 
+## Commit messages
+
+Write for a future reader who has the diff but not the task conversation.
+
+- Use an imperative subject that describes the outcome, not the files changed.
+- Add a body only when the change has context the diff cannot explain.
+- Preserve the reason for the change and any important decision, tradeoff, or
+  intentional deviation.
+- Record meaningful verification that was actually performed and any known
+  remaining risk that affects future work.
+- Omit empty headings, diff summaries, file lists, session transcripts,
+  abandoned debugging paths, and agent, model, token, or task metadata.
+- Never claim a test or check passed unless it was run.
+
 ## Design-authority scope
 
 The Candidate A design authority governs only the React platform shell:

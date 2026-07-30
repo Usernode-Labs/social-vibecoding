@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url"
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const roots = [
   "AGENTS.md",
+  "CLAUDE.md",
   "frontend/AGENTS.md",
   "agent-skills/ui-development",
   "tool/ui-workflow.mjs",
