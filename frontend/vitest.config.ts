@@ -15,6 +15,7 @@ export default defineConfig({
   test: {
     projects: [
       {
+        extends: path.join(dirname, "vite.config.ts"),
         plugins: [
           storybookTest({
             configDir: path.join(dirname, ".storybook"),

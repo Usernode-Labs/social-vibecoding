@@ -1,8 +1,4 @@
-import * as a11yAddonAnnotations from "@storybook/addon-a11y/preview"
-import { setProjectAnnotations } from "@storybook/react-vite"
-
-import * as projectAnnotations from "./preview"
-
-// Explicit annotations avoid Storybook's generated setup importing the
-// CommonJS `aria-query` package through an incompatible ESM named-export path.
-setProjectAnnotations([a11yAddonAnnotations, projectAnnotations])
+// Keep the stylesheet explicit in the browser-test setup. Storybook 10.3+
+// auto-provisions preview and addon annotations; the retired manual setup
+// disabled that path and dropped preview CSS.
+import "../src/index.css"

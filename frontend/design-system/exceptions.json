@@ -368,11 +368,10 @@
       "file": "@/components/ui/badge.tsx",
       "matches": [
         "dark:aria-invalid:ring-destructive/40",
-        "dark:bg-destructive/20",
         "dark:focus-visible:ring-destructive/40",
         "dark:hover:bg-muted/50"
       ],
-      "count": 4,
+      "count": 3,
       "owner": "frontend-platform",
       "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
       "expires": "2026-09-30"
