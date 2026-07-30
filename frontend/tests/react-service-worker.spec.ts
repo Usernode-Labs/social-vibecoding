@@ -106,27 +106,21 @@ test("keeps one old deployment available to an already-open tab after the new wo
   await page.evaluate(async () => {
     const registration = await navigator.serviceWorker.getRegistration("/react/")
     if (!registration) throw new Error("Missing fixture registration")
-    await registration.update()
     await new Promise<void>((resolve, reject) => {
       const deadline = window.setTimeout(() => reject(new Error("New worker did not claim the old client")), 5000)
-      const sync = async () => {
-        const controller = navigator.serviceWorker.controller
-        if (controller) {
-          const channel = new MessageChannel()
-          channel.port1.onmessage = (event) => {
-            if (!String(event.data?.buildRevision || "").startsWith("old-")) {
-              window.clearTimeout(deadline)
-              resolve()
-            } else {
-              window.setTimeout(sync, 50)
-            }
-          }
-          controller.postMessage({ type: "get-react-shell-status" }, [channel.port2])
-        } else {
-          window.setTimeout(sync, 50)
-        }
+      const oldController = navigator.serviceWorker.controller
+      const claimed = () => {
+        if (navigator.serviceWorker.controller === oldController) return
+        window.clearTimeout(deadline)
+        navigator.serviceWorker.removeEventListener("controllerchange", claimed)
+        resolve()
       }
-      void sync()
+      navigator.serviceWorker.addEventListener("controllerchange", claimed)
+      void registration.update().catch((cause) => {
+        window.clearTimeout(deadline)
+        navigator.serviceWorker.removeEventListener("controllerchange", claimed)
+        reject(cause)
+      })
     })
   })
 
@@ -280,7 +274,7 @@ test("real web logout clears legacy user caches while preserving unrelated cache
   })
 })
 
-test("keeps the user on settings and surfaces a failed cache deletion", async ({ page }) => {
+test("routes a failed cache deletion to the pending sign-out screen", async ({ page }) => {
   await page.goto("/react/settings")
   await expect.poll(() => page.locator("html").getAttribute("data-react-shell-ready")).toBe("true")
   const status = await workerStatus(page)
@@ -300,8 +294,8 @@ test("keeps the user on settings and surfaces a failed cache deletion", async ({
   await page.getByRole("button", { name: "Log out" }).click()
   await page.getByRole("button", { name: "Log out" }).last().click()
 
-  await expect(page).toHaveURL(/\/react\/settings$/)
-  await expect(page.getByRole("heading", { level: 1, name: "Finish signing out" })).toBeVisible()
+  await expect(page).toHaveURL(/\/react\/login\?cleanup=pending$/)
+  await expect(page.getByRole("heading", { level: 2, name: "Finish signing out" })).toBeVisible()
   await expect(page.getByRole("alert")).toContainText("Local cleanup required")
   await expect(page.getByRole("alert")).toContainText(
     "Clear offline session data before signing in again on this device.",
