@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { GroupDiscussionComposer } from "@/features/dev/group-discussion"
 
 const meta = {
-  title: "Dev/Group discussion composer",
+  title: "Blocks/Dev/Group discussion composer",
   component: GroupDiscussionComposer,
   parameters: { layout: "fullscreen" },
   decorators: [(Story) => <div className="mx-auto min-h-dvh max-w-3xl bg-background p-4 sm:p-8"><Story /></div>],

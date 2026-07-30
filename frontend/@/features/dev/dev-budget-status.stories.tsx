@@ -12,7 +12,7 @@ const sharedBudget = {
 }
 
 const meta = {
-  title: "Dev/Budget status",
+  title: "Blocks/Dev/Budget status",
   component: DevBudgetStatusView,
   parameters: { layout: "padded" },
 } satisfies Meta<typeof DevBudgetStatusView>

@@ -4,7 +4,7 @@ import { Bell, ExternalLink, Search, Trophy } from "lucide-react"
 import { PlatformIcon } from "@/components/platform-icon"
 
 const meta = {
-  title: "Foundation/Platform icon",
+  title: "Elements/Platform icon",
   component: PlatformIcon,
   parameters: { layout: "centered" },
   decorators: [(Story) => <div className="flex items-center gap-4 rounded-lg border p-4"><Story /></div>],

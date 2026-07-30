@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { NativeDeviceSummary } from "@/features/account/native-device-summary"
 
 const meta = {
-  title: "Account/Native device summary",
+  title: "Blocks/Account/Native device summary",
   component: NativeDeviceSummary,
   parameters: { layout: "padded" },
   decorators: [(Story) => <div className="mx-auto max-w-3xl"><Story /></div>],

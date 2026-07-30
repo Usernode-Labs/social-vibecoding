@@ -4,7 +4,7 @@ import { expect, within } from "storybook/test"
 import { AppIdentity } from "@/features/apps/app-identity"
 
 const meta = {
-  title: "Apps/App identity",
+  title: "Elements/App identity",
   component: AppIdentity,
   parameters: { layout: "centered" },
   decorators: [(Story) => <div className="flex items-center gap-4 rounded-lg border bg-card p-6 text-card-foreground"><Story /></div>],

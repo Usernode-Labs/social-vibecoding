@@ -18,7 +18,7 @@ const snapshot = {
 }
 
 const meta = {
-  title: "Dev/Board",
+  title: "Features/Dev/Board",
   component: DevBoard,
   parameters: { layout: "padded" },
   decorators: [(Story) => <div className="mx-auto max-w-7xl bg-background p-4"><Story /></div>],

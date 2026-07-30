@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { DevVoteControls } from "@/features/dev/dev-vote-controls"
 
 const meta = {
-  title: "Dev/Vote controls",
+  title: "Blocks/Dev/Vote controls",
   component: DevVoteControls,
   parameters: { layout: "padded" },
 } satisfies Meta<typeof DevVoteControls>

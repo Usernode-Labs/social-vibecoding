@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 
 import { SubmittedFeaturesList } from "@/features/admin/admin-features"
 
-const meta = { title: "Admin/Submitted features", component: SubmittedFeaturesList, parameters: { layout: "padded" }, decorators: [(Story) => <div className="mx-auto max-w-5xl"><Story /></div>] } satisfies Meta<typeof SubmittedFeaturesList>
+const meta = { title: "Features/Admin/Submitted features", component: SubmittedFeaturesList, parameters: { layout: "padded" }, decorators: [(Story) => <div className="mx-auto max-w-5xl"><Story /></div>] } satisfies Meta<typeof SubmittedFeaturesList>
 export default meta
 type Story = StoryObj<typeof meta>
 

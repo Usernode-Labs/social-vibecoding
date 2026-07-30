@@ -23,7 +23,7 @@ const recipeBot: AppRecord = {
 }
 
 const meta = {
-  title: "Apps/Home app shortcut",
+  title: "Blocks/Apps/Home app shortcut",
   component: HomeAppShortcut,
   parameters: { layout: "centered" },
   decorators: [

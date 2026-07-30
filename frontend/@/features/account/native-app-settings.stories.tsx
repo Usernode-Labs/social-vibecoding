@@ -80,7 +80,7 @@ function UnavailableSurface() {
 }
 
 const meta = {
-  title: "Account/Native app settings",
+  title: "Blocks/Account/Native app settings",
   component: NativeAppSettings,
   parameters: { layout: "padded" },
   decorators: [(Story) => <div className="mx-auto max-w-3xl"><Story /></div>],

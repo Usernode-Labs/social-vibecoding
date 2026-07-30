@@ -8,7 +8,7 @@ const drafts = [
 ]
 
 const meta = {
-  title: "Dev/Saved drafts",
+  title: "Blocks/Dev/Saved drafts",
   component: DevSavedDraftsView,
   args: {
     drafts,

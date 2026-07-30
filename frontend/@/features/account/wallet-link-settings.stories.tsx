@@ -15,7 +15,7 @@ const request = {
 }
 
 const meta = {
-  title: "Account/Wallet link settings",
+  title: "Blocks/Account/Wallet link settings",
   component: WalletLinkSettingsView,
   parameters: { layout: "padded" },
   decorators: [(Story) => <div className="mx-auto max-w-3xl"><Story /></div>],

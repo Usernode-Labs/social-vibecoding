@@ -41,7 +41,7 @@ function StreamingConversation() {
 }
 
 const meta = {
-  title: "Dev/Conversation",
+  title: "Blocks/Dev/Conversation",
   component: DevConversation,
   parameters: { layout: "centered" },
   decorators: [(Story) => <div className="w-[min(42rem,calc(100vw-2rem))] bg-background p-4"><Story /></div>],

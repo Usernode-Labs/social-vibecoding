@@ -10,7 +10,7 @@ const messages: GroupChatMessage[] = [
 ]
 
 const meta = {
-  title: "Dev/Group discussion",
+  title: "Blocks/Dev/Group discussion",
   component: GroupDiscussionTranscript,
   parameters: { layout: "fullscreen" },
   decorators: [(Story) => <div className="min-h-dvh bg-background"><Story /></div>],

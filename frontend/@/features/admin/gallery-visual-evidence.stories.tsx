@@ -7,7 +7,7 @@ const secondPng = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 const video = "cccccccccccccccccccccccccccccccc"
 
 const meta = {
-  title: "Admin/Gallery visual evidence",
+  title: "Blocks/Admin/Gallery visual evidence",
   component: GalleryVisualEvidence,
   parameters: { layout: "padded" },
 } satisfies Meta<typeof GalleryVisualEvidence>

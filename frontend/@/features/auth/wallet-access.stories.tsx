@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { WalletAccessView } from "@/features/auth/wallet-access"
 
 const meta = {
-  title: "Authentication/Wallet access",
+  title: "Features/Authentication/Wallet access",
   component: WalletAccessView,
   parameters: { layout: "centered" },
   args: {

@@ -33,7 +33,7 @@ function LinkedWalletSurface() {
 }
 
 const meta = {
-  title: "Account/Password settings",
+  title: "Blocks/Account/Password settings",
   component: PasswordSettings,
   parameters: { layout: "padded" },
   decorators: [(Story) => <div className="mx-auto max-w-3xl"><Story /></div>],

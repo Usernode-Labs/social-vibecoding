@@ -9,7 +9,7 @@ const overview = {
 }
 
 const meta = {
-  title: "Admin/Operations overview",
+  title: "Features/Admin/Operations overview",
   component: AdminOperationsOverview,
   parameters: { layout: "padded" },
   decorators: [(Story) => <div className="mx-auto max-w-5xl"><Story /></div>],

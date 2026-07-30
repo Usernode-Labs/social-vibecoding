@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { AppVisibilitySettings } from "@/features/apps/app-visibility-settings"
 
 const meta = {
-  title: "Apps/App visibility settings",
+  title: "Blocks/Apps/App visibility settings",
   component: AppVisibilitySettings,
   parameters: { layout: "padded" },
   decorators: [

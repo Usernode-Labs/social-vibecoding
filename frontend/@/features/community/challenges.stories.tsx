@@ -25,7 +25,7 @@ const snapshot = {
 }
 
 const meta = {
-  title: "Community/Challenge feed",
+  title: "Features/Community/Challenge feed",
   component: ChallengeFeed,
   parameters: { layout: "padded" },
   decorators: [(Story) => <div className="mx-auto max-w-3xl"><Story /></div>],

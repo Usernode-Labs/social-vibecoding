@@ -23,7 +23,7 @@ const gameCorner: AppRecord = {
 }
 
 const meta = {
-  title: "Apps/Explore app card",
+  title: "Blocks/Apps/Explore app card",
   component: ExploreAppCard,
   parameters: { layout: "centered" },
   decorators: [

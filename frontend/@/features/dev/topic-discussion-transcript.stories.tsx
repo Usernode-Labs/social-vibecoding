@@ -33,7 +33,7 @@ const messages: GroupChatMessage[] = [
 ]
 
 const meta = {
-  title: "Dev/Topic discussion",
+  title: "Blocks/Dev/Topic discussion",
   component: TopicDiscussionContent,
   parameters: { layout: "fullscreen" },
   decorators: [(Story) => <div className="mx-auto min-h-dvh max-w-3xl bg-background p-4 sm:p-8"><Story /></div>],

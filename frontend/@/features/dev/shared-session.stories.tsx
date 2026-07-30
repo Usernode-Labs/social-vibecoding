@@ -11,7 +11,7 @@ const messages: GroupChatMessage[] = [
   { id: 2, user_id: 5, username: "Sam", content: "Keeping the existing search terms intact sounds right.", msg_type: "message", created_at: "2026-07-28T09:35:00.000Z" },
 ]
 
-const meta = { title: "Dev/SharedSessionDetail", component: SharedSessionDetailContent, parameters: { layout: "fullscreen" } } satisfies Meta<typeof SharedSessionDetailContent>
+const meta = { title: "Features/Dev/Shared session detail", component: SharedSessionDetailContent, parameters: { layout: "fullscreen" } } satisfies Meta<typeof SharedSessionDetailContent>
 export default meta
 type Story = StoryObj<typeof meta>
 

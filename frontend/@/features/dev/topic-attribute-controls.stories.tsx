@@ -25,7 +25,7 @@ const attributes = {
 }
 
 const meta = {
-  title: "Dev/Topic attribute controls",
+  title: "Blocks/Dev/Topic attribute controls",
   component: TopicAttributeControls,
   parameters: { layout: "padded" },
 } satisfies Meta<typeof TopicAttributeControls>

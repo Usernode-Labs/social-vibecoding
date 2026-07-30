@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { SpecSharingControls } from "@/features/dev/session-spec-viewer"
 
 const meta = {
-  title: "Dev/Session spec sharing",
+  title: "Blocks/Dev/Session spec sharing",
   component: SpecSharingControls,
   parameters: { layout: "padded" },
   args: {

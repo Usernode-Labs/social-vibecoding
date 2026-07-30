@@ -7,7 +7,7 @@ import { connectionPresentationStatus } from "@/features/platform/connection-pre
 import { nodePresentationStatus } from "@/features/platform/node-presentation-status"
 
 const meta = {
-  title: "Foundation/Status dot",
+  title: "Elements/Status dot",
   component: StatusDot,
   parameters: { layout: "centered" },
   decorators: [(Story) => <div className="rounded-lg border bg-card p-6 text-card-foreground"><Story /></div>],

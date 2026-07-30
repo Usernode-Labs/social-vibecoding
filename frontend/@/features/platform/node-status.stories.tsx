@@ -11,7 +11,7 @@ const snapshot = {
 }
 
 const meta = {
-  title: "Platform/Node status",
+  title: "Features/Platform/Node status",
   component: NodeStatusContent,
   parameters: { layout: "padded" },
   decorators: [(Story) => <div className="mx-auto max-w-5xl"><Story /></div>],

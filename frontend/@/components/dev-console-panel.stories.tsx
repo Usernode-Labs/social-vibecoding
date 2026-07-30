@@ -36,7 +36,7 @@ const entries: DevConsoleEntry[] = [
 ]
 
 const meta = {
-  title: "Platform/Developer console",
+  title: "Blocks/Shell/Developer console",
   component: DevConsolePanel,
   parameters: { layout: "fullscreen" },
   decorators: [(Story) => <div className="flex h-[32rem] flex-col"><Story /></div>],

@@ -77,7 +77,7 @@ function NavigationFixture({
 }
 
 const meta = {
-  title: "Shell/Platform navigation",
+  title: "Blocks/Shell/Platform navigation",
   component: PlatformNavigation,
   parameters: { layout: "fullscreen" },
   args: baseArgs,

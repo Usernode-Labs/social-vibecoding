@@ -3,7 +3,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { AppShareSheet } from "@/features/apps/app-share-sheet"
 
 const meta = {
-  title: "Apps/App share sheet",
+  title: "Blocks/Apps/App share sheet",
   component: AppShareSheet,
   args: {
     appName: "RecipeBot",

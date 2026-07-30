@@ -2,7 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 
 import { AdminUsersList } from "@/features/admin/admin-users"
 
-const meta = { title: "Admin/Users list", component: AdminUsersList, parameters: { layout: "padded" }, decorators: [(Story) => <div className="mx-auto max-w-5xl"><Story /></div>] } satisfies Meta<typeof AdminUsersList>
+const meta = { title: "Features/Admin/Users list", component: AdminUsersList, parameters: { layout: "padded" }, decorators: [(Story) => <div className="mx-auto max-w-5xl"><Story /></div>] } satisfies Meta<typeof AdminUsersList>
 export default meta
 type Story = StoryObj<typeof meta>
 
