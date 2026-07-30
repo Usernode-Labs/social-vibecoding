@@ -113,10 +113,15 @@ function authMiddleware(config) {
             const switchTok = qTok || (typeof hTok === 'string' ? hTok : null);
             if (switchTok) {
               let tokenUserId = null;
-              try {
-                const payload = platformJwt.verifyAppIdentityToken(switchTok, { appId: SELF_APP_ID });
-                if (payload && typeof payload.id === 'number') tokenUserId = payload.id;
-              } catch (_) { /* invalid token → keep the cookie session */ }
+              // App-identity (RS256) first, always. The legacy fallback is
+              // only reachable in a preview built by the pre-cutover
+              // platform — see platformJwt.legacyBootstrapActive().
+              const payload = platformJwt.orNull(
+                () => platformJwt.verifyAppIdentityToken(switchTok, { appId: SELF_APP_ID })
+              ) || (platformJwt.legacyBootstrapActive()
+                ? platformJwt.orNull(() => platformJwt.verifyLegacyBootstrapToken(switchTok))
+                : null);
+              if (payload && typeof payload.id === 'number') tokenUserId = payload.id;
               if (tokenUserId != null && tokenUserId !== rows[0].user_id) {
                 const minted = await tryMintSessionFromIframeJwt(pool, config, switchTok, res);
                 if (minted) {
@@ -195,11 +200,23 @@ function authMiddleware(config) {
 // resolved req.user shape on success, null on any failure (caller falls
 // through to redirectOrReject).
 async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
-  let payload;
-  try {
-    payload = platformJwt.verifyAppIdentityToken(jwtToken, { appId: SELF_APP_ID });
-  } catch (err) {
-    log.warn('auth', 'Staging iframe-JWT verification failed', { err: err.message });
+  // App-identity (RS256) first, always. Only if that fails AND this
+  // container is a pre-cutover preview (no key material, old shared
+  // secret present) do we fall back to the legacy bare-HS256 shape the
+  // deployed parent still mints — see
+  // platformJwt.legacyBootstrapActive() for why that can never be true
+  // in production, and for when to delete this.
+  let payload = platformJwt.orNull(
+    () => platformJwt.verifyAppIdentityToken(jwtToken, { appId: SELF_APP_ID })
+  );
+  if (!payload && platformJwt.legacyBootstrapActive()) {
+    payload = platformJwt.orNull(() => platformJwt.verifyLegacyBootstrapToken(jwtToken));
+    if (payload) {
+      log.warn('auth', 'Staging iframe-JWT accepted via pre-cutover bootstrap shim');
+    }
+  }
+  if (!payload) {
+    log.warn('auth', 'Staging iframe-JWT verification failed');
     return null;
   }
 

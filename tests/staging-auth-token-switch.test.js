@@ -227,9 +227,16 @@ test('an HS256 token forged with the public PEM does not switch identity', async
 // expect, so it must reject every token rather than accept an identity
 // minted for some other app. appAudience() throws on a non-integer, which
 // is what makes this fail closed for free.
+//
+// JWT_SECRET is deleted alongside it so this stays a pure fail-closed
+// assertion: with a legacy secret present AND no key material this
+// container would match the pre-cutover bootstrap shim's gate, which the
+// three tests after this one cover on purpose.
 test('without USERNODE_APP_ID every token is refused (fails closed)', async () => {
   const saved = process.env.USERNODE_APP_ID;
+  const savedSecret = process.env.JWT_SECRET;
   delete process.env.USERNODE_APP_ID;
+  delete process.env.JWT_SECRET;
   const pool = makePool(defaultHandlers());
   const { authMiddleware, restore } = loadMiddleware(pool);
   try {
@@ -243,5 +250,144 @@ test('without USERNODE_APP_ID every token is refused (fails closed)', async () =
   } finally {
     restore();
     process.env.USERNODE_APP_ID = saved;
+    if (savedSecret === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = savedSecret;
   }
+});
+
+// ── pre-cutover staging bootstrap shim ──────────────────────────────────
+//
+// A preview container's env is built by the DEPLOYED platform, which
+// predates app-identity-env.js: it injects the old shared HS256 secret and
+// neither IFRAME_JWT_PUBLIC_KEY nor USERNODE_APP_ID. Without the shim the
+// preview of the cutover itself is unopenable — the checks runner cannot
+// mint a session, so every assertion on an authenticated route fails.
+//
+// The shim's whole safety argument is its gate, so the gate is what these
+// tests pin: active only in that exact pre-cutover shape, inert the moment
+// ANY conjunct stops holding.
+
+// The legacy parent's token: bare HS256, no iss/aud/pur — the shape the
+// deployed /api/iframe-token still emits.
+function legacyToken(user, secret) {
+  return jwt.sign({ ...user, usernode_pubkey: null, locale: null }, secret, { expiresIn: '15m' });
+}
+
+// Drive the middleware with the env of a pre-cutover preview container.
+async function withPreCutoverEnv(fn, { overrides = {} } = {}) {
+  const saved = {
+    USERNODE_APP_ID: process.env.USERNODE_APP_ID,
+    IFRAME_JWT_PUBLIC_KEY: process.env.IFRAME_JWT_PUBLIC_KEY,
+    JWT_SECRET: process.env.JWT_SECRET,
+    USERNODE_ENV: process.env.USERNODE_ENV,
+  };
+  const target = {
+    USERNODE_APP_ID: undefined,
+    IFRAME_JWT_PUBLIC_KEY: undefined,
+    JWT_SECRET: 'legacy-shared-secret-0123456789abcdef',
+    USERNODE_ENV: 'staging',
+    ...overrides,
+  };
+  for (const [k, v] of Object.entries(target)) {
+    if (v === undefined) delete process.env[k];
+    else process.env[k] = v;
+  }
+  try {
+    return await fn(target.JWT_SECRET);
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+test('a pre-cutover preview accepts the legacy parent token via the shim', async () => {
+  await withPreCutoverEnv(async (secret) => {
+    assert.equal(platformJwt.legacyBootstrapActive(), true,
+      'the pre-cutover preview shape must satisfy the gate');
+    const pool = makePool(defaultHandlers());
+    const { authMiddleware, restore } = loadMiddleware(pool);
+    try {
+      const mw = authMiddleware({});
+      const token = legacyToken({ id: 3, username: 'usernode-capture-admin' }, secret);
+      const { req, nexted } = await run(mw, { token });
+      assert.equal(nexted, true);
+      assert.equal(req.user.id, 3, 'the checks-runner admin identity must win');
+      assert.equal(req.user.isAdmin, true);
+      assert.equal(pool.issued(/INSERT INTO sessions/), true);
+    } finally {
+      restore();
+    }
+  });
+});
+
+test('the shim still rejects a legacy token signed with the WRONG secret', async () => {
+  await withPreCutoverEnv(async () => {
+    const pool = makePool(defaultHandlers());
+    const { authMiddleware, restore } = loadMiddleware(pool);
+    try {
+      const mw = authMiddleware({});
+      const token = legacyToken({ id: 3, username: 'usernode-capture-admin' }, 'not-the-secret');
+      const { req, nexted } = await run(mw, { token });
+      assert.equal(nexted, true);
+      assert.equal(req.user.id, 2, 'a token we cannot verify must never switch identity');
+      assert.equal(pool.issued(/INSERT INTO sessions/), false);
+    } finally {
+      restore();
+    }
+  });
+});
+
+// The conjunct that makes the shim structurally unreachable in
+// production: config.js REQUIRED_PROD lists IFRAME_JWT_PUBLIC_KEY, so
+// production cannot boot without it, so this branch can never be taken
+// there no matter what else is set.
+test('the shim is inert once IFRAME_JWT_PUBLIC_KEY is present', async () => {
+  await withPreCutoverEnv(async (secret) => {
+    assert.equal(platformJwt.legacyBootstrapActive(), false,
+      'key material present → the real path only');
+    const pool = makePool(defaultHandlers());
+    const { authMiddleware, restore } = loadMiddleware(pool);
+    try {
+      const mw = authMiddleware({});
+      const { req, nexted } = await run(mw, {
+        token: legacyToken({ id: 3, username: 'usernode-capture-admin' }, secret),
+      });
+      assert.equal(nexted, true);
+      assert.equal(req.user.id, 2);
+      assert.equal(pool.issued(/INSERT INTO sessions/), false);
+    } finally {
+      restore();
+    }
+  }, { overrides: { IFRAME_JWT_PUBLIC_KEY: keys.IFRAME_JWT_PUBLIC_KEY } });
+});
+
+// Self-disabling: the moment the cutover is on main, appIdentityEnv()
+// gives every new preview USERNODE_APP_ID, and the shim is dead code.
+test('the shim is inert once USERNODE_APP_ID is present', async () => {
+  await withPreCutoverEnv(async () => {
+    assert.equal(platformJwt.legacyBootstrapActive(), false,
+      'a container that knows its app id is post-cutover');
+  }, { overrides: { USERNODE_APP_ID: '42' } });
+});
+
+test('the shim is inert outside staging, and with no legacy secret', async () => {
+  await withPreCutoverEnv(async () => {
+    assert.equal(platformJwt.legacyBootstrapActive(), false, 'production is never eligible');
+  }, { overrides: { USERNODE_ENV: 'production' } });
+
+  await withPreCutoverEnv(async () => {
+    assert.equal(platformJwt.legacyBootstrapActive(), false, 'nothing to verify against');
+  }, { overrides: { JWT_SECRET: undefined } });
+});
+
+// A caller that forgets the gate must not be able to smuggle a legacy
+// token into a container that has real key material.
+test('verifyLegacyBootstrapToken throws when the shim is not active', () => {
+  assert.equal(platformJwt.legacyBootstrapActive(), false);
+  assert.throws(
+    () => platformJwt.verifyLegacyBootstrapToken(legacyToken({ id: 3 }, 'whatever')),
+    /legacy bootstrap not active/
+  );
 });

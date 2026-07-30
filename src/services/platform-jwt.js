@@ -225,6 +225,66 @@ function orNull(fn) {
   try { return fn(); } catch { return null; }
 }
 
+// ── Pre-cutover staging bootstrap (TEMPORARY) ─────────────────────────
+//
+// A staging preview container's env is built by the platform that is
+// CURRENTLY DEPLOYED, not by the code in the branch being previewed. The
+// deployed platform predates services/app-identity-env.js, so it injects
+// only the old shared HS256 secret as JWT_SECRET — no
+// IFRAME_JWT_PUBLIC_KEY, no USERNODE_APP_ID. The new verify path
+// therefore fails closed on every parent-issued token, and the preview of
+// THIS cutover is unopenable: the checks runner cannot mint a session, so
+// every assertion on an authenticated route fails, and a human reviewer
+// lands on the login screen.
+//
+// The gate is a three-way conjunction, and each conjunct is load-bearing:
+//
+//   USERNODE_ENV === 'staging'   — production never reaches the two
+//                                  auth.js call sites at all, but pin it
+//                                  here too so the shim cannot be reached
+//                                  by a future non-staging caller.
+//   no IFRAME_JWT_PUBLIC_KEY     — config.js REQUIRED_PROD lists that key,
+//                                  so production cannot boot without it.
+//                                  This conjunct is UNSATISFIABLE in
+//                                  production, which is what makes the
+//                                  shim structurally unreachable there
+//                                  rather than merely unused.
+//   no USERNODE_APP_ID           — a container that DOES know its app id
+//                                  has been built by the post-cutover
+//                                  platform and must use the real path.
+//   JWT_SECRET present           — nothing to verify against otherwise.
+//
+// SELF-DISABLING, and that is the point: the moment this lands on main,
+// every newly built preview gets IFRAME_JWT_PUBLIC_KEY + USERNODE_APP_ID
+// from appIdentityEnv(), the second and third conjuncts go false forever,
+// and this code is dead. Delete it in the follow-up — it is not a
+// fallback the platform is meant to keep.
+//
+// Deliberately NOT wired into verifyAppIdentityToken(): the primary path
+// keeps its "no legacy branch anywhere" property, and every caller that
+// wants the shim has to name it explicitly.
+function legacyBootstrapActive() {
+  return process.env.USERNODE_ENV === 'staging'
+    && !process.env.IFRAME_JWT_PUBLIC_KEY
+    && !process.env.USERNODE_APP_ID
+    && !!process.env.JWT_SECRET;
+}
+
+// Verify a pre-cutover parent's iframe token: bare HS256 against the
+// shared secret, with no iss/aud/pur to check because the old signer
+// emitted none. Throws when the shim is not active, so a caller that
+// forgets the gate cannot accidentally accept one of these in a
+// container that has real key material.
+function verifyLegacyBootstrapToken(token) {
+  if (!legacyBootstrapActive()) {
+    throw new Error('platform-jwt: legacy bootstrap not active');
+  }
+  if (!token || typeof token !== 'string') throw new Error('jwt must be provided');
+  const claims = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
+  if (!claims || typeof claims !== 'object') throw new Error('invalid token payload');
+  return claims;
+}
+
 // ── Boot validation ───────────────────────────────────────────────────
 //
 // A mismatched RSA pair breaks every app login silently — the platform
@@ -278,4 +338,8 @@ module.exports = {
   verifyEdgeCookie,
   orNull,
   assertIframeKeyPair,
+  // Temporary, staging-only — see the block comment above. Remove with
+  // the follow-up once the cutover has deployed.
+  legacyBootstrapActive,
+  verifyLegacyBootstrapToken,
 };

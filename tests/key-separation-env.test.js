@@ -203,6 +203,72 @@ test("a token minted host-side verifies using only appIdentityEnv's own output",
   }
 });
 
+// ── 1a-bis. The pre-cutover bootstrap shim cannot reach a real container ─
+//
+// platform-jwt.js carries ONE temporary legacy verify path, for the window
+// where a preview container is built by the pre-cutover platform and so
+// has the old shared secret but no key material. It is a real weakening —
+// bare HS256, no iss/aud/pur — so its containment belongs in this suite
+// rather than only in the staging-auth tests that exercise its behaviour.
+//
+// The load-bearing claim is that the shim is UNREACHABLE, not merely
+// unused, anywhere a container has been given key material. That holds
+// because IFRAME_JWT_PUBLIC_KEY is in REQUIRED_PROD (asserted above), so
+// production cannot boot without it, so the gate's second conjunct is
+// unsatisfiable there. Pin it against the env every builder actually
+// emits: appIdentityEnv always sets IFRAME_JWT_PUBLIC_KEY and
+// USERNODE_APP_ID, so the shim is inert in every app container too — not
+// just on the host.
+test('the legacy bootstrap shim is inert wherever key material exists', () => {
+  assert.ok(REQUIRED_PROD.includes('IFRAME_JWT_PUBLIC_KEY'),
+    'the shim is only unreachable in production because config.js requires this key');
+
+  const { publicKey } = keyPair();
+  const containerEnv = appIdentityEnv({ id: 42 }, { iframeJwtPublicKey: publicKey });
+  assert.ok(containerEnv.IFRAME_JWT_PUBLIC_KEY, 'appIdentityEnv must set the public key');
+  assert.ok(containerEnv.USERNODE_APP_ID, 'appIdentityEnv must set the app id');
+
+  const savedEnv = {
+    USERNODE_ENV: process.env.USERNODE_ENV,
+    IFRAME_JWT_PUBLIC_KEY: process.env.IFRAME_JWT_PUBLIC_KEY,
+    USERNODE_APP_ID: process.env.USERNODE_APP_ID,
+    JWT_SECRET: process.env.JWT_SECRET,
+  };
+  const apply = (patch) => {
+    for (const [k, v] of Object.entries(patch)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  };
+  try {
+    // A post-cutover staging container: exactly appIdentityEnv's output,
+    // with the deprecated JWT_SECRET alias it also carries. The shim must
+    // be inert here — this is the state every preview reaches the moment
+    // the cutover is on main, which is what makes the shim self-deleting.
+    apply({
+      USERNODE_ENV: 'staging',
+      IFRAME_JWT_PUBLIC_KEY: containerEnv.IFRAME_JWT_PUBLIC_KEY,
+      USERNODE_APP_ID: containerEnv.USERNODE_APP_ID,
+      JWT_SECRET: containerEnv.JWT_SECRET,
+    });
+    assert.equal(platformJwt.legacyBootstrapActive(), false,
+      'a container built by the post-cutover platform must never take the legacy path');
+
+    // Production, with every platform key set: unreachable by construction.
+    apply({ USERNODE_ENV: 'production', JWT_SECRET: 'some-legacy-value' });
+    assert.equal(platformJwt.legacyBootstrapActive(), false,
+      'production must never take the legacy path');
+
+    // And the shim never *signs*: it is verify-only, so a container
+    // holding the legacy secret still cannot mint an identity.
+    assert.equal(typeof platformJwt.verifyLegacyBootstrapToken, 'function');
+    assert.equal(platformJwt.signLegacyBootstrapToken, undefined,
+      'the shim must expose no signing path');
+  } finally {
+    apply(savedEnv);
+  }
+});
+
 // ── 1b. Behavioral: the in-loop browser's app env ───────────────────────
 
 const inLoopBrowser = require('../src/services/in-loop-browser');

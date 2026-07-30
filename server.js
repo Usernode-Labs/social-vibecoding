@@ -503,7 +503,13 @@ app.get('/api/iframe-token', async (req, res) => {
   const pool = getPool(config);
   let appRow;
   try {
-    appRow = await appAccess.getAppForUser(pool, slug, req.user, 'view', 'id, slug');
+    // ACCESS_COLUMNS, not a trimmed list. checkAppAccess() reads
+    // `view_visibility` off the row it is handed and treats a MISSING
+    // column as public ("legacy rows mid-migration may briefly lack the
+    // column"). Project that column away and the gate below silently
+    // passes for every app — including the view-private ones whose
+    // existence the 404 is here to hide.
+    appRow = await appAccess.getAppForUser(pool, slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
   } catch (err) {
     log.error('iframe-token', 'App resolve failed', { slug, err: err.message });
     return res.status(500).json({ error: 'Internal server error' });
