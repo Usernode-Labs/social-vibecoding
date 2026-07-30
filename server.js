@@ -504,11 +504,12 @@ app.get('/api/iframe-token', async (req, res) => {
   let appRow;
   try {
     // ACCESS_COLUMNS, not a trimmed list. checkAppAccess() reads
-    // `view_visibility` off the row it is handed and treats a MISSING
-    // column as public ("legacy rows mid-migration may briefly lack the
-    // column"). Project that column away and the gate below silently
-    // passes for every app — including the view-private ones whose
-    // existence the 404 is here to hide.
+    // `view_visibility` off the row it is handed; trimming it away used to
+    // make the gate below silently pass for every app — including the
+    // view-private ones whose existence the 404 is here to hide. That
+    // default is gone (checkAppAccess now THROWS on a missing column, and
+    // the catch below turns it into a 500), but keep the full list: a 500
+    // on every iframe token is its own outage.
     appRow = await appAccess.getAppForUser(pool, slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
   } catch (err) {
     log.error('iframe-token', 'App resolve failed', { slug, err: err.message });
