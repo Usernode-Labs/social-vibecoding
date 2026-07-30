@@ -856,23 +856,46 @@ convention, gated entirely on `USERNODE_ENV === 'staging'`:
    reached `main`. It has since been removed; there is no legacy token
    shape any part of the platform still accepts.
 
-   **How a preview signs at all.** A staging clone is injected no platform
-   keys, but it is also a parent shell — every app view it renders fetches
-   `/api/iframe-token` for the embedded child — so with no private key that
-   endpoint 503s and every framed route logs a console error, failing the
-   console-error baseline check. `config.load()` therefore has a staging
-   clone **generate its own ephemeral RSA pair at boot**
-   (`platformJwt.generateStagingIframeKeyPair()`), and from there it runs the
-   byte-identical sign/verify path production does — same RS256 pin, same
-   issuer, same per-app audience, same `pur`. The pair lives only in the
-   process (a restart re-mints; tokens are 15m–1h and the shell refreshes),
-   is confined to that one clone (production verifies with production's key,
-   so a preview-minted token is refused everywhere else), and never reaches a
-   child container — `appIdentityEnv()` still propagates only the public
-   half. The generator refuses outright unless `USERNODE_ENV === 'staging'`,
-   and it never overwrites a key an operator did inject, so a real deployment
-   missing its key still fails loudly rather than self-signing around the
-   misconfiguration.
+   **How a preview signs at all — two issuers.** A clone receives the
+   production **public** key (`appIdentityEnv()` injects
+   `IFRAME_JWT_PUBLIC_KEY` into every container, the clone included) but
+   never a private one. That public key is load-bearing for the handoff
+   above: it is what verifies the production parent's `?token=`, and hence
+   what lets a preview mint a session at all. But the clone is *also* a
+   parent shell — every app view it renders fetches `/api/iframe-token` for
+   the embedded child — and with no private key that endpoint 503s, which is
+   a console error on load and fails the console-error baseline check on
+   every framed route.
+
+   So `config.load()` has a staging clone **generate its own ephemeral RSA
+   signing pair at boot** (`platformJwt.generateStagingIframeKeyPair()`),
+   giving it two trusted issuers: the production parent (injected public key)
+   and itself. `platformJwt.iframeVerifyKeys()` returns both, and each is
+   checked with identical pins — RS256, issuer `usernode`, per-app audience,
+   `pur: 'iframe'` — so this is a two-key keyring, not a relaxed check.
+   Production always has exactly one entry.
+
+   Details that matter if you touch this:
+
+   - **Generation is gated on the absence of the PRIVATE key only.** Gating
+     on "either half unset" is a no-op, because the public half is always
+     injected — that mistake shipped once and left the 503 in place.
+   - **The ephemeral pair lives in module state, not `process.env`.**
+     `config.load()` probes the pair whenever both env halves are present, so
+     writing an ephemeral private key beside production's injected public key
+     would fail that probe and hard-exit; the preview would not boot.
+   - **`IFRAME_JWT_PUBLIC_KEY` is never overwritten.** Doing so would break
+     the parent handoff and leave the checks runner on a login screen —
+     failing checks harder than the 503 did.
+   - The pair is ephemeral (a restart re-mints; tokens are 15m–1h and the
+     shell refreshes), confined to that one clone (production verifies with
+     production's key, so a preview-minted token is refused everywhere else),
+     and never reaches a child container — `appIdentityEnv()` still
+     propagates only the injected public half.
+   - The generator refuses outright unless `USERNODE_ENV === 'staging'`, is
+     idempotent within a process, and never overwrites an injected private
+     key — so a real deployment missing its key still answers the structured
+     `503` loudly rather than self-signing around the misconfiguration.
 3. On verify it loads the matching `users` row from the local clone
    (the row identity survives Phase 0/2c — only `password` and four
    other columns are scrubbed; `id`, `username`, and `is_admin` are

@@ -76,16 +76,54 @@ function pem(raw) {
   return String(raw || '').replace(/\\n/g, '\n').trim();
 }
 
+// The staging clone's self-generated signing pair, or null. Held in module
+// state and NOT in process.env deliberately — see
+// generateStagingIframeKeyPair() for why writing it to
+// IFRAME_JWT_PRIVATE_KEY would stop the preview booting at all.
+let _stagingSigningPair = null;
+
 function iframePrivateKey() {
   const key = pem(process.env.IFRAME_JWT_PRIVATE_KEY);
-  if (!key) throw new Error('IFRAME_JWT_PRIVATE_KEY not set — cannot sign app identity tokens');
-  return key;
+  if (key) return key;
+  // A staging clone has no injected private key; it signs with the pair it
+  // generated for itself at boot.
+  if (_stagingSigningPair) return _stagingSigningPair.privateKey;
+  throw new Error('IFRAME_JWT_PRIVATE_KEY not set — cannot sign app identity tokens');
 }
 
 function iframePublicKey() {
   const key = pem(process.env.IFRAME_JWT_PUBLIC_KEY);
   if (!key) throw new Error('IFRAME_JWT_PUBLIC_KEY not set — cannot verify app identity tokens');
   return key;
+}
+
+// The public halves this deployment trusts for app-identity tokens, in
+// order. Normally exactly one: the injected IFRAME_JWT_PUBLIC_KEY.
+//
+// A staging clone legitimately has TWO issuers, and conflating them is what
+// broke the first attempt at this fix:
+//
+//   1. the PRODUCTION parent shell, whose token arrives as `?token=` on the
+//      preview's iframe src and is what mints the preview's own session
+//      (middleware/auth.js). It is signed with production's private key, so
+//      it verifies only against the injected public key — which is why that
+//      value must never be overwritten in a clone.
+//   2. the CLONE ITSELF, which also acts as a parent shell for the app views
+//      it renders and signs those with its own ephemeral pair.
+//
+// Both are checked with identical pins (RS256, issuer, per-app audience,
+// `pur`) — this is a two-key keyring, not a relaxed check. The second entry
+// exists only when a staging clone generated a pair, so production always
+// has exactly one trusted key.
+function iframeVerifyKeys() {
+  const keys = [];
+  const injected = pem(process.env.IFRAME_JWT_PUBLIC_KEY);
+  if (injected) keys.push(injected);
+  if (_stagingSigningPair) keys.push(_stagingSigningPair.publicKey);
+  if (!keys.length) {
+    throw new Error('IFRAME_JWT_PUBLIC_KEY not set — cannot verify app identity tokens');
+  }
+  return keys;
 }
 
 function workerSecret() {
@@ -146,11 +184,30 @@ function signAppIdentityToken({ appId, user, ttl }) {
 }
 
 function verifyAppIdentityToken(token, { appId }) {
-  return verifyWith(token, iframePublicKey(), {
+  const opts = {
     algorithm: 'RS256',
     audience: appAudience(appId),
     purpose: PUR_IFRAME,
-  });
+  };
+  // Try each trusted public half. In production that is one key and this is
+  // a plain call; in a staging clone it is the production parent's key then
+  // the clone's own.
+  //
+  // The FIRST failure is what gets rethrown, not the last: the injected key
+  // is the primary authority, so its error is the diagnostic one. A token
+  // that is really a wrong-`pur` parent token would otherwise be reported as
+  // "invalid signature" (the second key's complaint) and send whoever reads
+  // the log looking for a key mismatch instead of a claim bug.
+  const keys = iframeVerifyKeys();
+  let firstErr = null;
+  for (const key of keys) {
+    try {
+      return verifyWith(token, key, opts);
+    } catch (err) {
+      if (!firstErr) firstErr = err;
+    }
+  }
+  throw firstErr;
 }
 
 // ── Worker → platform internal API ────────────────────────────────────
@@ -262,18 +319,40 @@ function orNull(fn) {
 // forged HS256 token, a wrong audience or a wrong issuer is refused here
 // exactly as it is in production.
 //
+// GATED ON THE PRIVATE KEY ALONE, and that is the whole bug in the first
+// attempt at this fix. A staging clone DOES receive IFRAME_JWT_PUBLIC_KEY:
+// services/app-identity-env.js injects it into every container, including
+// the clone, precisely so the clone can verify the production parent's
+// token. Bailing out when "either half is set" therefore never generated
+// anything, the signer kept throwing, and the 503 survived the fix.
+//
+// The pair lives in MODULE STATE, not process.env, for two reasons:
+//   - config.load() runs assertIframeKeyPair() whenever BOTH env halves are
+//     present. Writing an ephemeral private key next to production's
+//     injected public key would make that probe fail on a mismatched pair
+//     and hard-exit — the preview would not boot at all.
+//   - IFRAME_JWT_PUBLIC_KEY must keep its injected value so parent-issued
+//     tokens still verify (see iframeVerifyKeys()). Overwriting it would
+//     break the session handoff that gets the checks runner into the
+//     preview in the first place, failing every check harder.
+//
 // Two independent locks keep this out of production:
 //   1. it throws unless USERNODE_ENV === 'staging';
 //   2. config.load() only calls it on the staging branch, and production
-//      cannot boot without a real pair anyway (REQUIRED_PROD).
-// A configured key is never clobbered — an operator who DOES inject a
-// pair into a preview keeps it.
+//      cannot boot without a real private key anyway (REQUIRED_PROD).
+// An injected private key is never clobbered — an operator who DOES give a
+// preview a real signing key keeps it.
 function generateStagingIframeKeyPair() {
   if (process.env.USERNODE_ENV !== 'staging') {
     throw new Error('platform-jwt: refusing to self-sign outside staging');
   }
-  if (process.env.IFRAME_JWT_PRIVATE_KEY || process.env.IFRAME_JWT_PUBLIC_KEY) {
+  if (process.env.IFRAME_JWT_PRIVATE_KEY) {
     return { generated: false, bits: 0 };
+  }
+  if (_stagingSigningPair) {
+    // Idempotent: a second call must not rotate the key out from under
+    // tokens already minted in this process.
+    return { generated: false, bits: 0, alreadyGenerated: true };
   }
   const modulusLength = 2048;
   const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
@@ -281,14 +360,34 @@ function generateStagingIframeKeyPair() {
     publicKeyEncoding: { type: 'spki', format: 'pem' },
     privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
   });
-  // Written to process.env because that is where every reader already
-  // looks (iframePrivateKey/iframePublicKey read at CALL time, and
-  // config.iframeJwtPublicKey is derived from the same source), so the
-  // generated pair needs no new plumbing to reach the signer, the
-  // verifier or the container-env builders.
-  process.env.IFRAME_JWT_PRIVATE_KEY = privateKey;
-  process.env.IFRAME_JWT_PUBLIC_KEY = publicKey;
+  _stagingSigningPair = { privateKey, publicKey };
+
+  // Prove the generated pair actually round-trips before declaring success,
+  // the same property assertIframeKeyPair() guarantees for an injected pair.
+  // A clone that reports "self-signed ok" and then mints unverifiable
+  // tokens would be worse than one that plainly 503s.
+  try {
+    const probe = signAppIdentityToken({
+      appId: 1,
+      user: { id: 1, username: '__staging_probe__', usernode_pubkey: null, locale: null },
+      ttl: '1m',
+    });
+    verifyWith(probe, publicKey, {
+      algorithm: 'RS256',
+      audience: appAudience(1),
+      purpose: PUR_IFRAME,
+    });
+  } catch (err) {
+    _stagingSigningPair = null;
+    throw new Error(`self-signed pair failed its probe: ${err.message}`);
+  }
   return { generated: true, bits: modulusLength };
+}
+
+// Test seam: drop the self-generated pair so a suite can assert the
+// pre-generation state.
+function _resetStagingSigningPair() {
+  _stagingSigningPair = null;
 }
 
 // ── Boot validation ───────────────────────────────────────────────────
@@ -345,4 +444,6 @@ module.exports = {
   orNull,
   assertIframeKeyPair,
   generateStagingIframeKeyPair,
+  iframeVerifyKeys,
+  _resetStagingSigningPair,
 };
