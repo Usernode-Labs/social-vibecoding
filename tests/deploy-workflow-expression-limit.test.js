@@ -127,7 +127,10 @@ test('the base .env is composed in its own short step and forwarded as base64', 
     'single-line base64 survives $GITHUB_ENV and the ssh-action envs: forwarding');
   // The multi-line PEM is exactly why this cannot be a plain env var.
   assert.match(step, /GITHUB_PRIVATE_KEY='\$\{\{ secrets\.USERNODE_GITHUB_PRIVATE_KEY \}\}'/);
-  assert.match(step, /GIT_SHA=\$\{\{ github\.sha \}\}/);
+  assert.match(step, /GIT_SHA=\$\{\{ steps\.verified\.outputs\.source_sha \}\}/,
+    'the environment must identify the exact commit whose artifact passed verification');
+  assert.match(step, /SV_REACT_SHELL_REVISION=\$\{\{ steps\.verified\.outputs\.source_sha \}\}/,
+    'the served shell revision must match the exact verified artifact');
 });
 
 test('the ssh step forwards the blob and the target sha into the remote shell', () => {
@@ -135,7 +138,8 @@ test('the ssh step forwards the blob and the target sha into the remote shell', 
   const step = deploy.slice(deploy.indexOf('- name: Write .env and run docker compose'),
     deploy.indexOf('- name: Signal deploy finished'));
   assert.match(step, /BASE_ENV_B64: \$\{\{ env\.BASE_ENV_B64 \}\}/);
-  assert.match(step, /DEPLOY_SHA: \$\{\{ github\.sha \}\}/);
+  assert.match(step, /DEPLOY_SHA: \$\{\{ steps\.verified\.outputs\.source_sha \}\}/,
+    'the remote health probe must report the exact commit being deployed');
   const envs = step.match(/envs: ([^\n]+)/);
   assert.ok(envs, 'the ssh step must declare envs:');
   for (const name of ['BASE_ENV_B64', 'DEPLOY_SHA', 'GH_PLATFORM_ENV_B64']) {
