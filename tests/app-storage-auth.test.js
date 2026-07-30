@@ -11,14 +11,16 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
+const keys = require('./platform-keys').setPlatformKeys();
+const platformJwt = require('../src/services/platform-jwt');
 
 const { appStorageAuth } = require('../src/middleware/app-storage-auth');
 
-const JWT_SECRET = 'test-jwt-secret';
 const APP_TOKEN = 'b'.repeat(64);
+const APP_ID = 11;
 
 const state = {
-  app: { id: 11, slug: 'demo-app', storage_api_token: APP_TOKEN },
+  app: { id: APP_ID, slug: 'demo-app', storage_api_token: APP_TOKEN },
 };
 
 const pool = {
@@ -46,14 +48,32 @@ function makeReq({ ip = '10.0.0.5', appToken = APP_TOKEN, userToken } = {}) {
   return { ip, headers, socket: {}, path: '/api/app-storage/files' };
 }
 
-function userJwt(claims = { id: 7, username: 'tester' }, opts = {}) {
-  return jwt.sign(claims, JWT_SECRET, opts);
+// A real platform-minted user identity for THIS app.
+function userJwt(user = { id: 7, username: 'tester' }, { appId = APP_ID, ttl } = {}) {
+  return platformJwt.signAppIdentityToken({ appId, user, ttl });
+}
+
+// Hand-forged with the real private key so algorithm, issuer, audience and
+// `pur` all pass — only the claim shape is wrong. The sole route to the
+// middleware's belt-and-braces branch now that infrastructure tokens are a
+// separate authority. See tests/app-llm-proxy-auth.test.js.
+function forgedIdentity(extra) {
+  return jwt.sign(
+    { id: 7, username: 'tester', pur: 'iframe', ...extra },
+    keys.IFRAME_JWT_PRIVATE_KEY,
+    {
+      algorithm: 'RS256',
+      issuer: 'usernode',
+      audience: `usernode:app:${APP_ID}`,
+      expiresIn: '1h',
+    }
+  );
 }
 
 async function run(req) {
   const res = makeRes();
   let nexted = false;
-  const mw = appStorageAuth(pool, { jwtSecret: JWT_SECRET });
+  const mw = appStorageAuth(pool, {});
   await mw(req, res, () => { nexted = true; });
   return { res, nexted, req };
 }
@@ -97,23 +117,41 @@ test('garbage user token is rejected', async () => {
 });
 
 test('expired user token is rejected', async () => {
-  const token = userJwt({ id: 7 }, { expiresIn: '-1s' });
+  const token = userJwt({ id: 7 }, { ttl: '-1s' });
   const { res } = await run(makeReq({ userToken: token }));
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.code, 'bad_user_token');
 });
 
-test('scoped platform JWTs (infrastructure identities) are rejected', async () => {
-  const token = userJwt({ id: 7, scope: 'worker:session' });
-  const { res } = await run(makeReq({ userToken: token }));
+// A worker token is HS256 under its own key with its own audience — a
+// separate authority since key separation, so it dies at the verifier.
+test('a worker token is not a user token', async () => {
+  const { res } = await run(makeReq({ userToken: platformJwt.signWorkerToken({ sessionId: 5 }) }));
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.code, 'bad_user_token');
+});
+
+test('a correctly-signed identity carrying a scope claim is still refused', async () => {
+  const { res } = await run(makeReq({ userToken: forgedIdentity({ scope: 'worker:session' }) }));
   assert.equal(res.statusCode, 403);
   assert.equal(res.body.code, 'bad_user_token');
 });
 
 test('non-numeric id claim is rejected', async () => {
-  const token = userJwt({ id: 'seven' });
-  const { res } = await run(makeReq({ userToken: token }));
+  const { res } = await run(makeReq({ userToken: forgedIdentity({ id: 'seven' }) }));
   assert.equal(res.statusCode, 403);
+  assert.equal(res.body.code, 'bad_user_token');
+});
+
+// The cross-app replay hole the RSA cutover closes: app 11 presenting an
+// identity the user only ever handed to app 12, to write files (and burn
+// storage quota) as them.
+test('a user token minted for a DIFFERENT app is rejected', async () => {
+  const { res, nexted } = await run(makeReq({
+    userToken: userJwt({ id: 7, username: 'tester' }, { appId: 12 }),
+  }));
+  assert.equal(nexted, false);
+  assert.equal(res.statusCode, 401);
   assert.equal(res.body.code, 'bad_user_token');
 });
 
@@ -121,5 +159,5 @@ test('success path attaches req.appStorage', async () => {
   const { res, nexted, req } = await run(makeReq({ userToken: userJwt({ id: 7 }) }));
   assert.equal(res.statusCode, 200);
   assert.equal(nexted, true);
-  assert.deepEqual(req.appStorage, { appId: 11, appSlug: 'demo-app', userId: 7 });
+  assert.deepEqual(req.appStorage, { appId: APP_ID, appSlug: 'demo-app', userId: 7 });
 });

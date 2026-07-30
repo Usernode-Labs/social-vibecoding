@@ -79,7 +79,7 @@ const DEV_CONSOLE_FORWARDER = `
 const PLATFORM_DOMAIN = process.env.USERNODE_DOMAIN || 'social-vibecoding.usernodelabs.org';
 const PLATFORM_BASE_URL = `https://${PLATFORM_DOMAIN}`;
 
-function getTemplateFiles(appName, slug, dbUrl, jwtSecret) {
+function getTemplateFiles(appName, slug, dbUrl) {
   return [
     {
       path: 'CLAUDE.md',
@@ -162,8 +162,9 @@ node_modules
     },
     {
       // Per-app secrets manifest. Empty by default — apps that need
-      // env vars beyond the platform-injected DATABASE_URL/JWT_SECRET/
-      // PORT/USERNODE_ENV add entries here. The Usernode platform
+      // env vars beyond the platform-injected DATABASE_URL/
+      // USERNODE_JWT_PUBLIC_KEY/USERNODE_APP_ID/PORT/USERNODE_ENV add
+      // entries here. The Usernode platform
       // reads this on every deploy and refuses to start the container
       // if a required key has no stored value (see
       // src/services/app-secrets.js + app-manifest.js in the platform).
@@ -183,7 +184,8 @@ node_modules
       //       }
       //     ]
       //   }
-      // Reserved keys (DATABASE_URL, JWT_SECRET, PORT, USERNODE_ENV,
+      // Reserved keys (DATABASE_URL, USERNODE_JWT_PUBLIC_KEY,
+      // USERNODE_APP_ID, JWT_SECRET, PORT, USERNODE_ENV,
       // USERNODE_MISSING_SECRETS) are managed by the platform and
       // can't appear in this list.
       path: 'dapp.json',
@@ -199,7 +201,23 @@ const jwt = require('jsonwebtoken');
 const app = express();
 const port = process.env.PORT || 3000;
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-const JWT_SECRET = process.env.JWT_SECRET;
+
+// The platform signs user-identity tokens with an RSA private key it never
+// shares. Containers get only the PUBLIC half, so this app can verify who a
+// user is but cannot mint an identity — and neither can any other app.
+//
+// JWT_SECRET is a deprecated alias the platform still injects with the same
+// public PEM, so apps written before the RSA cutover keep working unchanged.
+// New code should read USERNODE_JWT_PUBLIC_KEY.
+const JWT_PUBLIC_KEY = (process.env.USERNODE_JWT_PUBLIC_KEY || process.env.JWT_SECRET || '')
+  .replace(/\\\\n/g, '\\n');
+
+// Tokens are minted for one app: the audience is this app's numeric id, so a
+// token issued for a different app is rejected below rather than accepted as
+// a valid user.
+const APP_AUDIENCE = process.env.USERNODE_APP_ID
+  ? 'usernode:app:' + process.env.USERNODE_APP_ID
+  : null;
 
 // Paths that stay open without authentication. Add a path here (and add it
 // with \`app.get\`/\`app.post\` below) if you deliberately want it public.
@@ -214,8 +232,20 @@ app.use(express.json());
 // on subsequent fetches.
 app.use((req, res, next) => {
   const token = req.query.token || req.headers['x-usernode-token'];
-  if (token && JWT_SECRET) {
-    try { req.user = jwt.verify(token, JWT_SECRET); } catch {}
+  if (token && JWT_PUBLIC_KEY && APP_AUDIENCE) {
+    try {
+      // Pin the algorithm, issuer and audience. Without \`algorithms\` a
+      // caller could hand us an HS256 token signed with the public PEM
+      // (which every app knows) and forge any user.
+      const claims = jwt.verify(token, JWT_PUBLIC_KEY, {
+        algorithms: ['RS256'],
+        issuer: 'usernode',
+        audience: APP_AUDIENCE,
+      });
+      // \`pur\` names what the token is for. Only user-identity tokens
+      // authenticate a person here.
+      if (claims && claims.pur === 'iframe') req.user = claims;
+    } catch {}
   }
 
   // Static assets (CSS/JS/images) are always served; the API and the HTML

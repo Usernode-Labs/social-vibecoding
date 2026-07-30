@@ -120,12 +120,12 @@ function load() {
     iframeJwtPublicKey: (process.env.IFRAME_JWT_PUBLIC_KEY || '').replace(/\\n/g, '\n'),
     workerJwtSecret: process.env.WORKER_JWT_SECRET || '',
     edgeJwtSecret: process.env.EDGE_JWT_SECRET || '',
-    // TRANSITIONAL (removed in the iframe cutover): the former shared
-    // secret, still the signing key for iframe/capture identity tokens
-    // and still injected into child containers as JWT_SECRET. Worker and
-    // edge authorities no longer read it. Do NOT add new call sites —
-    // use services/platform-jwt.js.
-    jwtSecret: process.env.JWT_SECRET || process.env.DATA_ENCRYPTION_KEY,
+    // The former single shared JWT_SECRET is GONE. All four token
+    // authorities (app identity RS256, worker, edge grant, edge cookie)
+    // read their own key from env via services/platform-jwt.js, and a
+    // token signed with the old shared value verifies nowhere. Child
+    // containers still receive a JWT_SECRET env var, but it carries the
+    // RSA PUBLIC key — see services/app-identity-env.js.
     githubAppId: process.env.GITHUB_APP_ID || '',
     githubPrivateKey: (process.env.GITHUB_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',

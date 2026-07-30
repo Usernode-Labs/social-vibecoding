@@ -797,23 +797,36 @@ bcrypt'd password (or seed a known one) into staging — both of which
 move credential material across the prod/staging boundary that Phase
 0/2c exists to enforce.
 
-**Implementation:** the platform already mints 1-hour JWTs at
-[/api/iframe-token](./server.js) signed with `config.jwtSecret`, and
-[public/js/app-view.js](./public/js/app-view.js) already rewrites every
-embedded iframe's `src` to include `?token=<JWT>` (with periodic
-refresh). [src/services/staging.js](./src/services/staging.js)
-propagates `JWT_SECRET` into every staging container, so a parent-issued
-JWT verifies against the same secret inside staging. Child apps already
-honor this — see "Auth — iframe token injection" in
+**Implementation:** the platform already mints 1-hour **RS256**
+app-identity JWTs at [/api/iframe-token](./server.js), signed with the
+iframe *private* key (`IFRAME_JWT_PRIVATE_KEY`, which never leaves the
+platform process). The caller must name the app it wants an identity
+for — `GET /api/iframe-token?app=<slug>` — and the slug is resolved
+through `appAccess.getAppForUser` at the `view` level, so you cannot
+mint an identity for an app you are not allowed to see (unknown slug and
+no-view-access return the same existence-hiding 404). The resulting
+token is *audience-scoped to one app*: `aud: usernode:app:<apps.id>`,
+plus `pur: 'iframe'`, so app A's token presented to app B fails the
+audience check. [public/js/app-view.js](./public/js/app-view.js) already
+rewrites every embedded iframe's `src` to include `?token=<JWT>` (with
+periodic refresh).
+[src/services/app-identity-env.js](./src/services/app-identity-env.js)
+propagates only the RSA **public** half into every child and staging
+container — as `USERNODE_JWT_PUBLIC_KEY`, `IFRAME_JWT_PUBLIC_KEY`, and
+(deprecated, same PEM under the legacy name for pre-cutover scaffolds)
+`JWT_SECRET` — together with `USERNODE_APP_ID`, from which the container
+builds its expected audience. A container can therefore *verify* a
+parent-issued identity and structurally *cannot mint* one. Child apps
+already honor this — see "Auth — iframe token injection" in
 [src/prompts/app-conventions.md](./src/prompts/app-conventions.md).
-`JWT_SECRET` is the *only* platform key that propagates: after phase-1
-key separation the data key, worker secret, edge secret and iframe
-private key are never placed in any child or staging container, and a
-staging clone resolves its at-rest key from the committed
-`config.stagingDataKey()` constant instead (which is why prod ciphertext
-is structurally undecryptable in a preview — not that any reaches one,
-since `app_secrets` / `platform_env_values` are `staging:private` and
-truncated by the clone).
+The public key is the *only* platform key material that propagates:
+after phase-1 key separation the data key, worker secret, edge secret
+and iframe **private** key are never placed in any child or staging
+container, and a staging clone resolves its at-rest key from the
+committed `config.stagingDataKey()` constant instead (which is why prod
+ciphertext is structurally undecryptable in a preview — not that any
+reaches one, since `app_secrets` / `platform_env_values` are
+`staging:private` and truncated by the clone).
 Phase 5 wires the platform's *own*
 [src/middleware/auth.js](./src/middleware/auth.js) to the same
 convention, gated entirely on `USERNODE_ENV === 'staging'`:
@@ -821,8 +834,20 @@ convention, gated entirely on `USERNODE_ENV === 'staging'`:
 1. Cookie path runs first, identical to prod.
 2. If the cookie is missing/stale **and** `USERNODE_ENV === 'staging'`,
    the middleware looks for `?token=<JWT>` (or the
-   `x-usernode-token` header) and verifies it against
-   `config.jwtSecret`.
+   `x-usernode-token` header) and verifies it with the iframe **public**
+   key — RS256, issuer `usernode`, audience
+   `usernode:app:${USERNODE_APP_ID}`, `pur: 'iframe'` — via
+   `platformJwt.verifyAppIdentityToken()`. A preview built by a
+   *pre-cutover* platform gets no `USERNODE_APP_ID` and no public key at
+   all; for that one window `platform-jwt.js` carries a staging-only
+   legacy bootstrap shim (see `legacyBootstrapActive()`), which is
+   structurally unreachable in production because
+   `IFRAME_JWT_PUBLIC_KEY` is in `REQUIRED_PROD`. The shim has **two**
+   halves, both temporary and both removed together: a verify half here,
+   and a mint half in `/api/iframe-token` — the self-app clone also acts
+   as the parent shell, and a preview has no `IFRAME_JWT_PRIVATE_KEY` to
+   sign with either. The removal checklist is in the block comment above
+   `legacyBootstrapActive()`.
 3. On verify it loads the matching `users` row from the local clone
    (the row identity survives Phase 0/2c — only `password` and four
    other columns are scrubbed; `id`, `username`, and `is_admin` are
@@ -833,17 +858,24 @@ convention, gated entirely on `USERNODE_ENV === 'staging'`:
    the cookie path short-circuits any later `?token=` value.
 
 **Trust chain:** parent prod admin auth (cookie) → parent
-`/api/iframe-token` (signed with shared `JWT_SECRET`) →
+`/api/iframe-token?app=<slug>` (RS256, signed with the platform-only
+iframe private key, `aud: usernode:app:<apps.id>`) →
 `AppView.refreshToken()` injects token on iframe `src` → staging
-middleware verifies → mints local 7-day session cookie.
+middleware verifies with the injected **public** key against its own
+`USERNODE_APP_ID` → mints local 7-day session cookie.
 
 **Why this is a downgraded credential:** in prod the same JWT is
 ignored — the production middleware never reads `req.query.token` /
 `x-usernode-token`. So a stolen iframe-token can authenticate against
 ephemeral staging clones (which are PR-scoped and short-lived) but
-never against prod itself. This matches the existing posture for
-child-app iframe tokens, which are also useless against the parent
-platform.
+never against prod itself. It is also scoped to a single app by its
+`usernode:app:<apps.id>` audience, so a token lifted out of one app's
+iframe is inert against every other app *and* against the self-app
+staging clone, whose `USERNODE_APP_ID` is the platform's own row. And
+because containers hold only the public half, a compromised container
+can verify tokens but cannot forge one. This matches the existing
+posture for child-app iframe tokens, which are also useless against the
+parent platform.
 
 **Forwarded env vars:** [staging.js](./src/services/staging.js) also
 forwards `USERNODE_DOMAIN` and `USERNODE_PLATFORM_REPO` from the

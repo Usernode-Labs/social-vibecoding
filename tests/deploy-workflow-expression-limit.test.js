@@ -159,12 +159,28 @@ test('the .env keys the platform cannot boot without are still all written', () 
     deploy.indexOf('- name: Sync repo to VPS'));
   for (const key of [
     'USERNODE_DOMAIN', 'ADMIN_USERNAME', 'ADMIN_PASSWORD', 'SESSION_SECRET',
-    'JWT_SECRET', 'USERNODE_DB_PASSWORD', 'GITHUB_APP_ID', 'GITHUB_PRIVATE_KEY',
+    'USERNODE_DB_PASSWORD', 'GITHUB_APP_ID', 'GITHUB_PRIVATE_KEY',
     'GITHUB_BOT_TOKEN', 'ANTHROPIC_API_KEY', 'GIT_SHA', 'LOG_LEVEL',
+    // config.js REQUIRED_PROD — boot exits 1 without any of these.
+    'DATA_ENCRYPTION_KEY', 'IFRAME_JWT_PRIVATE_KEY', 'IFRAME_JWT_PUBLIC_KEY',
+    'WORKER_JWT_SECRET', 'EDGE_JWT_SECRET',
   ]) {
     // Indented inside the YAML block scalar; the block's own indentation
     // is stripped before the runner shell sees the heredoc.
     assert.ok(new RegExp(`^\\s*${key}=`, 'm').test(step),
       `${key} missing from the composed .env`);
   }
+});
+
+// The retired shared secret. Nothing in the platform process verifies with
+// it any more, so writing it into the platform .env would only leave the
+// old value sitting under a name whose meaning changed (child containers
+// now receive JWT_SECRET = the RSA PUBLIC key, injected by
+// services/app-identity-env.js — never from this file).
+test('the retired shared JWT_SECRET is not written into the platform .env', () => {
+  const deploy = workflows.find((w) => w.file === 'deploy.yml').src;
+  const step = deploy.slice(deploy.indexOf('- name: Compose base .env'),
+    deploy.indexOf('- name: Sync repo to VPS'));
+  assert.ok(!/^\s*JWT_SECRET=/m.test(step),
+    'JWT_SECRET must not be composed into the platform .env');
 });

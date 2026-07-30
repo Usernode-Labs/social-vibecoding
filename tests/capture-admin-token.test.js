@@ -5,7 +5,9 @@
 // distribution.test.js:
 //   1. Behavioural — the pure token helpers in src/services/visuals.js
 //      (mintCaptureToken / selectCaptureTokens) plus withToken, exercised
-//      with a real jwt secret so the routing + fallback is verifiable.
+//      with a real RSA key pair so the routing + fallback is verifiable.
+//      Since the iframe cutover mintCaptureToken's second argument is the
+//      app id (the token audience), not a secret.
 //   2. Source guards — the read-only-admin capture identity seed contract
 //      on src/db/migrate.js (idempotent, is_admin + admin_readonly), and
 //      the visuals.js wiring that routes testsToken to the test URLs only.
@@ -16,12 +18,13 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const jwt = require('jsonwebtoken');
+require('./platform-keys').setPlatformKeys();
+const platformJwt = require('../src/services/platform-jwt');
 
 const visuals = require('../src/services/visuals');
 const { mintCaptureToken, selectCaptureTokens, withToken } = visuals;
 
-const SECRET = 'test-jwt-secret';
+const APP_ID = 11;
 const CAPTURE_USER = { id: 7, username: 'usernode-capture', usernode_pubkey: null };
 const ADMIN_USER = { id: 8, username: 'usernode-capture-admin', usernode_pubkey: null };
 
@@ -29,30 +32,47 @@ const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 // Decode the `token=` query param out of a capture URL and verify it.
 function tokenOf(url) {
   const m = /[?&]token=([^&#]+)/.exec(url);
-  return m ? jwt.verify(decodeURIComponent(m[1]), SECRET) : null;
+  return m
+    ? platformJwt.verifyAppIdentityToken(decodeURIComponent(m[1]), { appId: APP_ID })
+    : null;
 }
 
 // ── 1. Behavioural: mintCaptureToken ────────────────────────────────────
 
 test('mintCaptureToken returns "" for a missing user (degrade to unauth)', () => {
-  assert.equal(mintCaptureToken(null, SECRET), '');
-  assert.equal(mintCaptureToken(undefined, SECRET), '');
+  assert.equal(mintCaptureToken(null, APP_ID), '');
+  assert.equal(mintCaptureToken(undefined, APP_ID), '');
 });
 
 test('mintCaptureToken signs the iframe-token payload shape', () => {
-  const tok = mintCaptureToken(ADMIN_USER, SECRET);
+  const tok = mintCaptureToken(ADMIN_USER, APP_ID);
   assert.ok(tok);
-  const decoded = jwt.verify(tok, SECRET);
+  const decoded = platformJwt.verifyAppIdentityToken(tok, { appId: APP_ID });
   assert.equal(decoded.id, 8);
   assert.equal(decoded.username, 'usernode-capture-admin');
   assert.equal(decoded.usernode_pubkey, null);
+  // Same authority and purpose as a live iframe token — the capture
+  // browser hits the staging container through the ordinary token path.
+  assert.equal(decoded.pur, 'iframe');
+  assert.equal(decoded.iss, 'usernode');
+  assert.deepEqual(decoded.aud, `usernode:app:${APP_ID}`);
+  // Short-lived: a capture run is minutes, so the token is 15m, not 1h.
+  assert.equal(decoded.exp - decoded.iat, 15 * 60);
+});
+
+test('a capture token is scoped to the app it was minted for', () => {
+  const tok = mintCaptureToken(ADMIN_USER, APP_ID);
+  assert.throws(
+    () => platformJwt.verifyAppIdentityToken(tok, { appId: APP_ID + 1 }),
+    /audience/i
+  );
 });
 
 // ── 1. Behavioural: selectCaptureTokens routing + fallback ──────────────
 
 test('selectCaptureTokens: screenshots keep capture token, tests prefer admin token', () => {
-  const captureToken = mintCaptureToken(CAPTURE_USER, SECRET);
-  const adminToken = mintCaptureToken(ADMIN_USER, SECRET);
+  const captureToken = mintCaptureToken(CAPTURE_USER, APP_ID);
+  const adminToken = mintCaptureToken(ADMIN_USER, APP_ID);
   const { screenshotToken, testsToken } = selectCaptureTokens({ captureToken, adminToken });
   // Screenshots always sign as the non-admin capture user.
   assert.equal(screenshotToken, captureToken);
@@ -64,8 +84,8 @@ test('selectCaptureTokens: screenshots keep capture token, tests prefer admin to
 });
 
 test('selectCaptureTokens: missing admin identity falls tests back to capture token', () => {
-  const captureToken = mintCaptureToken(CAPTURE_USER, SECRET);
-  const adminToken = mintCaptureToken(null, SECRET); // ''
+  const captureToken = mintCaptureToken(CAPTURE_USER, APP_ID);
+  const adminToken = mintCaptureToken(null, APP_ID); // ''
   const { screenshotToken, testsToken } = selectCaptureTokens({ captureToken, adminToken });
   assert.equal(testsToken, captureToken);
   assert.equal(screenshotToken, captureToken);

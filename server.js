@@ -7,7 +7,6 @@ const { migrate } = require('./src/db/migrate');
 const { shellAssetCacheControl } = require('./src/services/static-cache');
 const { authMiddleware } = require('./src/middleware/auth');
 const { authRoutes } = require('./src/routes/auth');
-const jwt = require('jsonwebtoken');
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { sessionRoutes } = require('./src/routes/sessions');
@@ -66,6 +65,8 @@ const nodeStatus = require('./src/services/node-status');
 const statusService = require('./src/services/status');
 const { getActiveWorkerCount } = require('./src/routes/sessions');
 const { sweepStuckCreatingApps } = require('./src/routes/apps');
+const appAccess = require('./src/services/app-access');
+const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
 
 const config = loadConfig();
@@ -478,27 +479,113 @@ app.use(galleryRoutes(config));
 // router's own adminMiddleware runs, exactly like src/routes/admin.js.
 app.use(topochainAdminRoutes(config));
 
+// Mint the iframe identity token the shell injects into an app iframe.
+//
+// The token is APP-SCOPED (RS256, audience `usernode:app:<apps.id>`), so
+// the caller must name which app it is for: `?app=<slug>`. That is what
+// closes the cross-app replay hole the single shared-secret token had —
+// every app used to be handed a credential that every OTHER app would
+// also accept, so any app operator could take a visitor's token and
+// spend it against an unrelated app's API as that user.
+//
+// The slug is resolved through appAccess.getAppForUser at the 'view'
+// level: you cannot mint an identity for an app you are not allowed to
+// see. Unknown slug and no-view-access both return the SAME 404 — see
+// the comment on that branch.
 app.get('/api/iframe-token', async (req, res) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+
+  const slug = typeof req.query.app === 'string' ? req.query.app.trim() : '';
+  if (!slug) {
+    return res.status(400).json({ error: 'app query parameter is required' });
+  }
+
+  const pool = getPool(config);
+  let appRow;
+  try {
+    // ACCESS_COLUMNS, not a trimmed list. checkAppAccess() reads
+    // `view_visibility` off the row it is handed and treats a MISSING
+    // column as public ("legacy rows mid-migration may briefly lack the
+    // column"). Project that column away and the gate below silently
+    // passes for every app — including the view-private ones whose
+    // existence the 404 is here to hide.
+    appRow = await appAccess.getAppForUser(pool, slug, req.user, 'view', appAccess.ACCESS_COLUMNS);
+  } catch (err) {
+    log.error('iframe-token', 'App resolve failed', { slug, err: err.message });
+    return res.status(500).json({ error: 'Internal server error' });
+  }
+  if (!appRow) {
+    // Existence-hiding, and deliberately the SAME response for "no such
+    // slug" and "you can't view this app". getAppForUser cannot tell the
+    // two apart (both are a null return), and splitting them into
+    // 400-vs-404 would hand an unauthenticated prober an app-existence
+    // oracle for every private app — precisely what the existence-hiding
+    // 404 exists to prevent. The 400 above is reserved for a caller that
+    // named no app at all, which leaks nothing.
+    return res.status(404).json({ error: 'App not found' });
+  }
+
   let usernodePubkey = null;
   // Platform-level language preference (issue #757): a BCP-47 tag or null
   // when unset. Always present in the payload so app servers never need
-  // `'locale' in payload` checks. Additive claim only — signing secret,
-  // algorithm, expiry, and the existing claims are unchanged.
+  // `'locale' in payload` checks.
   let userLocale = null;
   try {
-    const { rows } = await getPool(config).query(
+    const { rows } = await pool.query(
       'SELECT usernode_pubkey, locale FROM users WHERE id = $1',
       [req.user.id]
     );
     usernodePubkey = rows[0]?.usernode_pubkey || null;
     userLocale = rows[0]?.locale || null;
   } catch {}
-  const token = jwt.sign(
-    { id: req.user.id, username: req.user.username, usernode_pubkey: usernodePubkey, locale: userLocale },
-    config.jwtSecret,
-    { expiresIn: '1h' }
-  );
+
+  const tokenUser = {
+    id: req.user.id,
+    username: req.user.username,
+    usernode_pubkey: usernodePubkey,
+    locale: userLocale,
+  };
+
+  // App-scoped RS256 is the only path whenever key material exists — the
+  // fallback below is gated on the ABSENCE of it, not on this throw.
+  let token = null;
+  let signErr = null;
+  try {
+    token = platformJwt.signAppIdentityToken({ appId: appRow.id, user: tokenUser });
+  } catch (err) {
+    signErr = err;
+  }
+
+  // Pre-cutover staging bootstrap ONLY, mint side. A preview container's
+  // env comes from the DEPLOYED platform, so it has no
+  // IFRAME_JWT_PRIVATE_KEY and the sign above always throws — which used
+  // to 500 on every app view in the preview of this very cutover, failing
+  // the console-error baseline check on each one even though the session
+  // itself was fine. platformJwt.legacyBootstrapActive() is unsatisfiable
+  // in production (IFRAME_JWT_PUBLIC_KEY is in REQUIRED_PROD) and goes
+  // false forever once previews are built by post-cutover code. Remove
+  // with the verify-side half.
+  if (!token && platformJwt.legacyBootstrapActive()) {
+    try {
+      token = platformJwt.signLegacyBootstrapToken({ user: tokenUser });
+      log.warn('iframe-token', 'Minted a pre-cutover bootstrap token', { slug });
+    } catch (err) {
+      signErr = err;
+    }
+  }
+
+  if (!token) {
+    // A missing/broken IFRAME_JWT_PRIVATE_KEY with no shim available is an
+    // operator problem, not a client one, and it is not transient within
+    // the life of the process — so say which it is instead of a bare 500.
+    // config.load() refuses to boot production without the key, so this is
+    // the self-hosted / misconfigured-staging edge.
+    log.error('iframe-token', 'Signing failed', { slug, err: signErr && signErr.message });
+    return res.status(503).json({
+      error: 'App identity signing is not configured on this deployment',
+      code: 'signing_unavailable',
+    });
+  }
   res.json({ token });
 });
 

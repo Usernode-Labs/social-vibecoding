@@ -7,6 +7,7 @@ const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
+const { appIdentityEnv } = require('./app-identity-env');
 const deployFailure = require('./deploy-failure');
 const { getTemplateFiles } = require('./template');
 const { getPool } = require('../db/pool');
@@ -67,7 +68,7 @@ async function createApp(config, appRow) {
         });
         repoUrl = repo.html_url;
 
-        const files = getTemplateFiles(name, slug, dbUrl, config.jwtSecret);
+        const files = getTemplateFiles(name, slug, dbUrl);
         await github.pushFiles(botUsername, slug, files, {
           message: `Initialize ${name} from Usernode template`,
         });
@@ -137,7 +138,7 @@ async function createApp(config, appRow) {
       fs.mkdirSync(tempDir, { recursive: true });
       fs.mkdirSync(path.join(tempDir, 'public'), { recursive: true });
 
-      const files = getTemplateFiles(name, slug, dbUrl, config.jwtSecret);
+      const files = getTemplateFiles(name, slug, dbUrl);
       for (const f of files) {
         const filePath = path.join(tempDir, f.path);
         fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -279,7 +280,7 @@ async function finalizeDeploy(config, { appId, name, slug, tempDir, dbUrl, repoU
       image: imageName,
       env: {
         DATABASE_URL: dbUrl,
-        JWT_SECRET: config.jwtSecret,
+        ...appIdentityEnv({ id: appId }, config),
         PORT: '3000',
         USERNODE_ENV: 'production',
         ...llmEnv,

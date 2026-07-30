@@ -19,8 +19,9 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const jwt = require('jsonwebtoken');
 const { Readable } = require('stream');
+require('./platform-keys').setPlatformKeys();
+const platformJwt = require('../src/services/platform-jwt');
 
 const poolMod = require('../src/db/pool');
 let poolQueryHandler = async () => ({ rows: [] });
@@ -45,7 +46,6 @@ require.cache[appAccessId] = {
 const { appFileServeRoutes, appFileShellRoutes } = require('../src/routes/app-files');
 const express = require('express');
 
-const JWT_SECRET = 'test-jwt-secret';
 const GOOD_ID = 'a'.repeat(32);
 const PNG = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -64,7 +64,7 @@ function fakeStore(overrides = {}) {
 
 function startServeServer(store) {
   const app = express();
-  app.use(appFileServeRoutes({ jwtSecret: JWT_SECRET }, { store }));
+  app.use(appFileServeRoutes({}, { store }));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
   });
@@ -73,7 +73,7 @@ function startServeServer(store) {
 function startShellServer(store, userId = 5) {
   const app = express();
   app.use((req, _res, next) => { req.user = { id: userId, username: 'alice' }; next(); });
-  app.use(appFileShellRoutes({ jwtSecret: JWT_SECRET }, { store }));
+  app.use(appFileShellRoutes({}, { store }));
   return new Promise((resolve) => {
     const server = app.listen(0, () => resolve(server));
   });
@@ -137,9 +137,21 @@ test('private file: 404 without a token, served with a valid one, short private 
     assert.equal((await fetch(base)).status, 404);
     assert.equal((await fetch(`${base}?token=garbage`)).status, 404);
     // Scoped (infrastructure) tokens are rejected like app-storage-auth.
-    const scoped = jwt.sign({ id: 7, scope: 'worker:session' }, JWT_SECRET);
-    assert.equal((await fetch(`${base}?token=${scoped}`)).status, 404);
-    const good = jwt.sign({ id: 7, username: 'alice' }, JWT_SECRET);
+    // A worker token is a different authority entirely now, so it fails at
+    // the verifier rather than on the shape check — either way, 404.
+    assert.equal(
+      (await fetch(`${base}?token=${platformJwt.signWorkerToken({ sessionId: 1 })}`)).status,
+      404
+    );
+    // A user identity minted for a DIFFERENT app must not unlock this
+    // app's private file — the row's app_id is the audience checked.
+    const otherApp = platformJwt.signAppIdentityToken({
+      appId: 8, user: { id: 7, username: 'alice' },
+    });
+    assert.equal((await fetch(`${base}?token=${otherApp}`)).status, 404);
+    const good = platformJwt.signAppIdentityToken({
+      appId: 7, user: { id: 7, username: 'alice' },
+    });
     const res = await fetch(`${base}?token=${good}`);
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('cache-control'), 'private, max-age=3600');

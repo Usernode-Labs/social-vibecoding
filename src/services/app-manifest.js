@@ -108,7 +108,19 @@ function readTests(parsed) {
 // values that all dapps depend on.
 const RESERVED_KEYS = new Set([
   'DATABASE_URL',
+  // The RS256 public key user tokens are verified against, and the app's
+  // own integer id (the audience the platform mints for). Reserved for the
+  // same reason as JWT_SECRET: a manifest that shadowed either could point
+  // the container's verifier at an attacker-controlled key or make it
+  // accept identities minted for a different app.
+  'USERNODE_JWT_PUBLIC_KEY',
+  'USERNODE_APP_ID',
+  // Deprecated alias of USERNODE_JWT_PUBLIC_KEY (holds the same public
+  // PEM) kept so pre-cutover scaffolds verify unchanged.
   'JWT_SECRET',
+  // Same public PEM again, under the platform's own env-var name — see
+  // services/app-identity-env.js. Reserved for the same reason.
+  'IFRAME_JWT_PUBLIC_KEY',
   'PORT',
   'USERNODE_ENV',
   'USERNODE_MISSING_SECRETS',
@@ -167,8 +179,11 @@ const PLATFORM_ENV_UNWRITABLE = new Set([
   //
   // The other four are signing keys: rewriting one from a web form would
   // let an admin mint app identities, worker tokens or edge cookies at
-  // will. JWT_SECRET is still the transitional iframe signer AND still
-  // holds the same bytes as DATA_ENCRYPTION_KEY, so it stays listed too.
+  // will. JWT_SECRET no longer signs anything in the platform process, but
+  // the deploy's own secret of that name still holds the same bytes as
+  // DATA_ENCRYPTION_KEY, so it stays listed too. (The JWT_SECRET a child
+  // container receives is a different thing entirely — the RSA public
+  // PEM, injected by services/app-identity-env.js.)
   'DATA_ENCRYPTION_KEY',
   'IFRAME_JWT_PRIVATE_KEY',
   'IFRAME_JWT_PUBLIC_KEY',

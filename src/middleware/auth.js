@@ -1,7 +1,7 @@
 const crypto = require('crypto');
-const jwt = require('jsonwebtoken');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const platformJwt = require('../services/platform-jwt');
 
 const PUBLIC_PATHS = [
   '/login.html',
@@ -53,7 +53,7 @@ const PUBLIC_PATHS = [
 // platform-issued JWT every child app already verifies (see app-conventions.md
 // "Auth — iframe token injection") and exchange it for a real session row on
 // first hit. The trust chain is: parent prod admin authenticates via cookie →
-// parent mints a 1h JWT signed with config.jwtSecret via /api/iframe-token →
+// parent mints a 1h RS256 app-identity JWT via /api/iframe-token →
 // app-view.js sets `iframe.src = stagingUrl + '?token=' + jwt` → this
 // middleware verifies + mints a local session cookie. Subsequent fetches
 // inside the iframe use the cookie like any prod request.
@@ -63,6 +63,15 @@ const PUBLIC_PATHS = [
 // a downgraded credential that only works against staging clones).
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 const STAGING_SESSION_DAYS = 7;
+
+// The app row this container is serving, injected by the env builders via
+// services/app-identity-env.js. Iframe identity tokens are app-scoped
+// (audience `usernode:app:<id>`) since the RSA cutover, so verifying one
+// requires knowing which app we are. Absent → every token below fails
+// closed (verifyAppIdentityToken rejects a non-integer appId), which is
+// the right default: a staging container with no app identity cannot
+// safely accept an identity minted for some other app.
+const SELF_APP_ID = process.env.USERNODE_APP_ID;
 const SECURE_COOKIE = process.env.NODE_ENV === 'production';
 
 function authMiddleware(config) {
@@ -104,10 +113,15 @@ function authMiddleware(config) {
             const switchTok = qTok || (typeof hTok === 'string' ? hTok : null);
             if (switchTok) {
               let tokenUserId = null;
-              try {
-                const payload = jwt.verify(switchTok, config.jwtSecret);
-                if (payload && typeof payload.id === 'number') tokenUserId = payload.id;
-              } catch (_) { /* invalid token → keep the cookie session */ }
+              // App-identity (RS256) first, always. The legacy fallback is
+              // only reachable in a preview built by the pre-cutover
+              // platform — see platformJwt.legacyBootstrapActive().
+              const payload = platformJwt.orNull(
+                () => platformJwt.verifyAppIdentityToken(switchTok, { appId: SELF_APP_ID })
+              ) || (platformJwt.legacyBootstrapActive()
+                ? platformJwt.orNull(() => platformJwt.verifyLegacyBootstrapToken(switchTok))
+                : null);
+              if (payload && typeof payload.id === 'number') tokenUserId = payload.id;
               if (tokenUserId != null && tokenUserId !== rows[0].user_id) {
                 const minted = await tryMintSessionFromIframeJwt(pool, config, switchTok, res);
                 if (minted) {
@@ -186,11 +200,23 @@ function authMiddleware(config) {
 // resolved req.user shape on success, null on any failure (caller falls
 // through to redirectOrReject).
 async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
-  let payload;
-  try {
-    payload = jwt.verify(jwtToken, config.jwtSecret);
-  } catch (err) {
-    log.warn('auth', 'Staging iframe-JWT verification failed', { err: err.message });
+  // App-identity (RS256) first, always. Only if that fails AND this
+  // container is a pre-cutover preview (no key material, old shared
+  // secret present) do we fall back to the legacy bare-HS256 shape the
+  // deployed parent still mints — see
+  // platformJwt.legacyBootstrapActive() for why that can never be true
+  // in production, and for when to delete this.
+  let payload = platformJwt.orNull(
+    () => platformJwt.verifyAppIdentityToken(jwtToken, { appId: SELF_APP_ID })
+  );
+  if (!payload && platformJwt.legacyBootstrapActive()) {
+    payload = platformJwt.orNull(() => platformJwt.verifyLegacyBootstrapToken(jwtToken));
+    if (payload) {
+      log.warn('auth', 'Staging iframe-JWT accepted via pre-cutover bootstrap shim');
+    }
+  }
+  if (!payload) {
+    log.warn('auth', 'Staging iframe-JWT verification failed');
     return null;
   }
 
