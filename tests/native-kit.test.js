@@ -309,6 +309,40 @@ test('native.css: .un-sheet does not clip its overscroll filler', () => {
     'overflow:hidden on .un-sheet would clip the overscroll filler away (issue #789)');
 });
 
+// ── Popover surface (issue #847) ───────────────────────────────────────
+// A popover has NO backdrop, so its own background is the only thing
+// separating the menu from the content it covers. It therefore gets its
+// own token instead of sharing --un-group-bg (grouped-list cards sit ON
+// the page and may legitimately be a translucent tint — the platform's
+// own --bg-card is a 6% violet, which is what made the homepage card
+// menu see-through).
+
+test('native.css: .un-popover paints its own surface token, not --un-group-bg', () => {
+  const block = cssBlock('.un-popover');
+  assert.match(block, /background:\s*var\(--un-popover-bg\)/,
+    'the popover surface must route through --un-popover-bg; --un-group-bg is themeable to a translucent card tint (issue #847)');
+  assert.match(block, /border:\s*1px solid var\(--un-hairline\)/,
+    'the hairline is what separates a same-colored menu from the page behind it');
+  assert.match(block, /border-radius:\s*var\(--un-radius-card\)/);
+  assert.match(block, /box-shadow:/,
+    'no backdrop — the shadow is the only depth cue that the menu is a raised layer');
+});
+
+test('native.css: the --un-popover-bg defaults are fully opaque in both modes', () => {
+  // Kit defaults, so an app that never themes the token can't inherit a
+  // see-through menu. Hex-only by construction: any rgba()/transparent
+  // default would reintroduce issue #847 for every consumer.
+  for (const scope of [':root', '.dark']) {
+    const at = NATIVE_CSS.indexOf(scope + ' {');
+    assert.ok(at !== -1, `native.css lost the ${scope} block`);
+    const block = NATIVE_CSS.slice(at, NATIVE_CSS.indexOf('\n}', at));
+    const decl = /--un-popover-bg:\s*([^;]+);/.exec(block);
+    assert.ok(decl, `${scope} must declare --un-popover-bg`);
+    assert.match(decl[1].trim(), /^#(?:[0-9a-f]{6}|[0-9a-f]{3})$/i,
+      `${scope} --un-popover-bg must be an opaque hex color, got "${decl[1].trim()}"`);
+  }
+});
+
 // ── Keyboard occlusion (issue #719) ────────────────────────────────────
 
 test('keyboardInset: iOS overlay keyboard returns the occluded height', () => {

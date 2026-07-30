@@ -53,6 +53,12 @@
   --un-hairline: var(--border);
   --un-muted: var(--text-muted);
   --un-group-bg: var(--bg-card);
+  /* Anchored menus (the card "…" popover, #847) float over the app grid
+     with no backdrop, so their surface must be OPAQUE — --bg-card is a 6%
+     violet tint, right for a grouped-list card on the page but see-through
+     as a menu. Page background, so the kit's hairline + shadow read it as
+     a raised layer. */
+  --un-popover-bg: var(--bg-primary);
   --un-sheet-bg: var(--bg-primary);
   --un-navbar-bg: rgba(255, 255, 255, 0.82);
   --un-radius-card: 12px;
@@ -67,6 +73,9 @@
   --un-hairline: var(--border);
   --un-muted: var(--text-faint);
   --un-group-bg: #12121f;
+  /* Already opaque in dark, and one step lighter than the #08080f page —
+     kept explicit so the popover can't drift back onto a tinted token. */
+  --un-popover-bg: #12121f;
   --un-sheet-bg: #12121f;
   --un-navbar-bg: rgba(8, 8, 15, 0.78);
   --un-zoom-bg: var(--bg-primary);

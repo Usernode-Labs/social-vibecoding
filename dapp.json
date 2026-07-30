@@ -840,6 +840,16 @@
       "name": "Topochain seasons screen renders at #topochain/seasons (Task 14)",
       "path": "/#topochain/seasons",
       "expectSelector": "#topochain-seasons-screen:not(.hidden) #tc-se-grid"
+    },
+    {
+      "name": "Home card actions menu opens on the ?shot=card-menu deep link (#847)",
+      "path": "/?shot=card-menu",
+      "expectSelector": ".un-popover .card-menu-header"
+    },
+    {
+      "name": "The open card menu paints an opaque surface, not the page behind it (#847)",
+      "path": "/?shot=card-menu",
+      "expectSelector": ".un-popover[data-opaque-surface='true']"
     }
   ],
   "governance": {

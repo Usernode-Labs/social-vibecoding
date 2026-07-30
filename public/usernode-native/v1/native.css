@@ -47,6 +47,13 @@
   --un-navbar-bg: rgba(249, 249, 251, 0.82);
   --un-backdrop: rgba(0, 0, 0, 0.4);
 
+  /* Anchored popover / dropdown-menu surface. Deliberately its OWN token
+     rather than --un-group-bg: a grouped-list card sits ON the page and may
+     legitimately be a translucent tint, but a popover floats OVER content
+     with no backdrop behind it, so it must be opaque or the page reads
+     straight through the menu. Keep any override fully opaque. */
+  --un-popover-bg: #ffffff;
+
   /* Zoom transition overlay surface ('zoom-in'/'zoom-out'): the moving
      screen gets this opaque background for the animation's duration so
      the grid beneath can't bleed through a transparent screen mid-zoom.
@@ -96,6 +103,7 @@
   --un-hairline: rgba(120, 120, 150, 0.4);
   --un-muted: rgba(235, 235, 245, 0.6);
   --un-group-bg: #222240;
+  --un-popover-bg: #222240;
   --un-sheet-bg: #1e1e38;
   --un-navbar-bg: rgba(18, 18, 32, 0.78);
   --un-backdrop: rgba(0, 0, 0, 0.55);
@@ -640,7 +648,10 @@ html.un-kb .un-action-sheet {
    fidelity rules). Sits one layer above sheets/modals so a popover can
    open from inside one. position/left/top are JS-owned (the pure
    placePopover math); max-height keeps a long menu scrolling internally
-   instead of overflowing the viewport. */
+   instead of overflowing the viewport. The surface is --un-popover-bg
+   (opaque by contract — see the token) plus hairline, radius and shadow:
+   with no backdrop, the menu's own background is what separates it from
+   whatever it covers. */
 
 .un-popover {
   position: fixed;
@@ -650,7 +661,7 @@ html.un-kb .un-action-sheet {
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   padding: 4px 0;
-  background: var(--un-group-bg);
+  background: var(--un-popover-bg);
   border: 1px solid var(--un-hairline);
   border-radius: var(--un-radius-card);
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);

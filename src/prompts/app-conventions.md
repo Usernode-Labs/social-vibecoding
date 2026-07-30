@@ -1784,6 +1784,11 @@ out-specificity-ing kit selectors or copying the stylesheet:
 - `--un-group-bg`, `--un-sheet-bg`, `--un-navbar-bg`, `--un-backdrop`
   — grouped-list cards, sheet/modal/alert surfaces, nav-bar backing,
   overlay dim
+- `--un-popover-bg` — anchored popover / dropdown-menu surface. Separate
+  from `--un-group-bg` on purpose: a grouped-list card sits ON the page
+  and may be a translucent tint, but a popover floats OVER content with
+  no backdrop, so **this one must stay opaque** or the page shows through
+  the menu
 - `--un-toast-bg`, `--un-toast-text`, `--un-toast-action` — the toast
   surface (dark in BOTH modes, the iOS HUD idiom) and its action label
 - `--un-radius`, `--un-radius-full`, `--un-radius-card`
