@@ -59,6 +59,12 @@ const SESSION_ROW = {
   app_name: 'MyPage',
   repo_url: null, // the broken state under test
   app_self_hosted: false,
+  // appAccess.sessionCollabGuard selects a.collab_visibility +
+  // a.view_visibility alongside the session; checkAppAccess THROWS when handed
+  // a row without them. Model what the real SQL returns — the old
+  // default-to-public branch meant this stub never exercised the gate at all.
+  collab_visibility: 'public',
+  view_visibility: 'public',
 };
 
 function installHandlers() {

@@ -124,7 +124,19 @@ function makeMockPool(initial = {}) {
       const id = params[0];
       const session = state.sessions.get(id);
       if (!session) return { rows: [] };
-      return { rows: [{ ...session, app_slug: 'app', app_name: 'App' }] };
+      return {
+        rows: [{
+          // appAccess.sessionCollabGuard also joins apps for the visibility
+          // columns, and checkAppAccess THROWS when handed a row without
+          // them. Defaults model the real SQL; a session fixture can override
+          // either to exercise a private app.
+          collab_visibility: 'public',
+          view_visibility: 'public',
+          ...session,
+          app_slug: 'app',
+          app_name: 'App',
+        }],
+      };
     }
     // ------------ SELECT existence check ------------
     if (/^\s*SELECT id FROM chat_sessions WHERE id = \$1\s*$/i.test(s)) {
