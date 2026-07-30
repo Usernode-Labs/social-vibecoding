@@ -81,6 +81,16 @@ const EVENT_TYPES = Object.freeze({
   // durationMs }. Emitted once, at job end — the job record itself is
   // in-memory, so this is its only durable trace. No backfill.
   CONTAINERS_ROLLED_OVER: 'containers_rolled_over',
+  // An admin ran the stale-staging-preview sweep
+  // (src/services/staging-reap.js via POST /api/admin/staging-reap): every
+  // preview container torn down so the next Preview click rebuilds it with
+  // current env. The preview half of CONTAINERS_ROLLED_OVER — the rollover
+  // deliberately covers production app containers only. Metadata carries
+  // { jobId, total, tornDown, dbsDropped, skipped, failed, failedNames,
+  // byClassification, durationMs }. Emitted once, at job end — the job
+  // record itself is in-memory, so this is its only durable trace. No
+  // backfill.
+  STALE_PREVIEWS_REAPED: 'stale_previews_reaped',
 });
 
 // Record a single analytics event. Fire-and-forget — returns a promise

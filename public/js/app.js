@@ -908,6 +908,15 @@ const App = {
               AdminConsole.handleRolloverStatus(data);
             }
             break;
+          case 'admin_staging_reap_status':
+            // Stale-staging-preview sweep progress (admin-only broadcast —
+            // see ws.broadcastToAdmins). Only the admin console's stale
+            // previews section cares; it no-ops when that section isn't
+            // mounted.
+            if (window.AdminConsole?.handleStagingReapStatus) {
+              AdminConsole.handleStagingReapStatus(data);
+            }
+            break;
         }
       } catch {}
     };
@@ -941,6 +950,10 @@ const App = {
     // by `admin_rollover_status`, so a dropped socket means missed
     // transitions. The loader no-ops unless that section is mounted.
     if (window.AdminConsole?.isOpen?.()) AdminConsole.loadRollover?.();
+    // Same for the stale-previews sweep, driven by
+    // `admin_staging_reap_status`. Each loader no-ops unless its own section
+    // is the mounted one, so calling both is free.
+    if (window.AdminConsole?.isOpen?.()) AdminConsole.loadStagingReap?.();
     App.loadVersion();
     if (App.currentApp && typeof AppView !== 'undefined' && AppView.appData) {
       AppView.refreshVersionPill();
