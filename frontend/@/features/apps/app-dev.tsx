@@ -5,7 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
+import { AppTopBar } from "@/features/apps/app-top-bar"
 import { DevBoard, type DevPmMove, type DevWorkspaceView } from "@/features/dev/dev-board"
 import { createAppSession, getApp, type AppDetail } from "@/lib/apps-api"
 import { readBrowserPreference, writeBrowserPreference } from "@/lib/browser-preferences"
@@ -164,7 +164,7 @@ export function AppDev() {
   }
 
   return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6 lg:px-8" data-testid="app-dev">
-    {app ? <AppContextChrome app={app} mode="improve" state={appContextState(app)} /> : null}
+    <AppTopBar app={app} fallbackTitle="Improve" mode="improve" />
     <div className="flex w-full flex-col gap-6" data-testid="app-dev-content">
       {error ? <Alert variant="destructive"><AlertTitle>Improve didn’t load</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!app && !error ? <Skeleton className="h-32 w-full" /> : null}

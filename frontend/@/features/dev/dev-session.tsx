@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
+import { AppTopBar } from "@/features/apps/app-top-bar"
 import { DevConversation, type ConversationMessage } from "@/features/dev/dev-conversation"
 import { DevComposer, type DevSuggestionGroup } from "@/features/dev/dev-composer"
 import { DevSessionActivity } from "@/features/dev/dev-session-activity"
@@ -286,7 +286,7 @@ export function DevSession() {
   const suggestions = currentSuggestions(liveMessages, data?.session.status, streamState === "streaming")
 
   return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="dev-session">
-    {app && data ? <AppContextChrome app={app} backTo={appDevPath(slug)} label={sessionTitle(data.session)} mode="nested" state={appContextState(app)} /> : null}
+    <AppTopBar app={data ? app : null} backTo={appDevPath(slug)} fallbackTitle="Dev session" label={data ? sessionTitle(data.session) : ""} mode="nested" />
     {error ? <Alert variant="destructive"><AlertTitle>Session unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {!data && !error ? <><Skeleton className="h-20 w-full" /><Skeleton className="min-h-96 w-full" /></> : null}
     {data ? <>

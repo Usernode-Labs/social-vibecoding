@@ -1,16 +1,17 @@
 import type { ReactNode } from "react"
 import { Bell, BriefcaseBusiness, Compass, EyeOff, House, MessageCircle, Server, Settings, Shield, Trophy, UserRound } from "lucide-react"
-import { createContext, useContext, useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useLocation } from "react-router-dom"
 
 import { DevCompletionAlerts } from "@/components/dev-completion-alerts"
 import { DevConsoleLayer, DevConsoleProvider } from "@/components/dev-console-provider"
 import { PlatformIcon } from "@/components/platform-icon"
 import { PlatformNavigation, type PlatformNavItem } from "@/components/platform-navigation"
+import { ShellAttentionProvider } from "@/components/platform-menu-trigger"
 import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { SidebarInset, SidebarMenuBadge, SidebarProvider, SidebarTrigger, useSidebar } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarMenuBadge, SidebarProvider, useSidebar } from "@/components/ui/sidebar"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { usePlatformShellNavigationState } from "@/components/platform-shell-navigation"
 import { isAdminPreviewEnabled, setAdminPreviewEnabled } from "@/lib/admin-preview"
@@ -20,39 +21,9 @@ import {
   getExternalLinkFailure,
   type ExternalLinkFailureDetail,
 } from "@/lib/external-links"
-import { cn } from "@/lib/utils"
 
 function route(path: string) {
   return (pathname: string) => pathname === path || pathname.startsWith(`${path}/`)
-}
-
-const ShellAttentionContext = createContext(0)
-
-/**
- * The platform menu control: the sidebar trigger plus the shell's single
- * attention dot. Full-bleed routes (the focused app) place it inside their
- * contextual chrome so the shell keeps exactly one bar per screen.
- */
-export function PlatformMenuTrigger({ className }: { className?: string }) {
-  const attentionCount = useContext(ShellAttentionContext)
-  return (
-    <span className={cn("relative inline-flex shrink-0", className)}>
-      <SidebarTrigger
-        aria-label="Toggle navigation"
-        className="relative after:pointer-fine:hidden after:absolute after:top-1/2 after:left-1/2 after:size-[max(100%,3rem)] after:-translate-1/2 after:content-['']"
-      />
-      {attentionCount > 0 ? (
-        <StatusDot
-          className="pointer-events-none absolute -top-0.5 -right-0.5"
-          label="Needs attention"
-          role="attention"
-          showLabel={false}
-          size="sm"
-          subject="Activity"
-        />
-      ) : null}
-    </span>
-  )
 }
 
 function AdminPreviewBanner() {
@@ -174,35 +145,31 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
   const closeNavigation = () => {
     if (isMobile) setOpenMobile(false)
   }
-  const fullBleedRoute =
-    /^\/apps\/[^/]+\/open\/?$/.test(location.pathname) ||
-    /^\/apps\/[^/]+\/dev\/sessions\/[^/]+\/preview\/?$/.test(location.pathname)
 
   return (
-    <ShellAttentionContext.Provider value={navigation.attentionCount}>
+    <ShellAttentionProvider count={navigation.attentionCount}>
       <PlatformNavigation
         brand={{ label: "dApps", href: "/react/" }}
         items={navigationItems}
         onNavigate={closeNavigation}
         pathname={location.pathname}
       />
-      {/* The inset card is the page: one contained surface hosts the header,
-          every route, and the focused-app frame. min-h comes from the sidebar
-          wrapper so the card's inset margins never force a scrollbar. */}
+      {/* The inset card is the page. Every route renders its own TopBar as the
+          first child of the viewport, so the shell owns the drawer and the
+          card while the route owns its chrome and its single h1. min-h comes
+          from the sidebar wrapper so the inset margins never force a
+          scrollbar. */}
       <SidebarInset className="overflow-hidden">
-        {fullBleedRoute ? null : (
-          <header className="flex min-h-16 shrink-0 items-center gap-2 border-b px-4" data-slot="platform-header">
-            <PlatformMenuTrigger />
-            <div className="min-w-0 flex-1 truncate font-semibold">dApps</div>
-          </header>
-        )}
         <AdminPreviewBanner />
-        <div data-slot="route-viewport" data-viewport-mode={fullBleedRoute ? "full-bleed" : "content"}>
+        <div
+          className="relative flex min-h-0 flex-1 flex-col"
+          data-slot="route-viewport"
+        >
           {children}
         </div>
         <ExternalLinkFeedback />
       </SidebarInset>
-    </ShellAttentionContext.Provider>
+    </ShellAttentionProvider>
   )
 }
 

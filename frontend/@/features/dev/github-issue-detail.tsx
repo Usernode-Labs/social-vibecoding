@@ -14,7 +14,8 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
 import { PlatformIcon } from "@/components/platform-icon"
-import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
+import { TopBar } from "@/components/top-bar"
+import { AppTopBar } from "@/features/apps/app-top-bar"
 import { TopicAttributeControls } from "@/features/dev/topic-attribute-controls"
 import { TopicDiscussionTranscript } from "@/features/dev/topic-discussion-transcript"
 import { getCurrentUser } from "@/lib/auth-api"
@@ -120,7 +121,7 @@ export function GitHubIssueDetailContent({ app, attributeError, attributes = EMP
   }
 
   return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="github-issue-detail">
-    <AppContextChrome app={app} backTo={back} label={issue.title} mode="nested" state={appContextState(app)} />
+    <AppTopBar app={app} backTo={back} label={issue.title} mode="nested" />
     <Card>
       <CardHeader className="gap-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -431,9 +432,9 @@ export function GitHubIssueDetail() {
     }
   }
 
-  if (error) return <div className="flex flex-1 items-center justify-center p-6" data-testid="github-issue-detail-error"><Alert className="max-w-md" variant="destructive"><AlertTitle>GitHub issue unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>
-  if (issue === null) return <div className="flex flex-1 items-center justify-center p-6" data-testid="github-issue-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={MessageCircle} /></EmptyMedia><EmptyTitle>GitHub issue not found</EmptyTitle><EmptyDescription>It may have been closed, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><Button render={<Link to={appDevPath(slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</Button></Empty></div>
-  if (issue === undefined || app === undefined) return <div className="flex w-full flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-64 w-full" /></div>
+  if (error) return <><TopBar title="GitHub issue" /><div className="flex flex-1 items-center justify-center p-6" data-testid="github-issue-detail-error"><Alert className="max-w-md" variant="destructive"><AlertTitle>GitHub issue unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div></>
+  if (issue === null) return <><TopBar title="GitHub issue not found" /><div className="flex flex-1 items-center justify-center p-6" data-testid="github-issue-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={MessageCircle} /></EmptyMedia><EmptyTitle>GitHub issue not found</EmptyTitle><EmptyDescription>It may have been closed, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><Button render={<Link to={appDevPath(slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</Button></Empty></div></>
+  if (issue === undefined || app === undefined) return <><TopBar title="GitHub issue" /><div className="flex w-full flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-64 w-full" /></div></>
   return <GitHubIssueDetailContent app={app} attributeError={attributeError} attributes={attributes} attributeUpdating={attributeUpdating} bountyError={bountyError} bountyNotice={bountyNotice} bountyUpdating={bountyUpdating} canAdminWrite={canAdminWrite} claiming={claiming} claimClearingUserId={claimClearingUserId} claimError={claimError} closeProposal={closeProposal} closeProposalError={closeProposalError} closeProposalNotice={closeProposalNotice} closeProposalOpen={closeProposalOpen} closeProposalSubmitting={closeProposalSubmitting} comments={comments} creatingSession={creatingSession} currentUsername={currentUsername} headlessCloning={headlessCloning} headlessError={headlessError} headlessNotice={headlessNotice} headlessOpen={headlessOpen} headlessStarting={headlessStarting} issue={issue} modelError={modelError} models={models} onAttribute={updateAttribute} onBounty={giveBounty} onClaim={updateClaim} onClearClaim={clearClaimAsAdmin} onCloneHeadless={cloneHeadless} onCloseProposal={proposeClose} onCloseProposalOpenChange={setCloseProposalOpen} onCreateSession={createSession} onHeadlessOpenChange={setHeadlessOpen} onRename={rename} onSelectedModelChange={selectHeadlessModel} onStartHeadless={startHeadless} renaming={renaming} renameError={renameError} selectedModel={selectedModel} sessionError={sessionError} slug={slug} truncated={truncated}>
     <TopicDiscussionTranscript slug={slug} threadRef={issue.number} threadType="issue" />
   </GitHubIssueDetailContent>

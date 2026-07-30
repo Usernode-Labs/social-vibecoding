@@ -61,7 +61,7 @@ test.beforeEach(async ({ page }) => {
 test("renders an existing Dev session without a legacy action handoff", async ({ page }) => {
   await page.goto("/react/apps/recipebot/dev/sessions/9")
   const route = page.getByTestId("dev-session")
-  const chrome = route.getByTestId("app-context-chrome")
+  const chrome = route.locator('[data-slot="top-bar"]')
   await expect(route).toContainText("Improve pantry search")
   await expect(route.getByRole("heading", { name: /RecipeBot.*Improve pantry search/, level: 1 })).toBeVisible()
   await expect(route.locator("h1")).toHaveCount(1)
@@ -69,7 +69,7 @@ test("renders an existing Dev session without a legacy action handoff", async ({
   await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
   expect(await route.getAttribute("class")).not.toMatch(/\b(?:mx-auto|max-w-)/)
   const chromeBox = await chrome.boundingBox()
-  const contentBox = await route.locator(":scope > :not([data-testid='app-context-chrome'])").first().boundingBox()
+  const contentBox = await route.locator(":scope > :not([data-slot='top-bar'])").first().boundingBox()
   expect(chromeBox).not.toBeNull()
   expect(contentBox).not.toBeNull()
   expect(contentBox!.y).toBeGreaterThanOrEqual(chromeBox!.y + chromeBox!.height)

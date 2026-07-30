@@ -1,10 +1,11 @@
 import { ArrowLeft, ExternalLink, FlaskConical, RefreshCw, TriangleAlert } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
 
 import { useDevConsoleFrame } from "@/hooks/use-dev-console-frame"
 import { DevConsoleTrigger } from "@/components/dev-console-provider"
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Button } from "@/components/ui/button"
@@ -49,6 +50,7 @@ async function waitForPreviewUrl(sessionId: string, initial: DevSession, alive: 
  */
 export function StagingPreview() {
   const { slug = "", sessionId = "" } = useParams()
+  const navigate = useNavigate()
   const iframe = useRef<HTMLIFrameElement>(null)
   const [session, setSession] = useState<DevSession | null>(null)
   const [token, setToken] = useState<string | null>(null)
@@ -102,18 +104,18 @@ export function StagingPreview() {
   useDevConsoleFrame(slug, iframe, state === "ready" && Boolean(source), frameRevision)
   const testingInstructions = session?.testing_md?.trim() || null
   const back = `/apps/${encodeURIComponent(slug)}/dev/sessions/${encodeURIComponent(sessionId)}`
-  if (error) return <div className="flex flex-1 items-center justify-center" data-slot="staging-preview-surface" data-state="error"><Alert className="max-w-md" variant="destructive"><PlatformIcon icon={TriangleAlert} /><AlertTitle>Preview unavailable</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{error}<Button render={<Link to={back} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</Button></AlertDescription></Alert></div>
-  if (state !== "ready" || !source) return <div className="flex flex-1 items-center justify-center" data-slot="staging-preview-surface" data-state={state}><Card className="w-full max-w-md"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={state === "rebuilding" ? RefreshCw : FlaskConical} size="sm" />{state === "rebuilding" ? "Spinning the preview back up…" : "Provisioning secure preview…"}</CardTitle></CardHeader><CardContent className="flex flex-col gap-4 text-muted-foreground"><p>{state === "rebuilding" ? "Rebuilding from this session’s latest changes. This usually takes 20–60 seconds." : "Preparing preview."}</p><Skeleton className="h-8 w-full" /><Button className="w-fit" render={<Link to={back} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</Button></CardContent></Card></div>
-  return <div className="isolate flex min-h-0 flex-1 flex-col bg-background" data-slot="staging-preview-surface" data-state="ready" data-testid="staging-preview">
-    <header className="flex shrink-0 items-center justify-between gap-3 border-b px-4 py-3" data-slot="staging-preview-header">
-      <Button render={<Link to={back} />} variant="ghost"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Session</Button>
-      <h1 className="truncate text-sm text-muted-foreground">Staging preview</h1>
-      <div className="flex items-center gap-1">
+  const topBar = { onBack: () => navigate(back), title: "Staging preview" }
+  if (error) return <><TopBar {...topBar} /><div className="flex flex-1 items-center justify-center" data-slot="staging-preview-surface" data-state="error"><Alert className="max-w-md" variant="destructive"><PlatformIcon icon={TriangleAlert} /><AlertTitle>Preview unavailable</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{error}<Button render={<Link to={back} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</Button></AlertDescription></Alert></div></>
+  if (state !== "ready" || !source) return <><TopBar {...topBar} /><div className="flex flex-1 items-center justify-center" data-slot="staging-preview-surface" data-state={state}><Card className="w-full max-w-md"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={state === "rebuilding" ? RefreshCw : FlaskConical} size="sm" />{state === "rebuilding" ? "Spinning the preview back up…" : "Provisioning secure preview…"}</CardTitle></CardHeader><CardContent className="flex flex-col gap-4 text-muted-foreground"><p>{state === "rebuilding" ? "Rebuilding from this session’s latest changes. This usually takes 20–60 seconds." : "Preparing preview."}</p><Skeleton className="h-8 w-full" /><Button className="w-fit" render={<Link to={back} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</Button></CardContent></Card></div></>
+  return <div className="isolate flex w-full flex-1 flex-col" data-slot="staging-preview-surface" data-state="ready" data-testid="staging-preview">
+    <TopBar
+      {...topBar}
+      action={<>
         <DevConsoleTrigger />
         <Button render={<a href={source} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open externally</Button>
-      </div>
-    </header>
+      </>}
+    /><div className="flex min-h-0 flex-1 flex-col bg-background">
     {testingInstructions ? <div className="shrink-0 border-b px-4" data-slot="staging-preview-instructions"><Accordion><AccordionItem value="testing"><AccordionTrigger>How to test this change</AccordionTrigger><AccordionContent><pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground">{testingInstructions}</pre></AccordionContent></AccordionItem></Accordion></div> : null}
     <iframe allow="clipboard-write; pointer-lock" className="min-h-0 flex-1 border-0" data-slot="staging-preview-frame" onLoad={() => setFrameRevision((revision) => revision + 1)} ref={iframe} sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock" src={source} title="Staging preview" />
-  </div>
+  </div></div>
 }

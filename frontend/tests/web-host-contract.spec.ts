@@ -31,7 +31,9 @@ test("keeps zoom accessible and assigns device insets to the shell", async ({ pa
     root.style.setProperty("--safe-area-right", "29px")
   })
 
-  const shellHeader = page.locator('[data-slot="sidebar-inset"] > header').first()
+  // The bar owns the top inset; the route viewport it sits inside owns the
+  // horizontal ones, so the bar keeps its ordinary inline padding.
+  const shellHeader = page.locator('[data-slot="top-bar"]').first()
   await expect.poll(() => shellHeader.evaluate((node) => {
     const style = getComputedStyle(node)
     return {
@@ -39,7 +41,7 @@ test("keeps zoom accessible and assigns device insets to the shell", async ({ pa
       paddingLeft: style.paddingLeft,
       paddingRight: style.paddingRight,
     }
-  })).toEqual({ paddingTop: "13px", paddingLeft: "23px", paddingRight: "29px" })
+  })).toEqual({ paddingTop: "13px", paddingLeft: "12px", paddingRight: "12px" })
 
   const route = page.getByTestId("not-found")
   const routeViewport = page.locator('[data-slot="route-viewport"]')

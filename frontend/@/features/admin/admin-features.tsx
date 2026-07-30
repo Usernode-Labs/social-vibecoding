@@ -2,7 +2,7 @@ import { ExternalLink, ListTodo, ShieldAlert } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
-import { PageHeader } from "@/components/page-header"
+import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -65,9 +65,9 @@ function downloadCsv(features: SubmittedFeature[], status: SubmittedFeatureStatu
 export function AdminFeaturesPage() {
   const [state, setState] = useState<State>({ kind: "loading" })
   const [status, setStatus] = useState<SubmittedFeatureStatus>("all")
-  const [reloadToken, setReloadToken] = useState(0)
   const [downloading, setDownloading] = useState(false)
   const [downloadError, setDownloadError] = useState<string | null>(null)
+  const [reloadToken, setReloadToken] = useState(0)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -98,8 +98,8 @@ export function AdminFeaturesPage() {
     }
   }, [status])
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-features">
-    <PageHeader action={state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : undefined} description="Cross-app feature requests ranked by community support." title="Submitted features" />
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="admin-features">
+    <TopBar action={state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : undefined} title="Submitted features" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {state.kind === "loading" ? <div className="space-y-3"><Skeleton className="h-10 w-40" /><Skeleton className="h-36 w-full" /><Skeleton className="h-36 w-full" /></div> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Submitted features unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
@@ -119,7 +119,7 @@ export function AdminFeaturesPage() {
       <p className="text-sm text-muted-foreground">{state.total} {state.total === 1 ? "request" : "requests"}.</p>
       <SubmittedFeaturesList features={state.features} />
     </> : null}
-  </div>
+  </div></div>
 }
 
 export function SubmittedFeaturesList({ features }: { features: SubmittedFeature[] }) {

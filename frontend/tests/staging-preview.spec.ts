@@ -20,7 +20,7 @@ test("opens a server-authorized preview only after its secure host is reachable"
   await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
   await expect(page.getByTestId("staging-preview")).toBeVisible()
   await expect(page.getByTitle("Staging preview")).toHaveAttribute("src", /https:\/\/preview\.example\.test\/pantry\?token=preview-token/)
-  await expect(page.getByRole("link", { name: "Session" })).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/9")
+  await expect(page.getByRole("button", { name: "Back" })).toBeVisible()
   await page.getByRole("button", { name: "How to test this change" }).click()
   await expect(page.getByText("Search for a pantry staple and confirm its filter.")).toBeVisible()
 })
@@ -44,7 +44,7 @@ test("exposes the developer console only from the active preview chrome", async 
 test("keeps preview chrome and its iframe inside web-owned safe-area slots", async ({ page }) => {
   await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
   const preview = page.locator('[data-slot="staging-preview-surface"][data-state="ready"]')
-  const header = page.locator('[data-slot="staging-preview-header"]')
+  const header = page.locator('[data-slot="top-bar"]')
   const frame = page.locator('[data-slot="staging-preview-frame"]')
   await expect(preview).toBeVisible()
   await page.evaluate(() => {

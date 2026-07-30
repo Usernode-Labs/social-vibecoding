@@ -14,8 +14,9 @@ async function platformNavigation(page: import("@playwright/test").Page) {
 test("turns an unmatched React deep link into a recoverable page", async ({ page }) => {
   await page.goto("/react/no-such-route")
   const route = page.getByTestId("not-found")
-  await expect(route.getByRole("heading", { level: 1, name: "Page not found" })).toBeVisible()
-  await expect(route.locator("h1")).toHaveCount(1)
+  await expect(page.getByRole("heading", { level: 1, name: "Page not found" })).toBeVisible()
+  await expect(page.locator("h1")).toHaveCount(1)
+  await expect(route.locator("h1")).toHaveCount(0)
   await expect.poll(() => route.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
   await expect(page.getByRole("link", { name: "Back to apps" })).toHaveCount(0)
   await expect(route.getByRole("link", { name: "Go to Home" })).toHaveAttribute("href", "/react")

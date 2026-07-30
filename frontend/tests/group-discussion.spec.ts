@@ -62,7 +62,7 @@ async function installGroupChatSocket(page: import("@playwright/test").Page) {
 test("renders the complete view-authorized general discussion without a legacy handoff", async ({ page }) => {
   await page.goto("/react/apps/recipebot/dev/chat")
   const route = page.getByTestId("group-discussion")
-  const chrome = route.getByTestId("app-context-chrome")
+  const chrome = route.locator('[data-slot="top-bar"]')
   await expect(route.getByRole("heading", { name: /RecipeBot.*Discussion/, level: 1 })).toBeVisible()
   await expect(route.locator("h1")).toHaveCount(1)
   await expect(chrome.getByRole("button", { name: "Back" })).toBeVisible()

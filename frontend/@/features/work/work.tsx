@@ -2,8 +2,8 @@ import { Gauge, RefreshCw, Vote } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 
-import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -79,11 +79,8 @@ export function Work() {
   const isEmpty = snapshot && sessions.length === 0 && snapshot.proposals.length === 0 && snapshot.governance.length === 0
 
   return (
-    <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="work">
-      <PageHeader
-        action={<Button aria-label="Refresh work" onClick={() => setRefreshKey((value) => value + 1)} type="button" variant="outline">Refresh</Button>}
-        title="Work"
-      />
+    <div className="isolate flex w-full flex-1 flex-col" data-testid="work">
+      <TopBar action={<Button aria-label="Refresh work" onClick={() => setRefreshKey((value) => value + 1)} type="button" variant="outline">Refresh</Button>} title="Work" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
       {sessionEventsState !== "connected" ? <p className="text-sm text-muted-foreground" role="status">{sessionEventsState === "connecting" ? "Connecting to live updates" : sessionEventsState === "unavailable" ? "Live updates unavailable. Refreshing periodically." : "Reconnecting to live updates"}</p> : null}
       {error ? <Alert variant="destructive"><AlertTitle>Work unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!snapshot && !error ? <WorkSkeleton /> : null}
@@ -91,7 +88,7 @@ export function Work() {
       {snapshot?.proposals.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Proposals</h3>{snapshot.proposals.map((proposal) => <ProposalRow key={proposal.id} proposal={proposal} />)}</section> : null}
       {snapshot?.governance.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Governance proposals</h3>{snapshot.governance.map((proposal) => <GovernanceRow key={proposal.id} proposal={proposal} />)}</section> : null}
       {sessions.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Sessions</h3>{sessions.map((session) => <SessionRow key={session.id} session={session} />)}</section> : null}
-    </div>
+    </div></div>
   )
 }
 

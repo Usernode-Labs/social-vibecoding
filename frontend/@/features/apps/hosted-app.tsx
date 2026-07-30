@@ -1,36 +1,16 @@
-import { useCallback, useEffect, useState } from "react"
-import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { useEffect, useState } from "react"
+import { useParams, useSearchParams } from "react-router-dom"
 
-import { PlatformMenuTrigger } from "@/components/platform-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AppChrome, type AppChromeProps } from "@/features/apps/app-chrome"
+import { AppTopBar } from "@/features/apps/app-top-bar"
 import { FocusedAppFrame } from "@/features/apps/focused-app-frame"
 import { getApp, getIframeToken, type AppDetail } from "@/lib/apps-api"
 import { useDevConsoleContext } from "@/lib/dev-console-context"
 import { syncNativeTitle } from "@/lib/native-bridge"
-import { appDevPath, safeAppInnerPath } from "@/lib/routes"
+import { safeAppInnerPath } from "@/lib/routes"
 
 const TOKEN_REFRESH_MS = 45 * 60 * 1000
-
-function chromeState({
-  app,
-  frameLoaded,
-  offline,
-  token,
-  tokenError,
-}: {
-  app: AppDetail
-  frameLoaded: boolean
-  offline: boolean
-  token: string | null
-  tokenError: string | null
-}): AppChromeProps["state"] {
-  if (app.self_hosted) return "self-hosted"
-  if (offline) return "offline"
-  if (app.status !== "running" || !app.url || tokenError) return "unavailable"
-  return token && frameLoaded ? "ready" : "loading"
-}
 
 function retryHostedApp() {
   window.location.reload()
@@ -38,24 +18,18 @@ function retryHostedApp() {
 
 export function HostedApp() {
   const { slug = "" } = useParams()
-  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
   const [app, setApp] = useState<AppDetail | null>(null)
   const [loadErrorState, setLoadErrorState] = useState<{ slug: string; message: string } | null>(null)
   const [tokenErrorState, setTokenErrorState] = useState<{ slug: string; message: string } | null>(null)
   const [tokenState, setTokenState] = useState<{ slug: string; value: string } | null>(null)
   const [offline, setOffline] = useState(() => navigator.onLine === false)
-  const [loadedFrameKey, setLoadedFrameKey] = useState<string | null>(null)
   const devConsole = useDevConsoleContext()
   const innerPath = safeAppInnerPath(searchParams.get("path"))
   const currentApp = app?.slug === slug ? app : null
   const loadError = loadErrorState?.slug === slug ? loadErrorState.message : null
   const token = tokenState?.slug === slug ? tokenState.value : null
   const tokenError = tokenErrorState?.slug === slug ? tokenErrorState.message : null
-  const frameKey = currentApp && token
-    ? `${currentApp.id}:${currentApp.url || ""}:${innerPath || "/"}:${token}`
-    : null
-  const frameLoaded = Boolean(frameKey && loadedFrameKey === frameKey)
 
   useEffect(() => {
     const controller = new AbortController()
@@ -83,7 +57,6 @@ export function HostedApp() {
     const syncOffline = (event?: Event) => {
       const detail = event as CustomEvent<{ offline?: boolean }> | undefined
       const nextOffline = detail?.detail?.offline ?? navigator.onLine === false
-      if (nextOffline) setLoadedFrameKey(null)
       setOffline(nextOffline)
     }
     window.addEventListener("online", syncOffline)
@@ -108,7 +81,6 @@ export function HostedApp() {
         setTokenState({ slug: currentApp.slug, value: receivedToken })
       } catch (cause) {
         if (cancelled || (cause instanceof DOMException && cause.name === "AbortError")) return
-        setLoadedFrameKey(null)
         setTokenErrorState({
           slug: currentApp.slug,
           message: cause instanceof Error ? cause.message : "Your app session could not be prepared.",
@@ -124,58 +96,36 @@ export function HostedApp() {
     }
   }, [currentApp])
 
-  const closeApp = useCallback(() => {
-    navigate("/", { replace: true })
-  }, [navigate])
-
-  const improveApp = useCallback(() => {
-    if (currentApp) navigate(appDevPath(currentApp.slug))
-  }, [currentApp, navigate])
-
-  const handleFrameLoad = useCallback(() => {
-    setLoadedFrameKey(frameKey)
-  }, [frameKey])
-
   if (loadError) {
     return (
-      <div className="flex flex-1 items-center justify-center" data-slot="hosted-app-surface" data-state="error">
-        <Alert className="max-w-md" variant="destructive">
-          <AlertTitle>App unavailable</AlertTitle>
-          <AlertDescription>{loadError}</AlertDescription>
-        </Alert>
-      </div>
+      <>
+        <AppTopBar app={currentApp} consoleError={devConsole.unseenErrors > 0} fallbackTitle={loadError ? "App unavailable" : "Loading app"} mode="use" onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined} />
+        <div className="flex flex-1 items-center justify-center" data-slot="hosted-app-surface" data-state="error">
+          <Alert className="max-w-md" variant="destructive">
+            <AlertTitle>App unavailable</AlertTitle>
+            <AlertDescription>{loadError}</AlertDescription>
+          </Alert>
+        </div>
+      </>
     )
   }
 
   if (!currentApp) {
     return (
-      <div className="flex flex-1" data-slot="hosted-app-surface" data-state="loading">
-        <Skeleton className="h-full w-full" />
-      </div>
+      <>
+        <AppTopBar app={currentApp} consoleError={devConsole.unseenErrors > 0} fallbackTitle={loadError ? "App unavailable" : "Loading app"} mode="use" onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined} />
+        <div className="flex flex-1" data-slot="hosted-app-surface" data-state="loading">
+          <Skeleton className="h-full w-full" />
+        </div>
+      </>
     )
   }
 
-  const state = chromeState({
-    app: currentApp,
-    frameLoaded,
-    offline,
-    token,
-    tokenError,
-  })
-
   return (
     <div className="isolate flex min-h-0 flex-1 flex-col bg-background" data-slot="hosted-app-surface" data-state="ready" data-testid="hosted-app">
-      <AppChrome
-        app={currentApp}
-        consoleError={devConsole.unseenErrors > 0}
-        menuSlot={<PlatformMenuTrigger />}
-        mode="use"
-        onClose={closeApp}
-        onImprove={currentApp.can_collaborate !== false ? improveApp : undefined}
-        onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined}
-        placement="flow"
-        state={state}
-      />
+      {/* The app owns the whole page; the bar floats over it so no viewport
+          estate is spent on chrome. */}
+      <AppTopBar app={currentApp} consoleError={devConsole.unseenErrors > 0} fallbackTitle={loadError ? "App unavailable" : "Loading app"} mode="use" onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined} placement="overlay" />
 
       {tokenError ? (
         <div className="flex flex-1 items-center justify-center" data-slot="focused-app-surface" data-state="error">
@@ -190,7 +140,6 @@ export function HostedApp() {
           iframeToken={token}
           innerPath={innerPath}
           offline={offline}
-          onFrameLoad={handleFrameLoad}
           onRetry={retryHostedApp}
         />
       )}

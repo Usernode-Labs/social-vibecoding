@@ -2,13 +2,13 @@ import { Activity, ExternalLink, ShieldAlert } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { TopBar } from "@/components/top-bar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PlatformIcon } from "@/components/platform-icon"
-import { PageHeader } from "@/components/page-header"
 import { AdminAccessError, getAdminOverview, getAdminUser, type AdminOverview, type AdminUser } from "@/lib/admin-api"
 import { Link } from "react-router-dom"
 
@@ -59,13 +59,13 @@ export function AdminOverviewPage() {
     return () => { cancelled = true; controller.abort() }
   }, [reloadToken])
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-overview">
-    <PageHeader action={state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : undefined} title="Operations" />
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="admin-overview">
+    <TopBar action={state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : undefined} title="Operations" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {state.kind === "loading" ? <Loading /> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Operations unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "ready" ? <AdminOperationsOverview user={state.user} overview={state.overview} /> : null}
-  </div>
+  </div></div>
 }
 
 function Loading() {

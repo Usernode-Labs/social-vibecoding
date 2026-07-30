@@ -2,8 +2,8 @@ import { useEffect, useId, useMemo, useState } from "react"
 import { AppWindow, Bell } from "lucide-react"
 import { Link } from "react-router-dom"
 
-import { PageHeader, HeaderLayout } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardHeader } from "@/components/ui/card"
@@ -92,16 +92,12 @@ function ActivityPreview({ items }: { items: readonly HomeActivityItem[] }) {
 
   return (
     <section aria-labelledby={headingId} className="flex flex-col gap-4">
-      <HeaderLayout
-        heading={
-          <h2
-            className="font-heading text-xl font-medium tracking-tight text-balance"
-            id={headingId}
-          >
-            Needs attention
-          </h2>
-        }
-      />
+      <h2
+        className="font-heading text-xl font-medium tracking-tight text-balance"
+        id={headingId}
+      >
+        Needs attention
+      </h2>
       <ul className="divide-y divide-border" role="list">
         {items.slice(0, 3).map((item) => (
           <li className="py-3 first:pt-0 last:pb-0" key={item.id}>
@@ -164,10 +160,10 @@ export function HomeView({
 
   return (
     <div
-      className="isolate flex w-full flex-1 flex-col gap-8 p-4 antialiased sm:p-6 lg:p-8"
+      className="isolate flex w-full flex-1 flex-col"
       data-testid="home-route"
     >
-      <PageHeader title="Home" />
+      <TopBar title="Home" /><div className="flex w-full flex-1 flex-col gap-8 p-4 antialiased sm:p-6 lg:p-8">
 
       {error ? (
         <Alert variant="destructive">
@@ -189,36 +185,33 @@ export function HomeView({
 
       {!error && apps !== null && homeApps.length > 0 ? (
         <section aria-labelledby={headingId} className="@container flex flex-col gap-4">
-          <HeaderLayout
-            action={
-              showReorder ? (
-                <Button
-                  disabled={!canReorder}
-                  onClick={() => onReorderingChange(!reordering)}
-                  size="sm"
-                  type="button"
-                  variant="outline"
-                >
-                  {reordering ? "Done" : "Reorder"}
-                </Button>
-              ) : undefined
-            }
-            description={
-              reordering ? (
-                <p className="text-pretty text-base text-muted-foreground sm:text-sm">
-                  Use Earlier and Later to set the order on Home.
-                </p>
-              ) : undefined
-            }
-            heading={
+          <div className="flex min-w-0 flex-col items-start gap-4 @sm:flex-row @sm:justify-between">
+            <div className="flex min-w-0 flex-1 flex-col gap-2">
               <h2
                 className="font-heading text-xl font-medium tracking-tight text-balance"
                 id={headingId}
               >
                 Your apps
               </h2>
-            }
-          />
+              {reordering ? (
+                <p className="text-pretty text-base text-muted-foreground sm:text-sm">
+                  Use Earlier and Later to set the order on Home.
+                </p>
+              ) : null}
+            </div>
+            {showReorder ? (
+              <Button
+                className="shrink-0"
+                disabled={!canReorder}
+                onClick={() => onReorderingChange(!reordering)}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {reordering ? "Done" : "Reorder"}
+              </Button>
+            ) : null}
+          </div>
 
           {orderError ? (
             <Alert variant="destructive">
@@ -284,7 +277,7 @@ export function HomeView({
 
       {!activityError && activity === null ? <ActivityLoading /> : null}
       {!activityError && activity ? <ActivityPreview items={activity} /> : null}
-    </div>
+    </div></div>
   )
 }
 

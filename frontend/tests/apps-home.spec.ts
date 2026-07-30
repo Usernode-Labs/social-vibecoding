@@ -167,9 +167,9 @@ test("uses the detail view for primary app destinations", async ({ page }) => {
   await page.goto("/react/apps/recipebot")
 
   const details = page.getByTestId("app-details")
-  const chrome = page.getByTestId("app-context-chrome")
+  const chrome = page.locator('[data-slot="top-bar"]')
   await expect(details).toContainText("RecipeBot")
-  await expect(chrome.getByRole("group", { name: "RecipeBot controls" })).toHaveAttribute("data-placement", "flow")
+  await expect(chrome).toHaveAttribute("data-placement", "flow")
   await expect(details.locator("h1")).toHaveCount(1)
   await expect(details.getByRole("heading", { level: 1, name: "RecipeBot" })).toBeVisible()
   await expect.poll(() => details.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
@@ -244,11 +244,11 @@ test("gates the shortcut action on native capability and reports native failure"
 
 test("routes the detail chrome to Improve and closes its app context to Home", async ({ page }) => {
   await page.goto("/react/apps/recipebot")
-  await page.getByTestId("app-context-chrome").getByRole("button", { name: "Improve" }).click()
+  await page.locator('[data-slot="top-bar"]').getByRole("button", { name: "Improve" }).click()
   await expect(page).toHaveURL("/react/apps/recipebot/dev")
 
   await page.goto("/react/apps/recipebot")
-  await page.getByTestId("app-context-chrome").getByRole("button", { name: "Close RecipeBot" }).click()
+  await page.locator('[data-slot="top-bar"]').getByRole("button", { name: "Close RecipeBot" }).click()
   await expect(page).toHaveURL(/\/react\/?$/)
 })
 
@@ -259,8 +259,8 @@ test("does not invent app identity when app detail access fails", async ({ page 
 
   const details = page.getByTestId("app-details")
   await expect(details.getByRole("alert")).toContainText("App unavailable")
-  await expect(details.getByTestId("app-context-chrome")).toHaveCount(0)
-  await expect(details.locator("h1")).toHaveCount(0)
+  await expect(page.locator('[data-slot="top-bar"]')).not.toContainText("RecipeBot")
+  await expect(details.locator("h1")).toHaveCount(1)
 })
 
 test("shares the canonical bare app URL from the app detail action hub", async ({ page }) => {

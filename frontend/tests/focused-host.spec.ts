@@ -66,8 +66,8 @@ test.beforeEach(async ({ page }) => {
 test("the focused app owns a single bar: platform header yields to chrome", async ({ page }) => {
   await page.goto("/react/apps/recipebot/open")
 
-  await expect(page.locator('[data-slot="platform-header"]')).toHaveCount(0)
-  const chrome = page.locator('[data-slot="app-chrome"]')
+  await expect(page.locator('[data-slot="top-bar"]')).toHaveCount(1)
+  const chrome = page.locator('[data-slot="top-bar"]')
   await expect(chrome.getByRole("button", { name: "Toggle navigation" })).toBeVisible()
   await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
 })
@@ -115,7 +115,7 @@ test("keeps one offline recovery action and reloads the focused route", async ({
     window.dispatchEvent(new CustomEvent("usernode:offline-change", { detail: { offline: true } }))
   })
 
-  await expect(page.getByRole("img", { name: "RecipeBot, offline" })).toBeVisible()
+  await expect(page.locator('[data-slot="focused-app-surface"][data-state="offline"]')).toBeVisible()
   await expect(page.getByTestId("focused-app-frame")).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(1)
   await page.getByRole("button", { name: "Retry" }).click()
@@ -127,7 +127,7 @@ test("keeps one offline recovery action and reloads the focused route", async ({
 test("refreshes the iframe token on cadence without reloading an unchanged source", async ({ page }) => {
   await page.clock.install()
   await page.goto("/react/apps/recipebot/open")
-  await expect(page.getByRole("img", { name: "RecipeBot, running" })).toBeVisible()
+  await expect(page.locator('[data-slot="focused-app-surface"][data-state="ready"]')).toBeVisible()
 
   const settledTokenRequests = tokenRequests
   const settledDocumentRequests = hostedDocumentRequests
@@ -157,12 +157,12 @@ test("routes Improve and Close with their accepted focused-app meanings", async 
   await expect(page).toHaveURL(/\/react\/?$/)
 })
 
-test("keeps ready child-app content and flow chrome inside one web-owned safe area", async ({ page }) => {
+test("keeps ready child-app content and overlay chrome inside one web-owned safe area", async ({ page }) => {
   await page.goto("/react/apps/recipebot/open")
   const routeViewport = page.locator('[data-slot="route-viewport"]')
   const host = page.locator('[data-slot="hosted-app-surface"][data-state="ready"]')
   const focused = page.locator('[data-slot="focused-app-surface"][data-state="ready"]')
-  const chrome = page.locator('[data-slot="app-chrome"][data-placement="flow"]')
+  const chrome = page.locator('[data-slot="top-bar"][data-placement="overlay"]')
   await expect(focused).toBeVisible()
   await page.evaluate(() => {
     const root = document.documentElement
@@ -171,7 +171,7 @@ test("keeps ready child-app content and flow chrome inside one web-owned safe ar
     root.style.setProperty("--safe-area-right", "25px")
   })
 
-  await expect(routeViewport).toHaveAttribute("data-viewport-mode", "full-bleed")
+  await expect(chrome).toBeVisible()
   await expect.poll(() => routeViewport.evaluate((node) => {
     const style = getComputedStyle(node)
     return { bottom: style.paddingBottom, left: style.paddingLeft, right: style.paddingRight }
@@ -193,12 +193,13 @@ test("keeps ready child-app content and flow chrome inside one web-owned safe ar
       right: Math.round(hostBox.x + hostBox.width - chromeBox.x - chromeBox.width),
     }
   }).toEqual({ left: 21, right: 25 })
-  // Flow chrome consumes its own space: the child app is never occluded.
+  // Overlay chrome floats above the app rather than consuming viewport: the
+  // child app owns the whole page and starts at its top edge.
   await expect.poll(async () => {
     const chromeBox = await chrome.boundingBox()
     const focusedBox = await focused.boundingBox()
     if (!chromeBox || !focusedBox) return null
-    return focusedBox.y >= chromeBox.y + chromeBox.height - 1
+    return focusedBox.y <= chromeBox.y + 1
   }).toBe(true)
 
   await page.evaluate(() => {

@@ -59,7 +59,9 @@ test("keeps bell, pending-invitation, and Work completion responsibilities disti
   await expect(page.getByRole("heading", { name: "Pending invitations" })).toBeVisible()
   await expect(page.getByTestId("notifications")).not.toContainText("collab invite")
   await expect(page.getByRole("link", { name: "Open activity: Can we add a pantry filter?" })).toHaveAttribute("href", "/react/apps/recipebot/dev/chat")
-  await expect(page.getByTestId("notifications").locator('[data-status-role="attention"]')).toHaveCount(2)
+  // Three dots: the two actionable activity items plus the shell menu's single
+  // attention dot, which the bar renders inside this route's root.
+  await expect(page.getByTestId("notifications").locator('[data-status-role="attention"]')).toHaveCount(3)
   await expect(page.getByRole("img", { name: "RecipeBot, unread" })).toHaveCount(2)
 })
 

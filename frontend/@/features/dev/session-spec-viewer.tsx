@@ -23,7 +23,7 @@ import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
+import { AppTopBar } from "@/features/apps/app-top-bar"
 import { getApp, type AppDetail } from "@/lib/apps-api"
 import {
   getSessionSpec,
@@ -276,7 +276,7 @@ export function SessionSpecViewer() {
 
   return (
     <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="session-spec">
-      {app ? <AppContextChrome app={app} backTo={back} label="Session spec" mode="nested" state={appContextState(app)} /> : null}
+      <AppTopBar app={app} backTo={back} fallbackTitle="Session spec" label="Session spec" mode="nested" />
       {error ? <Alert variant="destructive"><AlertTitle>Spec unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {spec === null && !error ? <><Skeleton className="h-10 w-48" /><Skeleton className="h-96 w-full" /></> : null}
       {spec !== null ? (

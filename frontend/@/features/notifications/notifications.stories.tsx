@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
 
 import { NotificationsContent } from "@/features/notifications/notifications"
+import { SidebarProvider } from "@/components/ui/sidebar"
 
 const data = {
   unread: 2,
@@ -15,10 +16,10 @@ const data = {
 }
 
 const meta = {
-  title: "Platform/Activity",
+  title: "Features/Platform/Activity",
   component: NotificationsContent,
   parameters: { layout: "fullscreen" },
-  decorators: [(Story) => <Story />],
+  decorators: [(Story) => <SidebarProvider><Story /></SidebarProvider>],
   args: {
     data,
     error: null,

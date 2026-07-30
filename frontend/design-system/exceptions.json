@@ -321,13 +321,13 @@
     },
     {
       "rule": "no-arbitrary-utilities",
-      "file": "@/components/platform-shell.tsx",
+      "file": "@/components/platform-menu-trigger.tsx",
       "matches": [
         "after:size-[max(100%,3rem)]"
       ],
       "count": 1,
       "owner": "frontend-platform",
-      "reason": "Invisible pointer-coarse touch-target expansion on the menu trigger; the bare size- variant was a defect and is removed.",
+      "reason": "The 48px touch target on the drawer trigger has no named utility; the control moved out of platform-shell.tsx when TopBar became the shell's only route chrome.",
       "expires": "2026-09-30"
     },
     {

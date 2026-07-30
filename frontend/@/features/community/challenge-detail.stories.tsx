@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
 
 import { ChallengeDetailContent } from "@/features/community/challenge-detail"
+import { SidebarProvider } from "@/components/ui/sidebar"
 
 const challenge = {
   id: 12,
@@ -17,9 +18,10 @@ const challenge = {
 }
 
 const meta = {
-  title: "Community/Challenge detail",
+  title: "Features/Community/Challenge detail",
   component: ChallengeDetailContent,
   parameters: { layout: "fullscreen" },
+  decorators: [(Story) => <SidebarProvider><Story /></SidebarProvider>],
 } satisfies Meta<typeof ChallengeDetailContent>
 
 export default meta

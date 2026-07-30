@@ -4,6 +4,7 @@ import { expect, fn, userEvent, within } from "storybook/test"
 
 import { ExploreView } from "@/features/apps/explore"
 import type { AppRecord } from "@/lib/apps-api"
+import { SidebarProvider } from "@/components/ui/sidebar"
 
 const gameCorner: AppRecord = {
   id: "game-corner",
@@ -40,17 +41,19 @@ function EvidenceFrame({
   children: ReactNode
 }) {
   return (
-    <section
-      aria-label="Route evidence"
-      className="w-full max-w-5xl overflow-hidden bg-background text-foreground"
-    >
-      {children}
-    </section>
+    <SidebarProvider>
+      <section
+        aria-label="Route evidence"
+        className="w-full max-w-5xl overflow-hidden bg-background text-foreground"
+      >
+        {children}
+      </section>
+    </SidebarProvider>
   )
 }
 
 const meta = {
-  title: "Apps/Explore route",
+  title: "Features/Apps/Explore",
   component: ExploreView,
   parameters: { layout: "padded" },
   decorators: [

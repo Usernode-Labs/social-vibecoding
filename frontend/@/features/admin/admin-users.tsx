@@ -2,13 +2,13 @@ import { ExternalLink, ShieldAlert, UsersRound } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { TopBar } from "@/components/top-bar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
 import { PlatformIcon } from "@/components/platform-icon"
-import { PageHeader } from "@/components/page-header"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AdminAccessError, getAdminUser, getAdminUsers, updateAdminUserDailyLimit, updateAdminUserQuota, type AdminUser, type AdminUserRecord } from "@/lib/admin-api"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
@@ -56,15 +56,15 @@ export function AdminUsersPage() {
   const users = useMemo(() => state.kind === "ready" ? state.users.filter((user) => user.username.toLowerCase().includes(query.trim().toLowerCase())) : [], [query, state])
   const updateUser = (id: number, updates: Partial<AdminUserRecord>) => setState((current) => current.kind === "ready" ? { ...current, users: current.users.map((user) => user.id === id ? { ...user, ...updates } : user) } : current)
   const canWrite = state.kind === "ready" && state.user.canAdminWrite && !isProductionReadOnlyReview
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-users">
-    <PageHeader action={state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : undefined} description="Inspect accounts and update app quotas or daily spend overrides." title="Users" />
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="admin-users">
+    <TopBar action={state.kind === "ready" ? <Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button> : undefined} title="Users" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {state.kind === "loading" ? <div className="space-y-3"><Skeleton className="h-10 w-full" /><Skeleton className="h-32 w-full" /><Skeleton className="h-32 w-full" /></div> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Users unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "ready" && !state.user.canAdminWrite ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>View-only administrator</AlertTitle><AlertDescription>You can inspect users, but a write administrator is required to change quotas or spend overrides.</AlertDescription></Alert> : null}
     {state.kind === "ready" && isProductionReadOnlyReview ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Changes unavailable</AlertTitle><AlertDescription>Quota and spend changes are disabled.</AlertDescription></Alert> : null}
     {state.kind === "ready" ? <><div className="flex flex-wrap items-center justify-between gap-3"><Input aria-label="Filter users" className="max-w-sm" onChange={(event) => setQuery(event.target.value)} placeholder="Filter users" value={query} /><Button render={<a href="/#admin/users" />} variant="outline">Manage accounts<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button></div>{!users.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={UsersRound} /></EmptyMedia><EmptyTitle>No matching users</EmptyTitle><EmptyDescription>Try another name, or clear the filter.</EmptyDescription></EmptyHeader></Empty> : <section aria-label="Platform users" className="space-y-3">{users.map((user) => <UserCard canWrite={canWrite} key={user.id} onUpdate={updateUser} user={user} />)}</section>}</> : null}
-  </div>
+  </div></div>
 }
 
 export function AdminUsersList({ users }: { users: AdminUserRecord[] }) {

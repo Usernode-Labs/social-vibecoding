@@ -1,8 +1,8 @@
 import { Activity, AppWindow, CircleAlert, Container, GitPullRequest, RefreshCw, Server, TriangleAlert, UsersRound, Wrench } from "lucide-react"
 import { useEffect, useState } from "react"
 
-import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -92,5 +92,5 @@ export function StatusPage() {
     return () => { cancelled = true; controller.abort(); window.clearInterval(interval) }
   }, [refreshKey])
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="operational-status"><PageHeader action={<Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button>} description="A public, read-only operational snapshot. It refreshes every five seconds and never exposes privileged controls." title="Platform status" />{state.kind === "loading" ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-72 sm:col-span-2 xl:col-span-4" /></div> : null}{state.kind === "error" ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Status unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}{state.kind === "ready" ? <StatusContent snapshot={state.snapshot} /> : null}</div>
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="operational-status"><TopBar action={<Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RefreshCw} />Refresh</Button>} title="Platform status" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6"><p className="max-w-2xl text-pretty text-base text-muted-foreground sm:text-sm">A public, read-only operational snapshot. It refreshes every five seconds and never exposes privileged controls.</p>{state.kind === "loading" ? <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-72 sm:col-span-2 xl:col-span-4" /></div> : null}{state.kind === "error" ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Status unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}{state.kind === "ready" ? <StatusContent snapshot={state.snapshot} /> : null}</div></div>
 }

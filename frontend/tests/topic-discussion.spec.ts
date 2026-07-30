@@ -8,6 +8,15 @@ const forum = {
 }
 
 async function routeForum(page: Page) {
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: {
+    app: {
+      id: "recipebot",
+      slug: "recipebot",
+      name: "RecipeBot",
+      status: "running",
+      active_users: 24,
+    },
+  } }))
   await page.route("**/api/apps/recipebot/promoted", (route) => route.fulfill({ json: { promoted: forum.promoted } }))
   await page.route("**/api/apps/recipebot/issues", (route) => route.fulfill({ json: { issues: forum.issues } }))
 }

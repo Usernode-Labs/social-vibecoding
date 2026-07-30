@@ -25,7 +25,7 @@ const app = {
 } satisfies AppDetail
 
 const meta = {
-  title: "Apps/Focused app frame",
+  title: "Blocks/Apps/Focused app frame",
   component: FocusedAppFrame,
   parameters: { layout: "fullscreen" },
   decorators: [
@@ -47,7 +47,6 @@ const meta = {
     iframeToken: null,
     innerPath: null,
     offline: false,
-    onFrameLoad: fn(),
     onRetry: fn(),
   },
 } satisfies Meta<typeof FocusedAppFrame>

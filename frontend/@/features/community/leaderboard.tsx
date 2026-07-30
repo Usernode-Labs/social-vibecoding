@@ -3,10 +3,10 @@ import { useEffect, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { TopBar } from "@/components/top-bar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { PlatformIcon } from "@/components/platform-icon"
-import { PageHeader } from "@/components/page-header"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -53,8 +53,8 @@ export function Leaderboard() {
   }
 
   return (
-    <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="leaderboard">
-      <PageHeader description="Recognize proposals and the people building the platform." title="Kudos leaderboard" />
+    <div className="isolate flex w-full flex-1 flex-col" data-testid="leaderboard">
+      <TopBar title="Kudos leaderboard" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
         <div aria-label="Leaderboard view" className="flex gap-1" role="group">
           <Button aria-pressed={tab === "prs"} onClick={() => select("prs", window)} type="button" variant={tab === "prs" ? "secondary" : "ghost"}>Top PRs</Button>
@@ -70,7 +70,7 @@ export function Leaderboard() {
       {!items && !error ? <PaneSkeleton /> : null}
       {items?.length === 0 ? <Alert><AlertTitle>No kudos yet</AlertTitle><AlertDescription>Completed proposals will appear here when the community recognizes them.</AlertDescription></Alert> : null}
       {items?.map((item, index) => "author_username" in item ? <PrRow item={item} key={item.session_id} rank={index + 1} /> : <UserRow item={item} key={item.username} rank={index + 1} window={window} />)}
-    </div>
+    </div></div>
   )
 }
 
@@ -182,8 +182,9 @@ export function LeaderboardHistory() {
     }
   }
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="leaderboard-history">
-    <PageHeader description="Everything you’ve given — kudos, bounty pledges, and votes — newest first. Only you can see this." title="My history" />
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="leaderboard-history">
+    <TopBar title="My history" />
+    <p className="max-w-2xl text-pretty text-base text-muted-foreground sm:text-sm">Everything you’ve given — kudos, bounty pledges, and votes — newest first. Only you can see this.</p><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     <div aria-label="History filters" className="flex flex-wrap gap-2" role="group">
       <Button aria-pressed={kudosEnabled} onClick={() => toggle("kudos")} size="sm" type="button" variant={kudosEnabled ? "secondary" : "outline"}><PlatformIcon data-icon="inline-start" icon={ThumbsUp} size="sm" />Kudos</Button>
       <Button aria-pressed={votesEnabled} onClick={() => toggle("votes")} size="sm" type="button" variant={votesEnabled ? "secondary" : "outline"}><PlatformIcon data-icon="inline-start" icon={Vote} size="sm" />Votes</Button>
@@ -194,7 +195,7 @@ export function LeaderboardHistory() {
     {history?.items.length ? <section aria-label="Your recognition history" className="flex flex-col gap-3">{history.items.map((item, index) => <HistoryRow item={item} key={`${item.type}-${item.created_at}-${index}`} />)}</section> : null}
     {paginationError ? <Alert variant="destructive"><AlertTitle>Couldn’t load more history</AlertTitle><AlertDescription>{paginationError}</AlertDescription></Alert> : null}
     {history?.nextBefore ? <Button className="self-center" disabled={loadingMore} onClick={() => void loadMore()} variant="outline">{loadingMore ? "Loading…" : "Load more"}</Button> : null}
-  </div>
+  </div></div>
 }
 
 function Rank({ value }: { value: number }) {
@@ -284,10 +285,10 @@ export function LeaderboardUserProfile() {
     }
   }
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="leaderboard-profile">
-    <PageHeader description={profile ? "Public proposals this contributor has made, newest first." : undefined} title={`@${profile?.user.username || username}`} />
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="leaderboard-profile">
+    <TopBar title={`@${profile?.user.username || username}`} /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {error ? <Alert variant={error.notFound ? "default" : "destructive"}><AlertTitle>{error.notFound ? "User not found" : "Profile unavailable"}</AlertTitle><AlertDescription>{error.notFound ? "This public profile may have been removed or renamed." : error.message}</AlertDescription></Alert> : null}
     {!profile && !error ? <PaneSkeleton /> : null}
     {profile ? <><div aria-label="Contributor recognition" className="flex flex-wrap gap-2"><Badge><PlatformIcon data-icon="inline-start" icon={Award} size="xs" />{profile.stats.kudos_merged} kudos on merged</Badge><Badge variant="secondary">{profile.stats.prs_merged} merged</Badge><Badge variant="outline">{profile.stats.prs_total} proposed</Badge></div>{profile.items.length === 0 ? <Alert><AlertTitle>No public proposals yet</AlertTitle><AlertDescription>Public proposals will appear here when this contributor creates one.</AlertDescription></Alert> : <section aria-label={`${profile.user.username}'s proposals`} className="space-y-3">{profile.items.map((item) => <ProfilePrRow item={item} key={item.session_id} />)}</section>}{profile.nextBefore ? <Button className="self-center" disabled={loadingMore} onClick={() => void loadMore()} variant="outline">{loadingMore ? "Loading…" : "Load more"}</Button> : null}</> : null}
-  </div>
+  </div></div>
 }

@@ -6,6 +6,7 @@ import { HomeView } from "@/features/apps/home"
 import { homeActivityItems } from "@/features/apps/home-explore-model"
 import type { AppRecord } from "@/lib/apps-api"
 import type { NotificationsPage } from "@/lib/notifications-api"
+import { SidebarProvider } from "@/components/ui/sidebar"
 
 const recipeBot: AppRecord = {
   id: "recipebot",
@@ -56,17 +57,19 @@ function EvidenceFrame({
   children: ReactNode
 }) {
   return (
-    <section
-      aria-label="Route evidence"
-      className="w-full max-w-5xl overflow-hidden bg-background text-foreground"
-    >
-      {children}
-    </section>
+    <SidebarProvider>
+      <section
+        aria-label="Route evidence"
+        className="w-full max-w-5xl overflow-hidden bg-background text-foreground"
+      >
+        {children}
+      </section>
+    </SidebarProvider>
   )
 }
 
 const meta = {
-  title: "Apps/Home route",
+  title: "Features/Apps/Home",
   component: HomeView,
   parameters: { layout: "padded" },
   decorators: [

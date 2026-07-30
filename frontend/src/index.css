@@ -84,11 +84,16 @@
 /* The shell owns device insets. Route content keeps its existing padding.
  * These selectors deliberately sit above Tailwind's layered utilities so a
  * device inset can widen, but never compound, the route's ordinary padding. */
-[data-slot="platform-header"] {
-  min-height: calc(4rem + var(--safe-area-top));
+/* The bar sits inside the route viewport, so it takes only the top inset;
+ * horizontal insets belong to the viewport (flow) or to the bar's own offsets
+ * (overlay), and must never compound. */
+[data-slot="top-bar"] {
+  min-height: calc(3.5rem + var(--safe-area-top));
   padding-top: var(--safe-area-top);
-  padding-inline-start: max(1rem, var(--safe-area-left));
-  padding-inline-end: max(1rem, var(--safe-area-right));
+}
+[data-slot="top-bar"][data-placement="overlay"] {
+  inset-inline-start: var(--safe-area-left);
+  inset-inline-end: var(--safe-area-right);
 }
 [data-slot="sidebar-inner"] {
   padding-top: var(--safe-area-top);
@@ -101,7 +106,9 @@
   flex: 1 1 auto;
   flex-direction: column;
 }
-[data-slot="route-viewport"][data-viewport-mode="content"] {
+/* A screen is full-bleed exactly when its bar overlays a hosted surface; that
+ * surface owns its own insets, so the viewport adds none. */
+[data-slot="route-viewport"]:not(:has([data-slot="top-bar"][data-placement="overlay"])) {
   padding-bottom: var(--safe-area-bottom-active);
   padding-inline-start: max(0px, calc(var(--safe-area-left) - var(--route-content-gutter)));
   padding-inline-end: max(0px, calc(var(--safe-area-right) - var(--route-content-gutter)));
@@ -179,16 +186,10 @@
   padding-inline-start: var(--safe-area-left);
   padding-inline-end: var(--safe-area-right);
 }
-[data-slot="hosted-app-surface"] [data-slot="app-chrome"][data-placement="flow"] {
-  width: auto;
-  margin-top: 0.75rem;
-  margin-inline-start: max(0.75rem, var(--safe-area-left));
-  margin-inline-end: max(0.75rem, var(--safe-area-right));
-}
 [data-slot="staging-preview-surface"][data-state="ready"] {
   padding-bottom: var(--safe-area-bottom-active);
 }
-[data-slot="staging-preview-header"],
+[data-slot="staging-preview-surface"] > [data-slot="top-bar"],
 [data-slot="staging-preview-instructions"] {
   padding-inline-start: max(1rem, var(--safe-area-left));
   padding-inline-end: max(1rem, var(--safe-area-right));

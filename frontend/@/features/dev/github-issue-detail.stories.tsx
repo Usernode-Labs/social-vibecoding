@@ -1,12 +1,13 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
 
 import { GitHubIssueDetailContent } from "@/features/dev/github-issue-detail"
+import { SidebarProvider } from "@/components/ui/sidebar"
 
 const app = { id: "recipebot", slug: "recipebot", name: "RecipeBot", status: "running", active_users: 24, is_favorited: true, is_collaborator: true, your_apps_hidden: false, favorite_order: 0, open_prs: 1, active_sessions: 1, open_issues: 2 }
 const issue = { number: 84, title: "Make pantry filters easier to find", created_by_username: "mira", body: "The pantry controls are difficult to discover on a small screen.\n\nPlease keep the existing search behavior.", bounty_count: 2, chatCount: 5, headless: { status: "ready" }, in_progress: { count: 1 }, htmlUrl: "https://github.com/Usernode-Labs/social-vibecoding/issues/84" }
 const comments = [{ author: "mira", body: "The filters need to work with the existing search terms.", createdAt: "2026-07-28T08:00:00.000Z" }, { author: "sam", body: "I can take the first pass.", createdAt: "2026-07-28T09:00:00.000Z" }]
 const closeProposal = { id: 910, kind: "close_issue", title: "Close issue #84", status: "open", up_count: 1, down_count: 0, created_at: "2026-07-28T10:00:00.000Z", payload: { issueNumber: 84, reason: "Resolved elsewhere." } }
-const meta = { title: "Dev/GitHub issue detail", component: GitHubIssueDetailContent, parameters: { layout: "fullscreen" } } satisfies Meta<typeof GitHubIssueDetailContent>
+const meta = { title: "Features/Dev/GitHub issue detail", component: GitHubIssueDetailContent, parameters: { layout: "fullscreen" }, decorators: [(Story) => <SidebarProvider><Story /></SidebarProvider>] } satisfies Meta<typeof GitHubIssueDetailContent>
 
 export default meta
 type Story = StoryObj<typeof meta>

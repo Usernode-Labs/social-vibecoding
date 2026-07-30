@@ -34,7 +34,7 @@ test("renders the read-only operations snapshot and preserves legacy tools", asy
 
 test("exposes the operations route from platform navigation only to admins", async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { isAdmin: true, canAdminWrite: true } } }))
-  await page.route("**/api/apps", (route) => route.fulfill({ json: [] }))
+  await page.route("**/api/apps", (route) => route.fulfill({ json: { apps: [] } }))
   await page.goto("/react/")
   await expect(await platformAdminLink(page)).toHaveAttribute("href", "/react/admin")
 })

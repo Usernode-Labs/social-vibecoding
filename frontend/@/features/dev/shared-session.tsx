@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
+import { AppTopBar } from "@/features/apps/app-top-bar"
 import { TopicDiscussionTranscript } from "@/features/dev/topic-discussion-transcript"
 import { getApp, type AppDetail } from "@/lib/apps-api"
 import { appDevGitHubIssuePath, appDevPath } from "@/lib/routes"
@@ -87,7 +87,7 @@ export function SharedSessionDetail() {
   if (result === undefined) return <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-56 w-full" /><Skeleton className="h-28 w-full" /></div>
   if (result.session === null) return <div className="flex flex-1 items-center justify-center p-6" data-testid="shared-session-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={RadioTower} /></EmptyMedia><EmptyTitle>Shared session not found</EmptyTitle><EmptyDescription>It may no longer be shared, may have been archived, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><Button render={<Link to={appDevPath(slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</Button></Empty></div>
   return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="shared-session-detail">
-    {app ? <AppContextChrome app={app} backTo={appDevPath(slug)} label="Shared Dev session" mode="nested" state={appContextState(app)} /> : null}
+    <AppTopBar app={app} backTo={appDevPath(slug)} fallbackTitle="Shared Dev session" label="Shared Dev session" mode="nested" />
     <SharedSessionDetailContent session={result.session} slug={slug}>
       <TopicDiscussionTranscript slug={slug} threadRef={id} threadType="session" />
     </SharedSessionDetailContent>

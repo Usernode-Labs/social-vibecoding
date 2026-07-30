@@ -2,7 +2,7 @@ import { LoaderCircle, LockKeyhole, LockKeyholeOpen, UsersRound } from "lucide-r
 import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 
-import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
+import { AppTopBar } from "@/features/apps/app-top-bar"
 import { AppIdentity } from "@/features/apps/app-identity"
 import { AppShareSheet } from "@/features/apps/app-share-sheet"
 import { getApp, getPublicAppContributors, proposeAppRename, setAppChangeLock, setAppFavorite, type AppDetail, type PublicAppContributor } from "@/lib/apps-api"
@@ -193,10 +193,11 @@ export function AppDetails() {
   }
 
   return (
-    <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-details">
+    <div className="isolate flex w-full flex-1 flex-col" data-testid="app-details">
+      <AppTopBar app={app} fallbackTitle="App" mode="use" />
+      <div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
       {error ? <Alert variant="destructive"><AlertTitle>App unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!app && !error ? <DetailSkeleton /> : null}
-      {app ? <AppContextChrome app={app} mode="use" state={appContextState(app)} /> : null}
       {app && isProductionReadOnlyReview ? <Alert data-testid="app-details-production-review"><AlertTitle>Read-only</AlertTitle><AlertDescription>Saving to Your apps, renaming, and change-approval updates are unavailable.</AlertDescription></Alert> : null}
       {app ? (
         <Card>
@@ -323,6 +324,7 @@ export function AppDetails() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+      </div>
     </div>
   )
 }

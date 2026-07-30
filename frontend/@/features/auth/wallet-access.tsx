@@ -206,7 +206,7 @@ export function WalletAccessView({
         <div className="mb-1 flex size-10 items-center justify-center rounded-md border bg-muted">
           <PlatformIcon icon={WalletCards} size="lg" />
         </div>
-        <CardTitle><h1>{title}</h1></CardTitle>
+        <CardTitle><h2>{title}</h2></CardTitle>
         <CardDescription>
           {pubkey ? `Wallet ${shortAddress(pubkey)}` : "Use the wallet secured by the native Usernode app."}
         </CardDescription>

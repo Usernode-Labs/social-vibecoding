@@ -54,7 +54,8 @@ test("renders the public operational snapshot without admin diagnostics or contr
   await expect(status).not.toContainText("97%")
   await expect(status).toContainText("outside this read-only React view")
   await expect(status.getByRole("button", { name: "Refresh" })).toBeVisible()
-  await expect(status.getByRole("button")).toHaveCount(1)
+  await expect(status.getByRole("button", { name: "Toggle navigation" })).toBeVisible()
+  await expect(status.getByRole("button")).toHaveCount(2)
 })
 
 test("refreshes the public snapshot on request", async ({ page }) => {

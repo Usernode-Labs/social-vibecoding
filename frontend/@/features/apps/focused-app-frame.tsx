@@ -15,7 +15,6 @@ export type FocusedAppFrameProps = {
   iframeToken: string | null
   offline: boolean
   onRetry: () => void
-  onFrameLoad: () => void
 }
 
 const frameAllow = "clipboard-write; pointer-lock"
@@ -66,7 +65,6 @@ export function FocusedAppFrame({
   iframeToken,
   innerPath,
   offline,
-  onFrameLoad,
   onRetry,
 }: FocusedAppFrameProps) {
   const frame = useRef<HTMLIFrameElement>(null)
@@ -143,10 +141,7 @@ export function FocusedAppFrame({
         allow={frameAllow}
         className="size-full border-0"
         data-testid="focused-app-frame"
-        onLoad={() => {
-          setFrameRevision((revision) => revision + 1)
-          onFrameLoad()
-        }}
+        onLoad={() => setFrameRevision((revision) => revision + 1)}
         ref={frame}
         sandbox={frameSandbox}
         src={source}

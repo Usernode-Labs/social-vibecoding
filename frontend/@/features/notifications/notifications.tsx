@@ -2,8 +2,8 @@ import { Bell, CheckCheck, Handshake, RefreshCw, Scale } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 
-import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -96,15 +96,8 @@ export function NotificationsContent({ data, error, inviteError, loadMoreError, 
     return [...buckets.values()]
   }, [bellItems])
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="notifications">
-    <PageHeader
-      action={<div className="flex gap-2">
-        <Button aria-label="Refresh activity" onClick={onRefresh} size="icon" type="button" variant="outline"><PlatformIcon icon={RefreshCw} /></Button>
-        <Button disabled={!unread || markingAll || isProductionReadOnlyReview} onClick={onMarkAll} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={CheckCheck} />Mark all read</Button>
-      </div>}
-      description="Mentions, replies, votes, and invitations."
-      title="Activity"
-    />
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="notifications">
+    <TopBar action={<div className="flex gap-2"><Button aria-label="Refresh activity" onClick={onRefresh} size="icon" type="button" variant="outline"><PlatformIcon icon={RefreshCw} /></Button><Button disabled={!unread || markingAll || isProductionReadOnlyReview} onClick={onMarkAll} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={CheckCheck} />Mark all read</Button></div>} title="Activity" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {isProductionReadOnlyReview ? <Alert><AlertTitle>Read-only</AlertTitle><AlertDescription>Marking activity as read and accepting or declining invitations are unavailable.</AlertDescription></Alert> : null}
     {liveState !== "connected" ? <div className="text-sm text-muted-foreground" role="status"><StatusDot detail={liveState === "unavailable" ? "Refresh to check for updates." : undefined} subject="Activity" {...connectionPresentationStatus(liveState)} /></div> : null}
     {error ? <Alert variant="destructive"><PlatformIcon icon={Bell} /><AlertTitle>Activity unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
@@ -114,7 +107,7 @@ export function NotificationsContent({ data, error, inviteError, loadMoreError, 
     {data && !bellItems.length && !data.invites.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={Bell} /></EmptyMedia><EmptyTitle>You are all caught up</EmptyTitle><EmptyDescription>New messages and community activity will appear here.</EmptyDescription></EmptyHeader></Empty> : null}
     {groups.map((group) => <NotificationGroup group={group} key={group[0]?.appId ?? "general"} onOpen={onOpen} />)}
     {data?.hasMore ? <div className="flex flex-col items-center gap-2"><Button disabled={loadingMore} onClick={onLoadMore} type="button" variant="outline"><PlatformIcon className={loadingMore ? "animate-spin" : undefined} data-icon="inline-start" icon={RefreshCw} />{loadingMore ? "Loading older activity…" : "Show older activity"}</Button>{loadMoreError ? <p className="text-sm text-destructive" role="status">{loadMoreError}</p> : null}</div> : null}
-  </div>
+  </div></div>
 }
 
 function InviteSection({ invites, mutatingInvite, onInviteAction }: { invites: PendingInvite[]; mutatingInvite: string | null; onInviteAction: (invite: PendingInvite, action: "accept" | "decline") => void }) {

@@ -8,8 +8,8 @@ import {
 import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 
-import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { ThemeSwitcher } from "@/components/theme-switcher"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
@@ -100,7 +100,6 @@ function messageFrom(cause: unknown, fallback: string) {
 export function Settings() {
   const navigate = useNavigate()
   const [webState, setWebState] = useState<WebSettingsState>({ kind: "loading" })
-  const [refreshKey, setRefreshKey] = useState(0)
   const [preferenceError, setPreferenceError] = useState<string | null>(null)
   const [savingPreference, setSavingPreference] = useState<"locale" | "progress" | null>(null)
   const [apiKey, setApiKey] = useState("")
@@ -112,6 +111,7 @@ export function Settings() {
   const [loggingOut, setLoggingOut] = useState(false)
   const [logoutError, setLogoutError] = useState<string | null>(null)
   const [adminPreview, setAdminPreview] = useState(() => isAdminPreviewEnabled())
+  const [refreshKey, setRefreshKey] = useState(0)
   const preferencesReadOnly = isProductionReadOnlyReview || Boolean(productionWriteAppSlug)
 
   useEffect(() => {
@@ -227,15 +227,10 @@ export function Settings() {
 
   return (
     <div
-      className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6"
+      className="isolate flex w-full flex-1 flex-col"
       data-testid="settings"
     >
-      <PageHeader
-        action={<Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline">
-          Refresh
-        </Button>}
-        title="Settings"
-      />
+      <TopBar action={<Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline">Refresh</Button>} title="Settings" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
 
       {preferencesReadOnly ? (
         <Alert data-testid={isProductionReadOnlyReview ? "settings-production-review" : "settings-app-write-scope"}>
@@ -535,6 +530,6 @@ export function Settings() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </div></div>
   )
 }

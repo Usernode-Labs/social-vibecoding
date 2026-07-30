@@ -2,8 +2,8 @@ import { useEffect, useId, useMemo, useState } from "react"
 import { Compass, Search } from "lucide-react"
 import { Link } from "react-router-dom"
 
-import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
@@ -85,17 +85,14 @@ export function ExploreView({
 
   return (
     <div
-      className="isolate flex w-full flex-1 flex-col gap-8 p-4 antialiased sm:p-6 lg:p-8"
+      className="isolate flex w-full flex-1 flex-col"
       data-testid="explore-route"
     >
-      <PageHeader
-        action={
+      <TopBar action={
           <Link className={buttonVariants()} to="/create">
             Create dApp
           </Link>
-        }
-        title="Explore"
-      />
+        } title="Explore" /><div className="flex w-full flex-1 flex-col gap-8 p-4 antialiased sm:p-6 lg:p-8">
 
       <InputGroup>
         <InputGroupInput
@@ -187,7 +184,7 @@ export function ExploreView({
           </ul>
         </section>
       ) : null}
-    </div>
+    </div></div>
   )
 }
 

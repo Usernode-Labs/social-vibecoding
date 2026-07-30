@@ -1,8 +1,8 @@
 import { CircleAlert, RadioTower, Server, TriangleAlert } from "lucide-react"
 import { useEffect, useState } from "react"
 
-import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -89,10 +89,10 @@ export function NodeStatusPage() {
     return () => { cancelled = true; controller.abort(); window.clearInterval(interval) }
   }, [refreshKey])
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="node-status">
-    <PageHeader action={<Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline">Refresh</Button>} title="Node" />
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="node-status">
+    <TopBar action={<Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline">Refresh</Button>} title="Node" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {state.kind === "loading" ? <div className="grid gap-4 sm:grid-cols-3"><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-56 sm:col-span-3" /></div> : null}
     {state.kind === "error" ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Status unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "ready" ? <NodeStatusContent snapshot={state.snapshot} /> : null}
-  </div>
+  </div></div>
 }

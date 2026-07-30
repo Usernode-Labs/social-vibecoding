@@ -3,8 +3,8 @@ import { Award, CheckCircle2 } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link } from "react-router-dom"
 
-import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -238,11 +238,11 @@ export function Challenges() {
     return () => { cancelled = true; controller.abort() }
   }, [])
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="challenges">
-    <PageHeader title={data?.season?.name || "Challenges"} />
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="challenges">
+    <TopBar title={data?.season?.name || "Challenges"} /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {error ? <Alert variant="destructive"><AlertTitle>Challenges unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     {!data && !error ? <div className="space-y-3"><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /></div> : null}
     {data ? <ChallengeFeed snapshot={data} /> : null}
     {data?.entries.length ? <section className="space-y-3"><h3 className="text-xl font-semibold">Season leaderboard</h3>{data.entries.map((entry) => <Card key={entry.rank} size="sm"><CardHeader className="grid-cols-[auto_1fr_auto] gap-3"><span className="tabular-nums text-muted-foreground">#{entry.rank}</span><CardTitle>{entry.display_name || `Participant ${entry.participant_id}`}</CardTitle><Badge><PlatformIcon data-icon="inline-start" icon={Award} size="xs" />{pointsFormatter.format(Number(entry.total_points || 0))}</Badge></CardHeader></Card>)}</section> : null}
-  </div>
+  </div></div>
 }

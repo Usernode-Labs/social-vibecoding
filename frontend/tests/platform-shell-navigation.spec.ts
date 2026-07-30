@@ -61,7 +61,7 @@ test("keeps the menu trigger compact and the header title visible", async ({ pag
   // entire header row and collapsed the title to zero width.
   expect(triggerBox!.width).toBeLessThanOrEqual(64)
 
-  const title = page.locator('[data-slot="platform-header"]').getByText("dApps")
+  const title = page.locator('[data-slot="top-bar"]').getByRole("heading", { level: 1, name: "Home" })
   await expect(title).toBeVisible()
   const titleBox = await title.boundingBox()
   expect(titleBox).not.toBeNull()
