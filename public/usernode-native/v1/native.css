@@ -47,6 +47,17 @@
   --un-navbar-bg: rgba(249, 249, 251, 0.82);
   --un-backdrop: rgba(0, 0, 0, 0.4);
 
+  /* Anchored-popover surface. Deliberately its OWN token rather than
+     --un-group-bg: a grouped-list card sits IN the page and is often
+     themed as a translucent tint over it, whereas a popover floats over
+     arbitrary content with no backdrop behind it and must be opaque or
+     the page shows straight through the menu (#847). Defaults to the
+     sheet surface — the kit's other floating-overlay family
+     (sheet/modal/alert), opaque by contract in both modes — so dark
+     mode and app-level re-themes inherit correctly with no second
+     override (same pattern as --un-zoom-bg above). */
+  --un-popover-bg: var(--un-sheet-bg);
+
   /* Zoom transition overlay surface ('zoom-in'/'zoom-out'): the moving
      screen gets this opaque background for the animation's duration so
      the grid beneath can't bleed through a transparent screen mid-zoom.
@@ -640,7 +651,11 @@ html.un-kb .un-action-sheet {
    fidelity rules). Sits one layer above sheets/modals so a popover can
    open from inside one. position/left/top are JS-owned (the pure
    placePopover math); max-height keeps a long menu scrolling internally
-   instead of overflowing the viewport. */
+   instead of overflowing the viewport.
+
+   The surface is an OPAQUE token of its own (--un-popover-bg): there is
+   no backdrop behind a popover, so anything translucent here lets the
+   content underneath read through the menu rows (#847). */
 
 .un-popover {
   position: fixed;
@@ -650,12 +665,17 @@ html.un-kb .un-action-sheet {
   max-height: calc(100vh - 16px);
   overflow-y: auto;
   padding: 4px 0;
-  background: var(--un-group-bg);
+  background: var(--un-popover-bg);
   border: 1px solid var(--un-hairline);
   border-radius: var(--un-radius-card);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18), 0 2px 6px rgba(0, 0, 0, 0.08);
   text-align: left;
   outline: none;
+}
+/* A black shadow all but vanishes against a dark page — lift the menu
+   off the background harder so the floating surface still reads. */
+.dark .un-popover {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
 }
 .un-popover-header {
   padding: 8px 14px 9px;

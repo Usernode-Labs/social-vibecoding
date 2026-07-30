@@ -187,6 +187,65 @@ const Home = {
     if (!query && canCreate) Home.wireCreateButtons();
     Home._wireCards(listEl, canDragYours, yoursCount);
     Home._wireWidgetStrip(listEl);
+    Home._maybeOpenShotMenu(listEl);
+  },
+
+  // Screenshot-state deep link (`?shot=card-menu`, #847): the card's "…"
+  // actions menu only exists after a click, so neither the before/after
+  // captures nor a dapp.json test can reach it — and it's exactly the
+  // surface whose missing background this param exists to prove. Opening
+  // it from the URL makes it capturable and testable. Pure UI state (it
+  // opens the same kit popover a click opens, writes nothing, and is not
+  // env-gated), so the production "before" side works too once shipped.
+  //
+  // Anchored to the FIRST card in the grid so the shot is deterministic;
+  // pair it with `?demo=1` in staging to pin that to a seeded demo tile
+  // (routes/apps.js demoIconApps, which unshifts them to the front).
+  // Fires once per page load — a later re-render (a WS app_update, a
+  // search keystroke) must not pop the menu back open under the user.
+  _shotMenuDone: false,
+
+  _maybeOpenShotMenu(listEl) {
+    if (Home._shotMenuDone) return;
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'card-menu') return;
+    Home._shotMenuDone = true;
+    // Deferred a frame: the grid was written synchronously just above,
+    // and the kit's flip/clamp placement needs the button's settled rect.
+    requestAnimationFrame(() => {
+      const btn = listEl.querySelector('.card-menu-btn');
+      if (!btn || !btn.dataset.slug) return;
+      Home.openCardMenu(btn.dataset.slug, btn);
+      requestAnimationFrame(() => Home._assertMenuOpaque());
+    });
+  },
+
+  // Regression lock for #847, and the second reason the deep link above
+  // exists: a translucent menu is invisible to a selector/text test (every
+  // row is present and correct — you just read the app grid through them),
+  // so assert the SURFACE. The verdict is stamped on the popover as
+  // data-surface, which a dapp.json test asserts on, and a violation also
+  // logs console.error so it trips the baseline no-console-errors check on
+  // the same route. Scoped to ?shot=card-menu, so a real user's menu never
+  // runs this.
+  _assertMenuOpaque() {
+    const pop = document.querySelector('.un-popover');
+    if (!pop) return; // touch idiom: an action sheet over the kit's own backdrop
+    const bg = getComputedStyle(pop).backgroundColor || '';
+    const m = bg.match(/^rgba?\(([^)]+)\)$/);
+    const parts = m ? m[1].split(',').map((s) => parseFloat(s.trim())) : [];
+    // 3 components = rgb(), fully opaque. No match at all (`transparent`,
+    // an unresolved var) counts as alpha 0 — the bug this guards against.
+    const alpha = parts.length >= 4 ? parts[3] : (parts.length === 3 ? 1 : 0);
+    const opaque = alpha >= 0.99;
+    pop.dataset.surface = opaque ? 'opaque' : 'translucent';
+    if (!opaque) {
+      console.error(
+        `[home] card actions menu surface is translucent (${bg}) — the page reads`
+        + ' through it (#847). --un-popover-bg must resolve to an opaque color.'
+      );
+    }
   },
 
   // ===== Search bar =====

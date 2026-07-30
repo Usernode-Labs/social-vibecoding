@@ -54,6 +54,12 @@
   --un-muted: var(--text-muted);
   --un-group-bg: var(--bg-card);
   --un-sheet-bg: var(--bg-primary);
+  /* Anchored menus (the home card's "…" actions menu, header menus).
+     Pinned explicitly to an OPAQUE platform surface — --un-group-bg is a
+     translucent violet tint by design, so a popover inheriting it showed
+     the app grid straight through (#847). Matches the platform's other
+     floating dropdowns (.attr-popover, .gc-mention-menu). */
+  --un-popover-bg: var(--bg-primary);
   --un-navbar-bg: rgba(255, 255, 255, 0.82);
   --un-radius-card: 12px;
   /* The tile-zoom overlay surface: the app view's screens paint on the
@@ -68,6 +74,9 @@
   --un-muted: var(--text-faint);
   --un-group-bg: #12121f;
   --un-sheet-bg: #12121f;
+  /* One step lighter than --bg-primary (#08080f) so the floating menu
+     reads as elevated above the page rather than merging into it. */
+  --un-popover-bg: #12121f;
   --un-navbar-bg: rgba(8, 8, 15, 0.78);
   --un-zoom-bg: var(--bg-primary);
 }
