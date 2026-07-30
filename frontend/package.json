@@ -33,7 +33,7 @@
     "test:production-review": "CI=1 PLAYWRIGHT_PORT=4274 SV_PRODUCTION_READONLY=true SV_API_TARGET=https://example.invalid playwright test tests/notifications.production-review.spec.ts tests/apps-home.spec.ts tests/app-members.spec.ts tests/app-dev.spec.ts tests/dev-session.spec.ts tests/github-issues.spec.ts tests/group-discussion.spec.ts tests/shared-session.spec.ts tests/session-spec-viewer.spec.ts tests/activation-codes.spec.ts tests/admin-features.spec.ts tests/settings-feedback.spec.ts --grep 'production review mode'",
     "test:storybook": "vitest run --project=storybook",
     "check:storybook-build": "storybook build --test",
-    "storybook": "storybook dev -p 6006",
+    "storybook": "storybook dev -p 6006 --ci",
     "build-storybook": "storybook build",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
     "check:cutover-contract": "node scripts/check-cutover-contract.mjs",
