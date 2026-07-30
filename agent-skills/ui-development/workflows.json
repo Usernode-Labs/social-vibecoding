@@ -267,7 +267,7 @@
         "npm run check:harness",
         "npm run typecheck",
         "npm run test:e2e",
-        "npm run test:production-review"
+        "npm run test:production-guard"
       ],
       "evidence": [
         "Applicable loading, success, empty/error, permission/capability, mobile, and desktop states are exercised.",
@@ -370,8 +370,13 @@
     },
     {
       "cwd": "frontend",
-      "command": "npm run test:production-review",
-      "ciEvidence": "npm run test:production-review"
+      "command": "npm run test:production-guard",
+      "ciEvidence": "npm run test:production-guard"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run test:production-smoke",
+      "ciEvidence": "npm run test:production-smoke"
     },
     {
       "cwd": "frontend",

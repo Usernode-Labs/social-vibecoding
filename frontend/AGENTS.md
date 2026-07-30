@@ -20,6 +20,9 @@ This directory is the staged React replacement for the legacy static shell.
   Storybook before reuse. Every migrated route needs deterministic desktop
   and mobile browser coverage. Route-only orchestration is evidenced by its
   fixture-driven browser tests, not a fake Storybook network environment.
+- Storybook assertions count only when the test project loads the application
+  Vite configuration and compiled production styles. An unstyled render cannot
+  prove layout, truncation, contrast, or responsive behavior.
 - Dev conversations use the official `MessageScroller`, `Message`, `Bubble`,
   `Marker`, and `Attachment` components. The scroller owns anchoring and
   jump-to-latest behavior; no route may add a competing scroll hook.
@@ -52,7 +55,8 @@ npm run test:harness
 npm run test:agent-battery
 npm run typecheck
 npm run test:e2e
-npm run test:production-review
+npm run test:production-guard
+npm run test:production-smoke
 npm run test:native-bridge-contract
 npm run test:service-worker-contract
 npm run build

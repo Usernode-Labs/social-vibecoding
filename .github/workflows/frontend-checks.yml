@@ -99,7 +99,8 @@ jobs:
           # running production preview instead of starting a Vite dev server.
           npx playwright test tests/react-service-worker.spec.ts --project=desktop --workers=1
       - run: npm run test:e2e
-      - run: npm run test:production-review
+      - run: npm run test:production-guard
+      - run: npm run test:production-smoke
       - run: npm run check:cutover-contract
       - run: npm run check:bundle
       - run: npm run test:storybook
