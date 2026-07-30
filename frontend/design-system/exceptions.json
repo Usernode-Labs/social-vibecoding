@@ -323,12 +323,11 @@
       "rule": "no-arbitrary-utilities",
       "file": "@/components/platform-shell.tsx",
       "matches": [
-        "after:size-[max(100%,3rem)]",
-        "size-[max(100%,3rem)]"
+        "after:size-[max(100%,3rem)]"
       ],
-      "count": 2,
+      "count": 1,
       "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
+      "reason": "Invisible pointer-coarse touch-target expansion on the menu trigger; the bare size- variant was a defect and is removed.",
       "expires": "2026-09-30"
     },
     {

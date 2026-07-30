@@ -63,7 +63,8 @@ export const Running: Story = {
   play: async ({ canvasElement }) => {
     const canvas = light(canvasElement)
     await expect(canvas.getByRole("link", { name: "Open RecipeBot" })).toHaveAttribute("href", "/apps/recipebot")
-    await expect(canvas.getByText("Running")).toBeVisible()
+    // Healthy is the quiet default on Home: no status line competes with launch.
+    await expect(canvas.queryByText("Running")).not.toBeInTheDocument()
   },
 }
 

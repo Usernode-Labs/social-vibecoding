@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react"
 import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 
+import { PlatformMenuTrigger } from "@/components/platform-shell"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AppChrome, type AppChromeProps } from "@/features/apps/app-chrome"
@@ -163,16 +164,19 @@ export function HostedApp() {
   })
 
   return (
-    <div className="relative isolate flex min-h-0 flex-1 bg-background" data-slot="hosted-app-surface" data-state="ready" data-testid="hosted-app">
+    <div className="isolate flex min-h-0 flex-1 flex-col bg-background" data-slot="hosted-app-surface" data-state="ready" data-testid="hosted-app">
       <AppChrome
         app={currentApp}
         consoleError={devConsole.unseenErrors > 0}
+        menuSlot={<PlatformMenuTrigger />}
         mode="use"
         onClose={closeApp}
         onImprove={currentApp.can_collaborate !== false ? improveApp : undefined}
         onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined}
+        placement="flow"
         state={state}
       />
+
       {tokenError ? (
         <div className="flex flex-1 items-center justify-center" data-slot="focused-app-surface" data-state="error">
           <Alert className="max-w-md" variant="destructive">

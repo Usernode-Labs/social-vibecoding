@@ -179,9 +179,11 @@
   padding-inline-start: var(--safe-area-left);
   padding-inline-end: var(--safe-area-right);
 }
-[data-slot="hosted-app-surface"] [data-slot="app-chrome"][data-placement="overlay"] {
-  left: max(0.75rem, var(--safe-area-left));
-  right: max(0.75rem, var(--safe-area-right));
+[data-slot="hosted-app-surface"] [data-slot="app-chrome"][data-placement="flow"] {
+  width: auto;
+  margin-top: 0.75rem;
+  margin-inline-start: max(0.75rem, var(--safe-area-left));
+  margin-inline-end: max(0.75rem, var(--safe-area-right));
 }
 [data-slot="staging-preview-surface"][data-state="ready"] {
   padding-bottom: var(--safe-area-bottom-active);

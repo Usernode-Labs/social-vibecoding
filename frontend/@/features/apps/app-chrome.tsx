@@ -1,3 +1,4 @@
+import type { ReactNode } from "react"
 import { ArrowLeft, MoreHorizontal, RefreshCw, X } from "lucide-react"
 
 import { PlatformIcon } from "@/components/platform-icon"
@@ -21,6 +22,8 @@ export type AppChromeProps = {
   onOpenOverflow?: () => void
   consoleError?: boolean
   nestedLabel?: string
+  /** Shell-supplied platform menu control for routes where this chrome is the only bar. */
+  menuSlot?: ReactNode
 }
 
 const statePresentation = {
@@ -39,6 +42,7 @@ const statePresentation = {
 export function AppChrome({
   app,
   consoleError = false,
+  menuSlot,
   mode,
   nestedLabel,
   onBack,
@@ -64,6 +68,7 @@ export function AppChrome({
       data-state={state}
       role="group"
     >
+      {menuSlot}
       {mode === "nested" && onBack ? (
         <Button
           aria-label="Back"

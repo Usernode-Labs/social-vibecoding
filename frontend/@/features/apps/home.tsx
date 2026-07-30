@@ -4,10 +4,9 @@ import { Link } from "react-router-dom"
 
 import { PageHeader, HeaderLayout } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
-import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
-import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card"
+import { Card, CardHeader } from "@/components/ui/card"
 import {
   Empty,
   EmptyContent,
@@ -28,23 +27,18 @@ import { listApps, setFavoriteOrder, type AppRecord } from "@/lib/apps-api"
 import { getNotificationsPage } from "@/lib/notifications-api"
 import { appOpenPath } from "@/lib/routes"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
+import { cn } from "@/lib/utils"
 
 function HomeLoading() {
   const placeholders = ["first", "second", "third"] as const
   return (
-    <div aria-label="Loading Home" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" role="status">
+    <div aria-label="Loading Home" className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5" role="status">
       {placeholders.map((placeholder) => (
-        <Card aria-hidden="true" key={placeholder}>
+        <Card aria-hidden="true" key={placeholder} size="sm">
           <CardHeader className="gap-3">
             <Skeleton className="size-12 rounded-xl" />
             <Skeleton className="h-5 w-1/2" />
           </CardHeader>
-          <CardContent>
-            <Skeleton className="h-4 w-1/3" />
-          </CardContent>
-          <CardFooter>
-            <Skeleton className="h-9 w-full" />
-          </CardFooter>
         </Card>
       ))}
     </div>
@@ -110,32 +104,23 @@ function ActivityPreview({ items }: { items: readonly HomeActivityItem[] }) {
       />
       <ul className="divide-y divide-border" role="list">
         {items.slice(0, 3).map((item) => (
-          <li
-            className="flex min-w-0 items-start gap-3 py-3 first:pt-0 last:pb-0"
-            key={item.id}
-          >
-            <span aria-hidden="true" className="shrink-0 pt-2">
-              <StatusDot
-                label="Unread"
-                role="attention"
-                showLabel={false}
-                size="sm"
-                subject={item.title}
-              />
-            </span>
-            <div className="min-w-0">
-              <p className="font-medium text-pretty">{item.title}</p>
+          <li className="py-3 first:pt-0 last:pb-0" key={item.id}>
+            <Link
+              className="group flex min-w-0 flex-col gap-0.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              to="/notifications"
+            >
+              <p className="font-medium text-pretty group-hover:underline">{item.title}</p>
               {item.detail ? (
                 <p className="text-pretty text-base text-muted-foreground sm:text-sm">
                   {item.detail}
                 </p>
               ) : null}
-            </div>
+            </Link>
           </li>
         ))}
       </ul>
       <Link
-        className={buttonVariants({ size: "sm", variant: "outline" })}
+        className={cn(buttonVariants({ size: "sm", variant: "outline" }), "self-start")}
         to="/notifications"
       >
         View all activity
@@ -244,7 +229,7 @@ export function HomeView({
 
           <ol
             aria-label="Your apps"
-            className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3"
+            className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5"
             role="list"
           >
             {homeApps.map((app, index) => (
@@ -271,7 +256,7 @@ export function HomeView({
           </ol>
 
           <Link
-            className={buttonVariants({ size: "sm", variant: "outline" })}
+            className={cn(buttonVariants({ size: "sm", variant: "outline" }), "self-start")}
             to="/explore"
           >
             Explore dApps

@@ -60,6 +60,15 @@ test.beforeEach(async ({ page }) => {
   })
 })
 
+test("the focused app owns a single bar: platform header yields to chrome", async ({ page }) => {
+  await page.goto("/react/apps/recipebot/open")
+
+  await expect(page.locator('[data-slot="platform-header"]')).toHaveCount(0)
+  const chrome = page.locator('[data-slot="app-chrome"]')
+  await expect(chrome.getByRole("button", { name: "Toggle navigation" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
+})
+
 test("composes focused chrome with the exact iframe and native-title contracts", async ({ page }) => {
   await page.goto("/react/apps/recipebot/open?path=/recipes?query=tomato")
 
@@ -145,12 +154,12 @@ test("routes Improve and Close with their accepted focused-app meanings", async 
   await expect(page).toHaveURL(/\/react\/?$/)
 })
 
-test("keeps ready child-app content and overlay chrome inside one web-owned safe area", async ({ page }) => {
+test("keeps ready child-app content and flow chrome inside one web-owned safe area", async ({ page }) => {
   await page.goto("/react/apps/recipebot/open")
   const routeViewport = page.locator('[data-slot="route-viewport"]')
   const host = page.locator('[data-slot="hosted-app-surface"][data-state="ready"]')
   const focused = page.locator('[data-slot="focused-app-surface"][data-state="ready"]')
-  const chrome = page.locator('[data-slot="app-chrome"][data-placement="overlay"]')
+  const chrome = page.locator('[data-slot="app-chrome"][data-placement="flow"]')
   await expect(focused).toBeVisible()
   await page.evaluate(() => {
     const root = document.documentElement
@@ -181,6 +190,13 @@ test("keeps ready child-app content and overlay chrome inside one web-owned safe
       right: Math.round(hostBox.x + hostBox.width - chromeBox.x - chromeBox.width),
     }
   }).toEqual({ left: 21, right: 25 })
+  // Flow chrome consumes its own space: the child app is never occluded.
+  await expect.poll(async () => {
+    const chromeBox = await chrome.boundingBox()
+    const focusedBox = await focused.boundingBox()
+    if (!chromeBox || !focusedBox) return null
+    return focusedBox.y >= chromeBox.y + chromeBox.height - 1
+  }).toBe(true)
 
   await page.evaluate(() => {
     document.documentElement.dataset.keyboardVisible = "true"

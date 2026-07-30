@@ -35,6 +35,24 @@ test("renders the accepted platform IA with one current destination", async ({ p
   await expect(page.getByRole("group", { name: "Color mode" })).toHaveCount(0)
 })
 
+test("keeps the menu trigger compact and the header title visible", async ({ page }) => {
+  await page.goto("/react/")
+
+  const trigger = page.getByRole("button", { name: "Toggle navigation" })
+  await expect(trigger).toBeVisible()
+  const triggerBox = await trigger.boundingBox()
+  expect(triggerBox).not.toBeNull()
+  // The trigger is a compact control; a stretched trigger once consumed the
+  // entire header row and collapsed the title to zero width.
+  expect(triggerBox!.width).toBeLessThanOrEqual(64)
+
+  const title = page.locator('[data-slot="platform-header"]').getByText("dApps")
+  await expect(title).toBeVisible()
+  const titleBox = await title.boundingBox()
+  expect(titleBox).not.toBeNull()
+  expect(titleBox!.width).toBeGreaterThan(24)
+})
+
 test("closes the narrow sidebar through the official Sheet focus path", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "Desktop keeps the platform sidebar expanded.")
   await page.goto("/react/")

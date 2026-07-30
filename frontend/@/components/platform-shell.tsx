@@ -1,6 +1,6 @@
 import type { ReactNode } from "react"
 import { Bell, BriefcaseBusiness, Compass, EyeOff, House, MessageCircle, Server, Settings, Shield, Trophy, UserRound } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
+import { createContext, useContext, useEffect, useMemo, useState } from "react"
 import { useLocation } from "react-router-dom"
 
 import { DevCompletionAlerts } from "@/components/dev-completion-alerts"
@@ -20,9 +20,39 @@ import {
   getExternalLinkFailure,
   type ExternalLinkFailureDetail,
 } from "@/lib/external-links"
+import { cn } from "@/lib/utils"
 
 function route(path: string) {
   return (pathname: string) => pathname === path || pathname.startsWith(`${path}/`)
+}
+
+const ShellAttentionContext = createContext(0)
+
+/**
+ * The platform menu control: the sidebar trigger plus the shell's single
+ * attention dot. Full-bleed routes (the focused app) place it inside their
+ * contextual chrome so the shell keeps exactly one bar per screen.
+ */
+export function PlatformMenuTrigger({ className }: { className?: string }) {
+  const attentionCount = useContext(ShellAttentionContext)
+  return (
+    <span className={cn("relative inline-flex shrink-0", className)}>
+      <SidebarTrigger
+        aria-label="Toggle navigation"
+        className="relative after:pointer-fine:hidden after:absolute after:top-1/2 after:left-1/2 after:size-[max(100%,3rem)] after:-translate-1/2 after:content-['']"
+      />
+      {attentionCount > 0 ? (
+        <StatusDot
+          className="pointer-events-none absolute -top-0.5 -right-0.5"
+          label="Needs attention"
+          role="attention"
+          showLabel={false}
+          size="sm"
+          subject="Activity"
+        />
+      ) : null}
+    </span>
+  )
 }
 
 function AdminPreviewBanner() {
@@ -149,7 +179,7 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
     /^\/apps\/[^/]+\/dev\/sessions\/[^/]+\/preview\/?$/.test(location.pathname)
 
   return (
-    <>
+    <ShellAttentionContext.Provider value={navigation.attentionCount}>
       <PlatformNavigation
         brand={{ label: "dApps", href: "/react/" }}
         items={navigationItems}
@@ -157,22 +187,19 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
         pathname={location.pathname}
       />
       <SidebarInset className="min-h-dvh bg-background">
-        <header className="flex min-h-16 shrink-0 items-center gap-2 border-b px-4" data-slot="platform-header">
-          <SidebarTrigger
-            aria-label="Toggle navigation"
-            className="relative size-[max(100%,3rem)] after:pointer-fine:hidden after:absolute after:top-1/2 after:left-1/2 after:size-[max(100%,3rem)] after:-translate-1/2 after:content-['']"
-          >
-            {navigation.attentionCount > 0 ? <StatusDot className="pointer-events-none absolute top-1 right-1" label="Needs attention" role="attention" showLabel={false} size="sm" subject="Activity" /> : null}
-          </SidebarTrigger>
-          <div className="min-w-0 flex-1 truncate font-semibold">dApps</div>
-        </header>
+        {fullBleedRoute ? null : (
+          <header className="flex min-h-16 shrink-0 items-center gap-2 border-b px-4" data-slot="platform-header">
+            <PlatformMenuTrigger />
+            <div className="min-w-0 flex-1 truncate font-semibold">dApps</div>
+          </header>
+        )}
         <AdminPreviewBanner />
         <div data-slot="route-viewport" data-viewport-mode={fullBleedRoute ? "full-bleed" : "content"}>
           {children}
         </div>
         <ExternalLinkFeedback />
       </SidebarInset>
-    </>
+    </ShellAttentionContext.Provider>
   )
 }
 
