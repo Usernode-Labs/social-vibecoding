@@ -12,14 +12,25 @@
 //
 // Run with: node --test tests/staging-auth-token-switch.test.js
 
-// IS_STAGING is read at module load — must be set before the require.
+// IS_STAGING and SELF_APP_ID are read at module load — must both be set
+// before the require. USERNODE_APP_ID is what tells the container which
+// audience its tokens carry; without it every token fails closed (see the
+// last test in this file).
 process.env.USERNODE_ENV = 'staging';
+process.env.USERNODE_APP_ID = '42';
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
+const keys = require('./platform-keys').setPlatformKeys();
+const platformJwt = require('../src/services/platform-jwt');
 
-const SECRET = 'test-secret';
+const SELF_APP_ID = 42;
+
+// A parent-minted identity for THIS app.
+function identity(user, { appId = SELF_APP_ID, ttl = '15m' } = {}) {
+  return platformJwt.signAppIdentityToken({ appId, user, ttl });
+}
 
 function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
@@ -101,8 +112,8 @@ test('a valid token for a DIFFERENT user switches the session to the token user'
   const pool = makePool(defaultHandlers());
   const { authMiddleware, restore } = loadMiddleware(pool);
   try {
-    const mw = authMiddleware({ jwtSecret: SECRET });
-    const token = jwt.sign({ id: 3, username: 'usernode-capture-admin' }, SECRET, { expiresIn: '15m' });
+    const mw = authMiddleware({});
+    const token = identity({ id: 3, username: 'usernode-capture-admin' });
     const { req, cookies, nexted } = await run(mw, { token });
     assert.equal(nexted, true);
     assert.equal(req.user.id, 3, 'request runs as the token user');
@@ -119,8 +130,8 @@ test('a token for the SAME user keeps the cookie session (no re-mint)', async ()
   const pool = makePool(defaultHandlers());
   const { authMiddleware, restore } = loadMiddleware(pool);
   try {
-    const mw = authMiddleware({ jwtSecret: SECRET });
-    const token = jwt.sign({ id: 2, username: 'usernode-capture' }, SECRET, { expiresIn: '15m' });
+    const mw = authMiddleware({});
+    const token = identity({ id: 2, username: 'usernode-capture' });
     const { req, nexted } = await run(mw, { token });
     assert.equal(nexted, true);
     assert.equal(req.user.id, 2);
@@ -134,8 +145,8 @@ test('an INVALID token keeps the cookie session', async () => {
   const pool = makePool(defaultHandlers());
   const { authMiddleware, restore } = loadMiddleware(pool);
   try {
-    const mw = authMiddleware({ jwtSecret: SECRET });
-    const token = jwt.sign({ id: 3, username: 'x' }, 'wrong-secret', { expiresIn: '15m' });
+    const mw = authMiddleware({});
+    const token = jwt.sign({ id: 3, username: 'x', pur: 'iframe' }, 'wrong-secret', { expiresIn: '15m' });
     const { req, nexted } = await run(mw, { token });
     assert.equal(nexted, true);
     assert.equal(req.user.id, 2, 'a bad token must never dislodge a valid session');
@@ -149,8 +160,8 @@ test('a differing token whose user is missing falls back to the cookie session',
   const pool = makePool(defaultHandlers({ tokenUserRow: null }));
   const { authMiddleware, restore } = loadMiddleware(pool);
   try {
-    const mw = authMiddleware({ jwtSecret: SECRET });
-    const token = jwt.sign({ id: 99, username: 'ghost' }, SECRET, { expiresIn: '15m' });
+    const mw = authMiddleware({});
+    const token = identity({ id: 99, username: 'ghost' });
     const { req, nexted } = await run(mw, { token });
     assert.equal(nexted, true);
     assert.equal(req.user.id, 2, 'a failed mint must not break the existing session');
@@ -163,12 +174,74 @@ test('no token → plain cookie session, unchanged', async () => {
   const pool = makePool(defaultHandlers());
   const { authMiddleware, restore } = loadMiddleware(pool);
   try {
-    const mw = authMiddleware({ jwtSecret: SECRET });
+    const mw = authMiddleware({});
     const { req, nexted } = await run(mw, {});
     assert.equal(nexted, true);
     assert.equal(req.user.id, 2);
     assert.equal(pool.issued(/INSERT INTO sessions/), false);
   } finally {
     restore();
+  }
+});
+
+// ── per-app scoping (RSA cutover) ──────────────────────────────────────
+
+test('a token minted for a DIFFERENT app does not switch identity', async () => {
+  const pool = makePool(defaultHandlers());
+  const { authMiddleware, restore } = loadMiddleware(pool);
+  try {
+    const mw = authMiddleware({});
+    const token = identity({ id: 3, username: 'usernode-capture-admin' }, { appId: SELF_APP_ID + 1 });
+    const { req, nexted } = await run(mw, { token });
+    assert.equal(nexted, true);
+    assert.equal(req.user.id, 2, 'a foreign-audience token must not dislodge the session');
+    assert.equal(pool.issued(/INSERT INTO sessions/), false);
+  } finally {
+    restore();
+  }
+});
+
+// An HS256 token forged with the PUBLIC PEM. Every app container holds
+// that PEM, so without the algorithm pin inside platform-jwt this would
+// be a universal identity forgery against every staging clone.
+test('an HS256 token forged with the public PEM does not switch identity', async () => {
+  const pool = makePool(defaultHandlers());
+  const { authMiddleware, restore } = loadMiddleware(pool);
+  try {
+    const mw = authMiddleware({});
+    const forged = jwt.sign(
+      { id: 3, username: 'usernode-capture-admin', pur: 'iframe' },
+      keys.IFRAME_JWT_PUBLIC_KEY,
+      { algorithm: 'HS256', issuer: 'usernode', audience: `usernode:app:${SELF_APP_ID}`, expiresIn: '15m' }
+    );
+    const { req, nexted } = await run(mw, { token: forged });
+    assert.equal(nexted, true);
+    assert.equal(req.user.id, 2);
+    assert.equal(pool.issued(/INSERT INTO sessions/), false);
+  } finally {
+    restore();
+  }
+});
+
+// A container with no USERNODE_APP_ID cannot know which audience to
+// expect, so it must reject every token rather than accept an identity
+// minted for some other app. appAudience() throws on a non-integer, which
+// is what makes this fail closed for free.
+test('without USERNODE_APP_ID every token is refused (fails closed)', async () => {
+  const saved = process.env.USERNODE_APP_ID;
+  delete process.env.USERNODE_APP_ID;
+  const pool = makePool(defaultHandlers());
+  const { authMiddleware, restore } = loadMiddleware(pool);
+  try {
+    const mw = authMiddleware({});
+    const { req, nexted } = await run(mw, {
+      token: identity({ id: 3, username: 'usernode-capture-admin' }),
+    });
+    assert.equal(nexted, true);
+    assert.equal(req.user.id, 2, 'falls back to the cookie session, mints nothing');
+    assert.equal(pool.issued(/INSERT INTO sessions/), false);
+  } finally {
+    restore();
+    process.env.USERNODE_APP_ID = saved;
   }
 });

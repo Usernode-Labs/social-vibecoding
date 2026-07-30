@@ -10,14 +10,16 @@
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
+const keys = require('./platform-keys').setPlatformKeys();
+const platformJwt = require('../src/services/platform-jwt');
 
 const { appLlmAuth, invalidateGrant } = require('../src/middleware/app-llm-auth');
 
-const JWT_SECRET = 'test-jwt-secret';
 const APP_TOKEN = 'a'.repeat(64);
+const APP_ID = 11;
 
 const state = {
-  app: { id: 11, slug: 'demo-app', llm_proxy_token: APP_TOKEN },
+  app: { id: APP_ID, slug: 'demo-app', llm_proxy_token: APP_TOKEN },
   grant: null,
 };
 
@@ -49,14 +51,32 @@ function makeReq({ ip = '10.0.0.5', appToken = APP_TOKEN, userToken } = {}) {
   return { ip, headers, socket: {}, path: '/api/app-llm/v1/messages' };
 }
 
-function userJwt(claims = { id: 7, username: 'tester' }, opts = {}) {
-  return jwt.sign(claims, JWT_SECRET, opts);
+// A real platform-minted user identity for THIS app.
+function userJwt(user = { id: 7, username: 'tester' }, { appId = APP_ID, ttl } = {}) {
+  return platformJwt.signAppIdentityToken({ appId, user, ttl });
+}
+
+// Hand-forged with the real private key so it passes algorithm, issuer,
+// audience and `pur` — the only thing wrong with it is the claim shape.
+// This is the sole way to reach the middleware's belt-and-braces branch
+// now that infrastructure tokens are a separate authority entirely.
+function forgedIdentity(extra) {
+  return jwt.sign(
+    { id: 7, username: 'tester', pur: 'iframe', ...extra },
+    keys.IFRAME_JWT_PRIVATE_KEY,
+    {
+      algorithm: 'RS256',
+      issuer: 'usernode',
+      audience: `usernode:app:${APP_ID}`,
+      expiresIn: '1h',
+    }
+  );
 }
 
 async function run(req) {
   const res = makeRes();
   let nexted = false;
-  const mw = appLlmAuth(pool, { jwtSecret: JWT_SECRET });
+  const mw = appLlmAuth(pool, {});
   await mw(req, res, () => { nexted = true; });
   return { res, nexted, req };
 }
@@ -105,16 +125,44 @@ test('garbage user token is rejected', async () => {
 });
 
 test('expired user token is rejected', async () => {
-  const expired = userJwt({ id: 7 }, { expiresIn: -10 });
+  const expired = userJwt({ id: 7 }, { ttl: -10 });
   const { res } = await run(makeReq({ userToken: expired }));
   assert.equal(res.statusCode, 401);
   assert.equal(res.body.code, 'bad_user_token');
 });
 
-test('a scoped platform JWT (worker:session) is not a user token', async () => {
-  const worker = jwt.sign({ scope: 'worker:session', session_id: 5, id: 7 }, JWT_SECRET);
+// Worker tokens are HS256 under WORKER_JWT_SECRET with their own issuer
+// audience — a wholly separate authority since key separation, so one
+// presented here fails at the verifier rather than on the shape check.
+test('a worker token is not a user token', async () => {
+  const worker = platformJwt.signWorkerToken({ sessionId: 5 });
   const { res } = await run(makeReq({ userToken: worker }));
+  assert.equal(res.statusCode, 401);
+  assert.equal(res.body.code, 'bad_user_token');
+});
+
+test('a correctly-signed identity carrying a scope claim is still refused', async () => {
+  const { res } = await run(makeReq({ userToken: forgedIdentity({ scope: 'worker:session' }) }));
   assert.equal(res.statusCode, 403);
+  assert.equal(res.body.code, 'bad_user_token');
+});
+
+test('a correctly-signed identity with a non-numeric id is refused', async () => {
+  const { res } = await run(makeReq({ userToken: forgedIdentity({ id: '7' }) }));
+  assert.equal(res.statusCode, 403);
+  assert.equal(res.body.code, 'bad_user_token');
+});
+
+// The cross-app replay hole the RSA cutover closes. Under the old single
+// shared secret this token verified fine and app 11 could spend user 7's
+// AI budget using an identity the user only ever handed to app 12.
+test('a user token minted for a DIFFERENT app is rejected', async () => {
+  state.grant = {
+    app_id: APP_ID, user_id: 7, status: 'active', daily_cap_cents: 250, allow_byok: true,
+  };
+  const { res, nexted } = await run(makeReq({ userToken: userJwt({ id: 7, username: 'tester' }, { appId: 12 }) }));
+  assert.equal(nexted, false);
+  assert.equal(res.statusCode, 401);
   assert.equal(res.body.code, 'bad_user_token');
 });
 
@@ -141,7 +189,7 @@ test('active grant → next() with req.appLlm populated', async () => {
   const { res, nexted, req } = await run(makeReq({ userToken: userJwt() }));
   assert.equal(nexted, true, `expected next(), got ${res.statusCode} ${JSON.stringify(res.body)}`);
   assert.deepEqual(req.appLlm, {
-    appId: 11,
+    appId: APP_ID,
     appSlug: 'demo-app',
     userId: 7,
     grant: { dailyCapCents: 250, allowByok: true },

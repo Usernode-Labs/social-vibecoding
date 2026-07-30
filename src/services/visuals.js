@@ -20,8 +20,8 @@
 
 const crypto = require('crypto');
 const path = require('path');
-const jwt = require('jsonwebtoken');
 const log = require('./logger');
+const platformJwt = require('./platform-jwt');
 const docker = require('./docker');
 const github = require('./github');
 const caddy = require('./caddy');
@@ -92,22 +92,31 @@ const CONTENT_TYPES = {
 const RUN_TIMEOUT_MS = 240 * 1000;
 const RUN_MAX_BUFFER = 128 * 1024 * 1024;
 
-// Mint a 15-minute capture JWT for a seeded capture identity row, in the
-// same payload shape as /api/iframe-token (server.js) so child apps verify
-// it in prod/staging and the self-app staging clone exchanges it for a local
-// session (middleware/auth.js). Returns '' when the row is absent so callers
-// degrade to unauthenticated capture — never throws on a missing user.
-function mintCaptureToken(user, jwtSecret) {
+// Mint a 15-minute capture identity token for a seeded capture identity
+// row, scoped to the app being captured.
+//
+// Delegates to platformJwt.signAppIdentityToken, so a capture token is the
+// SAME kind of credential /api/iframe-token mints — RS256, issuer
+// `usernode`, audience `usernode:app:<appId>`, `pur: 'iframe'` — just with
+// a shorter life (it only has to outlive one screenshot run). That
+// sameness is the point: child apps verify it with the one code path they
+// already have, and the self-app staging clone exchanges it for a local
+// session via middleware/auth.js.
+//
+// Returns '' when the row is absent so callers degrade to unauthenticated
+// capture — never throws on a missing user.
+function mintCaptureToken(user, appId) {
   if (!user) return '';
-  return jwt.sign(
-    {
+  return platformJwt.signAppIdentityToken({
+    appId,
+    user: {
       id: user.id,
       username: user.username,
       usernode_pubkey: user.usernode_pubkey || null,
+      locale: user.locale ?? null,
     },
-    jwtSecret,
-    { expiresIn: '15m' }
-  );
+    ttl: platformJwt.CAPTURE_TTL,
+  });
 }
 
 // Route the two capture identities to their jobs (#47). Screenshots always
@@ -895,7 +904,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       );
       captureUser = rows[0] || null;
       if (captureUser) {
-        captureToken = mintCaptureToken(captureUser, config.jwtSecret);
+        captureToken = mintCaptureToken(captureUser, app.id);
       } else {
         log.warn('visuals', 'Capture user missing — capturing unauthenticated', {
           sessionId: session.id, username: CAPTURE_USERNAME,
@@ -925,7 +934,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       );
       const adminUser = rows[0] || null;
       if (adminUser) {
-        adminToken = mintCaptureToken(adminUser, config.jwtSecret);
+        adminToken = mintCaptureToken(adminUser, app.id);
       } else {
         log.warn('visuals', 'Capture admin user missing — tests run as non-admin capture user', {
           sessionId: session.id, username: CAPTURE_ADMIN_USERNAME,

@@ -7,6 +7,7 @@ const appManifest = require('./app-manifest');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
+const { appIdentityEnv } = require('./app-identity-env');
 const { getPool } = require('../db/pool');
 
 // Custom error thrown by both staging + prod build paths when the cloned
@@ -277,7 +278,7 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       image: imageName,
       env: {
         DATABASE_URL: stagingDbUrl,
-        JWT_SECRET: config.jwtSecret,
+        ...appIdentityEnv(app, config),
         PORT: '3000',
         USERNODE_ENV: 'staging',
         ...inheritedEnv,
@@ -574,7 +575,7 @@ async function rebuildProductionInner(config, app) {
       image: imageName,
       env: {
         DATABASE_URL: dbUrl,
-        JWT_SECRET: config.jwtSecret,
+        ...appIdentityEnv(app, config),
         PORT: '3000',
         USERNODE_ENV: 'production',
         ...llmEnv,

@@ -195,11 +195,16 @@ jobs:
           # get handed verbatim to every child container. It is now four
           # keys with one job each (src/services/platform-jwt.js).
           #
-          # JWT_SECRET stays for now: phase 1 does NOT cut the iframe
-          # authority over, so this value still signs iframe / capture /
-          # WebSocket / app-file tokens (config.jwtSecret) and is still
-          # what child containers receive. Phase 2 removes this line.
-          JWT_SECRET=${{ secrets.USERNODE_JWT_SECRET }}
+          # There is deliberately NO JWT_SECRET line any more. Phase 2 cut
+          # the iframe authority over to the RSA pair, so nothing in the
+          # platform process verifies with the old shared value and a token
+          # signed with it now verifies nowhere. Child containers still get
+          # a JWT_SECRET env var, but it is injected by
+          # src/services/app-identity-env.js and carries the RSA PUBLIC key
+          # (a deprecated alias of USERNODE_JWT_PUBLIC_KEY, kept so
+          # pre-cutover scaffolds verify unchanged). Do not re-add it here:
+          # the platform .env holding the retired secret under a name whose
+          # meaning has changed is exactly the confusion to avoid.
           # DATA_ENCRYPTION_KEY deliberately ALSO reads
           # USERNODE_JWT_SECRET: it is the AES-256-GCM KDF input for every
           # BYOK key and app secret already at rest, so the VALUE MUST NOT

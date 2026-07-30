@@ -2,9 +2,9 @@
 
 const express = require('express');
 const { Router } = require('express');
-const jwt = require('jsonwebtoken');
 const { getPool } = require('../db/pool');
 const appAccess = require('../services/app-access');
+const platformJwt = require('../services/platform-jwt');
 const appFiles = require('../services/app-files');
 const { appFileUploadLimiter } = require('../middleware/rate-limits');
 const log = require('../services/logger');
@@ -33,14 +33,15 @@ const log = require('../services/logger');
 // The iframe-token shape check, matching app-storage-auth: a plain user
 // identity (numeric id, no infrastructure scope). Self-contained on
 // purpose — this route is pre-auth, so no middleware attached req.user.
-function verifyUserToken(config, raw) {
-  if (!raw || typeof raw !== 'string' || !config.jwtSecret) return null;
-  let claims;
-  try {
-    claims = jwt.verify(raw, config.jwtSecret);
-  } catch {
-    return null;
-  }
+//
+// Scoped to the OWNING app's audience since the RSA cutover: a token
+// minted for app A no longer unlocks app B's private files, which is the
+// same cross-app replay hole app-llm-auth/app-storage-auth closed.
+function verifyUserToken(raw, appId) {
+  if (!raw || typeof raw !== 'string') return null;
+  const claims = platformJwt.orNull(
+    () => platformJwt.verifyAppIdentityToken(raw, { appId })
+  );
   if (!claims || typeof claims.id !== 'number' || claims.scope) return null;
   return claims;
 }
@@ -62,10 +63,10 @@ function appFileServeRoutes(config, deps = {}) {
       const file = rows[0];
 
       if (file.visibility === 'private') {
-        // Private files require any valid platform user JWT — apps
-        // append their iframe token to the URL. 404 (not 401) keeps
-        // private ids non-enumerable, same stance as everything else.
-        if (!verifyUserToken(config, req.query.token)) return res.status(404).end();
+        // Private files require a valid platform user JWT minted for THIS
+        // app — apps append their iframe token to the URL. 404 (not 401)
+        // keeps private ids non-enumerable, same stance as everything else.
+        if (!verifyUserToken(req.query.token, file.app_id)) return res.status(404).end();
       }
       if (!store) {
         log.warn('app-files', 'Serve requested but storage unconfigured', { id });

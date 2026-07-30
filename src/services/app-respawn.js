@@ -19,6 +19,7 @@ const dbManager = require('./db-manager');
 const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
+const { appIdentityEnv } = require('./app-identity-env');
 const { getPool } = require('../db/pool');
 
 // Core shared by respawnAppContainer (boot migration) and app-heal.js:
@@ -72,7 +73,7 @@ async function runExistingImage(config, app) {
     image: imageName,
     env: {
       DATABASE_URL: dbUrl,
-      JWT_SECRET: config.jwtSecret,
+      ...appIdentityEnv(app, config),
       PORT: '3000',
       USERNODE_ENV: 'production',
       ...llmEnv,
