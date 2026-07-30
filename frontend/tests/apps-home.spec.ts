@@ -88,7 +88,12 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/public/apps/recipebot/contributors?include_wallets=0", (route) => route.fulfill({ json: {
     contributors: [{ user_id: 7, username: "ava" }, { user_id: 12, username: "lin" }],
   } }))
-  await page.route("**/api/iframe-token", (route) => route.fulfill({ json: { token: "header.payload.signature" } }))
+  await page.route("**/api/iframe-token*", (route) => {
+    if (new URL(route.request().url()).searchParams.get("app") !== "recipebot") {
+      return route.fulfill({ status: 400, json: { error: "app query parameter is required" } })
+    }
+    return route.fulfill({ json: { token: "header.payload.signature" } })
+  })
   await page.route("https://recipebot.example.test/**", (route) => route.fulfill({
     contentType: "text/html",
     body: "<!doctype html><title>RecipeBot</title><main>RecipeBot child app</main>",
