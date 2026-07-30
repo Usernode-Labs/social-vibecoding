@@ -2712,6 +2712,21 @@ function startSessionAutoPauseSweeper(config) {
     } catch (err) {
       log.warn('server', 'Stale-preview sweep failed', { err: err.message });
     }
+
+    // Pass 8: orphaned staging-DATABASE reconciliation. Pass 7 (and every
+    // other teardown path) only drops a staging DB alongside a matching
+    // container; clones whose container is already gone used to accumulate
+    // forever (3,479 DBs / 198 GB by 2026-07-30). This drops the ones no
+    // session, build, or connection can reach anymore. Long interval (6h),
+    // bounded batch, own throttle in the service; never throws.
+    // STAGING_ORPHAN_DB_SWEEP_INTERVAL_MS=0 disables it.
+    try {
+      if (stagingReap.orphanDbSweepDue()) {
+        await stagingReap.sweepOrphanDbs(config);
+      }
+    } catch (err) {
+      log.warn('server', 'Orphan staging-DB sweep failed', { err: err.message });
+    }
   }, config.sessionSweepIntervalMs).unref();
 }
 

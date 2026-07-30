@@ -73,6 +73,16 @@ class PrivateSecretMissingStagingDefaultError extends Error {
 // content at different times).
 const _stagingBuilds = new Map(); // sessionId -> { commitHash, promise, tail }
 
+// Is a staging build currently in flight (or queued) for this session?
+// Consumed by staging-reap's orphan-DB sweep: a build's clone DB exists
+// before the session row's staging_url points at it, so without this
+// check the sweep could classify a mid-build clone as orphaned and drop
+// it out from under pg_restore — the exact friendly-fire failure the
+// per-session build serialization above exists to prevent.
+function hasInFlightBuild(sessionId) {
+  return _stagingBuilds.has(Number(sessionId));
+}
+
 async function buildAndDeployStaging(config, session, app, commitHash) {
   const key = session.id;
   const current = _stagingBuilds.get(key);
@@ -722,6 +732,7 @@ async function rebuildProductionInner(config, app) {
 
 module.exports = {
   buildAndDeployStaging,
+  hasInFlightBuild,
   warmStagingCert,
   teardownStaging,
   rebuildProduction,
