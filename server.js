@@ -546,8 +546,12 @@ app.get('/api/iframe-token', async (req, res) => {
     locale: userLocale,
   };
 
-  // App-scoped RS256 is the only path whenever key material exists — the
-  // fallback below is gated on the ABSENCE of it, not on this throw.
+  // App-scoped RS256 is the ONLY mint path. There is deliberately no
+  // downgrade branch: a staging-only pre-cutover bootstrap shim signed a
+  // bare-HS256 token here for the one deploy window in which previews were
+  // built by a platform with no IFRAME_JWT_PRIVATE_KEY, and it has been
+  // removed now that every preview is built by post-cutover code. A
+  // deployment that cannot sign gets the structured 503 below.
   let token = null;
   let signErr = null;
   try {
@@ -556,28 +560,10 @@ app.get('/api/iframe-token', async (req, res) => {
     signErr = err;
   }
 
-  // Pre-cutover staging bootstrap ONLY, mint side. A preview container's
-  // env comes from the DEPLOYED platform, so it has no
-  // IFRAME_JWT_PRIVATE_KEY and the sign above always throws — which used
-  // to 500 on every app view in the preview of this very cutover, failing
-  // the console-error baseline check on each one even though the session
-  // itself was fine. platformJwt.legacyBootstrapActive() is unsatisfiable
-  // in production (IFRAME_JWT_PUBLIC_KEY is in REQUIRED_PROD) and goes
-  // false forever once previews are built by post-cutover code. Remove
-  // with the verify-side half.
-  if (!token && platformJwt.legacyBootstrapActive()) {
-    try {
-      token = platformJwt.signLegacyBootstrapToken({ user: tokenUser });
-      log.warn('iframe-token', 'Minted a pre-cutover bootstrap token', { slug });
-    } catch (err) {
-      signErr = err;
-    }
-  }
-
   if (!token) {
-    // A missing/broken IFRAME_JWT_PRIVATE_KEY with no shim available is an
-    // operator problem, not a client one, and it is not transient within
-    // the life of the process — so say which it is instead of a bare 500.
+    // A missing/broken IFRAME_JWT_PRIVATE_KEY is an operator problem, not a
+    // client one, and it is not transient within the life of the process —
+    // so say which it is instead of a bare 500.
     // config.load() refuses to boot production without the key, so this is
     // the self-hosted / misconfigured-staging edge.
     log.error('iframe-token', 'Signing failed', { slug, err: signErr && signErr.message });

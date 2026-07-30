@@ -4,14 +4,20 @@
 //
 // Why this suite exists. The cutover rewrote the endpoint to take
 // `?app=<slug>` and to gate it through appAccess.getAppForUser at the
-// 'view' level — but passed a TRIMMED column list ('id, slug'). That is
-// a silent no-op: checkAppAccess() reads `view_visibility` off the row it
-// is handed, and a MISSING column takes the "legacy rows mid-migration
-// may briefly lack the column; treat as public" branch. Every app looked
-// public, so any authenticated user could mint a valid app-identity token
-// for a view-private app they cannot see — defeating the existence-hiding
-// 404 the handler's own comment claims to implement. Nothing else in the
-// suite covered the endpoint at all.
+// 'view' level — but passed a TRIMMED column list ('id, slug'). That was
+// a silent no-op at the time: checkAppAccess() reads `view_visibility`
+// off the row it is handed, and a MISSING column took a "legacy rows
+// mid-migration may briefly lack the column; treat as public" branch.
+// Every app looked public, so any authenticated user could mint a valid
+// app-identity token for a view-private app they cannot see — defeating
+// the existence-hiding 404 the handler's own comment claims to
+// implement. Nothing else in the suite covered the endpoint at all.
+//
+// checkAppAccess() has since been made fail-closed — it THROWS on a
+// missing or falsy visibility column instead of defaulting to public — so
+// the same mistake now surfaces as a 500 rather than a privacy hole. The
+// projection test at the bottom of this file still pins the correct
+// column list, because a 500 on every request is its own outage.
 //
 // The handler is INLINE IN server.js, which opens a pool and listens on
 // load, so it is extracted from source and run in a sandbox (same stance
@@ -230,15 +236,18 @@ test('200 for a public app, and the token is scoped to THAT app', async () => {
   );
 });
 
-// ── The mint path, and the pre-cutover staging fallback ─────────────────
+// ── The mint path: RS256 or a structured 503, never a downgrade ─────────
 //
-// A preview container built by the DEPLOYED platform has no
-// IFRAME_JWT_PRIVATE_KEY, so signAppIdentityToken() throws and this
-// endpoint used to answer 500 on every app view — which is a console
-// error on load, so the console-error baseline check failed on every
-// authenticated route even after the verify-side shim let the session
-// through. platform-jwt reads its key material from process.env at CALL
-// time, so these cases just reshape the env around the real handler.
+// A deployment with no IFRAME_JWT_PRIVATE_KEY cannot sign an app identity.
+// That is an operator problem and not transient within the life of the
+// process, so the endpoint must say so — 503 `signing_unavailable` — rather
+// than 500ing or falling back to a weaker token. During the RSA cutover a
+// staging-only bootstrap shim DID mint a bare-HS256 token here, for the one
+// deploy window in which preview containers were built by the pre-cutover
+// platform; it has been removed, and these cases pin that its shape is now
+// refused from every direction. platform-jwt reads its key material from
+// process.env at CALL time, so they just reshape the env around the real
+// handler.
 
 const LEGACY_SECRET = 'legacy-shared-secret-0123456789abcdef';
 const ENV_KEYS = [
@@ -275,7 +284,7 @@ const PRE_CUTOVER = {
   JWT_SECRET: LEGACY_SECRET,
 };
 
-test('a pre-cutover staging preview mints a legacy-shape token instead of 500ing', async () => {
+test('a preview with no key material gets a structured 503, never a token', async () => {
   const pool = makePool({
     apps: [PUBLIC_APP],
     users: { [VIEWER.id]: { usernode_pubkey: 'ut1abc', locale: 'pt-BR' } },
@@ -283,35 +292,15 @@ test('a pre-cutover staging preview mints a legacy-shape token instead of 500ing
   const { res } = await withEnv(PRE_CUTOVER, () =>
     call({ user: VIEWER, query: { app: 'public-app' }, pool }));
 
-  assert.equal(res.statusCode, 200, 'the preview must get a usable token, not a 500');
-  assert.ok(res.body.token);
-
-  // The retired signer's exact shape: bare HS256 over the shared secret,
-  // four claims, no iss/aud/pur — so a container running pre-cutover
-  // scaffold code verifies it verbatim.
-  const claims = jwt.verify(res.body.token, LEGACY_SECRET, { algorithms: ['HS256'] });
-  assert.equal(claims.id, VIEWER.id);
-  assert.equal(claims.username, VIEWER.username);
-  assert.equal(claims.usernode_pubkey, 'ut1abc');
-  assert.equal(claims.locale, 'pt-BR');
-  assert.equal(claims.aud, undefined, 'the legacy shape carries no audience');
-  assert.equal(claims.iss, undefined);
-  assert.equal(claims.pur, undefined);
-
-  const header = JSON.parse(Buffer.from(res.body.token.split('.')[0], 'base64url').toString());
-  assert.equal(header.alg, 'HS256');
+  assert.equal(res.statusCode, 503, 'no signing key is an operator problem, said plainly');
+  assert.equal(res.body.code, 'signing_unavailable');
+  assert.equal(res.body.token, undefined,
+    'and emphatically NOT a shared-secret token the old shim would have minted');
 });
 
-// The fallback must not become a hole in the gate Change 2 just fixed.
-test('the pre-cutover fallback still refuses a view-private app', async () => {
-  const pool = makePool({ apps: [PRIVATE_APP] });
-  const { res } = await withEnv(PRE_CUTOVER, () =>
-    call({ user: VIEWER, query: { app: 'private-app' }, pool }));
-  assert.equal(res.statusCode, 404);
-  assert.equal(res.body.token, undefined);
-});
-
-test('the fallback is inert in production — a clean 503, never a legacy token', async () => {
+// Same answer in production, where the shim was structurally unreachable
+// even before its removal (IFRAME_JWT_PUBLIC_KEY is in REQUIRED_PROD).
+test('production with no signing key answers 503, never a legacy token', async () => {
   const pool = makePool({ apps: [PUBLIC_APP] });
   const { res } = await withEnv(
     { ...PRE_CUTOVER, USERNODE_ENV: 'production' },
@@ -323,18 +312,28 @@ test('the fallback is inert in production — a clean 503, never a legacy token'
     'production must never hand out a shared-secret token');
 });
 
-test('the fallback is inert once IFRAME_JWT_PUBLIC_KEY is set', async () => {
+// A half-configured deployment (public key present, private key gone) is
+// the operator misconfiguration most likely to tempt a fallback. It must
+// surface, not degrade.
+test('a public key without its private half still answers 503', async () => {
   const { publicKey } = require('./platform-keys').keyPair();
   const pool = makePool({ apps: [PUBLIC_APP] });
-  // Public key present, private key gone: the shim's second conjunct is
-  // false, so there is no legacy path — the operator's misconfiguration
-  // must surface as a structured 503, not a silently downgraded token.
   const { res } = await withEnv(
     { ...PRE_CUTOVER, IFRAME_JWT_PUBLIC_KEY: publicKey },
     () => call({ user: VIEWER, query: { app: 'public-app' }, pool })
   );
   assert.equal(res.statusCode, 503);
   assert.equal(res.body.code, 'signing_unavailable');
+  assert.equal(res.body.token, undefined);
+});
+
+// The 503 path must not become a hole in the privacy gate: an unsignable
+// deployment still hides a view-private app behind the existence-hiding 404.
+test('the 503 path still refuses a view-private app with a 404', async () => {
+  const pool = makePool({ apps: [PRIVATE_APP] });
+  const { res } = await withEnv(PRE_CUTOVER, () =>
+    call({ user: VIEWER, query: { app: 'private-app' }, pool }));
+  assert.equal(res.statusCode, 404);
   assert.equal(res.body.token, undefined);
 });
 
@@ -363,6 +362,6 @@ test('the apps lookup projects the visibility columns the gate reads', async () 
   for (const col of ['view_visibility', 'collab_visibility', 'created_by']) {
     assert.match(q.sql, new RegExp(`\\b${col}\\b`),
       `the projection must include ${col} — checkAppAccess reads it and `
-      + 'treats a missing column as public');
+      + 'now THROWS when it is missing');
   }
 });

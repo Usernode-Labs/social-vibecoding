@@ -837,17 +837,19 @@ convention, gated entirely on `USERNODE_ENV === 'staging'`:
    `x-usernode-token` header) and verifies it with the iframe **public**
    key — RS256, issuer `usernode`, audience
    `usernode:app:${USERNODE_APP_ID}`, `pur: 'iframe'` — via
-   `platformJwt.verifyAppIdentityToken()`. A preview built by a
-   *pre-cutover* platform gets no `USERNODE_APP_ID` and no public key at
-   all; for that one window `platform-jwt.js` carries a staging-only
-   legacy bootstrap shim (see `legacyBootstrapActive()`), which is
-   structurally unreachable in production because
-   `IFRAME_JWT_PUBLIC_KEY` is in `REQUIRED_PROD`. The shim has **two**
-   halves, both temporary and both removed together: a verify half here,
-   and a mint half in `/api/iframe-token` — the self-app clone also acts
-   as the parent shell, and a preview has no `IFRAME_JWT_PRIVATE_KEY` to
-   sign with either. The removal checklist is in the block comment above
-   `legacyBootstrapActive()`.
+   `platformJwt.verifyAppIdentityToken()`. **Fail-closed with no fallback
+   branch:** a token that misses on algorithm, issuer, audience or `pur`
+   mints nothing, and the same holds for the mint half in
+   `/api/iframe-token` (the self-app clone also acts as the parent shell
+   for the app views it renders), which answers a structured
+   `503 signing_unavailable` rather than downgrading to a weaker token.
+   During the RSA cutover itself a staging-only *legacy bootstrap shim*
+   bridged both halves for one deploy window — a preview built by the
+   pre-cutover platform received neither `USERNODE_APP_ID` nor any key
+   material — but it was self-disabling by construction (its gate required
+   the ABSENCE of both) and went permanently inert the moment the cutover
+   reached `main`. It has since been removed; there is no legacy token
+   shape any part of the platform still accepts.
 3. On verify it loads the matching `users` row from the local clone
    (the row identity survives Phase 0/2c — only `password` and four
    other columns are scrubbed; `id`, `username`, and `is_admin` are
