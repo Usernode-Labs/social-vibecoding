@@ -18,7 +18,7 @@
     "check:content": "node scripts/check-content.mjs",
     "check:harness": "node scripts/check-harness-policy.mjs",
     "check:harness-integrity": "node scripts/check-harness-integrity.mjs",
-    "test:harness": "node --test scripts/check-component-relationships.test.mjs scripts/check-harness-integrity.test.mjs scripts/ui-workflow.test.mjs",
+    "test:harness": "node --test scripts/check-component-relationships.test.mjs scripts/check-harness-integrity.test.mjs scripts/ui-gate-options.test.mjs scripts/ui-workflow.test.mjs",
     "check:ui": "node scripts/run-ui-gate.mjs",
     "query:design-system": "node scripts/query-design-system.mjs",
     "resolve:ui-workflow": "node ../tool/ui-workflow.mjs",
