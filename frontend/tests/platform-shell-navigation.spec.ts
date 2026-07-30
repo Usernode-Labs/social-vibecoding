@@ -35,6 +35,21 @@ test("renders the accepted platform IA with one current destination", async ({ p
   await expect(page.getByRole("group", { name: "Color mode" })).toHaveCount(0)
 })
 
+test("keeps the inset page-card spatial model", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "The inset card margins apply from md up.")
+  await page.goto("/react/")
+
+  // The page is one contained card on the sidebar-colored plane. Dropping the
+  // variant once silently flattened the whole model while every functional
+  // gate stayed green.
+  await expect(page.locator('[data-slot="sidebar"][data-variant="inset"]')).toHaveCount(1)
+  const inset = page.locator('[data-slot="sidebar-inset"]')
+  await expect.poll(() => inset.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return Number.parseFloat(style.borderTopLeftRadius) > 0 && Number.parseFloat(style.marginTop) > 0
+  })).toBe(true)
+})
+
 test("keeps the menu trigger compact and the header title visible", async ({ page }) => {
   await page.goto("/react/")
 
