@@ -3,6 +3,7 @@ import { useCallback, useState, useSyncExternalStore, type FormEvent } from "rea
 import { Link, useLocation, useNavigate } from "react-router-dom"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -70,10 +71,12 @@ export function Login() {
 
   if (cleanupPending) {
     return (
-      <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
+      <>
+        <TopBar title="Sign out" />
+        <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
         <Card className="w-full max-w-sm">
           <CardHeader>
-            <CardTitle><h1>Finish signing out</h1></CardTitle>
+            <CardTitle><h2>Finish signing out</h2></CardTitle>
             <CardDescription>Your web session has ended.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
@@ -89,23 +92,29 @@ export function Login() {
           </CardContent>
         </Card>
       </div>
+      </>
     )
   }
 
   if (mode === "wallet") {
     return (
-      <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
+      <>
+        <TopBar title="Wallet sign-in" />
+        <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
         <WalletAccess onAuthenticated={authenticated} onDetected={walletReady} onUnavailable={showPassword} />
       </div>
+      </>
     )
   }
 
   if (mode === "recovery") {
     return (
-      <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
+      <>
+        <TopBar title="Password reset" />
+        <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
         <Card className="w-full max-w-sm">
           <CardHeader>
-            <CardTitle><h1>Reset your password</h1></CardTitle>
+            <CardTitle><h2>Reset your password</h2></CardTitle>
             <CardDescription>Social Vibecoding accounts do not store an email address.</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
@@ -129,56 +138,80 @@ export function Login() {
           </CardContent>
         </Card>
       </div>
+      </>
     )
   }
 
+  return <LoginPasswordView error={error} locationHash={location.hash} onRecovery={() => setMode("recovery")} onSubmit={submit} onWallet={() => setMode("wallet")} pending={pending} walletDetected={walletDetected} />
+}
+
+export function LoginPasswordView({
+  error,
+  locationHash,
+  onRecovery,
+  onSubmit,
+  onWallet,
+  pending,
+  walletDetected,
+}: {
+  error: string | null
+  locationHash: string
+  onRecovery: () => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  onWallet: () => void
+  pending: boolean
+  walletDetected: boolean
+}) {
   return (
-    <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle><h1>Welcome back</h1></CardTitle>
-          <CardDescription>Log in to Social Vibecoding.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={submit}>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="username">Username</FieldLabel>
-                <Input autoComplete="username" id="username" name="username" required />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <Input autoComplete="current-password" id="password" name="password" required type="password" />
-              </Field>
-              {error ? <Field data-invalid><FieldError>{error}</FieldError></Field> : null}
-              <Button disabled={pending} type="submit">
-                <PlatformIcon data-icon="inline-start" icon={LogIn} />
-                {pending ? "Logging in…" : "Log in"}
-              </Button>
-              {walletDetected ? (
-                <Button onClick={() => setMode("wallet")} type="button" variant="outline">
-                  <PlatformIcon data-icon="inline-start" icon={WalletCards} />
-                  Use Usernode wallet
+    <>
+      <TopBar title="Sign in" />
+      <div className="flex flex-1 items-center justify-center p-4 sm:p-6">
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle><h2>Welcome back</h2></CardTitle>
+            <CardDescription>Log in to Social Vibecoding.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form aria-label="Sign-in credentials" onSubmit={onSubmit}>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="username">Username</FieldLabel>
+                  <Input autoComplete="username" id="username" name="username" required />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="password">Password</FieldLabel>
+                  <Input autoComplete="current-password" id="password" name="password" required type="password" />
+                </Field>
+                {error ? <Field data-invalid><FieldError>{error}</FieldError></Field> : null}
+                <Button disabled={pending} type="submit">
+                  <PlatformIcon data-icon="inline-start" icon={LogIn} />
+                  {pending ? "Logging in…" : "Log in"}
                 </Button>
-              ) : null}
-            </FieldGroup>
-          </form>
-          <p className="mt-3 text-center text-sm">
-            <Button className="h-auto p-0 text-muted-foreground" onClick={() => setMode("recovery")} type="button" variant="link">
-              Forgot password?
-            </Button>
-          </p>
-          <p className="mt-5 text-center text-sm text-muted-foreground">
-            Have an activation code?{" "}
-            <Link className="underline underline-offset-4 hover:text-foreground" to={{ pathname: "/register", hash: location.hash }}>
-              Register
-            </Link>
-          </p>
-          <p className="mt-3 text-center text-sm text-muted-foreground">
-            <Link className="underline underline-offset-4 hover:text-foreground" to="/">Continue without signing in</Link>
-          </p>
-        </CardContent>
-      </Card>
-    </div>
+                {walletDetected ? (
+                  <Button onClick={onWallet} type="button" variant="outline">
+                    <PlatformIcon data-icon="inline-start" icon={WalletCards} />
+                    Use Usernode wallet
+                  </Button>
+                ) : null}
+              </FieldGroup>
+            </form>
+            <p className="mt-3 text-center text-sm">
+              <Button className="h-auto p-0 text-muted-foreground" onClick={onRecovery} type="button" variant="link">
+                Forgot password?
+              </Button>
+            </p>
+            <p className="mt-5 text-center text-sm text-muted-foreground">
+              Have an activation code?{" "}
+              <Link className="underline underline-offset-4 hover:text-foreground" to={{ pathname: "/register", hash: locationHash }}>
+                Register
+              </Link>
+            </p>
+            <p className="mt-3 text-center text-sm text-muted-foreground">
+              <Link className="underline underline-offset-4 hover:text-foreground" to="/">Continue without signing in</Link>
+            </p>
+          </CardContent>
+        </Card>
+      </div>
+    </>
   )
 }
