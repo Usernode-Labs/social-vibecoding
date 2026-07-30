@@ -1,5 +1,14 @@
 # Candidate A shell continuation record
 
+**Status:** Historical authorization record; not current implementation
+authority
+
+This file is retained because it records why Candidate A continued. Its
+measurements and component names are checkpoint evidence, not descriptions of
+the current shell. Current authority lives in `design-system.manifest.json`,
+`design-system/authority.json`, `design-system/coverage.json`, and the
+route-owned TopBar implementation.
+
 ## Decision
 
 Continue Candidate A for the Social Vibecoding React **platform shell only**.
@@ -40,7 +49,12 @@ plan to the shell and deferring the app-factory boundary.
 The 37 Storybook files / 135 named states above are the preserved measurements
 from the `bb47cbe` continuation checkpoint. They are not current catalog totals.
 
-## Current refinement evidence
+## Historical refinement evidence before the TopBar sweep
+
+The following measurements describe the continuation checkpoint. The
+live-agent evidence files named below were later swept or demoted when the
+harness review found that their fingerprint churn cost more than the evidence
+they produced.
 
 - Home/Explore split: `a989984`
 - M7a platform drawer and focused-frame continuity: `e6c05ab`
@@ -52,11 +66,11 @@ from the `bb47cbe` continuation checkpoint. They are not current catalog totals.
 - M7 closure sweep removing duplicate recovery navigation: `bd6e380`
 - Host cutover no-go record: `cc6d3d9` and
   `docs/shell-host-cutover-evidence.md`
-- Current authority: 44 manifest patterns, 12 component performance
+- Checkpoint authority: 44 manifest patterns, 12 component performance
   contracts, 2 registry entries, and style-policy coverage over 163 modules
 - Agent lifecycle: T1–T5 passes 5/5, including deliberate T4 enforcement at
   5/5
-- Current harness extension: T1–T8 passes 8/8. T6 discovers reviewed component
+- Checkpoint harness extension: T1–T8 passes 8/8. T6 discovers reviewed component
   relationships, T7 composes content/component/review workflows, and T8 proves
   skill/adapters/package-script/CI integrity. The live run records the exact
   harness fingerprint and does not claim Claude behavioral execution.
@@ -65,9 +79,9 @@ from the `bb47cbe` continuation checkpoint. They are not current catalog totals.
   retained in the JSON evidence). The
   deterministic T8 supplies self-integrity proof rather than spending another
   model turn on a mechanical check.
-- Current Storybook verification: 47 files / 228 tests
-- Browser verification: 655 passed, 53 intentional skips, 0 failed
-- Production-readonly review: 40/40 passed
+- Checkpoint Storybook verification: 47 files / 228 tests
+- Checkpoint browser verification: 655 passed, 53 intentional skips, 0 failed
+- Checkpoint production-readonly review: 40/40 passed
 - Native bridge contract: 8/8 passed
 - Production build: 2,074 modules transformed
 - Initial React JavaScript: 142.2 KiB gzip against the 160 KiB budget
@@ -76,14 +90,24 @@ from the `bb47cbe` continuation checkpoint. They are not current catalog totals.
 
 M6c is complete. M7 is complete only at `c0fb2c4`: `e6c05ab` supplied M7a,
 while `c0fb2c4` supplied M7b and the route-composition work recorded as M11;
-`bd6e380` is the final narrow source-sweep follow-up. The intended shell routes
-now use the shared `PageHeader` and available-width canvas. Login, Register,
-`HostedApp`, `StagingPreview`, and `NotFound` are explicit semantic/layout
-exceptions rather than unfinished bulk migration.
+`bd6e380` is the final narrow source-sweep follow-up. At that checkpoint, the
+intended shell routes used the shared `PageHeader` and available-width canvas.
+Login, Register, `HostedApp`, `StagingPreview`, and `NotFound` were recorded as
+semantic/layout exceptions.
 
 Activity is the canonical product label. The `/react/notifications` route,
 notification API, live events, pagination, and internal module/type names are
 retained compatibility boundaries, not a separate product concept.
+
+## Superseding implemented state
+
+The later shell sweep removed `PageHeader`, `AppChrome`, and
+`AppContextChrome`. Every route now renders one `TopBar`; app routes resolve
+their actions through `AppTopBar`, and focused app / staging surfaces select
+overlay placement. Existing manual Refresh actions remain functional. The
+source-derived design-system checker currently governs 29 local primitives,
+43 owned patterns, four runtime compositions, and 14 browser-evidenced route
+adapters. `docs/shell-simplification.md` is the implementation record.
 
 ## Execution record
 
