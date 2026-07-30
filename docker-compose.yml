@@ -215,6 +215,20 @@ services:
     # proposals' checks). 1g gives routine restore parallelism real
     # headroom so a single busy day can't wedge staging again.
     shm_size: 1gb
+    # max_wal_size: the postgres default (1GB) is far too small for this
+    # instance's write bursts — each staging-preview build pg_restores a
+    # ~10 GB platform-DB clone, and during the 2026-07-30 deploy failure
+    # the server was checkpointing every 6-9 SECONDS (postgres itself
+    # logging "checkpoints are occurring too frequently ... Consider
+    # increasing max_wal_size"), each pass flushing 600-900 MB. Constant
+    # checkpointing turns every restore into an I/O storm that starves
+    # everything else (boot migrations included). 8GB spaces checkpoints
+    # back out toward the checkpoint_timeout cadence at the cost of up to
+    # ~8GB extra WAL on disk and proportionally longer crash recovery.
+    command:
+      - postgres
+      - -c
+      - max_wal_size=8GB
     networks:
       - usernode-net
     volumes:

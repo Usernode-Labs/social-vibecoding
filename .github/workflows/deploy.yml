@@ -744,6 +744,39 @@ jobs:
               cat .platform-env >> .env
             fi
 
+            # ----------------------------------------------------------
+            # Don't cut over while a pg_dump of the platform database is
+            # in flight. Every staging-preview build of the self-app dumps
+            # $NEW_DB from *inside* the usernode-db container, so the dump
+            # survives the platform container being recreated — and its
+            # ACCESS SHARE locks on every table block the new container's
+            # boot migrations (ALTER TABLE needs ACCESS EXCLUSIVE), eating
+            # the whole 120s health gate and triggering a spurious
+            # rollback (2026-07-30 incident, run 30578204174).
+            #
+            # 10-minute cap: a dump of the ~10 GB platform DB finishes in
+            # single-digit minutes. If one is somehow stuck we proceed
+            # anyway — migrate.js's lock_timeout+retry loop and the health
+            # gate below are the second line of defense.
+            # ----------------------------------------------------------
+            DUMP_WAITED=0
+            while [ "$DUMP_WAITED" -lt 600 ]; do
+              ACTIVE_DUMPS=$(docker exec usernode-db psql -U usernode -d postgres -Atc \
+                "SELECT count(*) FROM pg_stat_activity WHERE application_name = 'pg_dump' AND datname = '$NEW_DB'" \
+                2>/dev/null || echo 0)
+              if [ "${ACTIVE_DUMPS:-0}" = "0" ]; then break; fi
+              if [ "$DUMP_WAITED" -eq 0 ]; then
+                echo "==> Waiting for $ACTIVE_DUMPS in-flight pg_dump(s) of $NEW_DB (staging clone) to finish before cutover..."
+              fi
+              sleep 10
+              DUMP_WAITED=$((DUMP_WAITED + 10))
+            done
+            if [ "$DUMP_WAITED" -ge 600 ]; then
+              echo "==> WARNING: platform-DB pg_dump still running after ${DUMP_WAITED}s; proceeding anyway."
+            elif [ "$DUMP_WAITED" -gt 0 ]; then
+              echo "==> Platform-DB dump(s) finished after ${DUMP_WAITED}s; cutting over."
+            fi
+
             docker compose up -d usernode
             docker compose up -d --remove-orphans
 

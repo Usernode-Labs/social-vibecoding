@@ -23,7 +23,7 @@ async function migrate(config) {
   await auditDuplicatePrSessions(pool);
 
   log.info('db', 'Running migrations...');
-  await pool.query(schema);
+  await applySchemaWithLockRetry(pool, schema);
   log.info('db', 'Schema up to date');
 
   await seedAdmin(pool, config);
@@ -100,6 +100,78 @@ async function migrate(config) {
   await backfillLinkedIssuesFromPrBodies(pool);
   await failOrphanedHeadlessRuns(pool);
   await migrateAppDbsToPerRole(pool, config);
+}
+
+// The schema apply is dozens of `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` /
+// `CREATE INDEX IF NOT EXISTS` statements; each needs a brief ACCESS
+// EXCLUSIVE lock on its table even when it turns out to be a no-op. A
+// concurrent pg_dump of this same database — every staging-preview build of
+// the self-app runs one, via `docker exec` inside the usernode-db container,
+// where it survives the platform container being recreated mid-deploy —
+// holds ACCESS SHARE on every table for its whole multi-minute duration
+// (~10 GB as of 2026-07). A bare `pool.query(schema)` queues behind it
+// silently until the deploy's 120s health gate expires and rolls the deploy
+// back with no diagnostics (2026-07-30 incident, Actions run 30578204174).
+//
+// lock_timeout bounds only lock *acquisition* waits, never statement
+// runtime, so a legitimately slow DDL (a new index on a big table) is
+// unaffected. On timeout Postgres raises 55P03; we log every active session
+// on the database (the blocker is visible there — pg_dump shows up under
+// application_name) and retry. Dumps always finish, so waiting in bounded,
+// observable slices strictly dominates one unbounded invisible wait.
+//
+// The statements are idempotent, so a mid-script timeout is safe to rerun:
+// the simple-query protocol runs the whole multi-statement string in one
+// implicit transaction, and a failure rolls all of it back.
+const SCHEMA_LOCK_TIMEOUT = '10s';
+const SCHEMA_APPLY_RETRIES = 25; // × (10s timeout + 3s delay) ≈ 5.4 min cap
+const SCHEMA_RETRY_DELAY_MS = 3000;
+
+async function applySchemaWithLockRetry(pool, schema) {
+  for (let attempt = 1; ; attempt++) {
+    const client = await pool.connect();
+    try {
+      await client.query(`SET lock_timeout = '${SCHEMA_LOCK_TIMEOUT}'`);
+      await client.query(schema);
+      return;
+    } catch (err) {
+      if (err.code !== '55P03' || attempt >= SCHEMA_APPLY_RETRIES) throw err;
+      log.warn('db', 'Schema apply blocked on a table lock; retrying', {
+        attempt, maxAttempts: SCHEMA_APPLY_RETRIES,
+        lockTimeout: SCHEMA_LOCK_TIMEOUT,
+      });
+      await logSchemaApplyBlockers(pool);
+      await new Promise((resolve) => setTimeout(resolve, SCHEMA_RETRY_DELAY_MS));
+    } finally {
+      // Destroy rather than release: the session-level lock_timeout must
+      // not leak back into the shared pool.
+      client.release(true);
+    }
+  }
+}
+
+// Best-effort visibility into WHO we were queued behind. Logged once per
+// blocked attempt so a stuck deploy's container logs answer "waiting on
+// what?" directly instead of requiring a live pg_stat_activity session.
+async function logSchemaApplyBlockers(pool) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT pid, usename, application_name, state, wait_event_type,
+             (now() - query_start)::text AS running_for,
+             left(query, 160) AS query
+      FROM pg_stat_activity
+      WHERE datname = current_database()
+        AND pid <> pg_backend_pid()
+        AND state IS DISTINCT FROM 'idle'
+      ORDER BY query_start ASC
+      LIMIT 10
+    `);
+    log.warn('db', 'Active sessions on this database during schema-apply lock wait', {
+      sessions: rows,
+    });
+  } catch (err) {
+    log.warn('db', 'Could not inspect schema-apply blockers', { message: err.message });
+  }
 }
 
 // #687 (PR-import, Slice 1): READ-ONLY boot audit. The PR-import feature
