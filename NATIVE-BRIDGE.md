@@ -131,9 +131,12 @@ app" sections in SV's Settings modal (`public/js/settings.js`).
 #### `getProfileInfo()` → `{ participantId }`
 
 `participantId` is the leaderboard participant id (number), or `null` when
-the user hasn't registered. SV's profile screen uses it to query the
-leaderboard API (`/me/ranking`, `/me/breakdown`) through the SV server's
-`/challenges-api` proxy.
+the user hasn't registered. Since the topochain merge, participant ids ARE
+platform user ids and SV's `#profile` screen no longer consults this
+method for data — the in-process `/challenges-api` routes
+(`src/routes/topochain/mobile.js`) scope `/me/*` to the platform session
+server-side. The method remains for capability detection (the drawer's
+profile row shows only inside the app webview) and forward compatibility.
 
 #### `getSettingsState()` → settings snapshot
 

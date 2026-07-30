@@ -1,13 +1,13 @@
 // Profile screen — the mobile app's native Profile screen absorbed into SV
 // (profile-and-settings-to-web migration, NATIVE-BRIDGE.md). Renders the
 // user's rank + points, token allocation (with reveal), points breakdown,
-// and completed challenges from the public leaderboard service via the
-// server's read-only /challenges-api passthrough (server.js).
+// and completed challenges from the in-process /challenges-api routes
+// (src/routes/topochain/mobile.js).
 //
-// Identity comes from the bridge: `usernode.getProfileInfo()` returns the
-// leaderboard participant id (bridge v3). Outside the app — or before the
-// install has registered with the leaderboard — the screen shows an
-// explanatory empty state instead of data.
+// Identity comes from the platform session: since the topochain merge,
+// leaderboard participants ARE platform users, so the /me/* routes scope
+// to the signed-in session server-side. The bridge's getProfileInfo()
+// participant id (bridge v3) is no longer consulted for data.
 //
 // Hosted in #profile-root; mounted/unmounted by App.navigateToProfile /
 // App._exitProfile when the #profile hash route is active.
@@ -18,8 +18,6 @@ const Profile = {
   // { ranking, breakdown, challenges, season } — kept across open/close so
   // re-entering the screen paints instantly, then refreshes.
   _data: null,
-  // null = not probed yet; { participantId } = probed (id may be null).
-  _profileInfo: null,
 
   // The token figure stays blurred until the user taps "Reveal" once;
   // mirrors the native TokenAllocationReveal acknowledgement.
@@ -49,31 +47,10 @@ const Profile = {
     return body;
   },
 
-  async _getProfileInfo() {
-    if (Profile._profileInfo) return Profile._profileInfo;
-    let info = null;
-    try {
-      if (window.usernode &&
-          typeof window.usernode.getProfileInfo === 'function') {
-        info = await window.usernode.getProfileInfo();
-      }
-    } catch (err) {
-      console.warn('[profile] getProfileInfo failed:', err);
-    }
-    Profile._profileInfo = info || { participantId: null };
-    return Profile._profileInfo;
-  },
-
   async _load() {
     if (Profile._loading) return;
     Profile._loading = true;
     try {
-      const { participantId } = await Profile._getProfileInfo();
-      if (participantId == null) {
-        Profile._data = { unavailable: true };
-        return;
-      }
-
       // Scope everything to the active season, like the challenges screen.
       const seasonsRaw = await Profile._fetchJson('/challenges-api/seasons');
       const seasons = Array.isArray(seasonsRaw)
@@ -82,19 +59,18 @@ const Profile = {
       const active = seasons.find((s) => s.is_active) ||
         seasons[seasons.length - 1] || null;
       const seasonId = active ? (active.season_id ?? active.id) : null;
-      const seasonQS = seasonId != null ? `&season_id=${seasonId}` : '';
+      const seasonQS = seasonId != null ? `?season_id=${seasonId}` : '';
 
       const [ranking, breakdown, challenges] = await Promise.all([
+        Profile._fetchJson(`/challenges-api/me/ranking${seasonQS}`),
         Profile._fetchJson(
-          `/challenges-api/me/ranking?participant_id=${participantId}` +
-          seasonQS),
-        Profile._fetchJson(
-          `/challenges-api/me/breakdown?participant_id=${participantId}` +
-          `&include_activity=1${seasonQS}`).catch(() => null),
+          '/challenges-api/me/breakdown?include_activity=1' +
+          (seasonId != null ? `&season_id=${seasonId}` : ''))
+          .catch(() => null),
         seasonId != null
           ? Profile._fetchJson(
-              `/challenges-api/challenges?season_id=${seasonId}` +
-              `&participant_id=${participantId}`).catch(() => [])
+              `/challenges-api/challenges?season_id=${seasonId}`)
+              .catch(() => [])
           : Promise.resolve([]),
       ]);
 
@@ -139,18 +115,6 @@ const Profile = {
         'Could not load your profile — check your connection and try again.'));
       return;
     }
-    if (d.unavailable) {
-      const box = Profile._el('div', 'text-center py-10');
-      box.appendChild(Profile._el('div', 'text-lg font-semibold mb-2',
-        'Profile unavailable'));
-      box.appendChild(Profile._el('div',
-        'text-sm text-zinc-500 dark:text-zinc-400 max-w-sm mx-auto',
-        'Your points and rank live in the Usernode app. Open Usernode ' +
-        'and finish registration to see your profile here.'));
-      root.appendChild(box);
-      return;
-    }
-
     const r = d.ranking || {};
 
     // Rank + points header (native ScoreHeader equivalent).

@@ -53,7 +53,7 @@
 const { Router } = require('express');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
-const { mobileTokenAuth } = require('../../middleware/topochain-auth');
+const { mobileTokenAuth, optionalSessionAuth } = require('../../middleware/topochain-auth');
 const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
@@ -776,7 +776,9 @@ function topochainMobileRoutes(config) {
   // ── GET /me/ranking (SPEC 1769-1820) ─────────────────────────────────
   // Scope resolution: season_event_id > season_id > neither (global) —
   // SPEC 1774's "takes precedence over season_id".
-  router.get('/api/v4/mobile/me/ranking', mobileTokenAuth(config), async (req, res) => {
+  // Named handler (not inline) so the /challenges-api web registrations
+  // at the bottom of this factory can reuse it with session auth.
+  const meRankingHandler = async (req, res) => {
     try {
       // `req.user.id` comes off `mobile_auth_tokens.user_id` (BIGINT) —
       // node-postgres returns BIGINT columns as STRINGS (no custom type
@@ -888,10 +890,11 @@ function topochainMobileRoutes(config) {
       log.error('topochain-mobile', 'GET /me/ranking failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
-  });
+  };
+  router.get('/api/v4/mobile/me/ranking', mobileTokenAuth(config), meRankingHandler);
 
   // ── GET /me/breakdown (SPEC 1821-1865) ───────────────────────────────
-  router.get('/api/v4/mobile/me/breakdown', mobileTokenAuth(config), async (req, res) => {
+  const meBreakdownHandler = async (req, res) => {
     try {
       const seasonEventId = toIntId(req.query.season_event_id);
       const seasonIdParam = toIntId(req.query.season_id);
@@ -981,7 +984,8 @@ function topochainMobileRoutes(config) {
       log.error('topochain-mobile', 'GET /me/breakdown failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
-  });
+  };
+  router.get('/api/v4/mobile/me/breakdown', mobileTokenAuth(config), meBreakdownHandler);
 
   // ── GET /event/points (SPEC 1867-1893) ───────────────────────────────
   // Rename #1: `event_id` -> `season_event_id`. Rename #2:
@@ -1049,7 +1053,7 @@ function topochainMobileRoutes(config) {
 
   // ── GET /leaderboard (SPEC 1895-1932) ────────────────────────────────
   // Rename #1: `event_id` -> `season_event_id`.
-  router.get('/api/v4/mobile/leaderboard', mobileTokenAuth(config), async (req, res) => {
+  const leaderboardHandler = async (req, res) => {
     try {
       const seasonId = toIntId(req.query.season_id);
       if (!seasonId) {
@@ -1137,12 +1141,13 @@ function topochainMobileRoutes(config) {
       log.error('topochain-mobile', 'GET /leaderboard failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
-  });
+  };
+  router.get('/api/v4/mobile/leaderboard', mobileTokenAuth(config), leaderboardHandler);
 
   // ── GET /challenges (SPEC 1934-1974) ─────────────────────────────────
   // Scope resolution: season_event_id > season_id > the current active
   // public season; no scope resolves -> empty array (SPEC's own words).
-  router.get('/api/v4/mobile/challenges', mobileTokenAuth(config), async (req, res) => {
+  const challengesHandler = async (req, res) => {
     try {
       const seasonEventId = toIntId(req.query.season_event_id);
       const seasonIdParam = toIntId(req.query.season_id);
@@ -1232,10 +1237,11 @@ function topochainMobileRoutes(config) {
       log.error('topochain-mobile', 'GET /challenges failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
-  });
+  };
+  router.get('/api/v4/mobile/challenges', mobileTokenAuth(config), challengesHandler);
 
   // ── GET /seasons (SPEC 1976-2029) ────────────────────────────────────
-  router.get('/api/v4/mobile/seasons', mobileTokenAuth(config), async (req, res) => {
+  const seasonsHandler = async (req, res) => {
     try {
       const seasonIdParam = toIntId(req.query.season_id);
       const seasonEventIdParam = toIntId(req.query.season_event_id);
@@ -1322,7 +1328,35 @@ function topochainMobileRoutes(config) {
       log.error('topochain-mobile', 'GET /seasons failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
-  });
+  };
+  router.get('/api/v4/mobile/seasons', mobileTokenAuth(config), seasonsHandler);
+
+  // ── /challenges-api (SV web shell reads) ─────────────────────────────
+  // The SV chrome screens (#challenges and #profile — public/js/
+  // challenges.js, public/js/profile.js) render the same data the mobile
+  // app pulls from the five GET surfaces above, but authenticate with the
+  // platform session cookie instead of a mobile bearer token. Before the
+  // topochain merge these paths were a read-only proxy in server.js to the
+  // retired external leaderboard deployment; now they are the SAME
+  // in-process handlers with session identity. Post-migration participant
+  // ids ARE platform user ids, so /me/* scope to the session user — the
+  // old proxy's client-claimed `participant_id` query param is ignored
+  // (mobileTokenAuth's own "never trust a client-supplied id" rule,
+  // Constraint #12, now holds on the web surface too).
+  const webSessionAuth = optionalSessionAuth(config);
+  const requireSessionUser = (req, res, next) => {
+    if (!req.user) return fail(res, 401, 'Unauthenticated.');
+    return next();
+  };
+  router.get('/challenges-api/seasons', webSessionAuth, requireSessionUser, seasonsHandler);
+  router.get('/challenges-api/challenges', webSessionAuth, requireSessionUser, challengesHandler);
+  router.get('/challenges-api/leaderboard', webSessionAuth, requireSessionUser, leaderboardHandler);
+  router.get('/challenges-api/me/ranking', webSessionAuth, requireSessionUser, meRankingHandler);
+  router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, meBreakdownHandler);
+  // Everything else under /challenges-api keeps the old proxy allowlist's
+  // "off-list -> 404" contract instead of falling through to the SPA
+  // catch-all (which would 200 with index.html) or authMiddleware's 401.
+  router.use('/challenges-api', (_req, res) => fail(res, 404, 'Not found.'));
 
   // ── POST /logs (SPEC 2031-2044) ──────────────────────────────────────
   router.post('/api/v4/mobile/logs', mobileTokenAuth(config), async (req, res) => {
