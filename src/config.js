@@ -99,6 +99,26 @@ function load() {
     process.exit(1);
   }
 
+  // The platform's own staging clone gets no platform keys, but it still
+  // acts as a parent shell — every app view it renders fetches
+  // /api/iframe-token for the embedded child. Without a signing key that
+  // endpoint answers 503 and every framed route logs a console error,
+  // failing the console-error baseline check. So a preview mints its own
+  // ephemeral pair and then runs the IDENTICAL sign/verify path as
+  // production. Deliberately BEFORE the config object below, which derives
+  // `iframeJwtPublicKey` from process.env. See the block comment above
+  // platformJwt.generateStagingIframeKeyPair() for why this is not a shim.
+  let stagingKeys = { generated: false };
+  if (staging) {
+    try {
+      stagingKeys = platformJwt.generateStagingIframeKeyPair();
+    } catch (err) {
+      // Never fatal: a preview that cannot self-sign is worse off than
+      // one that 503s on app views, but it is still reviewable.
+      console.log(`[config] [warn] could not self-sign an iframe key pair: ${err.message}`);
+    }
+  }
+
   const config = {
     // Deployment environment tag (plan Global Constraints #6, topochain
     // mailer): drives ONE behavior today — src/services/topochain/
@@ -313,7 +333,7 @@ function load() {
   console.log(`  DATA_ENCRYPTION_KEY=${mask(config.dataEncryptionKey)}${staging ? ' (staging constant — cannot decrypt production ciphertext)' : ''}`);
   console.log(`  WORKER_JWT_SECRET=${mask(config.workerJwtSecret)}`);
   console.log(`  EDGE_JWT_SECRET=${mask(config.edgeJwtSecret)}`);
-  console.log(`  IFRAME_JWT_PUBLIC_KEY=${config.iframeJwtPublicKey ? `(set, ${config.iframeJwtPublicKey.length} bytes)` : '(not set)'}`);
+  console.log(`  IFRAME_JWT_PUBLIC_KEY=${config.iframeJwtPublicKey ? `(set, ${config.iframeJwtPublicKey.length} bytes)` : '(not set)'}${stagingKeys.generated ? ' (staging self-signed, ephemeral — tokens are scoped to this preview only)' : ''}`);
   // Short HMAC keys stay a warning, not an exit — a fork running a
   // 24-byte key should get a loud line, not a platform that won't start.
   for (const name of ['WORKER_JWT_SECRET', 'EDGE_JWT_SECRET']) {

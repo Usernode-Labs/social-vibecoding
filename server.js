@@ -551,8 +551,11 @@ app.get('/api/iframe-token', async (req, res) => {
   // downgrade branch: a staging-only pre-cutover bootstrap shim signed a
   // bare-HS256 token here for the one deploy window in which previews were
   // built by a platform with no IFRAME_JWT_PRIVATE_KEY, and it has been
-  // removed now that every preview is built by post-cutover code. A
-  // deployment that cannot sign gets the structured 503 below.
+  // removed. A staging clone — which still gets no platform keys — self-signs
+  // an ephemeral pair at boot instead (config.load() →
+  // platformJwt.generateStagingIframeKeyPair), so it reaches this line with a
+  // real key and takes the identical path production does. A deployment that
+  // genuinely cannot sign gets the structured 503 below.
   let token = null;
   let signErr = null;
   try {

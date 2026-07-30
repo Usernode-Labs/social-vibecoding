@@ -225,6 +225,72 @@ function orNull(fn) {
   try { return fn(); } catch { return null; }
 }
 
+// ── Staging self-signing ──────────────────────────────────────────────
+//
+// The platform runs inside its own staging clone, and that clone is
+// injected NO platform keys — deliberately: a preview built from
+// unreviewed branch code must never hold production's signing key. But
+// the clone is also a PARENT SHELL: it renders app views, and each one
+// fetches /api/iframe-token for the embedded child. With no
+// IFRAME_JWT_PRIVATE_KEY, signAppIdentityToken() throws, the endpoint
+// answers its structured 503, and every app view logs a console error —
+// which fails the console-error baseline check on every route that frames
+// an app, even though the preview itself works.
+//
+// So a staging clone MINTS ITS OWN KEYPAIR at boot. The pair is:
+//
+//   ephemeral   — generated per process, never persisted, never in .env.
+//                 A restart invalidates outstanding tokens; they are
+//                 15m-1h TTL and the shell refreshes on demand, so the
+//                 cost is one refresh, not a broken session.
+//   self-consistent — the clone is both signer and verifier (its own
+//                 middleware/auth.js verifies against
+//                 IFRAME_JWT_PUBLIC_KEY for SELF_APP_ID), so both halves
+//                 must come from the same generation. They do: both env
+//                 vars are set together, here, or neither is.
+//   confined    — it can only ever authenticate against THIS clone.
+//                 Production verifies with production's public key, so a
+//                 token minted here is refused everywhere that matters.
+//
+// WHY THIS IS NOT A SHIM, and not a USERNODE_ENV feature gate. The code
+// path is byte-identical to production: the same signAppIdentityToken /
+// verifyAppIdentityToken, the same RS256 pin, the same issuer, the same
+// per-app audience, the same `pur` claim. Only the ORIGIN of the key
+// material differs — which is the sanctioned "swap the data behind the
+// path" use of USERNODE_ENV, not a swap of the path itself. There is no
+// second verify branch to keep in sync and no weaker token shape: a
+// forged HS256 token, a wrong audience or a wrong issuer is refused here
+// exactly as it is in production.
+//
+// Two independent locks keep this out of production:
+//   1. it throws unless USERNODE_ENV === 'staging';
+//   2. config.load() only calls it on the staging branch, and production
+//      cannot boot without a real pair anyway (REQUIRED_PROD).
+// A configured key is never clobbered — an operator who DOES inject a
+// pair into a preview keeps it.
+function generateStagingIframeKeyPair() {
+  if (process.env.USERNODE_ENV !== 'staging') {
+    throw new Error('platform-jwt: refusing to self-sign outside staging');
+  }
+  if (process.env.IFRAME_JWT_PRIVATE_KEY || process.env.IFRAME_JWT_PUBLIC_KEY) {
+    return { generated: false, bits: 0 };
+  }
+  const modulusLength = 2048;
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
+  // Written to process.env because that is where every reader already
+  // looks (iframePrivateKey/iframePublicKey read at CALL time, and
+  // config.iframeJwtPublicKey is derived from the same source), so the
+  // generated pair needs no new plumbing to reach the signer, the
+  // verifier or the container-env builders.
+  process.env.IFRAME_JWT_PRIVATE_KEY = privateKey;
+  process.env.IFRAME_JWT_PUBLIC_KEY = publicKey;
+  return { generated: true, bits: modulusLength };
+}
+
 // ── Boot validation ───────────────────────────────────────────────────
 //
 // A mismatched RSA pair breaks every app login silently — the platform
@@ -278,4 +344,5 @@ module.exports = {
   verifyEdgeCookie,
   orNull,
   assertIframeKeyPair,
+  generateStagingIframeKeyPair,
 };

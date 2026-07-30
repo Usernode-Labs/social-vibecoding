@@ -855,6 +855,24 @@ convention, gated entirely on `USERNODE_ENV === 'staging'`:
    the ABSENCE of both) and went permanently inert the moment the cutover
    reached `main`. It has since been removed; there is no legacy token
    shape any part of the platform still accepts.
+
+   **How a preview signs at all.** A staging clone is injected no platform
+   keys, but it is also a parent shell — every app view it renders fetches
+   `/api/iframe-token` for the embedded child — so with no private key that
+   endpoint 503s and every framed route logs a console error, failing the
+   console-error baseline check. `config.load()` therefore has a staging
+   clone **generate its own ephemeral RSA pair at boot**
+   (`platformJwt.generateStagingIframeKeyPair()`), and from there it runs the
+   byte-identical sign/verify path production does — same RS256 pin, same
+   issuer, same per-app audience, same `pur`. The pair lives only in the
+   process (a restart re-mints; tokens are 15m–1h and the shell refreshes),
+   is confined to that one clone (production verifies with production's key,
+   so a preview-minted token is refused everywhere else), and never reaches a
+   child container — `appIdentityEnv()` still propagates only the public
+   half. The generator refuses outright unless `USERNODE_ENV === 'staging'`,
+   and it never overwrites a key an operator did inject, so a real deployment
+   missing its key still fails loudly rather than self-signing around the
+   misconfiguration.
 3. On verify it loads the matching `users` row from the local clone
    (the row identity survives Phase 0/2c — only `password` and four
    other columns are scrubbed; `id`, `username`, and `is_admin` are
