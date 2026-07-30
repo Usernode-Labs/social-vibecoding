@@ -383,11 +383,54 @@ test('the shim is inert outside staging, and with no legacy secret', async () =>
 });
 
 // A caller that forgets the gate must not be able to smuggle a legacy
-// token into a container that has real key material.
+// token into a container that has real key material — in EITHER direction.
 test('verifyLegacyBootstrapToken throws when the shim is not active', () => {
   assert.equal(platformJwt.legacyBootstrapActive(), false);
   assert.throws(
     () => platformJwt.verifyLegacyBootstrapToken(legacyToken({ id: 3 }, 'whatever')),
     /legacy bootstrap not active/
   );
+});
+
+test('signLegacyBootstrapToken throws when the shim is not active', () => {
+  assert.equal(platformJwt.legacyBootstrapActive(), false);
+  assert.throws(
+    () => platformJwt.signLegacyBootstrapToken({ user: { id: 3, username: 'x' } }),
+    /legacy bootstrap not active/
+  );
+});
+
+// The mint half exists for the preview acting AS the parent shell: the
+// self-app clone renders app views, each of which fetches
+// /api/iframe-token for the embedded child. A preview has no private key,
+// so without this the endpoint 500s on every app view. Round-trip the
+// token through the verify half to pin that the two agree on the shape.
+test('the shim mints a legacy-shape token a pre-cutover container can verify', async () => {
+  await withPreCutoverEnv(async (secret) => {
+    const token = platformJwt.signLegacyBootstrapToken({
+      user: { id: 3, username: 'usernode-capture-admin', usernode_pubkey: 'ut1abc', locale: 'id' },
+    });
+    const header = JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString());
+    assert.equal(header.alg, 'HS256', 'the retired signer emitted bare HS256');
+
+    const claims = jwt.verify(token, secret, { algorithms: ['HS256'] });
+    assert.equal(claims.id, 3);
+    assert.equal(claims.username, 'usernode-capture-admin');
+    assert.equal(claims.usernode_pubkey, 'ut1abc');
+    assert.equal(claims.locale, 'id');
+    assert.equal(claims.aud, undefined, 'no audience — the legacy shape had none');
+    assert.equal(claims.pur, undefined);
+    assert.ok(claims.exp > claims.iat, 'and it expires');
+
+    // The two halves of the shim are each other's counterpart.
+    assert.deepEqual(platformJwt.verifyLegacyBootstrapToken(token).id, 3);
+  });
+});
+
+test('a legacy-minted token is useless against a post-cutover container', async () => {
+  const token = await withPreCutoverEnv(async () => platformJwt.signLegacyBootstrapToken({
+    user: { id: 3, username: 'usernode-capture-admin' },
+  }));
+  // Back in the default (post-cutover) env: RS256 + audience + purpose.
+  assert.throws(() => platformJwt.verifyAppIdentityToken(token, { appId: SELF_APP_ID }));
 });

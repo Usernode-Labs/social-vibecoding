@@ -253,17 +253,29 @@ test('the legacy bootstrap shim is inert wherever key material exists', () => {
     });
     assert.equal(platformJwt.legacyBootstrapActive(), false,
       'a container built by the post-cutover platform must never take the legacy path');
+    assert.throws(
+      () => platformJwt.signLegacyBootstrapToken({ user: { id: 1, username: 'x' } }),
+      /legacy bootstrap not active/,
+      'nor mint a legacy token there'
+    );
 
     // Production, with every platform key set: unreachable by construction.
     apply({ USERNODE_ENV: 'production', JWT_SECRET: 'some-legacy-value' });
     assert.equal(platformJwt.legacyBootstrapActive(), false,
       'production must never take the legacy path');
 
-    // And the shim never *signs*: it is verify-only, so a container
-    // holding the legacy secret still cannot mint an identity.
+    // Both halves of the shim — verify AND mint — refuse outright rather
+    // than merely going unused. The mint half exists because a preview
+    // acting as the parent shell has to answer /api/iframe-token, but it
+    // must be just as unreachable: a container holding the legacy secret
+    // in ANY post-cutover or production env cannot mint with it.
     assert.equal(typeof platformJwt.verifyLegacyBootstrapToken, 'function');
-    assert.equal(platformJwt.signLegacyBootstrapToken, undefined,
-      'the shim must expose no signing path');
+    assert.equal(typeof platformJwt.signLegacyBootstrapToken, 'function');
+    assert.throws(
+      () => platformJwt.signLegacyBootstrapToken({ user: { id: 1, username: 'x' } }),
+      /legacy bootstrap not active/,
+      'the mint half must throw wherever key material exists'
+    );
   } finally {
     apply(savedEnv);
   }

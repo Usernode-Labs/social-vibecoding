@@ -539,23 +539,52 @@ app.get('/api/iframe-token', async (req, res) => {
     userLocale = rows[0]?.locale || null;
   } catch {}
 
-  let token;
+  const tokenUser = {
+    id: req.user.id,
+    username: req.user.username,
+    usernode_pubkey: usernodePubkey,
+    locale: userLocale,
+  };
+
+  // App-scoped RS256 is the only path whenever key material exists — the
+  // fallback below is gated on the ABSENCE of it, not on this throw.
+  let token = null;
+  let signErr = null;
   try {
-    token = platformJwt.signAppIdentityToken({
-      appId: appRow.id,
-      user: {
-        id: req.user.id,
-        username: req.user.username,
-        usernode_pubkey: usernodePubkey,
-        locale: userLocale,
-      },
-    });
+    token = platformJwt.signAppIdentityToken({ appId: appRow.id, user: tokenUser });
   } catch (err) {
-    // A missing/broken IFRAME_JWT_PRIVATE_KEY is an operator problem, not
-    // a client one. config.load() already refuses to boot production
-    // without it, so this is the self-hosted-staging edge.
-    log.error('iframe-token', 'Signing failed', { slug, err: err.message });
-    return res.status(500).json({ error: 'Token signing unavailable' });
+    signErr = err;
+  }
+
+  // Pre-cutover staging bootstrap ONLY, mint side. A preview container's
+  // env comes from the DEPLOYED platform, so it has no
+  // IFRAME_JWT_PRIVATE_KEY and the sign above always throws — which used
+  // to 500 on every app view in the preview of this very cutover, failing
+  // the console-error baseline check on each one even though the session
+  // itself was fine. platformJwt.legacyBootstrapActive() is unsatisfiable
+  // in production (IFRAME_JWT_PUBLIC_KEY is in REQUIRED_PROD) and goes
+  // false forever once previews are built by post-cutover code. Remove
+  // with the verify-side half.
+  if (!token && platformJwt.legacyBootstrapActive()) {
+    try {
+      token = platformJwt.signLegacyBootstrapToken({ user: tokenUser });
+      log.warn('iframe-token', 'Minted a pre-cutover bootstrap token', { slug });
+    } catch (err) {
+      signErr = err;
+    }
+  }
+
+  if (!token) {
+    // A missing/broken IFRAME_JWT_PRIVATE_KEY with no shim available is an
+    // operator problem, not a client one, and it is not transient within
+    // the life of the process — so say which it is instead of a bare 500.
+    // config.load() refuses to boot production without the key, so this is
+    // the self-hosted / misconfigured-staging edge.
+    log.error('iframe-token', 'Signing failed', { slug, err: signErr && signErr.message });
+    return res.status(503).json({
+      error: 'App identity signing is not configured on this deployment',
+      code: 'signing_unavailable',
+    });
   }
   res.json({ token });
 });

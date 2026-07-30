@@ -30,6 +30,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const jwt = require('jsonwebtoken');
 
 require('./platform-keys').setPlatformKeys();
 const platformJwt = require('../src/services/platform-jwt');
@@ -227,6 +228,127 @@ test('200 for a public app, and the token is scoped to THAT app', async () => {
     /audience/i,
     'a token minted for one app must not verify for another'
   );
+});
+
+// ── The mint path, and the pre-cutover staging fallback ─────────────────
+//
+// A preview container built by the DEPLOYED platform has no
+// IFRAME_JWT_PRIVATE_KEY, so signAppIdentityToken() throws and this
+// endpoint used to answer 500 on every app view — which is a console
+// error on load, so the console-error baseline check failed on every
+// authenticated route even after the verify-side shim let the session
+// through. platform-jwt reads its key material from process.env at CALL
+// time, so these cases just reshape the env around the real handler.
+
+const LEGACY_SECRET = 'legacy-shared-secret-0123456789abcdef';
+const ENV_KEYS = [
+  'USERNODE_ENV', 'IFRAME_JWT_PUBLIC_KEY', 'IFRAME_JWT_PRIVATE_KEY',
+  'USERNODE_APP_ID', 'JWT_SECRET',
+];
+
+// Run `fn` under an env patch, restoring every key afterwards. `undefined`
+// in the patch means "delete", which is the state that matters here.
+async function withEnv(patch, fn) {
+  const saved = {};
+  for (const k of ENV_KEYS) saved[k] = process.env[k];
+  const apply = (o) => {
+    for (const k of ENV_KEYS) {
+      if (o[k] === undefined) delete process.env[k];
+      else process.env[k] = o[k];
+    }
+  };
+  apply({ ...saved, ...patch });
+  try {
+    return await fn();
+  } finally {
+    apply(saved);
+  }
+}
+
+// Exactly a pre-cutover preview: staging, no key material of any kind,
+// only the old shared secret.
+const PRE_CUTOVER = {
+  USERNODE_ENV: 'staging',
+  IFRAME_JWT_PUBLIC_KEY: undefined,
+  IFRAME_JWT_PRIVATE_KEY: undefined,
+  USERNODE_APP_ID: undefined,
+  JWT_SECRET: LEGACY_SECRET,
+};
+
+test('a pre-cutover staging preview mints a legacy-shape token instead of 500ing', async () => {
+  const pool = makePool({
+    apps: [PUBLIC_APP],
+    users: { [VIEWER.id]: { usernode_pubkey: 'ut1abc', locale: 'pt-BR' } },
+  });
+  const { res } = await withEnv(PRE_CUTOVER, () =>
+    call({ user: VIEWER, query: { app: 'public-app' }, pool }));
+
+  assert.equal(res.statusCode, 200, 'the preview must get a usable token, not a 500');
+  assert.ok(res.body.token);
+
+  // The retired signer's exact shape: bare HS256 over the shared secret,
+  // four claims, no iss/aud/pur — so a container running pre-cutover
+  // scaffold code verifies it verbatim.
+  const claims = jwt.verify(res.body.token, LEGACY_SECRET, { algorithms: ['HS256'] });
+  assert.equal(claims.id, VIEWER.id);
+  assert.equal(claims.username, VIEWER.username);
+  assert.equal(claims.usernode_pubkey, 'ut1abc');
+  assert.equal(claims.locale, 'pt-BR');
+  assert.equal(claims.aud, undefined, 'the legacy shape carries no audience');
+  assert.equal(claims.iss, undefined);
+  assert.equal(claims.pur, undefined);
+
+  const header = JSON.parse(Buffer.from(res.body.token.split('.')[0], 'base64url').toString());
+  assert.equal(header.alg, 'HS256');
+});
+
+// The fallback must not become a hole in the gate Change 2 just fixed.
+test('the pre-cutover fallback still refuses a view-private app', async () => {
+  const pool = makePool({ apps: [PRIVATE_APP] });
+  const { res } = await withEnv(PRE_CUTOVER, () =>
+    call({ user: VIEWER, query: { app: 'private-app' }, pool }));
+  assert.equal(res.statusCode, 404);
+  assert.equal(res.body.token, undefined);
+});
+
+test('the fallback is inert in production — a clean 503, never a legacy token', async () => {
+  const pool = makePool({ apps: [PUBLIC_APP] });
+  const { res } = await withEnv(
+    { ...PRE_CUTOVER, USERNODE_ENV: 'production' },
+    () => call({ user: VIEWER, query: { app: 'public-app' }, pool })
+  );
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.code, 'signing_unavailable');
+  assert.equal(res.body.token, undefined,
+    'production must never hand out a shared-secret token');
+});
+
+test('the fallback is inert once IFRAME_JWT_PUBLIC_KEY is set', async () => {
+  const { publicKey } = require('./platform-keys').keyPair();
+  const pool = makePool({ apps: [PUBLIC_APP] });
+  // Public key present, private key gone: the shim's second conjunct is
+  // false, so there is no legacy path — the operator's misconfiguration
+  // must surface as a structured 503, not a silently downgraded token.
+  const { res } = await withEnv(
+    { ...PRE_CUTOVER, IFRAME_JWT_PUBLIC_KEY: publicKey },
+    () => call({ user: VIEWER, query: { app: 'public-app' }, pool })
+  );
+  assert.equal(res.statusCode, 503);
+  assert.equal(res.body.code, 'signing_unavailable');
+  assert.equal(res.body.token, undefined);
+});
+
+test('with key material present the token is RS256, even with JWT_SECRET set', async () => {
+  const pool = makePool({ apps: [PUBLIC_APP] });
+  const { res } = await withEnv({ JWT_SECRET: LEGACY_SECRET }, () =>
+    call({ user: VIEWER, query: { app: 'public-app' }, pool }));
+  assert.equal(res.statusCode, 200);
+
+  const header = JSON.parse(Buffer.from(res.body.token.split('.')[0], 'base64url').toString());
+  assert.equal(header.alg, 'RS256', 'the app-scoped path must stay the only path');
+  assert.throws(() => jwt.verify(res.body.token, LEGACY_SECRET, { algorithms: ['HS256'] }));
+  const claims = platformJwt.verifyAppIdentityToken(res.body.token, { appId: PUBLIC_APP.id });
+  assert.equal(claims.aud, `usernode:app:${PUBLIC_APP.id}`);
 });
 
 // ── The projection itself ───────────────────────────────────────────────

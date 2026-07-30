@@ -842,7 +842,12 @@ convention, gated entirely on `USERNODE_ENV === 'staging'`:
    all; for that one window `platform-jwt.js` carries a staging-only
    legacy bootstrap shim (see `legacyBootstrapActive()`), which is
    structurally unreachable in production because
-   `IFRAME_JWT_PUBLIC_KEY` is in `REQUIRED_PROD`.
+   `IFRAME_JWT_PUBLIC_KEY` is in `REQUIRED_PROD`. The shim has **two**
+   halves, both temporary and both removed together: a verify half here,
+   and a mint half in `/api/iframe-token` — the self-app clone also acts
+   as the parent shell, and a preview has no `IFRAME_JWT_PRIVATE_KEY` to
+   sign with either. The removal checklist is in the block comment above
+   `legacyBootstrapActive()`.
 3. On verify it loads the matching `users` row from the local clone
    (the row identity survives Phase 0/2c — only `password` and four
    other columns are scrubbed; `id`, `username`, and `is_admin` are
