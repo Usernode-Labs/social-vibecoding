@@ -399,7 +399,15 @@ export function DevComposer({
       </AttachmentGroup> : null}
       <Field data-disabled={busy || undefined}>
         <FieldLabel htmlFor="dev-model">Model for this turn</FieldLabel>
-        <Select disabled={busy || models.length === 0} onValueChange={selectModel} value={selectedModel}>
+        <Select
+          disabled={busy || models.length === 0}
+          items={models.map((model) => ({
+            label: `${model.label}${model.changeSize?.short ? ` — ${model.changeSize.short}` : ""}`,
+            value: model.id,
+          }))}
+          onValueChange={selectModel}
+          value={selectedModel}
+        >
           <SelectTrigger id="dev-model" size="default"><SelectValue placeholder={modelError ? "Server default" : "Loading models…"} /></SelectTrigger>
           <SelectContent><SelectGroup>{models.map((model) => <SelectItem key={model.id} value={model.id}>{model.label}{model.changeSize?.short ? ` — ${model.changeSize.short}` : ""}</SelectItem>)}</SelectGroup></SelectContent>
         </Select>
