@@ -1812,6 +1812,10 @@ const App = {
       document.getElementById('import-pr-submit').addEventListener('click', AppView.submitImportPr);
       importPrModal.addEventListener('click', (e) => {
         if (AppView.modalDismissGuarded(importPrModal)) return;
+        // #846: a backdrop tap must not dismiss the dialog while the import
+        // POST is in flight (closeImportPrModal also refuses, this just
+        // avoids the wasted work).
+        if (AppView._importPrBusy) return;
         if (e.target === e.currentTarget || e.target.dataset.modalBackdrop !== undefined) AppView.closeImportPrModal();
       });
     }

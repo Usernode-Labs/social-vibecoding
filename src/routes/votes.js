@@ -1109,41 +1109,12 @@ function voteRoutes(config) {
   // Fire-and-forget: build the imported PR's staging preview pinned to its
   // exact head SHA (Slice 1 clone fix) and run its checks, mirroring the
   // post-promote path so an imported proposal gets a preview + checks verdict
-  // like any native one. Never throws into the request.
+  // like any native one. The implementation lives in services/pr-import-sync
+  // (#846) beside its head-change sibling rerunChecksForNewHead, so it is
+  // unit-testable; it never throws, so nothing can escape into the request.
   const kickImportedChecks = (session, app, headSha) => {
-    (async () => {
-      const visualsService = require('../services/visuals');
-      await visualsService.setChecksPending(pool, session.id, headSha || null)
-        .catch((err) => log.warn('votes', 'import setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-      visualsService.notifyChecksPending(session.id, headSha || null);
-      // #687 Slice 6: in mock-GitHub mode there is no real repo to clone, so
-      // skip the staging build entirely and record a gate-passing 'skipped'
-      // verdict — the imported proposal shows a neutral (mergeable) check so
-      // the whole preview flow (import → vote → merge) is exercisable.
-      if (usesMockGithubForImports()) {
-        await visualsService.storeChecksSkipped(pool, session.id, headSha || null,
-          'mock GitHub preview — automated checks not run')
-          .catch((err) => log.warn('votes', 'import mock storeChecksSkipped failed (non-fatal)', { sessionId: session.id, err: err.message }));
-        return;
-      }
-      let result;
-      try {
-        result = await staging.buildAndDeployStaging(config, session, app, headSha || 'latest');
-      } catch (err) {
-        const stagingRecovery = require('../services/staging-recovery');
-        await stagingRecovery.recordStagingBootFailure({
-          config, pool, session, commitHash: headSha || null, err,
-        }).catch((e) => log.warn('votes', 'import recordStagingBootFailure failed (non-fatal)', { sessionId: session.id, err: e.message }));
-        throw err;
-      }
-      await pool.query(
-        `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
-        [result.containerId, result.stagingUrl, session.id]
-      );
-      await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
-      visualsService.captureForSession(config, session, app, headSha || null, result)
-        .catch((err) => log.warn('votes', 'import visuals capture failed', { sessionId: session.id, err: err.message }));
-    })().catch((err) => log.warn('votes', 'import staging build failed', { sessionId: session.id, err: err.message }));
+    const prImportSync = require('../services/pr-import-sync');
+    prImportSync.kickImportedChecks({ config, pool, session, app, headSha });
   };
 
   // Which of this app's PR numbers are already imported and still live/merged

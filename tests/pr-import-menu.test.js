@@ -40,8 +40,10 @@ function makeEl() {
     scrollTop: 0,
   };
   el.classList = {
-    add: (c) => el._classes.add(c),
-    remove: (c) => el._classes.delete(c),
+    // Varargs like the real DOM API — _setImportPrBusy adds/removes two
+    // classes in one call (#846).
+    add: (...cs) => cs.forEach((c) => el._classes.add(c)),
+    remove: (...cs) => cs.forEach((c) => el._classes.delete(c)),
     contains: (c) => el._classes.has(c),
     toggle: () => false,
   };
@@ -60,13 +62,20 @@ function makeHarness({ fetchImpl } = {}) {
     'import-pr-list': makeEl(),
     'import-pr-error': makeEl(),
     'import-pr-submit': makeEl(),
+    // #846: the in-flight progress row + the now-freezable Cancel button.
+    'import-pr-cancel': makeEl(),
+    'import-pr-progress': makeEl(),
+    'import-pr-progress-text': makeEl(),
+    'import-pr-progress-slow': makeEl(),
   };
+  const toasts = [];
   const sandbox = {
     console: { ...console, warn: () => {}, debug: () => {} },
     Date,
     escapeHtml: (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'),
     escapeAttr: (s) => String(s).replace(/"/g, '&quot;'),
     App: { switchTab: (...a) => { switchCalls.push(a); } },
+    PlatformUI: { toast: (m) => { toasts.push(m); } },
     document: {
       getElementById: (id) => (id in els ? els[id] : null),
       querySelector: () => null,
@@ -86,7 +95,7 @@ function makeHarness({ fetchImpl } = {}) {
   vm.runInContext(VIEW_SRC, sandbox);
   const AppView = sandbox.window.AppView;
   AppView.appData = { slug: 'x', name: 'X' };
-  return { AppView, els, switchCalls };
+  return { AppView, els, switchCalls, toasts };
 }
 
 const CANDIDATES = [
@@ -209,7 +218,9 @@ test('openImportPrModal shows the GitHub-off message on a non-OK (404) response'
 
 // ── submitImportPr ───────────────────────────────────────────────────────
 
-test('submitImportPr POSTs { pr } and navigates to the new proposal', async () => {
+// #846: the destination is the proposal's DISCUSSION page (subTab 'topic'),
+// never the dev-chat session view — an imported PR has no dev session.
+test('submitImportPr POSTs { pr } and navigates to the new proposal\'s discussion page', async () => {
   const posted = {};
   const { AppView, els, switchCalls } = makeHarness({
     fetchImpl: async (url, opts) => {
@@ -223,12 +234,68 @@ test('submitImportPr POSTs { pr } and navigates to the new proposal', async () =
   assert.equal(posted.opts.method, 'POST');
   assert.deepEqual(JSON.parse(posted.opts.body), { pr: 9401 });
   assert.ok(els['import-pr-modal']._classes.has('hidden'), 'modal closed on success');
-  assert.deepEqual(switchCalls[0], ['dev', 555, 'sessions'], 'navigated to the new proposal');
+  assert.equal(switchCalls.length, 1, 'navigated exactly once');
+  // Field-wise, not deepEqual: the ref object is built inside the vm context,
+  // so its prototype differs from this realm's and deepStrictEqual rejects it.
+  const [tab, ref, subTab] = switchCalls[0];
+  assert.equal(tab, 'dev');
+  assert.equal(subTab, 'topic', 'proposal topic view, not the dev chat');
+  assert.equal(ref.kind, 'proposal');
+  assert.equal(ref.id, 555);
+  assert.ok(els['import-pr-progress']._classes.has('hidden'), 'progress row cleared');
+});
+
+// #846: the dialog stays put while the POST is in flight, with progress.
+test('submitImportPr freezes the dialog and shows progress while importing', async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const { AppView, els, switchCalls } = makeHarness({
+    fetchImpl: async () => {
+      await gate;
+      return { ok: true, json: async () => ({ ok: true, sessionId: 777, prNumber: 9402 }) };
+    },
+  });
+  els['import-pr-modal'].classList.remove('hidden');
+  AppView._importPrSelected = 9402;
+  const pending = AppView.submitImportPr();
+
+  assert.equal(AppView._importPrBusy, true, 'busy flag set while in flight');
+  assert.ok(!els['import-pr-progress']._classes.has('hidden'), 'progress row shown');
+  assert.match(els['import-pr-progress-text'].textContent, /Importing PR #9402/);
+  assert.equal(els['import-pr-submit'].disabled, true, 'submit disabled');
+  assert.equal(els['import-pr-cancel'].disabled, true, 'cancel disabled');
+  assert.ok(els['import-pr-list']._classes.has('pointer-events-none'), 'list inert');
+  assert.ok(els['import-pr-list']._classes.has('opacity-50'), 'list dimmed');
+  assert.ok(!els['import-pr-modal']._classes.has('hidden'), 'modal still open mid-import');
+  assert.equal(switchCalls.length, 0, 'no navigation before the server confirms');
+
+  // A dismiss attempt mid-flight must not close it.
+  AppView.closeImportPrModal();
+  assert.ok(!els['import-pr-modal']._classes.has('hidden'), 'close refused while busy');
+
+  // A second submit mid-flight must not fire a second POST.
+  await AppView.submitImportPr();
+  assert.equal(switchCalls.length, 0, 'double submit ignored');
+
+  release();
+  await pending;
+  assert.equal(AppView._importPrBusy, false, 'busy flag cleared');
+  assert.ok(els['import-pr-modal']._classes.has('hidden'), 'modal closed after navigation');
+  assert.equal(switchCalls.length, 1, 'navigated exactly once');
+  assert.ok(!els['import-pr-list']._classes.has('pointer-events-none'), 'list interactive again');
+  assert.equal(els['import-pr-cancel'].disabled, false, 'cancel re-enabled');
 });
 
 test('submitImportPr shows the inline error and keeps the list open on 409', async () => {
+  const calls = [];
   const { AppView, els, switchCalls } = makeHarness({
-    fetchImpl: async () => ({ ok: false, status: 409, json: async () => ({ error: 'PR #9401 has already been imported.' }) }),
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url.includes('/pr-import/candidates')) {
+        return { ok: true, json: async () => ({ candidates: [CANDIDATES[1]] }) };
+      }
+      return { ok: false, status: 409, json: async () => ({ error: 'PR #9401 has already been imported.' }) };
+    },
   });
   els['import-pr-modal'].classList.remove('hidden'); // modal is open before submit
   AppView._importPrSelected = 9401;
@@ -238,7 +305,67 @@ test('submitImportPr shows the inline error and keeps the list open on 409', asy
   assert.ok(!err._classes.has('hidden'), 'error region shown');
   assert.ok(!els['import-pr-modal']._classes.has('hidden'), 'modal stays open');
   assert.equal(switchCalls.length, 0, 'no navigation on failure');
-  assert.equal(els['import-pr-submit'].disabled, false, 'submit re-enabled in finally');
+  assert.equal(AppView._importPrBusy, false, 'dialog unfrozen');
+  assert.ok(!els['import-pr-list']._classes.has('opacity-50'), 'list interactive again');
+  assert.ok(els['import-pr-progress']._classes.has('hidden'), 'progress row hidden');
+  // #846: an already-imported 409 means the list is stale — it reloads so the
+  // row the user just tried disappears.
+  assert.ok(calls.some((u) => u.includes('/pr-import/candidates')),
+    'candidates reloaded after an already-imported 409');
+  assert.ok(els['import-pr-list'].innerHTML.includes('#9402'), 'refreshed list rendered');
+});
+
+// #846: each failure names its own cause instead of "Import failed (HTTP N)".
+test('submitImportPr maps failure statuses to specific copy', async () => {
+  const cases = [
+    { status: 404, body: { error: 'PR #9401 not found on GitHub' }, expect: /not found on GitHub/i },
+    { status: 404, body: {}, expect: /wasn.t found on GitHub/i },
+    { status: 409, body: { error: 'PR #9401 is not open.' }, expect: /is not open/i },
+    { status: 409, body: { error: 'GitHub is not configured for this app' }, expect: /GitHub is not configured/i },
+    { status: 503, body: {}, expect: /platform is restarting/i },
+    { status: 500, body: {}, expect: /Something went wrong importing this PR/i },
+  ];
+  for (const c of cases) {
+    const { AppView, els, switchCalls } = makeHarness({
+      fetchImpl: async () => ({ ok: false, status: c.status, json: async () => c.body }),
+    });
+    els['import-pr-modal'].classList.remove('hidden');
+    AppView._importPrSelected = 9401;
+    await AppView.submitImportPr();
+    assert.match(els['import-pr-error'].textContent, c.expect,
+      `status ${c.status} (${JSON.stringify(c.body)}) copy`);
+    assert.ok(!els['import-pr-modal']._classes.has('hidden'), `status ${c.status} keeps modal open`);
+    assert.equal(switchCalls.length, 0, `status ${c.status} does not navigate`);
+    assert.equal(els['import-pr-cancel'].disabled, false, `status ${c.status} re-enables cancel`);
+  }
+});
+
+test('submitImportPr surfaces a network error without navigating', async () => {
+  const { AppView, els, switchCalls } = makeHarness({
+    fetchImpl: async () => { throw new Error('offline'); },
+  });
+  els['import-pr-modal'].classList.remove('hidden');
+  AppView._importPrSelected = 9401;
+  await AppView.submitImportPr();
+  assert.match(els['import-pr-error'].textContent, /Network error/i);
+  assert.ok(!els['import-pr-modal']._classes.has('hidden'), 'modal stays open');
+  assert.equal(switchCalls.length, 0, 'no navigation');
+  assert.equal(AppView._importPrBusy, false, 'dialog unfrozen');
+});
+
+// The import succeeded server-side even if the navigation blew up, so the
+// user is told where to find it rather than left staring at a frozen dialog.
+test('submitImportPr closes the dialog and toasts when navigation throws', async () => {
+  const { AppView, els, toasts } = makeHarness({
+    fetchImpl: async () => ({ ok: true, json: async () => ({ ok: true, sessionId: 42, prNumber: 9401 }) }),
+  });
+  els['import-pr-modal'].classList.remove('hidden');
+  AppView._importPrSelected = 9401;
+  AppView.openTopic = () => { throw new Error('app data gone'); };
+  await AppView.submitImportPr();
+  assert.ok(els['import-pr-modal']._classes.has('hidden'), 'modal closed anyway');
+  assert.equal(toasts.length, 1, 'told the user the import landed');
+  assert.match(toasts[0], /PR #9401 was imported/);
 });
 
 test('submitImportPr no-ops with no selection', async () => {

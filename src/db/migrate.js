@@ -6359,8 +6359,78 @@ async function seedStagingImportedPrProposal(pool, config) {
     }
   }
 
+  // Fixture 3 (#846): the state a user lands on the instant an import
+  // completes — checks pending against the head, no staging preview yet, no
+  // votes. In mock-GitHub mode a real staging import records a 'skipped'
+  // verdict immediately, so this is the only way to review the
+  // "Checks are starting…" / no-Preview-pill arrival page in a preview. It
+  // also gives the dev-chat redirect guard something to redirect FROM: it's
+  // owned by the seed importer, so opening
+  // #app/<slug>/dev/sessions/<this id> must bounce to the proposal page.
+  const headSha3 = 'c4d3b2a1908f7e6d5c4b3a29180f7e6d5c4b3a29';
+  const branch3 = 'staging-fixture/imported-pr-fresh';
+  let id3;
+  {
+    const { rows: have } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, branch3]
+    );
+    id3 = have[0]?.id;
+    if (!id3) {
+      const { rows } = await pool.query(
+        `INSERT INTO chat_sessions
+           (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
+            status, source, imported_pr_head_sha, imported_pr_author,
+            check_state, checks_commit_sha, checks_checked_at,
+            votes_required, promoted_at, created_at)
+         VALUES
+           ($1, $2, $3, 9312, 'https://github.com/example/example/pull/9312',
+            '[staging fixture] Imported PR — just imported, preview still building',
+            'In plain terms: this pull request was just imported from GitHub, so its preview is still being built and the automated checks haven''t finished yet.',
+            'promoted', 'imported', $4, 'octo-contributor',
+            'pending', $4, NOW(),
+            $5, NOW(), NOW())
+         RETURNING id`,
+        [appId, importer.id, branch3, headSha3, votesRequired]
+      );
+      id3 = rows[0].id;
+    } else {
+      // Re-stamp on every boot so the row keeps reading as "just imported"
+      // (a fresh checks_checked_at is what keeps the pending block on the
+      // plain spinner instead of the stale "re-run checks" affordance), and
+      // clear any preview a sweep may have attached to it.
+      await pool.query(
+        `UPDATE chat_sessions
+            SET source = 'imported', imported_pr_head_sha = $2,
+                imported_pr_author = 'octo-contributor', check_state = 'pending',
+                checks_commit_sha = $2, checks_checked_at = NOW(),
+                staging_url = NULL, staging_container_id = NULL,
+                promoted_at = NOW()
+          WHERE id = $1`,
+        [id3, headSha3]
+      );
+    }
+    // The import announcement the real route posts, so the arrival page has
+    // a thread rather than an empty one. Idempotent, like fixture 2's note.
+    const { rows: msgHave3 } = await pool.query(
+      `SELECT 1 FROM chat_messages
+        WHERE app_id = $1 AND thread_type = 'session' AND thread_ref = $2
+        LIMIT 1`,
+      [appId, id3]
+    );
+    if (!msgHave3.length) {
+      await pool.query(
+        `INSERT INTO chat_messages
+           (app_id, user_id, content, msg_type, thread_type, thread_ref, created_at)
+         VALUES ($1, NULL, $3, 'vote', 'session', $2, NOW())`,
+        [appId, id3,
+         `[Mock] ${importer.username} imported PR #9312 — [staging fixture] Imported PR — just imported, preview still building for voting`]
+      );
+    }
+  }
+
   log.info('db', 'Staging imported-PR fixtures seeded', {
-    appId, healthy: id1, headChanged: id2,
+    appId, healthy: id1, headChanged: id2, justImported: id3,
   });
 }
 
