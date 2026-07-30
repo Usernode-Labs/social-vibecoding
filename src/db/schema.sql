@@ -556,6 +556,12 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS source               TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_head_sha VARCHAR(40);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_author   VARCHAR(255);
+-- source = 'maintenance' marks proposals opened by a fleet maintenance
+-- campaign (services/fleet-maintenance.js): platform-authored PRs fanned
+-- out to child apps after a maintenance_campaign governance vote passes.
+-- Same column as the 'imported' discriminator above; NULL stays native.
+-- The campaign tables themselves live below the issues table (they FK
+-- to it).
 
 -- Restart-proof turns + resumable headless runs.
 --   active_turn   = durable record of an in-flight detached CC turn:
@@ -850,6 +856,53 @@ CREATE TABLE IF NOT EXISTS issue_votes (
 );
 -- User-first scan for the "My history" view (GET /api/me/history).
 CREATE INDEX IF NOT EXISTS idx_issue_votes_user ON issue_votes (user_id, created_at DESC);
+
+-- Fleet maintenance campaigns (#853's generalization): a platform-level
+-- governance proposal (issues.kind='maintenance_campaign' on the
+-- self-hosted app) that, once its vote passes, runs a sequential AI loop
+-- over every child app repo, opening one maintenance PR per app
+-- (chat_sessions.source='maintenance'). The campaign row is created by
+-- the apply path (issues.maybeApplyMaintenanceCampaignProposal); per-app
+-- execution state lives in maintenance_campaign_apps so a platform
+-- restart resumes from the first pending row instead of losing track
+-- (fleet-maintenance.resumeRunningCampaigns).
+--   status: 'running'   = fan-out in progress (the boot resume picks
+--                         these up);
+--           'done'      = every target reached a terminal engine state
+--                         (pr_open / skipped / failed) — merging is
+--                         tracked per-app, not here;
+--           'cancelled' = an admin stopped it.
+CREATE TABLE IF NOT EXISTS maintenance_campaigns (
+  id            SERIAL PRIMARY KEY,
+  issue_id      INTEGER REFERENCES issues(id) ON DELETE SET NULL,
+  title         VARCHAR(300) NOT NULL,
+  instructions  TEXT NOT NULL,
+  target_filter JSONB,
+  status        VARCHAR(32) NOT NULL DEFAULT 'running',
+  created_by    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ DEFAULT NOW(),
+  completed_at  TIMESTAMPTZ
+);
+
+-- One row per (campaign, target app). State machine, engine-owned:
+--   pending -> running -> pr_open | skipped | failed
+--   pr_open -> merged   (written by the merge-green drain; the status
+--                        endpoint also derives live merge state from the
+--                        joined session so a normal community-vote merge
+--                        shows correctly without this write)
+-- 'skipped' = the AI concluded the app doesn't need the change;
+-- 'failed'  = LLM/GitHub error, `error` carries the reason; the dashboard
+--             retry route resets the row to 'pending' and re-runs it.
+CREATE TABLE IF NOT EXISTS maintenance_campaign_apps (
+  id          SERIAL PRIMARY KEY,
+  campaign_id INTEGER NOT NULL REFERENCES maintenance_campaigns(id) ON DELETE CASCADE,
+  app_id      INTEGER NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+  session_id  INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
+  state       VARCHAR(32) NOT NULL DEFAULT 'pending',
+  error       TEXT,
+  updated_at  TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(campaign_id, app_id)
+);
 
 -- PR votes
 CREATE TABLE IF NOT EXISTS pr_votes (

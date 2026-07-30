@@ -2303,7 +2303,8 @@ const AppView = {
 
       AppView._proposals = promoted;
       AppView._govProposals = (issuesData.issues || [])
-        .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue');
+        .filter((i) => i.kind === 'secret_change' || i.kind === 'rename' || i.kind === 'close_issue'
+          || i.kind === 'maintenance_campaign');
       AppView._proposalsCtx = {
         majority,
         activeUsers,
@@ -4632,6 +4633,13 @@ const AppView = {
     const importedBadge = (pr.source === 'imported')
       ? `<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 shrink-0" title="${pr.imported_pr_author ? ('Imported from GitHub — authored by ' + escapeHtml(pr.imported_pr_author)) : 'Imported from an external GitHub pull request'}">Imported PR</span>`
       : '';
+    // Fleet maintenance provenance badge (source='maintenance'): this PR
+    // was authored by the platform under an approved maintenance campaign.
+    // Same informational amber family as Imported; votes/checks/merge work
+    // like any proposal.
+    const maintenanceBadge = (pr.source === 'maintenance')
+      ? '<span class="inline-flex items-center gap-1 text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 shrink-0" title="Opened automatically by an approved platform maintenance campaign. Review and vote like any proposal — or a platform admin can merge it once checks pass.">Platform maintenance</span>'
+      : '';
     // #405: the merge-state slot is now driven by the shared MergeStatus
     // lifecycle helper so labels/colours match the home strip and the dev
     // session header exactly. It renders the merge-pipeline / conflict /
@@ -4704,6 +4712,7 @@ const AppView = {
             </div>
             ${fallbackChip}
             ${importedBadge}
+            ${maintenanceBadge}
             ${unvotedBadge}
             ${AppView.voteCountPill(pr, majority)}
             ${stateBadge}
@@ -5437,8 +5446,16 @@ const AppView = {
     const downT = AppView._voteBtnTally(issue.qualified_no_count, downCount, issue.approval_policy, 'No');
     const yesBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-yes${myVote === 'up' ? ' gc-vote-active' : ''}"${upT.title} onclick="AppView.castIssueVote(${issue.id}, 'up')">Yes (${upT.label})</button>`;
     const noBtn = ro ? '' : `<button class="gc-vote-btn gc-vote-btn-no${myVote === 'down' ? ' gc-vote-active' : ''}"${downT.title} onclick="AppView.castIssueVote(${issue.id}, 'down')">No (${downT.label})</button>`;
-    const adminBtn = (!ro && (issue.kind === 'secret_change' || isCloseIssue) && App.user?.canAdminWrite)
+    const isCampaign = issue.kind === 'maintenance_campaign';
+    const adminBtn = (!ro && (issue.kind === 'secret_change' || isCloseIssue || isCampaign) && App.user?.canAdminWrite)
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="Admin: apply this change right now, bypassing the vote majority" onclick="AppView.castIssueAdminApply(${issue.id})">Admin merge</button>`
+      : '';
+    // An applied campaign proposal links to its live dashboard (fan-out
+    // progress, per-app PRs, retry, merge-all-green) on /admin. Admin-only
+    // affordance — /admin is admin-gated; everyone else follows the
+    // per-app PRs from each app's own proposals tab.
+    const campaignBtn = (isCampaign && issue.payload && issue.payload.campaignId && App.user?.canAdminWrite)
+      ? `<button class="gc-vote-btn" title="Open this campaign's per-app progress" onclick="event.stopPropagation(); window.open('/admin#campaign-${issue.payload.campaignId}', '_blank')">View campaign</button>`
       : '';
     // mine: the viewer created this governance proposal, so they may
     // withdraw it (creator-scoped POST /api/issues/:id/close).
@@ -5464,7 +5481,7 @@ const AppView = {
             ${tallyPill}
             ${AppView._devChatBadge(govChatN)}
           </div>
-          ${AppView._cardActionsHtml([yesBtn, noBtn, adminBtn, withdrawBtn])}
+          ${AppView._cardActionsHtml([yesBtn, noBtn, adminBtn, campaignBtn, withdrawBtn])}
         </div>
         ${noNav ? '' : AppView.DEV_CARD_CHEVRON}
       </div>`;
@@ -6375,20 +6392,25 @@ const AppView = {
     if (!App.user?.isAdmin) return;
     const key = `issue-admin-apply:${issueId}`;
     if (AppView._voteInFlight.has(key)) return;
-    // Kind-aware confirm copy: the same route force-applies both env-var
-    // (secret_change) and close-issue proposals.
+    // Kind-aware confirm copy: the same route force-applies env-var
+    // (secret_change), close-issue, and maintenance-campaign proposals.
     const gov = (AppView._govProposals || []).find((g) => g.id === issueId);
     const isCloseIssue = gov?.kind === 'close_issue';
+    const isCampaign = gov?.kind === 'maintenance_campaign';
     const targetN = gov?.payload?.issueNumber;
     const ok = await ConfirmModal.show({
       title: isCloseIssue
         ? `Close issue ${targetN ? `#${targetN} ` : ''}now?`
-        : 'Apply this env-var change now?',
+        : isCampaign
+          ? 'Start this maintenance campaign now?'
+          : 'Apply this env-var change now?',
       message: (isCloseIssue
         ? 'This bypasses the active-user vote majority and closes the issue right now, here and on GitHub.\n\n'
-        : 'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n')
+        : isCampaign
+          ? 'This bypasses the platform vote and starts the campaign right now: an AI will open one maintenance PR per app across the fleet.\n\n'
+          : 'This bypasses the active-user vote majority and applies the proposed secret change right now (the app redeploys with the new value).\n\n')
         + 'Use only when you\'re confident the change should ship — the override is announced in group chat with your username.',
-      confirmLabel: isCloseIssue ? 'Close now' : 'Apply now',
+      confirmLabel: isCloseIssue ? 'Close now' : isCampaign ? 'Start now' : 'Apply now',
       cancelLabel: 'Cancel',
       danger: true,
     });
