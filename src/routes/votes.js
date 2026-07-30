@@ -2594,9 +2594,22 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
       } catch {}
     }
 
-    // Teardown staging
-    await staging.teardownStaging(session, app);
-    dstep({ phase: 'staging_teardown', message: 'Staging container torn down.' });
+    // Teardown staging. #851: this is the path that produced the ten known
+    // orphans — a swallowed removal failure while the session row was nulled
+    // anyway. teardownStaging now reports a leak instead of hiding it, and the
+    // trace says so rather than claiming a teardown that didn't happen. The
+    // merge itself must not fail over a container that won't die: the row keeps
+    // pointing at it and the stale-preview sweeper retries.
+    const stagingTeardown = await staging.teardownStaging(session, app)
+      .catch((err) => ({ removed: false, leaked: true, error: err.message }));
+    if (stagingTeardown && stagingTeardown.leaked) {
+      dstep({
+        phase: 'staging_teardown',
+        message: 'Staging container could not be removed — left for the stale-preview sweeper.',
+      });
+    } else {
+      dstep({ phase: 'staging_teardown', message: 'Staging container torn down.' });
+    }
 
     // #58: snapshot the vote threshold + active-user count in effect at
     // this merge, so the merged-PR pill shows the historical "yes / N"

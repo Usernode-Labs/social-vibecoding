@@ -170,11 +170,23 @@ async function teardownStagingForSession({ pool, sessionId, reason = 'idle' }) {
   const session = rows[0];
   if (!session || !session.staging_container_id) return { torn: false };
 
-  await staging.teardownStaging(session, { slug: session.app_slug }).catch(() => {});
-  await pool.query(
-    `UPDATE chat_sessions SET staging_container_id = NULL, staging_url = NULL WHERE id = $1`,
-    [sessionId]
-  );
+  // #851: teardownStaging owns the nulling and now reports whether the
+  // container actually went away. On a leak the row deliberately still names
+  // the survivor so the stale-preview sweeper can retry through the same
+  // chokepoint — so this must NOT null the columns behind its back (which is
+  // exactly how ten production previews became untracked orphans) and must
+  // not announce a teardown that didn't happen.
+  const result = await staging.teardownStaging(session, { slug: session.app_slug })
+    .catch((err) => {
+      log.warn('session-lifecycle', 'Staging teardown threw', { sessionId, err: err.message });
+      return { removed: false, leaked: true };
+    });
+  if (result && result.leaked) {
+    log.warn('session-lifecycle', 'Staging GC left a container behind — link kept for retry', {
+      sessionId, reason,
+    });
+    return { torn: false, leaked: true };
+  }
 
   const { pushSessionUpdate } = require('./ws');
   pushSessionUpdate({ action: 'staging_torn_down', sessionId, appSlug: session.app_slug });
@@ -228,11 +240,20 @@ async function archiveSession({ pool, sessionId, userId = null, reason = 'manual
   const appSlug = session?.app_slug;
 
   if (session?.staging_container_id) {
-    await staging.teardownStaging(session, { slug: appSlug }).catch(() => {});
-    await pool.query(
-      `UPDATE chat_sessions SET staging_container_id = NULL, staging_url = NULL WHERE id = $1`,
-      [sessionId]
-    );
+    // Same contract as teardownStagingForSession above (#851): the chokepoint
+    // nulls the columns itself once removal is CONFIRMED, and a leak keeps
+    // them so the sweeper can retry. The archive itself proceeds regardless —
+    // closing the PR and changing status must not hinge on docker.
+    const result = await staging.teardownStaging(session, { slug: appSlug })
+      .catch((err) => {
+        log.warn('session-lifecycle', 'Staging teardown threw on archive', { sessionId, err: err.message });
+        return { removed: false, leaked: true };
+      });
+    if (result && result.leaked) {
+      log.warn('session-lifecycle', 'Archive left a staging container behind — link kept for retry', {
+        sessionId, reason,
+      });
+    }
   }
 
   if (session?.pr_number) {

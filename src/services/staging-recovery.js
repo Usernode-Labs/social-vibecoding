@@ -14,7 +14,7 @@ const log = require('./logger');
 
 // Does a session need its staging preview (re)built?
 //
-// Two failure shapes leave a card without a working preview:
+// THREE failure shapes leave a card without a working preview:
 //   1. staging_url IS NULL — GC reclaimed it (or it was GC'd before
 //      promotion). The Preview button is hidden (gated on staging_url).
 //   2. staging_url is set but the staging container is gone — the
@@ -23,15 +23,47 @@ const log = require('./logger');
 //      surfaced as "secure connection failed" when the per-host route
 //      was dropped; routing is now container-name based so the only
 //      remaining cause is a missing/stopped container.)
-// Both are healable by a rebuild. We deliberately do NOT rebuild on a
+//   3. #851: the container is running, but its ENVIRONMENT is out of date —
+//      it was assembled by an older platform build. This shape is invisible
+//      to a liveness check and is why #850 needed a manual sweep at all: a
+//      pre-#848 preview boots fine and then cannot recognise the signed-in
+//      user, so the on-demand route answered {status:'ready'} and opened the
+//      app's login screen. Detected by comparing the `usernode.env.fp` label
+//      stamped at build time (services/staging-env.js) against the digest the
+//      platform would produce today.
+// All three are healable by a rebuild. We deliberately do NOT rebuild on a
 // merely-unhealthy-but-running container (that's a 502, an app bug, not
 // a missing preview) to avoid churn.
-async function stagingNeedsRebuild(session) {
+//
+// `config` is optional. Without it the staleness comparison is skipped and
+// the verdict is liveness-only — the pre-#851 behaviour. Every real caller
+// passes one; the fallback keeps the function usable from a context that has
+// no config and makes the added parameter non-breaking.
+async function stagingNeedsRebuild(session, { config = null } = {}) {
   if (!session.staging_url) return true;
   if (!session.staging_container_id) return true;
   const docker = require('./docker');
-  const status = await docker.getContainerStatus(session.staging_container_id);
-  return status !== 'running';
+  const state = await docker.inspectContainer(session.staging_container_id);
+  // The inspect could not be PERFORMED (unreachable daemon). Distinct from
+  // 'not_found', which means the container is genuinely gone and is handled
+  // below by the status check. Leave the preview strictly alone here: a docker
+  // hiccup must never be read as evidence that a preview is broken or stale,
+  // because the heal sweep and the reap pass both act on this verdict.
+  if (!state) return false;
+  // Covers 'not_found' (shape 2 — the container is gone) as well as
+  // exited/dead/created.
+  if (state.status !== 'running') return true;
+  if (!config) return false;
+
+  const stagingEnv = require('./staging-env');
+  const expected = stagingEnv.expectedStagingFingerprint(config);
+  const actual = state.labels[stagingEnv.LABEL_ENV_FP] || null;
+  if (actual === expected) return false;
+
+  log.info('staging-recovery', 'Preview env is stale — rebuild needed', {
+    sessionId: session.id, expected, actual,
+  });
+  return true;
 }
 
 // Rebuild the staging preview for a single session that has a branch +
@@ -344,7 +376,7 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
       }));
     visuals.notifyChecksPending(session.id, session.checks_commit_sha || null);
   }
-  if (await stagingNeedsRebuild(session)) {
+  if (await stagingNeedsRebuild(session, { config })) {
     // rebuildSessionStaging owns the capture (see above) and the no-op
     // short-circuits (missing owner/repo or bot token → 'skipped').
     return rebuildSessionStaging({ config, pool, session, reason });

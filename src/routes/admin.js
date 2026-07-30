@@ -11,6 +11,7 @@ const dbExport = require('../services/db-export');
 const events = require('../services/events');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
+const stagingEnv = require('../services/staging-env');
 
 // Fixed app-wide key for pg_advisory_xact_lock, dedicated to admin-status
 // mutations (revoke-admin and delete-user). Any code path that could drop
@@ -141,11 +142,16 @@ function adminRoutes(config) {
   // The preview half of the rollover above. A preview's env is assembled by
   // the platform build that was deployed when it was BUILT, and previews
   // live for weeks — so a platform env change leaves them running happily
-  // with stale env, which the existing staging-heal sweep cannot see (it
-  // only rebuilds previews whose container has STOPPED). This tears them
-  // down; the next Preview click rebuilds any that someone actually wants,
-  // with current env, through the existing ensure-staging path. See
-  // services/staging-reap.js for the full rationale.
+  // with stale env. This tears them down; the next Preview click rebuilds any
+  // that someone actually wants, with current env, through the existing
+  // ensure-staging path. See services/staging-reap.js for the full rationale.
+  //
+  // #851: staleness is now detected automatically (an env-fingerprint label,
+  // services/staging-env.js) and swept on a background pass, so this button
+  // is no longer the only remedy — it is the BIGGER HAMMER: it tears down
+  // every preview it can enumerate, stale or not, without waiting out the
+  // pass's interval. The GET reports the automatic pass's last run so an
+  // admin can tell whether pressing it is even necessary.
 
   router.post('/api/admin/staging-reap', requireAdminWrite, drainGuard, async (req, res) => {
     try {
@@ -188,12 +194,25 @@ function adminRoutes(config) {
       // button must be able to say so either way.
       const staging = stagingReap.isStagingEnv();
       if (staging && req.query.demo === '1') {
-        return res.json({ job: stagingReap.demoJob(), stale: 6, demo: true, staging });
+        return res.json({
+          job: stagingReap.demoJob(),
+          ...stagingReap.demoCounts(),
+          demo: true,
+          staging,
+          concurrency: stagingReap.concurrency(),
+        });
       }
-      const stale = await stagingReap.staleCount().catch(() => null);
+      // `open` is every preview the manual button would shut down; `stale` is
+      // the subset the automatic pass (#851) considers out of date. Both come
+      // from one docker call. `stale` is kept as the legacy field name the
+      // console's confirm dialog already reads — see the note below.
+      const counts = await stagingReap.previewCounts(config).catch(() => ({ open: null, stale: null }));
       res.json({
         job: stagingReap.read(),
-        stale,
+        open: counts.open,
+        stale: counts.stale,
+        expectedFingerprint: stagingEnv.expectedStagingFingerprint(config),
+        automatic: stagingReap.readAutomatic(),
         staging,
         concurrency: stagingReap.concurrency(),
       });

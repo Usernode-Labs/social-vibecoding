@@ -555,7 +555,9 @@ const AdminConsole = {
           settings are fixed when it is built, so after a platform change to
           what gets injected into containers, old previews keep running with
           the old settings — typically showing a login screen instead of the
-          app.
+          app. Out-of-date previews are now found and cleaned up
+          automatically in the background; this button is the immediate
+          version, and takes every preview rather than only the stale ones.
         </p>
         <p class="text-xs text-zinc-500 mb-4">
           Nothing is lost that matters: clicking Preview on a proposal rebuilds
@@ -563,10 +565,14 @@ const AdminConsole = {
           went to sleep does. A preview's throwaway test data is discarded, and
           rebuilding re-runs that proposal's automated checks.
         </p>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
           <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
             <div class="text-xs uppercase tracking-wide text-zinc-500">Open previews</div>
             <div id="admin-reap-stale" class="text-2xl font-bold mt-1">—</div>
+          </div>
+          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">Out of date</div>
+            <div id="admin-reap-outdated" class="text-2xl font-bold mt-1">—</div>
           </div>
           <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
             <div class="text-xs uppercase tracking-wide text-zinc-500">At a time</div>
@@ -577,6 +583,7 @@ const AdminConsole = {
             <div id="admin-reap-failed" class="text-2xl font-bold mt-1">—</div>
           </div>
         </div>
+        <p id="admin-reap-automatic" class="text-xs text-zinc-500 mb-4"></p>
         ${canWrite ? `
         <button id="admin-reap-btn"
           class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:hover:bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors">
@@ -605,7 +612,13 @@ const AdminConsole = {
     const { data } = await AdminConsole.fetchJson(`/api/admin/staging-reap${demoQS}`);
     if (!data || typeof data !== 'object') return;
     if (AdminConsole._section !== 'staging-reap') return; // navigated away mid-fetch
-    AdminConsole._reapStale = typeof data.stale === 'number' ? data.stale : null;
+    // `open` is every preview (what the button shuts down); `stale` is the
+    // out-of-date subset the automatic pass acts on. Older payloads carried
+    // only `stale` meaning "all previews", so fall back to it for `open`.
+    AdminConsole._reapOpen = typeof data.open === 'number' ? data.open
+      : (typeof data.stale === 'number' ? data.stale : null);
+    AdminConsole._reapOutdated = typeof data.stale === 'number' ? data.stale : null;
+    AdminConsole._reapAutomatic = data.automatic || null;
     AdminConsole._reapConcurrency = data.concurrency || null;
     AdminConsole._reapDemo = !!data.demo;
     // Tracked separately from _reapDemo: the POST is refused in a preview
@@ -627,7 +640,10 @@ const AdminConsole = {
 
   async _startStagingReap() {
     const btn = document.getElementById('admin-reap-btn');
-    const count = AdminConsole._reapStale;
+    // The button takes EVERY open preview, not just the out-of-date ones, so
+    // the confirmation counts `open` — saying "4 previews" when it will shut
+    // down 6 would be a lie about a fleet-wide action.
+    const count = AdminConsole._reapOpen;
     const many = typeof count === 'number'
       ? `${count} preview${count === 1 ? '' : 's'}`
       : 'every open preview';
@@ -663,9 +679,25 @@ const AdminConsole = {
     }
   },
 
+  // "3 minutes ago" for the automatic pass's last run. Kept local and tiny:
+  // the only consumer is the one line below.
+  _reapAgo(iso) {
+    const then = Date.parse(iso);
+    if (!Number.isFinite(then)) return null;
+    const mins = Math.max(0, Math.round((Date.now() - then) / 60000));
+    if (mins < 1) return 'just now';
+    if (mins < 60) return `${mins} minute${mins === 1 ? '' : 's'} ago`;
+    const hours = Math.round(mins / 60);
+    if (hours < 24) return `${hours} hour${hours === 1 ? '' : 's'} ago`;
+    const days = Math.round(hours / 24);
+    return `${days} day${days === 1 ? '' : 's'} ago`;
+  },
+
   _paintStagingReap(job) {
     const esc = AdminConsole.esc;
     const staleEl = document.getElementById('admin-reap-stale');
+    const outdatedEl = document.getElementById('admin-reap-outdated');
+    const autoEl = document.getElementById('admin-reap-automatic');
     const concEl = document.getElementById('admin-reap-concurrency');
     const failedEl = document.getElementById('admin-reap-failed');
     const summary = document.getElementById('admin-reap-summary');
@@ -675,8 +707,27 @@ const AdminConsole = {
     const running = !!(job && !job.finishedAt && !job.stale);
 
     if (staleEl) {
-      staleEl.textContent = AdminConsole._reapStale == null
-        ? '—' : String(AdminConsole._reapStale);
+      staleEl.textContent = AdminConsole._reapOpen == null
+        ? '—' : String(AdminConsole._reapOpen);
+    }
+    if (outdatedEl) {
+      outdatedEl.textContent = AdminConsole._reapOutdated == null
+        ? '—' : String(AdminConsole._reapOutdated);
+    }
+    if (autoEl) {
+      const auto = AdminConsole._reapAutomatic;
+      if (!auto || !auto.intervalMs) {
+        autoEl.textContent = 'The automatic background sweep is switched off.';
+      } else if (!auto.lastRunAt) {
+        const every = Math.round(auto.intervalMs / 60000);
+        autoEl.textContent = `Automatic sweep runs every ${every} minutes — it hasn't run yet since this platform process started.`;
+      } else {
+        const ago = AdminConsole._reapAgo(auto.lastRunAt) || 'recently';
+        const bits = [`Automatic sweep last ran ${ago}`];
+        bits.push(`${auto.tornDown || 0} shut down`);
+        if (auto.failed) bits.push(`${auto.failed} failed`);
+        autoEl.textContent = `${bits.join(' · ')}.`;
+      }
     }
     if (concEl) {
       concEl.textContent = job ? String(job.concurrency)
