@@ -478,6 +478,9 @@ function stripComments(src) {
 // that legitimately reads a platform key name for this purpose.
 const BUILDERS = [
   'src/services/app-identity-env.js',
+  // #851: the platform-owned half of the staging container env moved here,
+  // so it is a container-env builder and gets the same scrutiny.
+  'src/services/staging-env.js',
   'src/services/app-creator.js',
   'src/services/staging.js',
   'src/services/app-respawn.js',
@@ -502,9 +505,16 @@ test('all five app-container env builders go through the shared helper', () => {
   // Drift between the five builders is the historical failure mode this
   // helper exists to prevent; if one stops using it, the leak checks
   // above stop covering that builder's identity env.
+  //
+  // #851 moved ONE of the six spreads behind a second helper: staging.js's
+  // preview path now spreads staging-env.platformStagingEnv, which spreads
+  // appIdentityEnv itself (so the same env can be fingerprinted into a
+  // container label). staging.js therefore has one direct spread left — the
+  // production rebuild — and the preview half is covered via staging-env.js.
   const expected = {
     'src/services/app-creator.js': 1,
-    'src/services/staging.js': 2,
+    'src/services/staging.js': 1,
+    'src/services/staging-env.js': 1,
     'src/services/app-respawn.js': 1,
     'src/routes/sessions.js': 1,
   };
@@ -514,5 +524,55 @@ test('all five app-container env builders go through the shared helper', () => {
     assert.equal(uses, count, `${rel} must spread appIdentityEnv ${count}×`);
     assert.match(code, /require\((?:'|")[^'"]*app-identity-env(?:'|")\)/,
       `${rel} must require the shared helper`);
+  }
+
+  // The indirection must actually BE the staging path — if staging.js stopped
+  // calling platformStagingEnv, its preview containers would silently lose
+  // both the identity trio and the fingerprint label.
+  const stagingCode = stripComments(read('src/services/staging.js'));
+  assert.match(stagingCode, /platformStagingEnv\(/,
+    'staging.js must build its preview env through staging-env.platformStagingEnv');
+});
+
+// ── 5. Container LABELS are as constrained as container env ─────────────
+//
+// #851 gave runContainer a `labels` option. Labels are readable by anything
+// that can run `docker inspect`, so they are exactly as exposed as env — more
+// so, since they survive on a stopped container. The fingerprint label is a
+// one-way digest by construction; this pins that it stays one.
+
+test('the staging container label carries a digest, never a platform value', () => {
+  const stagingEnv = require('../src/services/staging-env');
+  const config = poisonedConfig();
+  const env = stagingEnv.platformStagingEnv({ id: 7 }, config);
+  const label = stagingEnv.envFingerprint(env);
+
+  assert.match(label, /^[0-9a-f]{16}$/, 'the label value is a truncated hex digest');
+  // Nothing forbidden is even in the input...
+  assertNoLeak('platformStagingEnv', env);
+  // ...and no input value (forbidden or not) survives into the label.
+  for (const value of Object.values(env)) {
+    if (!value || String(value).length < 8) continue;
+    const v = String(value);
+    for (let i = 0; i + 8 <= v.length; i++) {
+      assert.ok(!label.includes(v.slice(i, i + 8)),
+        'a container label must not contain any fragment of an injected value');
+    }
+  }
+  for (const k of FORBIDDEN) {
+    assert.ok(!label.includes(SENTINELS[k]), `the label leaks ${k}`);
+  }
+});
+
+test('staging.js labels its preview containers with the fingerprint only', () => {
+  const code = stripComments(read('src/services/staging.js'));
+  // The `labels:` object handed to runContainer must reference the digest
+  // helper, not interpolate env values.
+  const labelBlock = code.match(/labels:\s*\{[^}]*\}/);
+  assert.ok(labelBlock, 'staging.js must pass a labels object to runContainer');
+  assert.match(labelBlock[0], /envFingerprint\(/,
+    'the label value must be the digest, not a raw value');
+  for (const k of FORBIDDEN) {
+    assert.ok(!labelBlock[0].includes(k), `the label block references ${k}`);
   }
 });

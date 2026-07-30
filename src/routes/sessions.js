@@ -4074,8 +4074,10 @@ function sessionRoutes(config) {
         return res.json({ status: 'unavailable', reason: 'demo' });
       }
 
-      // Already live (container running, URL set)? Open it as-is.
-      if (!(await stagingRecovery.stagingNeedsRebuild(session))) {
+      // Already live (container running, URL set) AND built with current
+      // platform env? Open it as-is. A stale-env preview (#851) falls through
+      // to the rebuild below instead of opening the app's login screen.
+      if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) {
         return res.json({ status: 'ready', url: session.staging_url });
       }
 

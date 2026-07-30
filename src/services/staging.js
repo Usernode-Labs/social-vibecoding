@@ -8,6 +8,8 @@ const appSecrets = require('./app-secrets');
 const appLlmEnv = require('./app-llm-env');
 const appStorageEnv = require('./app-storage-env');
 const { appIdentityEnv } = require('./app-identity-env');
+const stagingEnv = require('./staging-env');
+const events = require('./events');
 const { getPool } = require('../db/pool');
 
 // Custom error thrown by both staging + prod build paths when the cloned
@@ -241,10 +243,24 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
 
     // 4. Stop existing staging container if any. Short grace: a preview
     // being replaced has nothing worth draining (#767).
+    //
+    // Best-effort by design, unlike teardownStaging: this container's name is
+    // deterministic and runContainer below force-removes a surviving
+    // name-collision and retries (docker.js), so a failure here self-heals.
+    // But it is no longer SILENT (#851) — a container that resists removal
+    // here is the same condition that leaked ten production previews, and
+    // finding it in the logs is how you notice a host with a stuck overlay.
     if (session.staging_container_id) {
-      await docker.stopAndRemove(session.staging_container_id, {
+      const stopped = await docker.stopAndRemove(session.staging_container_id, {
         stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
-      }).catch(() => {});
+      }).catch((err) => ({ removed: false, error: err.message })) || {};
+      // Only an EXPLICIT false is a failure — see teardownStaging below for
+      // why the absence of the flag is not treated as one.
+      if (stopped.removed === false) {
+        log.warn('staging', 'Previous preview container did not remove; relying on run-time name reclaim', {
+          sessionId: session.id, containerId: session.staging_container_id, err: stopped.error || null,
+        });
+      }
     }
 
     // 5. Run staging container
@@ -269,22 +285,27 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     //     password trapped inside DATABASE_URL. Costs nothing to keep
     //     since no legitimate consumer in staging needs the real value.
     //     See SELF-HOSTING.md Phase 5 risks.
-    const inheritedEnv = {};
-    for (const key of ['USERNODE_DOMAIN', 'USERNODE_PLATFORM_REPO']) {
-      if (process.env[key]) inheritedEnv[key] = process.env[key];
-    }
+    //
+    // The platform-owned half of the env (identity trio, PORT, USERNODE_ENV,
+    // the inherited locators) now comes from services/staging-env.js, which
+    // ALSO fingerprints it into the `usernode.env.fp` label below. Assembling
+    // it there rather than inline is what guarantees the label describes the
+    // env that was actually injected: a future var added to platformStagingEnv
+    // moves the fingerprint automatically, so previews built before it are
+    // detected as stale with no change to the sweeper (#851).
+    const platformEnv = stagingEnv.platformStagingEnv(app, config);
 
     const containerId = await docker.runContainer(containerName, {
       image: imageName,
       env: {
         DATABASE_URL: stagingDbUrl,
-        ...appIdentityEnv(app, config),
-        PORT: '3000',
-        USERNODE_ENV: 'staging',
-        ...inheritedEnv,
+        ...platformEnv,
         ...stagingMerge.env,
       },
       port: 3000,
+      labels: {
+        [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
+      },
     });
 
     // 6. Wait for health
@@ -319,9 +340,17 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
   } catch (err) {
     log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
     // Cleanup on failure — short grace, this container is being discarded.
-    await docker.stopAndRemove(containerName, {
+    // Best-effort (the build already failed; nothing downstream forgets this
+    // container, and the by-name sweeper is the backstop) but logged rather
+    // than swallowed, same reasoning as step 4 above (#851).
+    const cleaned = await docker.stopAndRemove(containerName, {
       stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
-    }).catch(() => {});
+    }).catch((e) => ({ removed: false, error: e.message })) || {};
+    if (cleaned.removed === false) {
+      log.warn('staging', 'Failed-build cleanup left a container behind', {
+        sessionId: session.id, containerName, err: cleaned.error || null,
+      });
+    }
     throw err;
   }
 }
@@ -351,6 +380,31 @@ async function warmStagingCert(session, hostname, stagingUrl) {
   }
 }
 
+// Tear down a session's staging preview: stop+remove the container, drop the
+// cloned staging database, and stop vouching for the hostname. The single
+// chokepoint every teardown caller (merge, archive, idle-reclaim, the
+// stale-preview sweeper) funnels through.
+//
+// Returns { removed, leaked }. `leaked: true` means the container is STILL
+// RUNNING and this session's row deliberately still names it.
+//
+// #851 — WHY THE ORDER AND THE RETURN VALUE MATTER. This function used to
+// swallow the stopAndRemove result and null the staging_* columns
+// unconditionally. When a removal failed (and stopAndRemove could not even
+// report that it had), the container kept running while the only record
+// pointing at it was erased: ten merged sessions in production ended up that
+// way, discoverable only by enumerating docker and joining back to the DB.
+//
+// So nothing is forgotten before removal is CONFIRMED:
+//   - the DB drop is skipped on a leak — dropDatabase's
+//     pg_terminate_backend would kill the live container's connections and
+//     leave it running against a dropped database, which is strictly worse
+//     than a preview that still works;
+//   - both columns are kept on a leak, so the row stays a truthful pointer.
+//     staging-reap's `linked` branch re-enters this same function on the next
+//     automatic pass and finishes the job; keeping staging_url populated for
+//     that window is correct precisely because the container IS still
+//     serving that hostname.
 async function teardownStaging(session, app) {
   log.info('staging', 'Tearing down staging', { sessionId: session.id });
 
@@ -358,13 +412,40 @@ async function teardownStaging(session, app) {
   // to drain. Before #767 this step alone cost a flat ~10.9s on every
   // merge, purely waiting out a SIGTERM the container never received.
   if (session.staging_container_id) {
-    await docker.stopAndRemove(session.staging_container_id, {
+    const result = await docker.stopAndRemove(session.staging_container_id, {
       stopTimeoutSec: docker.STAGING_STOP_GRACE_SEC,
-    }).catch(() => {});
+    }).catch((err) => ({ removed: false, error: err.message })) || {};
+
+    // An EXPLICIT `removed: false` is the leak. A result with no flag at all
+    // means the removal reported nothing either way, and the pre-#851
+    // behaviour (proceed) is the right answer there: refusing to null on
+    // "unknown" would strand every row behind any caller or wrapper that
+    // doesn't carry the flag. docker.stopAndRemove always sets it.
+    if (result.removed === false) {
+      log.error('staging', 'Staging teardown LEAKED a container — keeping the DB link so it can be retried', {
+        sessionId: session.id,
+        containerId: session.staging_container_id,
+        err: result.error || null,
+      });
+      // The only durable trace: the job that noticed is in-memory, and the
+      // session row looks untouched by design. Best-effort like every
+      // events.record.
+      events.record(getPool(), {
+        type: events.EVENT_TYPES.STAGING_TEARDOWN_LEAKED,
+        metadata: {
+          sessionId: session.id,
+          containerId: session.staging_container_id,
+          appSlug: app ? app.slug : null,
+          error: result.error || null,
+        },
+      });
+      return { removed: false, leaked: true };
+    }
   }
 
   // Drop staging database. Derive the name from the still-in-memory
-  // staging_url *before* we null the column below.
+  // staging_url *before* we null the column below. Only reached once the
+  // container is confirmed gone, so there is nothing left connected to it.
   if (app) {
     const commitHash = session.staging_url?.match(/--(\w{6})\./)?.[1] || '000000';
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
@@ -388,6 +469,7 @@ async function teardownStaging(session, app) {
   ).catch((err) => log.warn('staging', 'Failed to clear staging_url on teardown', { sessionId: session.id, err: err.message }));
 
   log.info('staging', 'Staging torn down', { sessionId: session.id });
+  return { removed: true, leaked: false };
 }
 
 // Per-app rebuild serialization. Every prod-rebuild caller (dev-chat

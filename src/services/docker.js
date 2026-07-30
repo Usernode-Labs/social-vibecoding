@@ -88,8 +88,19 @@ async function buildImage(contextPath, tag, buildArgs = {}) {
   return { durationMs };
 }
 
-async function runContainer(name, { image, env = {}, port, memory = APP_MEMORY, cpus = APP_CPUS }) {
+async function runContainer(name, {
+  image, env = {}, port, memory = APP_MEMORY, cpus = APP_CPUS, labels = {},
+}) {
   const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+  // Labels are metadata the platform can read back off a LIVE container
+  // without knowing anything about how it was built — the one channel that
+  // survives `docker restart` and a host reboot. Two consumers today: the
+  // warm-worker migration marker (services/worker.js `usernode.proxy`) and
+  // the staging env fingerprint (services/staging-env.js `usernode.env.fp`),
+  // which is how a preview running stale env becomes detectable at all.
+  // Values must never carry secret material — a label is readable by
+  // anything that can run `docker inspect`.
+  const labelArgs = Object.entries(labels).flatMap(([k, v]) => ['--label', `${k}=${v}`]);
 
   const args = [
     'run', '-d',
@@ -117,6 +128,7 @@ async function runContainer(name, { image, env = {}, port, memory = APP_MEMORY, 
     '--security-opt', 'no-new-privileges:true',
     '--restart', 'unless-stopped',
     '-p', `${port}`,
+    ...labelArgs,
     ...envArgs,
     image,
   ];
@@ -274,21 +286,68 @@ async function restartContainer(nameOrId) {
 // grace expired and Docker had to SIGKILL, i.e. that container's process
 // never handled SIGTERM. It's how you find apps still lacking the
 // graceful-shutdown handler without inspecting their repos.
+//
+// #851: `removed` is the OTHER thing callers need, and until this change it
+// was unknowable. Both inner calls swallowed their own failure and the outer
+// catch returned timings, so this function could not report "the container is
+// still there" — and staging.teardownStaging went on to null
+// chat_sessions.staging_container_id anyway, orphaning ten production
+// containers whose stopAndRemove had quietly failed. The contract is
+// deliberately still NON-THROWING (a dozen best-effort callers rely on that);
+// what changes is that the result now tells the truth:
+//
+//   removed: true   the container is gone — verified, not assumed. Also true
+//                   when it was already gone before we started.
+//   removed: false  it is STILL THERE after a stop, an rm -f, a short wait
+//                   and a second rm -f. `error` carries why. A caller that
+//                   is about to forget this container must not.
 async function stopAndRemove(nameOrId, { stopTimeoutSec = STOP_GRACE_SEC } = {}) {
+  let lastError = null;
+  const note = (err) => {
+    const msg = String((err && (err.stderr || err.message)) || '').trim();
+    // "No such container" is success, not failure: the goal is absence.
+    if (msg && !/no such (container|object)/i.test(msg)) lastError = msg.slice(0, 300);
+  };
+
   try {
     const stopStartedAt = Date.now();
     await execFileAsync('docker', ['stop', '-t', String(stopTimeoutSec), nameOrId], { timeout: 30000 })
-      .catch(() => {});
+      .catch(note);
     const stopMs = Date.now() - stopStartedAt;
     const rmStartedAt = Date.now();
-    await execFileAsync('docker', ['rm', '-f', nameOrId], { timeout: 10000 }).catch(() => {});
-    const rmMs = Date.now() - rmStartedAt;
+    await execFileAsync('docker', ['rm', '-f', nameOrId], { timeout: 10000 }).catch(note);
+    let rmMs = Date.now() - rmStartedAt;
+
+    // Verify. `docker rm -f` can fail for reasons that are transient (a
+    // device-busy unmount, a daemon mid-restart) and reasons that are not.
+    // One retry after a short pause heals the transient shape cheaply;
+    // anything surviving that is a genuine leak the caller has to know about.
+    let removed = (await getContainerStatus(nameOrId)) === 'not_found';
+    if (!removed) {
+      await sleep(1000);
+      await execFileAsync('docker', ['rm', '-f', nameOrId], { timeout: 10000 }).catch(note);
+      rmMs = Date.now() - rmStartedAt;
+      removed = (await getContainerStatus(nameOrId)) === 'not_found';
+    }
+
     const forceKilled = stopMs >= (stopTimeoutSec * 1000) - FORCE_KILL_SLACK_MS;
-    log.info('docker', 'Container removed', { nameOrId, stopMs, rmMs, stopTimeoutSec, forceKilled });
-    return { stopMs, rmMs, forceKilled };
+    if (removed) {
+      log.info('docker', 'Container removed', { nameOrId, stopMs, rmMs, stopTimeoutSec, forceKilled });
+      return { removed: true, stopMs, rmMs, forceKilled, error: null };
+    }
+    log.warn('docker', 'Container SURVIVED stop+rm — still present after retry', {
+      nameOrId, stopMs, rmMs, err: lastError,
+    });
+    return {
+      removed: false, stopMs, rmMs, forceKilled,
+      error: lastError || 'container still present after stop + rm -f',
+    };
   } catch (err) {
     log.warn('docker', 'Failed to remove container', { nameOrId, err: err.message });
-    return { stopMs: null, rmMs: null, forceKilled: null };
+    return {
+      removed: false, stopMs: null, rmMs: null, forceKilled: null,
+      error: lastError || err.message,
+    };
   }
 }
 
@@ -319,6 +378,49 @@ async function getContainerLabels(nameOrId) {
     return parsed && typeof parsed === 'object' ? parsed : {};
   } catch {
     return {};
+  }
+}
+
+// Status + labels in ONE `docker inspect` (#851). The staleness check in
+// staging-recovery.stagingNeedsRebuild needs both on a hot path (every
+// Preview click, every heal sweep over up to 50 sessions), and doing it as
+// getContainerStatus + getContainerLabels would pay two inspects.
+//
+// Crucially this makes THREE outcomes distinguishable, where the existing
+// helpers only manage two:
+//
+//   { status, labels }              the container is there; labels may be {}
+//   { status: 'not_found', ... }    docker says no such container — it is GONE
+//   null                            the inspect could not be performed at all
+//
+// getContainerLabels returns {} for both "no labels" and "could not look", and
+// getContainerStatus returns 'not_found' for both "gone" and "daemon
+// unreachable". Neither conflation is survivable here: the staleness check acts
+// on this verdict by rebuilding or tearing containers down, so "gone" must mean
+// rebuild while "cannot see" must mean LEAVE IT ALONE. Collapsing them would
+// either strand dead previews or sweep a healthy fleet on a docker hiccup.
+async function inspectContainer(nameOrId) {
+  try {
+    const { stdout } = await execFileAsync('docker', [
+      'inspect', '--format', '{{.State.Status}}\t{{json .Config.Labels}}', nameOrId,
+    ], { timeout: 5000 });
+    const [status, labelsJson] = String(stdout).trim().split('\t');
+    let labels = {};
+    if (labelsJson && labelsJson !== 'null') {
+      try {
+        const parsed = JSON.parse(labelsJson);
+        if (parsed && typeof parsed === 'object') labels = parsed;
+      } catch { /* malformed label blob — treat as unlabelled, status is still good */ }
+    }
+    return { status: status || 'unknown', labels };
+  } catch (err) {
+    const msg = String((err && (err.stderr || err.message)) || '');
+    // Docker's own "it isn't here" wording. Same phrase getContainerStatus
+    // turns into 'not_found', kept in sync deliberately.
+    if (/no such (container|object)/i.test(msg)) {
+      return { status: 'not_found', labels: {} };
+    }
+    return null;
   }
 }
 
@@ -461,6 +563,7 @@ module.exports = {
   stopAndRemove,
   getContainerStatus,
   getContainerLabels,
+  inspectContainer,
   containerExists,
   imageExists,
   waitForHealthy,

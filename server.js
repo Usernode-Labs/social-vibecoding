@@ -55,6 +55,7 @@ const turnWatchdog = require('./src/services/turn-watchdog');
 const recoveryPills = require('./src/services/recovery-pills');
 const sessionLifecycle = require('./src/services/session-lifecycle');
 const stagingRecovery = require('./src/services/staging-recovery');
+const stagingReap = require('./src/services/staging-reap');
 const limits = require('./src/services/limits');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
@@ -858,6 +859,23 @@ async function start() {
     log.warn('server', 'Session recovery failed', { err: err.message });
   });
 
+  // #851: one stale-env preview pass at boot, then on the sweeper's long
+  // interval (Pass 7). A restart is exactly when a platform env change has
+  // just landed, which is when the fleet is most likely to be holding stale
+  // env — the same "a restart is when to look" reasoning the quick-reply
+  // backfill documents. This also means the pass still happens at least once
+  // per deploy on a host that has the session sweeper disabled
+  // (SESSION_AUTOPAUSE_IDLE_MS=0), where Pass 7 never ticks.
+  //
+  // Ordered after recoverSessions so the vote-backed previews it REBUILDS are
+  // already current by the time this looks for ones to tear down. Detached
+  // and self-swallowing: sweepStale never throws, and boot must not wait on
+  // docker.
+  if (stagingReap.staleSweepDue()) {
+    stagingReap.sweepStale(config, { isInFlight: (id) => worker.isInFlight(id) })
+      .catch((err) => log.warn('server', 'Boot stale-preview sweep failed', { err: err.message }));
+  }
+
   // Merge-debug retention: prune /debug runs (and their cascaded steps)
   // older than the window once at boot and then on a slow timer, so the
   // staging:private merge_debug_* tables can't grow without bound. Off the
@@ -1458,7 +1476,7 @@ async function recoverSessions(config) {
 
   for (const session of rows) {
     try {
-      if (!(await stagingRecovery.stagingNeedsRebuild(session))) continue;
+      if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
       await stagingRecovery.rebuildSessionStaging({ config, pool, session, reason: 'startup' });
     } catch (err) {
       log.warn('server', 'Failed to recover session', { sessionId: session.id, err: err.message });
@@ -2358,6 +2376,11 @@ const checkRecheckAttempts = new Map();
 // per cooldown (one GitHub getPR per open imported proposal per interval),
 // not on every 60s tick — bounding the API cost the spec calls out. Entries
 // are naturally evicted when the proposal leaves the open set.
+// #851: the stale-env preview pass (Pass 7) needs no throttle map here — it is
+// fleet-wide rather than per-session, and its cadence lives in
+// services/staging-reap.js (staleSweepDue / STAGING_STALE_SWEEP_INTERVAL_MS) so
+// the boot run and this sweeper's tick cannot disagree about when it is due.
+
 const importedHeadSyncAttempts = new Map();
 const IMPORTED_HEAD_SYNC_COOLDOWN_MS = Math.max(
   parseInt(process.env.IMPORTED_HEAD_SYNC_COOLDOWN_MS || String(3 * 60 * 1000), 10) || (3 * 60 * 1000),
@@ -2545,7 +2568,7 @@ function startSessionAutoPauseSweeper(config) {
       for (const session of rows) {
         if (healed >= MAX_HEALS_PER_SWEEP) break;
         if (worker.isInFlight(session.id)) continue;
-        if (!(await stagingRecovery.stagingNeedsRebuild(session))) continue;
+        if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
         const last = stagingHealAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
         // Stamp the attempt BEFORE the (minutes-long) build so a later
@@ -2707,6 +2730,27 @@ function startSessionAutoPauseSweeper(config) {
       }
     } catch (err) {
       log.warn('server', 'Imported-PR head-sync sweep failed', { err: err.message });
+    }
+
+    // Pass 7: stale-env preview teardown (#851). The counterpart to Pass 3:
+    // Pass 3 REBUILDS a stale preview that backs a live vote, this tears down
+    // the stale rest (merged / abandoned / paused / session-gone), so the next
+    // Preview click rebuilds with current env behind the existing loader.
+    // Together they replace #850's one-off admin sweep.
+    //
+    // Throttled to its own long interval rather than given a timer of its
+    // own — this sweeper already ticks, and a `docker ps` + teardown of a few
+    // containers every 15 minutes has no business running every 60 seconds.
+    // STAGING_STALE_SWEEP_INTERVAL_MS=0 disables it (the admin sweep stays).
+    try {
+      // The interval + "is it due" bookkeeping lives in the service, so this
+      // tick and the boot run share one throttle. sweepStale never throws and
+      // bounds its own work per pass.
+      if (stagingReap.staleSweepDue()) {
+        await stagingReap.sweepStale(config, { isInFlight: (id) => worker.isInFlight(id) });
+      }
+    } catch (err) {
+      log.warn('server', 'Stale-preview sweep failed', { err: err.message });
     }
   }, config.sessionSweepIntervalMs).unref();
 }

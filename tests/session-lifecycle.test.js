@@ -135,8 +135,13 @@ test('archiveSession: keeps CC volume by default (reversible), closes PR, tears 
     // ...but the CC volume is PRESERVED (the whole point of reversible archive).
     assert.deepEqual(spies.destroyCcVolume, []);
     assert.equal(pool.issued(/SET cc_purged = TRUE/), false);
-    // Staging columns nulled, WS notified.
-    assert.equal(pool.issued(/staging_container_id = NULL/), true);
+    // #851: the staging columns are nulled by teardownStaging, which is the
+    // ONLY place that knows whether the container actually went away. This
+    // caller used to run its own nulling UPDATE on top; that is exactly how a
+    // failed removal ended up with a live container and a nulled row, so the
+    // duplicate is gone and the chokepoint above owns it.
+    assert.equal(pool.issued(/staging_container_id = NULL/), false,
+      'the caller must not null behind the chokepoint (see tests/staging-teardown-leak.test.js)');
     assert.equal(spies.pushSessionUpdate[0].action, 'archived');
   } finally {
     restore();

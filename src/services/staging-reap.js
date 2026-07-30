@@ -60,18 +60,31 @@
  *   - Progress rides one aggregate `admin_staging_reap_status` broadcast to
  *     admin sockets only.
  *
- * FOLLOW-UP (deliberately not solved here): nothing detects env staleness
- * automatically. The durable fix is to stamp the platform build SHA (or an
- * env fingerprint) into a container label at build time and have
- * stagingNeedsRebuild() treat a mismatch as needing a rebuild — turning this
- * one-off sweep into a sweeper pass. Until then this is an admin-triggered
- * tool, run after a platform env change.
+ * AUTOMATIC PASS (#851, the follow-up this header used to defer). Previews are
+ * now stamped at build time with a digest of the platform-owned env
+ * (services/staging-env.js, label `usernode.env.fp`), so staleness IS
+ * detectable: a label that does not match today's digest means an older
+ * platform built that container. Two halves consume that:
+ *
+ *   - stagingRecovery.stagingNeedsRebuild() treats a mismatch as needing a
+ *     rebuild, so the heal sweep (server.js Pass 3) REBUILDS the previews
+ *     that back live votes.
+ *   - sweepStale() below TEARS DOWN the stale rest on a long interval, which
+ *     is the automatic version of the admin sweep. Same reap unit, same
+ *     failure isolation; it just selects by fingerprint instead of taking
+ *     everything, and it never touches a promoted/merging preview (that is
+ *     Pass 3's job — see selectStale).
+ *
+ * The admin-triggered sweep stays as the bigger hammer: it tears down every
+ * preview it can enumerate, stale or not, which is what you want immediately
+ * after a platform env change rather than waiting out the interval.
  */
 
 const log = require('./logger');
 const docker = require('./docker');
 const dbManager = require('./db-manager');
 const events = require('./events');
+const stagingEnv = require('./staging-env');
 const { getPool } = require('../db/pool');
 
 // Preview teardown is cheaper and less disruptive than a production
@@ -83,6 +96,19 @@ const MAX_CONCURRENCY = 10;
 // Same TTL as app-rollover / app-deploy-status: anything claiming to be in
 // flight for >30min is an orphaned record, not a genuinely slow sweep.
 const JOB_STALE_AFTER_MS = 30 * 60 * 1000;
+
+// How often the AUTOMATIC stale pass may run, and how many previews it may
+// tear down per pass. Long interval + small cap on purpose: a stale preview
+// is a nuisance, not an outage, so the pass should be invisible in host load.
+// 0 disables it entirely (the admin sweep still works).
+const DEFAULT_STALE_SWEEP_INTERVAL_MS = 15 * 60 * 1000;
+const DEFAULT_STALE_SWEEP_LIMIT = 10;
+
+// Statuses whose preview backs a live merge vote. The automatic pass must NOT
+// tear these down: stagingNeedsRebuild() now sees their staleness too, so
+// server.js Pass 3 REBUILDS them (bounded to 5 per tick with a per-session
+// cooldown) and a reviewer finds a working preview instead of a dead link.
+const VOTE_BACKED_STATUSES = new Set(['promoted', 'merging']);
 
 // `usernode-staging-<slug>--<sessionId>`, built by staging.js
 // buildAndDeployStagingInner. The slug itself contains hyphens (and for the
@@ -181,7 +207,10 @@ async function listStagingContainers() {
     ({ stdout } = await docker.execFileAsync('docker', [
       'ps', '-a',
       '--filter', 'name=^/usernode-staging-',
-      '--format', '{{.Names}}\t{{.State}}\t{{.Image}}',
+      // The env-fingerprint label comes back as a fourth column so the
+      // automatic pass can classify the whole fleet from ONE docker call
+      // instead of an inspect per preview (#851).
+      '--format', `{{.Names}}\t{{.State}}\t{{.Image}}\t{{.Label "${stagingEnv.LABEL_ENV_FP}"}}`,
     ], { timeout: 10000 }));
   } catch (err) {
     log.warn('staging-reap', 'docker ps failed', { err: err.message });
@@ -189,7 +218,7 @@ async function listStagingContainers() {
   }
   const out = [];
   for (const line of String(stdout || '').trim().split('\n').filter(Boolean)) {
-    const [name, state, image] = line.split('\t');
+    const [name, state, image, fingerprint] = line.split('\t');
     const m = name && name.match(CONTAINER_NAME_RE);
     // A name the pattern does not recognise is left strictly alone. Better
     // to under-reap than to stop something we cannot identify.
@@ -203,9 +232,40 @@ async function listStagingContainers() {
       sessionId: parseInt(m[2], 10),
       state: state || null,
       image: image || null,
+      // null means "no label" OR "this docker does not support the .Label
+      // format verb". Both read as stale, which is safe for a pre-#851
+      // container (it genuinely is) but would sweep the fleet on a docker
+      // too old to answer — hence the verify step in sweepStale below.
+      fingerprint: fingerprint || null,
     });
   }
   return out;
+}
+
+/**
+ * Which of these previews were built by an OLDER platform than the one
+ * running now? Pure and synchronous so it can be unit-tested without docker.
+ *
+ * Selection = fingerprint mismatch, minus two exclusions:
+ *   - vote-backed previews (promoted/merging) — Pass 3 rebuilds those, and
+ *     tearing down a preview a group is actively voting on is the wrong move
+ *     even when its env is stale;
+ *   - sessions with a coding turn in flight — a rebuild/push is about to
+ *     replace the preview anyway, and pulling the container out from under a
+ *     live turn invites exactly the interleaving staging.js serialises against.
+ *
+ * `isInFlight` is injected rather than required at module scope to keep the
+ * module graph acyclic (worker.js reaches into staging paths) and the
+ * function trivially testable.
+ */
+function selectStale(items, expectedFp, { isInFlight = null } = {}) {
+  return (items || []).filter((item) => {
+    if (item.fingerprint === expectedFp) return false;
+    const status = item.session ? item.session.status : null;
+    if (status && VOTE_BACKED_STATUSES.has(status)) return false;
+    if (isInFlight && isInFlight(item.sessionId)) return false;
+    return true;
+  });
 }
 
 /**
@@ -239,11 +299,184 @@ async function classify(pool, containers) {
   });
 }
 
-// How many previews the sweep would act on right now. Docker is the whole
-// inventory (see the header), so this is just the parsed container count.
+// How many previews the ADMIN sweep would act on right now — it takes
+// everything it can enumerate, so this is just the parsed container count.
+// Docker is the whole inventory (see the header).
 async function staleCount() {
   const containers = await listStagingContainers();
   return containers.length;
+}
+
+/**
+ * Counts for the admin console: how many previews exist, and how many of
+ * those the AUTOMATIC pass considers out of date. Both from one docker call
+ * plus one DB round-trip. Never throws; returns nulls when docker is
+ * unreadable so the console renders "—" rather than a bogus zero.
+ */
+async function previewCounts(config) {
+  try {
+    const containers = await listStagingContainers();
+    if (!containers.length) return { open: 0, stale: 0 };
+    const items = await classify(getPool(config), containers);
+    return {
+      open: items.length,
+      stale: selectStale(items, stagingEnv.expectedStagingFingerprint(config)).length,
+    };
+  } catch (err) {
+    log.warn('staging-reap', 'previewCounts failed', { err: err.message });
+    return { open: null, stale: null };
+  }
+}
+
+function staleSweepIntervalMs() {
+  const raw = parseInt(process.env.STAGING_STALE_SWEEP_INTERVAL_MS || '', 10);
+  if (!Number.isFinite(raw) || raw < 0) return DEFAULT_STALE_SWEEP_INTERVAL_MS;
+  return raw;   // 0 disables
+}
+
+function staleSweepLimit() {
+  const raw = parseInt(process.env.STAGING_STALE_SWEEP_LIMIT || '', 10);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_STALE_SWEEP_LIMIT;
+  return raw;
+}
+
+// Last automatic pass, for the admin console's "when did this last run" line.
+// In-memory for the same reason the job record is (see the header): a fresh
+// process showing no history is exactly right.
+let _lastAutomatic = null;
+
+// When the last automatic pass STARTED. Separate from _lastAutomatic (which
+// records the outcome) because the throttle has to be armed before the work
+// begins, or a slow pass invites a second one on the next tick.
+//
+// The throttle lives here rather than in server.js so the two callers — the
+// boot run and the sweeper tick — cannot disagree about whether a pass is due,
+// and so the service owns its own cadence.
+let _lastStaleSweepStartedAt = 0;
+
+// Is an automatic pass due? False when the pass is disabled outright.
+function staleSweepDue(nowMs = Date.now()) {
+  const interval = staleSweepIntervalMs();
+  if (interval <= 0) return false;
+  return nowMs - _lastStaleSweepStartedAt >= interval;
+}
+
+function readAutomatic() {
+  return _lastAutomatic
+    ? { ..._lastAutomatic, intervalMs: staleSweepIntervalMs(), limit: staleSweepLimit() }
+    : { lastRunAt: null, examined: null, stale: null, tornDown: null, failed: null,
+        intervalMs: staleSweepIntervalMs(), limit: staleSweepLimit() };
+}
+
+/**
+ * The automatic pass. Tears down up to `limit` previews whose env fingerprint
+ * does not match the platform's current one, skipping vote-backed and busy
+ * sessions (see selectStale).
+ *
+ * NEVER THROWS and never runs concurrently with itself or with an admin
+ * sweep — the caller is a sweeper tick, and a rejected promise there would be
+ * an unhandled rejection in a timer. Returns a small summary for logging.
+ *
+ * `isInFlight` is threaded through from the caller (server.js has the worker
+ * module) rather than required here, per selectStale's note.
+ */
+async function sweepStale(config, { limit = null, isInFlight = null } = {}) {
+  const cap = limit || staleSweepLimit();
+  const summary = { examined: 0, stale: 0, tornDown: 0, failed: 0, skipped: 0 };
+  // Arm the throttle up front: a pass that takes minutes must not let the next
+  // sweeper tick start a second one alongside it.
+  _lastStaleSweepStartedAt = Date.now();
+  try {
+    if (isStagingEnv()) return summary;      // no docker socket in a preview
+    if (isActive(_job)) return summary;      // an admin sweep owns the fleet
+
+    const containers = await listStagingContainers();
+    summary.examined = containers.length;
+    if (!containers.length) return summary;
+
+    // Guard against a docker whose `{{.Label}}` verb yielded nothing for
+    // EVERY container: that looks identical to "the whole fleet is stale" and
+    // would tear down every preview on the host. Verify one container with a
+    // real inspect before acting on a 100%-unlabelled reading.
+    if (containers.every((c) => c.fingerprint === null)) {
+      const probe = await docker.inspectContainer(containers[0].name);
+      const probed = probe && probe.labels ? probe.labels[stagingEnv.LABEL_ENV_FP] : undefined;
+      if (probed) {
+        log.warn('staging-reap', 'docker ps reported no labels but inspect found one — falling back to inspect', {
+          sample: containers[0].name,
+        });
+        for (const c of containers) {
+          const state = await docker.inspectContainer(c.name);
+          c.fingerprint = (state && state.labels && state.labels[stagingEnv.LABEL_ENV_FP]) || null;
+        }
+      }
+    }
+
+    const items = await classify(getPool(config), containers);
+    const stale = selectStale(items, stagingEnv.expectedStagingFingerprint(config), { isInFlight });
+    summary.stale = stale.length;
+    if (!stale.length) return summary;
+
+    const batch = stale.slice(0, cap);
+    if (stale.length > batch.length) {
+      // Never let a cap look like completeness.
+      log.info('staging-reap', 'Stale pass capped — remainder waits for the next pass', {
+        stale: stale.length, limit: cap, deferred: stale.length - batch.length,
+      });
+      summary.skipped = stale.length - batch.length;
+    }
+
+    log.info('staging-reap', 'Automatic stale-preview pass started', {
+      examined: summary.examined, stale: summary.stale, acting: batch.length,
+    });
+
+    await drain(batch, concurrency(), async (item) => {
+      let outcome = FAILED;
+      let error = null;
+      try {
+        const result = await reapOne(item);
+        outcome = result.outcome;
+        error = result.error || null;
+      } catch (err) {
+        error = err && err.message ? err.message : 'teardown failed';
+      }
+      if (outcome === FAILED) {
+        summary.failed += 1;
+        log.warn('staging-reap', 'Automatic pass failed to tear down a preview', {
+          name: item.name, sessionId: item.sessionId, err: error,
+        });
+      } else if (outcome === TORN_DOWN || outcome === TORN_DOWN_NO_DB) {
+        summary.tornDown += 1;
+      }
+    });
+
+    log.info('staging-reap', 'Automatic stale-preview pass finished', summary);
+
+    events.record(getPool(config), {
+      type: events.EVENT_TYPES.STALE_PREVIEWS_REAPED,
+      metadata: {
+        trigger: 'sweeper',
+        total: batch.length,
+        tornDown: summary.tornDown,
+        failed: summary.failed,
+        examined: summary.examined,
+        stale: summary.stale,
+        deferred: summary.skipped,
+      },
+    });
+    return summary;
+  } catch (err) {
+    log.warn('staging-reap', 'Automatic stale-preview pass crashed', { err: err.message });
+    return summary;
+  } finally {
+    _lastAutomatic = {
+      lastRunAt: new Date().toISOString(),
+      examined: summary.examined,
+      stale: summary.stale,
+      tornDown: summary.tornDown,
+      failed: summary.failed,
+    };
+  }
 }
 
 /**
@@ -324,6 +557,30 @@ function demoJob() {
         error: 'stop timeout exceeded: container did not exit',
       },
     ],
+  };
+}
+
+/**
+ * Staging demo counters + automatic-pass history to accompany demoJob(),
+ * so the "Out of date" tile and the "last automatic sweep" line are
+ * screenshot-covered in a preview too (#851). Same rules as demoJob: fixed
+ * timestamps, obviously-fake values, never persisted, served only behind
+ * IS_STAGING && ?demo=1.
+ */
+function demoCounts() {
+  return {
+    open: 6,
+    stale: 4,
+    expectedFingerprint: 'stagingdemofp0000',
+    automatic: {
+      lastRunAt: '2026-01-01T11:45:00.000Z',
+      examined: 6,
+      stale: 4,
+      tornDown: 3,
+      failed: 1,
+      intervalMs: 900000,
+      limit: DEFAULT_STALE_SWEEP_LIMIT,
+    },
   };
 }
 
@@ -478,7 +735,17 @@ async function reapOne(item) {
   if (linked) {
     try {
       const staging = require('./staging');
-      await staging.teardownStaging(item.session, { slug: item.session.app_slug || item.slug });
+      const result = await staging.teardownStaging(
+        item.session, { slug: item.session.app_slug || item.slug }
+      );
+      // #851: teardownStaging no longer lies about a removal it could not
+      // perform. A leak is this unit FAILING — the container is still there,
+      // so reporting success would hide it from the tally and the admin
+      // console alike. The session row still names it, so the next pass
+      // retries through this same branch.
+      if (result && result.leaked) {
+        return { outcome: FAILED, error: 'container survived teardown (still running)' };
+      }
       return { outcome: TORN_DOWN };
     } catch (err) {
       log.warn('staging-reap', 'teardownStaging failed', {
@@ -547,19 +814,30 @@ async function drain(items, limit, worker) {
 function _reset() {
   _job = null;
   _seq = 0;
+  _lastAutomatic = null;
+  _lastStaleSweepStartedAt = 0;
 }
 
 module.exports = {
   start,
   read,
   demoJob,
+  demoCounts,
   isStagingEnv,
   concurrency,
   staleCount,
+  previewCounts,
   listStagingContainers,
   classify,
+  selectStale,
+  sweepStale,
+  readAutomatic,
+  staleSweepDue,
+  staleSweepIntervalMs,
+  staleSweepLimit,
   reapOne,
   CONTAINER_NAME_RE,
+  VOTE_BACKED_STATUSES,
   TORN_DOWN,
   TORN_DOWN_NO_DB,
   FAILED,

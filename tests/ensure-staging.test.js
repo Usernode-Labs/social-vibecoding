@@ -27,23 +27,55 @@ function stubModule(id, exports) {
 }
 
 // ── 1. Unit: stagingNeedsRebuild against a stubbed docker ────────────────
+//
+// #851 added a THIRD failure shape on top of the two liveness ones: a running
+// container whose env fingerprint label was stamped by an older platform
+// build. That is the shape the whole change exists to catch — a pre-#848
+// preview boots fine and then can't recognise the signed-in user, so a
+// liveness-only check answered "ready" and opened the app's login screen.
+//
+// The verdict drives an automatic teardown/rebuild sweeper, so the negative
+// cases matter as much as the positive ones: an unreadable docker must NOT
+// read as "stale" (it would sweep the fleet on a daemon hiccup), and a caller
+// that passes no config must keep the old liveness-only behaviour.
 
-function loadRecovery(getContainerStatus) {
+const stagingEnvModule = require('../src/services/staging-env');
+
+const TEST_PEM = '-----BEGIN PUBLIC KEY-----\nTESTKEY\n-----END PUBLIC KEY-----';
+const TEST_CONFIG = { iframeJwtPublicKey: TEST_PEM };
+
+// The label value a preview built by THIS platform would carry.
+function currentFingerprint() {
+  stagingEnvModule._resetExpected();
+  const fp = stagingEnvModule.expectedStagingFingerprint(TEST_CONFIG);
+  stagingEnvModule._resetExpected();
+  return fp;
+}
+
+function loadRecovery(inspectContainer) {
   const dockerPath = require.resolve('../src/services/docker');
   const recPath = require.resolve('../src/services/staging-recovery');
-  const original = stubModule(dockerPath, { getContainerStatus });
+  const original = stubModule(dockerPath, { inspectContainer });
   delete require.cache[recPath];
   const subject = require('../src/services/staging-recovery');
   const restore = () => {
     if (original) require.cache[dockerPath] = original; else delete require.cache[dockerPath];
     delete require.cache[recPath];
+    stagingEnvModule._resetExpected();
   };
   return { subject, restore };
 }
 
+// Sugar: a container in `status` carrying `labels`.
+function inspecting(status, labels = {}) {
+  return async () => ({ status, labels });
+}
+
+const LIVE_SESSION = { id: 1, staging_url: 'https://x.example', staging_container_id: 'c1' };
+
 test('stagingNeedsRebuild: NULL staging_url → true (no docker call)', async () => {
   let called = false;
-  const { subject, restore } = loadRecovery(async () => { called = true; return 'running'; });
+  const { subject, restore } = loadRecovery(async () => { called = true; return { status: 'running', labels: {} }; });
   try {
     assert.equal(await subject.stagingNeedsRebuild({ staging_url: null, staging_container_id: 'c1' }), true);
     assert.equal(called, false, 'short-circuits before hitting docker');
@@ -51,21 +83,72 @@ test('stagingNeedsRebuild: NULL staging_url → true (no docker call)', async ()
 });
 
 test('stagingNeedsRebuild: url set but container stopped → true', async () => {
-  const { subject, restore } = loadRecovery(async () => 'exited');
+  const { subject, restore } = loadRecovery(inspecting('exited'));
   try {
-    assert.equal(await subject.stagingNeedsRebuild({
-      staging_url: 'https://x.example', staging_container_id: 'c1',
-    }), true);
+    assert.equal(await subject.stagingNeedsRebuild(LIVE_SESSION, { config: TEST_CONFIG }), true);
   } finally { restore(); }
 });
 
-test('stagingNeedsRebuild: url set + container running → false', async () => {
-  const { subject, restore } = loadRecovery(async () => 'running');
+test('stagingNeedsRebuild: url set + container running + fingerprint matches → false', async () => {
+  const { subject, restore } = loadRecovery(
+    inspecting('running', { [stagingEnvModule.LABEL_ENV_FP]: currentFingerprint() })
+  );
   try {
-    assert.equal(await subject.stagingNeedsRebuild({
-      staging_url: 'https://x.example', staging_container_id: 'c1',
-    }), false);
+    assert.equal(await subject.stagingNeedsRebuild(LIVE_SESSION, { config: TEST_CONFIG }), false);
   } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: running but fingerprint MISMATCHED → true (stale env)', async () => {
+  const { subject, restore } = loadRecovery(
+    inspecting('running', { [stagingEnvModule.LABEL_ENV_FP]: 'deadbeefdeadbeef' })
+  );
+  try {
+    assert.equal(await subject.stagingNeedsRebuild(LIVE_SESSION, { config: TEST_CONFIG }), true);
+  } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: running with NO fingerprint label → true (built pre-#851)', async () => {
+  const { subject, restore } = loadRecovery(inspecting('running', {}));
+  try {
+    assert.equal(await subject.stagingNeedsRebuild(LIVE_SESSION, { config: TEST_CONFIG }), true);
+  } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: container GONE (not_found) → true', async () => {
+  // Shape 2, and the case the fingerprint work could most easily have broken:
+  // "gone" and "cannot inspect" arrive through the same call, and collapsing
+  // them would silently stop rebuilding previews lost to a host restart or a
+  // manual cleanup.
+  const { subject, restore } = loadRecovery(inspecting('not_found'));
+  try {
+    assert.equal(await subject.stagingNeedsRebuild(LIVE_SESSION, { config: TEST_CONFIG }), true);
+    // ...and with no config either: this is liveness, not staleness.
+    assert.equal(await subject.stagingNeedsRebuild(LIVE_SESSION), true);
+  } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: inspect FAILED (null) → false, leave it strictly alone', async () => {
+  // A docker hiccup must never be read as staleness: the sweeper acts on this
+  // verdict, so mistaking "can't see" for "out of date" would tear down every
+  // preview on the host.
+  const { subject, restore } = loadRecovery(async () => null);
+  try {
+    assert.equal(await subject.stagingNeedsRebuild(LIVE_SESSION, { config: TEST_CONFIG }), false);
+  } finally { restore(); }
+});
+
+test('stagingNeedsRebuild: no config → liveness-only verdict (unchanged behaviour)', async () => {
+  const stale = loadRecovery(inspecting('running', { [stagingEnvModule.LABEL_ENV_FP]: 'notthecurrentone' }));
+  try {
+    assert.equal(await stale.subject.stagingNeedsRebuild(LIVE_SESSION), false,
+      'without config the fingerprint is not consulted');
+  } finally { stale.restore(); }
+
+  const dead = loadRecovery(inspecting('exited'));
+  try {
+    assert.equal(await dead.subject.stagingNeedsRebuild(LIVE_SESSION), true,
+      'liveness still decides');
+  } finally { dead.restore(); }
 });
 
 // ── 2. Route: POST /api/sessions/:id/ensure-staging ──────────────────────
