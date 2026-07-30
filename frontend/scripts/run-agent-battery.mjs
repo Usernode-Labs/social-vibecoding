@@ -148,9 +148,9 @@ result("T7", Boolean(
   checks: composed.checks,
 })
 
-const integrity = runNode("scripts/check-harness-integrity.mjs", ["--skip-evidence-freshness"])
+const integrity = runNode("scripts/check-harness-integrity.mjs")
 result("T8", integrity.status === 0, {
-  command: "npm run check:harness-integrity -- --skip-evidence-freshness",
+  command: "npm run check:harness-integrity",
   output: `${integrity.stdout}\n${integrity.stderr}`.trim(),
 })
 

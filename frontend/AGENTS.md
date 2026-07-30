@@ -111,6 +111,8 @@ router and full-gate authority. `node tool/ui-workflow.mjs --task "<task>"`
 may select several workflows; follow all of them. `npm run check:ui` executes
 the same full gate CI is required to expose. `npm run
 check:harness-integrity` validates the skill package, context paths, package
-scripts, CI parity, `.agents`/`.claude`/`.codex` adapters, and live-battery
+scripts, continuous-integration parity, `.agents`/`.claude`/`.codex` adapters,
+and the deterministic agent battery. The live-agent evaluator is reserved for
+prerelease diagnostics because a harness edit necessarily changes its own
 fingerprint. `check:harness` remains the source architecture boundary and is
 not a substitute for harness self-integrity.

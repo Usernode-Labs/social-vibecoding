@@ -24,7 +24,7 @@
     "resolve:ui-workflow": "node ../tool/ui-workflow.mjs",
     "test:agent-battery": "node scripts/run-agent-battery.mjs",
     "test:content": "node --test scripts/check-content.test.mjs",
-    "evaluate:agent-battery": "node scripts/run-live-agent-battery.mjs",
+    "evaluate:agent-battery:prerelease": "node scripts/run-live-agent-battery.mjs",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "test:e2e": "playwright test",

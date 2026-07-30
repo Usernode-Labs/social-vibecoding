@@ -3,11 +3,9 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { harnessFingerprint } from "./harness-fingerprint.mjs"
 
 const frontendRoot = process.cwd()
 const repoRoot = path.resolve(frontendRoot, "..")
-const skipEvidenceFreshness = process.argv.includes("--skip-evidence-freshness")
 const violations = []
 const readJson = (relativePath) => JSON.parse(fs.readFileSync(path.join(repoRoot, relativePath), "utf8"))
 
@@ -83,21 +81,8 @@ try {
   fs.rmSync(adapterRoot, { recursive: true, force: true })
 }
 
-if (!skipEvidenceFreshness) {
-  const liveEvidencePath = path.join(frontendRoot, "design-system/evidence/candidate-a-shell-live-agent-battery.json")
-  if (!fs.existsSync(liveEvidencePath)) {
-    violations.push("live agent battery evidence is missing")
-  } else {
-    const evidence = JSON.parse(fs.readFileSync(liveEvidencePath, "utf8"))
-    const current = harnessFingerprint()
-    if (evidence.harnessFingerprint !== current.value) {
-      violations.push("live agent battery evidence is stale for the current harness fingerprint")
-    }
-  }
-}
-
 if (violations.length) {
   console.error(`Harness integrity check failed:\n\n${violations.map((item) => `- ${item}`).join("\n")}`)
   process.exit(1)
 }
-console.log(`Harness integrity check passed: composable workflows, ${workflows.fullGate.length} CI-parity gates, three portable adapters, and ${skipEvidenceFreshness ? "freshness skipped" : "fresh live evidence"}.`)
+console.log(`Harness integrity check passed: composable workflows, ${workflows.fullGate.length} continuous-integration-parity gates, three portable adapters, and deterministic agent-battery coverage.`)

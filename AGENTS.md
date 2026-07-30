@@ -21,7 +21,9 @@ progressive, task-specific context and gates without depending on one agent
 vendor's hook runtime. Its classifications compose: follow every selected
 workflow, not only the first label. Run `cd frontend && npm run check:ui`
 before handoff; harness integrity proves that authority still matches package
-scripts, CI, adapters, and current live-agent evidence.
+scripts, continuous integration, adapters, and the deterministic agent
+battery. The expensive live-agent evaluator is a prerelease diagnostic, not a
+per-commit freshness gate.
 
 1. Preserve a working legacy route until its React replacement has parity
    evidence for loading, error, empty, permission, narrow and desktop states.

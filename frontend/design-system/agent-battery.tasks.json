@@ -48,7 +48,7 @@
       "id": "T8",
       "name": "Prove portable harness integrity",
       "intent": "Verify the skill package, workflow authority, adapter discovery, package scripts, and CI parity.",
-      "expected": "The deterministic self-integrity check passes independently of live-evidence freshness."
+      "expected": "The deterministic self-integrity check passes without requiring a self-invalidating live-agent fingerprint."
     }
   ]
 }
