@@ -14,19 +14,39 @@
 //                            that asymmetry is the whole point of the
 //                            cutover. The private half never leaves the
 //                            platform process.
-//   JWT_SECRET               the SAME public PEM, under the legacy name.
-//                            A deprecated source-compat shim, nothing
-//                            more: apps generated before this cutover
-//                            read `process.env.JWT_SECRET` and pass it
-//                            to `jwt.verify`, which accepts a PEM as the
-//                            key argument and — because the token's own
-//                            header says RS256 — verifies asymmetrically.
-//                            So the legacy scaffold keeps working
-//                            verbatim, while a container that tries to
-//                            SIGN with it produces an RS256 token it has
-//                            no private key for (throws) or an HS256
-//                            token the platform rejects on algorithm.
-//                            See tests/scaffold-token-compat.test.js.
+//   JWT_SECRET               the SAME public PEM, under the retired name.
+//                            LEGACY-APP COMPATIBILITY ONLY — see the
+//                            removal criterion below. Apps generated
+//                            before the cutover read
+//                            `process.env.JWT_SECRET` and pass it to
+//                            `jwt.verify`, which accepts a PEM as the key
+//                            argument and — because the token's own header
+//                            says RS256 — verifies asymmetrically. So the
+//                            legacy scaffold keeps working verbatim, while
+//                            a container that tries to SIGN with it
+//                            produces an RS256 token it has no private key
+//                            for (throws) or an HS256 token the platform
+//                            rejects on algorithm. See
+//                            tests/scaffold-token-compat.test.js.
+//
+//                            REMOVAL CRITERION. Every platform-side reader
+//                            of this name is already gone: the generated
+//                            scaffold (services/template.js) and the
+//                            app-authoring conventions
+//                            (prompts/app-conventions.md) both read only
+//                            USERNODE_JWT_PUBLIC_KEY, so no NEW app can
+//                            acquire the dependency. What remains is app
+//                            source the platform cannot edit — roughly 40
+//                            containers at the time of the cutover. Delete
+//                            this line once
+//                            `scripts/audit-jwt-secret-readers.js` reports
+//                            zero apps still referencing
+//                            `process.env.JWT_SECRET`, which in practice
+//                            means a migration PR per affected repo.
+//                            Deleting it sooner logs every user out of
+//                            those apps. The name stays reserved in
+//                            services/app-manifest.js either way, so a
+//                            manifest can never shadow it.
 //   USERNODE_APP_ID          `apps.id`, the immutable integer PK. The
 //                            scaffold builds its expected audience from
 //                            it (`usernode:app:<id>`), which is what

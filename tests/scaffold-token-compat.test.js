@@ -254,17 +254,54 @@ function currentEnv(appId = APP_ID) {
   };
 }
 
-test('the current scaffold still reads the deprecated JWT_SECRET as a fallback', () => {
-  // Source compat runs both ways: an app cloned from the new template but
-  // deployed by an older platform (or a self-hoster mid-upgrade) sees only
-  // JWT_SECRET. Dropping this fallback would break that silently.
+// This case used to assert the OPPOSITE — that the generated scaffold keeps
+// `|| process.env.JWT_SECRET` as a fallback, for "an app cloned from the new
+// template but deployed by an older platform". That fallback has been dropped,
+// and the rationale for it does not survive inspection:
+//
+//   - template.js and app-identity-env.js ship in the SAME image, so within
+//     one platform instance a new-template app is always deployed by a
+//     platform that injects USERNODE_JWT_PUBLIC_KEY.
+//   - The only way a new-template app meets an old platform is a ROLLBACK
+//     (scripts/rollback.sh) to a pre-cutover build. There the fallback buys
+//     nothing: that platform mints bare HS256, and the current scaffold pins
+//     `algorithms: ['RS256']`, so the token is refused on ALGORITHM no matter
+//     which env var supplied the key. Asserted below rather than argued.
+//
+// So the fallback protected nothing while teaching every newly generated app
+// to depend on a name we are trying to retire. The alias itself is still
+// INJECTED for pre-cutover apps (see the removal criterion in
+// services/app-identity-env.js) — that is what the rest of this suite covers.
+test('the current scaffold reads only USERNODE_JWT_PUBLIC_KEY', () => {
   const src = currentScaffoldSource();
-  assert.match(src, /process\.env\.USERNODE_JWT_PUBLIC_KEY \|\| process\.env\.JWT_SECRET/);
+  assert.match(src, /process\.env\.USERNODE_JWT_PUBLIC_KEY/);
+  assert.ok(!/process\.env\.JWT_SECRET/.test(src),
+    'a newly generated app must not acquire a dependency on the retired alias');
+});
+
+test('a new-template app with only JWT_SECRET set fails closed', () => {
+  // The rollback scenario, both halves. First: the key is simply not found.
   const env = currentEnv();
   delete env.USERNODE_JWT_PUBLIC_KEY;
   const mw = loadScaffoldMiddleware(currentScaffoldSource(), env);
   const token = platformJwt.signAppIdentityToken({ appId: APP_ID, user: { id: 42 } });
-  assert.equal(authenticate(mw, token).user.id, 42);
+  assert.equal(authenticate(mw, token).user, null,
+    'no verification key means no user — fail closed, never a bare pass');
+});
+
+test('the dropped fallback could not have rescued a rollback anyway', () => {
+  // Second half: even WITH the old shared secret in JWT_SECRET, a
+  // pre-cutover platform's bare-HS256 token is refused on algorithm by the
+  // current scaffold. That is why removing the fallback costs nothing.
+  const env = currentEnv();
+  delete env.USERNODE_JWT_PUBLIC_KEY;
+  env.JWT_SECRET = 'legacy-shared-secret-0123456789abcdef';
+  const mw = loadScaffoldMiddleware(currentScaffoldSource(), env);
+  const legacyToken = jwt.sign({ id: 42, username: 'alice' }, env.JWT_SECRET, {
+    algorithm: 'HS256', expiresIn: '1h',
+  });
+  assert.equal(authenticate(mw, legacyToken).user, null,
+    'HS256 is refused by the RS256 pin regardless of where the key came from');
 });
 
 test('the current scaffold accepts a token minted for ITS app', () => {

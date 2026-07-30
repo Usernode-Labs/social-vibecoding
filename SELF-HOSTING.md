@@ -813,9 +813,14 @@ periodic refresh).
 [src/services/app-identity-env.js](./src/services/app-identity-env.js)
 propagates only the RSA **public** half into every child and staging
 container — as `USERNODE_JWT_PUBLIC_KEY`, `IFRAME_JWT_PUBLIC_KEY`, and
-(deprecated, same PEM under the legacy name for pre-cutover scaffolds)
-`JWT_SECRET` — together with `USERNODE_APP_ID`, from which the container
-builds its expected audience. A container can therefore *verify* a
+(retired, same PEM under the legacy name so pre-cutover app source keeps
+verifying) `JWT_SECRET` — together with `USERNODE_APP_ID`, from which the
+container builds its expected audience. The `JWT_SECRET` alias is on its
+way out: nothing the platform generates reads it any more (neither the
+scaffold nor the app-authoring conventions), so only app source predating
+the cutover still depends on it. Run
+`node scripts/audit-jwt-secret-readers.js` to see which repos those are;
+the removal criterion lives in a block comment in `app-identity-env.js`. A container can therefore *verify* a
 parent-issued identity and structurally *cannot mint* one. Child apps
 already honor this — see "Auth — iframe token injection" in
 [src/prompts/app-conventions.md](./src/prompts/app-conventions.md).
