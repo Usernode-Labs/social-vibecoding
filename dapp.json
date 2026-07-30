@@ -394,6 +394,16 @@
       "expectText": "hit 44px×44px"
     },
     {
+      "name": "Home card actions menu opens from ?shot=card-menu (#847)",
+      "path": "/?demo=1&shot=card-menu",
+      "expectSelector": ".un-popover .card-menu-header .card-menu-title"
+    },
+    {
+      "name": "Home card actions menu paints an opaque surface (#847)",
+      "path": "/?demo=1&shot=card-menu",
+      "expectSelector": ".un-popover[data-surface=\"opaque\"]"
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"
