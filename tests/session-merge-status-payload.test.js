@@ -97,6 +97,12 @@ function baseRow(overrides = {}) {
     app_name: 'Demo App',
     yes_count: 3,
     no_count: 0,
+    // The route's own SELECT projects both visibility columns for
+    // checkAppAccess, which THROWS when handed a row without them. Model what
+    // the real SQL returns rather than relying on the old default-to-public
+    // branch (which meant this stub never exercised the privacy gate).
+    collab_visibility: 'public',
+    view_visibility: 'public',
     ...overrides,
   };
 }

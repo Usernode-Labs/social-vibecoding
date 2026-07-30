@@ -71,6 +71,10 @@ function makeHandler({ outcome, suggestionsRow }) {
           app_slug: 'demo',
           app_name: 'Demo App',
           repo_url: null, // no owner/name → branch + title fetch skipped
+          // appAccess.sessionCollabGuard selects both visibility columns
+          // alongside the session; checkAppAccess THROWS without them.
+          collab_visibility: 'public',
+          view_visibility: 'public',
           is_headless: true,
           headless_status: 'ready',
           headless_outcome: outcome,

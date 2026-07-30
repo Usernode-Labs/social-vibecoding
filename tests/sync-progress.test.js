@@ -463,6 +463,13 @@ function activeSessionRow(id) {
     app_slug: 'widget', app_name: 'Widget',
     repo_url: 'https://github.com/acme/widget',
     branch_name: 'dev/tester-1', behind_main: 3,
+    // appAccess.sessionCollabGuard selects a.collab_visibility +
+    // a.view_visibility alongside the session; checkAppAccess THROWS when
+    // handed a row without them. Model what the real SQL returns rather than
+    // relying on the old default-to-public branch (which meant this stub was
+    // never actually exercising the privacy gate).
+    collab_visibility: 'public',
+    view_visibility: 'public',
   };
 }
 

@@ -10,6 +10,7 @@ const limits = require('../services/limits');
 const dbExport = require('../services/db-export');
 const events = require('../services/events');
 const appRollover = require('../services/app-rollover');
+const stagingReap = require('../services/staging-reap');
 
 // Fixed app-wide key for pg_advisory_xact_lock, dedicated to admin-status
 // mutations (revoke-admin and delete-user). Any code path that could drop
@@ -131,6 +132,73 @@ function adminRoutes(config) {
       });
     } catch (err) {
       log.error('admin', 'Rollover status failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Stale staging previews ─────────────────────────────────
+  //
+  // The preview half of the rollover above. A preview's env is assembled by
+  // the platform build that was deployed when it was BUILT, and previews
+  // live for weeks — so a platform env change leaves them running happily
+  // with stale env, which the existing staging-heal sweep cannot see (it
+  // only rebuilds previews whose container has STOPPED). This tears them
+  // down; the next Preview click rebuilds any that someone actually wants,
+  // with current env, through the existing ensure-staging path. See
+  // services/staging-reap.js for the full rationale.
+
+  router.post('/api/admin/staging-reap', requireAdminWrite, drainGuard, async (req, res) => {
+    try {
+      // A staging preview has no docker socket (SELF-HOSTING.md Phase 2g),
+      // so it cannot manage other previews. Explicit refusal beats a sweep
+      // that sees an empty inventory and silently reports success.
+      if (stagingReap.isStagingEnv()) {
+        return res.status(400).json({
+          error: 'The stale-preview sweep is unavailable in staging previews.',
+        });
+      }
+      const { started, job } = stagingReap.start(config, {
+        userId: req.user.id,
+        username: req.user.username,
+      });
+      if (!started) {
+        return res.status(409).json({ error: 'Sweep already in progress', job });
+      }
+      // warn-level: a fleet-wide preview teardown is worth finding in the
+      // logs later, same stance as the rollover above.
+      log.warn('admin', 'Stale preview sweep started', {
+        by: req.user.username, jobId: job.id, total: job.total,
+      });
+      res.status(202).json({ job });
+    } catch (err) {
+      log.error('admin', 'Stale preview sweep kickoff failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Read-only, so it stays on the plain adminMiddleware gate — view-only
+  // admins can watch a sweep, they just can't start one.
+  router.get('/api/admin/staging-reap', async (req, res) => {
+    try {
+      // Staging mock data (request-time demo injection): a preview has no
+      // docker socket, so this section would screenshot empty. Never
+      // persisted, strictly a no-op outside staging.
+      // `staging` is reported independently of `demo`: the POST is refused in
+      // a preview whether or not the reviewer arrived with ?demo=1, so the
+      // button must be able to say so either way.
+      const staging = stagingReap.isStagingEnv();
+      if (staging && req.query.demo === '1') {
+        return res.json({ job: stagingReap.demoJob(), stale: 6, demo: true, staging });
+      }
+      const stale = await stagingReap.staleCount().catch(() => null);
+      res.json({
+        job: stagingReap.read(),
+        stale,
+        staging,
+        concurrency: stagingReap.concurrency(),
+      });
+    } catch (err) {
+      log.error('admin', 'Stale preview status failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

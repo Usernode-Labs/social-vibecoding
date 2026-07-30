@@ -99,6 +99,28 @@ function load() {
     process.exit(1);
   }
 
+  // The platform's own staging clone is injected the production PUBLIC key
+  // (so it can verify the parent's token) but no private one — yet it also
+  // acts as a parent shell itself: every app view it renders fetches
+  // /api/iframe-token for the embedded child. Without a signing key that
+  // endpoint answers 503 and every framed route logs a console error,
+  // failing the console-error baseline check. So a preview mints its own
+  // ephemeral SIGNING pair and then runs the IDENTICAL sign/verify path as
+  // production, trusting two issuers instead of one. Runs before anything
+  // can sign. See the block comment above
+  // platformJwt.generateStagingIframeKeyPair() for why this is not a shim,
+  // and why it must not gate on the public half or write to process.env.
+  let stagingKeys = { generated: false };
+  if (staging) {
+    try {
+      stagingKeys = platformJwt.generateStagingIframeKeyPair();
+    } catch (err) {
+      // Never fatal: a preview that cannot self-sign is worse off than
+      // one that 503s on app views, but it is still reviewable.
+      console.log(`[config] [warn] could not self-sign an iframe key pair: ${err.message}`);
+    }
+  }
+
   const config = {
     // Deployment environment tag (plan Global Constraints #6, topochain
     // mailer): drives ONE behavior today — src/services/topochain/
@@ -314,6 +336,12 @@ function load() {
   console.log(`  WORKER_JWT_SECRET=${mask(config.workerJwtSecret)}`);
   console.log(`  EDGE_JWT_SECRET=${mask(config.edgeJwtSecret)}`);
   console.log(`  IFRAME_JWT_PUBLIC_KEY=${config.iframeJwtPublicKey ? `(set, ${config.iframeJwtPublicKey.length} bytes)` : '(not set)'}`);
+  if (stagingKeys.generated) {
+    // The clone keeps the injected public key for verifying the production
+    // parent's tokens and signs its own with this pair — two issuers, both
+    // fully pinned. See platformJwt.iframeVerifyKeys().
+    console.log(`  IFRAME_JWT signing key=staging self-signed (RSA-${stagingKeys.bits}, ephemeral; verifies ${platformJwt.iframeVerifyKeys().length} keys)`);
+  }
   // Short HMAC keys stay a warning, not an exit — a fork running a
   // 24-byte key should get a loud line, not a platform that won't start.
   for (const name of ['WORKER_JWT_SECRET', 'EDGE_JWT_SECRET']) {

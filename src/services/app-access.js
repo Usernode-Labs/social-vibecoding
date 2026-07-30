@@ -70,13 +70,50 @@ async function isCollaborator(pool, appId, userId) {
 }
 
 // `app` must carry id + collab_visibility + view_visibility (SELECT * or
-// ACCESS_COLUMNS both work). Returns boolean.
+// ACCESS_COLUMNS both work). Returns boolean, or THROWS when the row it is
+// handed cannot answer the question — see below.
+//
+// FAIL-CLOSED ON A MISSING COLUMN, and this is the structural fix for a
+// real bug. This function used to read the visibility column off the row
+// and treat a missing/falsy value as public ("legacy rows mid-migration
+// may briefly lack the column"). That default turned every caller that
+// projected the column away into a silent, total privacy bypass: the RSA
+// cutover's /api/iframe-token gate passed a trimmed `'id, slug'` list, so
+// every app looked public and any authenticated user could mint an
+// app-identity token for a view-private app they cannot even see. The
+// endpoint's own comment claimed an existence-hiding 404 while handing out
+// tokens. Nothing failed; nothing logged.
+//
+// A caller that cannot supply the visibility columns has a bug, and the
+// only safe answer is to refuse loudly. So: absent key, or present but
+// falsy, throws. `apps.collab_visibility` / `apps.view_visibility` are
+// NOT NULL DEFAULT 'public' (see schema.sql), so a legitimate row always
+// carries a non-empty string — there is no honest caller this rejects, and
+// throwing on falsy rather than merely on absent is the stricter invariant.
+//
+// Blast radius is deliberate and bounded: getAppForUser and the two
+// id-scoped router guards below all sit inside route-level try/catch
+// blocks that answer 500, and both ws.js call sites already wrap this in
+// `.catch(() => false)` — so a throw fails CLOSED there (a 4004 close, a
+// dropped write), never an unhandled rejection.
+//
+// The check runs BEFORE the admin short-circuit on purpose. Admins are
+// exactly who the screenshot and proposal-checks runners authenticate as,
+// so a trimmed projection that only broke for non-admins would keep
+// slipping through the paths most likely to exercise it.
 async function checkAppAccess(pool, app, user, level = 'view') {
   if (!app) return false;
+  const column = level === 'collab' ? 'collab_visibility' : 'view_visibility';
+  const vis = app[column];
+  if (!vis) {
+    throw new Error(
+      `app-access: cannot check '${level}' access — the app row is missing `
+      + `\`${column}\` (got ${JSON.stringify(vis)}). Select it (use `
+      + 'ACCESS_COLUMNS) rather than trimming the projection.'
+    );
+  }
   if (user?.isAdmin) return true;
-  const vis = level === 'collab' ? app.collab_visibility : app.view_visibility;
-  // Legacy rows mid-migration may briefly lack the column; treat as public.
-  if (!vis || vis === 'public') return true;
+  if (vis === 'public') return true;
   return isCollaborator(pool, app.id, user?.id);
 }
 

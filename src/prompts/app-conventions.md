@@ -39,9 +39,6 @@ Required env vars at runtime (provided by the harness):
 - `USERNODE_APP_ID` — this app's numeric platform id. User tokens are
   minted with audience `usernode:app:<USERNODE_APP_ID>`, which is what
   stops a token issued for another app from authenticating here.
-- `JWT_SECRET` — **deprecated alias** of `USERNODE_JWT_PUBLIC_KEY`,
-  carrying the same public PEM so pre-cutover apps keep working
-  unchanged. New code should read `USERNODE_JWT_PUBLIC_KEY`.
 - `PORT` — always `3000`.
 - `USERNODE_ENV` — either `production` or `staging`. See "Staging vs
   production" below.
@@ -69,7 +66,7 @@ forge any user.
 Server-side the pattern (already present in the scaffold) is:
 
 ```js
-const JWT_PUBLIC_KEY = (process.env.USERNODE_JWT_PUBLIC_KEY || process.env.JWT_SECRET || '')
+const JWT_PUBLIC_KEY = (process.env.USERNODE_JWT_PUBLIC_KEY || '')
   .replace(/\\n/g, '\n');
 const APP_AUDIENCE = process.env.USERNODE_APP_ID
   ? 'usernode:app:' + process.env.USERNODE_APP_ID
@@ -798,7 +795,10 @@ Per-field rules:
 **Reserved keys** the platform owns and rejects from the manifest:
 `DATABASE_URL`, `USERNODE_JWT_PUBLIC_KEY`, `USERNODE_APP_ID`,
 `JWT_SECRET`, `PORT`, `USERNODE_ENV`,
-`USERNODE_MISSING_SECRETS`. Don't list these.
+`USERNODE_MISSING_SECRETS`. Don't list these. (`JWT_SECRET` is a retired
+alias of `USERNODE_JWT_PUBLIC_KEY` — still injected so apps written
+before the RSA cutover keep working, but nothing new should read it. It
+stays reserved so a manifest can never shadow it.)
 
 **Platform-managed keys** the platform supplies a default for at
 deploy time (overriding the manifest `default` but losing to a
@@ -926,8 +926,8 @@ Mark **private** when the secret unlocks:
   Slack OAuth `client_secret`).
 - Signing keys used for prod user sessions (`SESSION_SECRET`, your own
   app-issued cookie keys). Note the platform's own
-  `USERNODE_JWT_PUBLIC_KEY` / `JWT_SECRET` are *public* keys and not
-  secrets at all — they are platform-managed either way.
+  `USERNODE_JWT_PUBLIC_KEY` is a *public* key and not a secret at all —
+  it is platform-managed either way.
 - Wallet / on-chain secret keys that hold real funds.
 - Database superuser passwords.
 - Push-notification keys (FCM, APNS) that fan out to real devices.

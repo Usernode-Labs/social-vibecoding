@@ -205,11 +205,7 @@ const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 // The platform signs user-identity tokens with an RSA private key it never
 // shares. Containers get only the PUBLIC half, so this app can verify who a
 // user is but cannot mint an identity — and neither can any other app.
-//
-// JWT_SECRET is a deprecated alias the platform still injects with the same
-// public PEM, so apps written before the RSA cutover keep working unchanged.
-// New code should read USERNODE_JWT_PUBLIC_KEY.
-const JWT_PUBLIC_KEY = (process.env.USERNODE_JWT_PUBLIC_KEY || process.env.JWT_SECRET || '')
+const JWT_PUBLIC_KEY = (process.env.USERNODE_JWT_PUBLIC_KEY || '')
   .replace(/\\\\n/g, '\\n');
 
 // Tokens are minted for one app: the audience is this app's numeric id, so a

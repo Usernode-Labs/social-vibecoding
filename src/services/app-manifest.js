@@ -115,8 +115,12 @@ const RESERVED_KEYS = new Set([
   // accept identities minted for a different app.
   'USERNODE_JWT_PUBLIC_KEY',
   'USERNODE_APP_ID',
-  // Deprecated alias of USERNODE_JWT_PUBLIC_KEY (holds the same public
-  // PEM) kept so pre-cutover scaffolds verify unchanged.
+  // Retired alias of USERNODE_JWT_PUBLIC_KEY (holds the same public PEM),
+  // still injected so pre-cutover scaffolds verify unchanged. The
+  // RESERVATION OUTLIVES THE INJECTION: even after app-identity-env.js
+  // stops setting this name (see the removal criterion there), a manifest
+  // must never be able to introduce it — an app that still reads
+  // JWT_SECRET would then be handed an attacker-chosen verification key.
   'JWT_SECRET',
   // Same public PEM again, under the platform's own env-var name — see
   // services/app-identity-env.js. Reserved for the same reason.

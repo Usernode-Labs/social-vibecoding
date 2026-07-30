@@ -36,6 +36,12 @@ const sessionRow = (overrides = {}) => ({
   app_slug: 'demo',
   app_name: 'Demo App',
   repo_url: 'https://github.com/acme/demo',
+  // appAccess.sessionCollabGuard selects a.collab_visibility +
+  // a.view_visibility alongside the session; checkAppAccess THROWS when handed
+  // a row without them. Model what the real SQL returns — the old
+  // default-to-public branch meant this stub never exercised the gate at all.
+  collab_visibility: 'public',
+  view_visibility: 'public',
   ...overrides,
 });
 

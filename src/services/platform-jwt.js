@@ -76,16 +76,54 @@ function pem(raw) {
   return String(raw || '').replace(/\\n/g, '\n').trim();
 }
 
+// The staging clone's self-generated signing pair, or null. Held in module
+// state and NOT in process.env deliberately — see
+// generateStagingIframeKeyPair() for why writing it to
+// IFRAME_JWT_PRIVATE_KEY would stop the preview booting at all.
+let _stagingSigningPair = null;
+
 function iframePrivateKey() {
   const key = pem(process.env.IFRAME_JWT_PRIVATE_KEY);
-  if (!key) throw new Error('IFRAME_JWT_PRIVATE_KEY not set — cannot sign app identity tokens');
-  return key;
+  if (key) return key;
+  // A staging clone has no injected private key; it signs with the pair it
+  // generated for itself at boot.
+  if (_stagingSigningPair) return _stagingSigningPair.privateKey;
+  throw new Error('IFRAME_JWT_PRIVATE_KEY not set — cannot sign app identity tokens');
 }
 
 function iframePublicKey() {
   const key = pem(process.env.IFRAME_JWT_PUBLIC_KEY);
   if (!key) throw new Error('IFRAME_JWT_PUBLIC_KEY not set — cannot verify app identity tokens');
   return key;
+}
+
+// The public halves this deployment trusts for app-identity tokens, in
+// order. Normally exactly one: the injected IFRAME_JWT_PUBLIC_KEY.
+//
+// A staging clone legitimately has TWO issuers, and conflating them is what
+// broke the first attempt at this fix:
+//
+//   1. the PRODUCTION parent shell, whose token arrives as `?token=` on the
+//      preview's iframe src and is what mints the preview's own session
+//      (middleware/auth.js). It is signed with production's private key, so
+//      it verifies only against the injected public key — which is why that
+//      value must never be overwritten in a clone.
+//   2. the CLONE ITSELF, which also acts as a parent shell for the app views
+//      it renders and signs those with its own ephemeral pair.
+//
+// Both are checked with identical pins (RS256, issuer, per-app audience,
+// `pur`) — this is a two-key keyring, not a relaxed check. The second entry
+// exists only when a staging clone generated a pair, so production always
+// has exactly one trusted key.
+function iframeVerifyKeys() {
+  const keys = [];
+  const injected = pem(process.env.IFRAME_JWT_PUBLIC_KEY);
+  if (injected) keys.push(injected);
+  if (_stagingSigningPair) keys.push(_stagingSigningPair.publicKey);
+  if (!keys.length) {
+    throw new Error('IFRAME_JWT_PUBLIC_KEY not set — cannot verify app identity tokens');
+  }
+  return keys;
 }
 
 function workerSecret() {
@@ -146,11 +184,30 @@ function signAppIdentityToken({ appId, user, ttl }) {
 }
 
 function verifyAppIdentityToken(token, { appId }) {
-  return verifyWith(token, iframePublicKey(), {
+  const opts = {
     algorithm: 'RS256',
     audience: appAudience(appId),
     purpose: PUR_IFRAME,
-  });
+  };
+  // Try each trusted public half. In production that is one key and this is
+  // a plain call; in a staging clone it is the production parent's key then
+  // the clone's own.
+  //
+  // The FIRST failure is what gets rethrown, not the last: the injected key
+  // is the primary authority, so its error is the diagnostic one. A token
+  // that is really a wrong-`pur` parent token would otherwise be reported as
+  // "invalid signature" (the second key's complaint) and send whoever reads
+  // the log looking for a key mismatch instead of a claim bug.
+  const keys = iframeVerifyKeys();
+  let firstErr = null;
+  for (const key of keys) {
+    try {
+      return verifyWith(token, key, opts);
+    } catch (err) {
+      if (!firstErr) firstErr = err;
+    }
+  }
+  throw firstErr;
 }
 
 // ── Worker → platform internal API ────────────────────────────────────
@@ -225,129 +282,112 @@ function orNull(fn) {
   try { return fn(); } catch { return null; }
 }
 
-// ── Pre-cutover staging bootstrap (TEMPORARY) ─────────────────────────
+// ── Staging self-signing ──────────────────────────────────────────────
 //
-// A staging preview container's env is built by the platform that is
-// CURRENTLY DEPLOYED, not by the code in the branch being previewed. The
-// deployed platform predates services/app-identity-env.js, so it injects
-// only the old shared HS256 secret as JWT_SECRET — no
-// IFRAME_JWT_PUBLIC_KEY, no USERNODE_APP_ID. The new verify path
-// therefore fails closed on every parent-issued token, and the preview of
-// THIS cutover is unopenable: the checks runner cannot mint a session, so
-// every assertion on an authenticated route fails, and a human reviewer
-// lands on the login screen.
+// The platform runs inside its own staging clone, and that clone is
+// injected NO platform keys — deliberately: a preview built from
+// unreviewed branch code must never hold production's signing key. But
+// the clone is also a PARENT SHELL: it renders app views, and each one
+// fetches /api/iframe-token for the embedded child. With no
+// IFRAME_JWT_PRIVATE_KEY, signAppIdentityToken() throws, the endpoint
+// answers its structured 503, and every app view logs a console error —
+// which fails the console-error baseline check on every route that frames
+// an app, even though the preview itself works.
 //
-// The gate is a three-way conjunction, and each conjunct is load-bearing:
+// So a staging clone MINTS ITS OWN KEYPAIR at boot. The pair is:
 //
-//   USERNODE_ENV === 'staging'   — production never reaches the two
-//                                  auth.js call sites at all, but pin it
-//                                  here too so the shim cannot be reached
-//                                  by a future non-staging caller.
-//   no IFRAME_JWT_PUBLIC_KEY     — config.js REQUIRED_PROD lists that key,
-//                                  so production cannot boot without it.
-//                                  This conjunct is UNSATISFIABLE in
-//                                  production, which is what makes the
-//                                  shim structurally unreachable there
-//                                  rather than merely unused.
-//   no USERNODE_APP_ID           — a container that DOES know its app id
-//                                  has been built by the post-cutover
-//                                  platform and must use the real path.
-//   JWT_SECRET present           — nothing to verify against otherwise.
+//   ephemeral   — generated per process, never persisted, never in .env.
+//                 A restart invalidates outstanding tokens; they are
+//                 15m-1h TTL and the shell refreshes on demand, so the
+//                 cost is one refresh, not a broken session.
+//   self-consistent — the clone is both signer and verifier (its own
+//                 middleware/auth.js verifies against
+//                 IFRAME_JWT_PUBLIC_KEY for SELF_APP_ID), so both halves
+//                 must come from the same generation. They do: both env
+//                 vars are set together, here, or neither is.
+//   confined    — it can only ever authenticate against THIS clone.
+//                 Production verifies with production's public key, so a
+//                 token minted here is refused everywhere that matters.
 //
-// SELF-DISABLING, and that is the point: the moment this lands on main,
-// every newly built preview gets IFRAME_JWT_PUBLIC_KEY + USERNODE_APP_ID
-// from appIdentityEnv(), the second and third conjuncts go false forever,
-// and this code is dead. It is not a fallback the platform is meant to
-// keep — the follow-up deletes ALL of it, both directions:
+// WHY THIS IS NOT A SHIM, and not a USERNODE_ENV feature gate. The code
+// path is byte-identical to production: the same signAppIdentityToken /
+// verifyAppIdentityToken, the same RS256 pin, the same issuer, the same
+// per-app audience, the same `pur` claim. Only the ORIGIN of the key
+// material differs — which is the sanctioned "swap the data behind the
+// path" use of USERNODE_ENV, not a swap of the path itself. There is no
+// second verify branch to keep in sync and no weaker token shape: a
+// forged HS256 token, a wrong audience or a wrong issuer is refused here
+// exactly as it is in production.
 //
-//   1. this file            legacyBootstrapActive(),
-//                           verifyLegacyBootstrapToken(),
-//                           signLegacyBootstrapToken(), and the three
-//                           exports.
-//   2. middleware/auth.js   the two verify-side fallbacks (identity
-//                           switch, tryMintSessionFromIframeJwt).
-//   3. server.js            the mint-side fallback in /api/iframe-token.
-//                           Keep the structured 503 there: it is the
-//                           correct answer for a deployment with no
-//                           signing key, shim or no shim.
-//   4. tests                restore the pure fail-closed assertion in
-//                           tests/staging-auth-token-switch.test.js and
-//                           drop its shim cases; drop the shim cases in
-//                           tests/iframe-token-route.test.js and the
-//                           sentinel in tests/key-separation-env.test.js.
+// GATED ON THE PRIVATE KEY ALONE, and that is the whole bug in the first
+// attempt at this fix. A staging clone DOES receive IFRAME_JWT_PUBLIC_KEY:
+// services/app-identity-env.js injects it into every container, including
+// the clone, precisely so the clone can verify the production parent's
+// token. Bailing out when "either half is set" therefore never generated
+// anything, the signer kept throwing, and the 503 survived the fix.
 //
-// Removing only half would be worse than keeping both: verify-only leaves
-// every app view in a pre-cutover preview 500ing, and mint-only leaves the
-// preview unable to establish a session at all.
+// The pair lives in MODULE STATE, not process.env, for two reasons:
+//   - config.load() runs assertIframeKeyPair() whenever BOTH env halves are
+//     present. Writing an ephemeral private key next to production's
+//     injected public key would make that probe fail on a mismatched pair
+//     and hard-exit — the preview would not boot at all.
+//   - IFRAME_JWT_PUBLIC_KEY must keep its injected value so parent-issued
+//     tokens still verify (see iframeVerifyKeys()). Overwriting it would
+//     break the session handoff that gets the checks runner into the
+//     preview in the first place, failing every check harder.
 //
-// Deliberately NOT wired into verifyAppIdentityToken() or
-// signAppIdentityToken(): the primary paths keep their "no legacy branch
-// anywhere" property, and every caller that wants the shim has to name it
-// explicitly.
-//
-// Both DIRECTIONS need the shim, which is easy to miss. Verifying the
-// parent's token is what mints the preview's own session; SIGNING is what
-// the preview does when it acts AS the parent shell — the self-app staging
-// clone renders app views, and each one fetches /api/iframe-token for the
-// embedded child. A preview has no IFRAME_JWT_PRIVATE_KEY either, so
-// without a mint-side fallback that endpoint 500s on every app view and
-// the console-error baseline check fails even though the session works.
-function legacyBootstrapActive() {
-  return process.env.USERNODE_ENV === 'staging'
-    && !process.env.IFRAME_JWT_PUBLIC_KEY
-    && !process.env.USERNODE_APP_ID
-    && !!process.env.JWT_SECRET;
+// Two independent locks keep this out of production:
+//   1. it throws unless USERNODE_ENV === 'staging';
+//   2. config.load() only calls it on the staging branch, and production
+//      cannot boot without a real private key anyway (REQUIRED_PROD).
+// An injected private key is never clobbered — an operator who DOES give a
+// preview a real signing key keeps it.
+function generateStagingIframeKeyPair() {
+  if (process.env.USERNODE_ENV !== 'staging') {
+    throw new Error('platform-jwt: refusing to self-sign outside staging');
+  }
+  if (process.env.IFRAME_JWT_PRIVATE_KEY) {
+    return { generated: false, bits: 0 };
+  }
+  if (_stagingSigningPair) {
+    // Idempotent: a second call must not rotate the key out from under
+    // tokens already minted in this process.
+    return { generated: false, bits: 0, alreadyGenerated: true };
+  }
+  const modulusLength = 2048;
+  const { privateKey, publicKey } = crypto.generateKeyPairSync('rsa', {
+    modulusLength,
+    publicKeyEncoding: { type: 'spki', format: 'pem' },
+    privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+  });
+  _stagingSigningPair = { privateKey, publicKey };
+
+  // Prove the generated pair actually round-trips before declaring success,
+  // the same property assertIframeKeyPair() guarantees for an injected pair.
+  // A clone that reports "self-signed ok" and then mints unverifiable
+  // tokens would be worse than one that plainly 503s.
+  try {
+    const probe = signAppIdentityToken({
+      appId: 1,
+      user: { id: 1, username: '__staging_probe__', usernode_pubkey: null, locale: null },
+      ttl: '1m',
+    });
+    verifyWith(probe, publicKey, {
+      algorithm: 'RS256',
+      audience: appAudience(1),
+      purpose: PUR_IFRAME,
+    });
+  } catch (err) {
+    _stagingSigningPair = null;
+    throw new Error(`self-signed pair failed its probe: ${err.message}`);
+  }
+  return { generated: true, bits: modulusLength };
 }
 
-// Verify a pre-cutover parent's iframe token: bare HS256 against the
-// shared secret, with no iss/aud/pur to check because the old signer
-// emitted none. Throws when the shim is not active, so a caller that
-// forgets the gate cannot accidentally accept one of these in a
-// container that has real key material.
-function verifyLegacyBootstrapToken(token) {
-  if (!legacyBootstrapActive()) {
-    throw new Error('platform-jwt: legacy bootstrap not active');
-  }
-  if (!token || typeof token !== 'string') throw new Error('jwt must be provided');
-  const claims = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-  if (!claims || typeof claims !== 'object') throw new Error('invalid token payload');
-  return claims;
-}
-
-// Mint a pre-cutover-shaped iframe token: the EXACT payload, algorithm and
-// TTL the retired signer emitted — bare HS256 over the shared secret, four
-// claims, 1h, no iss/aud/pur — so a child container still running
-// pre-cutover scaffold code verifies it verbatim. Adding iss/aud/pur here
-// would be strictly worse: a container built by the deployed platform has
-// no USERNODE_APP_ID to build an expected audience from, so it checks
-// none of them, and emitting them would only make this token look
-// app-scoped when it is not.
-//
-// Same gate as the verify half, and the same throw when it is not active:
-// this must never be reachable in a container that holds real key
-// material. Note the asymmetry that keeps it honest — the shim can only
-// sign with a secret the platform ALREADY shares with every container, so
-// it grants the preview nothing that the pre-cutover platform did not
-// already grant. It confers no authority in a post-cutover container,
-// which verifies RS256 against a public key this token was not signed
-// with.
-function signLegacyBootstrapToken({ user, ttl }) {
-  if (!legacyBootstrapActive()) {
-    throw new Error('platform-jwt: legacy bootstrap not active');
-  }
-  if (!user || typeof user.id !== 'number') {
-    throw new Error('platform-jwt: user.id must be a number');
-  }
-  return jwt.sign(
-    {
-      id: user.id,
-      username: user.username,
-      usernode_pubkey: user.usernode_pubkey ?? null,
-      locale: user.locale ?? null,
-    },
-    process.env.JWT_SECRET,
-    { algorithm: 'HS256', expiresIn: ttl || IFRAME_TTL }
-  );
+// Test seam: drop the self-generated pair so a suite can assert the
+// pre-generation state.
+function _resetStagingSigningPair() {
+  _stagingSigningPair = null;
 }
 
 // ── Boot validation ───────────────────────────────────────────────────
@@ -403,9 +443,7 @@ module.exports = {
   verifyEdgeCookie,
   orNull,
   assertIframeKeyPair,
-  // Temporary, staging-only — see the block comment above. Remove with
-  // the follow-up once the cutover has deployed.
-  legacyBootstrapActive,
-  verifyLegacyBootstrapToken,
-  signLegacyBootstrapToken,
+  generateStagingIframeKeyPair,
+  iframeVerifyKeys,
+  _resetStagingSigningPair,
 };

@@ -37,6 +37,7 @@ const AdminConsole = {
     { key: 'limits', label: 'Spend limits' },
     { key: 'features', label: 'Submitted features' },
     { key: 'rollover', label: 'Container rollover' },
+    { key: 'staging-reap', label: 'Stale previews' },
     { key: 'db-export', label: 'Database export' },
     // Topochain (Task 15, migration plan Global Constraint #8): ONE
     // section, its own sub-nav under #admin/topochain/<sub> — see
@@ -262,6 +263,7 @@ const AdminConsole = {
       case 'limits': return AdminConsole.renderLimitsSection(host);
       case 'features': return AdminConsole.renderFeaturesSection(host);
       case 'rollover': return AdminConsole.renderRolloverSection(host);
+      case 'staging-reap': return AdminConsole.renderStalePreviewsSection(host);
       case 'db-export': return AdminConsole.renderDbExportSection(host);
       case 'topochain': return AdminConsole.renderTopochainSection(host);
       default: return AdminConsole.renderOverviewSection(host);
@@ -489,6 +491,250 @@ const AdminConsole = {
         <span class="flex-1 min-w-0">
           <code class="font-mono text-sm">${esc(app.slug)}</code>
           ${app.error ? `<span class="block text-xs text-red-500 mt-0.5">${esc(app.error)}</span>` : ''}
+        </span>
+        <span class="flex items-center gap-2 shrink-0">
+          ${secs ? `<span class="text-xs text-zinc-500">${esc(secs)}</span>` : ''}
+          <span class="text-xs px-2 py-0.5 rounded-full ${chip.cls}">${esc(chip.label)}</span>
+        </span>`;
+      list.appendChild(el);
+    }
+  },
+
+  // ── Stale previews ────────────────────────────────────────────────────
+  //
+  // The preview half of the rollover above. A staging preview's environment
+  // is fixed when it is BUILT, and previews live for weeks — so a platform
+  // env change leaves them running happily with stale env, which the
+  // existing staging-heal sweep cannot see (it only rebuilds previews whose
+  // container has STOPPED). This shuts them down; the next Preview click
+  // rebuilds any that someone actually wants. Progress arrives on the
+  // shell's /ws/events socket as `admin_staging_reap_status` (admin-only
+  // broadcast) and is routed here by App's onmessage; GET
+  // /api/admin/staging-reap covers first paint and WS reconnect. See
+  // src/services/staging-reap.js.
+
+  // Per-preview outcome → chip. Mirrors the outcome vocabulary in
+  // src/services/staging-reap.js; an unknown state falls back to the raw
+  // string so a new outcome shows up rather than disappearing.
+  REAP_STATES: {
+    pending: { label: 'Queued', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    running: { label: 'Shutting down…', cls: 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300' },
+    torn_down: { label: 'Shut down', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
+    torn_down_no_db: { label: 'Shut down — database kept', cls: 'bg-green-100 dark:bg-green-950/60 text-green-700 dark:text-green-400' },
+    skipped_gone: { label: 'Skipped — already gone', cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' },
+    failed: { label: 'Failed', cls: 'bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400' },
+  },
+
+  // Why each preview was picked up. Presentational only — the sweep tears
+  // down everything it enumerates; this just explains what the admin is
+  // looking at, and distinguishes "expected leftover of a merged proposal"
+  // from "the session row is gone entirely".
+  REAP_CLASSIFICATIONS: {
+    merged: 'proposal merged',
+    archived: 'proposal abandoned',
+    promoted: 'up for a vote',
+    merging: 'merging now',
+    active: 'session open',
+    paused: 'session paused',
+    merged_unlinked: 'merged — leaked past teardown',
+    archived_unlinked: 'abandoned — leaked past teardown',
+    promoted_unlinked: 'up for a vote — link lost',
+    no_session_row: 'session no longer exists',
+  },
+
+  renderStalePreviewsSection(host) {
+    const canWrite = AdminConsole.canWrite();
+    host.innerHTML = `
+      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">Stale previews</h2>
+          <button id="admin-refresh-reap" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+        </div>
+        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-2">
+          Shuts down every proposal preview that is still running. A preview's
+          settings are fixed when it is built, so after a platform change to
+          what gets injected into containers, old previews keep running with
+          the old settings — typically showing a login screen instead of the
+          app.
+        </p>
+        <p class="text-xs text-zinc-500 mb-4">
+          Nothing is lost that matters: clicking Preview on a proposal rebuilds
+          it automatically with current settings, the same way a preview that
+          went to sleep does. A preview's throwaway test data is discarded, and
+          rebuilding re-runs that proposal's automated checks.
+        </p>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">Open previews</div>
+            <div id="admin-reap-stale" class="text-2xl font-bold mt-1">—</div>
+          </div>
+          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">At a time</div>
+            <div id="admin-reap-concurrency" class="text-2xl font-bold mt-1">—</div>
+          </div>
+          <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3">
+            <div class="text-xs uppercase tracking-wide text-zinc-500">Failed</div>
+            <div id="admin-reap-failed" class="text-2xl font-bold mt-1">—</div>
+          </div>
+        </div>
+        ${canWrite ? `
+        <button id="admin-reap-btn"
+          class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:hover:bg-violet-600 px-4 py-2 text-sm font-medium text-white transition-colors">
+          Shut down stale previews
+        </button>` : `
+        <p class="text-xs text-zinc-500">View-only admin — you can watch a sweep, but not start one.</p>`}
+        <p id="admin-reap-summary" class="text-sm text-zinc-500 mt-3">Loading…</p>
+        <div id="admin-reap-list" class="space-y-2 mt-3"></div>
+      </div>`;
+
+    document.getElementById('admin-refresh-reap')
+      ?.addEventListener('click', () => AdminConsole.loadStagingReap());
+    document.getElementById('admin-reap-btn')
+      ?.addEventListener('click', () => AdminConsole._startStagingReap());
+
+    AdminConsole.loadStagingReap();
+  },
+
+  async loadStagingReap() {
+    // The page's ?demo=1 rides along on the status read so a staging preview
+    // renders the demo job (routes/admin.js serves it only behind
+    // IS_STAGING && ?demo=1) — a preview has no docker socket, so there is
+    // nothing real for this section to show there. Same pass-through
+    // loadRollover uses.
+    const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+    const { data } = await AdminConsole.fetchJson(`/api/admin/staging-reap${demoQS}`);
+    if (!data || typeof data !== 'object') return;
+    if (AdminConsole._section !== 'staging-reap') return; // navigated away mid-fetch
+    AdminConsole._reapStale = typeof data.stale === 'number' ? data.stale : null;
+    AdminConsole._reapConcurrency = data.concurrency || null;
+    AdminConsole._reapDemo = !!data.demo;
+    // Tracked separately from _reapDemo: the POST is refused in a preview
+    // whether or not the reviewer arrived with ?demo=1.
+    AdminConsole._reapStaging = !!data.staging;
+    AdminConsole._paintStagingReap(data.job || null);
+  },
+
+  // Routed here from App's /ws/events onmessage. The section may not be
+  // mounted (an admin can be anywhere in the shell while a sweep runs) — in
+  // that case there is nothing to repaint and the next mount picks the state
+  // up from the GET.
+  handleStagingReapStatus(data) {
+    if (!data || !AdminConsole._open) return;
+    if (AdminConsole._section !== 'staging-reap') return;
+    if (!document.getElementById('admin-reap-list')) return;
+    AdminConsole._paintStagingReap(data.job || null);
+  },
+
+  async _startStagingReap() {
+    const btn = document.getElementById('admin-reap-btn');
+    const count = AdminConsole._reapStale;
+    const many = typeof count === 'number'
+      ? `${count} preview${count === 1 ? '' : 's'}`
+      : 'every open preview';
+    const ok = await AdminConsole._confirm({
+      title: 'Shut down stale previews?',
+      message: `This shuts down ${many}. Anyone who wants one back gets it `
+        + 'rebuilt automatically on their next Preview click, with current '
+        + "settings. Each preview's throwaway test data is discarded, and "
+        + "rebuilding re-runs that proposal's automated checks.",
+      confirmLabel: 'Shut down',
+    });
+    if (!ok) return;
+    if (btn) { btn.disabled = true; btn.textContent = 'Starting…'; }
+    try {
+      const res = await fetch('/api/admin/staging-reap', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 409) {
+        // Singleton job: a second press is a no-op, not an error.
+        window.PlatformUI?.toast?.('A sweep is already in progress.');
+        if (data && data.job) AdminConsole._paintStagingReap(data.job);
+        return;
+      }
+      if (!res.ok) {
+        AdminConsole._alert((data && data.error) || `Sweep failed to start (HTTP ${res.status})`);
+        return;
+      }
+      window.PlatformUI?.toast?.('Sweep started.');
+      if (data && data.job) AdminConsole._paintStagingReap(data.job);
+    } catch (err) {
+      AdminConsole._alert(`Sweep failed to start: ${err.message}`);
+    } finally {
+      AdminConsole.loadStagingReap();
+    }
+  },
+
+  _paintStagingReap(job) {
+    const esc = AdminConsole.esc;
+    const staleEl = document.getElementById('admin-reap-stale');
+    const concEl = document.getElementById('admin-reap-concurrency');
+    const failedEl = document.getElementById('admin-reap-failed');
+    const summary = document.getElementById('admin-reap-summary');
+    const list = document.getElementById('admin-reap-list');
+    if (!summary || !list) return;
+
+    const running = !!(job && !job.finishedAt && !job.stale);
+
+    if (staleEl) {
+      staleEl.textContent = AdminConsole._reapStale == null
+        ? '—' : String(AdminConsole._reapStale);
+    }
+    if (concEl) {
+      concEl.textContent = job ? String(job.concurrency)
+        : (AdminConsole._reapConcurrency ? String(AdminConsole._reapConcurrency) : '—');
+    }
+    if (failedEl) failedEl.textContent = job ? String(job.failed) : '—';
+
+    const btn = document.getElementById('admin-reap-btn');
+    if (btn) {
+      // A preview has no docker socket, so it cannot manage other previews,
+      // and the route refuses the POST there — say so on the button rather
+      // than letting a reviewer press it into a 400. Gate on `staging`, not
+      // on `demo`: the refusal applies with or without ?demo=1.
+      const preview = !!AdminConsole._reapStaging || !!AdminConsole._reapDemo;
+      btn.disabled = running || preview;
+      btn.textContent = preview
+        ? 'Unavailable in previews'
+        : (running ? 'Sweep in progress…' : 'Shut down stale previews');
+    }
+    const summaryPrefix = AdminConsole._reapDemo
+      ? '<span class="text-violet-500">Staging demo data</span> — ' : '';
+
+    if (!job) {
+      summary.textContent = 'No sweep has run since this platform process started.';
+      list.innerHTML = '';
+      return;
+    }
+    if (!job.total) {
+      summary.textContent = job.finishedAt
+        ? 'Finished — no open previews were found.'
+        : 'Starting…';
+      list.innerHTML = '';
+      return;
+    }
+
+    const parts = [`${job.done} of ${job.total} done`];
+    if (job.failed) parts.push(`${job.failed} failed`);
+    const when = job.finishedAt ? 'Finished' : (job.stale ? 'Stalled' : 'Running');
+    const by = job.startedBy ? ` · started by ${esc(job.startedBy)}` : '';
+    summary.innerHTML = `${summaryPrefix}<span class="font-medium">${when}</span> — ${esc(parts.join(', '))}${by}`;
+
+    list.innerHTML = '';
+    for (const preview of job.previews || []) {
+      const chip = AdminConsole.REAP_STATES[preview.state]
+        || { label: preview.state, cls: 'bg-zinc-200 dark:bg-zinc-700 text-zinc-600 dark:text-zinc-300' };
+      const why = AdminConsole.REAP_CLASSIFICATIONS[preview.classification]
+        || preview.classification;
+      const el = document.createElement('div');
+      el.className = 'flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-2.5 rounded-lg bg-zinc-100 dark:bg-zinc-800';
+      el.setAttribute('data-reap-name', preview.name);
+      el.setAttribute('data-reap-state', preview.state);
+      const secs = preview.ms == null ? '' : `${(preview.ms / 1000).toFixed(1)}s`;
+      el.innerHTML = `
+        <span class="flex-1 min-w-0">
+          <code class="font-mono text-sm">${esc(preview.slug)}</code>
+          <span class="text-xs text-zinc-500 ml-1">#${esc(String(preview.sessionId))}</span>
+          <span class="block text-xs text-zinc-500 mt-0.5">${esc(why)}</span>
+          ${preview.error ? `<span class="block text-xs text-red-500 mt-0.5">${esc(preview.error)}</span>` : ''}
         </span>
         <span class="flex items-center gap-2 shrink-0">
           ${secs ? `<span class="text-xs text-zinc-500">${esc(secs)}</span>` : ''}

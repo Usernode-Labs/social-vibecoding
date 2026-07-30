@@ -113,14 +113,14 @@ function authMiddleware(config) {
             const switchTok = qTok || (typeof hTok === 'string' ? hTok : null);
             if (switchTok) {
               let tokenUserId = null;
-              // App-identity (RS256) first, always. The legacy fallback is
-              // only reachable in a preview built by the pre-cutover
-              // platform — see platformJwt.legacyBootstrapActive().
+              // App-identity (RS256) is the ONLY accepted shape. There is
+              // no legacy branch here: the pre-cutover bootstrap shim was
+              // deleted once every preview was built by a platform that
+              // injects IFRAME_JWT_PUBLIC_KEY + USERNODE_APP_ID, so a
+              // token the RS256 path rejects switches nothing.
               const payload = platformJwt.orNull(
                 () => platformJwt.verifyAppIdentityToken(switchTok, { appId: SELF_APP_ID })
-              ) || (platformJwt.legacyBootstrapActive()
-                ? platformJwt.orNull(() => platformJwt.verifyLegacyBootstrapToken(switchTok))
-                : null);
+              );
               if (payload && typeof payload.id === 'number') tokenUserId = payload.id;
               if (tokenUserId != null && tokenUserId !== rows[0].user_id) {
                 const minted = await tryMintSessionFromIframeJwt(pool, config, switchTok, res);
@@ -200,21 +200,16 @@ function authMiddleware(config) {
 // resolved req.user shape on success, null on any failure (caller falls
 // through to redirectOrReject).
 async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
-  // App-identity (RS256) first, always. Only if that fails AND this
-  // container is a pre-cutover preview (no key material, old shared
-  // secret present) do we fall back to the legacy bare-HS256 shape the
-  // deployed parent still mints — see
-  // platformJwt.legacyBootstrapActive() for why that can never be true
-  // in production, and for when to delete this.
-  let payload = platformJwt.orNull(
+  // App-identity (RS256) pinned to THIS clone's app id, and nothing else.
+  // Fail-closed with no fallback branch anywhere: the token must carry the
+  // right algorithm, issuer, audience and `pur` claim or no session is
+  // minted. (A staging-only pre-cutover bootstrap shim lived here for one
+  // deploy window while previews were still built by a platform that
+  // injected only the old shared secret; it went permanently inert the
+  // moment the cutover reached main and has been removed.)
+  const payload = platformJwt.orNull(
     () => platformJwt.verifyAppIdentityToken(jwtToken, { appId: SELF_APP_ID })
   );
-  if (!payload && platformJwt.legacyBootstrapActive()) {
-    payload = platformJwt.orNull(() => platformJwt.verifyLegacyBootstrapToken(jwtToken));
-    if (payload) {
-      log.warn('auth', 'Staging iframe-JWT accepted via pre-cutover bootstrap shim');
-    }
-  }
   if (!payload) {
     log.warn('auth', 'Staging iframe-JWT verification failed');
     return null;

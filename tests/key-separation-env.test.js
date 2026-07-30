@@ -203,82 +203,53 @@ test("a token minted host-side verifies using only appIdentityEnv's own output",
   }
 });
 
-// ── 1a-bis. The pre-cutover bootstrap shim cannot reach a real container ─
+// ── 1a-bis. No legacy token authority survives anywhere ─────────────────
 //
-// platform-jwt.js carries ONE temporary legacy verify path, for the window
-// where a preview container is built by the pre-cutover platform and so
-// has the old shared secret but no key material. It is a real weakening —
-// bare HS256, no iss/aud/pur — so its containment belongs in this suite
-// rather than only in the staging-auth tests that exercise its behaviour.
+// platform-jwt.js briefly carried ONE temporary legacy verify+mint path,
+// for the window in which a preview container was built by the pre-cutover
+// platform and so held the old shared secret but no key material. It was a
+// real weakening — bare HS256, no iss/aud/pur — so its REMOVAL belongs in
+// this suite rather than only in the staging-auth tests.
 //
-// The load-bearing claim is that the shim is UNREACHABLE, not merely
-// unused, anywhere a container has been given key material. That holds
-// because IFRAME_JWT_PUBLIC_KEY is in REQUIRED_PROD (asserted above), so
-// production cannot boot without it, so the gate's second conjunct is
-// unsatisfiable there. Pin it against the env every builder actually
-// emits: appIdentityEnv always sets IFRAME_JWT_PUBLIC_KEY and
-// USERNODE_APP_ID, so the shim is inert in every app container too — not
-// just on the host.
-test('the legacy bootstrap shim is inert wherever key material exists', () => {
+// The invariant now is stronger than "unreachable": there is no legacy
+// signer or verifier in the module at all, and the alias every container
+// still receives carries the RSA PUBLIC PEM — which cannot sign. Pin both,
+// so re-introducing a shared-secret authority has to be a deliberate,
+// visible act rather than a quiet re-export.
+test('platform-jwt exposes no legacy shared-secret authority', () => {
   assert.ok(REQUIRED_PROD.includes('IFRAME_JWT_PUBLIC_KEY'),
-    'the shim is only unreachable in production because config.js requires this key');
+    'production must not be able to boot without the iframe public key');
 
+  for (const name of [
+    'legacyBootstrapActive',
+    'verifyLegacyBootstrapToken',
+    'signLegacyBootstrapToken',
+  ]) {
+    assert.equal(platformJwt[name], undefined,
+      `platform-jwt must not export ${name}`);
+  }
+
+  // Nothing in the module signs or verifies with process.env.JWT_SECRET —
+  // the one env var a child container shares with the platform by name.
+  const src = fs.readFileSync(
+    require.resolve('../src/services/platform-jwt.js'), 'utf8'
+  );
+  assert.ok(!/process\.env\.JWT_SECRET/.test(src),
+    'platform-jwt.js must not read JWT_SECRET at all');
+});
+
+// The alias is still injected for pre-cutover app scaffolds, and it must
+// hold the PUBLIC PEM — a value that can verify a signature and never
+// produce one. That asymmetry is what makes keeping the alias safe.
+test('the JWT_SECRET alias carries the public PEM, never a signing key', () => {
   const { publicKey } = keyPair();
   const containerEnv = appIdentityEnv({ id: 42 }, { iframeJwtPublicKey: publicKey });
   assert.ok(containerEnv.IFRAME_JWT_PUBLIC_KEY, 'appIdentityEnv must set the public key');
   assert.ok(containerEnv.USERNODE_APP_ID, 'appIdentityEnv must set the app id');
-
-  const savedEnv = {
-    USERNODE_ENV: process.env.USERNODE_ENV,
-    IFRAME_JWT_PUBLIC_KEY: process.env.IFRAME_JWT_PUBLIC_KEY,
-    USERNODE_APP_ID: process.env.USERNODE_APP_ID,
-    JWT_SECRET: process.env.JWT_SECRET,
-  };
-  const apply = (patch) => {
-    for (const [k, v] of Object.entries(patch)) {
-      if (v === undefined) delete process.env[k];
-      else process.env[k] = v;
-    }
-  };
-  try {
-    // A post-cutover staging container: exactly appIdentityEnv's output,
-    // with the deprecated JWT_SECRET alias it also carries. The shim must
-    // be inert here — this is the state every preview reaches the moment
-    // the cutover is on main, which is what makes the shim self-deleting.
-    apply({
-      USERNODE_ENV: 'staging',
-      IFRAME_JWT_PUBLIC_KEY: containerEnv.IFRAME_JWT_PUBLIC_KEY,
-      USERNODE_APP_ID: containerEnv.USERNODE_APP_ID,
-      JWT_SECRET: containerEnv.JWT_SECRET,
-    });
-    assert.equal(platformJwt.legacyBootstrapActive(), false,
-      'a container built by the post-cutover platform must never take the legacy path');
-    assert.throws(
-      () => platformJwt.signLegacyBootstrapToken({ user: { id: 1, username: 'x' } }),
-      /legacy bootstrap not active/,
-      'nor mint a legacy token there'
-    );
-
-    // Production, with every platform key set: unreachable by construction.
-    apply({ USERNODE_ENV: 'production', JWT_SECRET: 'some-legacy-value' });
-    assert.equal(platformJwt.legacyBootstrapActive(), false,
-      'production must never take the legacy path');
-
-    // Both halves of the shim — verify AND mint — refuse outright rather
-    // than merely going unused. The mint half exists because a preview
-    // acting as the parent shell has to answer /api/iframe-token, but it
-    // must be just as unreachable: a container holding the legacy secret
-    // in ANY post-cutover or production env cannot mint with it.
-    assert.equal(typeof platformJwt.verifyLegacyBootstrapToken, 'function');
-    assert.equal(typeof platformJwt.signLegacyBootstrapToken, 'function');
-    assert.throws(
-      () => platformJwt.signLegacyBootstrapToken({ user: { id: 1, username: 'x' } }),
-      /legacy bootstrap not active/,
-      'the mint half must throw wherever key material exists'
-    );
-  } finally {
-    apply(savedEnv);
-  }
+  assert.equal(containerEnv.JWT_SECRET, containerEnv.USERNODE_JWT_PUBLIC_KEY,
+    'the alias must be the public PEM verbatim');
+  assert.match(containerEnv.JWT_SECRET, /BEGIN PUBLIC KEY/,
+    'and must be a PUBLIC key, so a container cannot mint an identity');
 });
 
 // ── 1b. Behavioral: the in-loop browser's app env ───────────────────────
