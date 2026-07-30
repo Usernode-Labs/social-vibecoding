@@ -186,7 +186,10 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
         onNavigate={closeNavigation}
         pathname={location.pathname}
       />
-      <SidebarInset className="min-h-dvh bg-background">
+      {/* The inset card is the page: one contained surface hosts the header,
+          every route, and the focused-app frame. min-h comes from the sidebar
+          wrapper so the card's inset margins never force a scrollbar. */}
+      <SidebarInset className="overflow-hidden">
         {fullBleedRoute ? null : (
           <header className="flex min-h-16 shrink-0 items-center gap-2 border-b px-4" data-slot="platform-header">
             <PlatformMenuTrigger />

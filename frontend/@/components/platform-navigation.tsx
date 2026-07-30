@@ -87,7 +87,7 @@ export function PlatformNavigation({
   const utilityItems = visibleItems.filter((item) => item.group === "utility")
 
   return (
-    <Sidebar collapsible="offcanvas">
+    <Sidebar collapsible="offcanvas" variant="inset">
       <nav aria-label="Platform navigation" className="flex min-h-0 flex-1 flex-col">
         <SidebarHeader>
           <SidebarMenu>
