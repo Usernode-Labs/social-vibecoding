@@ -1,9 +1,9 @@
 // Challenges screen — the mobile app's native Challenges tab absorbed into
 // SV (app-as-SV-chrome migration, NATIVE-BRIDGE.md). Renders the active
 // season, its challenge list, and the season points leaderboard from the
-// public leaderboard service via the server's read-only /challenges-api
-// passthrough (server.js). No bridge dependency — works identically on
-// desktop and inside the app webview.
+// in-process /challenges-api routes (src/routes/topochain/mobile.js,
+// session-cookie authed — the SPA is always signed in). No bridge
+// dependency — works identically on desktop and inside the app webview.
 //
 // Hosted in #challenges-root; mounted/unmounted by App.navigateToChallenges
 // / App._exitChallenges when the #challenges hash route is active.
@@ -164,7 +164,10 @@ const Challenges = {
         row.appendChild(Challenges._el('span',
           'w-8 shrink-0 text-zinc-400 font-mono text-xs', `#${e.rank}`));
         row.appendChild(Challenges._el('span', 'flex-1 min-w-0 truncate',
-          e.display_name || `Participant ${e.participant_id}`));
+          // v4 rows carry user_id (participant == platform user since the
+          // topochain merge); the v2 proxy's rows carried participant_id.
+          e.display_name ||
+            `Participant ${e.user_id ?? e.participant_id}`));
         row.appendChild(Challenges._el('span',
           'shrink-0 font-semibold text-violet-600 dark:text-violet-400',
           `${Number(e.total_points || 0).toLocaleString()} pts`));
