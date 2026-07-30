@@ -7,7 +7,12 @@ test.beforeEach(async ({ page }) => {
     messages: [],
   } }))
   await page.route("**/api/sessions/9/ensure-staging", (route) => route.fulfill({ json: { status: "ready", url: "https://preview.example.test" } }))
-  await page.route("**/api/iframe-token", (route) => route.fulfill({ json: { token: "preview-token" } }))
+  await page.route("**/api/iframe-token*", (route) => {
+    if (new URL(route.request().url()).searchParams.get("app") !== "recipebot") {
+      return route.fulfill({ status: 400, json: { error: "app query parameter is required" } })
+    }
+    return route.fulfill({ json: { token: "preview-token" } })
+  })
   await page.route("https://preview.example.test/**", (route) => route.fulfill({ contentType: "text/html", body: "<title>Preview</title><main>Preview ready</main>" }))
 })
 

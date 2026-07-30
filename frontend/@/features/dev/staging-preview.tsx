@@ -84,7 +84,7 @@ export function StagingPreview() {
         if (!await waitForHostedTls(resolved.staging_url, { alive: () => !cancelled, resolveHost: resolveDevHost })) {
           throw new Error("The secure preview is taking longer than expected. Return to the session and try again in a moment.")
         }
-        const iframeToken = await getIframeToken(controller.signal)
+        const iframeToken = await getIframeToken(slug, controller.signal)
         if (cancelled) return
         setToken(iframeToken)
         setState("ready")

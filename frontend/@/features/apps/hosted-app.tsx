@@ -102,7 +102,7 @@ export function HostedApp() {
     let cancelled = false
     const refreshToken = async () => {
       try {
-        const receivedToken = await getIframeToken(controller.signal)
+        const receivedToken = await getIframeToken(currentApp.slug, controller.signal)
         if (cancelled) return
         setTokenErrorState(null)
         setTokenState({ slug: currentApp.slug, value: receivedToken })

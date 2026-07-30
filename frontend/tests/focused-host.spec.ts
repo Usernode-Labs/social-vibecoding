@@ -44,8 +44,11 @@ test.beforeEach(async ({ page }) => {
     appRequests += 1
     return route.fulfill({ json: { app } })
   })
-  await page.route("**/api/iframe-token", (route) => {
+  await page.route("**/api/iframe-token*", (route) => {
     tokenRequests += 1
+    if (new URL(route.request().url()).searchParams.get("app") !== app.slug) {
+      return route.fulfill({ status: 400, json: { error: "app query parameter is required" } })
+    }
     return route.fulfill({ json: { token: "focused.header.signature" } })
   })
   await page.route("https://recipebot.example.test/**", (route) => {

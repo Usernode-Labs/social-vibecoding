@@ -325,12 +325,16 @@ export async function createAppSession(slug: string, issueNumber?: number): Prom
 }
 
 /**
- * The server mints the short-lived identity token used by hosted child apps
- * and staging previews. Keeping it in the app data layer prevents route
- * components from inventing their own fetch/refresh contracts.
+ * The server mints a short-lived, app-scoped identity token used by hosted
+ * child apps and staging previews. Keeping the app slug and request in the
+ * data layer prevents route components from inventing their own
+ * fetch/refresh contracts.
  */
-export async function getIframeToken(signal?: AbortSignal) {
-  const response = await fetch("/api/iframe-token", { credentials: "same-origin", signal })
+export async function getIframeToken(slug: string, signal?: AbortSignal) {
+  const response = await fetch(`/api/iframe-token?app=${encodeURIComponent(slug)}`, {
+    credentials: "same-origin",
+    signal,
+  })
   if (!response.ok) throw new Error(`Request failed (${response.status})`)
   const payload = await response.json() as { token?: string }
   if (!payload.token) throw new Error("Your app session could not be prepared.")
