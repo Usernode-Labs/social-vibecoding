@@ -18,8 +18,14 @@ test("reads the live public status contract through the guarded local shell", as
 })
 
 test("reads the live public leaderboard contract through the guarded local shell", async ({ page }) => {
+  const leaderboardResponse = page.waitForResponse((response) =>
+    new URL(response.url()).pathname === "/api/leaderboard/prs"
+  )
+
   await page.goto("/react/community/leaderboard")
 
   await expect(page.getByRole("heading", { level: 1, name: "Kudos leaderboard" })).toBeVisible()
-  await expect(page.getByTestId("leaderboard").getByRole("alert")).toHaveCount(0)
+  await expect((await leaderboardResponse).status()).toBe(200)
+  await expect(page.getByTestId("leaderboard").locator('[data-slot="skeleton"]')).toHaveCount(0)
+  await expect(page.getByTestId("leaderboard").getByText("Leaderboard unavailable")).toHaveCount(0)
 })

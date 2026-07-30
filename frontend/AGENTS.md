@@ -70,6 +70,10 @@ npm run check:ui
 WebView behavior. Add a host-level contract test when changing bridge, iframe,
 safe-area, history, authentication, or offline behavior.
 
+`npm run test:production-smoke` is anonymous and read-only. It verifies live
+public contracts only; authenticated iframe-token scope remains covered by
+exact fixtures and host-level contract tests rather than production credentials.
+
 ## Owned pattern registry
 
 `design-system/tokens.json` is the canonical DTCG token source.
