@@ -71,7 +71,7 @@ function makeHomeEnv(user) {
     alert: () => {},
     confirm: () => true,
     setTimeout, clearTimeout, setInterval, clearInterval,
-    URL,
+    URL, URLSearchParams,
     location: { search: '', origin: 'https://sv.test' },
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -880,5 +880,83 @@ test('menu: shortcut item hidden when unsupported or app not running', () => {
       false,
       `hidden on ${status} apps`
     );
+  }
+});
+
+// ── ?shot=card-menu deep link + opaque menu surface (issue #847) ───
+//
+// The menu only exists after a click, so the before/after captures and
+// the dapp.json checks can't reach it — hence the screenshot-state deep
+// link. And because a popover has no backdrop, its surface must be
+// opaque: the platform themes the kit's --un-group-bg to a 6% violet
+// tint (right for grouped-list cards on the page, see-through as a
+// menu), which is exactly what #847 reported.
+
+function shotEnv(search, buttons) {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  sandbox.location.search = search;
+  sandbox.CSS = { escape: (s) => s };
+  sandbox.document.querySelector = (sel) => {
+    if (!sel.startsWith('.card-menu-btn')) return null;
+    const m = /\[data-slug="([^"]+)"\]/.exec(sel);
+    return m
+      ? buttons.find((b) => b.dataset.slug === m[1]) || null
+      : buttons[0] || null;
+  };
+  const opened = [];
+  Home.openCardMenu = (slug, anchor) => opened.push({ slug, anchor });
+  return { Home, opened };
+}
+
+const menuBtn = (slug) => ({ dataset: { slug } });
+
+test('shot link: ?shot=card-menu opens the first card\'s menu, once', () => {
+  const { Home, opened } = shotEnv('?shot=card-menu', [menuBtn('first-app'), menuBtn('second-app')]);
+  Home._applyShotState();
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].slug, 'first-app');
+  assert.ok(opened[0].anchor, 'anchored to the trigger so the kit can toggle it closed');
+  // load() re-runs on every WS app_status/app_update — a menu that
+  // reopened on each of those would fight the user.
+  Home._applyShotState();
+  assert.equal(opened.length, 1, 'one-shot');
+});
+
+test('shot link: &slug= targets one app; unknown slug and no param are no-ops', () => {
+  const btns = [menuBtn('first-app'), menuBtn('wanted-app')];
+  const a = shotEnv('?shot=card-menu&slug=wanted-app', btns);
+  a.Home._applyShotState();
+  assert.deepEqual(a.opened.map((o) => o.slug), ['wanted-app']);
+
+  const b = shotEnv('?shot=card-menu&slug=nope', btns);
+  b.Home._applyShotState();
+  assert.equal(b.opened.length, 0, 'no card for that slug — nothing to open');
+
+  for (const search of ['', '?demo=1', '?shot=secrets']) {
+    const c = shotEnv(search, btns);
+    c.Home._applyShotState();
+    assert.equal(c.opened.length, 0, `no menu for "${search}"`);
+  }
+});
+
+test('app.css: --un-popover-bg is pinned opaque in light and dark (issue #847)', () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'css', 'app.css'),
+    'utf8'
+  );
+  // The kit paints .un-popover with --un-popover-bg; the platform's
+  // theming block must not hand it a translucent value.
+  const scopes = [':root', '.dark'];
+  for (const scope of scopes) {
+    // The kit-theming block is the LAST occurrence of each scope in
+    // app.css (the palette blocks come first).
+    const at = css.lastIndexOf(scope + ' {\n  --un-accent');
+    assert.ok(at !== -1, `app.css lost the ${scope} kit-theming block`);
+    const block = css.slice(at, css.indexOf('\n}', at));
+    const decl = /--un-popover-bg:\s*([^;]+);/.exec(block);
+    assert.ok(decl, `${scope} must pin --un-popover-bg — inheriting a card tint is issue #847`);
+    const value = decl[1].trim();
+    assert.doesNotMatch(value, /rgba|hsla|transparent|--bg-card/,
+      `${scope} --un-popover-bg must be opaque, got "${value}"`);
   }
 });

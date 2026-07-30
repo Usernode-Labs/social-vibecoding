@@ -33,6 +33,7 @@ const Home = {
       // populated (it needs the app objects for icon payloads); retry
       // now that they're here. No-op when everything has an icon.
       Home._healWidgetIcons();
+      Home._applyShotState();
     } catch (err) {
       listEl.innerHTML = `<div class="p-4 text-red-400 text-sm">Failed to load apps</div>`;
     }
@@ -1392,15 +1393,76 @@ const Home = {
       })),
     });
     Home._menu = menu;
+    // The desktop popover floats over the grid with NO backdrop, so a
+    // translucent surface lets the tiles behind it show through (#847).
+    // The kit inserts the popover synchronously (menus have no entrance
+    // animation), so its resolved surface is measurable right here.
+    Home._markMenuSurface();
     menu.then(() => {
       if (Home._menu === menu) Home._menu = null;
     });
+  },
+
+  // Stamps the open popover with whether its surface actually resolved to
+  // an opaque color. Two consumers: the dapp.json check asserts the
+  // attribute (a selector is all a proposal test can assert), and the
+  // console.error fails the baseline no-console-errors check — so a token
+  // regression can't merge quietly. Touch presents an action sheet (over
+  // a backdrop, on --un-sheet-bg) — nothing to measure there.
+  _markMenuSurface() {
+    if (typeof getComputedStyle !== 'function') return;
+    const el = document.querySelector('.un-popover');
+    if (!el) return;
+    const opaque = Home.isOpaqueColor(getComputedStyle(el).backgroundColor);
+    el.dataset.opaqueSurface = opaque ? 'true' : 'false';
+    if (!opaque) {
+      console.error(
+        '[home] card actions menu has a see-through surface — check --un-popover-bg (#847)'
+      );
+    }
+  },
+
+  // 'rgb(r, g, b)' / 'rgba(r, g, b, a)' → true only when fully opaque.
+  // Anything unparseable (or 'transparent') counts as NOT opaque: a
+  // surface we can't measure is one we can't vouch for.
+  isOpaqueColor(color) {
+    const m = /^rgba?\(([^)]+)\)$/.exec(String(color || '').trim());
+    if (!m) return false;
+    const parts = m[1].split(/[\s,/]+/).filter(Boolean);
+    if (parts.length === 3) return true;
+    return parts.length === 4 && Number(parts[3]) === 1;
   },
 
   closeCardMenu() {
     const menu = Home._menu;
     Home._menu = null;
     if (menu && typeof menu.dismiss === 'function') menu.dismiss();
+  },
+
+  // Screenshot-state deep link (`?shot=card-menu`, #847): the card actions
+  // menu only exists after a click, so neither the before/after captures
+  // nor a dapp.json test can reach it — a change to the menu's own surface
+  // would be invisible to both. Opening it from a URL param makes it
+  // capturable and testable. Pure UI state (it opens exactly what the "…"
+  // button opens, writes nothing, gated on no environment), so the
+  // "before" side of a capture works too. `&slug=<slug>` targets one app;
+  // the default is the first card in the grid.
+  _shotApplied: false,
+
+  _applyShotState() {
+    if (Home._shotApplied) return;
+    let params;
+    try { params = new URLSearchParams(location.search); } catch { return; }
+    if (params.get('shot') !== 'card-menu') return;
+    const wanted = params.get('slug');
+    const btn = wanted
+      ? document.querySelector(`.card-menu-btn[data-slug="${CSS.escape(wanted)}"]`)
+      : document.querySelector('.card-menu-btn');
+    if (!btn) return;
+    // One-shot: load() re-runs on every WS app_status/app_update, and a
+    // menu that reopened on each of those would fight the user.
+    Home._shotApplied = true;
+    Home.openCardMenu(btn.dataset.slug, btn);
   },
 
   // ── Menu actions ──────────────────────────────────────────────────
