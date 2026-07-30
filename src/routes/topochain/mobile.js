@@ -1716,6 +1716,127 @@ function topochainMobileRoutes(config) {
     }
   });
 
+  // ── POST /wallet/provision ────────────────────────────────────────────
+  // Replaces the retired v2 /register flow's account allocation for
+  // platform-auth (OTP/password) users. The mobile app calls this after
+  // sign-in to obtain the user's on-chain account for the current active
+  // public season (same fallback rule as GET /challenges):
+  //
+  //   - Idempotent: a user who already holds an `onchain_accounts` row for
+  //     the season (migrated from topochain, or a reinstall on a new
+  //     device) gets the SAME account back — address, public_key AND
+  //     secret_key, exactly what v2 /register returned. Client-generated
+  //     random keys can't work here: /zkpassport/complete (and every
+  //     wallet-scoped read) requires a matching pre-provisioned row, and
+  //     slot-outcome ingest resolves users by these allocated addresses.
+  //   - Fresh users are allocated an unused season-scoped account from the
+  //     admin-seeded pool (`user_id IS NULL AND is_used = FALSE`, claimed
+  //     with FOR UPDATE SKIP LOCKED so concurrent first-logins never race
+  //     onto the same row) and enrolled season-wide when no enrollment for
+  //     the season exists yet — mirroring admin/users.js's import
+  //     semantics (user_id + is_used + used_at on the account; a
+  //     season-scoped user_enrollments row).
+  //   - 409 when the pool is exhausted: a real operational condition (the
+  //     accounts are pre-funded on-chain and can't be minted here); the
+  //     app surfaces "try again later" and ops re-seeds the pool.
+  //
+  // Returning `secret_key` over the token-authenticated channel is the
+  // same exposure the v2 registration response had — it IS the account
+  // credential the device must import to run its node.
+  router.post('/api/v4/mobile/wallet/provision', mobileTokenAuth(config), async (req, res) => {
+    try {
+      const { rows: seasonRows } = await pool.query(
+        `SELECT id FROM seasons
+          WHERE internal = FALSE AND is_active = TRUE
+            AND starts_at <= NOW() AND ends_at >= NOW()
+          ORDER BY starts_at DESC, id DESC LIMIT 1`
+      );
+      if (!seasonRows.length) return fail(res, 422, 'No active season is available.');
+      const seasonId = Number(seasonRows[0].id);
+
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+
+        // Existing allocation wins. Prefer a season-wide account (matches
+        // every event's wallet check) over an event-scoped one.
+        const { rows: existingRows } = await client.query(
+          `SELECT id, address, public_key, secret_key, season_event_id
+             FROM onchain_accounts
+            WHERE user_id = $1 AND season_id = $2
+            ORDER BY (season_event_id IS NULL) DESC, id ASC
+            LIMIT 1`,
+          [req.user.id, seasonId]
+        );
+
+        let account = existingRows[0] || null;
+        let newlyAllocated = false;
+        if (!account) {
+          const { rows: poolRows } = await client.query(
+            `SELECT id, address, public_key, secret_key, season_event_id
+               FROM onchain_accounts
+              WHERE user_id IS NULL AND is_used = FALSE
+                AND season_id = $1 AND season_event_id IS NULL
+              ORDER BY id ASC
+              LIMIT 1
+              FOR UPDATE SKIP LOCKED`,
+            [seasonId]
+          );
+          if (!poolRows.length) {
+            await client.query('ROLLBACK');
+            return fail(res, 409, 'No on-chain accounts are available for the current season.');
+          }
+          account = poolRows[0];
+          await client.query(
+            `UPDATE onchain_accounts
+                SET user_id = $1, is_used = TRUE, used_at = NOW(), updated_at = NOW()
+              WHERE id = $2`,
+            [req.user.id, account.id]
+          );
+          newlyAllocated = true;
+        }
+
+        // Any enrollment for the season (event-scoped or season-wide)
+        // satisfies the completion check; only insert a season-wide row
+        // when none exists, so migrated users never get a duplicate scope.
+        const { rows: enrollRows } = await client.query(
+          `SELECT id FROM user_enrollments
+            WHERE user_id = $1 AND season_id = $2
+            LIMIT 1`,
+          [req.user.id, seasonId]
+        );
+        if (!enrollRows.length) {
+          await client.query(
+            `INSERT INTO user_enrollments (season_event_id, user_id, season_id, registered_at, created_at, updated_at)
+             VALUES (NULL, $1, $2, NOW(), NOW(), NOW())`,
+            [req.user.id, seasonId]
+          );
+        }
+
+        await client.query('COMMIT');
+
+        return ok(res, {
+          data: {
+            address: account.address,
+            public_key: account.public_key,
+            secret_key: account.secret_key,
+            season_id: seasonId,
+            season_event_id: account.season_event_id != null ? Number(account.season_event_id) : null,
+            newly_allocated: newlyAllocated,
+          },
+        });
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    } catch (err) {
+      log.error('topochain-mobile', 'POST /wallet/provision failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
   // ── GET /delegation (SPEC 2142-2166) ─────────────────────────────────
   // v4 requires a session token (SPEC flags "no auth in source"); the
   // user may only read their own wallets — the account lookup below is
