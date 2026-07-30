@@ -13,7 +13,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { AppContextChrome, appContextState } from "@/features/apps/app-context-chrome"
+import { AppTopBar } from "@/features/apps/app-top-bar"
 import { AppVisibilitySettings, type AppVisibilityProposalState, type AppVisibilitySelection } from "@/features/apps/app-visibility-settings"
 import { getApp, proposeAppVisibility, type AppDetail } from "@/lib/apps-api"
 import { CollaboratorRequestError, getCollaborators, inviteCollaborator, removeCollaborator, searchInviteUsers, type Collaborator, type CollaboratorRoster, type UserSearchResult } from "@/lib/collaborators-api"
@@ -186,13 +186,14 @@ export function AppMembers() {
     }
   }
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="app-members">
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="app-members">
+    <AppTopBar app={ready ? ready.app : null} backTo={ready ? appDetailsPath(ready.app.slug) : "/"} fallbackTitle="Members and visibility" label="Members and visibility" mode="nested" />
+    <div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {state.kind === "loading" ? <MembersSkeleton /> : null}
     {state.kind === "not-found" ? <Empty data-testid="members-not-found"><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={UsersRound} /></EmptyMedia><EmptyTitle>Collaborators unavailable</EmptyTitle><EmptyDescription>This collaborators view is not available to this session.</EmptyDescription></EmptyHeader><Button render={<Link to="/" />} variant="outline">Back to apps</Button></Empty> : null}
     {state.kind === "forbidden" ? <Alert variant="destructive"><PlatformIcon icon={ShieldAlert} /><AlertTitle>Collaborator access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Could not load collaborators</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {ready ? <>
-      <AppContextChrome app={ready.app} backTo={appDetailsPath(ready.app.slug)} label="Members and visibility" mode="nested" state={appContextState(ready.app)} />
       {isProductionReadOnlyReview ? <Alert data-testid="members-production-review"><AlertTitle>Read-only</AlertTitle><AlertDescription>Invitations, collaborator changes, and visibility changes are unavailable.</AlertDescription></Alert> : null}
       <AppVisibilitySettings
         appName={ready.app.name}
@@ -223,12 +224,37 @@ export function AppMembers() {
       </Card>
       {ready.roster.collabVisibility === "private" ? <Card>
         <CardHeader><CardTitle>Invite a collaborator</CardTitle><CardDescription>Search by username. Existing collaborators and pending invites won’t appear.</CardDescription></CardHeader>
-        <CardContent><form onSubmit={(event) => void submitInvite(event)}><FieldGroup><Field data-invalid={!!inviteError}><FieldLabel htmlFor="invite-username">Username</FieldLabel><Input autoComplete="off" disabled={!canInvite || inviting} id="invite-username" onChange={(event) => setInviteQuery(event.target.value)} placeholder="Start typing a username" value={inviteQuery} />{searchError ? <FieldError>{searchError}</FieldError> : null}{inviteError ? <FieldError>{inviteError}</FieldError> : null}<FieldDescription>Type at least two characters to search eligible users.</FieldDescription></Field>{suggestions.length ? <ul aria-label="Invite suggestions" className="flex flex-col gap-1 rounded-lg border p-1">{suggestions.map((user) => <li key={user.id}><Button className="w-full justify-start" disabled={!canInvite || inviting} onClick={() => { setInviteQuery(user.username); setSuggestions([]) }} size="sm" type="button" variant="ghost">@{user.username}</Button></li>)}</ul> : null}<Button disabled={!canInvite || inviting || !inviteQuery.trim()} type="submit">{inviting ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}{inviting ? "Inviting…" : "Send invite"}</Button></FieldGroup></form></CardContent>
+        <CardContent><AppMemberInviteForm canInvite={canInvite} error={inviteError} inviting={inviting} onQueryChange={setInviteQuery} onSelectSuggestion={(username) => { setInviteQuery(username); setSuggestions([]) }} onSubmit={submitInvite} query={inviteQuery} searchError={searchError} suggestions={suggestions} /></CardContent>
         <CardFooter>{!canInvite && !isProductionReadOnlyReview ? <p className="text-sm text-muted-foreground">This app does not use collaborator invitations.</p> : <p aria-live="polite" className="text-sm text-muted-foreground">{inviteSuccess}</p>}</CardFooter>
       </Card> : null}
     </> : null}
     <AlertDialog onOpenChange={(open) => { if (!open && !removing) setRemoveTarget(null) }} open={removeTarget !== null}>
       <AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{removeTarget ? memberAction(removeTarget, currentUser).title : "Update collaborator"}</AlertDialogTitle><AlertDialogDescription>{removeTarget ? memberAction(removeTarget, currentUser).description : ""}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={removing}>Cancel</AlertDialogCancel><AlertDialogAction disabled={removing || isProductionReadOnlyReview} onClick={() => void confirmRemoval()} type="button" variant="destructive">{removing ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}{removing ? "Updating…" : removeTarget?.status === "invited" ? "Revoke invite" : removeTarget?.userId === currentUser?.id ? "Leave app" : "Remove collaborator"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent>
     </AlertDialog>
+    </div>
   </div>
+}
+
+export function AppMemberInviteForm({
+  canInvite,
+  error,
+  inviting,
+  onQueryChange,
+  onSelectSuggestion,
+  onSubmit,
+  query,
+  searchError,
+  suggestions,
+}: {
+  canInvite: boolean
+  error: string | null
+  inviting: boolean
+  onQueryChange: (query: string) => void
+  onSelectSuggestion: (username: string) => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  query: string
+  searchError: string | null
+  suggestions: UserSearchResult[]
+}) {
+  return <form aria-label="Invite a collaborator" onSubmit={onSubmit}><FieldGroup><Field data-invalid={!!error}><FieldLabel htmlFor="invite-username">Username</FieldLabel><Input autoComplete="off" disabled={!canInvite || inviting} id="invite-username" onChange={(event) => onQueryChange(event.target.value)} placeholder="Start typing a username" value={query} />{searchError ? <FieldError>{searchError}</FieldError> : null}{error ? <FieldError>{error}</FieldError> : null}<FieldDescription>Type at least two characters to search eligible users.</FieldDescription></Field>{suggestions.length ? <ul aria-label="Invite suggestions" className="flex flex-col gap-1 rounded-lg border p-1">{suggestions.map((user) => <li key={user.id}><Button className="w-full justify-start" disabled={!canInvite || inviting} onClick={() => onSelectSuggestion(user.username)} size="sm" type="button" variant="ghost">@{user.username}</Button></li>)}</ul> : null}<Button disabled={!canInvite || inviting || !query.trim()} type="submit">{inviting ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}{inviting ? "Inviting…" : "Send invite"}</Button></FieldGroup></form>
 }

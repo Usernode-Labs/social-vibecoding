@@ -2,8 +2,8 @@ import { Check, Github, LoaderCircle, Plus } from "lucide-react"
 import { useEffect, useState, type FormEvent } from "react"
 import { useNavigate } from "react-router-dom"
 
-import { PageHeader } from "@/components/page-header"
 import { PlatformIcon } from "@/components/platform-icon"
+import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -13,7 +13,7 @@ import { getCurrentUser } from "@/lib/auth-api"
 import { createApp, verifyRepositoryAccess, type AppVisibility, type VerifyRepoAccess } from "@/lib/apps-api"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
 
-type Mode = "new" | "import"
+export type CreateAppMode = "new" | "import"
 
 function VisibilityChoice({ disabled, label, onChange, value, values }: { disabled: boolean; label: string; onChange: (value: AppVisibility) => void; value: AppVisibility; values: Array<{ description: string; label: string; value: AppVisibility }> }) {
   return <FieldSet>
@@ -30,7 +30,7 @@ function VisibilityChoice({ disabled, label, onChange, value, values }: { disabl
 
 export function CreateApp() {
   const navigate = useNavigate()
-  const [mode, setMode] = useState<Mode>("new")
+  const [mode, setMode] = useState<CreateAppMode>("new")
   const [name, setName] = useState("")
   const [repoUrl, setRepoUrl] = useState("")
   const [access, setAccess] = useState<VerifyRepoAccess | null>(null)
@@ -53,7 +53,7 @@ export function CreateApp() {
     return () => { cancelled = true; controller.abort() }
   }, [])
 
-  function changeMode(next: Mode) {
+  function changeMode(next: CreateAppMode) {
     setMode(next); setAccess(null); setError(null)
   }
 
@@ -86,24 +86,80 @@ export function CreateApp() {
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to create this app.") } finally { setSubmitting(false) }
   }
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="create-app">
-    <PageHeader description="Start a new app, or import a GitHub repository that the platform bot can build." title="Create an app" />
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="create-app">
+    <TopBar title="Create an app" />
+    <p className="max-w-2xl text-pretty text-base text-muted-foreground sm:text-sm">Start a new app, or import a GitHub repository that the platform bot can build.</p><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {isProductionReadOnlyReview ? <Alert><AlertTitle>Production review mode</AlertTitle><AlertDescription>App creation is disabled while this local React workspace reviews production data.</AlertDescription></Alert> : null}
     {canCreate === false && !isProductionReadOnlyReview ? <Alert><AlertTitle>App creation unavailable</AlertTitle><AlertDescription>Sign in with an account that has an available app-creation slot.</AlertDescription></Alert> : null}
     {error ? <Alert variant="destructive"><AlertTitle>Could not create app</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
     <Card className="w-full max-w-2xl"><CardHeader><CardTitle>App source</CardTitle><CardDescription>The server remains authoritative for quotas, visibility, repository access, and creation.</CardDescription></CardHeader><CardContent>
-      <form onSubmit={(event) => void submit(event)}><FieldGroup>
-        <div className="grid grid-cols-2 gap-2" role="tablist" aria-label="App source">
-          <Button aria-selected={mode === "new"} onClick={() => changeMode("new")} role="tab" type="button" variant={mode === "new" ? "default" : "outline"}>Create new</Button>
-          <Button aria-selected={mode === "import"} onClick={() => changeMode("import")} role="tab" type="button" variant={mode === "import" ? "default" : "outline"}>Import existing</Button>
-        </div>
-        {mode === "import" ? <Field><FieldLabel htmlFor="repo-url">GitHub repository URL</FieldLabel><div className="flex flex-col gap-2 sm:flex-row"><Input autoComplete="off" disabled={disabled} id="repo-url" onChange={(event) => { setRepoUrl(event.target.value); setAccess(null) }} placeholder="https://github.com/owner/repo" spellCheck={false} type="url" value={repoUrl} /><Button disabled={disabled || !repoUrl.trim()} onClick={() => void checkAccess()} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={checking ? LoaderCircle : Github} className={checking ? "animate-spin" : undefined} />{checking ? "Checking…" : access ? "Check again" : "Check access"}</Button></div><FieldDescription>Invite <code>usernode-bot</code> to the repository with Write access, then check it here.</FieldDescription>{access ? <p className="text-sm text-primary" role="status">usernode-bot has Write access to {access.fullName || `${access.owner}/${access.repo}`}.</p> : null}</Field> : null}
-        <Field><FieldLabel htmlFor="app-name">App name</FieldLabel><Input disabled={disabled || (mode === "import" && !access)} id="app-name" maxLength={80} onChange={(event) => setName(event.target.value)} placeholder="My useful app" required value={name} /></Field>
-        <VisibilityChoice disabled={disabled} label="Who can build it" onChange={changeCollabVisibility} value={collabVisibility} values={[{ value: "public", label: "Everyone", description: "Anyone on the platform can collaborate." }, { value: "private", label: "Invite-only", description: "Only invited collaborators can build it." }]} />
-        <VisibilityChoice disabled={disabled || collabVisibility === "public"} label="Who can see and use it" onChange={setViewVisibility} value={viewVisibility} values={[{ value: "public", label: "Everyone", description: "The app is visible to the community." }, { value: "private", label: "Members", description: "Only members can open the app." }]} />
-        <FieldDescription>{collabVisibility === "public" ? "Public collaboration requires public viewing, so the second choice is fixed to Everyone." : "Visibility is applied by the server when the app is created."}</FieldDescription>
-        <Button disabled={disabled || !name.trim() || (mode === "import" && !access)} type="submit"><PlatformIcon data-icon="inline-start" icon={submitting ? LoaderCircle : Plus} className={submitting ? "animate-spin" : undefined} />{submitting ? "Creating…" : mode === "import" ? "Import app" : "Create app"}</Button>
-      </FieldGroup></form>
+      <CreateAppForm
+        access={access}
+        checking={checking}
+        collabVisibility={collabVisibility}
+        disabled={disabled}
+        mode={mode}
+        name={name}
+        onCheckAccess={() => void checkAccess()}
+        onCollabVisibilityChange={changeCollabVisibility}
+        onModeChange={changeMode}
+        onNameChange={setName}
+        onRepoUrlChange={(value) => { setRepoUrl(value); setAccess(null) }}
+        onSubmit={submit}
+        onViewVisibilityChange={setViewVisibility}
+        repoUrl={repoUrl}
+        submitting={submitting}
+        viewVisibility={viewVisibility}
+      />
     </CardContent></Card>
-  </div>
+  </div></div>
+}
+
+export function CreateAppForm({
+  access,
+  checking,
+  collabVisibility,
+  disabled,
+  mode,
+  name,
+  onCheckAccess,
+  onCollabVisibilityChange,
+  onModeChange,
+  onNameChange,
+  onRepoUrlChange,
+  onSubmit,
+  onViewVisibilityChange,
+  repoUrl,
+  submitting,
+  viewVisibility,
+}: {
+  access: VerifyRepoAccess | null
+  checking: boolean
+  collabVisibility: AppVisibility
+  disabled: boolean
+  mode: CreateAppMode
+  name: string
+  onCheckAccess: () => void
+  onCollabVisibilityChange: (value: AppVisibility) => void
+  onModeChange: (mode: CreateAppMode) => void
+  onNameChange: (name: string) => void
+  onRepoUrlChange: (url: string) => void
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void
+  onViewVisibilityChange: (value: AppVisibility) => void
+  repoUrl: string
+  submitting: boolean
+  viewVisibility: AppVisibility
+}) {
+  return <form aria-label="Create an app" onSubmit={onSubmit}><FieldGroup>
+    <div className="grid grid-cols-2 gap-2" role="tablist" aria-label="App source">
+      <Button aria-selected={mode === "new"} onClick={() => onModeChange("new")} role="tab" type="button" variant={mode === "new" ? "default" : "outline"}>Create new</Button>
+      <Button aria-selected={mode === "import"} onClick={() => onModeChange("import")} role="tab" type="button" variant={mode === "import" ? "default" : "outline"}>Import existing</Button>
+    </div>
+    {mode === "import" ? <Field><FieldLabel htmlFor="repo-url">GitHub repository URL</FieldLabel><div className="flex flex-col gap-2 sm:flex-row"><Input autoComplete="off" disabled={disabled} id="repo-url" onChange={(event) => onRepoUrlChange(event.target.value)} placeholder="https://github.com/owner/repo" spellCheck={false} type="url" value={repoUrl} /><Button disabled={disabled || !repoUrl.trim()} onClick={onCheckAccess} type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={checking ? LoaderCircle : Github} className={checking ? "animate-spin" : undefined} />{checking ? "Checking…" : access ? "Check again" : "Check access"}</Button></div><FieldDescription>Invite <code>usernode-bot</code> to the repository with Write access, then check it here.</FieldDescription>{access ? <p className="text-sm text-primary" role="status">usernode-bot has Write access to {access.fullName || `${access.owner}/${access.repo}`}.</p> : null}</Field> : null}
+    <Field><FieldLabel htmlFor="app-name">App name</FieldLabel><Input disabled={disabled || (mode === "import" && !access)} id="app-name" maxLength={80} onChange={(event) => onNameChange(event.target.value)} placeholder="My useful app" required value={name} /></Field>
+    <VisibilityChoice disabled={disabled} label="Who can build it" onChange={onCollabVisibilityChange} value={collabVisibility} values={[{ value: "public", label: "Everyone", description: "Anyone on the platform can collaborate." }, { value: "private", label: "Invite-only", description: "Only invited collaborators can build it." }]} />
+    <VisibilityChoice disabled={disabled || collabVisibility === "public"} label="Who can see and use it" onChange={onViewVisibilityChange} value={viewVisibility} values={[{ value: "public", label: "Everyone", description: "The app is visible to the community." }, { value: "private", label: "Members", description: "Only members can open the app." }]} />
+    <FieldDescription>{collabVisibility === "public" ? "Public collaboration requires public viewing, so the second choice is fixed to Everyone." : "Visibility is applied by the server when the app is created."}</FieldDescription>
+    <Button disabled={disabled || !name.trim() || (mode === "import" && !access)} type="submit"><PlatformIcon data-icon="inline-start" icon={submitting ? LoaderCircle : Plus} className={submitting ? "animate-spin" : undefined} />{submitting ? "Creating…" : mode === "import" ? "Import app" : "Create app"}</Button>
+  </FieldGroup></form>
 }

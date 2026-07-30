@@ -45,9 +45,9 @@ test("links App Detail to the collaboration manager and renders member/pending-i
   await page.getByRole("link", { name: "Manage RecipeBot collaborators" }).click()
 
   const members = page.getByTestId("app-members")
-  const chrome = members.getByTestId("app-context-chrome")
+  const chrome = members.locator('[data-slot="top-bar"]')
   await expect(members).toContainText("RecipeBot collaborators")
-  await expect(chrome.getByRole("group", { name: "RecipeBot controls" })).toHaveAttribute("data-placement", "flow")
+  await expect(chrome).toHaveAttribute("data-placement", "flow")
   await expect(members.locator("h1")).toHaveCount(1)
   await expect(members.getByRole("heading", { level: 1, name: "RecipeBot · Members and visibility" })).toBeVisible()
   await expect.poll(() => members.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
@@ -172,8 +172,8 @@ test("keeps private existence hidden for a non-disclosing collaborator 404", asy
   const members = page.getByTestId("app-members")
   await expect(page.getByTestId("members-not-found")).toContainText("This collaborators view is not available to this session.")
   await expect(page.getByTestId("members-not-found")).not.toContainText("RecipeBot")
-  await expect(members.getByTestId("app-context-chrome")).toHaveCount(0)
-  await expect(members.locator("h1")).toHaveCount(0)
+  await expect(page.locator('[data-slot="top-bar"]')).not.toContainText("RecipeBot")
+  await expect(members.locator("h1")).toHaveCount(1)
 })
 
 test("makes a 403, empty roster, mobile layout, and accessibility explicit", async ({ page }) => {
