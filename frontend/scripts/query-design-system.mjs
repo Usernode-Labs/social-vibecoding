@@ -16,6 +16,7 @@ const matches = catalog.components.filter((component) => {
   const searchable = [
     component.id,
     component.name,
+    component.tier,
     component.module,
     ...component.variants,
     component.dataBoundary.kind,
@@ -28,6 +29,7 @@ const matches = catalog.components.filter((component) => {
 const summarize = (component) => ({
     id: component.id,
     name: component.name,
+    tier: component.tier,
     module: component.module,
     owner: component.owner,
     maturity: component.maturity,

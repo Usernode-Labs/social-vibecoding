@@ -43,24 +43,44 @@
       "substitutionBoundary": "Share AppIdentity and status primitives, but do not add discovery metadata or detail-first behavior to HomeAppShortcut."
     },
     {
-      "id": "page-header-and-app-chrome",
+      "id": "top-bar-and-platform-navigation",
       "decision": "keep-distinct",
       "components": [
-        "page-header",
-        "app-chrome"
+        "top-bar",
+        "platform-navigation"
       ],
       "jobs": [
         {
-          "component": "page-header",
-          "job": "Name and orient a platform-owned route with optional supporting context and one route action."
+          "component": "top-bar",
+          "job": "Name the screen the person is on and carry that screen's contextual actions."
         },
         {
-          "component": "app-chrome",
-          "job": "Control the focused hosted-app context, including returning to the platform and switching between use and development."
+          "component": "platform-navigation",
+          "job": "Change global platform scope by choosing among the primary destinations, Node health and the utility footer."
         }
       ],
-      "rationale": "Both occupy a leading route region, but one structures platform content while the other preserves a focused iframe and its contextual controls.",
-      "substitutionBoundary": "Do not wrap focused apps in PageHeader or add hosted-app lifecycle controls to PageHeader."
+      "rationale": "Both are always-present shell chrome, but one answers \"where am I and what can I do here\" while the other answers \"where else can I go\". The bar hosts the drawer's trigger; it never duplicates its destinations.",
+      "substitutionBoundary": "Do not place global destinations, Activity counts or Node status in the TopBar, and do not put screen names or per-screen actions in PlatformNavigation. The attention dot on the menu trigger is the only shared signal, and it never carries a number."
+    },
+    {
+      "id": "top-bar-and-focused-app-frame",
+      "decision": "keep-distinct",
+      "components": [
+        "top-bar",
+        "focused-app-frame"
+      ],
+      "jobs": [
+        {
+          "component": "top-bar",
+          "job": "Identify the focused dApp and offer its reciprocal mode, overflow and Close controls."
+        },
+        {
+          "component": "focused-app-frame",
+          "job": "Host the dApp and explain its lifecycle state — loading, offline with retry, unavailable or self-hosted — in the content area."
+        }
+      ],
+      "rationale": "A focused dApp screen is one overlay bar above a full-bleed frame. Chrome states and host states were previously duplicated: the removed AppChrome restated the frame's status as a compact dot beside the app name. The frame already presents every host state where the person is looking, so the bar carries only identity and actions.",
+      "substitutionBoundary": "Do not present hosted-app status, retry affordances or iframe lifecycle messaging in the TopBar, and do not put mode switching, Close or platform navigation inside FocusedAppFrame."
     }
   ]
 }

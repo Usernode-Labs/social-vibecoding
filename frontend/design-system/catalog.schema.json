@@ -14,12 +14,14 @@
       "items": {
         "type": "object",
         "properties": {
+          "tier": { "enum": ["element", "block", "feature"] },
           "performance": { "$ref": "#/$defs/performance" },
           "content": { "$ref": "#/$defs/content" }
         },
         "required": [
           "id",
           "name",
+          "tier",
           "module",
           "export",
           "owner",

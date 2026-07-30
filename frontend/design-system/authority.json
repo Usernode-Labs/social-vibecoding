@@ -170,26 +170,53 @@
         "evidence": "StatusDot role and App/Node/Connection adapter stories, semantic token contrast checks, and forced-colors browser evidence."
       }
     },
-    "page-header": {
+    "top-bar": {
       "dataBoundary": {
         "kind": "props-only",
-        "contract": "PageHeader receives a route title, optional Read-layer description, and at most one caller-owned contextual action. It performs no routing, authorization, loading, or native title synchronization."
+        "contract": "TopBar receives the screen name, an optional Back callback, and caller-owned contextual actions. It reads only the shell attention count for its menu dot, and performs no routing, fetching, authorization, bridge or iframe work."
+      },
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "single",
+          "rationale": "Exactly one TopBar accompanies every screen; it is the shell's only route chrome."
+        },
+        "updateFrequency": "streaming",
+        "stateScope": "shared",
+        "virtualization": "not-required",
+        "mountPolicy": "Keep the TopBar and the adjacent hosted app mounted while title, attention, authorization and contextual actions update.",
+        "sensitiveInteractions": [
+          "Title or action changes must not resize, reload or remount the hosted iframe.",
+          "Overlay placement must not consume viewport estate from the hosted app.",
+          "Exactly one reciprocal Use or Improve action remains reachable as authorization changes."
+        ],
+        "followUp": "profile-before-cutover"
       },
       "content": {
-        "layer": "read",
-        "canonicalTerms": ["dApp", "Improve"],
+        "layer": "glance",
+        "canonicalTerms": [
+          "dApp",
+          "Use",
+          "Improve",
+          "Back",
+          "Close"
+        ],
         "requiredStates": [],
         "visibleLabelAccessibilityName": "match-or-prefix",
-        "reviewedFailureModes": ["context-restatement", "vague-link-text"]
+        "reviewedFailureModes": [
+          "context-restatement",
+          "vague-link-text",
+          "vague state"
+        ]
       },
       "accessibility": {
         "contract": [
-          "PageHeader is the route's sole h1 and its header landmark is labelled by that title.",
-          "An optional description is linked through aria-describedby.",
-          "The caller-owned contextual action retains a visible label or accessible name.",
-          "Long titles and actions do not create horizontal overflow at the narrow-mobile contract."
+          "The TopBar renders the screen's sole h1, whether that name is a platform destination or a dApp context.",
+          "Menu, Back, Close and overflow controls have specific accessible names and 48 CSS-pixel targets.",
+          "The platform menu shows an attention dot, never a count, and the dot is understandable without color.",
+          "Long titles truncate without creating horizontal overflow at the narrow-mobile contract.",
+          "Use and Improve are never presented as permanent equal-weight modes."
         ],
-        "evidence": "WithDescription, WithAction, Compact, LongTitle, Narrow and NoDescription stories render light/dark desktop/mobile evidence with interaction assertions."
+        "evidence": "Default, attention, action, icon-action, nested-back, overlay, long-title, mobile and dark stories render both themes with interaction assertions; the composition preview proves one bar and one h1 per screen."
       }
     },
     "platform-navigation": {
@@ -214,10 +241,27 @@
       },
       "content": {
         "layer": "glance",
-        "canonicalTerms": ["Home", "Explore", "Work", "Challenges", "Activity", "Node", "Account", "Settings", "Send feedback", "Admin"],
-        "requiredStates": ["attention", "unknown"],
+        "canonicalTerms": [
+          "Home",
+          "Explore",
+          "Work",
+          "Challenges",
+          "Activity",
+          "Node",
+          "Account",
+          "Settings",
+          "Send feedback",
+          "Admin"
+        ],
+        "requiredStates": [
+          "attention",
+          "unknown"
+        ],
         "visibleLabelAccessibilityName": "match-or-prefix",
-        "reviewedFailureModes": ["context-restatement", "mechanism-as-content"]
+        "reviewedFailureModes": [
+          "context-restatement",
+          "mechanism-as-content"
+        ]
       },
       "accessibility": {
         "contract": [
@@ -250,10 +294,19 @@
       },
       "content": {
         "layer": "glance",
-        "canonicalTerms": ["Open", "Collaborator"],
-        "requiredStates": ["unavailable", "pending"],
+        "canonicalTerms": [
+          "Open",
+          "Collaborator"
+        ],
+        "requiredStates": [
+          "unavailable",
+          "pending"
+        ],
         "visibleLabelAccessibilityName": "match-or-prefix",
-        "reviewedFailureModes": ["context-restatement", "vague-link-text"]
+        "reviewedFailureModes": [
+          "context-restatement",
+          "vague-link-text"
+        ]
       },
       "accessibility": {
         "contract": [
@@ -286,10 +339,20 @@
       },
       "content": {
         "layer": "glance",
-        "canonicalTerms": ["View details"],
-        "requiredStates": ["building", "configuration-required", "unavailable", "no-description"],
+        "canonicalTerms": [
+          "View details"
+        ],
+        "requiredStates": [
+          "building",
+          "configuration-required",
+          "unavailable",
+          "no-description"
+        ],
         "visibleLabelAccessibilityName": "match-or-prefix",
-        "reviewedFailureModes": ["vague-link-text", "context-restatement"]
+        "reviewedFailureModes": [
+          "vague-link-text",
+          "context-restatement"
+        ]
       },
       "accessibility": {
         "contract": [
@@ -299,43 +362,6 @@
           "AppIdentity remains decorative because the adjacent dApp name labels the card."
         ],
         "evidence": "Running, Building, AwaitingSecrets, Unavailable, WithCommunity and NoDescription stories render both themes with assertions."
-      }
-    },
-    "app-chrome": {
-      "dataBoundary": {
-        "kind": "props-only",
-        "contract": "AppChrome receives app identity, finite host state, use/improve/nested mode, authorization-filtered callbacks and console-error evidence. It performs no routing, fetching, bridge calls or iframe work."
-      },
-      "performance": {
-        "expectedCollectionSize": {
-          "category": "single",
-          "rationale": "Exactly one contextual chrome instance accompanies the currently focused dApp."
-        },
-        "updateFrequency": "streaming",
-        "stateScope": "shared",
-        "virtualization": "not-required",
-        "mountPolicy": "Keep AppChrome and the adjacent FocusedAppFrame mounted while status, console evidence and use/improve mode update.",
-        "sensitiveInteractions": [
-          "Chrome state changes must not resize, reload or remount the iframe.",
-          "Exactly one reciprocal Use or Improve action remains reachable as authorization changes."
-        ],
-        "followUp": "profile-before-cutover"
-      },
-      "content": {
-        "layer": "glance",
-        "canonicalTerms": ["Use", "Improve", "Back", "Close", "Retry"],
-        "requiredStates": ["loading", "offline", "unavailable", "self-hosted"],
-        "visibleLabelAccessibilityName": "match-or-prefix",
-        "reviewedFailureModes": ["internal-state leak", "vague state"]
-      },
-      "accessibility": {
-        "contract": [
-          "The dApp name is the focused route's sole h1.",
-          "Close, Back and overflow controls have dApp- or action-specific accessible names and 48 CSS-pixel targets.",
-          "The compact status remains understandable without color.",
-          "Use and Improve are never presented as permanent equal-weight modes."
-        ],
-        "evidence": "Loading, ready, offline, self-hosted, unavailable, narrow, improve, nested and console-error stories render both themes with interaction assertions."
       }
     },
     "focused-app-frame": {
@@ -361,10 +387,23 @@
       },
       "content": {
         "layer": "read",
-        "canonicalTerms": ["Retry", "Dev"],
-        "requiredStates": ["loading", "offline", "unavailable", "self-hosted", "unsafe-destination"],
+        "canonicalTerms": [
+          "Retry",
+          "Dev"
+        ],
+        "requiredStates": [
+          "loading",
+          "offline",
+          "unavailable",
+          "self-hosted",
+          "unsafe-destination"
+        ],
         "visibleLabelAccessibilityName": "match-or-prefix",
-        "reviewedFailureModes": ["internal-state leak", "performative apology", "vague state"]
+        "reviewedFailureModes": [
+          "internal-state leak",
+          "performative apology",
+          "vague state"
+        ]
       },
       "accessibility": {
         "contract": [
@@ -455,10 +494,21 @@
     "notifications-content": {
       "content": {
         "layer": "read",
-        "canonicalTerms": ["Activity", "Improve", "Work"],
-        "requiredStates": ["loading", "empty", "error"],
+        "canonicalTerms": [
+          "Activity",
+          "Improve",
+          "Work"
+        ],
+        "requiredStates": [
+          "loading",
+          "empty",
+          "error"
+        ],
         "visibleLabelAccessibilityName": "match-or-prefix",
-        "reviewedFailureModes": ["mechanism-as-content", "vague-link-text"]
+        "reviewedFailureModes": [
+          "mechanism-as-content",
+          "vague-link-text"
+        ]
       },
       "performance": {
         "expectedCollectionSize": {

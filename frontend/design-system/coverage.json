@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "description": "Source-derived Storybook and browser-evidence coverage for production React interface modules. Lists are exceptions and evidence assignments, never the discovery source.",
+  "source": {
+    "roots": [
+      "@/components",
+      "@/features"
+    ],
+    "routeRegistry": "src/main.tsx",
+    "storyPolicy": "same-module",
+    "formPolicy": "same-module-story-required",
+    "reusablePolicy": "story-or-owned-pattern-required"
+  },
+  "runtimeModules": [
+    {
+      "module": "@/components/dev-completion-alerts.tsx",
+      "reason": "Global event-to-browser-notification effect with no rendered interface.",
+      "evidence": [
+        "tests/settings-feedback.spec.ts"
+      ]
+    },
+    {
+      "module": "@/components/dev-console-provider.tsx",
+      "reason": "Global provider and active-frame adapter; visible trigger and sheet behavior is exercised through production compositions.",
+      "evidence": [
+        "tests/focused-host.spec.ts",
+        "tests/staging-preview.spec.ts"
+      ]
+    },
+    {
+      "module": "@/components/dev-console-sheet.tsx",
+      "reason": "Lazy provider-owned sheet adapter; its reusable panel has direct stories and the sheet opens only inside active production frames.",
+      "evidence": [
+        "@/components/dev-console-panel.stories.tsx",
+        "tests/focused-host.spec.ts",
+        "tests/staging-preview.spec.ts"
+      ]
+    },
+    {
+      "module": "@/components/platform-shell.tsx",
+      "reason": "Application composition root whose contract requires routing, ambient data adapters, and browser navigation.",
+      "evidence": [
+        "tests/platform-shell-navigation.spec.ts"
+      ]
+    }
+  ],
+  "routeEvidence": [
+    {
+      "module": "@/features/account/account.tsx",
+      "evidence": ["tests/account.spec.ts"]
+    },
+    {
+      "module": "@/features/account/profile.tsx",
+      "evidence": ["tests/profile.spec.ts"]
+    },
+    {
+      "module": "@/features/account/settings.tsx",
+      "evidence": ["tests/settings-feedback.spec.ts", "tests/theme-preference.spec.ts"]
+    },
+    {
+      "module": "@/features/apps/app-details.tsx",
+      "evidence": ["tests/app-members.spec.ts", "tests/app-identity.spec.ts"]
+    },
+    {
+      "module": "@/features/apps/app-dev.tsx",
+      "evidence": ["tests/app-dev.spec.ts"]
+    },
+    {
+      "module": "@/features/apps/app-recovery.tsx",
+      "evidence": ["tests/app-recovery.spec.ts"]
+    },
+    {
+      "module": "@/features/apps/hosted-app.tsx",
+      "evidence": ["tests/focused-host.spec.ts", "tests/focused-app-continuity.spec.ts"]
+    },
+    {
+      "module": "@/features/community/leaderboard.tsx",
+      "evidence": ["tests/leaderboard.spec.ts"]
+    },
+    {
+      "module": "@/features/dev/dev-governance-detail.tsx",
+      "evidence": ["tests/app-dev.spec.ts", "tests/topic-discussion.spec.ts"]
+    },
+    {
+      "module": "@/features/dev/dev-proposal-detail.tsx",
+      "evidence": ["tests/app-dev.spec.ts", "tests/topic-discussion.spec.ts"]
+    },
+    {
+      "module": "@/features/dev/dev-session.tsx",
+      "evidence": ["tests/dev-session.spec.ts"]
+    },
+    {
+      "module": "@/features/dev/staging-preview.tsx",
+      "evidence": ["tests/staging-preview.spec.ts"]
+    },
+    {
+      "module": "@/features/platform/status.tsx",
+      "evidence": ["tests/status.spec.ts"]
+    },
+    {
+      "module": "@/features/work/work.tsx",
+      "evidence": ["tests/work.spec.ts"]
+    }
+  ]
+}

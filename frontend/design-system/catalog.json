@@ -31,8 +31,1363 @@
   },
   "components": [
     {
+      "id": "primitive-accordion",
+      "name": "Accordion",
+      "tier": "element",
+      "module": "@/components/ui/accordion.tsx",
+      "export": "Accordion",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Closed",
+        "Open"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Accordion Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/accordion.stories.tsx",
+        "states": [
+          "Closed",
+          "Open"
+        ]
+      }
+    },
+    {
+      "id": "primitive-alert-dialog",
+      "name": "AlertDialog",
+      "tier": "element",
+      "module": "@/components/ui/alert-dialog.tsx",
+      "export": "AlertDialog",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Trigger",
+        "Open",
+        "CompactOpen"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated AlertDialog Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/alert-dialog.stories.tsx",
+        "states": [
+          "Trigger",
+          "Open",
+          "CompactOpen"
+        ]
+      }
+    },
+    {
+      "id": "primitive-alert",
+      "name": "Alert",
+      "tier": "element",
+      "module": "@/components/ui/alert.tsx",
+      "export": "Alert",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Destructive",
+        "WithAction"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Alert Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/alert.stories.tsx",
+        "states": [
+          "Default",
+          "Destructive",
+          "WithAction"
+        ]
+      }
+    },
+    {
+      "id": "primitive-attachment",
+      "name": "Attachment",
+      "tier": "element",
+      "module": "@/components/ui/attachment.tsx",
+      "export": "Attachment",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Complete",
+        "Uploading",
+        "Error",
+        "Group"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Attachment Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/attachment.stories.tsx",
+        "states": [
+          "Complete",
+          "Uploading",
+          "Error",
+          "Group"
+        ]
+      }
+    },
+    {
+      "id": "primitive-avatar",
+      "name": "Avatar",
+      "tier": "element",
+      "module": "@/components/ui/avatar.tsx",
+      "export": "Avatar",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Fallback",
+        "Image",
+        "Presence",
+        "Group"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Avatar Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/avatar.stories.tsx",
+        "states": [
+          "Fallback",
+          "Image",
+          "Presence",
+          "Group"
+        ]
+      }
+    },
+    {
+      "id": "primitive-badge",
+      "name": "Badge",
+      "tier": "element",
+      "module": "@/components/ui/badge.tsx",
+      "export": "Badge",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Variants",
+        "WithIcon"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Badge Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/badge.stories.tsx",
+        "states": [
+          "Default",
+          "Variants",
+          "WithIcon"
+        ]
+      }
+    },
+    {
+      "id": "primitive-bubble",
+      "name": "Bubble",
+      "tier": "element",
+      "module": "@/components/ui/bubble.tsx",
+      "export": "Bubble",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Incoming",
+        "Outgoing",
+        "Reactions",
+        "Variants"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Bubble Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/bubble.stories.tsx",
+        "states": [
+          "Incoming",
+          "Outgoing",
+          "Reactions",
+          "Variants"
+        ]
+      }
+    },
+    {
+      "id": "primitive-button-group",
+      "name": "ButtonGroup",
+      "tier": "element",
+      "module": "@/components/ui/button-group.tsx",
+      "export": "ButtonGroup",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Actions",
+        "WithText",
+        "Vertical"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated ButtonGroup Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/button-group.stories.tsx",
+        "states": [
+          "Actions",
+          "WithText",
+          "Vertical"
+        ]
+      }
+    },
+    {
+      "id": "primitive-button",
+      "name": "Button",
+      "tier": "element",
+      "module": "@/components/ui/button.tsx",
+      "export": "Button",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Variants",
+        "Sizes",
+        "WithIcons",
+        "Pending",
+        "Disabled",
+        "KeyboardFocus"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Button Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/button.stories.tsx",
+        "states": [
+          "Default",
+          "Variants",
+          "Sizes",
+          "WithIcons",
+          "Pending",
+          "Disabled",
+          "KeyboardFocus"
+        ]
+      }
+    },
+    {
+      "id": "primitive-card",
+      "name": "Card",
+      "tier": "element",
+      "module": "@/components/ui/card.tsx",
+      "export": "Card",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Compact"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Card Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/card.stories.tsx",
+        "states": [
+          "Default",
+          "Compact"
+        ]
+      }
+    },
+    {
+      "id": "primitive-empty",
+      "name": "Empty",
+      "tier": "element",
+      "module": "@/components/ui/empty.tsx",
+      "export": "Empty",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Message",
+        "WithAction"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Empty Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/empty.stories.tsx",
+        "states": [
+          "Message",
+          "WithAction"
+        ]
+      }
+    },
+    {
+      "id": "primitive-field",
+      "name": "Field",
+      "tier": "element",
+      "module": "@/components/ui/field.tsx",
+      "export": "Field",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Invalid",
+        "Responsive",
+        "Fieldset"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Field Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/field.stories.tsx",
+        "states": [
+          "Default",
+          "Invalid",
+          "Responsive",
+          "Fieldset"
+        ]
+      }
+    },
+    {
+      "id": "primitive-input-group",
+      "name": "InputGroup",
+      "tier": "element",
+      "module": "@/components/ui/input-group.tsx",
+      "export": "InputGroup",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "SearchInput",
+        "Composer",
+        "Invalid"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated InputGroup Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/input-group.stories.tsx",
+        "states": [
+          "SearchInput",
+          "Composer",
+          "Invalid"
+        ]
+      }
+    },
+    {
+      "id": "primitive-input",
+      "name": "Input",
+      "tier": "element",
+      "module": "@/components/ui/input.tsx",
+      "export": "Input",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Filled",
+        "Disabled",
+        "Password",
+        "Invalid"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Input Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/input.stories.tsx",
+        "states": [
+          "Default",
+          "Filled",
+          "Disabled",
+          "Password",
+          "Invalid"
+        ]
+      }
+    },
+    {
+      "id": "primitive-label",
+      "name": "Label",
+      "tier": "element",
+      "module": "@/components/ui/label.tsx",
+      "export": "Label",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "DisabledPeer"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Label Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/label.stories.tsx",
+        "states": [
+          "Default",
+          "DisabledPeer"
+        ]
+      }
+    },
+    {
+      "id": "primitive-marker",
+      "name": "Marker",
+      "tier": "element",
+      "module": "@/components/ui/marker.tsx",
+      "export": "Marker",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Status",
+        "Separator",
+        "Border"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Marker Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/marker.stories.tsx",
+        "states": [
+          "Status",
+          "Separator",
+          "Border"
+        ]
+      }
+    },
+    {
+      "id": "primitive-message-scroller",
+      "name": "MessageScroller",
+      "tier": "element",
+      "module": "@/components/ui/message-scroller.tsx",
+      "export": "MessageScroller",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Conversation",
+        "Empty"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated MessageScroller Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/message-scroller.stories.tsx",
+        "states": [
+          "Conversation",
+          "Empty"
+        ]
+      }
+    },
+    {
+      "id": "primitive-message",
+      "name": "Message",
+      "tier": "element",
+      "module": "@/components/ui/message.tsx",
+      "export": "Message",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Incoming",
+        "Outgoing",
+        "Grouped"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Message Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/message.stories.tsx",
+        "states": [
+          "Incoming",
+          "Outgoing",
+          "Grouped"
+        ]
+      }
+    },
+    {
+      "id": "primitive-select",
+      "name": "Select",
+      "tier": "element",
+      "module": "@/components/ui/select.tsx",
+      "export": "Select",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Placeholder",
+        "Disabled"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Select Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/select.stories.tsx",
+        "states": [
+          "Default",
+          "Placeholder",
+          "Disabled"
+        ]
+      }
+    },
+    {
+      "id": "primitive-separator",
+      "name": "Separator",
+      "tier": "element",
+      "module": "@/components/ui/separator.tsx",
+      "export": "Separator",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Horizontal",
+        "Vertical"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Separator Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/separator.stories.tsx",
+        "states": [
+          "Horizontal",
+          "Vertical"
+        ]
+      }
+    },
+    {
+      "id": "primitive-sheet",
+      "name": "Sheet",
+      "tier": "element",
+      "module": "@/components/ui/sheet.tsx",
+      "export": "Sheet",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Trigger",
+        "RightOpen",
+        "BottomOpen"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Sheet Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/sheet.stories.tsx",
+        "states": [
+          "Trigger",
+          "RightOpen",
+          "BottomOpen"
+        ]
+      }
+    },
+    {
+      "id": "primitive-sidebar",
+      "name": "Sidebar",
+      "tier": "element",
+      "module": "@/components/ui/sidebar.tsx",
+      "export": "Sidebar",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Expanded",
+        "Collapsed",
+        "ToggleInteraction"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Sidebar Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/sidebar.stories.tsx",
+        "states": [
+          "Expanded",
+          "Collapsed",
+          "ToggleInteraction"
+        ]
+      }
+    },
+    {
+      "id": "primitive-skeleton",
+      "name": "Skeleton",
+      "tier": "element",
+      "module": "@/components/ui/skeleton.tsx",
+      "export": "Skeleton",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Line",
+        "CardLoading"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Skeleton Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/skeleton.stories.tsx",
+        "states": [
+          "Line",
+          "CardLoading"
+        ]
+      }
+    },
+    {
+      "id": "primitive-switch",
+      "name": "Switch",
+      "tier": "element",
+      "module": "@/components/ui/switch.tsx",
+      "export": "Switch",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Off",
+        "On",
+        "Small",
+        "Disabled",
+        "WithField"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Switch Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/switch.stories.tsx",
+        "states": [
+          "Off",
+          "On",
+          "Small",
+          "Disabled",
+          "WithField"
+        ]
+      }
+    },
+    {
+      "id": "primitive-tabs",
+      "name": "Tabs",
+      "tier": "element",
+      "module": "@/components/ui/tabs.tsx",
+      "export": "Tabs",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Line",
+        "Vertical"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Tabs Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/tabs.stories.tsx",
+        "states": [
+          "Default",
+          "Line",
+          "Vertical"
+        ]
+      }
+    },
+    {
+      "id": "primitive-textarea",
+      "name": "Textarea",
+      "tier": "element",
+      "module": "@/components/ui/textarea.tsx",
+      "export": "Textarea",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Filled",
+        "Disabled",
+        "Invalid"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Textarea Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/textarea.stories.tsx",
+        "states": [
+          "Default",
+          "Filled",
+          "Disabled",
+          "Invalid"
+        ]
+      }
+    },
+    {
+      "id": "primitive-toggle-group",
+      "name": "ToggleGroup",
+      "tier": "element",
+      "module": "@/components/ui/toggle-group.tsx",
+      "export": "ToggleGroup",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Segmented",
+        "Vertical",
+        "Disabled"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated ToggleGroup Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/toggle-group.stories.tsx",
+        "states": [
+          "Default",
+          "Segmented",
+          "Vertical",
+          "Disabled"
+        ]
+      }
+    },
+    {
+      "id": "primitive-toggle",
+      "name": "Toggle",
+      "tier": "element",
+      "module": "@/components/ui/toggle.tsx",
+      "export": "Toggle",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Pressed",
+        "Outline",
+        "WithIcon",
+        "Disabled",
+        "Interaction"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Toggle Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/toggle.stories.tsx",
+        "states": [
+          "Default",
+          "Pressed",
+          "Outline",
+          "WithIcon",
+          "Disabled",
+          "Interaction"
+        ]
+      }
+    },
+    {
+      "id": "primitive-tooltip",
+      "name": "Tooltip",
+      "tier": "element",
+      "module": "@/components/ui/tooltip.tsx",
+      "export": "Tooltip",
+      "owner": "frontend-platform",
+      "maturity": "stable",
+      "distribution": "shell-internal",
+      "variants": [
+        "Trigger",
+        "Open",
+        "RightOpen"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Use semantic elements and accessible names for every interactive control.",
+          "Support keyboard operation and visible focus wherever the pattern is interactive.",
+          "Keep serious and critical Storybook accessibility violations at zero."
+        ],
+        "evidence": "Dedicated Tooltip Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/ui/tooltip.stories.tsx",
+        "states": [
+          "Trigger",
+          "Open",
+          "RightOpen"
+        ]
+      }
+    },
+    {
       "id": "platform-icon",
       "name": "PlatformIcon",
+      "tier": "element",
       "module": "@/components/platform-icon.tsx",
       "export": "PlatformIcon",
       "owner": "frontend-platform",
@@ -80,6 +1435,7 @@
     {
       "id": "theme-switcher",
       "name": "ThemeSwitcherView",
+      "tier": "block",
       "module": "@/components/theme-switcher.tsx",
       "export": "ThemeSwitcherView",
       "owner": "frontend-platform",
@@ -125,6 +1481,7 @@
     {
       "id": "app-identity",
       "name": "AppIdentity",
+      "tier": "element",
       "module": "@/features/apps/app-identity.tsx",
       "export": "AppIdentity",
       "owner": "frontend-platform",
@@ -200,6 +1557,7 @@
     {
       "id": "status-dot",
       "name": "StatusDot",
+      "tier": "element",
       "module": "@/components/status-dot.tsx",
       "export": "StatusDot",
       "owner": "frontend-platform",
@@ -307,20 +1665,24 @@
       }
     },
     {
-      "id": "page-header",
-      "name": "PageHeader",
-      "module": "@/components/page-header.tsx",
-      "export": "PageHeader",
+      "id": "top-bar",
+      "name": "TopBar",
+      "tier": "block",
+      "module": "@/components/top-bar.tsx",
+      "export": "TopBar",
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
       "variants": [
-        "WithDescription",
+        "Default",
+        "WithAttention",
         "WithAction",
-        "Compact",
+        "WithIconAction",
+        "NestedBack",
+        "Overlay",
         "LongTitle",
-        "Narrow",
-        "NoDescription"
+        "Mobile",
+        "Dark"
       ],
       "tokens": [
         "foundation.font.sans",
@@ -330,50 +1692,75 @@
       ],
       "accessibility": {
         "contract": [
-          "PageHeader is the route's sole h1 and its header landmark is labelled by that title.",
-          "An optional description is linked through aria-describedby.",
-          "The caller-owned contextual action retains a visible label or accessible name.",
-          "Long titles and actions do not create horizontal overflow at the narrow-mobile contract."
+          "The TopBar renders the screen's sole h1, whether that name is a platform destination or a dApp context.",
+          "Menu, Back, Close and overflow controls have specific accessible names and 48 CSS-pixel targets.",
+          "The platform menu shows an attention dot, never a count, and the dot is understandable without color.",
+          "Long titles truncate without creating horizontal overflow at the narrow-mobile contract.",
+          "Use and Improve are never presented as permanent equal-weight modes."
         ],
-        "evidence": "WithDescription, WithAction, Compact, LongTitle, Narrow and NoDescription stories render light/dark desktop/mobile evidence with interaction assertions."
+        "evidence": "Default, attention, action, icon-action, nested-back, overlay, long-title, mobile and dark stories render both themes with interaction assertions; the composition preview proves one bar and one h1 per screen."
       },
       "dataBoundary": {
         "kind": "props-only",
-        "contract": "PageHeader receives a route title, optional Read-layer description, and at most one caller-owned contextual action. It performs no routing, authorization, loading, or native title synchronization."
+        "contract": "TopBar receives the screen name, an optional Back callback, and caller-owned contextual actions. It reads only the shell attention count for its menu dot, and performs no routing, fetching, authorization, bridge or iframe work."
       },
       "responsive": [
         "narrow-mobile",
         "wide-desktop"
       ],
       "deprecation": null,
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "single",
+          "rationale": "Exactly one TopBar accompanies every screen; it is the shell's only route chrome."
+        },
+        "updateFrequency": "streaming",
+        "stateScope": "shared",
+        "virtualization": "not-required",
+        "mountPolicy": "Keep the TopBar and the adjacent hosted app mounted while title, attention, authorization and contextual actions update.",
+        "sensitiveInteractions": [
+          "Title or action changes must not resize, reload or remount the hosted iframe.",
+          "Overlay placement must not consume viewport estate from the hosted app.",
+          "Exactly one reciprocal Use or Improve action remains reachable as authorization changes."
+        ],
+        "followUp": "profile-before-cutover"
+      },
       "content": {
-        "layer": "read",
+        "layer": "glance",
         "canonicalTerms": [
           "dApp",
-          "Improve"
+          "Use",
+          "Improve",
+          "Back",
+          "Close"
         ],
         "requiredStates": [],
         "visibleLabelAccessibilityName": "match-or-prefix",
         "reviewedFailureModes": [
           "context-restatement",
-          "vague-link-text"
+          "vague-link-text",
+          "vague state"
         ]
       },
       "evidence": {
-        "story": "@/components/page-header.stories.tsx",
+        "story": "@/components/top-bar.stories.tsx",
         "states": [
-          "WithDescription",
+          "Default",
+          "WithAttention",
           "WithAction",
-          "Compact",
+          "WithIconAction",
+          "NestedBack",
+          "Overlay",
           "LongTitle",
-          "Narrow",
-          "NoDescription"
+          "Mobile",
+          "Dark"
         ]
       }
     },
     {
       "id": "platform-navigation",
       "name": "PlatformNavigation",
+      "tier": "block",
       "module": "@/components/platform-navigation.tsx",
       "export": "PlatformNavigation",
       "owner": "frontend-platform",
@@ -471,6 +1858,7 @@
     {
       "id": "home-app-shortcut",
       "name": "HomeAppShortcut",
+      "tier": "block",
       "module": "@/features/apps/home-app-shortcut.tsx",
       "export": "HomeAppShortcut",
       "owner": "frontend-platform",
@@ -555,6 +1943,7 @@
     {
       "id": "explore-app-card",
       "name": "ExploreAppCard",
+      "tier": "block",
       "module": "@/features/apps/explore-app-card.tsx",
       "export": "ExploreAppCard",
       "owner": "frontend-platform",
@@ -636,102 +2025,9 @@
       }
     },
     {
-      "id": "app-chrome",
-      "name": "AppChrome",
-      "module": "@/features/apps/app-chrome.tsx",
-      "export": "AppChrome",
-      "owner": "frontend-platform",
-      "maturity": "candidate",
-      "distribution": "shell-internal",
-      "variants": [
-        "Loading",
-        "Ready",
-        "OfflineRetry",
-        "SelfHosted",
-        "NotRunning",
-        "NarrowFocused",
-        "ImproveMode",
-        "NestedRoute",
-        "ConsoleError"
-      ],
-      "tokens": [
-        "foundation.font.sans",
-        "foundation.radius.base",
-        "semantic.light.*",
-        "semantic.dark.*"
-      ],
-      "accessibility": {
-        "contract": [
-          "The dApp name is the focused route's sole h1.",
-          "Close, Back and overflow controls have dApp- or action-specific accessible names and 48 CSS-pixel targets.",
-          "The compact status remains understandable without color.",
-          "Use and Improve are never presented as permanent equal-weight modes."
-        ],
-        "evidence": "Loading, ready, offline, self-hosted, unavailable, narrow, improve, nested and console-error stories render both themes with interaction assertions."
-      },
-      "dataBoundary": {
-        "kind": "props-only",
-        "contract": "AppChrome receives app identity, finite host state, use/improve/nested mode, authorization-filtered callbacks and console-error evidence. It performs no routing, fetching, bridge calls or iframe work."
-      },
-      "responsive": [
-        "narrow-mobile",
-        "wide-desktop"
-      ],
-      "deprecation": null,
-      "performance": {
-        "expectedCollectionSize": {
-          "category": "single",
-          "rationale": "Exactly one contextual chrome instance accompanies the currently focused dApp."
-        },
-        "updateFrequency": "streaming",
-        "stateScope": "shared",
-        "virtualization": "not-required",
-        "mountPolicy": "Keep AppChrome and the adjacent FocusedAppFrame mounted while status, console evidence and use/improve mode update.",
-        "sensitiveInteractions": [
-          "Chrome state changes must not resize, reload or remount the iframe.",
-          "Exactly one reciprocal Use or Improve action remains reachable as authorization changes."
-        ],
-        "followUp": "profile-before-cutover"
-      },
-      "content": {
-        "layer": "glance",
-        "canonicalTerms": [
-          "Use",
-          "Improve",
-          "Back",
-          "Close",
-          "Retry"
-        ],
-        "requiredStates": [
-          "loading",
-          "offline",
-          "unavailable",
-          "self-hosted"
-        ],
-        "visibleLabelAccessibilityName": "match-or-prefix",
-        "reviewedFailureModes": [
-          "internal-state leak",
-          "vague state"
-        ]
-      },
-      "evidence": {
-        "story": "@/features/apps/app-chrome.stories.tsx",
-        "states": [
-          "Loading",
-          "Ready",
-          "OfflineRetry",
-          "SelfHosted",
-          "NotRunning",
-          "NarrowFocused",
-          "ImproveMode",
-          "NestedRoute",
-          "ConsoleError"
-        ]
-      }
-    },
-    {
       "id": "focused-app-frame",
       "name": "FocusedAppFrame",
+      "tier": "block",
       "module": "@/features/apps/focused-app-frame.tsx",
       "export": "FocusedAppFrame",
       "owner": "frontend-platform",
@@ -818,6 +2114,7 @@
     {
       "id": "native-device-summary",
       "name": "NativeDeviceSummary",
+      "tier": "block",
       "module": "@/features/account/native-device-summary.tsx",
       "export": "NativeDeviceSummary",
       "owner": "frontend-platform",
@@ -863,6 +2160,7 @@
     {
       "id": "node-status-content",
       "name": "NodeStatusContent",
+      "tier": "feature",
       "module": "@/features/platform/node-status.tsx",
       "export": "NodeStatusContent",
       "owner": "frontend-platform",
@@ -906,6 +2204,7 @@
     {
       "id": "app-visibility-settings",
       "name": "AppVisibilitySettings",
+      "tier": "block",
       "module": "@/features/apps/app-visibility-settings.tsx",
       "export": "AppVisibilitySettings",
       "owner": "frontend-platform",
@@ -955,6 +2254,7 @@
     {
       "id": "app-share-sheet",
       "name": "AppShareSheet",
+      "tier": "block",
       "module": "@/features/apps/app-share-sheet.tsx",
       "export": "AppShareSheet",
       "owner": "frontend-platform",
@@ -998,6 +2298,7 @@
     {
       "id": "challenge-feed",
       "name": "ChallengeFeed",
+      "tier": "feature",
       "module": "@/features/community/challenges.tsx",
       "export": "ChallengeFeed",
       "owner": "frontend-platform",
@@ -1039,6 +2340,7 @@
     {
       "id": "challenge-detail-content",
       "name": "ChallengeDetailContent",
+      "tier": "feature",
       "module": "@/features/community/challenge-detail.tsx",
       "export": "ChallengeDetailContent",
       "owner": "frontend-platform",
@@ -1088,6 +2390,7 @@
     {
       "id": "dev-conversation",
       "name": "DevConversation",
+      "tier": "block",
       "module": "@/features/dev/dev-conversation.tsx",
       "export": "DevConversation",
       "owner": "frontend-platform",
@@ -1148,6 +2451,7 @@
     {
       "id": "dev-budget-status",
       "name": "DevBudgetStatusView",
+      "tier": "block",
       "module": "@/features/dev/dev-budget-status.tsx",
       "export": "DevBudgetStatusView",
       "owner": "frontend-platform",
@@ -1197,6 +2501,7 @@
     {
       "id": "dev-saved-drafts",
       "name": "DevSavedDraftsView",
+      "tier": "block",
       "module": "@/features/dev/dev-saved-drafts.tsx",
       "export": "DevSavedDraftsView",
       "owner": "frontend-platform",
@@ -1240,6 +2545,7 @@
     {
       "id": "dev-board",
       "name": "DevBoard",
+      "tier": "feature",
       "module": "@/features/dev/dev-board.tsx",
       "export": "DevBoard",
       "owner": "frontend-platform",
@@ -1304,6 +2610,7 @@
     {
       "id": "dev-vote-controls",
       "name": "DevVoteControls",
+      "tier": "block",
       "module": "@/features/dev/dev-vote-controls.tsx",
       "export": "DevVoteControls",
       "owner": "frontend-platform",
@@ -1351,6 +2658,7 @@
     {
       "id": "github-issues",
       "name": "GitHubIssues",
+      "tier": "feature",
       "module": "@/features/dev/github-issues.tsx",
       "export": "GitHubIssues",
       "owner": "frontend-platform",
@@ -1396,6 +2704,7 @@
     {
       "id": "github-issue-detail-content",
       "name": "GitHubIssueDetailContent",
+      "tier": "feature",
       "module": "@/features/dev/github-issue-detail.tsx",
       "export": "GitHubIssueDetailContent",
       "owner": "frontend-platform",
@@ -1457,6 +2766,7 @@
     {
       "id": "topic-attribute-controls",
       "name": "TopicAttributeControls",
+      "tier": "block",
       "module": "@/features/dev/topic-attribute-controls.tsx",
       "export": "TopicAttributeControls",
       "owner": "frontend-platform",
@@ -1504,6 +2814,7 @@
     {
       "id": "shared-session-detail-content",
       "name": "SharedSessionDetailContent",
+      "tier": "feature",
       "module": "@/features/dev/shared-session.tsx",
       "export": "SharedSessionDetailContent",
       "owner": "frontend-platform",
@@ -1547,6 +2858,7 @@
     {
       "id": "group-discussion-transcript",
       "name": "GroupDiscussionTranscript",
+      "tier": "block",
       "module": "@/features/dev/group-discussion.tsx",
       "export": "GroupDiscussionTranscript",
       "owner": "frontend-platform",
@@ -1613,6 +2925,7 @@
     {
       "id": "group-discussion-composer",
       "name": "GroupDiscussionComposer",
+      "tier": "block",
       "module": "@/features/dev/group-discussion.tsx",
       "export": "GroupDiscussionComposer",
       "owner": "frontend-platform",
@@ -1660,6 +2973,7 @@
     {
       "id": "admin-operations-overview",
       "name": "AdminOperationsOverview",
+      "tier": "feature",
       "module": "@/features/admin/admin-overview.tsx",
       "export": "AdminOperationsOverview",
       "owner": "frontend-platform",
@@ -1705,6 +3019,7 @@
     {
       "id": "admin-users-list",
       "name": "AdminUsersList",
+      "tier": "feature",
       "module": "@/features/admin/admin-users.tsx",
       "export": "AdminUsersList",
       "owner": "frontend-platform",
@@ -1761,6 +3076,7 @@
     {
       "id": "activation-codes-list",
       "name": "ActivationCodesList",
+      "tier": "feature",
       "module": "@/features/admin/activation-codes.tsx",
       "export": "ActivationCodesList",
       "owner": "frontend-platform",
@@ -1806,13 +3122,14 @@
     {
       "id": "spend-limits-cards",
       "name": "SpendLimitsCards",
+      "tier": "feature",
       "module": "@/features/admin/spend-limits.tsx",
       "export": "SpendLimitsCards",
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
       "variants": [
-        "Defaults"
+        "Summary"
       ],
       "tokens": [
         "foundation.font.sans",
@@ -1840,13 +3157,14 @@
       "evidence": {
         "story": "@/features/admin/spend-limits.stories.tsx",
         "states": [
-          "Defaults"
+          "Summary"
         ]
       }
     },
     {
       "id": "submitted-features-list",
       "name": "SubmittedFeaturesList",
+      "tier": "feature",
       "module": "@/features/admin/admin-features.tsx",
       "export": "SubmittedFeaturesList",
       "owner": "frontend-platform",
@@ -1890,6 +3208,7 @@
     {
       "id": "merge-run-list",
       "name": "MergeRunList",
+      "tier": "feature",
       "module": "@/features/admin/merge-debug.tsx",
       "export": "MergeRunList",
       "owner": "frontend-platform",
@@ -1933,6 +3252,7 @@
     {
       "id": "session-spec-document",
       "name": "SpecDocument",
+      "tier": "block",
       "module": "@/features/dev/session-spec-viewer.tsx",
       "export": "SpecDocument",
       "owner": "frontend-platform",
@@ -1976,6 +3296,7 @@
     {
       "id": "session-spec-sharing",
       "name": "SpecSharingControls",
+      "tier": "block",
       "module": "@/features/dev/session-spec-viewer.tsx",
       "export": "SpecSharingControls",
       "owner": "frontend-platform",
@@ -2021,6 +3342,7 @@
     {
       "id": "dev-build-timeline",
       "name": "DevBuildTimeline",
+      "tier": "block",
       "module": "@/features/dev/dev-build-timeline.tsx",
       "export": "DevBuildTimeline",
       "owner": "frontend-platform",
@@ -2062,6 +3384,7 @@
     {
       "id": "gallery-visual-evidence",
       "name": "GalleryVisualEvidence",
+      "tier": "block",
       "module": "@/features/admin/gallery-visual-evidence.tsx",
       "export": "GalleryVisualEvidence",
       "owner": "frontend-platform",
@@ -2107,6 +3430,7 @@
     {
       "id": "topic-discussion",
       "name": "TopicDiscussionContent",
+      "tier": "block",
       "module": "@/features/dev/topic-discussion-transcript.tsx",
       "export": "TopicDiscussionContent",
       "owner": "frontend-platform",
@@ -2166,6 +3490,7 @@
     {
       "id": "notifications-content",
       "name": "NotificationsContent",
+      "tier": "feature",
       "module": "@/features/notifications/notifications.tsx",
       "export": "NotificationsContent",
       "owner": "frontend-platform",
@@ -2246,6 +3571,7 @@
     {
       "id": "dev-console-panel",
       "name": "DevConsolePanel",
+      "tier": "block",
       "module": "@/components/dev-console-panel.tsx",
       "export": "DevConsolePanel",
       "owner": "frontend-platform",
@@ -2291,6 +3617,7 @@
     {
       "id": "native-app-settings",
       "name": "NativeAppSettings",
+      "tier": "block",
       "module": "@/features/account/native-app-settings.tsx",
       "export": "NativeAppSettings",
       "owner": "frontend-platform",
@@ -2336,6 +3663,7 @@
     {
       "id": "wallet-link-settings",
       "name": "WalletLinkSettingsView",
+      "tier": "block",
       "module": "@/features/account/wallet-link-settings.tsx",
       "export": "WalletLinkSettingsView",
       "owner": "frontend-platform",
@@ -2387,6 +3715,7 @@
     {
       "id": "password-settings",
       "name": "PasswordSettings",
+      "tier": "block",
       "module": "@/features/account/password-settings.tsx",
       "export": "PasswordSettings",
       "owner": "frontend-platform",
@@ -2432,6 +3761,7 @@
     {
       "id": "wallet-access",
       "name": "WalletAccessView",
+      "tier": "feature",
       "module": "@/features/auth/wallet-access.tsx",
       "export": "WalletAccessView",
       "owner": "frontend-platform",

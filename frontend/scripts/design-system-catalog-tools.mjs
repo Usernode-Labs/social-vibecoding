@@ -25,6 +25,63 @@ function mergeContract(defaults, override = {}) {
   }
 }
 
+function primitiveName(fileName) {
+  return fileName
+    .replace(/\.tsx$/, "")
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join("")
+}
+
+function storyStates(source) {
+  return [...source.matchAll(/^export const ([A-Za-z_$][\w$]*)/gm)]
+    .map((match) => match[1])
+}
+
+function renderPrimitiveCatalog(manifest, authority) {
+  const relativeRoot = manifest.coverage.primitiveRoot.replace(/^@\//, "")
+  const primitiveRoot = path.join(frontendRoot, "@", relativeRoot)
+  return fs.readdirSync(primitiveRoot)
+    .filter((fileName) => fileName.endsWith(".tsx") && !fileName.endsWith(".stories.tsx"))
+    .sort()
+    .map((fileName) => {
+      const base = fileName.replace(/\.tsx$/, "")
+      const name = primitiveName(fileName)
+      const storyFile = `${base}.stories.tsx`
+      const storySource = fs.readFileSync(path.join(primitiveRoot, storyFile), "utf8")
+      const contract = mergeContract(authority.defaults, {
+        maturity: "stable",
+        dataBoundary: {
+          kind: "props-only",
+          contract: "The official local primitive receives presentation and interaction props only; routes and adapters retain application data, persistence, transport, and authorization ownership.",
+        },
+        accessibility: {
+          evidence: `Dedicated ${name} Storybook states plus the styled Storybook accessibility gate.`,
+        },
+      })
+      return {
+        id: `primitive-${base}`,
+        name,
+        tier: manifest.coverage.primitiveTier,
+        module: `@/components/ui/${fileName}`,
+        export: name,
+        owner: contract.owner,
+        maturity: contract.maturity,
+        distribution: contract.distribution,
+        variants: storyStates(storySource),
+        tokens: contract.tokens,
+        accessibility: contract.accessibility,
+        dataBoundary: contract.dataBoundary,
+        responsive: contract.responsive,
+        deprecation: contract.deprecation,
+        evidence: {
+          story: `@/components/ui/${storyFile}`,
+          states: storyStates(storySource),
+        },
+      }
+    })
+}
+
 export function renderCatalog() {
   const manifest = readJson(manifestPath)
   const authority = readJson(authorityPath)
@@ -32,11 +89,12 @@ export function renderCatalog() {
   for (const id of Object.keys(authority.overrides)) {
     if (!knownIds.has(id)) throw new Error(`authority override references unknown pattern: ${id}`)
   }
-  const components = manifest.patterns.map((pattern) => {
+  const patterns = manifest.patterns.map((pattern) => {
     const contract = mergeContract(authority.defaults, authority.overrides[pattern.id])
     return {
       id: pattern.id,
       name: pattern.name,
+      tier: pattern.tier,
       module: pattern.module,
       export: pattern.export,
       owner: contract.owner,
@@ -56,6 +114,7 @@ export function renderCatalog() {
       },
     }
   })
+  const components = [...renderPrimitiveCatalog(manifest, authority), ...patterns]
   return JSON.stringify({
     $schema: "./catalog.schema.json",
     generatedFrom: [

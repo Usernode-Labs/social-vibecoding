@@ -1,30 +1,49 @@
 {
-  "version": 1,
-  "description": "Explicit registry of owned, reusable Social Vibecoding platform patterns. This is intentionally a curated contract, not automatic component discovery.",
+  "version": 4,
+  "description": "Explicit registry of owned, reusable Social Vibecoding platform patterns plus source-derived coverage for every production-used local primitive.",
+  "coverage": {
+    "authority": "design-system/coverage.json",
+    "primitiveRoot": "@/components/ui",
+    "primitiveStoryPolicy": "same-module-required",
+    "primitiveTier": "element",
+    "storyTitlePrefix": "Elements/"
+  },
   "patterns": [
     {
       "id": "platform-icon",
       "name": "PlatformIcon",
+      "tier": "element",
       "module": "@/components/platform-icon.tsx",
       "export": "PlatformIcon",
       "story": {
         "module": "@/components/platform-icon.stories.tsx",
-        "states": ["Default", "SmallInline", "Control", "LargeFeature"]
+        "states": [
+          "Default",
+          "SmallInline",
+          "Control",
+          "LargeFeature"
+        ]
       }
     },
     {
       "id": "theme-switcher",
       "name": "ThemeSwitcherView",
+      "tier": "block",
       "module": "@/components/theme-switcher.tsx",
       "export": "ThemeSwitcherView",
       "story": {
         "module": "@/components/theme-switcher.stories.tsx",
-        "states": ["LightSelected", "DarkSelected", "SystemSelected"]
+        "states": [
+          "LightSelected",
+          "DarkSelected",
+          "SystemSelected"
+        ]
       }
     },
     {
       "id": "app-identity",
       "name": "AppIdentity",
+      "tier": "element",
       "module": "@/features/apps/app-identity.tsx",
       "export": "AppIdentity",
       "story": {
@@ -47,6 +66,7 @@
     {
       "id": "status-dot",
       "name": "StatusDot",
+      "tier": "element",
       "module": "@/components/status-dot.tsx",
       "export": "StatusDot",
       "story": {
@@ -74,329 +94,634 @@
       }
     },
     {
-      "id": "page-header",
-      "name": "PageHeader",
-      "module": "@/components/page-header.tsx",
-      "export": "PageHeader",
+      "id": "top-bar",
+      "name": "TopBar",
+      "tier": "block",
+      "module": "@/components/top-bar.tsx",
+      "export": "TopBar",
       "story": {
-        "module": "@/components/page-header.stories.tsx",
-        "states": ["WithDescription", "WithAction", "Compact", "LongTitle", "Narrow", "NoDescription"]
+        "module": "@/components/top-bar.stories.tsx",
+        "states": [
+          "Default",
+          "WithAttention",
+          "WithAction",
+          "WithIconAction",
+          "NestedBack",
+          "Overlay",
+          "LongTitle",
+          "Mobile",
+          "Dark"
+        ]
       }
     },
     {
       "id": "platform-navigation",
       "name": "PlatformNavigation",
+      "tier": "block",
       "module": "@/components/platform-navigation.tsx",
       "export": "PlatformNavigation",
       "story": {
         "module": "@/components/platform-navigation.stories.tsx",
-        "states": ["DesktopExpanded", "NarrowClosed", "NarrowOpen", "DesktopExpandedDark", "ActiveChallenges", "AccountFooter", "AdminAbsent", "AttentionCount", "NodeStatus"]
+        "states": [
+          "DesktopExpanded",
+          "NarrowClosed",
+          "NarrowOpen",
+          "DesktopExpandedDark",
+          "ActiveChallenges",
+          "AccountFooter",
+          "AdminAbsent",
+          "AttentionCount",
+          "NodeStatus"
+        ]
       }
     },
     {
       "id": "home-app-shortcut",
       "name": "HomeAppShortcut",
+      "tier": "block",
       "module": "@/features/apps/home-app-shortcut.tsx",
       "export": "HomeAppShortcut",
       "story": {
         "module": "@/features/apps/home-app-shortcut.stories.tsx",
-        "states": ["Running", "Unavailable", "Collaborator", "ReorderFirst", "ReorderMiddle", "ReorderLast", "ReorderPending"]
+        "states": [
+          "Running",
+          "Unavailable",
+          "Collaborator",
+          "ReorderFirst",
+          "ReorderMiddle",
+          "ReorderLast",
+          "ReorderPending"
+        ]
       }
     },
     {
       "id": "explore-app-card",
       "name": "ExploreAppCard",
+      "tier": "block",
       "module": "@/features/apps/explore-app-card.tsx",
       "export": "ExploreAppCard",
       "story": {
         "module": "@/features/apps/explore-app-card.stories.tsx",
-        "states": ["Running", "Building", "AwaitingSecrets", "Unavailable", "WithCommunity", "NoDescription"]
-      }
-    },
-    {
-      "id": "app-chrome",
-      "name": "AppChrome",
-      "module": "@/features/apps/app-chrome.tsx",
-      "export": "AppChrome",
-      "story": {
-        "module": "@/features/apps/app-chrome.stories.tsx",
-        "states": ["Loading", "Ready", "OfflineRetry", "SelfHosted", "NotRunning", "NarrowFocused", "ImproveMode", "NestedRoute", "ConsoleError"]
+        "states": [
+          "Running",
+          "Building",
+          "AwaitingSecrets",
+          "Unavailable",
+          "WithCommunity",
+          "NoDescription"
+        ]
       }
     },
     {
       "id": "focused-app-frame",
       "name": "FocusedAppFrame",
+      "tier": "block",
       "module": "@/features/apps/focused-app-frame.tsx",
       "export": "FocusedAppFrame",
       "story": {
         "module": "@/features/apps/focused-app-frame.stories.tsx",
-        "states": ["TokenUnavailable", "OfflineRetry", "UnsafeDestination", "SelfHosted", "NotRunning"]
+        "states": [
+          "TokenUnavailable",
+          "OfflineRetry",
+          "UnsafeDestination",
+          "SelfHosted",
+          "NotRunning"
+        ]
       }
     },
     {
       "id": "native-device-summary",
       "name": "NativeDeviceSummary",
+      "tier": "block",
       "module": "@/features/account/native-device-summary.tsx",
       "export": "NativeDeviceSummary",
       "story": {
         "module": "@/features/account/native-device-summary.stories.tsx",
-        "states": ["Loading", "OutsideUsernode", "Ready"]
+        "states": [
+          "Loading",
+          "OutsideUsernode",
+          "Ready"
+        ]
       }
     },
     {
       "id": "node-status-content",
       "name": "NodeStatusContent",
+      "tier": "feature",
       "module": "@/features/platform/node-status.tsx",
       "export": "NodeStatusContent",
       "story": {
         "module": "@/features/platform/node-status.stories.tsx",
-        "states": ["Healthy", "PartialAndOffline"]
+        "states": [
+          "Healthy",
+          "PartialAndOffline"
+        ]
       }
     },
     {
       "id": "app-visibility-settings",
       "name": "AppVisibilitySettings",
+      "tier": "block",
       "module": "@/features/apps/app-visibility-settings.tsx",
       "export": "AppVisibilitySettings",
       "story": {
         "module": "@/features/apps/app-visibility-settings.stories.tsx",
-        "states": ["PrivateCollaboration", "PublicCollaboration", "ProposalReady", "ExistingProposal", "ReadOnly"]
+        "states": [
+          "PrivateCollaboration",
+          "PublicCollaboration",
+          "ProposalReady",
+          "ExistingProposal",
+          "ReadOnly"
+        ]
       }
     },
     {
       "id": "app-share-sheet",
       "name": "AppShareSheet",
+      "tier": "block",
       "module": "@/features/apps/app-share-sheet.tsx",
       "export": "AppShareSheet",
       "story": {
         "module": "@/features/apps/app-share-sheet.stories.tsx",
-        "states": ["Trigger", "Open"]
+        "states": [
+          "Trigger",
+          "Open"
+        ]
       }
     },
     {
       "id": "challenge-feed",
       "name": "ChallengeFeed",
+      "tier": "feature",
       "module": "@/features/community/challenges.tsx",
       "export": "ChallengeFeed",
       "story": {
         "module": "@/features/community/challenges.stories.tsx",
-        "states": ["FairRewardsContractMatrix"]
+        "states": [
+          "FairRewardsContractMatrix"
+        ]
       }
     },
     {
       "id": "challenge-detail-content",
       "name": "ChallengeDetailContent",
+      "tier": "feature",
       "module": "@/features/community/challenge-detail.tsx",
       "export": "ChallengeDetailContent",
       "story": {
         "module": "@/features/community/challenge-detail.stories.tsx",
-        "states": ["NativeInProgress", "PublicOpen", "Pending", "Completed", "Missed"]
+        "states": [
+          "NativeInProgress",
+          "PublicOpen",
+          "Pending",
+          "Completed",
+          "Missed"
+        ]
       }
     },
     {
       "id": "dev-conversation",
       "name": "DevConversation",
+      "tier": "block",
       "module": "@/features/dev/dev-conversation.tsx",
       "export": "DevConversation",
       "story": {
         "module": "@/features/dev/dev-conversation.stories.tsx",
-        "states": ["History", "Streaming", "Disconnected"]
+        "states": [
+          "History",
+          "Streaming",
+          "Disconnected"
+        ]
       }
     },
     {
       "id": "dev-budget-status",
       "name": "DevBudgetStatusView",
+      "tier": "block",
       "module": "@/features/dev/dev-budget-status.tsx",
       "export": "DevBudgetStatusView",
       "story": {
         "module": "@/features/dev/dev-budget-status.stories.tsx",
-        "states": ["SharedAllowance", "PersonalKeySpillover", "UserAllowanceExhausted", "SharedAllowanceExhausted", "AiUnavailable"]
+        "states": [
+          "SharedAllowance",
+          "PersonalKeySpillover",
+          "UserAllowanceExhausted",
+          "SharedAllowanceExhausted",
+          "AiUnavailable"
+        ]
       }
     },
     {
       "id": "dev-saved-drafts",
       "name": "DevSavedDraftsView",
+      "tier": "block",
       "module": "@/features/dev/dev-saved-drafts.tsx",
       "export": "DevSavedDraftsView",
       "story": {
         "module": "@/features/dev/dev-saved-drafts.stories.tsx",
-        "states": ["ReadyToSend", "BuilderWorking"]
+        "states": [
+          "ReadyToSend",
+          "BuilderWorking"
+        ]
       }
     },
     {
       "id": "dev-board",
       "name": "DevBoard",
+      "tier": "feature",
       "module": "@/features/dev/dev-board.tsx",
       "export": "DevBoard",
       "story": {
         "module": "@/features/dev/dev-board.stories.tsx",
-        "states": ["LifecycleWithOrdering", "LinearWorkFeed", "TasksByPerson", "TasksByPersonReadOnly", "ReadOnly"]
+        "states": [
+          "LifecycleWithOrdering",
+          "LinearWorkFeed",
+          "TasksByPerson",
+          "TasksByPersonReadOnly",
+          "ReadOnly"
+        ]
       }
     },
     {
       "id": "dev-vote-controls",
       "name": "DevVoteControls",
+      "tier": "block",
       "module": "@/features/dev/dev-vote-controls.tsx",
       "export": "DevVoteControls",
       "story": {
         "module": "@/features/dev/dev-vote-controls.stories.tsx",
-        "states": ["ProposalNeedsVote", "GovernanceVoteSelected", "Recording", "ReadOnly"]
+        "states": [
+          "ProposalNeedsVote",
+          "GovernanceVoteSelected",
+          "Recording",
+          "ReadOnly"
+        ]
       }
     },
     {
       "id": "github-issues",
       "name": "GitHubIssues",
+      "tier": "feature",
       "module": "@/features/dev/github-issues.tsx",
       "export": "GitHubIssues",
       "story": {
         "module": "@/features/dev/github-issues.stories.tsx",
-        "states": ["WithActivity", "Empty", "Loading"]
+        "states": [
+          "WithActivity",
+          "Empty",
+          "Loading"
+        ]
       }
     },
     {
       "id": "github-issue-detail-content",
       "name": "GitHubIssueDetailContent",
+      "tier": "feature",
       "module": "@/features/dev/github-issue-detail.tsx",
       "export": "GitHubIssueDetailContent",
       "story": {
         "module": "@/features/dev/github-issue-detail.stories.tsx",
-        "states": ["WithDiscussion", "AlreadyPledged", "ProposalGenerating", "ProposalReadyToClone", "LoadingComments", "TruncatedDiscussion", "CloseProposalAvailable", "CloseProposalOpen", "CloseProposalCreated", "CloseProposalError", "AdminClaimRecovery"]
+        "states": [
+          "WithDiscussion",
+          "AlreadyPledged",
+          "ProposalGenerating",
+          "ProposalReadyToClone",
+          "LoadingComments",
+          "TruncatedDiscussion",
+          "CloseProposalAvailable",
+          "CloseProposalOpen",
+          "CloseProposalCreated",
+          "CloseProposalError",
+          "AdminClaimRecovery"
+        ]
       }
     },
     {
       "id": "topic-attribute-controls",
       "name": "TopicAttributeControls",
+      "tier": "block",
       "module": "@/features/dev/topic-attribute-controls.tsx",
       "export": "TopicAttributeControls",
       "story": {
         "module": "@/features/dev/topic-attribute-controls.stories.tsx",
-        "states": ["Loaded", "SavingCategory", "PartialAvailability", "ReadOnly"]
+        "states": [
+          "Loaded",
+          "SavingCategory",
+          "PartialAvailability",
+          "ReadOnly"
+        ]
       }
     },
     {
       "id": "shared-session-detail-content",
       "name": "SharedSessionDetailContent",
+      "tier": "feature",
       "module": "@/features/dev/shared-session.tsx",
       "export": "SharedSessionDetailContent",
       "story": {
         "module": "@/features/dev/shared-session.stories.tsx",
-        "states": ["Collaborator", "ViewOnly"]
+        "states": [
+          "Collaborator",
+          "ViewOnly"
+        ]
       }
     },
     {
       "id": "group-discussion-transcript",
       "name": "GroupDiscussionTranscript",
+      "tier": "block",
       "module": "@/features/dev/group-discussion.tsx",
       "export": "GroupDiscussionTranscript",
       "story": {
         "module": "@/features/dev/group-discussion.stories.tsx",
-        "states": ["ReadOnly", "CollaboratorReactions", "CollaboratorReplies", "CollaboratorEditing", "UnreadNotification", "Empty"]
+        "states": [
+          "ReadOnly",
+          "CollaboratorReactions",
+          "CollaboratorReplies",
+          "CollaboratorEditing",
+          "UnreadNotification",
+          "Empty"
+        ]
       }
     },
     {
       "id": "group-discussion-composer",
       "name": "GroupDiscussionComposer",
+      "tier": "block",
       "module": "@/features/dev/group-discussion.tsx",
       "export": "GroupDiscussionComposer",
       "story": {
         "module": "@/features/dev/group-discussion-composer.stories.tsx",
-        "states": ["Ready", "Replying", "Reconnecting", "CollaboratorsTyping"]
+        "states": [
+          "Ready",
+          "Replying",
+          "Reconnecting",
+          "CollaboratorsTyping"
+        ]
       }
     },
     {
       "id": "admin-operations-overview",
       "name": "AdminOperationsOverview",
+      "tier": "feature",
       "module": "@/features/admin/admin-overview.tsx",
       "export": "AdminOperationsOverview",
       "story": {
         "module": "@/features/admin/admin-overview.stories.tsx",
-        "states": ["Administrator", "ViewOnly", "AllClear"]
+        "states": [
+          "Administrator",
+          "ViewOnly",
+          "AllClear"
+        ]
       }
     },
     {
       "id": "admin-users-list",
       "name": "AdminUsersList",
+      "tier": "feature",
       "module": "@/features/admin/admin-users.tsx",
       "export": "AdminUsersList",
       "story": {
         "module": "@/features/admin/admin-users.stories.tsx",
-        "states": ["MixedRoles"]
+        "states": [
+          "MixedRoles"
+        ]
       }
     },
     {
       "id": "activation-codes-list",
       "name": "ActivationCodesList",
+      "tier": "feature",
       "module": "@/features/admin/activation-codes.tsx",
       "export": "ActivationCodesList",
       "story": {
         "module": "@/features/admin/activation-codes.stories.tsx",
-        "states": ["AvailableAndUsed", "CopyReady", "Empty"]
+        "states": [
+          "AvailableAndUsed",
+          "CopyReady",
+          "Empty"
+        ]
       }
     },
     {
       "id": "spend-limits-cards",
       "name": "SpendLimitsCards",
+      "tier": "feature",
       "module": "@/features/admin/spend-limits.tsx",
       "export": "SpendLimitsCards",
       "story": {
         "module": "@/features/admin/spend-limits.stories.tsx",
-        "states": ["Defaults"]
+        "states": [
+          "Summary"
+        ]
       }
     },
     {
       "id": "submitted-features-list",
       "name": "SubmittedFeaturesList",
+      "tier": "feature",
       "module": "@/features/admin/admin-features.tsx",
       "export": "SubmittedFeaturesList",
       "story": {
         "module": "@/features/admin/admin-features.stories.tsx",
-        "states": ["Ranked", "Empty"]
+        "states": [
+          "Ranked",
+          "Empty"
+        ]
       }
     },
     {
       "id": "merge-run-list",
       "name": "MergeRunList",
+      "tier": "feature",
       "module": "@/features/admin/merge-debug.tsx",
       "export": "MergeRunList",
-      "story": { "module": "@/features/admin/merge-debug.stories.tsx", "states": ["MixedOutcomes", "Empty"] }
+      "story": {
+        "module": "@/features/admin/merge-debug.stories.tsx",
+        "states": [
+          "MixedOutcomes",
+          "Empty"
+        ]
+      }
     },
     {
       "id": "session-spec-document",
       "name": "SpecDocument",
+      "tier": "block",
       "module": "@/features/dev/session-spec-viewer.tsx",
       "export": "SpecDocument",
-      "story": { "module": "@/features/dev/session-spec-viewer.stories.tsx", "states": ["SplitSections", "Empty"] }
+      "story": {
+        "module": "@/features/dev/session-spec-viewer.stories.tsx",
+        "states": [
+          "SplitSections",
+          "Empty"
+        ]
+      }
     },
     {
       "id": "session-spec-sharing",
       "name": "SpecSharingControls",
+      "tier": "block",
       "module": "@/features/dev/session-spec-viewer.tsx",
       "export": "SpecSharingControls",
-      "story": { "module": "@/features/dev/session-spec-sharing.stories.tsx", "states": ["Available", "SharedToGroup", "ProductionReview"] }
+      "story": {
+        "module": "@/features/dev/session-spec-sharing.stories.tsx",
+        "states": [
+          "Available",
+          "SharedToGroup",
+          "ProductionReview"
+        ]
+      }
     },
     {
       "id": "dev-build-timeline",
       "name": "DevBuildTimeline",
+      "tier": "block",
       "module": "@/features/dev/dev-build-timeline.tsx",
       "export": "DevBuildTimeline",
-      "story": { "module": "@/features/dev/dev-build-timeline.stories.tsx", "states": ["ActiveAndPersisted"] }
+      "story": {
+        "module": "@/features/dev/dev-build-timeline.stories.tsx",
+        "states": [
+          "ActiveAndPersisted"
+        ]
+      }
     },
     {
       "id": "gallery-visual-evidence",
       "name": "GalleryVisualEvidence",
+      "tier": "block",
       "module": "@/features/admin/gallery-visual-evidence.tsx",
       "export": "GalleryVisualEvidence",
       "story": {
         "module": "@/features/admin/gallery-visual-evidence.stories.tsx",
-        "states": ["Complete", "CaptureWarnings", "NoArtifacts"]
+        "states": [
+          "Complete",
+          "CaptureWarnings",
+          "NoArtifacts"
+        ]
       }
     },
-    { "id": "topic-discussion", "name": "TopicDiscussionContent", "module": "@/features/dev/topic-discussion-transcript.tsx", "export": "TopicDiscussionContent", "story": { "module": "@/features/dev/topic-discussion-transcript.stories.tsx", "states": ["Collaborator", "CollaboratorEditing", "ReplyStaged", "ViewOnly", "Reconnecting", "CollaboratorTyping", "Empty", "Loading", "Error", "ProductionReview"] } },
-    { "id": "notifications-content", "name": "NotificationsContent", "module": "@/features/notifications/notifications.tsx", "export": "NotificationsContent", "story": { "module": "@/features/notifications/notifications.stories.tsx", "states": ["WithInvitationAndPagination", "Empty", "Loading", "Error"] } },
-    { "id": "dev-console-panel", "name": "DevConsolePanel", "module": "@/components/dev-console-panel.tsx", "export": "DevConsolePanel", "story": { "module": "@/components/dev-console-panel.stories.tsx", "states": ["MixedMessages", "ErrorsOnly", "Empty"] } },
-    { "id": "native-app-settings", "name": "NativeAppSettings", "module": "@/features/account/native-app-settings.tsx", "export": "NativeAppSettings", "story": { "module": "@/features/account/native-app-settings.stories.tsx", "states": ["Ready", "OutsideUsernode", "ReadOnly"] } },
-    { "id": "wallet-link-settings", "name": "WalletLinkSettingsView", "module": "@/features/account/wallet-link-settings.tsx", "export": "WalletLinkSettingsView", "story": { "module": "@/features/account/wallet-link-settings.stories.tsx", "states": ["LinkAvailable", "AwaitingQr", "AwaitingNative", "Linked", "Error", "ReadOnly"] } },
-    { "id": "password-settings", "name": "PasswordSettings", "module": "@/features/account/password-settings.tsx", "export": "PasswordSettings", "story": { "module": "@/features/account/password-settings.stories.tsx", "states": ["CurrentPassword", "LinkedWallet", "ReadOnly"] } },
-    { "id": "wallet-access", "name": "WalletAccessView", "module": "@/features/auth/wallet-access.tsx", "export": "WalletAccessView", "story": { "module": "@/features/auth/wallet-access.stories.tsx", "states": ["Checking", "LinkedWallet", "NewGenesisWallet", "LinkExisting", "Register", "Recovery", "Linking", "Ineligible", "LinkedNonGenesis"] } }
+    {
+      "id": "topic-discussion",
+      "name": "TopicDiscussionContent",
+      "tier": "block",
+      "module": "@/features/dev/topic-discussion-transcript.tsx",
+      "export": "TopicDiscussionContent",
+      "story": {
+        "module": "@/features/dev/topic-discussion-transcript.stories.tsx",
+        "states": [
+          "Collaborator",
+          "CollaboratorEditing",
+          "ReplyStaged",
+          "ViewOnly",
+          "Reconnecting",
+          "CollaboratorTyping",
+          "Empty",
+          "Loading",
+          "Error",
+          "ProductionReview"
+        ]
+      }
+    },
+    {
+      "id": "notifications-content",
+      "name": "NotificationsContent",
+      "tier": "feature",
+      "module": "@/features/notifications/notifications.tsx",
+      "export": "NotificationsContent",
+      "story": {
+        "module": "@/features/notifications/notifications.stories.tsx",
+        "states": [
+          "WithInvitationAndPagination",
+          "Empty",
+          "Loading",
+          "Error"
+        ]
+      }
+    },
+    {
+      "id": "dev-console-panel",
+      "name": "DevConsolePanel",
+      "tier": "block",
+      "module": "@/components/dev-console-panel.tsx",
+      "export": "DevConsolePanel",
+      "story": {
+        "module": "@/components/dev-console-panel.stories.tsx",
+        "states": [
+          "MixedMessages",
+          "ErrorsOnly",
+          "Empty"
+        ]
+      }
+    },
+    {
+      "id": "native-app-settings",
+      "name": "NativeAppSettings",
+      "tier": "block",
+      "module": "@/features/account/native-app-settings.tsx",
+      "export": "NativeAppSettings",
+      "story": {
+        "module": "@/features/account/native-app-settings.stories.tsx",
+        "states": [
+          "Ready",
+          "OutsideUsernode",
+          "ReadOnly"
+        ]
+      }
+    },
+    {
+      "id": "wallet-link-settings",
+      "name": "WalletLinkSettingsView",
+      "tier": "block",
+      "module": "@/features/account/wallet-link-settings.tsx",
+      "export": "WalletLinkSettingsView",
+      "story": {
+        "module": "@/features/account/wallet-link-settings.stories.tsx",
+        "states": [
+          "LinkAvailable",
+          "AwaitingQr",
+          "AwaitingNative",
+          "Linked",
+          "Error",
+          "ReadOnly"
+        ]
+      }
+    },
+    {
+      "id": "password-settings",
+      "name": "PasswordSettings",
+      "tier": "block",
+      "module": "@/features/account/password-settings.tsx",
+      "export": "PasswordSettings",
+      "story": {
+        "module": "@/features/account/password-settings.stories.tsx",
+        "states": [
+          "CurrentPassword",
+          "LinkedWallet",
+          "ReadOnly"
+        ]
+      }
+    },
+    {
+      "id": "wallet-access",
+      "name": "WalletAccessView",
+      "tier": "feature",
+      "module": "@/features/auth/wallet-access.tsx",
+      "export": "WalletAccessView",
+      "story": {
+        "module": "@/features/auth/wallet-access.stories.tsx",
+        "states": [
+          "Checking",
+          "LinkedWallet",
+          "NewGenesisWallet",
+          "LinkExisting",
+          "Register",
+          "Recovery",
+          "Linking",
+          "Ineligible",
+          "LinkedNonGenesis"
+        ]
+      }
+    }
   ]
 }
