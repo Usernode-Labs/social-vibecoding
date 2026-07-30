@@ -46,8 +46,15 @@ function creatorFromSourceLine(body) {
 // via POST /api/apps/:slug/rename (see src/routes/apps.js). The vote-apply
 // path below (maybeApplyRenameProposal) is retained only so any rename
 // issues already open at rollout can still resolve.
-const VALID_KINDS = ['general', 'secret_change', 'close_issue'];
+// maintenance_campaign (#853's generalization) is self-app-only,
+// admin-proposed fleet maintenance — see the create branch below and
+// services/fleet-maintenance.js for the engine the apply path starts.
+const VALID_KINDS = ['general', 'secret_change', 'close_issue', 'maintenance_campaign'];
 const MAX_SECRET_VALUE_LENGTH = 4096;
+// Campaign instructions are an LLM prompt, not an essay — but audits
+// with embedded code snippets are legitimate, so the cap is generous.
+const MAX_CAMPAIGN_INSTRUCTIONS_LENGTH = 20000;
+const MAX_CAMPAIGN_TITLE_LENGTH = 200;
 // "In progress" status windows. Two separate 7-day constants on purpose —
 // they protect different things and may be tuned independently:
 //  - IN_PROGRESS_PAUSED_WINDOW_DAYS: how long a PAUSED (never-promoted,
@@ -77,8 +84,11 @@ const MAX_ISSUE_TITLE_LENGTH = 200;
 // downstream already tolerates a null github_issue_number: the apply path
 // guards its close/comment on it, and the UI omits the kudos button when
 // no twin exists.
+// Maintenance campaigns are likewise platform governance: the per-app
+// PRs the engine opens are the repo-visible artifact; a twin issue on
+// the PLATFORM repo would be noise.
 function shouldCreateGithubTwin(kind) {
-  return kind !== 'secret_change' && kind !== 'close_issue';
+  return kind !== 'secret_change' && kind !== 'close_issue' && kind !== 'maintenance_campaign';
 }
 
 // Staging-only mock issues for GET /api/apps/:slug/github-issues. A
@@ -594,6 +604,54 @@ function issueRoutes(config) {
         payload = { issueNumber, issueTitle, reason: reason || null };
         title = `Close issue #${issueNumber}: "${issueTitle}"`.slice(0, 512);
         description = reason || null;
+      } else if (kind === 'maintenance_campaign') {
+        // Fleet maintenance (#853): only proposable on the self-hosted
+        // platform app (the campaign's blast radius is EVERY child app,
+        // so the vote belongs to the platform's own governance surface),
+        // and only by users who could force the result anyway — the
+        // campaign instructions are executed by an AI with write access
+        // to every app repo, so authorship is admin-gated even though
+        // approval still goes through the community vote.
+        if (!app.self_hosted) {
+          return res.status(400).json({
+            error: 'Maintenance campaigns can only be proposed on the platform app',
+          });
+        }
+        if (!req.user?.canAdminWrite) {
+          return res.status(403).json({ error: 'Full admin access required' });
+        }
+        if (!github.isEnabled()) {
+          return res.status(422).json({ error: 'GitHub is not configured — campaigns cannot run' });
+        }
+        const campaignTitle = typeof title === 'string' ? title.trim() : '';
+        const instructions = typeof payload?.instructions === 'string' ? payload.instructions.trim() : '';
+        if (!campaignTitle || campaignTitle.length > MAX_CAMPAIGN_TITLE_LENGTH) {
+          return res.status(400).json({
+            error: `Title is required and must be ≤ ${MAX_CAMPAIGN_TITLE_LENGTH} chars`,
+          });
+        }
+        if (!instructions || instructions.length > MAX_CAMPAIGN_INSTRUCTIONS_LENGTH) {
+          return res.status(400).json({
+            error: `payload.instructions is required and must be ≤ ${MAX_CAMPAIGN_INSTRUCTIONS_LENGTH} chars`,
+          });
+        }
+        // Optional slug allowlist; anything else in the payload is dropped.
+        const targetFilter = Array.isArray(payload?.targetFilter)
+          ? payload.targetFilter.map((s) => String(s).trim()).filter(Boolean).slice(0, 500)
+          : null;
+        // payload.title is the RAW campaign title (it becomes the per-app
+        // PR title); issues.title carries the display prefix.
+        payload = {
+          title: campaignTitle,
+          instructions,
+          ...(targetFilter && targetFilter.length ? { targetFilter } : {}),
+        };
+        title = `Maintenance campaign: ${campaignTitle}`.slice(0, 512);
+        description = description?.trim()
+          || `${req.user.username} proposed a platform-wide maintenance campaign. If approved, `
+          + 'an AI will apply the campaign instructions to '
+          + (targetFilter && targetFilter.length ? `${targetFilter.length} selected app(s)` : 'every app')
+          + ', opening one PR per app for its community to review and merge.';
       } else {
         if (!title?.trim()) return res.status(400).json({ error: 'Title required' });
         title = title.trim();
@@ -639,6 +697,8 @@ function issueRoutes(config) {
           : `${req.user.username} proposed setting secret ${payload.key}`;
       } else if (kind === 'close_issue') {
         chatPrefix = `${req.user.username} proposed closing issue #${payload.issueNumber}: "${payload.issueTitle}"`;
+      } else if (kind === 'maintenance_campaign') {
+        chatPrefix = `${req.user.username} proposed a maintenance campaign: "${payload.title}"`;
       } else {
         chatPrefix = `${req.user.username} created issue: "${title}"`;
       }
@@ -650,7 +710,8 @@ function issueRoutes(config) {
       // id; general issues thread on the GitHub twin number (no twin → no
       // thread yet). A close_issue proposal ALSO posts into its target
       // issue's thread so followers of the issue see the vote start.
-      if (kind === 'secret_change' || kind === 'rename' || kind === 'close_issue') {
+      if (kind === 'secret_change' || kind === 'rename' || kind === 'close_issue'
+          || kind === 'maintenance_campaign') {
         await sendSystemMessage(pool, app.id, createdMsg, 'system',
           null, { type: 'governance', ref: rows[0].id }).catch(() => {});
         if (kind === 'close_issue' && payload.issueNumber) {
@@ -725,6 +786,8 @@ function issueRoutes(config) {
         voteSubject = `secret ${action} "${issue.payload?.key || issue.title}"`;
       } else if (issue.kind === 'close_issue') {
         voteSubject = `close proposal for issue #${issue.payload?.issueNumber || '?'}`;
+      } else if (issue.kind === 'maintenance_campaign') {
+        voteSubject = `maintenance campaign "${issue.payload?.title || issue.title}"`;
       } else {
         voteSubject = `issue: "${issue.title}"`;
       }
@@ -740,17 +803,20 @@ function issueRoutes(config) {
       let renamed = null;
       let secretChanged = null;
       let issueClosed = null;
+      let campaignStarted = null;
       if (vote === 'up' && issue.kind === 'rename') {
         renamed = await maybeApplyRenameProposal(pool, issue);
       } else if (vote === 'up' && issue.kind === 'secret_change') {
         secretChanged = await maybeApplySecretChangeProposal(config, pool, issue);
       } else if (vote === 'up' && issue.kind === 'close_issue') {
         issueClosed = await maybeApplyCloseIssueProposal(pool, issue);
+      } else if (vote === 'up' && issue.kind === 'maintenance_campaign') {
+        campaignStarted = await maybeApplyMaintenanceCampaignProposal(config, pool, issue);
       }
 
       pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id, vote });
 
-      res.json({ ok: true, renamed, secretChanged, issueClosed });
+      res.json({ ok: true, renamed, secretChanged, issueClosed, campaignStarted });
     } catch (err) {
       log.error('issues', 'Vote failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -1710,8 +1776,14 @@ function issueRoutes(config) {
       if (issue.status !== 'open') {
         return res.status(409).json({ error: 'Issue is not open' });
       }
-      if (issue.kind !== 'secret_change' && issue.kind !== 'close_issue') {
-        return res.status(400).json({ error: 'Only secret-change and close-issue proposals can be admin-applied' });
+      if (issue.kind !== 'secret_change' && issue.kind !== 'close_issue'
+          && issue.kind !== 'maintenance_campaign') {
+        return res.status(400).json({ error: 'Only secret-change, close-issue, and maintenance-campaign proposals can be admin-applied' });
+      }
+      // Campaigns are self-app governance with fleet-wide blast radius:
+      // only a FULL platform admin may force one, never an app admin.
+      if (issue.kind === 'maintenance_campaign' && !req.user?.canAdminWrite) {
+        return res.status(403).json({ error: 'Full admin access required' });
       }
 
       log.info('issues', 'Admin force-apply requested', {
@@ -1720,7 +1792,9 @@ function issueRoutes(config) {
 
       const applied = issue.kind === 'close_issue'
         ? await maybeApplyCloseIssueProposal(pool, issue, { force: true, forceBy: req.user })
-        : await maybeApplySecretChangeProposal(config, pool, issue, { force: true, forceBy: req.user });
+        : issue.kind === 'maintenance_campaign'
+          ? await maybeApplyMaintenanceCampaignProposal(config, pool, issue, { force: true, forceBy: req.user })
+          : await maybeApplySecretChangeProposal(config, pool, issue, { force: true, forceBy: req.user });
 
       pushIssueUpdate({ action: 'voted', appSlug: issue.app_slug, appId: issue.app_id, issueId: issue.id });
 
@@ -2536,6 +2610,120 @@ async function maybeApplyCloseIssueProposal(pool, issue, options = {}) {
   return { applied: true, issueNumber, upCount, majority, active, force };
 }
 
+/**
+ * Vote-apply path for `kind='maintenance_campaign'` issues (#853's
+ * generalization). Same shape as maybeApplySecretChangeProposal: gate,
+ * lock the issue row, write the outcome atomically — here that's the
+ * maintenance_campaigns row — then start the campaign engine
+ * (services/fleet-maintenance.js) fire-and-forget. The engine is
+ * restart-proof (per-app state in maintenance_campaign_apps + boot
+ * resume), so "started but the process died" is not a lost campaign.
+ *
+ * `options.force` (admin force-apply): skip the vote gate; the route
+ * has already verified FULL platform-admin rights for this kind.
+ */
+async function maybeApplyMaintenanceCampaignProposal(config, pool, issue, options = {}) {
+  const force = !!options.force;
+  const { majority } = await getActiveUserStats(pool, issue.app_id);
+
+  const governanceSvc = require('../services/governance');
+  const gate = await governanceSvc.governedGate(pool, issue.app_id, {
+    kind: 'issue', id: issue.id, openedAt: issue.created_at,
+  });
+  const upCount = gate.qualifiedYes;
+  const active = gate.activeCount;
+  const required = force ? upCount : gate.required;
+  if (!force && !gate.mergeable) {
+    return {
+      applied: false, upCount, majority, active,
+      required: gate.required, windowEndsAt: gate.windowEndsAt,
+      waitingForWindow: (gate.thresholdMet || gate.lazyArmed) && !gate.windowElapsed,
+    };
+  }
+
+  // Locked-app admin-up gate, parity with the other governance kinds.
+  if (!force && await isAppLocked(pool, issue.app_id)) {
+    const adminUp = await hasAdminUpVote(pool, issue.id);
+    if (!adminUp) {
+      return { applied: false, upCount, majority, active, awaitingAdmin: true };
+    }
+  }
+
+  let campaignId = null;
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows: lockRows } = await client.query(
+      'SELECT * FROM issues WHERE id = $1 FOR UPDATE',
+      [issue.id]
+    );
+    if (!lockRows.length || lockRows[0].status !== 'open') {
+      await client.query('ROLLBACK');
+      return { applied: false, upCount, majority, active };
+    }
+    const locked = lockRows[0];
+    const payload = locked.payload || {};
+    const instructions = typeof payload.instructions === 'string' ? payload.instructions.trim() : '';
+    if (!instructions) {
+      await client.query('ROLLBACK');
+      log.warn('issues', 'Maintenance-campaign proposal missing instructions', { issueId: issue.id });
+      return { applied: false, upCount, majority, active };
+    }
+    const campaignTitle = (typeof payload.title === 'string' && payload.title.trim())
+      || locked.title.replace(/^Maintenance campaign:\s*/, '');
+    const targetFilter = Array.isArray(payload.targetFilter) && payload.targetFilter.length
+      ? payload.targetFilter : null;
+
+    const { rows: campRows } = await client.query(
+      `INSERT INTO maintenance_campaigns (issue_id, title, instructions, target_filter, status, created_by)
+       VALUES ($1, $2, $3, $4, 'running', $5)
+       RETURNING id`,
+      [locked.id, String(campaignTitle).slice(0, 300), instructions,
+        targetFilter ? JSON.stringify(targetFilter) : null, locked.created_by || null]
+    );
+    campaignId = campRows[0].id;
+
+    await client.query(
+      `UPDATE issues SET status = 'closed',
+          payload = COALESCE(payload, '{}'::jsonb) || $2::jsonb
+        WHERE id = $1`,
+      [locked.id, JSON.stringify({
+        campaignId,
+        appliedAt: new Date().toISOString(),
+        appliedBy: force ? `admin:${options.forceBy?.username || 'admin'}` : 'vote',
+        upCount, required, active,
+      })]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch {}
+    log.error('issues', 'Maintenance-campaign apply failed', { issueId: issue.id, err: err.message });
+    return { applied: false, error: err.message };
+  } finally {
+    client.release();
+  }
+
+  const appliedHow = force
+    ? `by admin override (${options.forceBy?.username || 'admin'})`
+    : `by group vote (${upCount}/${required})`;
+  const startedMsg = `Maintenance campaign "${issue.payload?.title || issue.title}" approved ${appliedHow}. `
+    + 'The platform is now opening one PR per app — progress on the campaign dashboard.';
+  await sendSystemMessage(pool, issue.app_id, startedMsg, 'system')
+    .catch((err) => log.warn('issues', 'Campaign chat msg failed', { err: err.message }));
+  await sendSystemMessage(pool, issue.app_id, startedMsg, 'system',
+    null, { type: 'governance', ref: issue.id }).catch(() => {});
+
+  // Fire-and-forget: the engine owns its own error handling + resume.
+  const fleetMaintenance = require('../services/fleet-maintenance');
+  fleetMaintenance.runCampaign(config, pool, campaignId).catch((err) =>
+    log.error('issues', 'Campaign run failed after apply', { campaignId, err: err.message }));
+
+  log.info('issues', 'Maintenance-campaign proposal applied', {
+    issueId: issue.id, campaignId, upCount, active, force,
+  });
+  return { applied: true, campaignId, upCount, majority, active, force };
+}
+
 module.exports = {
   issueRoutes,
   creatorFromSourceLine,
@@ -2545,6 +2733,7 @@ module.exports = {
   maybeApplyRenameProposal,
   maybeApplySecretChangeProposal,
   maybeApplyCloseIssueProposal,
+  maybeApplyMaintenanceCampaignProposal,
   // Exported for the merge path and the issue-close watcher (auto-resolve
   // of close proposals whose target was closed by other means).
   resolveSupersededCloseProposals,

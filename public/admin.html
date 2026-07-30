@@ -84,6 +84,41 @@
       <div id="overview-details" class="space-y-3 text-sm"></div>
     </div>
 
+    <!-- Maintenance campaigns (#853): fleet-wide platform maintenance.
+         "New campaign" here only PROPOSES — it opens a
+         kind='maintenance_campaign' governance issue on the platform app,
+         and the engine starts when that vote passes (or an admin
+         force-applies the proposal). This section tracks per-app fan-out
+         progress and offers retry / merge-all-green once PRs exist.
+         Deep-linkable: /admin#campaign-<id> auto-expands that campaign. -->
+    <div id="campaigns-section" class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 mb-6 border border-zinc-200 dark:border-zinc-800">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-lg font-semibold">Maintenance campaigns</h2>
+        <div class="flex items-center gap-3">
+          <button id="refresh-campaigns" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+          <button id="new-campaign-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">New campaign</button>
+        </div>
+      </div>
+      <div id="campaign-form" class="hidden mb-4 rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3 space-y-2">
+        <input id="campaign-title" type="text" maxlength="200"
+          class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm"
+          placeholder="Campaign title — becomes each app's PR title">
+        <textarea id="campaign-instructions" rows="6" maxlength="20000"
+          class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm font-mono"
+          placeholder="Instructions for the AI — what to change in each app, with code snippets where helpful. The AI reads each repo and applies these per-app."></textarea>
+        <input id="campaign-targets" type="text"
+          class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm font-mono"
+          placeholder="Optional: comma-separated app slugs to target (blank = every app)">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p class="text-xs text-zinc-500">Submitting opens a governance proposal on the platform app. The campaign starts when the vote passes, or when an admin applies the proposal.</p>
+          <button id="campaign-submit-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors shrink-0">Propose campaign</button>
+        </div>
+        <p id="campaign-form-status" class="text-xs hidden"></p>
+      </div>
+      <div id="campaign-list" class="space-y-2"></div>
+      <p id="campaign-empty" class="text-sm text-zinc-500 hidden">No campaigns yet.</p>
+    </div>
+
     <!-- LLM Spend Limits -->
     <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 mb-6 border border-zinc-200 dark:border-zinc-800">
       <div class="flex items-center justify-between mb-3">
@@ -751,7 +786,8 @@
     }
 
     function escapeHtml(str) {
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
     }
 
     async function loadOverview() {
@@ -826,6 +862,221 @@
     }
 
     document.getElementById('refresh-overview').addEventListener('click', loadOverview);
+
+    // ── Maintenance campaigns (#853) ─────────────────────────────────
+    // List + expandable per-app detail for fleet maintenance campaigns.
+    // Creation here only PROPOSES (a governance issue on the platform
+    // app); the engine starts when the vote passes. Deep link
+    // /admin#campaign-<id> (the "View campaign" button on an applied
+    // proposal card) pre-expands that campaign.
+    const CAMPAIGN_EXPANDED = new Set();
+    {
+      const m = location.hash.match(/^#campaign-(\d+)$/);
+      if (m) CAMPAIGN_EXPANDED.add(Number(m[1]));
+    }
+
+    function campaignAppBadge(state) {
+      const map = {
+        pending: ['bg-zinc-500/10 text-zinc-500', 'Pending'],
+        running: ['bg-violet-500/10 text-violet-500', 'Running'],
+        pr_open: ['bg-sky-500/10 text-sky-600 dark:text-sky-400', 'PR open'],
+        merged: ['bg-green-500/10 text-green-600 dark:text-green-400', 'Merged'],
+        skipped: ['bg-zinc-500/10 text-zinc-400', 'Skipped'],
+        failed: ['bg-red-500/10 text-red-500', 'Failed'],
+      };
+      const [cls, label] = map[state] || ['bg-zinc-500/10 text-zinc-400', state || '—'];
+      return `<span class="text-[0.65rem] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ${cls} shrink-0">${escapeHtml(label)}</span>`;
+    }
+
+    async function loadCampaigns() {
+      const { data } = await fetchAdminJson('/api/campaigns');
+      const list = document.getElementById('campaign-list');
+      const campaigns = Array.isArray(data?.campaigns) ? data.campaigns : [];
+      document.getElementById('campaign-empty').classList.toggle('hidden', campaigns.length > 0);
+      list.innerHTML = '';
+      for (const c of campaigns) {
+        const row = document.createElement('div');
+        row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3';
+        row.id = `campaign-${c.id}`;
+        const statusCls = c.status === 'running' ? 'text-violet-500'
+          : c.status === 'done' ? 'text-green-600 dark:text-green-400' : 'text-zinc-400';
+        const failedNote = c.failed_apps
+          ? ` · <span class="text-red-500">${c.failed_apps} failed</span>` : '';
+        row.innerHTML = `
+          <div class="flex items-center justify-between gap-3 cursor-pointer" data-campaign-toggle="${c.id}">
+            <div class="min-w-0">
+              <div class="font-medium truncate">${escapeHtml(c.title)}</div>
+              <div class="text-xs text-zinc-500">
+                #${c.id} · <span class="${statusCls}">${escapeHtml(c.status)}</span>
+                · by ${escapeHtml(c.created_by_username || 'platform')}
+                · ${new Date(c.created_at).toLocaleString()}
+              </div>
+            </div>
+            <div class="text-xs font-mono shrink-0">${c.merged_apps}/${c.total_apps} merged${failedNote}</div>
+          </div>
+          <div class="mt-2 hidden" data-campaign-detail="${c.id}"></div>`;
+        list.appendChild(row);
+        if (CAMPAIGN_EXPANDED.has(c.id)) refreshCampaignDetail(c.id);
+      }
+    }
+
+    async function refreshCampaignDetail(id) {
+      const el = document.querySelector(`[data-campaign-detail="${id}"]`);
+      if (!el) return;
+      el.classList.remove('hidden');
+      const { data } = await fetchAdminJson(`/api/campaigns/${id}`);
+      const c = data?.campaign;
+      if (!c) { el.innerHTML = '<p class="text-xs text-red-400">Failed to load campaign detail.</p>'; return; }
+      const rows = (c.apps || []).map((a) => {
+        const pr = a.prUrl
+          ? `<a href="${escapeHtml(a.prUrl)}" target="_blank" class="text-violet-400 hover:underline text-xs">PR #${a.prNumber || '?'}</a>` : '';
+        const check = a.checkState
+          ? `<span class="text-xs ${a.checkState === 'passing' ? 'text-green-500' : a.checkState === 'failing' || a.checkState === 'error' ? 'text-red-400' : 'text-zinc-500'}">checks: ${escapeHtml(a.checkState)}</span>` : '';
+        const err = a.error
+          ? `<div class="text-xs text-red-400 mt-0.5 break-words">${escapeHtml(a.error)}</div>` : '';
+        const retry = (CAN_WRITE && (a.state === 'failed' || a.state === 'skipped'))
+          ? `<button class="campaign-retry-btn text-xs text-violet-400 hover:text-violet-300 shrink-0" data-campaign="${c.id}" data-app="${a.appId}">Retry</button>` : '';
+        return `
+          <li class="p-2 rounded bg-white dark:bg-zinc-900">
+            <div class="flex items-center justify-between gap-3">
+              <span class="font-mono text-sm truncate">${escapeHtml(a.slug)}</span>
+              <span class="flex items-center gap-2">${pr}${check}${campaignAppBadge(a.state)}${retry}</span>
+            </div>
+            ${err}
+          </li>`;
+      }).join('');
+      // "Green" = open campaign PR whose checks pass — what merge-green
+      // will force-merge (mirrors the server-side query in
+      // fleet-maintenance.mergeGreen).
+      const green = (c.apps || []).filter((a) => a.state === 'pr_open'
+        && (a.checkState === 'passing' || a.checkState === 'skipped')).length;
+      const mergeBtn = (CAN_WRITE && green > 0)
+        ? `<button class="campaign-merge-green-btn rounded-lg bg-green-600 hover:bg-green-500 px-3 py-1.5 text-xs font-medium text-white transition-colors" data-campaign="${c.id}">Merge all green (${green})</button>` : '';
+      el.innerHTML = `
+        <details class="mb-2">
+          <summary class="text-xs text-zinc-500 cursor-pointer">Instructions</summary>
+          <pre class="text-xs text-zinc-500 whitespace-pre-wrap mt-1 p-2 rounded bg-white dark:bg-zinc-900 max-h-48 overflow-y-auto">${escapeHtml(c.instructions || '')}</pre>
+        </details>
+        <ul class="space-y-1">${rows || '<li class="text-xs text-zinc-500">No target apps.</li>'}</ul>
+        <div class="flex items-center justify-end gap-2 mt-2">
+          <span class="campaign-detail-status text-xs text-zinc-500"></span>
+          ${mergeBtn}
+        </div>`;
+    }
+
+    document.getElementById('campaign-list').addEventListener('click', async (e) => {
+      const toggle = e.target.closest('[data-campaign-toggle]');
+      const retryBtn = e.target.closest('.campaign-retry-btn');
+      const mergeBtn = e.target.closest('.campaign-merge-green-btn');
+      if (retryBtn) {
+        const campaignId = Number(retryBtn.dataset.campaign);
+        retryBtn.disabled = true;
+        retryBtn.textContent = 'Retrying…';
+        const res = await fetch(`/api/campaigns/${campaignId}/apps/${retryBtn.dataset.app}/retry`, { method: 'POST' });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          alert(`Retry failed: ${data.error || `HTTP ${res.status}`}`);
+        }
+        refreshCampaignDetail(campaignId).catch(() => {});
+        return;
+      }
+      if (mergeBtn) {
+        const campaignId = Number(mergeBtn.dataset.campaign);
+        if (!confirm('Force-merge every campaign PR whose checks pass? Each merge triggers a production rebuild of that app.')) return;
+        mergeBtn.disabled = true;
+        mergeBtn.textContent = 'Merging…';
+        const statusEl = mergeBtn.closest('div')?.querySelector('.campaign-detail-status');
+        if (statusEl) statusEl.textContent = 'Merging sequentially — this can take a while…';
+        try {
+          const res = await fetch(`/api/campaigns/${campaignId}/merge-green`, { method: 'POST' });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+          const merged = (data.results || []).filter((r) => r.merged).length;
+          const failed = (data.results || []).length - merged;
+          alert(`Merge-green done: ${merged} merged${failed ? `, ${failed} failed (see per-app rows)` : ''}.`);
+        } catch (err) {
+          alert(`Merge-green failed: ${err.message}`);
+        }
+        loadCampaigns().catch(() => {});
+        return;
+      }
+      if (toggle) {
+        const id = Number(toggle.dataset.campaignToggle);
+        const detail = document.querySelector(`[data-campaign-detail="${id}"]`);
+        if (!detail) return;
+        if (detail.classList.contains('hidden')) {
+          CAMPAIGN_EXPANDED.add(id);
+          refreshCampaignDetail(id).catch(() => {});
+        } else {
+          CAMPAIGN_EXPANDED.delete(id);
+          detail.classList.add('hidden');
+        }
+      }
+    });
+
+    // Live progress while a fan-out runs: cheap per-campaign status poll,
+    // but only for campaigns the admin has expanded.
+    setInterval(() => {
+      for (const id of CAMPAIGN_EXPANDED) {
+        // Skip if a merge-green is mid-flight in this detail (button
+        // disabled) so the poll doesn't wipe the in-progress UI.
+        const el = document.querySelector(`[data-campaign-detail="${id}"]`);
+        if (el && el.querySelector('.campaign-merge-green-btn:disabled')) continue;
+        refreshCampaignDetail(id).catch(() => {});
+      }
+    }, 8000);
+
+    document.getElementById('refresh-campaigns').addEventListener('click', () => {
+      loadCampaigns().catch(() => {});
+    });
+
+    document.getElementById('new-campaign-btn').addEventListener('click', () => {
+      document.getElementById('campaign-form').classList.toggle('hidden');
+    });
+
+    document.getElementById('campaign-submit-btn').addEventListener('click', async () => {
+      const status = document.getElementById('campaign-form-status');
+      const show = (msg, ok) => {
+        status.textContent = msg;
+        status.className = `text-xs ${ok ? 'text-green-500' : 'text-red-400'}`;
+        status.classList.remove('hidden');
+      };
+      const title = document.getElementById('campaign-title').value.trim();
+      const instructions = document.getElementById('campaign-instructions').value.trim();
+      const targetsRaw = document.getElementById('campaign-targets').value.trim();
+      if (!title) return show('Title is required.', false);
+      if (!instructions) return show('Instructions are required.', false);
+      const targetFilter = targetsRaw
+        ? targetsRaw.split(',').map((s) => s.trim()).filter(Boolean) : null;
+      const btn = document.getElementById('campaign-submit-btn');
+      btn.disabled = true;
+      try {
+        // Campaign proposals live on the self-hosted platform app's
+        // issues surface; resolve its slug first.
+        const meta = await fetchAdminJson('/api/campaigns/meta');
+        const slug = meta.data?.selfAppSlug;
+        if (!slug) throw new Error('Platform self-app not found — is self-hosting configured?');
+        const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/issues`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: 'maintenance_campaign',
+            title,
+            payload: { instructions, ...(targetFilter ? { targetFilter } : {}) },
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        show('Proposal opened on the platform app — the campaign starts when the vote passes (or an admin applies it).', true);
+        document.getElementById('campaign-title').value = '';
+        document.getElementById('campaign-instructions').value = '';
+        document.getElementById('campaign-targets').value = '';
+      } catch (err) {
+        show(`Propose failed: ${err.message}`, false);
+      } finally {
+        btn.disabled = false;
+      }
+    });
 
     // The DB and API are cents-native (`total_cost_cents` etc.) so cost
     // arithmetic stays in integer cents end-to-end. The admin UI just
@@ -918,7 +1169,7 @@
       // Hide the panel-level mutating controls for view-only admins. The
       // values they act on (codes, limits, quotas) still render read-only.
       if (!CAN_WRITE) {
-        for (const id of ['generate-code-btn', 'save-limits-btn', 'bulk-quota-control']) {
+        for (const id of ['generate-code-btn', 'save-limits-btn', 'bulk-quota-control', 'new-campaign-btn']) {
           document.getElementById(id)?.classList.add('hidden');
         }
         // Lock the platform-default limit inputs so they read as display-only.
@@ -934,6 +1185,7 @@
       loadUsers().catch(() => {});
       loadOverview().catch(() => {});
       loadLimits().catch(() => {});
+      loadCampaigns().catch(() => {});
     }
 
     initAdminPanel().catch(() => {});

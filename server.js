@@ -14,6 +14,7 @@ const { voteRoutes } = require('./src/routes/votes');
 const { kudosRoutes } = require('./src/routes/kudos');
 const { publicApiRoutes } = require('./src/routes/public-api');
 const { issueRoutes } = require('./src/routes/issues');
+const { campaignRoutes } = require('./src/routes/campaigns');
 const { adminRoutes } = require('./src/routes/admin');
 const { dashboardRoutes } = require('./src/routes/dashboard');
 const { feedbackRoutes } = require('./src/routes/feedback');
@@ -412,6 +413,7 @@ app.use(kudosRoutes(config));
 // PUBLIC_PATHS (src/middleware/auth.js).
 app.use(publicApiRoutes(config));
 app.use(issueRoutes(config));
+app.use(campaignRoutes(config));
 app.use(adminRoutes(config));
 app.use(dashboardRoutes(config));
 app.use(feedbackRoutes(config));
@@ -671,6 +673,14 @@ async function start() {
   const { migrateOpenRenameIssues } = require('./src/services/rename-pr');
   migrateOpenRenameIssues(config, getPool(config)).catch((err) => {
     log.warn('server', 'rename-issue migration failed', { err: err.message });
+  });
+
+  // Resume fleet maintenance campaigns interrupted by the restart —
+  // campaign state is a DB state machine (maintenance_campaign_apps),
+  // so re-entering the loop just continues from the first pending app.
+  const { resumeRunningCampaigns } = require('./src/services/fleet-maintenance');
+  resumeRunningCampaigns(config, getPool(config)).catch((err) => {
+    log.warn('server', 'Campaign resume failed', { err: err.message });
   });
 
   worker.ensureWorkerImage().catch((err) => {
@@ -2824,7 +2834,8 @@ function startStalePrSweeper(config) {
     }
 
     // Pass 0b: window-elapsed governance applies (rename + secret_change +
-    // close_issue). Same rationale as Pass 0 — an open governance proposal
+    // close_issue + maintenance_campaign). Same rationale as Pass 0 — an
+    // open governance proposal
     // can satisfy both gates with no further vote. The apply helpers re-check
     // the gate and lock the issue row atomically, so this can't double-apply
     // against a vote. close_issue rows are dispatched UNCONDITIONALLY (not
@@ -2838,7 +2849,7 @@ function startStalePrSweeper(config) {
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'up')   AS up_count,
                 (SELECT COUNT(*)::int FROM issue_votes WHERE issue_id = i.id AND vote = 'down') AS down_count
            FROM issues i JOIN apps a ON a.id = i.app_id
-          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue')
+          WHERE i.status = 'open' AND i.kind IN ('rename', 'secret_change', 'close_issue', 'maintenance_campaign')
           LIMIT 100`
       );
       for (const issue of rows) {
@@ -2854,6 +2865,8 @@ function startStalePrSweeper(config) {
           if (!gate.mergeable) continue;
           if (issue.kind === 'rename') {
             await issuesModule.maybeApplyRenameProposal(pool, issue);
+          } else if (issue.kind === 'maintenance_campaign') {
+            await issuesModule.maybeApplyMaintenanceCampaignProposal(config, pool, issue);
           } else {
             await issuesModule.maybeApplySecretChangeProposal(config, pool, issue);
           }
