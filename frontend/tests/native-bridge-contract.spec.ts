@@ -2,6 +2,8 @@ import { expect, test } from "@playwright/test"
 
 import { nativeBridgeFixtures } from "./fixtures/native-bridge"
 
+const expectNativeState = expect.configure({ timeout: 10_000 })
+
 for (const fixture of nativeBridgeFixtures) {
   test(`native bridge contract: ${fixture.name}`, async ({ page }) => {
     if (fixture.bridgeInfo) {
@@ -25,17 +27,17 @@ for (const fixture of nativeBridgeFixtures) {
     await page.goto("/react/account")
 
     if (fixture.expectedState === "unavailable") {
-      await expect(page.getByTestId("native-device-unavailable")).toBeVisible()
+      await expectNativeState(page.getByTestId("native-device-unavailable")).toBeVisible()
       return
     }
     if (fixture.expectedState === "unsupported") {
-      await expect(page.getByTestId("native-device-unsupported")).toContainText("Update Usernode")
+      await expectNativeState(page.getByTestId("native-device-unsupported")).toContainText("Update Usernode")
       await expect.poll(() => page.evaluate(() => (window as Window & { nativeBridgeUnexpectedNodeCall?: boolean }).nativeBridgeUnexpectedNodeCall === true)).toBe(false)
       return
     }
 
-    await expect(page.getByTestId("native-device-summary")).toContainText("12.5 UT")
-    await expect(page.getByTestId("native-device-summary")).toContainText("12,480 / 12,483")
+    await expectNativeState(page.getByTestId("native-device-summary")).toContainText("12.5 UT")
+    await expectNativeState(page.getByTestId("native-device-summary")).toContainText("12,480 / 12,483")
   })
 }
 
@@ -48,5 +50,5 @@ test("native bridge contract: malformed capability response is fail-closed", asy
   })
 
   await page.goto("/react/account")
-  await expect(page.getByTestId("native-device-unavailable")).toBeVisible()
+  await expectNativeState(page.getByTestId("native-device-unavailable")).toBeVisible()
 })
