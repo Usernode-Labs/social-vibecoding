@@ -52,9 +52,26 @@ Write for a future reader who has the diff but not the task conversation.
   intentional deviation.
 - Record meaningful verification that was actually performed and any known
   remaining risk that affects future work.
+- Derive verification and risk claims from command output produced at the exact
+  commit being described, not from session memory or a dirty neighboring tree.
 - Omit empty headings, diff summaries, file lists, session transcripts,
   abandoned debugging paths, and agent, model, token, or task metadata.
 - Never claim a test or check passed unless it was run.
+
+## Commit size and shape
+
+- Keep one concern per commit. If the subject needs "and", split the change.
+- Do not mix mechanical output with semantic implementation. Generated
+  catalogs, lockfiles, codemod output, and bulk evidence scaffolding belong in
+  commits labeled as mechanical so reviewers can distinguish derived changes
+  from decisions.
+- Treat roughly 400 hand-written changed lines or 20 files as a soft review
+  limit. If a semantic commit exceeds it, explain in the body why the change
+  cannot be split without breaking its contract.
+- Every commit must pass its required gate on its own. A commit that cannot be
+  checked independently is either too large or cut at the wrong boundary.
+- Keep enforcement advisory unless a specific failure proves a mechanical rule
+  is needed. Commit shape remains a review judgment, not a line-count contest.
 
 ## Design-authority scope
 
