@@ -3,7 +3,7 @@ import { useEffect, useState, type FormEvent } from "react"
 import { Link } from "react-router-dom"
 
 import { PlatformIcon } from "@/components/platform-icon"
-import { PageHeader } from "@/components/page-header"
+import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -42,7 +42,7 @@ function captureState(state?: string | null): { label: string; variant: "seconda
   return { label: "Outcome unknown", variant: "outline" }
 }
 
-function GalleryFiltersPanel({ apps, disabled, draft, onChange, onSubmit }: { apps: GalleryApp[]; disabled: boolean; draft: GalleryFilters; onChange: (next: GalleryFilters) => void; onSubmit: () => void }) {
+export function GalleryFiltersPanel({ apps, disabled, draft, onChange, onSubmit }: { apps: GalleryApp[]; disabled: boolean; draft: GalleryFilters; onChange: (next: GalleryFilters) => void; onSubmit: () => void }) {
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     onSubmit()
@@ -131,7 +131,7 @@ function GalleryContent() {
     }
   }
 
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-gallery"><PageHeader action={<div className="flex flex-wrap gap-2"><Button render={<a href="/gallery" />} size="sm" variant="outline">Open gallery<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button><Button onClick={() => setReload((value) => value + 1)} size="sm" type="button" variant="outline">Refresh</Button></div>} description="Before-and-after review evidence for merged proposals." title="Screenshot gallery" /><GalleryFiltersPanel apps={apps} disabled={pageState.loading} draft={draft} onChange={setDraft} onSubmit={() => setFilters(draft)} />{appsError ? <p className="text-base/7 text-muted-foreground sm:text-sm/6" role="status">App filters are unavailable. You can still review all proposals.</p> : null}{stats ? <GalleryStatsStrip stats={stats} /> : null}{statsError ? <p className="text-base/7 text-muted-foreground sm:text-sm/6" role="status">{statsError}</p> : null}{pageState.loading && !pageState.page ? <div className="flex flex-col gap-4"><Skeleton className="h-28" /><Skeleton className="h-96" /><Skeleton className="h-96" /></div> : null}{pageState.error ? <Alert variant="destructive"><PlatformIcon icon={ShieldAlert} /><AlertTitle>Screenshot gallery unavailable</AlertTitle><AlertDescription>{pageState.error}</AlertDescription></Alert> : null}{pageState.page ? <><GalleryProposalList proposals={pageState.page.proposals} />{pageState.page.hasMore ? <div className="flex flex-col items-center gap-3"><Button disabled={loadingOlder} onClick={() => void loadOlder()} type="button" variant="outline">{loadingOlder ? "Loading older proposals…" : "Load older"}</Button>{olderError ? <p className="text-base/7 text-muted-foreground sm:text-sm/6" role="status">Older proposals could not be loaded.</p> : null}</div> : null}</> : null}</div>
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="admin-gallery"><TopBar action={<div className="flex flex-wrap gap-2"><Button render={<a href="/gallery" />} size="sm" variant="outline">Open gallery<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button><Button onClick={() => setReload((value) => value + 1)} size="sm" type="button" variant="outline">Refresh</Button></div>} title="Screenshot gallery" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6"><GalleryFiltersPanel apps={apps} disabled={pageState.loading} draft={draft} onChange={setDraft} onSubmit={() => setFilters(draft)} />{appsError ? <p className="text-base/7 text-muted-foreground sm:text-sm/6" role="status">App filters are unavailable. You can still review all proposals.</p> : null}{stats ? <GalleryStatsStrip stats={stats} /> : null}{statsError ? <p className="text-base/7 text-muted-foreground sm:text-sm/6" role="status">{statsError}</p> : null}{pageState.loading && !pageState.page ? <div className="flex flex-col gap-4"><Skeleton className="h-28" /><Skeleton className="h-96" /><Skeleton className="h-96" /></div> : null}{pageState.error ? <Alert variant="destructive"><PlatformIcon icon={ShieldAlert} /><AlertTitle>Screenshot gallery unavailable</AlertTitle><AlertDescription>{pageState.error}</AlertDescription></Alert> : null}{pageState.page ? <><GalleryProposalList proposals={pageState.page.proposals} />{pageState.page.hasMore ? <div className="flex flex-col items-center gap-3"><Button disabled={loadingOlder} onClick={() => void loadOlder()} type="button" variant="outline">{loadingOlder ? "Loading older proposals…" : "Load older"}</Button>{olderError ? <p className="text-base/7 text-muted-foreground sm:text-sm/6" role="status">Older proposals could not be loaded.</p> : null}</div> : null}</> : null}</div></div>
 }
 
 export function GalleryPage() {
@@ -145,5 +145,5 @@ export function GalleryPage() {
     return () => controller.abort()
   }, [])
   if (access.kind === "ready") return <GalleryContent />
-  return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="admin-gallery"><PageHeader description="Before-and-after review evidence for merged proposals." title="Screenshot gallery" />{access.kind === "loading" ? <div className="flex flex-col gap-4"><Skeleton className="h-24" /><Skeleton className="h-72" /></div> : null}{access.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{access.message}</AlertDescription></Alert> : null}{access.kind === "error" ? <Alert variant="destructive"><AlertTitle>Screenshot gallery unavailable</AlertTitle><AlertDescription>{access.message}</AlertDescription></Alert> : null}</div>
+  return <div className="isolate flex w-full flex-1 flex-col" data-testid="admin-gallery"><TopBar title="Screenshot gallery" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">{access.kind === "loading" ? <div className="flex flex-col gap-4"><Skeleton className="h-24" /><Skeleton className="h-72" /></div> : null}{access.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{access.message}</AlertDescription></Alert> : null}{access.kind === "error" ? <Alert variant="destructive"><AlertTitle>Screenshot gallery unavailable</AlertTitle><AlertDescription>{access.message}</AlertDescription></Alert> : null}</div></div>
 }
