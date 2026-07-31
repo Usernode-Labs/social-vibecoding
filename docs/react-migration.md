@@ -49,6 +49,28 @@ The signed continuation record is
    service-worker/cache migration, route-parity evidence, then selective
    legacy removal.
 
+## Tracked legacy parity backlog
+
+Main continues to improve the production legacy shell while the React shell is
+staged under `/react/`. These changes remain available through the legacy
+fallback and are not mechanical rebase blockers, but the corresponding legacy
+surface cannot be retired until React has equivalent implementation and route
+evidence:
+
+1. Topochain administrator and leaderboard screens.
+2. Platform-environment and per-app secret administration panels.
+3. The one-shot **Explore in Dev chat** advisor handoff.
+4. Dev transcript read and fork flows.
+5. Fleet-maintenance campaign administration for governance-approved changes
+   across applications.
+6. Pull-request import must never open the incomplete developer-chat view.
+7. The homepage application options menu needs the production shell's solid
+   surface treatment.
+
+The in-process challenges interface added on main also changes session-identity
+handling. Track that endpoint in the separate authentication contract matrix;
+it is a session-boundary review item, not visual parity work.
+
 ## Definition of route parity
 
 For every replacement route: existing hash/deep-link and browser-back behavior
