@@ -420,6 +420,70 @@ function stagingMockProposals(viewer) {
       priority: { top: 'medium', count: 2, myValue: null },
       assignee: { top: 'maya-builder', count: 3, myValue: null },
     },
+    // #866: the three states of the Preview slot on an IMPORTED proposal.
+    //
+    // These can't be seeded in the DB the way the imported-PR fixtures in
+    // migrate.js are: `staging_building` is derived per request from the
+    // in-memory build registry (staging.hasInFlightBuild — deliberately not a
+    // persisted column), so a seeded row can only ever render the "no
+    // preview" state. Mock rows carry the derived flags explicitly, which is
+    // the only way to review all three pills in a staging preview.
+    //
+    // The fork label lives on the IMPORT PICKER, not the card (mock candidate
+    // 9403 in services/github-mock.js is the fork-headed one) — a card has no
+    // head-repo of its own to report.
+    //
+    // (a) Preview ready: the build landed, so the ordinary Preview button
+    // renders. The URL is deliberately unroutable — clicking it opens the
+    // loader and reports the host as unreachable, which is the point of a
+    // mock; the button's presence is what's under review.
+    {
+      ...mk(9000041, 900141,
+        '[Mock] Imported-preview test: preview built — the Preview button is live',
+        3, 2, 0, 2, { required: 2, windowEndsAt: hoursAhead(44) }),
+      source: 'imported',
+      imported_pr_author: 'octo-contributor',
+      staging_url: 'https://mock-preview--000000.staging.invalid',
+      staging_building: false,
+      staging_error: null,
+    },
+    // (b) Preview building: imported moments ago, the SHA-pinned build is
+    // still running. Renders the non-interactive "Preview building…" spinner
+    // pill plus the prose note in the detail view, with checks pending
+    // because they run against the preview that doesn't exist yet.
+    {
+      ...mk(9000042, 900142,
+        '[Mock] Imported-preview test: preview still building — spinner pill, no button',
+        0.08, 0, 0, 0, { required: 2, windowEndsAt: hoursAhead(71) }),
+      source: 'imported',
+      imported_pr_author: 'octo-contributor',
+      staging_url: null,
+      staging_building: true,
+      staging_error: null,
+      check_state: 'pending',
+      test_results: [],
+      checks_checked_at: hoursAgo(0.05),
+    },
+    // (c) Preview unavailable: the build failed, so there is nothing to
+    // preview and checks can't run. Renders the "Preview unavailable" chip
+    // (reason in the tooltip), the amber prose note, and — for a viewer who
+    // can act — the "Retry preview" button beside it. check_error_detail
+    // carries the same reason the chip shows, exactly as a real error row
+    // does (recordStagingBootFailure writes both).
+    {
+      ...mk(9000043, 900143,
+        '[Mock] Imported-preview test: preview failed to build — unavailable chip + retry',
+        2, 1, 0, 1, { required: 2 }),
+      source: 'imported',
+      imported_pr_author: 'octo-contributor',
+      staging_url: null,
+      staging_building: false,
+      staging_error: 'app failed to boot in its staging container: missing required secret DEMO_API_KEY',
+      check_state: 'error',
+      check_error_detail: 'app failed to boot in its staging container: missing required secret DEMO_API_KEY',
+      recheckable: true,
+      test_results: [],
+    },
   ];
   // Spread the community-voted priority/assignee across a few rows (the mk
   // factory otherwise stamps every proposal high / staging-tester) so the
@@ -1130,6 +1194,31 @@ function voteRoutes(config) {
     return new Set(rows.map((r) => r.pr_number));
   };
 
+  // #866: is this PR headed by a branch that lives in a DIFFERENT repo (a
+  // fork)? GitHub answers this by comparing head.repo.full_name against
+  // base.repo.full_name; `head.label` ("owner:branch") is the fallback for
+  // the case where the fork was deleted and head.repo comes back null.
+  //
+  // This matters to a reviewer BEFORE they import: a fork-headed PR's branch
+  // does not exist in the app's own repo, so the preview is built from
+  // refs/pull/<N>/head (see staging.js) and the code being previewed is an
+  // outside contributor's, not the group's. Unknown/absent metadata reads as
+  // "not a fork" — the label is an extra caution, never a gate, so guessing
+  // "fork" from missing data would only cry wolf.
+  function prForkInfo(pr, repo) {
+    const baseFull = pr?.base?.repo?.full_name
+      || (repo ? `${repo.owner}/${repo.repo}` : null);
+    let headFull = pr?.head?.repo?.full_name || null;
+    if (!headFull && typeof pr?.head?.label === 'string' && pr.head.label.includes(':')) {
+      const owner = pr.head.label.split(':')[0];
+      const name = baseFull ? baseFull.split('/')[1] : null;
+      if (owner && name) headFull = `${owner}/${name}`;
+    }
+    const fromFork = !!(headFull && baseFull
+      && headFull.toLowerCase() !== baseFull.toLowerCase());
+    return { fromFork, headRepo: fromFork ? headFull : null };
+  }
+
   // GET candidate PRs to import (open PRs on the app's repo not already
   // imported). Collab access.
   router.get('/api/apps/:slug/pr-import/candidates', async (req, res) => {
@@ -1158,6 +1247,8 @@ function voteRoutes(config) {
           baseBranch: p.base?.ref || null,
           headSha: p.head?.sha || null,
           htmlUrl: p.html_url || null,
+          // #866: fork provenance for the picker's "from a fork — …" label.
+          ...prForkInfo(p, repo),
         }));
       res.json({ candidates });
     } catch (err) {
@@ -1214,6 +1305,9 @@ function voteRoutes(config) {
           changedFileCount: changedFiles.length,
           htmlUrl: pr.html_url || null,
           alreadyImported: imported.has(pr.number),
+          // #866: same fork provenance the candidate list carries, so the
+          // preview pane can repeat the caution before the import lands.
+          ...prForkInfo(pr, repo),
         },
       });
     } catch (err) {
@@ -1579,6 +1673,10 @@ function voteRoutes(config) {
                 cs.merge_conflict_state, cs.behind_main,
                 cs.check_state, cs.check_error_detail,
                 cs.requires_explicit_approval,
+                -- #866: so the home strip can derive the same
+                -- building/unavailable preview state the proposal card
+                -- shows (see staging.previewDisplayState below).
+                cs.staging_url, cs.source,
                 a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
                 (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
@@ -1634,6 +1732,7 @@ function voteRoutes(config) {
         );
         proposals.push({
           ...s,
+          ...require('../services/staging').previewDisplayState(s),
           majority: statsByApp[s.app_id]?.majority || 1,
           activeUsers: statsByApp[s.app_id]?.active || 1,
           votes_required: gate.required,
@@ -1676,6 +1775,12 @@ function voteRoutes(config) {
             check_state: m.check_state || null,
             test_results: m.test_results || [],
             checks_checked_at: m.checks_checked_at || null,
+            // #866: carry the mock preview state through so the imported-PR
+            // fixtures read the same on the home strip as on the card.
+            source: m.source || null,
+            staging_url: m.staging_url || null,
+            staging_building: !!m.staging_building,
+            staging_error: m.staging_error || null,
             // #447: demo-only hint that renders the "Re-run checks" button
             // for any ?demo=1 viewer (real rows gate on owner/admin instead).
             recheckable: m.recheckable || false,
@@ -1842,9 +1947,16 @@ function voteRoutes(config) {
       );
 
       const visualsService = require('../services/visuals');
+      const stagingService = require('../services/staging');
       for (const row of rows) {
         row.visuals = visualsService.shapeAgg(row.visuals_agg);
         delete row.visuals_agg;
+        // #866: three-state Preview affordance. An imported PR is promoted
+        // before its preview finishes building, so `staging_url IS NULL`
+        // alone can't tell "building" from "failed" — derive both here
+        // (in-memory build map + the captured checks error) rather than
+        // persisting a staging_state column that a crash could strand.
+        Object.assign(row, stagingService.previewDisplayState(row));
         // #239: surface in-flight auto-conflict-resolution so the vote
         // panel can render a "Resolving conflicts…" badge. Process-local
         // map lookup (no SQL) — authoritative in the single-process

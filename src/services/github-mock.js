@@ -61,9 +61,16 @@ const FIXTURE_HEADS = {
 
 // Importable candidates surfaced by listOpenPulls (not tied to any DB row
 // until a reviewer imports one). Kept obviously-fake per staging conventions.
+// `headRepo` (owner/name of the branch's home repo) is what the fork check
+// reads: when it differs from the app's own repo the PR is fork-headed, which
+// #866 surfaces in the picker ("from a fork — …") because such a PR's branch
+// exists only on the fork — the preview build has to clone
+// refs/pull/<N>/head instead. 9403 is the fork-headed fixture; the other two
+// stay same-repo so both label states are reviewable side by side.
 const CANDIDATES = [
   { number: 9401, title: '[Mock] Importable PR — add a dashboard widget', author: 'octo-mock', headRef: 'mock/importable-widget', baseRef: 'main' },
   { number: 9402, title: '[Mock] Importable PR — fix a typo in the footer', author: 'octo-mock', headRef: 'mock/importable-typo', baseRef: 'main' },
+  { number: 9403, title: '[Mock] Importable PR from a fork — add a keyboard shortcut to the board', author: 'octo-forker', headRef: 'mock/fork-shortcut', baseRef: 'main', headRepo: 'octo-forker/usernode-mock-fork' },
 ];
 
 // prNumber -> integer revision. Absent = revision 0.
@@ -108,31 +115,48 @@ function metaFor(prNumber) {
     headRef: c ? c.headRef : `mock/pr-${n}`,
     baseRef: c ? c.baseRef : 'main',
     author: c ? c.author : 'octo-mock',
+    headRepo: (c && c.headRepo) || null,
   };
 }
 
-async function listOpenPulls(/* owner, repo */) {
-  return CANDIDATES.map((c) => ({
-    number: c.number,
-    title: c.title,
-    user: { login: c.author },
-    head: { ref: c.headRef, sha: currentHead(c.number) },
-    base: { ref: c.baseRef },
-    state: 'open',
-    html_url: `https://example.com/mock/pull/${c.number}`,
-  }));
+// The real GitHub payload carries head.repo / base.repo, and fork detection
+// compares their full_name. Mirror that shape (falling back to the app's own
+// repo when the fixture isn't fork-headed) so the routes need no mock-specific
+// branch.
+function repoRefs(owner, repo, headRepo) {
+  const baseFull = owner && repo ? `${owner}/${repo}` : 'mock-owner/mock-repo';
+  return {
+    base: { full_name: baseFull, fork: false },
+    head: { full_name: headRepo || baseFull, fork: !!headRepo },
+  };
+}
+
+async function listOpenPulls(owner, repo) {
+  return CANDIDATES.map((c) => {
+    const refs = repoRefs(owner, repo, c.headRepo);
+    return {
+      number: c.number,
+      title: c.title,
+      user: { login: c.author },
+      head: { ref: c.headRef, sha: currentHead(c.number), repo: refs.head },
+      base: { ref: c.baseRef, repo: refs.base },
+      state: 'open',
+      html_url: `https://example.com/mock/pull/${c.number}`,
+    };
+  });
 }
 
 async function getPR(owner, repo, prNumber) {
   const m = metaFor(prNumber);
+  const refs = repoRefs(owner, repo, m.headRepo);
   return {
     number: m.number,
     title: m.title,
     state: 'open',
     merged: false,
     user: { login: m.author },
-    head: { ref: m.headRef, sha: currentHead(prNumber) },
-    base: { ref: m.baseRef },
+    head: { ref: m.headRef, sha: currentHead(prNumber), repo: refs.head },
+    base: { ref: m.baseRef, repo: refs.base },
     // Always cleanly mergeable in the mock (real conflict simulation is out
     // of scope — the flow being exercised is head-change + exact-sha merge).
     mergeable: true,

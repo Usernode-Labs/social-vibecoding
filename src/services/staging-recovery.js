@@ -114,12 +114,33 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   const { Octokit } = await import('@octokit/rest');
   const ok = new Octokit({ auth: pat });
 
-  // Only build when the branch actually carries work — a branch level with
+  // #866: what identifies this session's code in the app's own repo.
+  //
+  // Native rows own their branch there, so `branch_name` compares and
+  // clones fine. An imported PR's branch_name is the PR's HEAD REF, which
+  // for a fork-headed PR doesn't exist in the base repo at all — the
+  // compare below 404s and the whole heal turns into a permanent 'error'
+  // verdict ("could not compare <branch> with main"), which is exactly the
+  // dead end an imported proposal used to reach the first time its preview
+  // was GC'd. The head SHA is always reachable (refs/pull/<N>/head), so
+  // pin to it and let staging.js's PR-ref clone fetch it.
+  const imported = session.source === 'imported';
+  const importedHead = imported ? (session.imported_pr_head_sha || null) : null;
+  if (imported && !importedHead) {
+    await recordChecksSkipped({
+      config, pool, session, commitSha: session.checks_commit_sha || null,
+      reason: 'imported PR has no recorded head commit — nothing to preview',
+    });
+    return 'skipped';
+  }
+  const compareHead = importedHead || session.branch_name;
+
+  // Only build when the head actually carries work — a head level with
   // (or behind) main has nothing to preview.
   let compare;
   try {
     const { data } = await ok.rest.repos.compareCommits({
-      owner, repo, base: 'main', head: session.branch_name,
+      owner, repo, base: 'main', head: compareHead,
     });
     compare = data;
   } catch (err) {
@@ -131,7 +152,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     await visuals.storeChecks(
       pool, session.id, session.checks_commit_sha || null,
       { state: 'error', results: [] },
-      `could not compare ${session.branch_name} with main: ${err.message}`.slice(0, 280)
+      `could not compare ${compareHead} with main: ${err.message}`.slice(0, 280)
     ).catch((e) => log.warn('staging-recovery', 'compare-failure verdict write failed', {
       sessionId: session.id, err: e.message,
     }));
@@ -142,17 +163,29 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     await recordChecksSkipped({
       config, pool, session,
       commitSha: compare.base_commit?.sha || session.checks_commit_sha || null,
-      reason: 'branch has no commits beyond main — nothing to test',
+      reason: imported
+        ? 'imported PR has no commits beyond main — nothing to test'
+        : 'branch has no commits beyond main — nothing to test',
     });
     return 'skipped';
   }
 
   log.info('staging-recovery', 'Rebuilding staging preview', {
     sessionId: session.id, status: session.status, branch: session.branch_name,
-    aheadBy: compare.ahead_by, reason,
+    imported, head: compareHead, aheadBy: compare.ahead_by, reason,
   });
 
-  const commitHash = compare.commits[compare.commits.length - 1]?.sha || 'latest';
+  // #866: for an imported row the commit to build is the RECORDED head —
+  // the SHA the votes and checks describe — not the compare's tip. They're
+  // usually the same commit, but "usually" is how a preview ends up
+  // showing code nobody voted on: a push that lands between the sweep
+  // reading the row and this compare running moves the tip while
+  // imported_pr_head_sha (and every vote cast against it) still points at
+  // the older commit. The head-change sweep is what advances that SHA, and
+  // it clears the tally when it does; this path must not front-run it.
+  const commitHash = importedHead
+    || compare.commits[compare.commits.length - 1]?.sha
+    || 'latest';
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
 
   // Create PR if missing (active-session recovery only). Route through
@@ -162,7 +195,13 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // with pr_title left NULL; the promote path then trusted pr_number's
   // presence and skipped its own metadata pass, so the throwaway title
   // stuck (the UI then renders its own "Change by <user>" NULL-fallback).
-  if (!session.pr_number) {
+  //
+  // #866: never for an imported row. It already HAS a PR (that's what it
+  // tracks), and the platform doesn't own its branch — a missing pr_number
+  // on an imported session is a broken row, not an invitation to open a
+  // second PR from someone else's fork. The `imported` guard makes that
+  // explicit rather than relying on pr_number always being set.
+  if (!session.pr_number && !imported) {
     try {
       // username + latest user message give applyPrMetadata the same
       // signals the live dev-turn path has; without the username the
@@ -218,15 +257,37 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     [stagingResult.containerId, stagingResult.stagingUrl, session.id]
   );
 
-  await pool.query(
-    `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-     VALUES ($1, 'system', $2, $3)`,
-    [
-      session.id,
-      reason === 'startup' ? 'Staging recovered after restart' : 'Staging preview rebuilt',
-      JSON.stringify({ stagingUrl: stagingResult.stagingUrl }),
-    ]
-  );
+  // Breadcrumb. Native rows get it in the dev-chat transcript; an imported
+  // proposal has no dev chat, so a chat_session_messages row there would be
+  // written to a surface nobody can open (#866). Its equivalent is the group
+  // discussion thread the proposal card links to.
+  if (imported) {
+    const { sendSystemMessage } = require('./ws');
+    const label = session.pr_title
+      ? `PR #${session.pr_number} — ${session.pr_title}`
+      : `PR #${session.pr_number}`;
+    await sendSystemMessage(
+      pool, session.app_id,
+      reason === 'startup'
+        ? `The staging preview for ${label} was rebuilt after a platform restart — the Preview button works again.`
+        : `The staging preview for ${label} was rebuilt — the Preview button works again.`,
+      'system',
+      { stagingBuild: 'ready', prNumber: session.pr_number || null, stagingUrl: stagingResult.stagingUrl },
+      { type: 'session', ref: session.id }
+    ).catch((err) => log.warn('staging-recovery', 'imported rebuild note failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    }));
+  } else {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+       VALUES ($1, 'system', $2, $3)`,
+      [
+        session.id,
+        reason === 'startup' ? 'Staging recovered after restart' : 'Staging preview rebuilt',
+        JSON.stringify({ stagingUrl: stagingResult.stagingUrl }),
+      ]
+    );
+  }
 
   broadcastGlobal({
     type: 'session_event', sessionId: session.id,
@@ -326,16 +387,31 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   ).catch(() => {});
 
   // Visible-in-thread record of why the preview won't come up.
+  //
+  // #866: "visible" depends on the kind of proposal. A native session shows
+  // chat_session_messages in its dev chat. An imported PR has no dev chat at
+  // all, so the same row lands on a surface nobody can open — the reason for
+  // the blocked merge existed only in the pill tooltip. Imported rows get the
+  // note in the group discussion thread the proposal card links to instead.
+  // Still exactly one post per failure streak, either way: setChecksPending
+  // clears check_error_notified_at when a new commit arrives, so a fresh
+  // build failure always narrates, and quiet backoff retries never do.
+  const body = `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet. Reason: ${detail}`;
   try {
-    await pool.query(
-      `INSERT INTO chat_session_messages (session_id, role, content, metadata)
-       VALUES ($1, 'system', $2, $3)`,
-      [
-        session.id,
-        `⚠️ Staging preview failed to start, so automated checks can't run and this proposal can't merge yet. Reason: ${detail}`,
-        JSON.stringify({ checkError: true, detail }),
-      ]
-    );
+    if (session.source === 'imported') {
+      const { sendSystemMessage } = require('./ws');
+      await sendSystemMessage(
+        pool, row.app_id || session.app_id, body, 'system',
+        { checkError: true, detail, prNumber: row.pr_number || session.pr_number || null },
+        { type: 'session', ref: session.id }
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [session.id, body, JSON.stringify({ checkError: true, detail })]
+      );
+    }
   } catch (e) {
     log.warn('staging-recovery', 'boot-failure thread post failed', { sessionId: session.id, err: e.message });
   }
