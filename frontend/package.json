@@ -7,6 +7,7 @@
     "dev": "vite",
     "build:tokens": "node scripts/build-design-tokens.mjs",
     "build:catalog": "node scripts/build-design-system-catalog.mjs",
+    "build:navigation-ledger": "node scripts/build-navigation-ledger.mjs",
     "build:registry": "shadcn build",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

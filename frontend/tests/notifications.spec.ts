@@ -10,6 +10,7 @@ const firstPage = {
     { id: 1, kind: "mention", readAt: null, appId: 4, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-28T12:00:00.000Z", messageContent: "Can we add a pantry filter?", sourceUsername: "ava" },
     { id: 2, kind: "session_done", readAt: null, appId: 4, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-28T11:00:00.000Z", sessionId: 9, prTitle: "Finish recipe search" },
     { id: 3, kind: "reply", readAt: null, appId: 4, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-28T10:00:00.000Z", messageContent: "A reply worth reading", sourceUsername: "sam" },
+    { id: 5, kind: "reaction", readAt: "2026-07-28T09:30:00.000Z", appId: 4, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-28T09:30:00.000Z", messageContent: "A reaction already read", sourceUsername: "mira" },
     { id: 4, kind: "collab_invite", readAt: null, appId: 9, appSlug: "recipebot", appName: "RecipeBot", createdAt: "2026-07-28T09:00:00.000Z" },
   ],
 }
@@ -49,7 +50,7 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/notifications/read", (route) => route.fulfill({ json: { unread: 0 } }))
 })
 
-test("keeps bell, pending-invitation, and Work completion responsibilities distinct", async ({ page }) => {
+test("keeps bell, pending-invitation, and Work completion responsibilities distinct", async ({ page }, testInfo) => {
   await page.goto("/react/notifications")
   const notifications = page.getByTestId("notifications")
   await expect(notifications.getByRole("heading", { level: 1 })).toHaveCount(1)
@@ -59,10 +60,18 @@ test("keeps bell, pending-invitation, and Work completion responsibilities disti
   await expect(page.getByRole("heading", { name: "Pending invitations" })).toBeVisible()
   await expect(page.getByTestId("notifications")).not.toContainText("collab invite")
   await expect(page.getByRole("link", { name: "Open activity: Can we add a pantry filter?" })).toHaveAttribute("href", "/react/apps/recipebot/dev/chat")
+  await expect(notifications.getByRole("button", { name: /^Open$/ })).toHaveCount(0)
+  await expect(notifications.locator("a button, button a")).toHaveCount(0)
   // Three dots: the two actionable activity items plus the shell menu's single
   // attention dot, which the bar renders inside this route's root.
   await expect(page.getByTestId("notifications").locator('[data-status-role="attention"]')).toHaveCount(3)
   await expect(page.getByRole("img", { name: "RecipeBot, unread" })).toHaveCount(2)
+  if (process.env.ACTIVITY_PILOT_CAPTURE_DIR) {
+    await page.screenshot({
+      fullPage: true,
+      path: `${process.env.ACTIVITY_PILOT_CAPTURE_DIR}/activity-pilot-after-${testInfo.project.name}.png`,
+    })
+  }
 })
 
 test("routes identified proposal notifications into the owned React detail", async ({ page }) => {
@@ -110,6 +119,52 @@ test("marks only the opened bell notification as read in a normal environment", 
   await page.goto("/react/notifications")
   await page.getByRole("link", { name: "Open activity: Can we add a pantry filter?" }).click()
   await expect.poll(() => markReadBodies).toEqual([{ id: 1 }])
+})
+
+test("marks one unread row without navigating and removes its action without shifting content", async ({ page }) => {
+  const markReadBodies: unknown[] = []
+  await page.route("**/api/notifications/read", async (route) => {
+    markReadBodies.push(route.request().postDataJSON())
+    await route.fulfill({ json: { unread: 1 } })
+  })
+  await page.goto("/react/notifications")
+  const row = page.locator('[data-slot="stream-row"]').filter({ hasText: "Can we add a pantry filter?" })
+  const title = row.locator('[data-slot="stream-row-title"]')
+  const before = await title.boundingBox()
+  await row.getByRole("button", { name: "Mark read" }).click()
+  await expect.poll(() => markReadBodies).toEqual([{ id: 1 }])
+  await expect(page).toHaveURL(/\/react\/notifications$/)
+  await expect(row).toHaveAttribute("data-read-state", "read")
+  await expect(row.locator('[data-slot="stream-row-action"]')).toHaveCount(0)
+  const after = await title.boundingBox()
+  expect(after?.x).toBe(before?.x)
+})
+
+test("keeps destination first in keyboard order and separates coarse-pointer targets", async ({ page }) => {
+  await page.goto("/react/notifications")
+  const row = page.locator('[data-slot="stream-row"]').filter({ hasText: "Can we add a pantry filter?" })
+  const link = row.getByRole("link")
+  const action = row.getByRole("button", { name: "Mark read" })
+
+  await link.focus()
+  await expect(link).toBeFocused()
+  await page.keyboard.press("Tab")
+  await expect(action).toBeFocused()
+
+  const linkBox = await link.boundingBox()
+  const actionBox = await action.boundingBox()
+  expect(linkBox).not.toBeNull()
+  expect(actionBox).not.toBeNull()
+  expect((linkBox?.x || 0) + (linkBox?.width || 0)).toBeLessThanOrEqual((actionBox?.x || 0) + 1)
+  if (await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)) {
+    expect(actionBox?.width).toBeGreaterThanOrEqual(48)
+    expect(actionBox?.height).toBeGreaterThanOrEqual(48)
+  }
+
+  const readRow = page.locator('[data-read-state="read"]').filter({ hasText: "A reaction already read" })
+  const readBox = await readRow.boundingBox()
+  const readLinkBox = await readRow.getByRole("link").boundingBox()
+  expect(Math.abs((readBox?.width || 0) - (readLinkBox?.width || 0))).toBeLessThanOrEqual(1)
 })
 
 test("marks every visible bell notification individually without clearing Work or actionable invitations", async ({ page }) => {

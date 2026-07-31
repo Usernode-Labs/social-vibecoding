@@ -81,6 +81,46 @@
       ],
       "rationale": "A focused dApp screen is one overlay bar above a full-bleed frame. Chrome states and host states were previously duplicated: the removed AppChrome restated the frame's status as a compact dot beside the app name. The frame already presents every host state where the person is looking, so the bar carries only identity and actions.",
       "substitutionBoundary": "Do not present hosted-app status, retry affordances or iframe lifecycle messaging in the TopBar, and do not put mode switching, Close or platform navigation inside FocusedAppFrame."
+    },
+    {
+      "id": "button-and-action-link",
+      "decision": "keep-distinct",
+      "components": [
+        "primitive-button",
+        "action-link"
+      ],
+      "jobs": [
+        {
+          "component": "primitive-button",
+          "job": "Perform an in-place action such as submit, mutate, open a controlled overlay, or confirm a consequence."
+        },
+        {
+          "component": "action-link",
+          "job": "Navigate to an internal or external destination while using an action-like visual treatment."
+        }
+      ],
+      "rationale": "Both may share the same visual variants, but their browser semantics, keyboard behavior, disabled mechanism, and destination responsibilities differ.",
+      "substitutionBoundary": "Share buttonVariants for appearance. Never render an ordinary navigation Link through Button or replace an in-place mutation with ActionLink."
+    },
+    {
+      "id": "card-and-stream-row",
+      "decision": "keep-distinct",
+      "components": [
+        "primitive-card",
+        "stream-row"
+      ],
+      "jobs": [
+        {
+          "component": "primitive-card",
+          "job": "Present one independent interactive or elevated object with its own internal regions."
+        },
+        {
+          "component": "stream-row",
+          "job": "Present one comparable record inside a continuous stream with a row destination and at most one sibling action."
+        }
+      ],
+      "rationale": "A stream needs fast comparison, stable repeated anatomy, and divider or quiet-state separation. Card elevation turns every record into an independent object and adds redundant navigation controls.",
+      "substitutionBoundary": "Use StreamRow for repeated comparable records. Keep Card for independent objects; do not nest Cards inside StreamRow or use one Card per stream record."
     }
   ]
 }

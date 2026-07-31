@@ -23,6 +23,8 @@
     "relationshipAuthority": "design-system/relationships.json",
     "registry": "registry.json",
     "exceptionLedger": "design-system/exceptions.json",
+    "interfaceLaws": "design-system/interface-laws.md",
+    "navigationLedger": "design-system/navigation-ledger.json",
     "contentGuidelines": "design-system/content-guidelines.md",
     "contentContractSchema": "design-system/content-contract.schema.json",
     "contentExceptionLedger": "design-system/content-exceptions.json"
@@ -61,6 +63,52 @@
     "deprecation": null
   },
   "overrides": {
+    "action-link": {
+      "maturity": "candidate",
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "ActionLink and ActionAnchor receive destinations, labels, visual variants, and navigation policy from callers. They own no route data, authorization, or external-destination policy."
+      },
+      "accessibility": {
+        "contract": [
+          "ActionLink and ActionAnchor always render semantic anchors, never buttons.",
+          "Disabled links expose aria-disabled, leave keyboard order, and guard activation.",
+          "Visible focus and disabled treatment match the shared action visual authority."
+        ],
+        "evidence": "ActionLink internal, external, primary, outline, and disabled Storybook states plus the source-derived navigation ledger."
+      }
+    },
+    "stream-row": {
+      "maturity": "candidate",
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "StreamRow receives a typed destination, visible content, read state, indicator, and caller-owned secondary action. It owns no fetching, mutation, authorization, or domain routing."
+      },
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "large",
+          "rationale": "A stream may contain cursor-paged records and receive live updates while each row renders one destination and at most one sibling action."
+        },
+        "updateFrequency": "streaming",
+        "stateScope": "local",
+        "virtualization": "review-later",
+        "mountPolicy": "Preserve the row and its content anchor while read state changes; remove the unread action without shifting the left anatomy.",
+        "sensitiveInteractions": [
+          "Mark one row read without navigating or rebuilding unrelated rows.",
+          "Preserve destination-first keyboard order and non-overlapping pointer targets."
+        ],
+        "followUp": "profile-before-stable"
+      },
+      "accessibility": {
+        "contract": [
+          "The row destination is one semantic Link with a specific accessible name.",
+          "The optional secondary action is a sibling, never nested inside the Link.",
+          "Destination precedes the secondary action in keyboard order and both show visible focus.",
+          "Coarse-pointer targets provide at least 48 by 48 CSS-pixel reach without overlap."
+        ],
+        "evidence": "StreamRow read/unread, mobile, dark, and long-content stories plus Activity browser tests for semantics, focus, navigation, mutation, read-only behavior, and geometry."
+      }
+    },
     "platform-icon": {
       "maturity": "stable",
       "distribution": "registry",
@@ -502,7 +550,11 @@
         "requiredStates": [
           "loading",
           "empty",
-          "error"
+          "error",
+          "read",
+          "unread",
+          "read-only",
+          "long-content"
         ],
         "visibleLabelAccessibilityName": "match-or-prefix",
         "reviewedFailureModes": [

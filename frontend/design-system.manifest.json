@@ -10,6 +10,38 @@
   },
   "patterns": [
     {
+      "id": "action-link",
+      "name": "ActionLink",
+      "tier": "element",
+      "module": "@/components/action-link.tsx",
+      "export": "ActionLink",
+      "story": {
+        "module": "@/components/action-link.stories.tsx",
+        "states": [
+          "InternalOutline",
+          "InternalPrimary",
+          "Disabled",
+          "External"
+        ]
+      }
+    },
+    {
+      "id": "stream-row",
+      "name": "StreamRow",
+      "tier": "block",
+      "module": "@/components/stream-row.tsx",
+      "export": "StreamRow",
+      "story": {
+        "module": "@/components/stream-row.stories.tsx",
+        "states": [
+          "ReadAndUnread",
+          "Mobile",
+          "Dark",
+          "LongContent"
+        ]
+      }
+    },
+    {
       "id": "platform-icon",
       "name": "PlatformIcon",
       "tier": "element",
@@ -633,6 +665,10 @@
         "module": "@/features/notifications/notifications.stories.tsx",
         "states": [
           "WithInvitationAndPagination",
+          "ReadAndUnread",
+          "Mobile",
+          "Dark",
+          "LongContent",
           "Empty",
           "Loading",
           "Error"

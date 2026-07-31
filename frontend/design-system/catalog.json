@@ -25,6 +25,8 @@
     "relationshipAuthority": "design-system/relationships.json",
     "registry": "registry.json",
     "exceptionLedger": "design-system/exceptions.json",
+    "interfaceLaws": "design-system/interface-laws.md",
+    "navigationLedger": "design-system/navigation-ledger.json",
     "contentGuidelines": "design-system/content-guidelines.md",
     "contentContractSchema": "design-system/content-contract.schema.json",
     "contentExceptionLedger": "design-system/content-exceptions.json"
@@ -1381,6 +1383,118 @@
           "Trigger",
           "Open",
           "RightOpen"
+        ]
+      }
+    },
+    {
+      "id": "action-link",
+      "name": "ActionLink",
+      "tier": "element",
+      "module": "@/components/action-link.tsx",
+      "export": "ActionLink",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "InternalOutline",
+        "InternalPrimary",
+        "Disabled",
+        "External"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "ActionLink and ActionAnchor always render semantic anchors, never buttons.",
+          "Disabled links expose aria-disabled, leave keyboard order, and guard activation.",
+          "Visible focus and disabled treatment match the shared action visual authority."
+        ],
+        "evidence": "ActionLink internal, external, primary, outline, and disabled Storybook states plus the source-derived navigation ledger."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "ActionLink and ActionAnchor receive destinations, labels, visual variants, and navigation policy from callers. They own no route data, authorization, or external-destination policy."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/action-link.stories.tsx",
+        "states": [
+          "InternalOutline",
+          "InternalPrimary",
+          "Disabled",
+          "External"
+        ]
+      }
+    },
+    {
+      "id": "stream-row",
+      "name": "StreamRow",
+      "tier": "block",
+      "module": "@/components/stream-row.tsx",
+      "export": "StreamRow",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "ReadAndUnread",
+        "Mobile",
+        "Dark",
+        "LongContent"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "The row destination is one semantic Link with a specific accessible name.",
+          "The optional secondary action is a sibling, never nested inside the Link.",
+          "Destination precedes the secondary action in keyboard order and both show visible focus.",
+          "Coarse-pointer targets provide at least 48 by 48 CSS-pixel reach without overlap."
+        ],
+        "evidence": "StreamRow read/unread, mobile, dark, and long-content stories plus Activity browser tests for semantics, focus, navigation, mutation, read-only behavior, and geometry."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "StreamRow receives a typed destination, visible content, read state, indicator, and caller-owned secondary action. It owns no fetching, mutation, authorization, or domain routing."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "performance": {
+        "expectedCollectionSize": {
+          "category": "large",
+          "rationale": "A stream may contain cursor-paged records and receive live updates while each row renders one destination and at most one sibling action."
+        },
+        "updateFrequency": "streaming",
+        "stateScope": "local",
+        "virtualization": "review-later",
+        "mountPolicy": "Preserve the row and its content anchor while read state changes; remove the unread action without shifting the left anatomy.",
+        "sensitiveInteractions": [
+          "Mark one row read without navigating or rebuilding unrelated rows.",
+          "Preserve destination-first keyboard order and non-overlapping pointer targets."
+        ],
+        "followUp": "profile-before-stable"
+      },
+      "evidence": {
+        "story": "@/components/stream-row.stories.tsx",
+        "states": [
+          "ReadAndUnread",
+          "Mobile",
+          "Dark",
+          "LongContent"
         ]
       }
     },
@@ -3498,6 +3612,10 @@
       "distribution": "shell-internal",
       "variants": [
         "WithInvitationAndPagination",
+        "ReadAndUnread",
+        "Mobile",
+        "Dark",
+        "LongContent",
         "Empty",
         "Loading",
         "Error"
@@ -3550,7 +3668,11 @@
         "requiredStates": [
           "loading",
           "empty",
-          "error"
+          "error",
+          "read",
+          "unread",
+          "read-only",
+          "long-content"
         ],
         "visibleLabelAccessibilityName": "match-or-prefix",
         "reviewedFailureModes": [
@@ -3562,6 +3684,10 @@
         "story": "@/features/notifications/notifications.stories.tsx",
         "states": [
           "WithInvitationAndPagination",
+          "ReadAndUnread",
+          "Mobile",
+          "Dark",
+          "LongContent",
           "Empty",
           "Loading",
           "Error"

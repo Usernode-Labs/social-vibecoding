@@ -1,13 +1,14 @@
-import { Bell, CheckCheck, Handshake, RefreshCw, Scale } from "lucide-react"
+import { Bell, Check, CheckCheck, Handshake, RefreshCw, Scale } from "lucide-react"
 import { useCallback, useEffect, useMemo, useState } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import { StreamRow } from "@/components/stream-row"
 import { TopBar } from "@/components/top-bar"
 import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
-import { Card, CardAction, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { connectionPresentationStatus } from "@/features/platform/connection-presentation-status"
@@ -33,6 +34,7 @@ type NotificationsContentProps = {
   liveState: NotificationEventsConnectionState
   markingAll: boolean
   mutatingInvite: string | null
+  onMarkRead: (notification: Notification) => void
   onOpen: (notification: Notification) => void
   onRefresh: () => void
   onLoadMore: () => void
@@ -84,7 +86,7 @@ function NotificationsSkeleton() {
   return <div className="flex flex-col gap-3" aria-label="Loading activity" role="status"><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /></div>
 }
 
-export function NotificationsContent({ data, error, inviteError, loadMoreError, loadingMore, liveState, markingAll, mutatingInvite, onOpen, onRefresh, onLoadMore, onMarkAll, onInviteAction }: NotificationsContentProps) {
+export function NotificationsContent({ data, error, inviteError, loadMoreError, loadingMore, liveState, markingAll, mutatingInvite, onMarkRead, onOpen, onRefresh, onLoadMore, onMarkAll, onInviteAction }: NotificationsContentProps) {
   const bellItems = useMemo(() => data?.items.filter(isBellNotification) || [], [data?.items])
   const unread = bellItems.filter((notification) => !notification.readAt).length
   const groups = useMemo(() => {
@@ -105,7 +107,7 @@ export function NotificationsContent({ data, error, inviteError, loadMoreError, 
     {!data && !error ? <NotificationsSkeleton /> : null}
     {data?.invites.length ? <InviteSection invites={data.invites} mutatingInvite={mutatingInvite} onInviteAction={onInviteAction} /> : null}
     {data && !bellItems.length && !data.invites.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={Bell} /></EmptyMedia><EmptyTitle>You are all caught up</EmptyTitle><EmptyDescription>New messages and community activity will appear here.</EmptyDescription></EmptyHeader></Empty> : null}
-    {groups.map((group) => <NotificationGroup group={group} key={group[0]?.appId ?? "general"} onOpen={onOpen} />)}
+    {groups.map((group) => <NotificationGroup group={group} key={group[0]?.appId ?? "general"} onMarkRead={onMarkRead} onOpen={onOpen} />)}
     {data?.hasMore ? <div className="flex flex-col items-center gap-2"><Button disabled={loadingMore} onClick={onLoadMore} type="button" variant="outline"><PlatformIcon className={loadingMore ? "animate-spin" : undefined} data-icon="inline-start" icon={RefreshCw} />{loadingMore ? "Loading older activity…" : "Show older activity"}</Button>{loadMoreError ? <p className="text-sm text-destructive" role="status">{loadMoreError}</p> : null}</div> : null}
   </div></div>
 }
@@ -118,13 +120,26 @@ function InviteSection({ invites, mutatingInvite, onInviteAction }: { invites: P
   })}</section>
 }
 
-function NotificationGroup({ group, onOpen }: { group: Notification[]; onOpen: (notification: Notification) => void }) {
+function NotificationGroup({ group, onMarkRead, onOpen }: { group: Notification[]; onMarkRead: (notification: Notification) => void; onOpen: (notification: Notification) => void }) {
   const heading = group[0]?.appName || "General"
-  return <section aria-labelledby={`notification-group-${group[0]?.appId ?? "general"}`} className="flex flex-col gap-2"><h2 className="text-lg font-medium" id={`notification-group-${group[0]?.appId ?? "general"}`}>{heading}</h2>{group.map((notification) => {
+  return <section aria-labelledby={`notification-group-${group[0]?.appId ?? "general"}`} className="flex flex-col gap-2"><h2 className="text-lg font-medium" id={`notification-group-${group[0]?.appId ?? "general"}`}>{heading}</h2><div className="overflow-hidden rounded-2xl border bg-background">{group.map((notification) => {
     const href = notificationHref(notification)
     const label = `Open activity: ${notificationCopy(notification)}`
-    return <Card key={notification.id} size="sm"><CardHeader><CardTitle className="truncate text-base">{notificationCopy(notification)}</CardTitle><CardDescription>{notification.sourceUsername ? `@${notification.sourceUsername} · ` : ""}{notification.kind.replaceAll("_", " ")}</CardDescription><CardAction>{!notification.readAt ? <StatusDot label="Unread" role="attention" subject={notification.appName || "Activity"} /> : null}</CardAction></CardHeader><CardFooter><Button onClick={() => onOpen(notification)} render={<Link aria-label={label} to={href} />} size="sm" variant="outline">Open</Button></CardFooter></Card>
-  })}</section>
+    const metadata = `${notification.sourceUsername ? `@${notification.sourceUsername} · ` : ""}${notification.kind.replaceAll("_", " ")}`
+    return notification.readAt
+      ? <StreamRow accessibleName={label} key={notification.id} metadata={metadata} onNavigate={() => onOpen(notification)} state="read" title={notificationCopy(notification)} to={href} />
+      : <StreamRow
+          accessibleName={label}
+          indicator={<StatusDot label="Unread" role="attention" showLabel={false} size="sm" subject={notification.appName || "Activity"} />}
+          key={notification.id}
+          metadata={metadata}
+          onNavigate={() => onOpen(notification)}
+          secondaryAction={<Button className="pointer-coarse:min-h-12" disabled={isProductionReadOnlyReview} onClick={() => onMarkRead(notification)} size="sm" type="button" variant="ghost"><PlatformIcon data-icon="inline-start" icon={Check} />Mark read</Button>}
+          state="unread"
+          title={notificationCopy(notification)}
+          to={href}
+        />
+  })}</div></section>
 }
 
 export function Notifications() {
@@ -217,5 +232,5 @@ export function Notifications() {
     } catch (cause: unknown) { setInviteError(cause instanceof Error ? cause.message : "Unable to update this invitation"); refresh() } finally { setMutatingInvite(null) }
   }, [navigate, refresh])
 
-  return <NotificationsContent data={data} error={error} inviteError={inviteError} liveState={liveState} loadMoreError={loadMoreError} loadingMore={loadingMore} markingAll={markingAll} mutatingInvite={mutatingInvite} onInviteAction={(invite, action) => void actOnInvite(invite, action)} onLoadMore={() => void loadMore()} onMarkAll={() => void markAll()} onOpen={(notification) => void openNotification(notification)} onRefresh={refresh} />
+  return <NotificationsContent data={data} error={error} inviteError={inviteError} liveState={liveState} loadMoreError={loadMoreError} loadingMore={loadingMore} markingAll={markingAll} mutatingInvite={mutatingInvite} onInviteAction={(invite, action) => void actOnInvite(invite, action)} onLoadMore={() => void loadMore()} onMarkAll={() => void markAll()} onMarkRead={(notification) => void openNotification(notification)} onOpen={(notification) => void openNotification(notification)} onRefresh={refresh} />
 }

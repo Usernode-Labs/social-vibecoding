@@ -28,6 +28,7 @@ test("production review mode exposes notifications but cannot mark them read or 
   await expect(page.getByRole("alert")).toContainText("Read-only")
   await expect(page.getByRole("alert")).toContainText("Marking activity as read and accepting or declining invitations are unavailable.")
   await expect(page.getByRole("button", { name: "Mark all read" })).toBeDisabled()
+  await expect(page.getByRole("button", { name: "Mark read" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "Accept" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "Decline" })).toBeDisabled()
   await page.getByRole("link", { name: "Open activity: Can we add a pantry filter?" }).click()

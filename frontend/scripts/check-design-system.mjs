@@ -4,6 +4,7 @@ import ts from "typescript"
 import { checkCatalog } from "./design-system-catalog-tools.mjs"
 import { checkDesignTokens } from "./design-token-tools.mjs"
 import { relationshipViolations } from "./component-relationship-tools.mjs"
+import { checkNavigationLedger } from "./navigation-ledger-tools.mjs"
 
 const frontendRoot = process.cwd()
 const manifestPath = path.join(frontendRoot, "design-system.manifest.json")
@@ -484,6 +485,12 @@ try {
 
 try {
   checkCatalog()
+} catch (error) {
+  violations.push(error.message)
+}
+
+try {
+  checkNavigationLedger()
 } catch (error) {
   violations.push(error.message)
 }
