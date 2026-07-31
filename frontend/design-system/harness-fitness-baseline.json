@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "acceptedAt": "2026-07-31T08:41:24.150Z",
+  "doctrineReviewedAt": "2026-07-31T08:41:24.150Z",
+  "sourceRevision": "d59f5030c84f69346a9d51be901ee9f76ff43b99",
+  "sourceWorktreeDirty": false,
+  "harnessFingerprint": "388ea69ddb5e969e034d905dccd1b3fde4dd3a0e9ca96033ca7a9fa761d313d2",
+  "acceptedBroadTriggers": [
+    "review:final",
+    "review:review"
+  ],
+  "metrics": {
+    "alwaysLoadedBytes": 12324,
+    "adapterBytes": 264,
+    "skillActivationBytes": 7772,
+    "totalRoutedContextBytes": 1374122,
+    "maximumRoutedContextBytes": 376667,
+    "routeContext": {
+      "harness-task": {
+        "classifications": [
+          "harness"
+        ],
+        "bytes": 65971,
+        "estimatedTokens": 16496
+      },
+      "harness-path": {
+        "classifications": [
+          "harness"
+        ],
+        "bytes": 65971,
+        "estimatedTokens": 16496
+      },
+      "canonical-skill-path": {
+        "classifications": [
+          "harness"
+        ],
+        "bytes": 65971,
+        "estimatedTokens": 16496
+      },
+      "root-instructions": {
+        "classifications": [
+          "harness"
+        ],
+        "bytes": 65971,
+        "estimatedTokens": 16496
+      },
+      "native-contract": {
+        "classifications": [
+          "contract"
+        ],
+        "bytes": 69756,
+        "estimatedTokens": 17440
+      },
+      "component-review": {
+        "classifications": [
+          "content",
+          "component",
+          "review"
+        ],
+        "bytes": 376667,
+        "estimatedTokens": 94171
+      },
+      "ordinary-route": {
+        "classifications": [
+          "route"
+        ],
+        "bytes": 183010,
+        "estimatedTokens": 45753
+      },
+      "public-contract": {
+        "classifications": [
+          "contract"
+        ],
+        "bytes": 69756,
+        "estimatedTokens": 17440
+      },
+      "server-fallback": {
+        "classifications": [
+          "route"
+        ],
+        "bytes": 183010,
+        "estimatedTokens": 45753
+      },
+      "test-contract": {
+        "classifications": [
+          "contract",
+          "review",
+          "route"
+        ],
+        "bytes": 228039,
+        "estimatedTokens": 57011
+      }
+    },
+    "duplicateInstructionCount": 0,
+    "broadTriggerCount": 2,
+    "unprovenRuleCount": 5
+  }
+}
