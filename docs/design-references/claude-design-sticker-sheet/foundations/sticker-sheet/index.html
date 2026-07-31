@@ -1,0 +1,208 @@
+<!-- @dsCard group="Foundations" name="Sticker Sheet" subtitle="Every component on one canvas — light & dark" viewport="1440x2950" -->
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sticker Sheet — Usernode Shell</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../../styles.css">
+<style>
+.sheet{padding:36px 44px 52px;background:var(--background);color:var(--foreground)}
+.sheet h1{font-size:22px;font-weight:600;letter-spacing:-0.02em;margin:0 0 2px}
+.sheet .sub{color:var(--muted-foreground);margin:0 0 28px;font-size:13.5px}
+.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;align-items:start}
+.cell{display:grid;gap:12px;align-content:start}
+.cl{font-size:10px;letter-spacing:.07em;text-transform:uppercase;color:var(--faint-foreground);font-weight:600}
+.wrap2{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.span2{grid-column:span 2}
+</style></head>
+<body>
+
+<div class="sheet">
+<h1>Sticker Sheet</h1>
+<p class="sub">All 31 primitives, one canvas · Craft Direction · light</p>
+<div class="grid">
+
+<div class="cell span2"><span class="cl">Button</span>
+<div class="wrap2"><button class="pill primary">Continue</button><button class="pill raised">Secondary</button><button class="pill tint">→ Tint</button><button class="pill danger">Destructive</button><button class="pill ghost">Ghost</button><button class="pill primary" disabled>Disabled</button><button class="pill primary" disabled><span class="spin"></span>Saving…</button><button class="pill raised iconbtn">↻</button><button class="pill primary xs">XS</button><button class="pill primary sm">Small</button><button class="pill primary lg">Large</button></div>
+<span class="cl">Button Group · Toggle</span>
+<div class="wrap2"><div class="pgroup"><button class="pill">←</button><button class="pill">→</button></div><div class="pgroup"><button class="pill">−</button><span class="gtext numxl" style="color:var(--foreground)">$ 100.01</span><button class="pill">＋</button></div><button class="pill raised sm">☆ Watchlist</button><button class="pill sm" style="background:var(--well);box-shadow:var(--shadow-inset)">★ Watching</button></div>
+<span class="cl">Toggle Group · Tabs · Switch</span>
+<div class="wrap2"><div class="seg"><button class="opt">1D</button><button class="opt">1W</button><button class="opt on">1M</button><button class="opt">YTD</button><button class="opt">All</button></div><div class="seg"><button class="opt on">Buy</button><button class="opt">Sell</button></div><span class="switch"></span><span class="switch on"></span><span class="switch sm on"></span></div>
+<div class="tabs" style="max-width:360px"><button class="opt on">Holdings</button><button class="opt">Watchlist</button><button class="opt">Activity</button></div>
+<span class="cl">Badge · Marker</span>
+<div class="wrap2"><span class="badge primary">New</span><span class="badge neutral">·· 1421</span><span class="badge tint">Managed</span><span class="badge pos numxl">+44.12%</span><span class="badge neg numxl">−4.12%</span><span class="badge gold">Premium</span><span class="metaline"><span class="mark pos"></span><b style="color:var(--foreground)">Open</b></span><span class="metaline">USD<span class="sepdot">·</span>11.89%</span></div>
+<span class="cl">Alert</span>
+<div class="banner err" style="max-width:470px"><div class="txt">Use $240.00 USD of margin to complete this order.</div><div class="cap"><span class="dot err">!</span></div></div>
+<div class="banner ok" style="max-width:470px"><div class="txt"><b>Transfer complete</b>$1,240.00 arrived in Chequing ·· 1421.</div><div class="cap" style="width:auto;padding:0 10px"><button class="pill xs" style="background:var(--status-ok-cap);color:var(--status-ok-ink)">View</button></div></div>
+</div>
+
+<div class="cell span2"><span class="cl">Card · Field · Input · Select · Switch</span>
+<div class="card" style="max-width:470px">
+<div class="row" style="min-height:0;padding:0 0 14px;border:none"><span style="font-size:15px;font-weight:600">Transfer</span><span class="badge gold">Premium</span></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+<div><label class="lab">Amount</label><input class="input numxl" value="$ 1,240.00" style="font-size:15px"></div>
+<div><label class="lab">Destination</label><div class="igroup"><select class="input" style="appearance:none"><option>Chequing ·· 1421</option></select><span class="trail kv" style="pointer-events:none">⌄</span></div></div>
+</div>
+<div class="igroup" style="margin-bottom:6px"><span class="lead">⌕</span><input class="input" placeholder="Search name or symbol"><span class="trail kbd">⌘K</span></div>
+<div class="row"><span><span class="pA">Recurring monthly</span><br><span class="pB" style="font-size:12.5px">Next on Aug 15</span></span><span class="switch on"></span></div>
+<div style="display:flex;gap:10px;margin-top:14px"><button class="pill primary" style="flex:1">Review</button><button class="pill ghost">Cancel</button></div>
+</div>
+<span class="cl">Invalid · Textarea</span>
+<div style="max-width:470px;display:grid;gap:12px">
+<div><input class="input invalid" value="not-an-email"><div class="errtext">Enter a valid email address.</div></div>
+<textarea class="input" rows="2" placeholder="Add a note for the recipient…" style="resize:none"></textarea>
+</div>
+</div>
+
+<div class="cell"><span class="cl">Select open · Tooltip</span>
+<div class="menu" style="width:100%"><div class="item on">Chequing ·· 1421<span class="chev">✓</span></div><div class="item">Savings ·· 1421</div><div class="msep"></div><div class="item">＋ Open another account<span class="chev">›</span></div></div>
+<div class="tip" style="margin-top:34px"><span class="bubble top">Copied to clipboard</span><button class="pill raised xs">703 ⧉</button></div>
+<span class="cl">Avatar · App Identity</span>
+<div class="wrap2"><span class="av" style="background:oklch(0.5 0.12 250)">EP</span><span class="av lg" style="background:oklch(0.5 0.12 330)">MK<span class="presence"></span></span><span class="cluster"><span class="av" style="background:oklch(0.5 0.12 250)">A</span><span class="av" style="background:oklch(0.5 0.12 145)">N</span><span class="av" style="background:oklch(0.5 0.12 25)">C</span><span class="av" style="background:var(--foreground);color:var(--card)">+4</span></span><span class="appid sm" style="background:oklch(0.52 0.1 25)">L</span><span class="appid" style="background:oklch(0.52 0.1 90)">字</span><span class="appid lg" style="background:linear-gradient(160deg,oklch(0.75 0.1 90),oklch(0.5 0.12 55))">W</span></div>
+<span class="cl">Platform Icon</span>
+<div style="display:flex;gap:16px;align-items:center;font-size:19px">⌂ ◷ ⇄ ▤ ◎ <button class="pill raised iconbtn" style="font-size:16px">◷</button></div>
+<span class="cl">Skeleton</span>
+<div style="display:grid;gap:8px"><span class="sk" style="height:11px;width:80%"></span><span class="sk" style="height:11px;width:55%"></span></div>
+<span class="cl">Separator</span>
+<div style="display:flex;gap:12px;align-items:center"><span class="kv">Bid 1.74</span><span class="vsep" style="height:15px"></span><span class="kv">Mid 1.76</span></div>
+<hr class="hsep">
+<span class="cl">Attachment</span>
+<div class="attach" style="min-width:0;width:100%"><span class="chipicon" style="background:var(--well);box-shadow:var(--shadow-inset);color:var(--muted-foreground);font-size:13px">▤</span><span style="flex:1"><span class="fname">statement-july.pdf</span><span class="bar"><i style="width:62%"></i></span></span></div>
+</div>
+
+<div class="cell"><span class="cl">Sidebar</span>
+<div class="rail" style="width:100%"><div class="ritem on">⌂ &nbsp;Home</div><div class="ritem">▤ &nbsp;Portfolio</div><div class="ritem">⇄ &nbsp;Move</div><hr class="hsep" style="margin:6px 4px"><div class="ritem">◎ &nbsp;Settings</div></div>
+<span class="cl">Accordion</span>
+<div class="card" style="padding:2px 18px"><details class="acc" open><summary>What is a virtual card?</summary><div class="body">A different number than your physical card keeps your information secure.</div></details><details class="acc"><summary>How do limits work?</summary></details></div>
+<span class="cl">Empty</span>
+<div class="card"><div class="empty" style="padding:24px 16px"><span class="chipicon">⌕</span><h3>No holdings found</h3><p>Try a different symbol.</p></div></div>
+</div>
+
+<div class="cell span2"><span class="cl">Alert Dialog</span>
+<div class="frame" style="height:250px;display:grid;place-items:center"><div class="scrim"></div><div class="dialog" style="position:relative"><h3>Remove this account?</h3><p>Positions will be closed and remaining cash moved to Chequing ·· 1421.</p><div class="acts"><button class="pill ghost">Cancel</button><button class="pill danger">Remove</button></div></div></div>
+</div>
+<div class="cell span2"><span class="cl">Sheet — bottom</span>
+<div class="frame" style="height:250px"><div class="scrim"></div><div class="dialog" style="position:absolute;left:10px;right:10px;bottom:10px;max-width:none;border-radius:24px 24px 18px 18px;padding:6px 20px 16px"><div class="grabber"></div><h3>Move money</h3><div class="menu" style="width:100%;box-shadow:none;padding:0"><div class="item"><span class="chipicon" style="background:var(--tint-surface);color:var(--tint-ink);width:30px;height:30px;border-radius:9px;font-size:13px">⇄</span>Transfer<span class="chev">›</span></div><div class="item"><span class="chipicon" style="background:var(--status-ok-surface);color:var(--status-ok-ink);width:30px;height:30px;border-radius:9px;font-size:13px">↗</span>Send a wire<span class="chev">›</span></div></div></div></div>
+</div>
+
+<div class="cell span2"><span class="cl">Conversation — Message Scroller · Message · Bubble · Input Group composer</span>
+<div class="card" style="padding:18px">
+<div class="datepill">Today</div>
+<div class="msg"><span class="av sm" style="background:oklch(0.5 0.12 330)">MK</span><div><div class="meta-line">Michelle Kay · 9:41</div><span class="cbubble in" style="max-width:none">Can you approve the household transfer?</span></div></div>
+<div class="msg out" style="margin-top:10px"><span class="av sm" style="background:oklch(0.5 0.12 250)">EP</span><div style="text-align:right"><span class="cbubble out" style="max-width:none">Done — lands tomorrow morning.</span></div></div>
+<div class="msg" style="margin-top:10px"><span class="av sm" style="background:oklch(0.5 0.12 330)">MK</span><div><span class="cbubble in" style="max-width:none">Perfect 🎉</span><br><span class="reacts"><span>👍 2</span></span></div></div>
+<div style="margin-top:16px;background:var(--well);box-shadow:var(--shadow-inset);border-radius:18px;padding:12px 12px 8px"><textarea rows="1" placeholder="Message the household…" style="width:100%;border:none;background:none;outline:none;font-family:inherit;font-size:13.5px;color:var(--foreground);resize:none"></textarea><div style="display:flex;justify-content:space-between;align-items:center"><span style="display:flex;gap:2px"><button class="pill ghost iconbtn" style="height:30px;width:30px">＋</button><button class="pill ghost iconbtn" style="height:30px;width:30px">@</button></span><button class="pill primary sm">Send</button></div></div>
+</div>
+</div>
+
+<div class="cell span2"><span class="cl">Composition — holdings</span>
+<div class="card">
+<div class="tabs" style="margin-bottom:8px"><button class="opt on">Holdings</button><button class="opt">Watchlist</button></div>
+<div class="row"><span style="display:flex;align-items:center;gap:12px"><span class="av" style="background:var(--foreground);color:var(--card)">A</span><span><span class="pA">AAPL</span> &nbsp;<span class="pB">Apple Inc</span></span></span><span style="text-align:right"><span class="numxl">$253,123</span><br><span class="badge pos numxl">+44.12%</span></span></div>
+<div class="row"><span style="display:flex;align-items:center;gap:12px"><span class="av" style="background:oklch(0.5 0.13 145)">N</span><span><span class="pA">NVDA</span> &nbsp;<span class="pB">Nvidia Corporation</span></span></span><span style="text-align:right"><span class="numxl">$110,987</span><br><span class="badge neg numxl">−4.12%</span></span></div>
+<div class="row"><span style="display:flex;align-items:center;gap:12px"><span class="sk" style="width:36px;height:36px;border-radius:50%"></span><span style="display:grid;gap:6px"><span class="sk" style="height:10px;width:110px"></span><span class="sk" style="height:8px;width:70px"></span></span></span><span class="sk" style="width:64px;height:12px"></span></div>
+</div>
+</div>
+
+</div>
+</div>
+
+<div class="sheet" style="padding-top:8px">
+<h1 style="font-size:17px">Signature instruments</h1>
+<p class="sub">The expressive budget — meters, steppers, instruments from the reference study</p>
+<div class="grid">
+
+<div class="cell span2"><span class="cl">Tick-mark meter · hero numeral · tier pill</span>
+<div class="card">
+<div class="row" style="min-height:0;padding:0 0 14px;border:none"><span style="font-size:15px;font-weight:600">Monthly Millionaire ›</span><span class="kv">2 days left</span></div>
+<div style="display:flex;justify-content:space-between;font-size:11px;color:var(--faint-foreground);margin-bottom:6px"><span>20K</span><span style="color:var(--foreground)">25K</span><span>30K</span></div>
+<div class="jsmeter" style="display:flex;align-items:flex-end;gap:3px;height:32px"></div>
+<div style="position:relative;height:12px"><span style="position:absolute;left:52%;transform:translateX(-50%);color:var(--gold-deep);font-size:9px">▲</span></div>
+<div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:6px"><span><span class="numxl" style="font-size:36px;line-height:1">24,614</span> <span class="pB" style="font-size:13px">entries</span></span><span class="badge gold" style="height:36px;padding:0 17px;border-radius:18px;font-size:13px">2x boosted</span></div>
+</div>
+</div>
+
+<div class="cell"><span class="cl">Amount stepper · ruler input</span>
+<div style="display:flex;align-items:center;background:var(--well);box-shadow:var(--shadow-inset);border-radius:16px;padding:4px 4px 4px 16px"><span class="numxl" style="flex:1;font-size:15px"><span class="pB" style="font-weight:400">$</span> 100.01</span><span style="display:grid;background:var(--card);border-radius:12px;box-shadow:var(--shadow-raise);overflow:hidden"><button class="pill" style="height:24px;width:40px;padding:0;border-radius:0;font-size:13px">＋</button><button class="pill" style="height:24px;width:40px;padding:0;border-radius:0;border-top:1px solid var(--hairline);font-size:13px">−</button></span></div>
+<div><label class="lab">Limit price</label><input class="input numxl" value="$ 1.76" style="font-size:15px"><div style="height:10px;margin:8px 2px 4px;background:repeating-linear-gradient(90deg,var(--faint-foreground) 0 1px,transparent 1px 9px);opacity:.55"></div><div style="display:flex;justify-content:space-between;font-size:12px"><span class="kv">Bid 1.74 <b style="color:var(--positive)">Cr</b></span><span class="kv">Mid 1.76 <b style="color:var(--positive)">Cr</b></span></div></div>
+</div>
+
+<div class="cell"><span class="cl">Glass buttons</span>
+<div style="display:grid;gap:10px;justify-items:start"><button class="pill primary">→ Label</button><button class="pill raised">Label</button><button class="pill wash-yellow">Label</button><button class="pill tint">→ Label</button><button class="pill wash-green">Label</button><button class="pill danger">Label</button></div>
+</div>
+
+<div class="cell"><span class="cl">Nav drawer pill · FAB</span>
+<div style="display:flex;gap:14px;align-items:center"><div style="display:flex;gap:6px;background:var(--card);border-radius:28px;box-shadow:var(--shadow-overlay);padding:8px 14px"><button class="pill ghost iconbtn" style="font-size:17px">⌂</button><button class="pill ghost iconbtn" style="font-size:17px">◷</button><button class="pill ghost iconbtn" style="font-size:17px">⇕</button></div><button class="pill raised iconbtn" style="width:56px;height:56px;box-shadow:var(--shadow-overlay);font-size:19px">⌕</button></div>
+<span class="cl" style="margin-top:6px">Carousel pager</span>
+<div class="row" style="border:none;min-height:0;padding:0"><span style="font-weight:600;font-size:13.5px">For you</span><span style="display:flex;gap:8px"><button class="pill raised iconbtn" style="width:32px;height:32px;font-size:13px">‹</button><button class="pill raised iconbtn" style="width:32px;height:32px;font-size:13px">›</button></span></div>
+</div>
+
+<div class="cell"><span class="cl">Bar chart — current month saturated</span>
+<div style="display:flex;gap:14px;align-items:flex-end;height:110px;max-width:260px">
+<div style="flex:1;display:grid;gap:8px;align-content:end"><div style="height:44px;border-radius:8px;background:linear-gradient(180deg,oklch(0.9 0.035 250),oklch(0.86 0.045 250))"></div><div style="font-size:11px;color:var(--muted-foreground)">Oct<br><b class="numxl" style="color:var(--foreground);font-size:12.5px">$173</b></div></div>
+<div style="flex:1;display:grid;gap:8px;align-content:end"><div style="height:56px;border-radius:8px;background:linear-gradient(180deg,oklch(0.9 0.035 250),oklch(0.86 0.045 250))"></div><div style="font-size:11px;color:var(--muted-foreground)">Nov<br><b class="numxl" style="color:var(--foreground);font-size:12.5px">$198</b></div></div>
+<div style="flex:1;display:grid;gap:8px;align-content:end"><div style="height:72px;border-radius:8px;background:linear-gradient(180deg,oklch(0.9 0.035 250),oklch(0.86 0.045 250))"></div><div style="font-size:11px;color:var(--muted-foreground)">Dec<br><b class="numxl" style="color:var(--foreground);font-size:12.5px">$234</b></div></div>
+<div style="flex:1;display:grid;gap:8px;align-content:end"><div style="height:38px;border-radius:8px;background:linear-gradient(180deg,oklch(0.68 0.12 250),oklch(0.58 0.13 255))"></div><div style="font-size:11px;color:var(--muted-foreground)">Jan<br><b class="numxl" style="color:var(--foreground);font-size:12.5px">$150</b></div></div>
+</div>
+</div>
+
+<div class="cell"><span class="cl">Calendar week — event dots</span>
+<div class="card compact" style="padding:14px 16px">
+<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;font-size:10.5px;color:var(--faint-foreground);margin-bottom:8px"><span>Su</span><span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span></div>
+<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;font-size:12.5px" class="numxl">
+<span style="padding:6px 0">12</span>
+<span style="padding:6px 0">13<br><span style="display:inline-flex"><i style="width:7px;height:7px;border-radius:50%;background:oklch(0.5 0.13 145)"></i></span></span>
+<span style="padding:6px 0">14<br><span style="display:inline-flex"><i style="width:7px;height:7px;border-radius:50%;background:oklch(0.55 0.15 25)"></i><i style="width:7px;height:7px;border-radius:50%;background:oklch(0.55 0.12 250);margin-left:-2px"></i></span></span>
+<span style="display:grid;place-items:center"><span style="width:26px;height:26px;border-radius:50%;background:var(--foreground);color:var(--card);display:grid;place-items:center">15</span></span>
+<span style="padding:6px 0">16</span><span style="padding:6px 0">17</span><span style="padding:6px 0">18</span>
+</div>
+<div class="row" style="border:none;min-height:0;padding:10px 0 0;font-size:12px"><span class="kv">← May</span><span class="kv">July →</span></div>
+</div>
+</div>
+
+</div>
+</div>
+
+<div class="sheet dark">
+<h1>Dark</h1>
+<p class="sub">Same components, lighter-not-brighter inversion</p>
+<div class="grid">
+<div class="cell span2"><span class="cl">Actions &amp; controls</span>
+<div class="wrap2"><button class="pill" style="background:var(--foreground);color:var(--background);box-shadow:inset 0 1px 0 oklch(1 0 0/.6)">Buy</button><button class="pill raised">Sell</button><button class="pill tint">✦ Trade with AI</button><button class="pill danger">Remove</button><div class="seg"><button class="opt on">Account value</button><button class="opt">Performance</button></div><span class="switch on"></span></div>
+<span class="cl">Alert · Badge</span>
+<div class="banner err" style="max-width:470px"><div class="txt">Ensure you have funds to cover potential losses.</div><div class="cap"><span class="dot err">!</span></div></div>
+<div class="wrap2"><span class="badge neutral">·· 1421</span><span class="badge tint">Managed</span><span class="badge pos numxl">+44.12%</span><span class="badge neg numxl">−4.12%</span><span class="badge gold">Premium</span></div>
+</div>
+<div class="cell span2"><span class="cl">Card · Input well · Rows</span>
+<div class="card">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:6px"><div><label class="lab">Limit price</label><input class="input numxl" value="$ 1.76" style="font-size:15px"></div><div><label class="lab">Order type</label><div class="igroup"><select class="input" style="appearance:none"><option>Market price</option></select><span class="trail kv" style="pointer-events:none">⌄</span></div></div></div>
+<div class="row"><span><span class="pA">Trading account</span> &nbsp;<span class="pB">TFSA</span></span><span style="text-align:right"><span class="numxl">$255,543.21</span><br><span class="numxl" style="font-size:12px;color:var(--positive)">+123.45 (0.45%)</span></span></div>
+<div class="row"><span><span class="pA">Group RRSP</span> &nbsp;<span class="badge tint">Managed</span></span><span style="text-align:right"><span class="numxl">$289,012.34</span><br><span class="numxl" style="font-size:12px;color:var(--negative)">−456.78 (1.23%)</span></span></div>
+</div>
+</div>
+
+<div class="cell span2"><span class="cl">Order ticket — hero numeral · chips · gradient CTA</span>
+<div class="card" style="max-width:400px">
+<div class="tabs" style="margin-bottom:14px"><button class="opt on">Buy</button><button class="opt">Sell</button></div>
+<div class="row" style="border:none;background:var(--well);box-shadow:var(--shadow-inset);border-radius:14px;padding:2px 16px;margin-bottom:22px"><span class="kv">Order type</span><span style="font-weight:600">Market price ⌄</span></div>
+<div style="text-align:center;margin-bottom:22px"><span class="numxl" style="font-size:52px;line-height:1"><span style="font-size:24px;color:var(--muted-foreground);vertical-align:16px">$ </span>12</span><div class="kv" style="margin-top:6px">0.0472 shares</div></div>
+<div style="display:flex;gap:8px;justify-content:center;margin-bottom:20px"><button class="pill raised xs">25%</button><button class="pill raised xs">50%</button><button class="pill raised xs">75%</button><button class="pill raised xs">Max</button></div>
+<div class="row" style="border:none;min-height:0;padding:0 0 14px"><span><span class="pA" style="font-size:13px">Stonks account (TFSA)</span><br><span class="pB numxl" style="font-size:12px">0 USD · $2,324.84 CAD</span></span><span class="kv">⌄</span></div>
+<button class="pill lg" style="width:100%;color:oklch(0.16 0.03 150);background:linear-gradient(90deg,oklch(0.62 0.11 150),oklch(0.76 0.13 145));box-shadow:inset 0 1px 0 oklch(1 0 0/.35),0 6px 18px -6px oklch(0.6 0.12 150/.6)">Review buy order</button>
+</div>
+</div>
+
+<div class="cell"><span class="cl">Numpad — thin numerals</span>
+<div style="text-align:center;margin-bottom:10px"><span class="numxl" style="font-size:34px"><span style="color:var(--faint-foreground)">$</span>0</span></div>
+<div class="numxl" style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;text-align:center;font-size:26px;font-weight:350;max-width:240px;margin:0 auto"><span style="padding:8px 0">1</span><span style="padding:8px 0">2</span><span style="padding:8px 0">3</span><span style="padding:8px 0">4</span><span style="padding:8px 0">5</span><span style="padding:8px 0">6</span><span style="padding:8px 0">7</span><span style="padding:8px 0">8</span><span style="padding:8px 0">9</span><span style="padding:8px 0;font-size:18px">.</span><span style="padding:8px 0">0</span><span style="padding:8px 0;font-size:18px">⌫</span></div>
+</div>
+
+<div class="cell"><span class="cl">Password strength · unit switch</span>
+<div><div class="numxl" style="letter-spacing:3px;font-size:16px;margin-bottom:10px">••••••••••••••••</div><div style="height:5px;border-radius:3px;background:var(--well);box-shadow:var(--shadow-inset);overflow:hidden;margin-bottom:8px"><i style="display:block;height:100%;width:88%;border-radius:3px;background:linear-gradient(90deg,oklch(0.6 0.12 150),oklch(0.74 0.14 145))"></i></div><div class="kv" style="font-size:12.5px">Very strong password — nice work!</div></div>
+<div style="display:flex;align-items:center;gap:12px;background:var(--well);box-shadow:var(--shadow-inset);border-radius:16px;padding:10px 6px 10px 18px;max-width:260px;margin-top:14px"><span class="numxl" style="flex:1;font-size:16px">0 <span class="pB" style="font-weight:400">%</span></span><span class="kv">$</span><button class="pill raised sm" style="width:52px;padding:0">%</button></div>
+</div>
+
+</div>
+</div>
+<script>document.querySelectorAll('.jsmeter').forEach(function(m){for(var i=0;i<56;i++){var b=document.createElement('i');b.style.cssText='width:2.5px;border-radius:2px;height:100%;background:'+(i<29?'oklch(0.56 0.09 85)':'oklch(0.68 0.008 95)')+';opacity:'+(i<29?'1':'.35');m.appendChild(b)}})</script>
+</body></html>
