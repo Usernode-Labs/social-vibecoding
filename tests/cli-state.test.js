@@ -300,6 +300,110 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
   );
 });
 
+test('Claude setup registers only the canonical credential-free stdio command', () => {
+  const server = main.claudeMcpServer({
+    nodePath: '/usr/bin/node',
+    scriptPath: '/checkout/tools/social-vibecoding',
+    profile: 'production',
+  });
+  assert.deepEqual(server, {
+    type: 'stdio',
+    command: '/usr/bin/node',
+    args: [
+      '/checkout/tools/social-vibecoding',
+      'mcp',
+      '--profile',
+      'production',
+    ],
+  });
+  assert.doesNotMatch(JSON.stringify(server), /env|bearer|token|https?:/i);
+
+  const marker = main.claudeSetupMarker({
+    checkoutRoot: '/checkout',
+    profile: 'production',
+    server,
+  });
+  assert.equal(main.validateClaudeSetupMarker(marker), marker);
+  assert.throws(
+    () => main.validateClaudeSetupMarker({ ...marker, unexpected: true }),
+    /not generated/
+  );
+  assert.throws(
+    () => main.validateClaudeSetupMarker({
+      ...marker,
+      server: { ...server, env: { SOCIAL_VIBECODING_TOKEN: 'secret' } },
+    }),
+    /not generated/
+  );
+  assert.throws(
+    () => main.validateClaudeSetupMarker({
+      ...marker,
+      server: { ...server, args: [...server.args, '--extra'] },
+    }),
+    /not generated/
+  );
+  assert.throws(
+    () => main.validateClaudeSetupMarker({
+      ...marker,
+      server: {
+        ...server,
+        args: ['/another-checkout/tools/social-vibecoding', ...server.args.slice(1)],
+      },
+    }),
+    /not generated/
+  );
+});
+
+test('Claude setup distinguishes an absent local MCP server from command failure', () => {
+  const present = main.claudeServerExists(() => ({
+    status: 0,
+    signal: null,
+    stdout: 'social_vibecoding:\n  Scope: Local config (private to you in this project)',
+    stderr: '',
+  }), '/checkout');
+  assert.equal(present, true);
+
+  const otherScope = main.claudeServerScope(() => ({
+    status: 0,
+    signal: null,
+    stdout: 'social_vibecoding:\n  Scope: User config (available in all your projects)',
+    stderr: '',
+  }), '/checkout');
+  assert.equal(otherScope, 'other');
+
+  const absent = main.claudeServerExists(() => ({
+    status: 1,
+    signal: null,
+    stdout: 'No MCP server named "social_vibecoding". Configured servers:',
+    stderr: '',
+  }), '/checkout');
+  assert.equal(absent, false);
+
+  assert.throws(() => main.claudeServerExists(() => ({
+    status: 1,
+    signal: null,
+    stdout: '',
+    stderr: 'configuration is invalid',
+  }), '/checkout'), /could not inspect/);
+  assert.throws(() => main.claudeServerExists(() => ({
+    status: null,
+    signal: null,
+    error: { code: 'ENOENT' },
+    stdout: '',
+    stderr: '',
+  }), '/checkout'), /not found on PATH/);
+});
+
+test('CLI usage advertises both agent setup commands', async () => {
+  let stderr = '';
+  assert.equal(await main.main([], {
+    stdout: { write: () => {} },
+    stderr: { write: (chunk) => { stderr += chunk; } },
+  }), 2);
+  assert.match(stderr, /social-vibecoding codex setup/);
+  assert.match(stderr, /social-vibecoding claude setup/);
+});
+
 test('CLI option parsing rejects duplicates instead of applying last-one-wins', () => {
   assert.throws(
     () => main.parseOptions(

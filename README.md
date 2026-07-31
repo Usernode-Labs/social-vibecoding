@@ -253,9 +253,9 @@ make down         # stop
 
 Then visit `http://localhost:3000`.
 
-### Codex CLI authentication and MCP
+### Codex and Claude Code CLI authentication and MCP
 
-Ask Codex for the platform operation directly, for example:
+Ask Codex or Claude Code for the platform operation directly, for example:
 
 ```text
 Pull the open issues for app demo.
@@ -263,18 +263,20 @@ Pull the open issues for app demo from local.
 Create and promote a proposal for app demo.
 ```
 
-Repository guidance makes Codex use production by default. It selects the
+Repository guidance makes either agent use production by default. It selects the
 immutable built-in `local` profile only when the prompt explicitly says local.
 For local requests it checks health and runs `make up` when necessary. It
-creates the ignored project MCP configuration if missing and can finish the
-current request through the generic CLI API client while a new MCP
-configuration waits for the next Codex reload.
+configures its project-local MCP server if missing and can finish the current
+request through the generic CLI API client while a new MCP configuration waits
+for the next client reload. Codex writes its ignored project configuration;
+Claude Code uses its private `local` MCP scope through the installed `claude`
+CLI. You do not need to run either setup command yourself.
 
-Codex also handles authentication. If the selected profile has no usable
+The agent also handles authentication. If the selected profile has no usable
 credential, it starts device login and waits. The only expected manual step is
 in the browser: the one-click link opens the request details, you compare the
 displayed code and select **Authorize**. There is no code to copy or type.
-Codex then retries the original API operation; you do not need to type setup
+The agent then retries the original API operation; you do not need to type setup
 or login commands.
 
 The MCP exposes generic read and mutation tools for allowed user-facing JSON
@@ -286,8 +288,11 @@ platform APIs, never directly to GitHub.
 Credentials are bound to the selected server profile and are stored
 outside the checkout. The ignored `.codex/config.toml` contains absolute
 launcher paths and a reviewed tool allowlist, but no credential or server
-origin. Codex loads project MCP configuration only for a trusted project; do
-not authenticate from an unreviewed or unexpectedly modified checkout.
+origin. Claude Code stores the equivalent server in its private project-local
+configuration; the ignored `.claude/social-vibecoding-mcp.local.json` is only a
+credential-free ownership marker used for safe, idempotent updates. Both
+clients load MCP configuration only for a trusted project; do not authenticate
+from an unreviewed or unexpectedly modified checkout.
 
 Optional diagnostic commands:
 
@@ -298,7 +303,7 @@ node ./tools/social-vibecoding auth server list
 ```
 
 If login ends after an ambiguous network failure, check Settings →
-CLI & Codex access and revoke any unexpected credential by its hint and
+CLI & coding-agent access and revoke any unexpected credential by its hint and
 creation time before retrying.
 
 A few things won't work locally:

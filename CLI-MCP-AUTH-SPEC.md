@@ -5,11 +5,11 @@
 Implementation specification.
 
 This feature lets a user authenticate a project-local CLI/MCP integration from
-Codex with a browser approval flow:
+Codex or Claude Code with a browser approval flow:
 
 ```text
-Codex → project-local MCP → global Usernode API
-                         ↘ device authorization in browser
+Coding agent → project-local MCP → global Usernode API
+                                ↘ device authorization in browser
 ```
 
 This is global platform authentication. It is not dApp authentication and it
@@ -17,12 +17,12 @@ must not use iframe identity tokens.
 
 ## User experience
 
-From a trusted checkout, Codex has a project-local MCP configured. The user
-asks Codex to perform an operation that requires Usernode access.
+From a trusted checkout, the coding agent has a project-local MCP configured.
+The user asks it to perform an operation that requires Usernode access.
 
 If the user is already authenticated locally, the MCP calls the global API.
 
-If not, the MCP reports a structured `login_required` error. Codex runs:
+If not, the MCP reports a structured `login_required` error. The agent runs:
 
 ```bash
 node ./tools/social-vibecoding login
@@ -36,7 +36,7 @@ The command:
 4. Waits for the user to authenticate and approve access.
 5. Exchanges the approved device code for a CLI access token.
 6. Stores the credential in the user's local credential store.
-7. Exits successfully so Codex can retry the original MCP tool call.
+7. Exits successfully so the agent can retry the original MCP tool call.
 
 The browser approval page uses the existing Usernode account session. A user
 who is already logged in proceeds directly to confirmation; otherwise the page
@@ -52,7 +52,7 @@ Included:
 - Global device authorization endpoints on the platform.
 - Browser approval page.
 - CLI login, logout, status, and token-expiry behavior.
-- Project-local MCP server launched by Codex over stdio.
+- Project-local MCP server launched by Codex or Claude Code over stdio.
 - Global RPC authentication using a CLI bearer token.
 - Token revocation, expiry, rate limits, and audit events.
 
@@ -550,8 +550,8 @@ This page is publicly reachable so the CLI can direct the user to it. It must:
    approving.
 4. Display the canonical user code, server-defined client name, and requested
    scopes on the confirmation view.
-5. Warn: "Approve only if this code matches the Social Vibecoding CLI or Codex
-   session you started."
+5. Warn: "Approve only if this code matches the Social Vibecoding CLI or
+   coding-agent session you started."
 6. Use one generic invalid/expired response for failed code lookup.
 7. Require an explicit **Authorize** click after showing the confirmation view.
 8. Bind the authorization to `req.user.id`.
@@ -856,6 +856,7 @@ social-vibecoding auth server use <profile>
 social-vibecoding auth server list
 social-vibecoding auth server remove <profile>
 social-vibecoding codex setup [--profile <name>] [--forward-env-token]
+social-vibecoding claude setup [--profile <name>]
 social-vibecoding mcp
 ```
 
@@ -1065,7 +1066,7 @@ social-vibecoding login --no-browser
 ```
 
 This prints the URL and code and continues polling, so the command can be
-run by Codex while the user approves in a browser.
+run by the coding agent while the user approves in a browser.
 Normal login passes the already validated bare URL to the platform opener as
 one argument, never through shell interpolation. Failure to open a browser is
 nonfatal: the CLI still prints the URL/code and continues exactly like
@@ -1147,10 +1148,10 @@ authoritative local expiry metadata.
 
 ## MCP server
 
-The MCP server is project-local and launched by Codex over stdio. It must not
-require an access token to initialize, because initialization without a
-credential should produce a useful login path rather than make the MCP
-unavailable.
+The MCP server is project-local and launched by Codex or Claude Code over
+stdio. It must not require an access token to initialize, because
+initialization without a credential should produce a useful login path rather
+than make the MCP unavailable.
 
 `codex setup` materializes project-scoped MCP configuration at
 `.codex/config.toml` using canonical absolute paths. Conceptually it writes:
@@ -1195,10 +1196,11 @@ are never committed. Setup uses an atomic write and refuses to overwrite an
 existing non-generated config. If it owns the existing generated file, an
 identical run is idempotent and a rerun may update moved checkout or Node
 paths. Omitting `--profile` preserves its prior selection; an explicit
-validated `--profile` changes it. Otherwise setup prints a credential-free
-table for manual merge into that ignored local file and exits nonzero. It
-refuses a target tracked by Git, and CI asserts that neither the target nor its
-lock is tracked.
+validated `--profile` changes it. On the first run, omission selects
+`production` regardless of the user's general CLI default. Otherwise setup
+prints a credential-free table for manual merge into that ignored local file
+and exits nonzero. It refuses a target tracked by Git, and CI asserts that
+neither the target nor its lock is tracked.
 
 Setup requires the selected profile to resolve through the same user-level
 rules as `mcp`, but materializes only its name. It refuses a symlink/reparse
@@ -1220,6 +1222,41 @@ stores only those names, never their values. A user who needs automation
 credentials configures the parent environment outside the repository. Codex
 loads project-scoped MCP configuration only for a trusted project; the user
 documentation must call out that trust decision.
+
+`claude setup` registers the same canonical stdio command under the
+`social_vibecoding` name using Claude Code's private, project-specific `local`
+MCP scope:
+
+```bash
+claude mcp add-json --scope local social_vibecoding \
+  '{"type":"stdio","command":"/absolute/path/to/node","args":["/absolute/path/to/checkout/tools/social-vibecoding","mcp","--profile","production"]}'
+```
+
+The command is executed directly without a shell. The JSON contains only the
+canonical Node executable, checked-in launcher, `mcp` arguments, and validated
+profile name; it contains no credential, origin, or environment value. Local
+scope keeps the registration private to the user and current project and does
+not require the separate approval Claude Code applies to shared `.mcp.json`
+servers.
+
+Because Claude Code owns its user-level configuration format, setup modifies
+it only through the installed `claude mcp` CLI. The checkout stores an ignored,
+credential-free `.claude/social-vibecoding-mcp.local.json` ownership marker.
+Setup refuses a pre-existing same-named local server when that marker is
+absent. With a valid marker, identical runs are idempotent, missing
+registrations are repaired, and a moved checkout, Node path, or explicit
+profile change replaces only the owned local registration. Without a marker or
+explicit profile, the first run selects `production`, not the general CLI
+default. If replacement fails, setup attempts to restore the marker's prior
+registration. A bounded ignored lock and atomic durable marker write cover
+each update. Symlinked, malformed, non-generated, or Git-tracked markers are
+refused.
+
+The checked-in root `CLAUDE.md` imports `AGENTS.md`, so Claude Code receives the
+same production/local selection, automatic setup/login, generic API, and
+untrusted-data guidance as Codex. After registration, setup tells the user to
+restart or reload Claude Code's MCP servers and never claims that the current
+process has adopted the new configuration.
 
 The repository-local launcher and MCP process are inside the credential trust
 boundary: a modified launcher can act with every granted scope. The project
@@ -1246,9 +1283,9 @@ reported as a structured `configuration_error`; the MCP process still
 initializes so the diagnostic remains callable, but protected tools return the
 same non-retryable configuration error without making a network request.
 
-Initialization returns concise server instructions telling Codex to use
-production unless the user explicitly requests local, invoke the generic API
-tool first, execute a returned local-setup or login argument vector itself,
+Initialization returns concise server instructions telling the client agent to
+use production unless the user explicitly requests local, invoke the generic
+API tool first, execute a returned local-setup or login argument vector itself,
 and retry once after health/approval. It never asks the user to type those
 commands and does not wait for login during initialization. All tools declare
 output schemas. Diagnostic, identity, and GET tools use
@@ -1288,7 +1325,7 @@ the tool returns a structured error:
 profile name, including `production`; for example,
 `node ./tools/social-vibecoding login --profile lab`. `argv` and `cwd` contain
 the runtime's canonical absolute Node, script, and checkout paths; the
-placeholders above are illustrative. Codex should invoke that argument vector
+placeholders above are illustrative. The client agent should invoke that argument vector
 in that directory rather than reparsing the display string. This pins the
 retry to the same origin if the user's default later changes. Profile names
 are restricted by the CLI grammar above and are never interpolated as
@@ -1319,7 +1356,7 @@ local.
 
 Before a local API call, MCP checks `http://localhost:3000/health`. If it is
 not ready, it returns `local_setup_required` with `argv: ["make", "up"]` and
-the canonical checkout `cwd`; Codex runs it, waits for health, and retries.
+the canonical checkout `cwd`; the agent runs it, waits for health, and retries.
 This never happens for a production request.
 
 MCP treats all API-returned strings, including `username`, as untrusted data.
@@ -1362,7 +1399,7 @@ neither class becomes `login_required`.
 
 The MCP server must not automatically block waiting for browser approval from
 inside its stdio process. This can deadlock the MCP client. Login is an
-explicit CLI operation, after which Codex retries the failed tool.
+explicit CLI operation, after which the client agent retries the failed tool.
 
 ## Global API authentication
 
@@ -1487,17 +1524,17 @@ responses as cacheable API data. The implementation must update
 These client-side exclusions are required in addition to the server's
 `Cache-Control: no-store` headers.
 
-## Codex retry contract
+## Coding-agent retry contract
 
-The MCP tool description should tell Codex that `login_required` is retryable.
-The expected interaction is:
+The MCP tool description should tell the client agent that `login_required` is
+retryable. The expected interaction is:
 
 ```text
-1. Codex calls MCP tool.
+1. Agent calls MCP tool.
 2. MCP returns login_required.
-3. Codex runs the repository-local login command with user approval.
+3. Agent runs the repository-local login command with user approval.
 4. Login command waits for browser approval and exits 0.
-5. Codex retries the original MCP tool once.
+5. Agent retries the original MCP tool once.
 ```
 
 If login fails, the MCP tool must not retry repeatedly. Return the login error
@@ -1505,7 +1542,7 @@ and let the user decide whether to try again.
 
 The browser approval itself cannot be fully autonomous: the user must still
 approve access. The CLI/MCP integration can, however, keep the entire
-orchestration inside the Codex session.
+orchestration inside the Codex or Claude Code session.
 
 ## Interaction with PR #840
 
@@ -1737,7 +1774,7 @@ This keeps global platform identity separate from child-app identity.
   including `production`, and is unaffected by later default-profile changes.
 - Its authoritative login `argv`/`cwd` use canonical setup paths and remain
   safe when checkout paths contain spaces or shell metacharacters.
-- After login, the same tool succeeds without restarting Codex.
+- After login, the same tool succeeds without restarting the MCP client.
 - Invalid, expired, and revoked tokens each produce one login-required
   response, not an infinite retry loop.
 - Unknown profiles remain diagnosable as non-retryable configuration errors
@@ -1757,8 +1794,8 @@ This keeps global platform identity separate from child-app identity.
   hardcoded per-endpoint registry or direct GitHub access.
 - Production is selected unless the prompt explicitly requests local. A local
   call with no ready stack returns an authoritative `make up` vector, and a
-  missing credential returns a login vector; Codex executes either itself and
-  retries the original request after health or browser approval.
+  missing credential returns a login vector; the agent executes either itself
+  and retries the original request after health or browser approval.
 - Project-local configuration launches the checked-in CLI as `mcp` and may
   select only a validated profile name, never an origin, environment value, or
   nonallowlisted forwarded variable; its tool allowlist contains only the four
@@ -1767,6 +1804,13 @@ This keeps global platform identity separate from child-app identity.
   ignored project config, works across Codex working-directory differences,
   is idempotent for its own file, and refuses symlinked or non-generated
   targets without overwriting them.
+- `claude setup` registers the same canonical credential-free command through
+  `claude mcp` local scope, refuses an unowned same-name collision, repairs a
+  missing owned registration, updates moved paths/profile selections with
+  rollback, and maintains only an ignored atomic ownership marker in the
+  checkout.
+- Root `CLAUDE.md` imports `AGENTS.md`, giving Claude Code the same automatic
+  setup, login, production/local selection, generic API, and retry guidance.
 - Setup forwards no environment variables by default; its explicit opt-in
   forwards only the two documented variable names and never persists values.
 - Setup emits the required MCP restart/reload instruction after a material
@@ -1787,9 +1831,9 @@ This keeps global platform identity separate from child-app identity.
    shared account-recovery cancellation/revocation helper.
 5. Add paginated Settings token listing/revocation, service-worker exclusions,
    and ownership/cache tests.
-6. Add `codex setup`, its ignored absolute-path project configuration, the
-   project-local MCP server, identity tool, and generic read/mutation API
-   tools.
+6. Add `codex setup`, `claude setup`, their ignored machine-local ownership
+   state, shared agent guidance, the project-local MCP server, identity tool,
+   and generic read/mutation API tools.
 7. Add automatic production/local selection guidance plus
    `local_setup_required`, `login_required`, and
    `reauthorization_required` retry contracts.

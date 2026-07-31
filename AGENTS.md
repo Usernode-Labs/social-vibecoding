@@ -1,4 +1,4 @@
-# Codex project guidance
+# Coding-agent project guidance
 
 ## Usernode API requests
 
@@ -6,14 +6,16 @@
   the setup and authentication workflow yourself. Do not ask the user to type
   CLI setup or login commands.
 - Use `production` unless the user explicitly says the request is for `local`.
-- Prefer `social_vibecoding.api_read` for GET requests and
-  `social_vibecoding.api_write` for POST, PUT, PATCH, or DELETE requests.
-  These are generic same-origin JSON API tools; resolve the appropriate
-  user-facing platform route from `src/routes/` rather than adding a
-  tool-specific endpoint or calling GitHub directly.
-- If the MCP tools are unavailable, run
-  `node ./tools/social-vibecoding codex setup` when `.codex/config.toml` is
-  absent, then finish the current request with
+- Prefer the `social_vibecoding` MCP server's `api_read` tool for GET requests
+  and `api_write` for POST, PUT, PATCH, or DELETE requests. These are generic
+  same-origin JSON API tools; resolve the appropriate user-facing platform
+  route from `src/routes/` rather than adding a tool-specific endpoint or
+  calling GitHub directly.
+- If the MCP tools are unavailable, configure the active client yourself:
+  Codex runs `node ./tools/social-vibecoding codex setup`; Claude Code runs
+  `node ./tools/social-vibecoding claude setup`. Pass `--profile production`
+  unless the user explicitly requested local, in which case pass
+  `--profile local`. Then finish the current request with
   `node ./tools/social-vibecoding api <METHOD> <PATH> --profile <profile>`.
   The CLI starts device login itself only when its credential is missing,
   invalid, or lacks the current API grant.

@@ -17,3 +17,8 @@ hackathon-data/
 .codex/config.toml
 .codex/config.toml.lock
 .codex/.config.toml.tmp-*
+
+# Machine-local Claude Code MCP wiring ownership (configuration is local scope).
+.claude/social-vibecoding-mcp.local.json
+.claude/social-vibecoding-mcp.local.json.lock
+.claude/.social-vibecoding-mcp.local.json.tmp-*
