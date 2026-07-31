@@ -46,9 +46,11 @@ const llm = require('./llm');
 
 const PLATFORM_USERNAME = 'usernode-platform';
 // Tool-call round-trips per app. Maintenance changes are small by
-// definition (read a file or two, stage an edit or two, finish);
-// a loop that needs more than this is lost, not thorough.
-const MAX_TOOL_ITERATIONS = 12;
+// definition (read a file or two, stage an edit or two, finish) — but a
+// repo with several >100 KB files can legitimately need a handful of
+// paged reads and searches before the first edit, so leave headroom.
+// A loop that needs more than this is lost, not thorough.
+const MAX_TOOL_ITERATIONS = 20;
 // Truncation guard for read_file RESULTS only — edits still apply
 // against the full content held in memory, so an old_string deep in a
 // huge file keeps matching even when the model saw a truncated view.
@@ -276,6 +278,22 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage }) {
     return 'ok';
   };
 
+  // Compact one-line-per-tool-call trace. Logged per turn and embedded
+  // in the budget-exhaustion error so a failed run on the dashboard is
+  // self-diagnosing instead of a black box (the puzzlechain retry on
+  // 2026-07-31 failed identically pre- and post-#862 and we had no way
+  // to tell what the model spent its 12 turns on).
+  const trace = [];
+  const describeToolCall = (tc) => {
+    const input = tc.input || {};
+    if (tc.name === 'read_file') {
+      return `read_file(${input.path}${input.offset ? `@${input.offset}` : ''})`;
+    }
+    if (tc.name === 'search_file') return `search_file(${input.path} ${JSON.stringify(String(input.query ?? '').slice(0, 40))})`;
+    if (tc.name === 'edit_file' || tc.name === 'write_file') return `${tc.name}(${input.path})`;
+    return tc.name;
+  };
+
   const messages = [{
     role: 'user',
     content: `App: "${app.name}" (slug ${app.slug}). Repository: ${app.repo_url}. Apply the campaign instructions to this app now.`,
@@ -295,6 +313,7 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage }) {
       }
       // The model answered in prose. One nudge back toward the tools;
       // a second prose-only turn is a hard failure, not a loop.
+      trace.push('prose');
       if (!nudged) {
         nudged = true;
         messages.push({ role: 'assistant', content: res.rawContent });
@@ -306,6 +325,11 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage }) {
 
     // Resolve every tool call (Anthropic requires a tool_result per
     // tool_use even alongside a terminal tool), then honor terminals.
+    const turnTools = res.toolUses.map(describeToolCall);
+    trace.push(...turnTools);
+    log.info('fleet-maintenance', 'Campaign tool turn', {
+      campaignId: campaign.id, slug: app.slug, iter: iter + 1, tools: turnTools,
+    });
     let terminal = null;
     const results = [];
     for (const tc of res.toolUses) {
@@ -335,7 +359,10 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage }) {
     });
   }
 
-  throw new Error(`Tool-call budget exhausted (${MAX_TOOL_ITERATIONS} iterations) without finish/skip_app`);
+  throw new Error(
+    `Tool-call budget exhausted (${MAX_TOOL_ITERATIONS} iterations) without finish/skip_app. `
+    + `Tool trace: ${trace.join(' → ') || '(none)'}`
+  );
 }
 
 // ─── PR + proposal per app ───────────────────────────────────────────
