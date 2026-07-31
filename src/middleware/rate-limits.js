@@ -1,5 +1,6 @@
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const log = require('../services/logger');
+const { clientIp } = require('../services/client-ip');
 
 // Retry-delay phrase for throttle messages: minutes rounded up, with
 // anything ≤ 60s collapsing to "in under a minute".
@@ -31,7 +32,7 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
     // can't bypass the limit by rotating addresses within its /56.
     keyGenerator: (req) => {
       if (keyByUser && req.user?.id) return `user:${req.user.id}`;
-      return ipKeyGenerator(req.ip);
+      return ipKeyGenerator(clientIp(req));
     },
     handler: (req, res) => {
       const resetTime = req.rateLimit?.resetTime;
@@ -40,7 +41,7 @@ function makeLimiter({ windowMs, max, name, keyByUser = false, message, skipFail
         : Math.ceil(windowMs / 1000);
       log.warn('rate-limit', 'Throttled', {
         name,
-        ip: req.ip,
+        ip: clientIp(req),
         userId: req.user?.id,
         path: req.path,
       });

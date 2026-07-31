@@ -39,6 +39,12 @@ const { boardOrderRoutes } = require('./src/routes/board-order');
 const { pmOrderRoutes } = require('./src/routes/pm-order');
 const { debugRoutes } = require('./src/routes/debug');
 const { galleryRoutes } = require('./src/routes/gallery');
+const {
+  cliAuthGate,
+  cliApiBearerAuth,
+  cliPreAuthRoutes,
+  cliBrowserRoutes,
+} = require('./src/routes/cli-auth');
 // Topochain v4 (plan Task 3): public/partner/ingest/mobile carry their own
 // auth and mount BEFORE authMiddleware; admin reuses the platform's own
 // admin auth and mounts AFTER it (architecture decision #2 — see the mount
@@ -70,14 +76,27 @@ const { sweepStuckCreatingApps } = require('./src/routes/apps');
 const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
+const { trustedProxyClientIp } = require('./src/services/client-ip');
 
 const config = loadConfig();
 log.setLevel(config.logLevel);
 
 const app = express();
 
-// One hop (Caddy) in front of us — enables accurate req.ip for rate limits.
-app.set('trust proxy', 1);
+// Child apps share the platform's Docker network, so trusting every direct
+// peer's X-Forwarded-For would let one spoof security rate-limit identities.
+// Express therefore never trusts forwarding headers globally. This narrow
+// middleware resolves the configured Caddy peer and exposes req.clientIp;
+// direct child/worker calls retain their real socket address.
+app.set('trust proxy', false);
+app.use(trustedProxyClientIp({ hostname: config.trustedProxyHost }));
+
+// Global CLI authentication has a hard staging/enablement gate before any
+// body parser, cookie lookup, bearer lookup, or static fallback. Public
+// device + bearer routes also mount here so they never inherit browser
+// session semantics.
+app.use(cliAuthGate(config));
+app.use(cliPreAuthRoutes(config));
 
 // ── Explorer API passthrough ───────────────────────────────────────────────
 // The mobile app's in-webview "Transaction Log" panel resolves the explorer
@@ -165,6 +184,12 @@ app.use('/explorer-api', (req, res) => {
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/internal/anthropic/')) return next();
   if (req.path.startsWith('/api/app-llm/')) return next();
+  // CLI-auth POSTs own a strict 4 KiB route-scoped parser. Browser approval
+  // reaches its parser only after cookie auth; public device routes were
+  // already handled by cliPreAuthRoutes above.
+  if (req.path.startsWith('/api/cli/')) return next();
+  if (req.path === '/api/me/cli-tokens'
+      || req.path.startsWith('/api/me/cli-tokens/')) return next();
   // Agent-file uploads (#460) carry up to 48 KB of file content, which
   // can exceed the 100kb default once JSON-escaped — the route mounts
   // its own 256kb parser (see routes/user-agent-files.js).
@@ -397,7 +422,12 @@ app.use(topochainPartnerRoutes(config));
 app.use(topochainIngestRoutes(config));
 app.use(topochainMobileRoutes(config));
 
+// User-facing JSON APIs may authenticate with a scoped CLI bearer token.
+// This mounts after internal/app/topochain bearer surfaces so the CLI token
+// can never be confused for one of those distinct credentials.
+app.use(cliApiBearerAuth(config));
 app.use(authMiddleware(config));
+app.use(cliBrowserRoutes(config));
 app.use(authRoutes(config));
 app.use(appRoutes(config));
 // Shell relay for usernode.uploadFile()/deleteFile()/getStorageUsage()
@@ -610,6 +640,23 @@ app.get('*', (req, res) => {
 
 async function start() {
   await migrate(config);
+
+  // Credential rows deliberately outlive their active period for settings
+  // and audit correlation, then age out on the documented schedule.
+  const { cleanupCliAuth } = require('./src/services/cli-auth');
+  const runCliAuthCleanup = () => cleanupCliAuth(getPool(config))
+    .then((counts) => {
+      if (Object.values(counts).some((count) => count > 0)) {
+        log.info('cli-auth', 'Retention cleanup completed', counts);
+      }
+    })
+    .catch((err) => {
+      log.warn('cli-auth', 'Retention cleanup failed', { message: err.message });
+    });
+  runCliAuthCleanup();
+  setInterval(() => {
+    runCliAuthCleanup();
+  }, 6 * 60 * 60 * 1000).unref?.();
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables

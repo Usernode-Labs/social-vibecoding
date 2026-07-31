@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { isPrivateIp } = require('./anthropic-proxy-auth');
 const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
+const { clientIp } = require('../services/client-ip');
 
 // Authenticates dapp → platform LLM-proxy requests (issue #34):
 // POST /api/app-llm/v1/messages etc.
@@ -90,7 +91,7 @@ async function resolveApp(pool, token) {
 // exactly like at the LLM proxy.
 function appPlatformAuth(pool) {
   return async function appPlatformAuthMiddleware(req, res, next) {
-    const ip = req.ip || req.socket?.remoteAddress || '';
+    const ip = clientIp(req);
     if (!isPrivateIp(ip)) {
       log.warn('app-platform-auth', 'Rejected non-private source IP', { ip, path: req.path });
       return res.status(403).json({ ok: false, code: 'forbidden_ip' });
@@ -119,7 +120,7 @@ function appPlatformAuth(pool) {
 
 function appLlmAuth(pool, config) {
   return async function appLlmAuthMiddleware(req, res, next) {
-    const ip = req.ip || req.socket?.remoteAddress || '';
+    const ip = clientIp(req);
     if (!isPrivateIp(ip)) {
       log.warn('app-llm-auth', 'Rejected non-private source IP', { ip, path: req.path });
       return res.status(403).json({ ok: false, code: 'forbidden_ip' });

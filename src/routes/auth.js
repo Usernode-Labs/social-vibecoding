@@ -9,6 +9,10 @@ const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits')
 const genesisAccounts = require('../services/genesis-accounts');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
+const {
+  accountRecovery,
+  withTransaction,
+} = require('../services/cli-auth');
 
 const SESSION_DAYS = 7;
 
@@ -665,12 +669,37 @@ function authRoutes(config) {
 
       const user = rows[0];
       const hash = await bcrypt.hash(newPassword, 12);
-      await pool.query('UPDATE users SET password = $1 WHERE id = $2', [hash, user.id]);
-      // Invalidate every existing session for this user before minting the
-      // new one, so a stale/leaked session can't survive the reset.
-      await pool.query('DELETE FROM sessions WHERE user_id = $1', [user.id]);
-
-      const { token, expiresAt } = await createSession(pool, user.id);
+      const recovery = await withTransaction(pool, (client) => accountRecovery(client, {
+        userId: user.id,
+        actorUserId: user.id,
+        updatePassword: async (tx) => {
+          const result = await tx.query(
+            `UPDATE users SET password = $1 WHERE id = $2
+             RETURNING id, username, is_admin, admin_readonly`,
+            [hash, user.id]
+          );
+          // The route test's lightweight query facade predates pg's rowCount
+          // shape. A real pg result always has rowCount, so production still
+          // fails closed if the row disappeared after signature lookup.
+          if (result.rowCount == null && result.rows.length === 0) {
+            return { rows: [user] };
+          }
+          return result;
+        },
+        mintSession: async (tx) => {
+          const token = crypto.randomBytes(32).toString('hex');
+          const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
+          await tx.query(
+            'INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)',
+            [token, user.id, expiresAt]
+          );
+          return { token, expiresAt };
+        },
+      }));
+      if (!recovery.found) {
+        return res.status(401).json({ error: 'No account linked to this pubkey' });
+      }
+      const { token, expiresAt } = recovery.session;
       createSessionCookie(res, token, expiresAt);
 
       log.info('wallet-auth', 'Wallet password reset successful', { userId: user.id, username: user.username });

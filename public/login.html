@@ -228,6 +228,23 @@
     const recoveryAdmin = document.getElementById('recovery-admin');
     const recoveryError = document.getElementById('recovery-error');
     const recoveryStatus = document.getElementById('recovery-status');
+    // The only login-return target accepted by the platform. Keeping this
+    // exact and relative prevents open redirects and prevents a user code
+    // from entering the URL.
+    const returnParams = new URLSearchParams(window.location.search);
+    const returnValues = returnParams.getAll('return_to');
+    const safeReturnTo = returnValues.length === 1
+      && [...returnParams.keys()].every((key) => key === 'return_to')
+      && returnValues[0] === '/cli/authorize'
+      ? '/cli/authorize'
+      : null;
+    function finishLogin() {
+      if (safeReturnTo) {
+        window.location.href = safeReturnTo;
+      } else {
+        window.location.href = '/' + window.location.hash;
+      }
+    }
 
     let walletPubkey = null;
     let cachedChallenge = null;
@@ -267,7 +284,7 @@
         });
         const data = await res.json();
         if (!res.ok) { showError(errorEl, data.error || 'Login failed'); return; }
-        window.location.href = '/' + window.location.hash;
+        finishLogin();
       } catch { showError(errorEl, 'Network error'); }
     });
 
@@ -367,7 +384,7 @@
           return;
         }
         recoveryStatus.textContent = 'Password reset! Redirecting...';
-        window.location.href = '/' + window.location.hash;
+        finishLogin();
       } catch (e) {
         recoveryStatus.classList.add('hidden');
         if (e.message && e.message.includes('denied')) {
@@ -501,7 +518,7 @@
 
         if (verifyRes.ok) {
           walletStatus.textContent = 'Logged in! Redirecting...';
-          window.location.href = '/' + window.location.hash;
+          finishLogin();
           return;
         }
         walletStatus.textContent = '';
@@ -544,7 +561,7 @@
         if (data.walletLink) {
           await sendLinkingTx(data.walletLink);
         } else {
-          window.location.href = '/' + window.location.hash;
+          finishLogin();
         }
       } catch (e) { showError(errEl, 'Network error: ' + (e.message || e)); }
     });
@@ -568,7 +585,7 @@
         if (data.walletLink) {
           await sendLinkingTx(data.walletLink);
         } else {
-          window.location.href = '/' + window.location.hash;
+          finishLogin();
         }
       } catch (e) { showError(errEl, 'Network error: ' + (e.message || e)); }
     });
@@ -622,11 +639,11 @@
         clearInterval(tickInterval);
         if (linked) {
           progressLabel.textContent = 'Wallet linked! Redirecting...';
-          window.location.href = '/' + window.location.hash;
+          finishLogin();
         } else {
           progressLabel.textContent = 'Transaction sent. The link may take a moment to finalize. Redirecting...';
           progressLabel.className = 'text-xs text-yellow-400';
-          setTimeout(() => { window.location.href = '/' + window.location.hash; }, 2000);
+          setTimeout(finishLogin, 2000);
         }
       } catch (e) {
         clearInterval(tickInterval);
@@ -636,7 +653,7 @@
           : 'Transaction failed: ' + (e.message || e) + '. Redirecting...';
         progressLabel.textContent = msg;
         progressLabel.className = 'text-xs text-red-400';
-        setTimeout(() => { window.location.href = '/' + window.location.hash; }, 3000);
+        setTimeout(finishLogin, 3000);
       }
     }
   })();

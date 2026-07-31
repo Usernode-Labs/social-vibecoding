@@ -17,6 +17,10 @@
     _alertsTestTimer: null,
     _walletExpiresAt: null,
     _walletCountdownTimer: null,
+    _cliTokens: [],
+    _cliTokenCursor: null,
+    _cliTokensLoading: false,
+    _cliTokenLoadId: 0,
 
     init() {
       this.modal = document.getElementById('settings-modal');
@@ -35,6 +39,8 @@
 
       const logoutBtn = document.getElementById('settings-logout');
       if (logoutBtn) logoutBtn.addEventListener('click', () => this.logout());
+      const cliMore = document.getElementById('cli-tokens-more');
+      if (cliMore) cliMore.addEventListener('click', () => this._loadCliTokens(false));
 
       // Change password (issue #282) → POST /api/me/password.
       const cpSave = document.getElementById('cp-save');
@@ -208,6 +214,7 @@
       this._renderBody();
       this._refreshSpend();
       this._renderLlmGrants();
+      this._loadCliTokens(true);
       this._renderAgentFilesSection();
       this._renderWalletSection();
       this._renderChangePasswordSection();
@@ -266,6 +273,141 @@
       select.value = value;
       const status = document.getElementById('settings-locale-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+    },
+
+    async _loadCliTokens(reset) {
+      const section = document.getElementById('cli-tokens-section');
+      const list = document.getElementById('cli-tokens-list');
+      const more = document.getElementById('cli-tokens-more');
+      const status = document.getElementById('cli-tokens-status');
+      if (!section || !list || !more || !status) return;
+
+      // A reset is authoritative (opening Settings or refreshing after a
+      // revocation), so let it supersede an older pagination request. The
+      // generation check below prevents that older response/finally block
+      // from rendering stale credential state or clearing the new load flag.
+      if (!reset && this._cliTokensLoading) return;
+
+      if (reset) {
+        this._cliTokenLoadId += 1;
+        this._cliTokens = [];
+        this._cliTokenCursor = null;
+        list.textContent = 'Loading credentials…';
+        more.classList.add('hidden');
+        status.classList.add('hidden');
+      }
+      const loadId = this._cliTokenLoadId;
+      this._cliTokensLoading = true;
+      more.disabled = true;
+      try {
+        const query = this._cliTokenCursor
+          ? `?limit=50&cursor=${encodeURIComponent(this._cliTokenCursor)}`
+          : '?limit=50';
+        const response = await fetch(`/api/me/cli-tokens${query}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (loadId !== this._cliTokenLoadId) return;
+        if (response.status === 404) {
+          section.classList.add('hidden');
+          return;
+        }
+        if (!response.ok) throw new Error('Could not load CLI credentials.');
+        const data = await response.json();
+        if (!data || !Array.isArray(data.tokens)
+            || (data.next_cursor != null && typeof data.next_cursor !== 'string')) {
+          throw new Error('The credential list response was invalid.');
+        }
+        section.classList.remove('hidden');
+        this._cliTokens.push(...data.tokens);
+        this._cliTokenCursor = data.next_cursor || null;
+        this._renderCliTokens();
+      } catch (err) {
+        if (loadId !== this._cliTokenLoadId) return;
+        if (!this._cliTokens.length) list.textContent = '';
+        status.textContent = err.message || 'Could not load CLI credentials.';
+        status.classList.remove('hidden', 'text-emerald-500');
+        status.classList.add('text-red-500');
+      } finally {
+        if (loadId === this._cliTokenLoadId) {
+          this._cliTokensLoading = false;
+          more.disabled = false;
+        }
+      }
+    },
+
+    _renderCliTokens() {
+      const list = document.getElementById('cli-tokens-list');
+      const more = document.getElementById('cli-tokens-more');
+      const status = document.getElementById('cli-tokens-status');
+      if (!list || !more || !status) return;
+      list.textContent = '';
+      status.classList.add('hidden');
+      if (!this._cliTokens.length) {
+        const empty = document.createElement('p');
+        empty.className = 'text-xs text-zinc-500 dark:text-zinc-400';
+        empty.textContent = 'No CLI credentials.';
+        list.appendChild(empty);
+      }
+      for (const token of this._cliTokens) {
+        const card = document.createElement('div');
+        card.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2';
+
+        const top = document.createElement('div');
+        top.className = 'flex items-start justify-between gap-3';
+        const text = document.createElement('div');
+        text.className = 'min-w-0';
+        const title = document.createElement('div');
+        title.className = 'text-sm font-mono text-zinc-800 dark:text-zinc-200';
+        title.textContent = typeof token.token_hint === 'string'
+          ? token.token_hint : 'CLI credential';
+        const detail = document.createElement('div');
+        detail.className = 'text-xs text-zinc-500 dark:text-zinc-400 mt-1';
+        const created = Number.isFinite(Date.parse(token.created_at))
+          ? new Date(token.created_at).toLocaleString() : 'unknown date';
+        const used = token.last_used_at && Number.isFinite(Date.parse(token.last_used_at))
+          ? ` · last used ${new Date(token.last_used_at).toLocaleString()}` : '';
+        detail.textContent = `${token.status || 'unknown'} · created ${created}${used}`;
+        text.append(title, detail);
+        top.appendChild(text);
+
+        if (token.status === 'valid' && typeof token.id === 'string') {
+          const revoke = document.createElement('button');
+          revoke.type = 'button';
+          revoke.className = 'shrink-0 rounded border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
+          revoke.textContent = 'Revoke';
+          revoke.addEventListener('click', () => this._revokeCliToken(token.id, revoke));
+          top.appendChild(revoke);
+        }
+        card.appendChild(top);
+        list.appendChild(card);
+      }
+      more.classList.toggle('hidden', !this._cliTokenCursor);
+    },
+
+    async _revokeCliToken(id, button) {
+      const status = document.getElementById('cli-tokens-status');
+      button.disabled = true;
+      try {
+        const response = await fetch(`/api/me/cli-tokens/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          credentials: 'same-origin',
+        });
+        if (response.status !== 204) throw new Error('Could not revoke the credential.');
+        if (status) {
+          status.textContent = 'Credential revoked.';
+          status.classList.remove('hidden', 'text-red-500');
+          status.classList.add('text-emerald-500');
+        }
+        await this._loadCliTokens(true);
+      } catch (err) {
+        if (status) {
+          status.textContent = err.message || 'Could not revoke the credential.';
+          status.classList.remove('hidden', 'text-emerald-500');
+          status.classList.add('text-red-500');
+        }
+        button.disabled = false;
+      }
     },
 
     async _saveLocale(value) {

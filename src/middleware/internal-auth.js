@@ -2,6 +2,7 @@
 
 const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
+const { clientIp } = require('../services/client-ip');
 
 // Authenticates requests from worker containers calling back into the
 // platform's internal API surface (see src/routes/internal.js). Worker
@@ -48,7 +49,7 @@ function isPrivateIp(ip) {
 function internalAuth(req, res, next) {
   // IP gate first — if this somehow leaks externally, fail fast before
   // even parsing the JWT.
-  const ip = req.ip || req.socket?.remoteAddress || '';
+  const ip = clientIp(req);
   if (!isPrivateIp(ip)) {
     log.warn('internal-auth', 'Rejected non-private source IP', { ip, path: req.path });
     return res.status(403).json({ ok: false, code: 'forbidden_ip' });

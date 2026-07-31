@@ -2,6 +2,7 @@
 
 const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
+const { clientIp } = require('../services/client-ip');
 
 // Authenticates worker → platform Anthropic-proxy requests
 // (POST /api/internal/anthropic/v1/messages, etc.).
@@ -36,7 +37,7 @@ function isPrivateIp(ip) {
 }
 
 function anthropicProxyAuth(req, res, next) {
-  const ip = req.ip || req.socket?.remoteAddress || '';
+  const ip = clientIp(req);
   if (!isPrivateIp(ip)) {
     log.warn('anthropic-proxy-auth', 'Rejected non-private source IP', { ip, path: req.path });
     return res.status(403).json({ ok: false, code: 'forbidden_ip' });

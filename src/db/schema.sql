@@ -93,6 +93,359 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at TIMESTAMPTZ NOT NULL
 );
 
+-- Global CLI device authorization and opaque access tokens. These are
+-- deliberately independent from browser sessions and iframe/app identity.
+CREATE TABLE IF NOT EXISTS cli_device_authorizations (
+  id BIGSERIAL PRIMARY KEY,
+  device_code_hash TEXT NOT NULL UNIQUE
+    CHECK (device_code_hash ~ '^[0-9a-f]{64}$'),
+  user_code TEXT NOT NULL UNIQUE
+    CHECK (
+      user_code = UPPER(user_code)
+      AND user_code ~ '^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}-[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$'
+    ),
+  client_id TEXT NOT NULL DEFAULT 'social-vibecoding-cli'
+    CHECK (client_id = 'social-vibecoding-cli'),
+  scopes TEXT[] NOT NULL
+    CONSTRAINT cli_device_authorizations_scopes_check
+    CHECK (
+      scopes = ARRAY['rpc:identity:read']::TEXT[]
+      OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+    ),
+  request_ip INET NOT NULL,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'approved', 'rejected', 'cancelled', 'consumed')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL
+    CHECK (expires_at = created_at + INTERVAL '10 minutes'),
+  approved_at TIMESTAMPTZ,
+  rejected_at TIMESTAMPTZ,
+  cancelled_at TIMESTAMPTZ,
+  consumed_at TIMESTAMPTZ,
+  last_polled_at TIMESTAMPTZ,
+  poll_count INTEGER NOT NULL DEFAULT 0 CHECK (poll_count >= 0),
+  CHECK (
+    (status = 'pending' AND user_id IS NULL
+      AND approved_at IS NULL AND rejected_at IS NULL
+      AND cancelled_at IS NULL AND consumed_at IS NULL)
+    OR
+    (status = 'approved' AND user_id IS NOT NULL
+      AND approved_at IS NOT NULL AND rejected_at IS NULL
+      AND cancelled_at IS NULL AND consumed_at IS NULL)
+    OR
+    (status = 'rejected' AND user_id IS NOT NULL
+      AND approved_at IS NULL AND rejected_at IS NOT NULL
+      AND cancelled_at IS NULL AND consumed_at IS NULL)
+    OR
+    (status = 'cancelled' AND user_id IS NOT NULL
+      AND approved_at IS NOT NULL AND rejected_at IS NULL
+      AND cancelled_at IS NOT NULL AND consumed_at IS NULL)
+    OR
+    (status = 'consumed' AND user_id IS NOT NULL
+      AND approved_at IS NOT NULL AND rejected_at IS NULL
+      AND cancelled_at IS NULL AND consumed_at IS NOT NULL)
+  ),
+  CHECK (approved_at IS NULL OR approved_at >= created_at),
+  CHECK (rejected_at IS NULL OR rejected_at >= created_at),
+  CHECK (cancelled_at IS NULL OR cancelled_at >= approved_at),
+  CHECK (consumed_at IS NULL OR consumed_at >= approved_at),
+  CHECK (approved_at IS NULL OR approved_at < expires_at),
+  CHECK (rejected_at IS NULL OR rejected_at < expires_at),
+  CHECK (cancelled_at IS NULL OR cancelled_at < expires_at),
+  CHECK (consumed_at IS NULL OR consumed_at < expires_at),
+  CHECK (
+    (last_polled_at IS NULL AND poll_count = 0)
+    OR
+    (last_polled_at IS NOT NULL
+      AND last_polled_at >= created_at
+      AND poll_count > 0)
+  )
+);
+
+CREATE TABLE IF NOT EXISTS cli_access_tokens (
+  id BIGSERIAL PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE
+    CHECK (token_hash ~ '^[0-9a-f]{64}$'),
+  token_hint TEXT NOT NULL
+    CHECK (token_hint ~ '^svcli_…[A-Za-z0-9_-]{4}$'),
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  client_id TEXT NOT NULL DEFAULT 'social-vibecoding-cli'
+    CHECK (client_id = 'social-vibecoding-cli'),
+  scopes TEXT[] NOT NULL
+    CONSTRAINT cli_access_tokens_scopes_check
+    CHECK (
+      cardinality(scopes) <= 2
+      AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+    ),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_used_at TIMESTAMPTZ,
+  expires_at TIMESTAMPTZ NOT NULL,
+  revoked_at TIMESTAMPTZ,
+  CHECK (expires_at = created_at + INTERVAL '30 days'),
+  CHECK (last_used_at IS NULL OR last_used_at >= created_at),
+  CHECK (revoked_at IS NULL OR revoked_at >= created_at)
+);
+
+CREATE TABLE IF NOT EXISTS cli_auth_audit_events (
+  id BIGSERIAL PRIMARY KEY,
+  event_type TEXT NOT NULL
+    CHECK (event_type IN (
+      'authorization_started', 'authorization_approved',
+      'authorization_rejected', 'authorization_cancelled',
+      'token_issued', 'token_used', 'token_revoked'
+    )),
+  occurred_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  device_authorization_id BIGINT,
+  access_token_id BIGINT,
+  client_id TEXT NOT NULL DEFAULT 'social-vibecoding-cli'
+    CHECK (client_id = 'social-vibecoding-cli'),
+  scopes TEXT[] NOT NULL
+    CONSTRAINT cli_auth_audit_events_scopes_check
+    CHECK (
+      (event_type IN ('token_used', 'token_revoked')
+       AND cardinality(scopes) <= 2
+       AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[])
+      OR
+      (event_type NOT IN ('token_used', 'token_revoked')
+       AND (
+         scopes = ARRAY['rpc:identity:read']::TEXT[]
+         OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+       ))
+    ),
+  outcome TEXT NOT NULL DEFAULT 'success'
+    CHECK (
+      (event_type = 'token_used'
+       AND outcome IN ('scope_authorized', 'insufficient_scope'))
+      OR (event_type <> 'token_used' AND outcome = 'success')
+    ),
+  metadata JSONB NOT NULL DEFAULT '{}'
+    CONSTRAINT cli_auth_audit_events_metadata_object_check
+    CHECK (jsonb_typeof(metadata) = 'object'),
+  CONSTRAINT cli_auth_audit_events_metadata_allowlist_check
+    CHECK (
+      (
+        event_type = 'token_used'
+        AND metadata ? 'method'
+        AND metadata ? 'route'
+        AND metadata - ARRAY['method', 'route']::TEXT[] = '{}'::JSONB
+        AND jsonb_typeof(metadata->'method') = 'string'
+        AND metadata->>'method' IN ('GET', 'POST', 'PUT', 'PATCH', 'DELETE')
+        AND jsonb_typeof(metadata->'route') = 'string'
+        AND char_length(metadata->>'route') BETWEEN 1 AND 2048
+        AND metadata->>'route' LIKE '/api/%'
+      )
+      OR (
+        event_type = 'authorization_cancelled'
+        AND metadata = '{"reason":"account_recovery"}'::JSONB
+      )
+      OR (
+        event_type = 'token_revoked'
+        AND metadata ? 'reason'
+        AND jsonb_typeof(metadata->'reason') = 'string'
+        AND metadata->>'reason' IN ('self', 'settings', 'account_recovery')
+        AND metadata - 'reason' = '{}'::JSONB
+      )
+      OR (
+        event_type NOT IN (
+          'token_used', 'authorization_cancelled', 'token_revoked'
+        )
+        AND metadata = '{}'::JSONB
+      )
+    ),
+  CHECK (
+    (event_type IN (
+      'authorization_started', 'authorization_approved',
+      'authorization_rejected', 'authorization_cancelled'
+    ) AND device_authorization_id IS NOT NULL)
+    OR
+    (event_type = 'token_issued'
+      AND device_authorization_id IS NOT NULL
+      AND access_token_id IS NOT NULL)
+    OR
+    (event_type IN ('token_used', 'token_revoked')
+      AND access_token_id IS NOT NULL)
+  )
+);
+
+-- Expand the CLI grant from identity-only to the authenticated user-facing
+-- JSON API.
+-- Existing identity-only rows remain valid until they expire or are revoked;
+-- all newly-created device grants request the exact two-scope set.
+DO $$
+DECLARE
+  constraint_name TEXT;
+  constraint_def TEXT;
+BEGIN
+  SELECT pg_get_constraintdef(oid) INTO constraint_def
+    FROM pg_constraint
+   WHERE conrelid = 'cli_device_authorizations'::regclass
+     AND conname = 'cli_device_authorizations_scopes_check';
+  IF constraint_def IS NOT NULL
+      AND position('api:access' IN constraint_def) = 0 THEN
+    ALTER TABLE cli_device_authorizations
+      DROP CONSTRAINT cli_device_authorizations_scopes_check;
+    ALTER TABLE cli_device_authorizations
+      ADD CONSTRAINT cli_device_authorizations_scopes_check CHECK (
+        scopes = ARRAY['rpc:identity:read']::TEXT[]
+        OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+      );
+  END IF;
+
+  SELECT pg_get_constraintdef(oid) INTO constraint_def
+    FROM pg_constraint
+   WHERE conrelid = 'cli_access_tokens'::regclass
+     AND conname = 'cli_access_tokens_scopes_check';
+  IF constraint_def IS NOT NULL
+      AND position('api:access' IN constraint_def) = 0 THEN
+    ALTER TABLE cli_access_tokens
+      DROP CONSTRAINT cli_access_tokens_scopes_check;
+    ALTER TABLE cli_access_tokens
+      ADD CONSTRAINT cli_access_tokens_scopes_check CHECK (
+        cardinality(scopes) <= 2
+        AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+      );
+  END IF;
+
+  -- This table's original multi-column inline CHECK was auto-named
+  -- cli_auth_audit_events_check rather than ..._scopes_check. Discover it
+  -- by the protected column so deployed databases migrate regardless of
+  -- PostgreSQL's generated name; new databases use the explicit name above.
+  SELECT conname, pg_get_constraintdef(oid)
+    INTO constraint_name, constraint_def
+    FROM pg_constraint
+   WHERE conrelid = 'cli_auth_audit_events'::regclass
+     AND contype = 'c'
+     AND position('scopes' IN pg_get_constraintdef(oid)) > 0
+   ORDER BY oid
+   LIMIT 1;
+  IF constraint_def IS NOT NULL
+      AND position('api:access' IN constraint_def) = 0 THEN
+    EXECUTE format(
+      'ALTER TABLE cli_auth_audit_events DROP CONSTRAINT %I',
+      constraint_name
+    );
+    ALTER TABLE cli_auth_audit_events
+      ADD CONSTRAINT cli_auth_audit_events_scopes_check CHECK (
+        (event_type IN ('token_used', 'token_revoked')
+         AND cardinality(scopes) <= 2
+         AND scopes <@ ARRAY['rpc:identity:read', 'api:access']::TEXT[])
+        OR
+        (event_type NOT IN ('token_used', 'token_revoked')
+         AND (
+           scopes = ARRAY['rpc:identity:read']::TEXT[]
+           OR scopes = ARRAY['rpc:identity:read', 'api:access']::TEXT[]
+         ))
+      );
+  END IF;
+END $$;
+
+-- CREATE TABLE does not add new constraints to an existing deployment.
+-- Install the exact audit-metadata allowlist when upgrading an older schema.
+DO $$
+DECLARE
+  constraint_def TEXT;
+BEGIN
+  SELECT pg_get_constraintdef(oid)
+    INTO constraint_def
+      FROM pg_constraint
+     WHERE conrelid = 'cli_auth_audit_events'::regclass
+       AND conname = 'cli_auth_audit_events_metadata_allowlist_check';
+  IF constraint_def IS NOT NULL
+      AND (
+        position('metadata ? ''reason''' IN constraint_def) = 0
+        OR position('''POST''' IN constraint_def) = 0
+        OR position('''PUT''' IN constraint_def) = 0
+        OR position('''PATCH''' IN constraint_def) = 0
+        OR position('''DELETE''' IN constraint_def) = 0
+        OR position('''/api/%''' IN constraint_def) = 0
+      ) THEN
+    ALTER TABLE cli_auth_audit_events
+      DROP CONSTRAINT cli_auth_audit_events_metadata_allowlist_check;
+    constraint_def := NULL;
+  END IF;
+  IF constraint_def IS NULL THEN
+    ALTER TABLE cli_auth_audit_events
+      ADD CONSTRAINT cli_auth_audit_events_metadata_allowlist_check
+      CHECK (
+        (
+          event_type = 'token_used'
+          AND metadata ? 'method'
+          AND metadata ? 'route'
+          AND metadata - ARRAY['method', 'route']::TEXT[] = '{}'::JSONB
+          AND jsonb_typeof(metadata->'method') = 'string'
+          AND metadata->>'method' IN ('GET', 'POST', 'PUT', 'PATCH', 'DELETE')
+          AND jsonb_typeof(metadata->'route') = 'string'
+          AND char_length(metadata->>'route') BETWEEN 1 AND 2048
+          AND metadata->>'route' LIKE '/api/%'
+        )
+        OR (
+          event_type = 'authorization_cancelled'
+          AND metadata = '{"reason":"account_recovery"}'::JSONB
+        )
+        OR (
+          event_type = 'token_revoked'
+          AND metadata ? 'reason'
+          AND jsonb_typeof(metadata->'reason') = 'string'
+          AND metadata->>'reason' IN ('self', 'settings', 'account_recovery')
+          AND metadata - 'reason' = '{}'::JSONB
+        )
+        OR (
+          event_type NOT IN (
+            'token_used', 'authorization_cancelled', 'token_revoked'
+          )
+          AND metadata = '{}'::JSONB
+        )
+      );
+  END IF;
+END $$;
+
+-- Shared token-bucket state. Keys are fixed SHA-256 digests of a
+-- namespace and subject, never raw credentials or addresses.
+CREATE TABLE IF NOT EXISTS cli_auth_rate_limits (
+  bucket_key TEXT PRIMARY KEY CHECK (bucket_key ~ '^[0-9a-f]{64}$'),
+  tokens DOUBLE PRECISION NOT NULL CHECK (tokens >= 0),
+  updated_at TIMESTAMPTZ NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS cli_device_authorizations_expiry_idx
+  ON cli_device_authorizations (expires_at);
+CREATE INDEX IF NOT EXISTS cli_device_authorizations_ip_state_idx
+  ON cli_device_authorizations (request_ip, status, expires_at);
+CREATE INDEX IF NOT EXISTS cli_device_authorizations_state_expiry_idx
+  ON cli_device_authorizations (status, expires_at);
+CREATE INDEX IF NOT EXISTS cli_access_tokens_user_idx
+  ON cli_access_tokens (user_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS cli_access_tokens_expiry_idx
+  ON cli_access_tokens (expires_at);
+CREATE INDEX IF NOT EXISTS cli_access_tokens_revoked_idx
+  ON cli_access_tokens (revoked_at) WHERE revoked_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS cli_auth_audit_events_time_idx
+  ON cli_auth_audit_events (occurred_at DESC);
+CREATE INDEX IF NOT EXISTS cli_auth_audit_events_user_idx
+  ON cli_auth_audit_events (user_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS cli_auth_audit_events_actor_idx
+  ON cli_auth_audit_events (actor_user_id, occurred_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS cli_auth_audit_device_transition_uidx
+  ON cli_auth_audit_events (event_type, device_authorization_id)
+  WHERE event_type IN (
+    'authorization_started', 'authorization_approved',
+    'authorization_rejected', 'authorization_cancelled'
+  );
+CREATE UNIQUE INDEX IF NOT EXISTS cli_auth_audit_token_transition_uidx
+  ON cli_auth_audit_events (event_type, access_token_id)
+  WHERE event_type IN ('token_issued', 'token_revoked');
+CREATE INDEX IF NOT EXISTS cli_auth_rate_limits_expiry_idx
+  ON cli_auth_rate_limits (expires_at);
+
+COMMENT ON TABLE cli_device_authorizations IS 'staging:private';
+COMMENT ON TABLE cli_access_tokens IS 'staging:private';
+COMMENT ON TABLE cli_auth_audit_events IS 'staging:private';
+COMMENT ON TABLE cli_auth_rate_limits IS 'staging:private';
+
 CREATE TABLE IF NOT EXISTS activation_codes (
   id         SERIAL PRIMARY KEY,
   code       VARCHAR(32) UNIQUE NOT NULL,

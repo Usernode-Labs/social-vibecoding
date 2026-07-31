@@ -1,0 +1,21 @@
+# Copying this file verbatim is not supported: codex setup writes canonical
+# absolute paths for this machine into the ignored .codex/config.toml.
+#
+# From a trusted, reviewed checkout, run:
+#   node ./tools/social-vibecoding codex setup
+
+[mcp_servers.social_vibecoding]
+command = "/absolute/path/to/node"
+args = [
+  "/absolute/path/to/checkout/tools/social-vibecoding",
+  "mcp",
+  "--profile",
+  "production",
+]
+cwd = "/absolute/path/to/checkout"
+enabled_tools = [
+  "social_vibecoding.login_status",
+  "social_vibecoding.whoami",
+  "social_vibecoding.api_read",
+  "social_vibecoding.api_write",
+]

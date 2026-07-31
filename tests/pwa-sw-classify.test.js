@@ -38,6 +38,10 @@ test('credential and auth endpoints are bypassed — except /api/auth/me', () =>
   assert.equal(classify('GET', '/api/auth/logout'), 'bypass');
   assert.equal(classify('GET', '/api/auth/wallet-challenge'), 'bypass');
   assert.equal(classify('GET', '/api/auth/me'), 'api');
+  assert.equal(classify('GET', '/api/cli/token/status'), 'bypass');
+  assert.equal(classify('GET', '/api/cli/device/approval?user_code=ABCD-EFGH'), 'bypass');
+  assert.equal(classify('GET', '/api/me/cli-tokens'), 'bypass');
+  assert.equal(classify('GET', '/api/me/cli-tokens/42?x=1'), 'bypass');
 });
 
 test('the mock namespace and the /health probe hit the network directly', () => {
@@ -88,7 +92,7 @@ test('SPA navigations may fall back to the cached shell', () => {
 });
 
 test('standalone server pages never fall back to the SPA shell', () => {
-  for (const page of ['/admin', '/admin-features', '/dashboard', '/debug', '/node-status', '/status', '/register.html']) {
+  for (const page of ['/admin', '/admin-features', '/dashboard', '/debug', '/node-status', '/status', '/register.html', '/cli/authorize']) {
     assert.ok(NO_FALLBACK_PAGES.includes(page), `${page} missing from NO_FALLBACK_PAGES`);
     assert.equal(classify('GET', page, 'text/html', 'navigate'), 'bypass');
   }
