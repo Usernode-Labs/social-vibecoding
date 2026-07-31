@@ -668,6 +668,31 @@ test('runAppChange: read_file pages through a >100KB file via offset', async () 
   } finally { restore(); }
 });
 
+test('runAppChange: budget exhaustion error carries the tool-call trace', async () => {
+  const { subject, restore } = loadFleet({
+    files: { 'server.js': 'start();\n' },
+    llmScript: Array.from({ length: 30 }, (_, i) => ({
+      toolUses: [{
+        id: `t${i}`,
+        name: i % 2 ? 'search_file' : 'read_file',
+        input: i % 2 ? { path: 'server.js', query: 'JWT' } : { path: 'server.js', offset: i * 100 },
+      }],
+    })),
+  });
+  try {
+    await assert.rejects(
+      subject.runAppChange({ campaign: CAMPAIGN, app: CHILD_APP }),
+      (err) => {
+        assert.match(err.message, /Tool-call budget exhausted \(20 iterations\)/);
+        assert.match(err.message, /Tool trace: read_file\(server\.js\)/);
+        assert.match(err.message, /search_file\(server\.js "JWT"\)/);
+        assert.match(err.message, /read_file\(server\.js@200\)/, 'offsets visible in the trace');
+        return true;
+      }
+    );
+  } finally { restore(); }
+});
+
 // ── runCampaign (sequential fan-out) ──────────────────────────────────────
 
 test('runCampaign: fans out sequentially — one PR opened, one skipped, campaign done', async () => {
