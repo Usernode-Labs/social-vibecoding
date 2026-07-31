@@ -668,9 +668,12 @@ locally with `403`. Do not combine it with `SV_PRODUCTION_READONLY=true`.
   administrator gate, and renders artifact ids solely through the existing
   public immutable `/visuals/:id` URLs. It does not proxy artifact bytes,
   reveal proposal-index metadata to non-admins, or add a visual-capture
-  mutation. Filters, empty/error states, mobile layout, and the legacy escape
-  are fixture-tested; legacy `/gallery` remains reachable until production
-  parity is reviewed.
+  mutation. The React route now treats `Captured` as a browser-proven media
+  readiness claim: images and recordings expose loading, decode failure,
+  recording-to-still fallback, and retry states, while invalid or failed bytes
+  suppress that label. Filters, empty/error states, mobile layout, direct
+  immutable-byte requests, and the legacy escape are fixture-tested; legacy
+  `/gallery` remains reachable until production parity is reviewed.
 
 ## Existing harness caveat
 

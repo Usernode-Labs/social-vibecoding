@@ -3511,6 +3511,10 @@
       "variants": [
         "Complete",
         "CaptureWarnings",
+        "Loading",
+        "ByteFailure",
+        "VideoFallback",
+        "InvalidReference",
         "NoArtifacts"
       ],
       "tokens": [
@@ -3541,6 +3545,10 @@
         "states": [
           "Complete",
           "CaptureWarnings",
+          "Loading",
+          "ByteFailure",
+          "VideoFallback",
+          "InvalidReference",
           "NoArtifacts"
         ]
       }

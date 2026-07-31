@@ -4,6 +4,8 @@ import AxeBuilder from "@axe-core/playwright"
 const beforePng = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 const afterPng = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 const recording = "cccccccccccccccccccccccccccccccc"
+const pngBytes = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl2gAAAAASUVORK5CYII=", "base64")
+const webmBytes = Buffer.from("GkXfo59ChoEBQveBAULygQRC84EIQoKEd2VibUKHgQJChYECGFOAZwEAAAAAAAHwEU2bdLpNu4tTq4QVSalmU6yBoU27i1OrhBZUrmtTrIHWTbuMU6uEElTDZ1OsggEjTbuMU6uEHFO7a1OsggHa7AEAAAAAAABZAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAVSalmsCrXsYMPQkBNgIxMYXZmNjIuMy4xMDBXQYxMYXZmNjIuMy4xMDBEiYhARAAAAAAAABZUrmvIrgEAAAAAAAA/14EBc8WIk0OUqTpMw/CcgQAitZyDdW5kiIEAhoVWX1ZQOYOBASPjg4QCYloA4JCwgRC6gRCagQJVsIRVuYEBElTDZ0B/c3OfY8CAZ8iZRaOHRU5DT0RFUkSHjExhdmY2Mi4zLjEwMHNz2mPAi2PFiJNDlKk6TMPwZ8ilRaOHRU5DT0RFUkSHmExhdmM2Mi4xMS4xMDAgbGlidnB4LXZwOWfIoUWjiERVUkFUSU9ORIeTMDA6MDA6MDAuMDQwMDAwMDAwAB9DtnWt54EAo6iBAACAgkmDQgAA8AD2ADgkHBhKAAAgIABNs//8uQz///60EH/9gDGAHFO7a5G7j7OBALeK94EB8YIBqPCBAw==", "base64")
 
 const apps = [{ id: 1, slug: "recipebot", name: "RecipeBot", proposal_count: 2 }]
 const stats = {
@@ -66,6 +68,12 @@ async function installGalleryFixture(page: import("@playwright/test").Page) {
       nextCursor: { before: "2026-07-27T12:00:00.000Z", before_id: 41 },
     } })
   })
+  await page.route("**/visuals/*", (route) => {
+    const id = new URL(route.request().url()).pathname.split("/").pop()
+    return id === recording
+      ? route.fulfill({ body: webmBytes, contentType: "video/webm" })
+      : route.fulfill({ body: pngBytes, contentType: "image/png" })
+  })
 }
 
 test("renders the any-admin metadata index without proxying visual bytes", async ({ page }) => {
@@ -83,6 +91,116 @@ test("renders the any-admin metadata index without proxying visual bytes", async
   await expect(gallery.getByRole("link", { name: "Open proposal" })).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/41")
   await expect(gallery.getByRole("img", { name: "Before /search · mobile" })).toHaveAttribute("src", `/visuals/${beforePng}`)
   await expect(gallery.locator("video[aria-label='After /search · mobile']")).toHaveAttribute("src", `/visuals/${recording}`)
+  await expect(gallery.locator('[data-media-readiness="ready"]')).toHaveCount(2)
+  await expect(gallery.getByTestId("gallery-capture-state-41")).toHaveText("Captured")
+})
+
+test("keeps Captured hidden until declared media bytes are ready", async ({ page }) => {
+  await installGalleryFixture(page)
+  await page.unroute("**/visuals/*")
+  let releaseBytes = () => {}
+  const bytesReady = new Promise<void>((resolve) => { releaseBytes = resolve })
+  const requests: string[] = []
+  await page.route("**/visuals/*", async (route) => {
+    requests.push(route.request().url())
+    await bytesReady
+    const id = new URL(route.request().url()).pathname.split("/").pop()
+    await (id === recording
+      ? route.fulfill({ body: webmBytes, contentType: "video/webm" })
+      : route.fulfill({ body: pngBytes, contentType: "image/png" }))
+  })
+  await page.goto("/react/admin/gallery", { waitUntil: "domcontentloaded" })
+
+  await expect(page.getByText("Make recipe search more useful")).toBeVisible()
+  await expect(page.locator('[data-media-readiness="loading"]')).toHaveCount(2)
+  await expect(page.getByTestId("gallery-capture-state-41")).toHaveCount(0)
+  await expect.poll(() => requests.map((url) => new URL(url).pathname).sort()).toEqual([`/visuals/${beforePng}`, `/visuals/${afterPng}`, `/visuals/${recording}`].sort())
+
+  releaseBytes()
+  await expect(page.locator('[data-media-readiness="ready"]')).toHaveCount(2)
+  await expect(page.getByTestId("gallery-capture-state-41")).toHaveText("Captured")
+})
+
+test("shows a negative in-tile failure and retries immutable image bytes", async ({ page }) => {
+  await installGalleryFixture(page)
+  await page.unroute("**/api/gallery/proposals**")
+  await page.route("**/api/gallery/proposals**", (route) => route.fulfill({ json: {
+    proposals: [{ ...firstProposal, visuals: { captures: [{ index: 0, path: "/search", viewport: "mobile", before: null, after: { png: afterPng } }] } }],
+    hasMore: false,
+    nextCursor: null,
+  } }))
+  await page.unroute("**/visuals/*")
+  const requests: string[] = []
+  await page.route("**/visuals/*", (route) => {
+    requests.push(route.request().url())
+    return requests.length === 1
+      ? route.fulfill({ status: 404, body: "missing" })
+      : route.fulfill({ body: pngBytes, contentType: "image/png" })
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto("/react/admin/gallery")
+
+  const alert = page.getByRole("alert").filter({ hasText: "After visual didn’t load" })
+  await expect(alert).toContainText("The stored media could not be opened.")
+  await expect(page.getByTestId("gallery-capture-state-41")).toHaveCount(0)
+  await alert.getByRole("button", { name: "Retry" }).click()
+
+  await expect(page.locator('[data-media-readiness="ready"]')).toHaveCount(1)
+  await expect(page.getByTestId("gallery-capture-state-41")).toHaveText("Captured")
+  expect(new URL(requests[0]).pathname).toBe(`/visuals/${afterPng}`)
+  expect(new URL(requests[1]).searchParams.get("retry")).toBe("1")
+})
+
+test("falls back from a failed recording to a proven still", async ({ page }) => {
+  await installGalleryFixture(page)
+  await page.unroute("**/visuals/*")
+  const requests: string[] = []
+  await page.route("**/visuals/*", (route) => {
+    const url = new URL(route.request().url())
+    requests.push(url.pathname)
+    return url.pathname === `/visuals/${recording}`
+      ? route.fulfill({ status: 404, body: "missing" })
+      : route.fulfill({ body: pngBytes, contentType: "image/png" })
+  })
+  await page.goto("/react/admin/gallery")
+
+  await expect(page.getByText("Recording unavailable")).toBeVisible()
+  await expect(page.locator('[data-media-readiness="ready"]')).toHaveCount(2)
+  await expect(page.getByTestId("gallery-capture-state-41")).toHaveText("Captured")
+  expect(requests).toContain(`/visuals/${recording}`)
+  expect(requests).toContain(`/visuals/${afterPng}`)
+})
+
+test("reports a failed recording when its poster cannot become a fallback", async ({ page }) => {
+  await installGalleryFixture(page)
+  await page.unroute("**/visuals/*")
+  await page.route("**/visuals/*", (route) => {
+    const path = new URL(route.request().url()).pathname
+    return path === `/visuals/${beforePng}`
+      ? route.fulfill({ body: pngBytes, contentType: "image/png" })
+      : route.fulfill({ status: 404, body: "missing" })
+  })
+  await page.goto("/react/admin/gallery")
+
+  await expect(page.getByRole("alert").filter({ hasText: "After visual didn’t load" })).toContainText("The stored media could not be opened.")
+  await expect(page.getByText("Recording unavailable")).toBeVisible()
+  await expect(page.getByTestId("gallery-capture-state-41")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Retry" })).toBeVisible()
+})
+
+test("does not claim Captured for an invalid artifact reference", async ({ page }) => {
+  await installGalleryFixture(page)
+  await page.unroute("**/api/gallery/proposals**")
+  await page.route("**/api/gallery/proposals**", (route) => route.fulfill({ json: {
+    proposals: [{ ...firstProposal, visuals: { captures: [{ index: 0, path: "/search", viewport: null, before: null, after: { png: "not-a-visual-id" } }] } }],
+    hasMore: false,
+    nextCursor: null,
+  } }))
+  await page.goto("/react/admin/gallery")
+
+  await expect(page.getByRole("alert")).toContainText("The stored artifact reference is invalid.")
+  await expect(page.getByTestId("gallery-capture-state-41")).toHaveCount(0)
+  await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(0)
 })
 
 test("preserves keyset paging and keeps captured proposals visible if the older page fails", async ({ page }) => {

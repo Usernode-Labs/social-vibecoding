@@ -1,4 +1,4 @@
-import { MessageCircle, Paperclip, RotateCcw } from "lucide-react"
+import { Info, MessageCircle, Paperclip, RotateCcw, TriangleAlert } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
@@ -110,14 +110,14 @@ export function TopicDiscussionContent({
         ) : null}
         {!productionReview && capability === "denied" ? (
           <Alert role="note" tone="info">
-            <PlatformIcon icon={Paperclip} />
+            <PlatformIcon icon={Info} />
             <AlertTitle>View-only discussion</AlertTitle>
             <AlertDescription>Collaboration access is required to post or react in this topic.</AlertDescription>
           </Alert>
         ) : null}
         {!productionReview && capability === "unknown" ? (
           <Alert tone="warning">
-            <PlatformIcon icon={Paperclip} />
+            <PlatformIcon icon={TriangleAlert} />
             <AlertTitle>Discussion status unknown</AlertTitle>
             <AlertDescription>We could not check whether you can post right now.</AlertDescription>
             {onRetryCapability ? (

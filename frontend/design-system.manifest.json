@@ -629,6 +629,10 @@
         "states": [
           "Complete",
           "CaptureWarnings",
+          "Loading",
+          "ByteFailure",
+          "VideoFallback",
+          "InvalidReference",
           "NoArtifacts"
         ]
       }

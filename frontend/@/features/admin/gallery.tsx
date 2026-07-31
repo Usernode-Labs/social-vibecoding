@@ -1,5 +1,5 @@
 import { ExternalLink, Image, ShieldAlert } from "lucide-react"
-import { useEffect, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useState, type FormEvent } from "react"
 import { Link } from "react-router-dom"
 
 import { PlatformIcon } from "@/components/platform-icon"
@@ -12,6 +12,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { gallerySurfaceKeys, type GallerySurfaceReadiness } from "@/features/admin/gallery-media-readiness"
 import { GalleryVisualEvidence } from "@/features/admin/gallery-visual-evidence"
 import { AdminAccessError, getAdminUser } from "@/lib/admin-api"
 import { appDevPath, appDevProposalPath } from "@/lib/routes"
@@ -66,9 +67,21 @@ function GalleryStatsStrip({ stats }: { stats: GalleryStats }) {
 }
 
 function GalleryProposalCard({ proposal }: { proposal: GalleryProposal }) {
+  const [readySurfaceKeys, setReadySurfaceKeys] = useState<ReadonlySet<string>>(() => new Set())
+  const mediaSurfaceKeys = gallerySurfaceKeys(proposal.visuals)
   const state = captureState(proposal.captureState)
   const appLabel = proposal.appName || proposal.appSlug || `App ${proposal.appId || "unknown"}`
-  return <article><Card><CardHeader className="gap-3"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="text-balance text-xl tracking-tight">{proposal.title || `Proposal ${proposal.id}`}</CardTitle><CardDescription>{appLabel} · {date(proposal.mergedAt)}</CardDescription></div><Badge variant={state.variant}>{state.label}</Badge></div><div className="flex flex-wrap gap-2"><Button render={proposal.appSlug ? <Link to={appDevPath(proposal.appSlug)} /> : <span />} size="sm" variant="outline" disabled={!proposal.appSlug}>Improve app</Button><Button render={proposal.appSlug ? <Link to={appDevProposalPath(proposal.appSlug, proposal.id)} /> : <span />} size="sm" variant="outline" disabled={!proposal.appSlug}>Open proposal</Button>{proposal.prUrl ? <Button render={<a href={proposal.prUrl} rel="noopener noreferrer" target="_blank" />} size="sm" variant="outline">{proposal.prNumber == null ? "Open pull request" : `PR #${proposal.prNumber}`}<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button> : null}</div>{proposal.captureReason ? <CardDescription>{proposal.captureReason}</CardDescription> : null}</CardHeader><CardContent><GalleryVisualEvidence visuals={proposal.visuals} /></CardContent></Card></article>
+  const mediaReady = mediaSurfaceKeys.length > 0 && mediaSurfaceKeys.every((key) => readySurfaceKeys.has(key))
+  const showCaptureState = proposal.captureState !== "captured" || mediaReady
+  const updateSurfaceReadiness = useCallback((surfaceId: string, readiness: GallerySurfaceReadiness) => setReadySurfaceKeys((current) => {
+    const ready = readiness === "ready"
+    if (current.has(surfaceId) === ready) return current
+    const next = new Set(current)
+    if (ready) next.add(surfaceId)
+    else next.delete(surfaceId)
+    return next
+  }), [])
+  return <article><Card><CardHeader className="gap-3"><div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="text-balance text-xl tracking-tight">{proposal.title || `Proposal ${proposal.id}`}</CardTitle><CardDescription>{appLabel} · {date(proposal.mergedAt)}</CardDescription></div>{showCaptureState ? <Badge data-testid={`gallery-capture-state-${proposal.id}`} variant={state.variant}>{state.label}</Badge> : null}</div><div className="flex flex-wrap gap-2"><Button render={proposal.appSlug ? <Link to={appDevPath(proposal.appSlug)} /> : <span />} size="sm" variant="outline" disabled={!proposal.appSlug}>Improve app</Button><Button render={proposal.appSlug ? <Link to={appDevProposalPath(proposal.appSlug, proposal.id)} /> : <span />} size="sm" variant="outline" disabled={!proposal.appSlug}>Open proposal</Button>{proposal.prUrl ? <Button render={<a href={proposal.prUrl} rel="noopener noreferrer" target="_blank" />} size="sm" variant="outline">{proposal.prNumber == null ? "Open pull request" : `PR #${proposal.prNumber}`}<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button> : null}</div>{proposal.captureReason ? <CardDescription>{proposal.captureReason}</CardDescription> : null}</CardHeader><CardContent><GalleryVisualEvidence onSurfaceReadinessChange={updateSurfaceReadiness} visuals={proposal.visuals} /></CardContent></Card></article>
 }
 
 function GalleryProposalList({ proposals }: { proposals: GalleryProposal[] }) {

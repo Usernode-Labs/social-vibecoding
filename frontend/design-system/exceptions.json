@@ -246,7 +246,7 @@
       "matches": [
         "rounded-[min(1vw,12px)]"
       ],
-      "count": 3,
+      "count": 2,
       "owner": "frontend-platform",
       "reason": "Screenshot frames preserve the source capture radius until a visual-evidence variant is approved.",
       "expires": "2026-09-30"
