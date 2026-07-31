@@ -147,6 +147,21 @@ const MAX_CONSOLE_ERRORS = 20;
 const MAX_CONSOLE_MSG_LEN = 500;
 const CONSOLE_ONLY_SETTLE_MS = 1500;
 
+// A failed /favicon.ico fetch is browser-initiated noise, not an app
+// error: apps built from the pre-fix template have no favicon route, so
+// auth middleware answers the browser's automatic request with 401/404
+// and Chromium logs "Failed to load resource". The template now ships a
+// favicon handler, but every app created before that fix still trips
+// this — and it was failing otherwise-green campaign PRs (JWT
+// switchover, 2026-07-31). Match narrowly: only the resource-load
+// message, only when the failing resource IS the favicon.
+function isFaviconLoadNoise(errKind, message, source) {
+  if (errKind !== 'console') return false;
+  if (!/^Failed to load resource/.test(String(message || ''))) return false;
+  // source is `${url}` or `${url}:${line}`; strip any query string first.
+  return /\/favicon\.ico(?::\d+)?$/.test(String(source || '').split('?')[0]);
+}
+
 // Whether this run also produces the before/after media artifacts. The
 // orchestrator sets MEDIA=0 for the always-on console-only check on a
 // non-UI-affecting proposal (visuals.js) — the page is still navigated
@@ -294,6 +309,7 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
     if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
+    if (isFaviconLoadNoise(errKind, message, source)) return;
     const msg = String(message == null ? '' : message).slice(0, MAX_CONSOLE_MSG_LEN);
     if (!msg) return;
     if (consoleErrors.some((e) => e.message === msg)) return; // dedupe by message
@@ -570,6 +586,7 @@ async function runTest(browser, test) {
   const consoleErrors = [];
   const pushErr = (errKind, message, source) => {
     if (consoleErrors.length >= MAX_CONSOLE_ERRORS) return;
+    if (isFaviconLoadNoise(errKind, message, source)) return;
     const msg = String(message == null ? '' : message).slice(0, MAX_CONSOLE_MSG_LEN);
     if (!msg) return;
     if (consoleErrors.some((e) => e.message === msg)) return;
@@ -738,4 +755,4 @@ if (require.main === module) {
     .then(() => process.exit(0));
 }
 
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, mediaEnabled, resolveTests, CHROMIUM_LAUNCH_ARGS };
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, mediaEnabled, resolveTests, isFaviconLoadNoise, CHROMIUM_LAUNCH_ARGS };

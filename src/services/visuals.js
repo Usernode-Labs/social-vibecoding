@@ -301,6 +301,17 @@ function parseConsole(stdout) {
   return Array.from(byIndex.values()).sort((a, b) => a.index - b.index);
 }
 
+// Mirror of capture.js isFaviconLoadNoise: a failed /favicon.ico fetch is
+// browser-initiated noise (pre-favicon-fix template apps 401/404 it), not
+// an app error. capture.js filters at collection; this filters again at
+// classification so frames from an older capture image (lazy rebuild) are
+// judged the same way.
+function isFaviconLoadNoise(kind, message, source) {
+  if (kind !== 'console') return false;
+  if (!/^Failed to load resource/.test(String(message || ''))) return false;
+  return /\/favicon\.ico(?::\d+)?$/.test(String(source || '').split('?')[0]);
+}
+
 // Classify the parsed frames into the persisted snapshot:
 //   'errors'  — at least one console error / page error / failed load
 //   'clean'   — every checked target navigated OK with no error output
@@ -314,6 +325,7 @@ function classifyConsole(frames) {
   const errors = [];
   for (const f of frames) {
     for (const e of (Array.isArray(f.errors) ? f.errors : [])) {
+      if (e && isFaviconLoadNoise(e.kind, e.message, e.source)) continue;
       const message = String((e && e.message) || '').slice(0, CONSOLE_MAX_MSG_LEN);
       if (!message || seen.has(message)) continue;
       seen.add(message);
@@ -393,6 +405,7 @@ function classifyTests(frames, expectedCount) {
     path: String(f.path || '').slice(0, CONSOLE_MAX_MSG_LEN),
     status: f.status === 'pass' ? 'pass' : 'fail',
     consoleErrors: (Array.isArray(f.consoleErrors) ? f.consoleErrors : [])
+      .filter((e) => !(e && isFaviconLoadNoise(e.kind, e.message, e.source)))
       .slice(0, CONSOLE_MAX_ERRORS)
       .map((e) => ({
         kind: (e && typeof e.kind === 'string') ? e.kind : 'console',

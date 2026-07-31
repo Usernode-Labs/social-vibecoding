@@ -514,6 +514,70 @@ test('classifyConsole dedupes by message and caps the list at 20', () => {
   assert.equal(capped.errors.length, 20);
 });
 
+test('classifyConsole ignores favicon resource-load noise (pre-fix template apps)', () => {
+  const favicon = {
+    kind: 'console',
+    message: 'Failed to load resource: the server responded with a status of 401 (Unauthorized)',
+    source: 'http://usernode-staging-notes-9206f8--2836:3000/favicon.ico',
+  };
+  // Favicon-only frame → clean, and the noise is not persisted.
+  const only = visuals.classifyConsole([{ index: 0, loadStatus: 200, errors: [favicon] }]);
+  assert.equal(only.state, 'clean');
+  assert.equal(only.errors.length, 0);
+  // A real error alongside it still fails — only the favicon line is dropped.
+  const mixed = visuals.classifyConsole([{ index: 0, loadStatus: 200, errors: [
+    favicon,
+    { kind: 'pageerror', message: "SyntaxError: Identifier 'currentUserId' has already been declared" },
+  ] }]);
+  assert.equal(mixed.state, 'errors');
+  assert.equal(mixed.errors.length, 1);
+  assert.match(mixed.errors[0].message, /currentUserId/);
+  // Line-number suffix and query string on the source still match.
+  const suffixed = visuals.classifyConsole([{ errors: [
+    { ...favicon, source: 'http://host:3000/favicon.ico?v=2' },
+    { ...favicon, message: 'Failed to load resource: 404 (Not Found)', source: 'http://host:3000/favicon.ico:1' },
+  ] }]);
+  assert.equal(suffixed.state, 'clean');
+  // NOT matched: same message for a different resource, or a favicon
+  // source with a non-resource-load message (e.g. a real script error).
+  const other = visuals.classifyConsole([{ errors: [
+    { ...favicon, source: 'http://host:3000/api/data' },
+  ] }]);
+  assert.equal(other.state, 'errors');
+});
+
+test('capture-side isFaviconLoadNoise agrees with the platform-side filter', () => {
+  const { isFaviconLoadNoise } = require('../capture/capture');
+  const msg = 'Failed to load resource: the server responded with a status of 401 (Unauthorized)';
+  assert.equal(isFaviconLoadNoise('console', msg, 'http://h:3000/favicon.ico'), true);
+  assert.equal(isFaviconLoadNoise('console', msg, 'http://h:3000/favicon.ico:1'), true);
+  assert.equal(isFaviconLoadNoise('console', msg, 'http://h:3000/favicon.ico?v=1'), true);
+  assert.equal(isFaviconLoadNoise('console', msg, 'http://h:3000/api/x'), false);
+  assert.equal(isFaviconLoadNoise('console', 'ReferenceError: x is not defined', 'http://h:3000/favicon.ico'), false);
+  assert.equal(isFaviconLoadNoise('pageerror', msg, 'http://h:3000/favicon.ico'), false);
+});
+
+test('classifyTests strips favicon noise from the persisted consoleErrors list', () => {
+  const r = visuals.classifyTests([{
+    index: 0,
+    name: 'home',
+    path: '/',
+    status: 'pass',
+    loadStatus: 200,
+    consoleErrors: [
+      {
+        kind: 'console',
+        message: 'Failed to load resource: the server responded with a status of 401 (Unauthorized)',
+        source: 'http://host:3000/favicon.ico',
+      },
+      { kind: 'console', message: 'real problem', source: 'http://host:3000/app.js:12' },
+    ],
+    failureReason: '',
+  }], 1);
+  assert.equal(r.results[0].consoleErrors.length, 1);
+  assert.equal(r.results[0].consoleErrors[0].message, 'real problem');
+});
+
 test('a failed-load error (kind=load) classifies as errors', () => {
   const frames = visuals.parseConsole(consoleFrame(0, [{ kind: 'load', message: 'navigation failed: timeout' }], 0));
   assert.equal(visuals.classifyConsole(frames).state, 'errors');
