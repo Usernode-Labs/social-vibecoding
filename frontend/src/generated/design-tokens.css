@@ -249,6 +249,36 @@
   --status-dot-border: var(--border);
 }
 
+.status-surface {
+  background-color: var(--status-surface);
+  border-color: var(--status-surface-border);
+  color: var(--status-surface-foreground);
+}
+
+.status-surface[data-status-tone="positive"] {
+  --status-surface: var(--status-positive-surface);
+  --status-surface-foreground: var(--status-positive-foreground);
+  --status-surface-border: var(--status-positive-border);
+}
+
+.status-surface[data-status-tone="info"] {
+  --status-surface: var(--status-info-surface);
+  --status-surface-foreground: var(--status-info-foreground);
+  --status-surface-border: var(--status-info-border);
+}
+
+.status-surface[data-status-tone="warning"] {
+  --status-surface: var(--status-warning-surface);
+  --status-surface-foreground: var(--status-warning-foreground);
+  --status-surface-border: var(--status-warning-border);
+}
+
+.status-surface[data-status-tone="negative"] {
+  --status-surface: var(--status-negative-surface);
+  --status-surface-foreground: var(--status-negative-foreground);
+  --status-surface-border: var(--status-negative-border);
+}
+
 @media (forced-colors: active) {
   .app-identity {
     background-color: Canvas;
@@ -262,5 +292,11 @@
     color: CanvasText;
     outline: 1px solid CanvasText;
     outline-offset: 1px;
+  }
+
+  .status-surface {
+    background-color: Canvas;
+    border-color: CanvasText;
+    color: CanvasText;
   }
 }

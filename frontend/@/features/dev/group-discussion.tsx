@@ -256,8 +256,8 @@ function DiscussionMessage({
 }
 
 /** Reusable transcript presentation; route ownership stays with GroupDiscussion. */
-export function GroupDiscussionTranscript({ currentUserId, messages, onEdit, onMarkRead, onReact, onReply, slug, writable = false }: { currentUserId?: number | string | null; messages: GroupChatMessage[]; onEdit?: (messageId: number | string, content: string) => void; onMarkRead?: (messageId: number | string) => void; onReact?: (messageId: number | string, emoji: string) => void; onReply?: (target: GroupChatReplyTarget) => void; slug: string; writable?: boolean }) {
-  if (!messages.length) return <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={MessagesSquare} /></EmptyMedia><EmptyTitle>No discussion yet</EmptyTitle><EmptyDescription>Start the conversation below.</EmptyDescription></EmptyHeader></Empty>
+export function GroupDiscussionTranscript({ currentUserId, emptyDescription = "Start the conversation below.", messages, onEdit, onMarkRead, onReact, onReply, slug, writable = false }: { currentUserId?: number | string | null; emptyDescription?: string; messages: GroupChatMessage[]; onEdit?: (messageId: number | string, content: string) => void; onMarkRead?: (messageId: number | string) => void; onReact?: (messageId: number | string, emoji: string) => void; onReply?: (target: GroupChatReplyTarget) => void; slug: string; writable?: boolean }) {
+  if (!messages.length) return <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={MessagesSquare} /></EmptyMedia><EmptyTitle>No discussion yet</EmptyTitle><EmptyDescription>{emptyDescription}</EmptyDescription></EmptyHeader></Empty>
   return <MessageScrollerProvider><MessageScroller aria-label="App discussion messages" className="min-h-80 max-h-[60dvh] rounded-xl border bg-card">
     <MessageScrollerViewport><MessageScrollerContent className="gap-5 p-4 pb-7 sm:p-6 sm:pb-8">
       {messages.map((message) => <MessageScrollerItem key={message.id}><DiscussionMessage currentUserId={currentUserId} message={message} onEdit={onEdit} onMarkRead={onMarkRead} onReact={onReact} onReply={onReply} slug={slug} writable={writable} /></MessageScrollerItem>)}
@@ -292,7 +292,7 @@ function typingLabel(usernames: string[]) {
   return `${usernames[0]}, ${usernames[1]}, and ${usernames.length - 2} others are typing…`
 }
 
-export function GroupDiscussionComposer({ disabled, label = "Post a discussion message", onCancelReply, onSend, onTyping, placeholder = "Share an update with collaborators…", replyTarget, slug, typingUsers = [], writable }: {
+export function GroupDiscussionComposer({ disabled, label = "Post a discussion message", onCancelReply, onSend, onTyping, placeholder = "Share an update with collaborators…", replyTarget, showWhenUnavailable = false, slug, typingUsers = [], writable }: {
   disabled: boolean
   label?: string
   onCancelReply?: () => void
@@ -300,6 +300,7 @@ export function GroupDiscussionComposer({ disabled, label = "Post a discussion m
   onTyping?: () => void
   placeholder?: string
   replyTarget?: GroupChatReplyTarget | null
+  showWhenUnavailable?: boolean
   slug: string
   typingUsers?: string[]
   writable: boolean
@@ -310,14 +311,15 @@ export function GroupDiscussionComposer({ disabled, label = "Post a discussion m
   const [attachments, setAttachments] = useState<PendingGroupChatAttachment[]>([])
   const [error, setError] = useState<string | null>(null)
   const uploading = attachments.some((attachment) => attachment.state === "uploading")
-  const canSend = writable && !disabled && !uploading && Boolean(content.trim() || attachments.some((attachment) => attachment.state === "done"))
+  const composerDisabled = disabled || !writable
+  const canSend = !composerDisabled && !uploading && Boolean(content.trim() || attachments.some((attachment) => attachment.state === "done"))
 
   useEffect(() => () => {
     previewUrls.current.forEach((url) => URL.revokeObjectURL(url))
   }, [])
 
   async function addFiles(files: FileList | null) {
-    if (!files || disabled || uploading) return
+    if (!files || composerDisabled || uploading) return
     setError(null)
     const available = 4 - attachments.length
     if (available <= 0) {
@@ -395,8 +397,8 @@ export function GroupDiscussionComposer({ disabled, label = "Post a discussion m
     }
   }
 
-  if (!writable) return null
-  return <form aria-label={label} className="sticky bottom-0 rounded-xl border bg-background p-3 shadow-sm" onSubmit={submit}>
+  if (!writable && !showWhenUnavailable) return null
+  return <form aria-disabled={composerDisabled || undefined} aria-label={label} className="sticky bottom-0 rounded-xl border bg-background p-3 shadow-sm" onSubmit={submit}>
     <FieldGroup className="gap-2">
       {replyTarget ? (
         <div className="flex items-start gap-3 rounded-lg border-s-2 bg-muted/40 px-3 py-2" data-testid="discussion-reply-preview">
@@ -437,10 +439,10 @@ export function GroupDiscussionComposer({ disabled, label = "Post a discussion m
         </AttachmentGroup>
       ) : null}
       <p aria-live="polite" className="min-h-5 text-xs text-muted-foreground">{typingLabel(typingUsers)}</p>
-      <InputGroup data-disabled={disabled || uploading || undefined}>
-        <InputGroupTextarea aria-describedby="discussion-composer-help" aria-label="Discussion message" disabled={disabled || uploading} maxLength={MAX_GROUP_MESSAGE_LENGTH} onChange={(event) => { setContent(event.target.value); if (event.target.value.trim()) onTyping?.() }} placeholder={placeholder} rows={3} value={content} />
+      <InputGroup data-disabled={composerDisabled || uploading || undefined}>
+        <InputGroupTextarea aria-describedby="discussion-composer-help" aria-label="Discussion message" disabled={composerDisabled || uploading} maxLength={MAX_GROUP_MESSAGE_LENGTH} onChange={(event) => { setContent(event.target.value); if (event.target.value.trim()) onTyping?.() }} placeholder={placeholder} rows={3} value={content} />
         <InputGroupAddon align="block-end">
-          <InputGroupButton aria-label="Attach files" disabled={disabled || uploading || attachments.length >= 4} onClick={() => fileInputRef.current?.click()} size="icon-xs" title="Attach files" type="button"><PlatformIcon data-icon icon={Paperclip} /></InputGroupButton>
+          <InputGroupButton aria-label="Attach files" disabled={composerDisabled || uploading || attachments.length >= 4} onClick={() => fileInputRef.current?.click()} size="icon-xs" title="Attach files" type="button"><PlatformIcon data-icon icon={Paperclip} /></InputGroupButton>
           <input aria-label="Choose discussion attachments" className="sr-only" multiple onChange={(event) => { void addFiles(event.target.files); event.target.value = "" }} ref={fileInputRef} type="file" />
           <span className="text-xs text-muted-foreground" id="discussion-composer-help">{uploading ? "Uploading attachments…" : `${attachments.length}/4 files · ${content.length}/${MAX_GROUP_MESSAGE_LENGTH}`}</span>
           <InputGroupButton aria-label="Post discussion message" disabled={!canSend} size="icon-xs" title="Post discussion message" type="submit"><PlatformIcon data-icon icon={SendHorizontal} /></InputGroupButton>

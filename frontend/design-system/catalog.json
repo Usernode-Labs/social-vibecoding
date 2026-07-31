@@ -134,7 +134,9 @@
       "variants": [
         "Default",
         "Destructive",
-        "WithAction"
+        "WithAction",
+        "StatusTonesLight",
+        "StatusTonesDark"
       ],
       "tokens": [
         "foundation.font.sans",
@@ -164,7 +166,9 @@
         "states": [
           "Default",
           "Destructive",
-          "WithAction"
+          "WithAction",
+          "StatusTonesLight",
+          "StatusTonesDark"
         ]
       }
     },

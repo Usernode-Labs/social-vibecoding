@@ -19,13 +19,13 @@ export const Collaborator: Story = {
   args: {
     slug: "recipebot",
     session,
-    children: <TopicDiscussionContent currentUserId={2} messages={messages} onEdit={() => {}} onReact={() => {}} onReply={() => {}} onSend={() => {}} slug="recipebot" writable />,
+    children: <TopicDiscussionContent capability="allowed" currentUserId={2} messages={messages} onEdit={() => {}} onReact={() => {}} onReply={() => {}} onSend={() => {}} slug="recipebot" writable />,
   },
 }
 export const ViewOnly: Story = {
   args: {
     slug: "recipebot",
     session: { ...session, status: "paused", staging_url: null, busy: false },
-    children: <TopicDiscussionContent messages={messages} slug="recipebot" viewOnly />,
+    children: <TopicDiscussionContent capability="denied" messages={messages} slug="recipebot" />,
   },
 }

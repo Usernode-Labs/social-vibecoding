@@ -71,3 +71,65 @@ test("mobile topic transcript has no serious axe violations", async ({ page }) =
   const results = await new AxeBuilder({ page }).analyze()
   expect(results.violations.filter(({ impact }) => impact === "critical" || impact === "serious")).toEqual([])
 })
+
+test("capability failure stays unknown and retries without navigation", async ({ page }, testInfo) => {
+  let capabilityRequests = 0
+  let capabilityAvailable = false
+  const capabilityMethods: string[] = []
+  await routeForum(page)
+  await page.unroute("**/api/apps/recipebot")
+  await page.route("**/api/apps/recipebot", (route) => {
+    capabilityRequests += 1
+    capabilityMethods.push(route.request().method())
+    // The proposal owner resolves its app snapshot twice under the development
+    // double-mount. Only later requests belong to TopicDiscussionTranscript.
+    if (capabilityRequests > 2 && !capabilityAvailable) {
+      return route.fulfill({ status: 503, json: { error: "Capability unavailable" } })
+    }
+    return route.fulfill({ json: { app: { id: "recipebot", slug: "recipebot", name: "RecipeBot", can_collaborate: false } } })
+  })
+  await page.route("**/api/apps/recipebot/messages**", (route) => route.fulfill({ json: { messages: [] } }))
+
+  await page.goto("/react/apps/recipebot/dev/proposals/7")
+  const discussion = page.getByTestId("topic-discussion")
+  const statusAlert = discussion.getByRole("alert").filter({ hasText: "Discussion status unknown" })
+  await expect(statusAlert).toBeVisible()
+  await expect(discussion.getByRole("alert")).toHaveCount(1)
+  await expect(discussion).toContainText("Posting availability could not be confirmed.")
+  const composer = discussion.getByRole("form", { name: "Post a topic discussion message" })
+  await expect(composer).toHaveAttribute("aria-disabled", "true")
+  await expect(composer.getByRole("textbox", { name: "Discussion message" })).toBeDisabled()
+  if (process.env.STATUS_REPRESENTATIVE_CAPTURE_DIR) {
+    await page.screenshot({
+      fullPage: true,
+      path: `${process.env.STATUS_REPRESENTATIVE_CAPTURE_DIR}/status-unknown-after-${testInfo.project.name}.png`,
+    })
+  }
+
+  const urlBeforeRetry = page.url()
+  const requestsBeforeRetry = capabilityRequests
+  capabilityAvailable = true
+  await statusAlert.getByRole("button", { name: "Retry" }).click()
+  await expect.poll(() => capabilityRequests).toBe(requestsBeforeRetry + 1)
+  expect(capabilityMethods).toEqual(Array.from({ length: capabilityRequests }, () => "GET"))
+  expect(page.url()).toBe(urlBeforeRetry)
+  await expect(discussion.getByRole("note").filter({ hasText: "View-only discussion" })).toBeVisible()
+  await expect(discussion.getByRole("alert")).toHaveCount(0)
+})
+
+test("confirmed view-only empty discussion names the permission state", async ({ page }, testInfo) => {
+  await routeForum(page)
+  await page.route("**/api/apps/recipebot/messages**", (route) => route.fulfill({ json: { messages: [] } }))
+
+  await page.goto("/react/apps/recipebot/dev/proposals/7")
+  const discussion = page.getByTestId("topic-discussion")
+  await expect(discussion.getByRole("note").filter({ hasText: "View-only discussion" })).toBeVisible()
+  await expect(discussion).toContainText("Posting is unavailable for this view-only discussion.")
+  await expect(discussion).not.toContainText("Start the conversation below.")
+  if (process.env.STATUS_REPRESENTATIVE_CAPTURE_DIR) {
+    await page.screenshot({
+      fullPage: true,
+      path: `${process.env.STATUS_REPRESENTATIVE_CAPTURE_DIR}/status-view-only-after-${testInfo.project.name}.png`,
+    })
+  }
+})

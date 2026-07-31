@@ -111,6 +111,12 @@ function renderSemanticComponentAliases() {
   --status-dot-border: var(--${prefix}-border);
 }`
   }).join("\n")
+  const statusSurfaceRules = statusRoles.map((role) => `
+.status-surface[data-status-tone="${role}"] {
+  --status-surface: var(--status-${role}-surface);
+  --status-surface-foreground: var(--status-${role}-foreground);
+  --status-surface-border: var(--status-${role}-border);
+}`).join("\n")
   const neutralRule = `
 .status-dot[data-status-role="neutral"] {
   --status-dot-surface: var(--muted);
@@ -130,7 +136,14 @@ ${identityRules}
   border-color: var(--status-dot-border);
   color: var(--status-dot-foreground);
 }
-${statusRules}${neutralRule}`
+${statusRules}${neutralRule}
+
+.status-surface {
+  background-color: var(--status-surface);
+  border-color: var(--status-surface-border);
+  color: var(--status-surface-foreground);
+}
+${statusSurfaceRules}`
 }
 
 function renderForcedColorsOverrides() {
@@ -147,6 +160,12 @@ function renderForcedColorsOverrides() {
     color: CanvasText;
     outline: 1px solid CanvasText;
     outline-offset: 1px;
+  }
+
+  .status-surface {
+    background-color: Canvas;
+    border-color: CanvasText;
+    color: CanvasText;
   }
 }`
 }

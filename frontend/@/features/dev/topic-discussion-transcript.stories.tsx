@@ -38,6 +38,7 @@ const meta = {
   parameters: { layout: "fullscreen" },
   decorators: [(Story) => <div className="mx-auto min-h-dvh max-w-3xl bg-background p-4 sm:p-8"><Story /></div>],
   args: {
+    capability: "allowed",
     messages,
     slug: "recipebot",
   },
@@ -85,7 +86,15 @@ export const ReplyStaged: Story = {
 }
 
 export const ViewOnly: Story = {
-  args: { viewOnly: true },
+  args: { capability: "denied", writable: false },
+}
+
+export const CapabilityUnknown: Story = {
+  args: {
+    capability: "unknown",
+    onRetryCapability: () => undefined,
+    writable: false,
+  },
 }
 
 export const Reconnecting: Story = {

@@ -1,8 +1,8 @@
-import { MessageCircle, Paperclip } from "lucide-react"
+import { MessageCircle, Paperclip, RotateCcw } from "lucide-react"
 import { useCallback, useEffect, useRef, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -31,6 +31,7 @@ import {
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
 
 type TopicDiscussionContentProps = {
+  capability?: "allowed" | "denied" | "loading" | "unknown"
   canLoadEarlier?: boolean
   connectionState?: GroupChatConnectionState
   currentUserId?: number | string | null
@@ -42,6 +43,7 @@ type TopicDiscussionContentProps = {
   onLoadEarlier?: () => void
   onMarkRead?: (messageId: number | string) => void
   onReact?: (messageId: number | string, emoji: string) => void
+  onRetryCapability?: () => void
   onReply?: (target: GroupChatReplyTarget) => void
   onSend?: (content: string, attachmentIds: string[]) => void
   onTyping?: () => void
@@ -49,11 +51,11 @@ type TopicDiscussionContentProps = {
   replyTarget?: GroupChatReplyTarget | null
   slug: string
   typingUsers?: string[]
-  viewOnly?: boolean
   writable?: boolean
 }
 
 export function TopicDiscussionContent({
+  capability = "loading",
   canLoadEarlier = false,
   connectionState = "connected",
   currentUserId,
@@ -65,6 +67,7 @@ export function TopicDiscussionContent({
   onLoadEarlier,
   onMarkRead,
   onReact,
+  onRetryCapability,
   onReply,
   onSend,
   onTyping,
@@ -72,10 +75,18 @@ export function TopicDiscussionContent({
   replyTarget,
   slug,
   typingUsers = [],
-  viewOnly = false,
   writable = false,
 }: TopicDiscussionContentProps) {
   const connected = connectionState === "connected"
+  const emptyDescription = productionReview
+    ? "Posting is unavailable during read-only review."
+    : capability === "allowed"
+      ? "Start the conversation below."
+      : capability === "denied"
+        ? "Posting is unavailable for this view-only discussion."
+        : capability === "unknown"
+          ? "Posting availability could not be confirmed."
+          : "Posting availability is being checked."
   return (
     <Card data-testid="topic-discussion">
       <CardHeader>
@@ -97,11 +108,26 @@ export function TopicDiscussionContent({
             <AlertDescription>Posting and reactions are unavailable.</AlertDescription>
           </Alert>
         ) : null}
-        {!productionReview && viewOnly ? (
-          <Alert>
+        {!productionReview && capability === "denied" ? (
+          <Alert role="note" tone="info">
             <PlatformIcon icon={Paperclip} />
             <AlertTitle>View-only discussion</AlertTitle>
             <AlertDescription>Collaboration access is required to post or react in this topic.</AlertDescription>
+          </Alert>
+        ) : null}
+        {!productionReview && capability === "unknown" ? (
+          <Alert tone="warning">
+            <PlatformIcon icon={Paperclip} />
+            <AlertTitle>Discussion status unknown</AlertTitle>
+            <AlertDescription>We could not check whether you can post right now.</AlertDescription>
+            {onRetryCapability ? (
+              <AlertAction>
+                <Button onClick={onRetryCapability} size="sm" type="button" variant="outline">
+                  <PlatformIcon data-icon="inline-start" icon={RotateCcw} size="xs" />
+                  Retry
+                </Button>
+              </AlertAction>
+            ) : null}
           </Alert>
         ) : null}
         {writable && !connected ? (
@@ -126,6 +152,7 @@ export function TopicDiscussionContent({
         {messages !== null ? (
           <GroupDiscussionTranscript
             currentUserId={currentUserId}
+            emptyDescription={emptyDescription}
             messages={messages}
             onEdit={onEdit}
             onMarkRead={onMarkRead}
@@ -154,6 +181,7 @@ export function TopicDiscussionContent({
           onTyping={onTyping}
           placeholder="Reply in this topic…"
           replyTarget={replyTarget}
+          showWhenUnavailable={!productionReview && capability === "unknown"}
           slug={slug}
           typingUsers={typingUsers}
           writable={writable}
@@ -175,12 +203,13 @@ export function TopicDiscussionTranscript({
   const [messages, setMessages] = useState<GroupChatMessage[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingEarlier, setLoadingEarlier] = useState(false)
-  const [canCollaborate, setCanCollaborate] = useState<boolean | null>(null)
+  const [capability, setCapability] = useState<"allowed" | "denied" | "loading" | "unknown">("loading")
   const [connectionState, setConnectionState] = useState<GroupChatConnectionState>("connecting")
   const [reactionError, setReactionError] = useState<string | null>(null)
   const [replyTarget, setReplyTarget] = useState<GroupChatReplyTarget | null>(null)
   const [currentUserId, setCurrentUserId] = useState<number | string | null>(null)
   const [typingUsers, setTypingUsers] = useState<string[]>([])
+  const capabilityRequestRef = useRef<AbortController | null>(null)
   const connectionRef = useRef<ReturnType<typeof subscribeGroupChat> | null>(null)
   const load = useCallback(async (before?: string | number, signal?: AbortSignal) => {
     if (before !== undefined) setLoadingEarlier(true)
@@ -198,19 +227,25 @@ export function TopicDiscussionTranscript({
     }
   }, [slug, threadRef, threadType])
 
+  const loadCapability = useCallback(() => {
+    capabilityRequestRef.current?.abort()
+    const controller = new AbortController()
+    capabilityRequestRef.current = controller
+    setCapability("loading")
+    void getApp(slug, controller.signal)
+      .then(({ app }) => {
+        if (!controller.signal.aborted) setCapability(app.can_collaborate ? "allowed" : "denied")
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setCapability("unknown")
+      })
+  }, [slug])
+
   useEffect(() => {
     const controller = new AbortController()
     setMessages(null)
     setError(null)
-    setCanCollaborate(null)
     void load(undefined, controller.signal)
-    void getApp(slug, controller.signal)
-      .then(({ app }) => {
-        if (!controller.signal.aborted) setCanCollaborate(Boolean(app.can_collaborate))
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setCanCollaborate(false)
-      })
     void getCurrentUser(controller.signal)
       .then((user) => {
         if (!controller.signal.aborted) setCurrentUserId(user.id ?? null)
@@ -221,7 +256,12 @@ export function TopicDiscussionTranscript({
     return () => controller.abort()
   }, [load, slug])
 
-  const writable = canCollaborate === true && !isProductionReadOnlyReview
+  useEffect(() => {
+    loadCapability()
+    return () => capabilityRequestRef.current?.abort()
+  }, [loadCapability])
+
+  const writable = capability === "allowed" && !isProductionReadOnlyReview
   useEffect(() => {
     if (!writable) {
       setConnectionState(isProductionReadOnlyReview ? "unavailable" : "connecting")
@@ -282,6 +322,7 @@ export function TopicDiscussionTranscript({
         </Alert>
       ) : null}
       <TopicDiscussionContent
+        capability={capability}
         canLoadEarlier={messages?.length === 50}
         connectionState={connectionState}
         currentUserId={currentUserId}
@@ -294,6 +335,7 @@ export function TopicDiscussionTranscript({
         onMarkRead={isProductionReadOnlyReview ? undefined : (messageId) => { void markMessageRead(messageId) }}
         onReact={reactToMessage}
         onReply={setReplyTarget}
+        onRetryCapability={loadCapability}
         onSend={(content, attachmentIds) => {
           if (!connectionRef.current) throw new Error("Discussion is reconnecting. Try again in a moment.")
           connectionRef.current.send(content, replyTarget, attachmentIds)
@@ -305,7 +347,6 @@ export function TopicDiscussionTranscript({
         replyTarget={replyTarget}
         slug={slug}
         typingUsers={typingUsers}
-        viewOnly={canCollaborate === false}
         writable={writable}
       />
     </div>
