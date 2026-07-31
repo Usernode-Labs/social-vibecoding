@@ -693,6 +693,247 @@ function completedRowCompare(a, b) {
   return b.id - a.id;
 }
 
+// Native proposals used to trust a mutable branch name all the way through
+// voting and merge. A branch can move independently of the platform's review
+// state, so every approval must be tied to an immutable PR head just like
+// imported proposals already are.
+//
+// Imported proposals deliberately keep imported_pr_head_sha as their source of
+// truth; this helper is native-only so their established sync behaviour stays
+// unchanged.
+function nativeGithubTarget(session) {
+  if (!session || session.source === 'imported' || !session.pr_number) return null;
+  const [, owner, repo] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+  return owner && repo ? { owner, repo: repo.replace(/\.git$/, '') } : null;
+}
+
+function reviewedHeadForSession(session) {
+  return session?.source === 'imported'
+    ? (session.imported_pr_head_sha || null)
+    : (session?.reviewed_head_sha || null);
+}
+
+async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
+  const visuals = require('../services/visuals');
+  await visuals.setChecksPending(pool, session.id, headSha)
+    .catch((err) => log.warn('votes', 'Native revision setChecksPending failed (non-fatal)', {
+      sessionId: session.id, headSha, err: err.message,
+    }));
+  try { visuals.notifyChecksPending(session.id, headSha); } catch (_) {}
+
+  const prImportSync = require('../services/pr-import-sync');
+  prImportSync.rerunChecksForNewHead({
+    config,
+    pool,
+    session,
+    newHead: headSha,
+  }).catch((err) => log.warn('votes', 'Native revision checks re-run failed', {
+    sessionId: session.id, headSha, err: err.message,
+  }));
+}
+
+// Refresh a native proposal's reviewed revision from the live GitHub PR.
+// `fresh=false` avoids an unnecessary API read when a caller only needs to
+// initialize a legacy row; vote-time callers pass true because the PR may have
+// moved since the previous vote.
+//
+// On a changed revision this function fail-closes first (revision-stamps the
+// row, removes only votes for other revisions, and marks checks pending), then
+// kicks an exact-SHA staging/check rebuild in the background. The conditional
+// UPDATE makes concurrent voters idempotent: only one caller owns the reset,
+// while `head_sha IS DISTINCT FROM` preserves any vote already cast on the new
+// revision.
+async function reconcileNativeReviewedHead({ config, pool, session, fresh = false, notify = true }) {
+  if (!session || session.source === 'imported') {
+    return { enforced: false, headSha: reviewedHeadForSession(session) };
+  }
+  if (!github.isEnabled()) {
+    // Local/mock installations without GitHub keep their existing PR-less
+    // behaviour. There is no external mutable branch to protect in that mode.
+    return { enforced: false, headSha: session.reviewed_head_sha || null };
+  }
+  if (!session.repo_url) {
+    // PR-less local sessions have no mutable remote head to authorize. A row
+    // that claims a GitHub PR but has lost its repository identity must fail
+    // closed instead of silently bypassing revision verification.
+    if (!session.pr_number) {
+      return { enforced: false, headSha: session.reviewed_head_sha || null };
+    }
+    return {
+      enforced: true,
+      blocked: true,
+      reason: 'This proposal has no GitHub repository to verify.',
+    };
+  }
+
+  const target = nativeGithubTarget(session);
+  if (!target) {
+    return {
+      enforced: true,
+      blocked: true,
+      reason: 'This proposal has no valid GitHub pull request to verify.',
+    };
+  }
+  if (!fresh && session.reviewed_head_sha) {
+    return { enforced: true, headSha: session.reviewed_head_sha, unchanged: true };
+  }
+
+  let pr;
+  try {
+    pr = await github.getPR(target.owner, target.repo, session.pr_number);
+  } catch (err) {
+    log.warn('votes', 'Could not verify native proposal head', {
+      sessionId: session.id, pr: session.pr_number, err: err.message,
+    });
+    return {
+      enforced: true,
+      blocked: true,
+      transient: true,
+      reason: 'GitHub could not verify the pull request revision. Try again shortly.',
+    };
+  }
+
+  if (pr?.merged) {
+    return {
+      enforced: true,
+      blocked: true,
+      reason: `PR #${session.pr_number} was already merged on GitHub.`,
+    };
+  }
+  if (pr?.state && pr.state !== 'open') {
+    return {
+      enforced: true,
+      blocked: true,
+      reason: `PR #${session.pr_number} is not open on GitHub.`,
+    };
+  }
+  const liveHead = pr?.head?.sha || null;
+  if (!liveHead || !/^[0-9a-f]{40}$/i.test(liveHead)) {
+    return {
+      enforced: true,
+      blocked: true,
+      reason: 'GitHub did not return a valid pull-request head commit.',
+    };
+  }
+  if (liveHead === session.reviewed_head_sha) {
+    return { enforced: true, headSha: liveHead, unchanged: true };
+  }
+
+  const oldHead = session.reviewed_head_sha || null;
+  const { rows: claimed } = await pool.query(
+    `UPDATE chat_sessions
+        SET reviewed_head_sha = $1, stale_notified_at = NULL
+      WHERE id = $2
+        AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
+        AND reviewed_head_sha IS DISTINCT FROM $1
+      RETURNING reviewed_head_sha`,
+    [liveHead, session.id, oldHead]
+  );
+
+  // Another concurrent verifier may have installed this same revision first.
+  // Re-read instead of performing a second vote/check reset. A different value
+  // means the PR moved again during our fetch; fail closed and let the caller
+  // retry against a fresh snapshot.
+  if (!claimed.length) {
+    const { rows } = await pool.query(
+      `SELECT reviewed_head_sha FROM chat_sessions WHERE id = $1`,
+      [session.id]
+    );
+    const storedHead = rows[0]?.reviewed_head_sha || null;
+    session.reviewed_head_sha = storedHead;
+    if (storedHead === liveHead) {
+      return { enforced: true, headSha: liveHead, unchanged: true };
+    }
+    return {
+      enforced: true,
+      blocked: true,
+      transient: true,
+      reason: 'The pull request changed while its revision was being verified. Try again.',
+    };
+  }
+
+  session.reviewed_head_sha = liveHead;
+  const deleted = await pool.query(
+    `DELETE FROM pr_votes
+      WHERE session_id = $1 AND head_sha IS DISTINCT FROM $2`,
+    [session.id, liveHead]
+  );
+
+  // A platform-authored push may already have run checks for this exact head.
+  // Preserve that verdict; otherwise invalidate the old result synchronously
+  // before launching the exact-SHA rebuild.
+  const needsChecks = session.checks_commit_sha !== liveHead;
+  if (needsChecks) {
+    await kickNativeRevisionChecks({ config, pool, session, headSha: liveHead });
+  }
+
+  if (notify) {
+    try {
+      const { pushVoteUpdate } = require('../services/ws');
+      pushVoteUpdate({
+        sessionId: session.id,
+        appSlug: session.app_slug || null,
+        merged: false,
+        headMoved: oldHead != null,
+      });
+    } catch (_) { /* ws failures are non-fatal */ }
+  }
+
+  if (notify && (oldHead || deleted.rowCount > 0)) {
+    const label = session.pr_title
+      ? `PR #${session.pr_number} — ${session.pr_title}`
+      : `PR #${session.pr_number}`;
+    const message = oldHead
+      ? `${label} was updated on GitHub — earlier votes were cleared, please re-review commit ${liveHead.slice(0, 8)}.`
+      : `${label} is now pinned to commit ${liveHead.slice(0, 8)} — earlier unbound votes were cleared, please re-review.`;
+    await sendSystemMessage(
+      pool, session.app_id, message, 'system',
+      { headChanged: !!oldHead, prNumber: session.pr_number, headSha: liveHead },
+      { type: 'session', ref: session.id }
+    ).catch(() => {});
+  }
+
+  log.info('votes', 'Native proposal revision reconciled', {
+    sessionId: session.id,
+    oldHead,
+    newHead: liveHead,
+    votesDropped: deleted.rowCount || 0,
+    checksReset: needsChecks,
+  });
+  return {
+    enforced: true,
+    headSha: liveHead,
+    updated: true,
+    initialized: oldHead == null,
+    changed: oldHead != null,
+    votesDropped: deleted.rowCount || 0,
+  };
+}
+
+// The background merge/rejection sweep has no user vote event to refresh a
+// native PR first. Give it one shared, testable preparation step: imported PRs
+// keep their existing synchronized head, while native PRs are always checked
+// live before a governance gate is allowed to count votes.
+async function reconcilePromotedSweepHead({ config, pool, session }) {
+  if (session?.source === 'imported') {
+    return {
+      enforced: true,
+      imported: true,
+      headSha: session.imported_pr_head_sha || null,
+    };
+  }
+  const revision = await reconcileNativeReviewedHead({
+    config,
+    pool,
+    session,
+    fresh: true,
+  });
+  return {
+    ...revision,
+    headSha: revision.blocked ? null : reviewedHeadForSession(session),
+  };
+}
+
 // Shared SELECT column list + FROM/JOIN block for a "merged-shaped"
 // proposal row. Used by BOTH `GET /api/apps/:slug/merged` (the paginated
 // Completed list) and `GET /api/apps/:slug/proposals/:id` (single-row
@@ -801,6 +1042,7 @@ function voteRoutes(config) {
       );
       if (!rows.length) return res.status(404).json({ error: 'Active session not found' });
       const session = rows[0];
+      const previousReviewedHead = session.reviewed_head_sha || null;
 
       // Promoted-PR cap: worker-less promoted sessions don't count
       // against the per-user active-session cap (see the create-session
@@ -899,7 +1141,10 @@ function voteRoutes(config) {
         }
       }
 
-      // Reconcile the PR's GitHub state before putting it up for vote.
+      // Reconcile the PR's GitHub state before putting it up for vote and
+      // capture the immutable head revision this review starts from. The PR
+      // head can move outside the vote flow, so failing to read it must
+      // fail closed: checks/votes cannot honestly describe an unknown revision.
       // A session that was withdrawn (archived) carries a CLOSED PR —
       // GitHub reports closed PRs as permanently unmergeable, so
       // promoting one without a reopen creates a proposal that can
@@ -907,17 +1152,25 @@ function voteRoutes(config) {
       // auto-resolver looped still_conflicting forever). Reopen it here;
       // if GitHub refuses (head branch deleted, a newer PR on the same
       // head), refuse the promote with an actionable error instead of
-      // minting a doomed proposal. A transient GET failure falls through
-      // — the merge-time guards catch what slips past.
+      // minting a doomed proposal.
+      let promotedHeadSha = null;
       if (github.isEnabled() && session.repo_url && session.pr_number) {
         const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
+        if (!owner || !repo) {
+          return res.status(409).json({
+            error: 'This proposal has no valid GitHub repository to verify.',
+          });
+        }
         if (owner && repo) {
           let pr = null;
           try {
             pr = await github.getPR(owner, repo, session.pr_number);
           } catch (err) {
-            log.warn('votes', 'Promote PR state check failed (continuing)', {
+            log.warn('votes', 'Promote PR revision check failed', {
               sessionId: session.id, pr: session.pr_number, err: err.message,
+            });
+            return res.status(503).json({
+              error: 'GitHub could not verify the pull request revision. Try promoting again shortly.',
             });
           }
           if (pr && pr.merged) {
@@ -939,6 +1192,12 @@ function voteRoutes(config) {
                 error: `This proposal's pull request (#${session.pr_number}) was closed on GitHub and couldn't be reopened — re-propose it as a fresh proposal.`,
               });
             }
+          }
+          promotedHeadSha = pr?.head?.sha || null;
+          if (!promotedHeadSha || !/^[0-9a-f]{40}$/i.test(promotedHeadSha)) {
+            return res.status(409).json({
+              error: 'GitHub did not return a valid pull-request head commit.',
+            });
           }
 
           // Mark PR as ready for review on GitHub. We deliberately DO NOT
@@ -965,9 +1224,50 @@ function voteRoutes(config) {
       // clock; clearing stale_notified_at handles the re-promote case
       // (a previously-stale PR that's proposed again starts fresh).
       await pool.query(
-        `UPDATE chat_sessions SET status = 'promoted', promoted_at = NOW(), stale_notified_at = NULL WHERE id = $1`,
-        [session.id]
+        `UPDATE chat_sessions
+            SET status = 'promoted', promoted_at = NOW(),
+                stale_notified_at = NULL,
+                reviewed_head_sha = COALESCE($2, reviewed_head_sha)
+          WHERE id = $1`,
+        [session.id, promotedHeadSha]
       );
+      if (promotedHeadSha) {
+        session.reviewed_head_sha = promotedHeadSha;
+
+        // A withdrawn proposal may retain votes from its earlier review.
+        // Preserve only votes explicitly cast for this exact revision; this
+        // also removes legacy unbound votes while keeping same-head re-promotes
+        // stable. The governance gate is head-scoped too, so this cleanup keeps
+        // the visible tally aligned with what can actually count.
+        const cleared = await pool.query(
+          `DELETE FROM pr_votes
+            WHERE session_id = $1 AND head_sha IS DISTINCT FROM $2`,
+          [session.id, promotedHeadSha]
+        );
+        if ((cleared.rowCount || 0) > 0) {
+          try {
+            const { pushVoteUpdate } = require('../services/ws');
+            pushVoteUpdate({
+              sessionId: session.id,
+              appSlug: session.app_slug || null,
+              merged: false,
+              headMoved: previousReviewedHead != null,
+            });
+          } catch (_) { /* ws failures are non-fatal */ }
+        }
+
+        // If this is a re-promotion on a new commit and an existing preview
+        // still describes the old one, invalidate it immediately and rebuild
+        // checks against the captured SHA. A proposal without staging is
+        // handled by the ordinary post-response build below.
+        if (previousReviewedHead !== promotedHeadSha
+            && session.staging_url
+            && session.checks_commit_sha !== promotedHeadSha) {
+          await kickNativeRevisionChecks({
+            config, pool, session, headSha: promotedHeadSha,
+          });
+        }
+      }
 
       // #788: classify the proposal now that it's up for vote — does its
       // diff change dapp.json's `admins` block? A flagged proposal loses
@@ -1028,8 +1328,10 @@ function voteRoutes(config) {
       // fire-and-forget; the Pass-3 heal sweeper in server.js is the backstop.
       if (!session.staging_url) {
         (async () => {
-          let commitHash = 'latest';
-          if (github.isEnabled() && repoOwner && repoName) {
+          // Use the exact revision captured before promotion. The fallback
+          // exists only for GitHub-disabled local development.
+          let commitHash = session.reviewed_head_sha || 'latest';
+          if (commitHash === 'latest' && github.isEnabled() && repoOwner && repoName) {
             try {
               const octokit = await github.getInstallationOctokit(repoOwner);
               const { data: ref } = await octokit.request(
@@ -1485,6 +1787,18 @@ function voteRoutes(config) {
       if (!sessionRows.length) return res.status(404).json({ error: 'Promoted session not found' });
       const session = sessionRows[0];
 
+      // Verify the live head before recording a native vote. The PR may have
+      // moved since the proposal was opened; in that case
+      // reconcileNativeReviewedHead advances the reviewed revision,
+      // drops only stale-revision votes, invalidates old checks, and this vote
+      // is then safely recorded against the new commit.
+      const revision = await reconcileNativeReviewedHead({
+        config, pool, session, fresh: true,
+      });
+      if (revision.blocked) {
+        return res.status(revision.transient ? 503 : 409).json({ error: revision.reason });
+      }
+
       // A Yes vote can be the operation that applies a value held by a
       // secret-declaration proposal. The generic session vote path stays
       // available for ordinary PRs, but api:access is not credential authority.
@@ -1501,20 +1815,18 @@ function voteRoutes(config) {
       // The DB upsert itself is still safe (UNIQUE(session_id,user_id))
       // but we avoid the side-effects on a no-op.
       const { rows: prevRows } = await pool.query(
-        `SELECT vote FROM pr_votes WHERE session_id = $1 AND user_id = $2`,
+        `SELECT vote, head_sha FROM pr_votes WHERE session_id = $1 AND user_id = $2`,
         [session.id, req.user.id]
       );
       const previousVote = prevRows[0]?.vote || null;
-      const unchanged = previousVote === vote;
+      const voteHeadSha = reviewedHeadForSession(session);
+      const unchanged = previousVote === vote
+        && (prevRows[0]?.head_sha || null) === voteHeadSha;
 
-      // #687 Slice 3: stamp the PR head this vote was cast against for
-      // imported proposals, so a later push (which re-opens approval) can
-      // distinguish approvals of the reviewed revision from stale ones. The
-      // gate counts only votes matching the current imported_pr_head_sha.
-      // Native proposals leave head_sha NULL (the gate applies no filter).
-      const voteHeadSha = session.source === 'imported'
-        ? (session.imported_pr_head_sha || null)
-        : null;
+      // Stamp every GitHub proposal vote with its reviewed PR head. Imported
+      // proposals retain imported_pr_head_sha; native proposals use the new
+      // reviewed_head_sha populated above. Governance counts only approvals
+      // matching the current revision.
       await pool.query(
         `INSERT INTO pr_votes (session_id, user_id, vote, head_sha) VALUES ($1, $2, $3, $4)
          ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha, created_at = NOW()`,
@@ -2942,6 +3254,37 @@ async function checkAndMerge(config, pool, session, options = {}) {
   // resolver — this bounds the resolve+retry to a single cycle.
   const { force = false, forceBy = null, autoResolve = true } = options;
 
+  // Legacy native rows may predate reviewed_head_sha. Establish their live
+  // GitHub revision before looking at votes (and clear any unbound legacy
+  // approvals); all newly promoted rows already carry the value. We do not
+  // refetch an existing stamp here because the exact-SHA merge below is the
+  // final race guard, while every interactive vote performs a fresh read.
+  const revision = await reconcileNativeReviewedHead({
+    config, pool, session, fresh: false,
+  });
+  if (revision.blocked) {
+    log.warn('votes', 'Merge blocked: native proposal revision unavailable', {
+      sessionId: session.id, reason: revision.reason,
+    });
+    return {
+      merged: false,
+      revisionBlocked: true,
+      transient: !!revision.transient,
+      error: revision.reason,
+    };
+  }
+  if (revision.updated) {
+    // No approval predating the first immutable stamp may merge. A force
+    // request also returns to review here; a second explicit request can merge
+    // the now-pinned revision if that is still intended.
+    return {
+      merged: false,
+      headMoved: !!revision.changed,
+      reviewReset: true,
+      reviewedHeadSha: revision.headSha,
+    };
+  }
+
   // The proposal's "opened for voting" anchor is promoted_at (falls back to
   // created_at defensively). All gates derive from one snapshot.
   //
@@ -3001,11 +3344,10 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
   const gate = await governance.governedGate(pool, session.app_id, {
     kind: 'pr', id: session.id, openedAt, explicitApproval,
-    // #687 Slice 3: an imported proposal's merge gate counts only approvals
-    // cast against its CURRENT head — so a head change that reset the tally
-    // (and any approval that raced the reset) can't carry an old revision's
-    // approval into the merge. Native rows pass no headSha (unchanged).
-    headSha: session.source === 'imported' ? (session.imported_pr_head_sha || null) : null,
+    // Every GitHub PR proposal counts only approvals cast against its current
+    // reviewed revision. Imported rows keep their existing source field;
+    // native rows use reviewed_head_sha.
+    headSha: reviewedHeadForSession(session),
   });
   const yesCount = gate.qualifiedYes;
   const noCount = gate.qualifiedNo;
@@ -3159,11 +3501,25 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // Re-read fresh: the in-memory `session` row can predate the latest
     // build's verdict. Admin force-merge bypasses (skipped under !force).
     const { rows: checkRows } = await pool.query(
-      `SELECT check_state, test_results, checks_checked_at, check_error_detail
+      `SELECT check_state, test_results, checks_checked_at,
+              check_error_detail, checks_commit_sha
          FROM chat_sessions WHERE id = $1`,
       [session.id]
     );
-    const checkState = checkRows[0]?.check_state || null;
+    const nativeReviewedHead = session.source === 'imported'
+      ? null
+      : (session.reviewed_head_sha || null);
+    const returnedChecksSha = checkRows[0]?.checks_commit_sha;
+    const checksRevisionMismatch = !!nativeReviewedHead
+      // `undefined` exists only in narrow unit-test row adapters that predate
+      // the selected column; PostgreSQL returns null for a real unset value.
+      && returnedChecksSha !== undefined
+      && returnedChecksSha !== nativeReviewedHead;
+    // A green verdict for an older commit is not a green verdict for the
+    // reviewed code. Treat it as pending and rebuild exactly the pinned SHA.
+    const checkState = checksRevisionMismatch
+      ? 'pending'
+      : (checkRows[0]?.check_state || null);
     if (checkState !== 'passing' && checkState !== 'skipped') {
       // #447: when a vote reaches threshold but the checks are NULL or stuck
       // 'pending' past the stale window, kick a recheck right now rather than
@@ -3178,7 +3534,11 @@ async function checkAndMerge(config, pool, session, options = {}) {
         : 0;
       const stalePending = checkState === null
         || (checkState === 'pending' && (Date.now() - checkedAt) > CHECKS_STALE_MS);
-      if (stalePending) {
+      if (checksRevisionMismatch) {
+        await kickNativeRevisionChecks({
+          config, pool, session, headSha: nativeReviewedHead,
+        });
+      } else if (stalePending) {
         const stagingRecovery = require('../services/staging-recovery');
         stagingRecovery.recheckSessionChecks({
           config, pool, session, reason: 'stale-pending-vote-kick',
@@ -3211,12 +3571,14 @@ async function checkAndMerge(config, pool, session, options = {}) {
         null, { type: 'session', ref: session.id }).catch(() => {});
       log.info('votes', 'Merge blocked: checks not passing', {
         sessionId: session.id, checkState, failingCount,
+        checksRevisionMismatch,
       });
-      dstep({ phase: 'gate:checks', level: 'warn', message: `Merge blocked: checks not passing (state = ${checkState || 'pending'}${failingCount ? `, ${failingCount} failing` : ''}).`, detail: { checkState: checkState || 'pending', failingCount } });
+      dstep({ phase: 'gate:checks', level: 'warn', message: `Merge blocked: checks not passing (state = ${checkState || 'pending'}${failingCount ? `, ${failingCount} failing` : ''}).`, detail: { checkState: checkState || 'pending', failingCount, checksRevisionMismatch } });
       dend('blocked', 'Blocked — votes reached but checks must pass first.');
       return {
         merged: false, yesCount, needed: required,
         checksBlocked: true, checkState: checkState || 'pending', failingCount,
+        checksRevisionMismatch,
       };
     }
     dstep({ phase: 'gate:checks', message: `Checks gate: state = ${checkState}.`, detail: { checkState } });
@@ -3355,32 +3717,86 @@ async function checkAndMerge(config, pool, session, options = {}) {
 
   try {
     // Merge PR on GitHub
-    // #687 Slice 4/6: for an IMPORTED proposal, pin the merge to the exact
-    // reviewed commit (imported_pr_head_sha) so GitHub refuses (409) if the
-    // head moved. In staging previews an imported merge talks to the
-    // in-memory mock client instead of the real one, so the 409/head-moved
-    // path is exercisable in a preview with no credentials.
-    // Native proposals ALWAYS use the real client with no sha (unchanged).
+    // Pin every GitHub merge to the exact reviewed commit so GitHub refuses
+    // (409) if the head moved. Imported staging previews still use their
+    // existing in-memory mock; native proposals always use the real client.
     const isImported = session.source === 'imported';
     const useMockMerge = isImported && usesMockGithubForImports();
     const mergeClient = useMockMerge ? githubMock : github;
     if ((mergeClient.isEnabled() || useMockMerge) && session.repo_url && session.pr_number) {
       const [, owner, repo] = session.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
       if (owner && repo) {
-        const pinnedSha = isImported ? (session.imported_pr_head_sha || null) : null;
+        const pinnedSha = reviewedHeadForSession(session);
         dstep({ phase: 'github_merge', message: `Calling GitHub merge for PR #${session.pr_number}…`, detail: { owner, repo, pinnedSha, mock: useMockMerge } });
         let mergeData;
         try {
           mergeData = await mergeClient.mergePR(owner, repo, session.pr_number, pinnedSha);
         } catch (err) {
-          // Head moved between the vote and the merge (only possible when a
-          // sha was pinned, i.e. imported). Do NOT error the proposal: release
+          // Head moved between the review and the merge. Do NOT error the proposal: release
           // the 'merging' claim back to 'promoted' so the row stays recoverable
-          // (recoverStuckMerges understands both states). The Slice 3 sync
-          // poller will pick up the new head — resetting votes/checks — and the
-          // next qualifying vote retries the merge against the new reviewed
-          // commit. Return a distinct { headMoved } outcome; nothing merged.
+          // (recoverStuckMerges understands both states). Imported proposals
+          // retain their existing sync-poller recovery; native proposals reset
+          // immediately below. Return a distinct { headMoved } outcome;
+          // nothing merged.
           if (err && err.headMoved) {
+            let nativeRefresh = null;
+            if (!isImported) {
+              nativeRefresh = await reconcileNativeReviewedHead({
+                config, pool, session, fresh: true, notify: false,
+              }).catch((syncErr) => {
+                log.warn('votes', 'Native head-moved reconciliation failed', {
+                  sessionId: session.id, err: syncErr.message,
+                });
+                return null;
+              });
+
+              // GitHub also uses 409 for an ordinary merge conflict. If a
+              // fresh read says the native PR is still on the exact pinned
+              // SHA, this was not a revision change; route it through the
+              // existing conflict recovery path instead of clearing review.
+              if (nativeRefresh?.unchanged && nativeRefresh.headSha === pinnedSha) {
+                err.headMoved = false;
+                err.status = 405;
+                throw err;
+              }
+
+              // A 409 plus an unverifiable revision is ambiguous. Release the
+              // claim and fail closed without claiming either a head move or a
+              // merge conflict; a later vote/sweep can retry the live read.
+              if (!nativeRefresh || nativeRefresh.blocked
+                  || (!nativeRefresh.updated && !nativeRefresh.changed)) {
+                await pool.query(
+                  `UPDATE chat_sessions SET status = 'promoted' WHERE id = $1 AND status = 'merging'`,
+                  [session.id]
+                ).catch(() => {});
+                try {
+                  const { pushVoteUpdate } = require('../services/ws');
+                  pushVoteUpdate({
+                    sessionId: session.id, appSlug: session.app_slug,
+                    merged: false, merging: false,
+                    selfHosted: !!session.app_self_hosted,
+                  });
+                } catch (_) { /* ws failures non-fatal */ }
+                const reason = nativeRefresh?.reason
+                  || 'GitHub could not verify the pull request revision after refusing the merge.';
+                await sendSystemMessage(pool, session.app_id,
+                  `PR #${session.pr_number} was not merged because its current GitHub revision could not be verified. Please retry after GitHub is reachable.`,
+                  'system', null, { type: 'session', ref: session.id }
+                ).catch(() => {});
+                dstep({
+                  phase: 'github_merge', level: 'warn',
+                  message: 'GitHub refused the merge and the live native revision could not be verified.',
+                  detail: { revisionBlocked: true, pinnedSha, reason },
+                });
+                dend('deferred', 'Merge deferred — current GitHub revision could not be verified.');
+                return {
+                  merged: false,
+                  revisionBlocked: true,
+                  transient: !!nativeRefresh?.transient,
+                  error: reason,
+                };
+              }
+            }
             await pool.query(
               `UPDATE chat_sessions SET status = 'promoted' WHERE id = $1 AND status = 'merging'`,
               [session.id]
@@ -3396,13 +3812,23 @@ async function checkAndMerge(config, pool, session, options = {}) {
             const movedLabel = session.pr_title
               ? `PR #${session.pr_number} — ${session.pr_title}`
               : `PR #${session.pr_number}`;
+            const movedMessage = isImported
+              ? `${movedLabel} wasn't merged — the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`
+              : `${movedLabel} wasn't merged — its GitHub head changed after review. Earlier-revision votes were cleared and the new commit is being checked; please re-review it.`;
             await sendSystemMessage(pool, session.app_id,
-              `${movedLabel} wasn't merged — the PR was updated on GitHub since the vote, so GitHub declined to merge the older commit. It'll be re-checked against the new commit and can merge again once it passes.`,
+              movedMessage,
               'system', null, { type: 'session', ref: session.id }
             ).catch(() => {});
-            dstep({ phase: 'github_merge', level: 'warn', message: 'GitHub refused the merge: the PR head moved since the reviewed commit. Released the merge claim; the sync poller will pick up the new head.', detail: { headMoved: true, pinnedSha } });
-            dend('deferred', 'Head moved since the reviewed commit — deferred to the sync poller.');
-            return { merged: false, headMoved: true, needed: required, yesCount };
+            dstep({ phase: 'github_merge', level: 'warn', message: isImported
+              ? 'GitHub refused the merge: the PR head moved since the reviewed commit. Released the merge claim; the sync poller will pick up the new head.'
+              : 'GitHub refused the merge: the native PR head moved since review. Released the merge claim and reset the proposal to the new revision.', detail: { headMoved: true, pinnedSha, refreshedHeadSha: nativeRefresh?.headSha || null } });
+            dend('deferred', isImported
+              ? 'Head moved since the reviewed commit — deferred to the sync poller.'
+              : 'Head moved since review — returned to review on the new commit.');
+            return {
+              merged: false, headMoved: true, needed: required, yesCount,
+              ...(nativeRefresh?.headSha ? { reviewedHeadSha: nativeRefresh.headSha } : {}),
+            };
           }
           throw err;
         }
@@ -3998,4 +4424,15 @@ async function createRevertPR({ session, mergeSha, repoOwner, repoName, deciderU
 // resolver circular-require load-order trap.
 // createRevertPR is exported for tests (tests/github-mention-safety.test.js
 // asserts its PR body never carries a live @mention).
-module.exports = { voteRoutes, checkAndMerge, resolveIssueBounty, createRevertPR, finalizeMerge };
+module.exports = {
+  voteRoutes,
+  checkAndMerge,
+  resolveIssueBounty,
+  createRevertPR,
+  finalizeMerge,
+  // Focused revision-safety tests exercise the reconciliation without
+  // driving the full HTTP router.
+  reconcileNativeReviewedHead,
+  reconcilePromotedSweepHead,
+  reviewedHeadForSession,
+};
