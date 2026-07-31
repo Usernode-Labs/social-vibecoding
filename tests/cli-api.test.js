@@ -12,6 +12,7 @@ const {
 const { makeAccessToken, hashSecret } = require('../src/services/cli-auth');
 const {
   canonicalApiTarget,
+  isCliCredentialManagementSession,
   isCliApiPath,
 } = require('../src/services/cli-api-policy');
 const { callUserApi } = require('../src/cli/main');
@@ -37,12 +38,68 @@ test('generic API target policy permits user-facing paths without an endpoint re
     '/api/me/password',
     '/api/me/wallet-link',
     '/api/apps/demo/llm-grant',
+    '/api/apps/demo/secret-declaration-pr',
     '/api/apps/demo/secrets',
     '/api/apps/%2e%2e/admin',
     '/health',
   ]) {
     assert.equal(canonicalApiTarget(target), null, target);
   }
+});
+
+test('multiplexed session routes identify CLI secret-declaration mutations', () => {
+  const secretSession = { branch_name: 'secret-declare/demo-123' };
+  const ordinarySession = { branch_name: 'dev/alice-123' };
+
+  assert.equal(isCliCredentialManagementSession({ cliAuthenticated: true }, secretSession), true);
+  assert.equal(isCliCredentialManagementSession({ cliAuthenticated: true }, ordinarySession), false);
+  assert.equal(isCliCredentialManagementSession({}, secretSession), false,
+    'browser sessions retain the existing secret-declaration workflow');
+  assert.equal(isCliCredentialManagementSession({ cliAuthenticated: true }, null), false);
+});
+
+test('all secret-declaration session lifecycle mutations enforce the CLI credential boundary', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const root = path.join(__dirname, '..', 'src', 'routes');
+  const votes = fs.readFileSync(path.join(root, 'votes.js'), 'utf8');
+  const sessions = fs.readFileSync(path.join(root, 'sessions.js'), 'utf8');
+
+  const routeSlice = (source, opening, nextOpening) => {
+    const start = source.indexOf(opening);
+    assert.notEqual(start, -1, `missing route: ${opening}`);
+    const end = nextOpening ? source.indexOf(nextOpening, start + opening.length) : source.length;
+    assert.notEqual(end, -1, `missing route boundary after: ${opening}`);
+    return source.slice(start, end);
+  };
+  const guardedBefore = (source, guard, mutation, label) => {
+    const guardAt = source.indexOf(guard);
+    const mutationAt = source.indexOf(mutation);
+    assert.ok(guardAt >= 0, `${label}: CLI credential guard missing`);
+    assert.ok(mutationAt >= 0, `${label}: mutation marker missing`);
+    assert.ok(guardAt < mutationAt, `${label}: guard must run before mutation`);
+  };
+
+  guardedBefore(
+    routeSlice(votes, "router.post('/api/sessions/:id/vote'", "router.get('/api/sessions/:id/votes'"),
+    'isCliCredentialManagementSession(req, session)', 'INSERT INTO pr_votes', 'vote'
+  );
+  guardedBefore(
+    routeSlice(votes, "router.post('/api/sessions/:id/undo'", "router.post('/api/sessions/:id/admin-merge'"),
+    'isCliCredentialManagementSession(req, session)', 'checkAndOpenRevert', 'undo'
+  );
+  guardedBefore(
+    routeSlice(votes, "router.post('/api/sessions/:id/admin-merge'", 'return router;'),
+    'isCliCredentialManagementSession(req, session)', 'checkAndMerge(config, pool, session', 'admin merge'
+  );
+  guardedBefore(
+    routeSlice(sessions, "router.post('/api/sessions/:id/archive'", "router.post('/api/sessions/:id/unarchive'"),
+    'isCliCredentialManagementSession(req, rows[0])', 'sessionLifecycle.archiveSession', 'archive'
+  );
+  guardedBefore(
+    routeSlice(sessions, "router.post('/api/sessions/:id/unarchive'", "router.post('/api/sessions/:id/share'"),
+    'isCliCredentialManagementSession(req, rows[0])', 'sessionLifecycle.unarchiveSession', 'unarchive'
+  );
 });
 
 test('CLI bearer middleware authenticates generic user APIs and skips other namespaces', async () => {

@@ -16,13 +16,17 @@ test('Claude imports the shared API-agent guidance', () => {
   assert.match(guidance, /social-vibecoding claude setup/);
   assert.match(guidance, /`production` unless the user explicitly says/);
   assert.match(guidance, /Browser approval/);
+  assert.match(guidance, /still-valid legacy credential lacks the API/);
+  assert.match(guidance, /social-vibecoding logout --profile/);
 });
 
 test('machine-local agent setup artifacts are ignored', () => {
   const ignore = fs.readFileSync(path.join(root, '.gitignore'), 'utf8');
   assert.match(ignore, /^\.codex\/config\.toml$/m);
+  assert.match(ignore, /^\.codex\/config\.toml\.lock\.\*$/m);
   assert.match(ignore, /^\.claude\/social-vibecoding-mcp\.local\.json$/m);
   assert.match(ignore, /^\.claude\/social-vibecoding-mcp\.local\.json\.lock$/m);
+  assert.match(ignore, /^\.claude\/social-vibecoding-mcp\.local\.json\.lock\.\*$/m);
 });
 
 test('authorization and token-management copy covers both coding agents', () => {

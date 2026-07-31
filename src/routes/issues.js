@@ -460,6 +460,14 @@ function issueRoutes(config) {
       return res.status(400).json({ error: `Invalid kind; must be one of ${VALID_KINDS.join(', ')}` });
     }
 
+    // api:access is intentionally not a credential-management capability.
+    // This route multiplexes ordinary issues and secret-change proposals, so
+    // the path policy alone cannot distinguish them. Enforce the boundary at
+    // the kind dispatch before reading, validating, or encrypting a value.
+    if (req.cliAuthenticated && kind === 'secret_change') {
+      return res.status(403).json({ error: 'credential_management_not_available_via_cli' });
+    }
+
     try {
       const app = await appAccess.getAppForUser(pool, req.params.slug, req.user, 'collab');
       if (!app) return res.status(404).json({ error: 'App not found' });
@@ -769,6 +777,13 @@ function issueRoutes(config) {
       );
       if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
       const issue = issueRows[0];
+
+      // A vote can be the transition that decrypts and applies a proposed
+      // secret value. api:access deliberately excludes credential management,
+      // so enforce the issue kind after lookup and before touching votes.
+      if (req.cliAuthenticated && issue.kind === 'secret_change') {
+        return res.status(403).json({ error: 'credential_management_not_available_via_cli' });
+      }
 
       if (issue.status !== 'open') {
         return res.status(409).json({ error: 'Issue is not open' });
@@ -1780,6 +1795,13 @@ function issueRoutes(config) {
       }
       const issue = issueRows[0];
 
+      // This multiplexed route force-applies several governance kinds. Keep
+      // the non-secret kinds available to the CLI, but never let api:access
+      // become authority to apply a stored credential value.
+      if (req.cliAuthenticated && issue.kind === 'secret_change') {
+        return res.status(403).json({ error: 'credential_management_not_available_via_cli' });
+      }
+
       // #788: the issue-side counterpart of the force-merge widening —
       // an app's own declared admins may force-apply that app's
       // governance proposals. Issue proposals never carry the
@@ -1843,6 +1865,13 @@ function issueRoutes(config) {
       );
       if (!issueRows.length) return res.status(404).json({ error: 'Issue not found' });
       const issue = issueRows[0];
+
+      // Withdrawing a secret proposal changes credential state just as voting
+      // or force-applying it does. Keep this multiplexed close route usable for
+      // ordinary governance proposals, but not through a CLI bearer grant.
+      if (req.cliAuthenticated && issue.kind === 'secret_change') {
+        return res.status(403).json({ error: 'credential_management_not_available_via_cli' });
+      }
 
       // Creator-only. (Admins already have other paths — admin merge / direct
       // GitHub close — so the gate stays creator-scoped per the spec.)

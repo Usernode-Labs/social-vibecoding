@@ -235,7 +235,11 @@ async function localProfileReady(profile) {
       && response.data
       && response.data.status === 'ok';
   } catch (err) {
-    if (err instanceof CliHttpError && err.code === 'network_error') return false;
+    // A listener on the expected port is not enough: redirects, malformed
+    // JSON, and other protocol responses also mean the Usernode stack is not
+    // ready. Keep programming/configuration errors visible, but classify any
+    // bounded HTTP probe failure as a failed readiness check.
+    if (err instanceof CliHttpError) return false;
     throw err;
   }
 }
@@ -314,7 +318,9 @@ async function login(args, io) {
           io.out(`Already logged in to ${profile.name} (${profile.origin}) via ${existing.backend}.\n`);
           return 0;
         }
-        await revokeToken(profile.origin, existing.record.access_token);
+        throw new Error(
+          'The existing credential is still valid but lacks the required scopes; run logout first, then log in again'
+        );
       }
       if (!['invalid', 'expired', 'revoked'].includes(status.status)) {
         if (status.status !== 'valid') {
@@ -1300,7 +1306,7 @@ async function runMcp(args, launcherPath) {
   function externalLoginShape(profile, code = 'login_required') {
     const command = `node ./tools/social-vibecoding login --profile ${profile.name}`;
     const message = code === 'reauthorization_required'
-      ? `Usernode API access requires renewed approval. Run ${command}, then retry.`
+      ? `Usernode API access requires renewed approval. Run ${command}; if it reports a valid legacy credential, log out that profile and run it again, then retry.`
       : `Usernode login is required. Run ${command}, then retry.`;
     return mcpError(code, message, {
       command,
@@ -1405,6 +1411,18 @@ async function runMcp(args, launcherPath) {
         );
       }
       return externalLoginShape(profile, 'reauthorization_required');
+    }
+    if (response.status === 429 || response.status >= 500) {
+      return mcpError(
+        'service_unavailable',
+        'Usernode is temporarily unavailable.',
+        {
+          profile: profile.name,
+          retryable: true,
+          status: response.status,
+          body: response.data,
+        }
+      );
     }
     const result = {
       structuredContent: {
@@ -1520,6 +1538,7 @@ async function runMcp(args, launcherPath) {
         retryable: false,
       });
     }
+    if (!(await localProfileReady(profile))) return localSetupShape();
     let credential;
     try {
       credential = await resolvedCredential(profile);
@@ -1554,6 +1573,13 @@ async function runMcp(args, launcherPath) {
     }
     if (response.status === 403
         && hasExactError(response, new Set(['insufficient_scope']))) {
+      if (credential.source === 'environment') {
+        return mcpError(
+          'environment_credential_invalid',
+          'The environment credential lacks identity-read access. Replace it and restart this MCP process.',
+          { profile: profile.name, retryable: false }
+        );
+      }
       return mcpError(
         'insufficient_scope',
         'The credential lacks identity-read access. Log out, consent again, and retry.',
@@ -1701,6 +1727,7 @@ module.exports = {
   validateDeviceResponse,
   validateTokenResponse,
   parseApiBody,
+  localProfileReady,
   callUserApi,
   hasExactError,
   tokenStatus,

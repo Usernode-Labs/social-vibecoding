@@ -652,11 +652,18 @@ function decodeCursor(config, value) {
   if (typeof value !== 'string' || value.length > 512) return null;
   const parts = value.split('.');
   if (parts.length !== 2) return null;
+  // HMAC-SHA256's unpadded base64url representation is exactly 43 ASCII
+  // bytes. Validate that representation before timingSafeEqual: JS string
+  // length counts UTF-16 code units, not encoded bytes, and the crypto API
+  // throws when buffer sizes differ.
+  if (!/^[A-Za-z0-9_-]{43}$/.test(parts[1])) return null;
   const expected = crypto.createHmac('sha256', config.sessionSecret)
     .update(parts[0])
     .digest('base64url');
-  if (parts[1].length !== expected.length
-      || !crypto.timingSafeEqual(Buffer.from(parts[1]), Buffer.from(expected))) return null;
+  const suppliedBuffer = Buffer.from(parts[1], 'ascii');
+  const expectedBuffer = Buffer.from(expected, 'ascii');
+  if (suppliedBuffer.length !== expectedBuffer.length
+      || !crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)) return null;
   try {
     const parsed = JSON.parse(Buffer.from(parts[0], 'base64url').toString('utf8'));
     if (!isExactObject(parsed, ['created_at', 'id'])) return null;

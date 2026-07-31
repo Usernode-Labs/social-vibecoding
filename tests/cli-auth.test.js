@@ -67,6 +67,18 @@ test('strict request helpers reject extra state and unsafe bigint identifiers', 
   );
 });
 
+test('cursor verification rejects malformed signatures without throwing', () => {
+  const malformed = [
+    `payload.${'é'.repeat(43)}`,
+    `payload.${'A'.repeat(42)}=`,
+    `payload.${'A'.repeat(44)}`,
+  ];
+  for (const cursor of malformed) {
+    assert.doesNotThrow(() => routes.decodeCursor({ sessionSecret: 'test-secret' }, cursor));
+    assert.equal(routes.decodeCursor({ sessionSecret: 'test-secret' }, cursor), null);
+  }
+});
+
 function bearerRequest(rawHeaders) {
   return { rawHeaders };
 }
@@ -144,6 +156,15 @@ test('schema pins credential states, exact lifetimes, privacy, and audit uniquen
     schema,
     /WHERE conrelid = 'cli_auth_audit_events'::regclass[\s\S]*position\('scopes' IN pg_get_constraintdef\(oid\)\) > 0[\s\S]*DROP CONSTRAINT %I/
   );
+  const metadataUpgrade = schema.slice(schema.indexOf(
+    '-- CREATE TABLE does not add new constraints to an existing deployment.'
+  ), schema.indexOf('-- Shared token-bucket state.'));
+  for (const marker of ['POST', 'PUT', 'PATCH', 'DELETE', '/api/%']) {
+    assert.ok(
+      metadataUpgrade.includes(`position('''${marker}''' IN constraint_def) = 0`),
+      `metadata migration must detect a legacy constraint missing ${marker}`
+    );
+  }
   assert.match(schema, /ON DELETE CASCADE/);
   assert.match(schema, /ON DELETE SET NULL/);
 });
@@ -216,5 +237,10 @@ test('Settings exposes only the hint-based CLI credential list and revocation AP
   assert.match(html, /id="cli-tokens-section"/);
   assert.match(script, /\/api\/me\/cli-tokens/);
   assert.match(script, /token_hint/);
+  assert.match(
+    script,
+    /if \(!reset && this\._cliTokensLoading\) return;[\s\S]*if \(reset\) \{[\s\S]*this\._cliTokenLoadId \+= 1;/,
+    'an authoritative reset must supersede an in-flight pagination request'
+  );
   assert.doesNotMatch(script, /access_token|token_hash/);
 });

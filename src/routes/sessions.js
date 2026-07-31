@@ -58,6 +58,9 @@ const { runSyncMain, persistBehindMain } = syncMainSvc;
 // the chat handler and server.js's drain logic read.
 const { activeWorkers, getActiveWorkerCount } = require('../services/active-workers');
 const turnWatchdog = require('../services/turn-watchdog');
+const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
+
+const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 
 // Per-session stop handles, populated while a chat turn is in flight.
 // Shape: { abort: AbortController, workerName: string|null, phase: 'mayor1'|'cc'|'mayor2', stopped: boolean, stoppedBy: string|null }
@@ -1485,6 +1488,19 @@ function sessionRoutes(config) {
     try {
       const sessionId = parseInt(req.params.id, 10);
 
+      // Archiving a declaration proposal discards its held encrypted value.
+      // Look up only the caller's own row so this check creates no session-id
+      // oracle; the lifecycle service retains its authoritative owner check.
+      if (req.cliAuthenticated) {
+        const { rows } = await pool.query(
+          'SELECT branch_name FROM chat_sessions WHERE id = $1 AND user_id = $2',
+          [sessionId, req.user.id]
+        );
+        if (isCliCredentialManagementSession(req, rows[0])) {
+          return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
+        }
+      }
+
       // Release any in-flight bookkeeping first (archiving mid-turn).
       if (activeWorkers.has(sessionId)) {
         activeWorkers.delete(sessionId);
@@ -1511,6 +1527,15 @@ function sessionRoutes(config) {
   router.post('/api/sessions/:id/unarchive', async (req, res) => {
     try {
       const sessionId = parseInt(req.params.id, 10);
+      if (req.cliAuthenticated) {
+        const { rows } = await pool.query(
+          'SELECT branch_name FROM chat_sessions WHERE id = $1 AND user_id = $2',
+          [sessionId, req.user.id]
+        );
+        if (isCliCredentialManagementSession(req, rows[0])) {
+          return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
+        }
+      }
       const { unarchived, ccPurged, prReopened } = await sessionLifecycle.unarchiveSession({
         pool, sessionId, userId: req.user.id,
       });

@@ -225,7 +225,40 @@ test('state and origin locks serialize live owners and recover only stale dead o
       timeoutMs: 100,
       recoverAfterMs: 1000,
     });
+    assert.equal((await fs.lstat(filename)).isDirectory(), true);
     await recovered.release();
+
+    const staleAttempt = 'fedcba9876543210fedcba9876543210';
+    await fs.mkdir(filename, { mode: 0o700 });
+    await fs.writeFile(path.join(filename, 'owner.json'), JSON.stringify({
+      version: 1,
+      pid: 99999999,
+      started_at: '2026-01-01T00:00:00.000Z',
+      recover_after: '2026-01-01T00:00:01.000Z',
+      attempt_id: staleAttempt,
+      operation: 'race',
+      process_identity: '99999999:1',
+    }), { mode: 0o600 });
+
+    const contenders = await Promise.allSettled([
+      state.acquireLock(filename, {
+        operation: 'race', timeoutMs: 120, recoverAfterMs: 1000,
+      }),
+      state.acquireLock(filename, {
+        operation: 'race', timeoutMs: 120, recoverAfterMs: 1000,
+      }),
+    ]);
+    const winners = contenders.filter((result) => result.status === 'fulfilled');
+    const losers = contenders.filter((result) => result.status === 'rejected');
+    assert.equal(winners.length, 1, 'only one stale-lock contender may acquire');
+    assert.equal(losers.length, 1);
+    assert.equal(losers[0].reason.code, 'race_in_progress');
+    assert.equal(
+      (await fs.lstat(`${filename}.stale-${staleAttempt}`)).isDirectory(),
+      true,
+      'the attempt-specific tombstone remains to stop delayed recovery'
+    );
+    await winners[0].value.release();
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

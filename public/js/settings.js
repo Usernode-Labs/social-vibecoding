@@ -280,7 +280,13 @@
       const list = document.getElementById('cli-tokens-list');
       const more = document.getElementById('cli-tokens-more');
       const status = document.getElementById('cli-tokens-status');
-      if (!section || !list || !more || !status || this._cliTokensLoading) return;
+      if (!section || !list || !more || !status) return;
+
+      // A reset is authoritative (opening Settings or refreshing after a
+      // revocation), so let it supersede an older pagination request. The
+      // generation check below prevents that older response/finally block
+      // from rendering stale credential state or clearing the new load flag.
+      if (!reset && this._cliTokensLoading) return;
 
       if (reset) {
         this._cliTokenLoadId += 1;

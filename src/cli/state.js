@@ -422,6 +422,140 @@ function processStartIdentity(pid) {
   }
 }
 
+const LOCK_OWNER_FILENAME = 'owner.json';
+const LOCK_OWNER_KEYS = [
+  'version',
+  'pid',
+  'started_at',
+  'recover_after',
+  'attempt_id',
+  'operation',
+  'process_identity',
+];
+
+function parseLockOwner(raw) {
+  const owner = parseStrictJson(raw);
+  if (!isExactObject(owner, LOCK_OWNER_KEYS)
+      || owner.version !== 1
+      || !Number.isSafeInteger(owner.pid)
+      || owner.pid <= 0
+      || typeof owner.operation !== 'string'
+      || !/^[0-9a-f]{32}$/.test(owner.attempt_id)
+      || (owner.process_identity !== null && typeof owner.process_identity !== 'string')) {
+    throw new Error('invalid lock owner');
+  }
+  const startedAt = new Date(owner.started_at);
+  const recoverAfter = new Date(owner.recover_after);
+  if (!Number.isFinite(startedAt.getTime())
+      || startedAt.toISOString() !== owner.started_at
+      || !Number.isFinite(recoverAfter.getTime())
+      || recoverAfter.toISOString() !== owner.recover_after) {
+    throw new Error('invalid lock timestamps');
+  }
+  return owner;
+}
+
+async function readLockOwner(filename) {
+  let stat;
+  try {
+    stat = await fsp.lstat(filename);
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+  if (stat.isSymbolicLink()) throw new Error(`Unsafe user state path: ${filename}`);
+
+  let ownerFilename;
+  let kind;
+  if (stat.isFile()) {
+    await safeExistingFile(filename);
+    ownerFilename = filename;
+    kind = 'legacy-file';
+  } else if (stat.isDirectory()) {
+    if (process.platform === 'win32') {
+      verifyPrivateWindowsAcl(filename, 'directory');
+    } else if (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0) {
+      throw new Error(`Unsafe ownership or permissions on ${filename}; require mode 0700`);
+    }
+    ownerFilename = path.join(filename, LOCK_OWNER_FILENAME);
+    if (!await safeExistingFile(ownerFilename)) {
+      try {
+        await fsp.lstat(filename);
+      } catch (err) {
+        if (err.code === 'ENOENT') return null;
+        throw err;
+      }
+      throw new Error('lock owner is missing');
+    }
+    kind = 'directory';
+  } else {
+    throw new Error(`Unsafe user state path: ${filename}`);
+  }
+
+  try {
+    return { kind, owner: parseLockOwner(await fsp.readFile(ownerFilename, 'utf8')) };
+  } catch (err) {
+    if (err.code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+async function removeLockDirectory(directory) {
+  try {
+    await fsp.unlink(path.join(directory, LOCK_OWNER_FILENAME));
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+  try {
+    await fsp.rmdir(directory);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+}
+
+async function createLockCandidate(filename, owner) {
+  const candidate = `${filename}.candidate-${owner.attempt_id}`;
+  await fsp.mkdir(candidate, { mode: 0o700 });
+  let handle;
+  try {
+    if (process.platform === 'win32') setPrivateWindowsAcl(candidate, 'directory');
+    const ownerFilename = path.join(candidate, LOCK_OWNER_FILENAME);
+    handle = await fsp.open(
+      ownerFilename,
+      fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
+      0o600
+    );
+    if (process.platform === 'win32') setPrivateWindowsAcl(ownerFilename, 'file');
+    await handle.writeFile(`${JSON.stringify(owner)}\n`, 'utf8');
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    return candidate;
+  } catch (err) {
+    if (handle) await handle.close().catch(() => {});
+    await removeLockDirectory(candidate).catch(() => {});
+    throw err;
+  }
+}
+
+function lockIsStale(owner) {
+  const alive = processAlive(owner.pid);
+  const liveIdentity = alive ? processStartIdentity(owner.pid) : null;
+  const sameProcess = alive
+    && (!owner.process_identity
+      || !liveIdentity
+      || owner.process_identity === liveIdentity);
+  return !sameProcess && Date.now() >= new Date(owner.recover_after).getTime();
+}
+
+function isLockContentionError(err) {
+  return ['EEXIST', 'ENOTEMPTY', 'ENOTDIR', 'EISDIR'].includes(err.code);
+}
+
+function isPossibleWindowsLockContention(err) {
+  return process.platform === 'win32' && ['EPERM', 'EACCES'].includes(err.code);
+}
+
 async function acquireLock(filename, {
   timeoutMs = 5000,
   recoverAfterMs = 30000,
@@ -446,59 +580,79 @@ async function acquireLock(filename, {
     operation,
     process_identity: processStartIdentity(process.pid),
   };
-  while (true) {
-    let handle;
-    try {
-      handle = await fsp.open(
-        filename,
-        fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY,
-        0o600
-      );
+  let candidate = await createLockCandidate(filename, owner);
+  try {
+    while (true) {
+      let possiblePermissionError = null;
       try {
-        if (process.platform === 'win32') setPrivateWindowsAcl(filename, 'file');
-        await handle.writeFile(`${JSON.stringify(owner)}\n`, 'utf8');
-        await handle.sync();
+        // The candidate already contains its owner file, so the lock is
+        // non-empty at the instant it becomes visible. That property is what
+        // makes the stale-owner rename below safe from delayed contenders.
+        await fsp.rename(candidate, filename);
+        candidate = null;
+        return {
+          owner,
+          async release() {
+            let current;
+            try {
+              current = await readLockOwner(filename);
+            } catch {
+              throw new Error(`Lock ownership could not be verified: ${filename}`);
+            }
+            if (!current || current.kind !== 'directory'
+                || current.owner.attempt_id !== owner.attempt_id) {
+              throw new Error(`Lock ownership changed unexpectedly: ${filename}`);
+            }
+            const retired = `${filename}.released-${owner.attempt_id}`;
+            await fsp.rename(filename, retired);
+            await removeLockDirectory(retired);
+          },
+        };
       } catch (err) {
-        await handle.close().catch(() => {});
-        await fsp.unlink(filename).catch(() => {});
-        throw err;
+        if (!isLockContentionError(err) && !isPossibleWindowsLockContention(err)) throw err;
+        if (isPossibleWindowsLockContention(err)) possiblePermissionError = err;
       }
-      return {
-        owner,
-        async release() {
-          await handle.close();
-          let current;
-          try {
-            current = parseStrictJson(await fsp.readFile(filename, 'utf8'));
-          } catch {
-            throw new Error(`Lock ownership could not be verified: ${filename}`);
-          }
-          if (current.attempt_id !== owner.attempt_id) {
-            throw new Error(`Lock ownership changed unexpectedly: ${filename}`);
-          }
-          await fsp.unlink(filename);
-        },
-      };
-    } catch (err) {
-      if (err.code !== 'EEXIST') throw err;
-      await safeExistingFile(filename);
-      let stale = false;
+
+      let current;
       try {
-        const current = parseStrictJson(await fsp.readFile(filename, 'utf8'));
-        const alive = processAlive(current.pid);
-        const liveIdentity = alive ? processStartIdentity(current.pid) : null;
-        const sameProcess = alive
-          && (!current.process_identity
-            || !liveIdentity
-            || current.process_identity === liveIdentity);
-        stale = !sameProcess && Date.now() >= new Date(current.recover_after).getTime();
+        current = await readLockOwner(filename);
       } catch {
         throw new Error(`Malformed lock file: ${filename}`);
       }
-      if (stale) {
-        await fsp.unlink(filename);
+      if (!current) {
+        // Windows can report EPERM for an existing destination directory. If
+        // the destination is actually absent, preserve the permission error
+        // instead of mistaking it for transient lock contention.
+        if (possiblePermissionError) throw possiblePermissionError;
         continue;
       }
+
+      if (lockIsStale(current.owner)) {
+        // The tombstone name is tied to the immutable stale attempt and is
+        // deliberately retained. Exactly one rename/link can create it. A
+        // contender that was paused after reading the stale owner therefore
+        // cannot later move or unlink a replacement lock.
+        const tombstone = `${filename}.stale-${current.owner.attempt_id}`;
+        try {
+          // This also migrates regular lock files created by older builds.
+          // A retained destination of either type makes a delayed rename of
+          // the replacement fail instead of displacing its new owner.
+          await fsp.rename(filename, tombstone);
+          continue;
+        } catch (err) {
+          if (err.code === 'ENOENT' || isLockContentionError(err)) continue;
+          if (isPossibleWindowsLockContention(err)) {
+            try {
+              await fsp.lstat(tombstone);
+              continue;
+            } catch (statErr) {
+              if (statErr.code !== 'ENOENT') throw statErr;
+            }
+          }
+          throw err;
+        }
+      }
+
       if (Date.now() >= deadline) {
         const error = new Error(`${operation}_in_progress`);
         error.code = `${operation}_in_progress`;
@@ -506,6 +660,8 @@ async function acquireLock(filename, {
       }
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
+  } finally {
+    if (candidate) await removeLockDirectory(candidate).catch(() => {});
   }
 }
 

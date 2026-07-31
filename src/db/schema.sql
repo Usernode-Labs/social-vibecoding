@@ -354,7 +354,14 @@ BEGIN
      WHERE conrelid = 'cli_auth_audit_events'::regclass
        AND conname = 'cli_auth_audit_events_metadata_allowlist_check';
   IF constraint_def IS NOT NULL
-      AND position('metadata ? ''reason''' IN constraint_def) = 0 THEN
+      AND (
+        position('metadata ? ''reason''' IN constraint_def) = 0
+        OR position('''POST''' IN constraint_def) = 0
+        OR position('''PUT''' IN constraint_def) = 0
+        OR position('''PATCH''' IN constraint_def) = 0
+        OR position('''DELETE''' IN constraint_def) = 0
+        OR position('''/api/%''' IN constraint_def) = 0
+      ) THEN
     ALTER TABLE cli_auth_audit_events
       DROP CONSTRAINT cli_auth_audit_events_metadata_allowlist_check;
     constraint_def := NULL;

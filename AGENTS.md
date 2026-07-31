@@ -17,8 +17,11 @@
   unless the user explicitly requested local, in which case pass
   `--profile local`. Then finish the current request with
   `node ./tools/social-vibecoding api <METHOD> <PATH> --profile <profile>`.
-  The CLI starts device login itself only when its credential is missing,
-  invalid, or lacks the current API grant.
+  The CLI starts device login itself when its credential is missing or
+  invalid. If it reports that a still-valid legacy credential lacks the API
+  grant, run `node ./tools/social-vibecoding logout --profile <profile>` and
+  retry the original API command so it starts fresh browser consent. Do not
+  ask the user to run either command.
 - For an explicitly local request, check `http://localhost:3000/health` first.
   If it is unavailable, run `make up`, wait for health to report `ok`, and
   continue. Do not start the local stack for a production request.

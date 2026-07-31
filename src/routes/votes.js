@@ -17,6 +17,9 @@ const { effectiveSessionCaps } = require('../services/session-caps');
 const topicAttrs = require('../services/topic-attributes');
 const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
+const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
+
+const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 
 // #687: pick the GitHub client the imported-PR flow talks to. Staging
 // previews use the in-memory mock (no GitHub credentials there — see
@@ -1388,6 +1391,13 @@ function voteRoutes(config) {
       if (!sessionRows.length) return res.status(404).json({ error: 'Promoted session not found' });
       const session = sessionRows[0];
 
+      // A Yes vote can be the operation that applies a value held by a
+      // secret-declaration proposal. The generic session vote path stays
+      // available for ordinary PRs, but api:access is not credential authority.
+      if (isCliCredentialManagementSession(req, session)) {
+        return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
+      }
+
       // Was this a new vote, or a flip? Distinguishing matters because
       // without this, a user mashing "Yes" would post the same
       // "X voted yes on PR #N" line to group chat every time AND fire a
@@ -2254,6 +2264,12 @@ function voteRoutes(config) {
       if (!sessionRows.length) return res.status(404).json({ error: 'Merged session not found' });
       const session = sessionRows[0];
 
+      // Reverting a secret-declaration PR changes credential configuration
+      // through an otherwise-generic session endpoint.
+      if (isCliCredentialManagementSession(req, session)) {
+        return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
+      }
+
       // Revert PRs are not themselves undoable — would create an endless
       // undo-undo-undo loop. The button is hidden on the client already;
       // this is the server-side enforcement.
@@ -2364,6 +2380,12 @@ function voteRoutes(config) {
           });
         }
         return res.status(403).json({ error: 'Full admin access required' });
+      }
+
+      // Force-merging this platform-created proposal would apply its held
+      // credential value. Keep ordinary admin merges available to the CLI.
+      if (isCliCredentialManagementSession(req, session)) {
+        return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
       }
 
       // Respond immediately; the merge itself runs in the background

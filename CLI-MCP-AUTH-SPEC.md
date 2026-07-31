@@ -1388,9 +1388,12 @@ into a false `login_required`.
 
 An `insufficient_scope` response from a legacy identity-only credential maps
 to retryable `reauthorization_required` with the external login vector. The
-login command revokes/removes that credential before starting fresh browser
-consent. Any other role, ownership, or object-level `403` is returned as the
-API response and never triggers login.
+login command first confirms that the legacy credential is still valid and
+refuses to rotate it implicitly. The client agent then runs `logout` for the
+same validated profile, reruns the login vector, and waits for fresh browser
+consent; it does not delegate those commands to the user. Any other role,
+ownership, or object-level `403` is returned as the API response and never
+triggers login.
 
 Timeouts, DNS/connectivity failures, and `429` are bounded transient service
 errors. TLS validation, redirect, oversized/malformed response, and unexpected

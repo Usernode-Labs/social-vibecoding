@@ -21,10 +21,12 @@ const DENIED_SEGMENTS = Object.freeze([
   'llm-grant',
   'llm-grants',
   'password',
+  'secret-declaration-pr',
   'secrets',
   'wallet-change-password',
   'wallet-link',
 ]);
+const SECRET_DECLARATION_BRANCH_PREFIX = 'secret-declare/';
 
 function hasPrefix(pathname, prefix) {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);
@@ -64,10 +66,23 @@ function isCliApiPath(pathname) {
   return canonicalApiTarget(pathname) === pathname;
 }
 
+// Secret-declaration proposals use otherwise-generic session endpoints for
+// voting, force-merging, withdrawal, and restoration. Those endpoints cannot
+// be denied by pathname without also disabling ordinary PR workflows, so the
+// route handlers use this immutable platform branch marker after loading the
+// session. Browser requests are deliberately unaffected.
+function isCliCredentialManagementSession(req, session) {
+  return !!req?.cliAuthenticated
+    && typeof session?.branch_name === 'string'
+    && session.branch_name.startsWith(SECRET_DECLARATION_BRANCH_PREFIX);
+}
+
 module.exports = {
   MAX_API_TARGET_BYTES,
   DENIED_PREFIXES,
   DENIED_SEGMENTS,
+  SECRET_DECLARATION_BRANCH_PREFIX,
   canonicalApiTarget,
   isCliApiPath,
+  isCliCredentialManagementSession,
 };
