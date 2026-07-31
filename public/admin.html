@@ -936,11 +936,18 @@
           ? `<div class="text-xs text-red-400 mt-0.5 break-words">${escapeHtml(a.error)}</div>` : '';
         const retry = (CAN_WRITE && (a.state === 'failed' || a.state === 'skipped'))
           ? `<button class="campaign-retry-btn text-xs text-violet-400 hover:text-violet-300 shrink-0" data-campaign="${c.id}" data-app="${a.appId}">Retry</button>` : '';
+        // Failing/error checks on an open campaign PR: offer the same
+        // manual re-run as the proposal card (#447). POSTs to the
+        // session recheck endpoint, which stamps 'pending' and rebuilds
+        // staging if the preview is gone — the 8s poll refreshes the row.
+        const recheck = (CAN_WRITE && a.state === 'pr_open' && a.sessionId
+          && (a.checkState === 'failing' || a.checkState === 'error'))
+          ? `<button class="campaign-recheck-btn text-xs text-violet-400 hover:text-violet-300 shrink-0" data-campaign="${c.id}" data-session="${a.sessionId}">Re-run checks</button>` : '';
         return `
           <li class="p-2 rounded bg-white dark:bg-zinc-900">
             <div class="flex items-center justify-between gap-3">
               <span class="font-mono text-sm truncate">${escapeHtml(a.slug)}</span>
-              <span class="flex items-center gap-2">${pr}${check}${campaignAppBadge(a.state)}${retry}</span>
+              <span class="flex items-center gap-2">${pr}${check}${campaignAppBadge(a.state)}${recheck}${retry}</span>
             </div>
             ${err}
           </li>`;
@@ -952,6 +959,12 @@
         && (a.checkState === 'passing' || a.checkState === 'skipped')).length;
       const mergeBtn = (CAN_WRITE && green > 0)
         ? `<button class="campaign-merge-green-btn rounded-lg bg-green-600 hover:bg-green-500 px-3 py-1.5 text-xs font-medium text-white transition-colors" data-campaign="${c.id}">Merge all green (${green})</button>` : '';
+      // Bulk companion to the per-row Re-run checks button. Each recheck
+      // is fire-and-forget server-side; the loop below just queues them.
+      const failingChecks = (c.apps || []).filter((a) => a.state === 'pr_open' && a.sessionId
+        && (a.checkState === 'failing' || a.checkState === 'error'));
+      const recheckAllBtn = (CAN_WRITE && failingChecks.length > 0)
+        ? `<button class="campaign-recheck-all-btn rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs font-medium text-white transition-colors" data-campaign="${c.id}" data-sessions="${failingChecks.map((a) => a.sessionId).join(',')}">Re-run failing checks (${failingChecks.length})</button>` : '';
       el.innerHTML = `
         <details class="mb-2">
           <summary class="text-xs text-zinc-500 cursor-pointer">Instructions</summary>
@@ -960,14 +973,56 @@
         <ul class="space-y-1">${rows || '<li class="text-xs text-zinc-500">No target apps.</li>'}</ul>
         <div class="flex items-center justify-end gap-2 mt-2">
           <span class="campaign-detail-status text-xs text-zinc-500"></span>
+          ${recheckAllBtn}
           ${mergeBtn}
         </div>`;
+    }
+
+    // POST one session recheck; resolves to true when the server accepted
+    // it (including the "already running" coalesce response).
+    async function postRecheck(sessionId) {
+      const res = await fetch(`/api/sessions/${sessionId}/recheck`, { method: 'POST' });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      return true;
     }
 
     document.getElementById('campaign-list').addEventListener('click', async (e) => {
       const toggle = e.target.closest('[data-campaign-toggle]');
       const retryBtn = e.target.closest('.campaign-retry-btn');
       const mergeBtn = e.target.closest('.campaign-merge-green-btn');
+      const recheckBtn = e.target.closest('.campaign-recheck-btn');
+      const recheckAllBtn = e.target.closest('.campaign-recheck-all-btn');
+      if (recheckBtn) {
+        const campaignId = Number(recheckBtn.dataset.campaign);
+        recheckBtn.disabled = true;
+        recheckBtn.textContent = 'Rechecking…';
+        try {
+          await postRecheck(recheckBtn.dataset.session);
+        } catch (err) {
+          alert(`Re-run checks failed: ${err.message}`);
+        }
+        refreshCampaignDetail(campaignId).catch(() => {});
+        return;
+      }
+      if (recheckAllBtn) {
+        const campaignId = Number(recheckAllBtn.dataset.campaign);
+        const sessions = (recheckAllBtn.dataset.sessions || '').split(',').filter(Boolean);
+        recheckAllBtn.disabled = true;
+        recheckAllBtn.textContent = 'Rechecking…';
+        const statusEl = recheckAllBtn.closest('div')?.querySelector('.campaign-detail-status');
+        let failed = 0;
+        for (const sid of sessions) {
+          try {
+            await postRecheck(sid);
+          } catch { failed++; }
+          if (statusEl) statusEl.textContent = `Queued rechecks — ${failed ? `${failed} failed to queue, ` : ''}watching for results…`;
+        }
+        refreshCampaignDetail(campaignId).catch(() => {});
+        return;
+      }
       if (retryBtn) {
         const campaignId = Number(retryBtn.dataset.campaign);
         retryBtn.disabled = true;
