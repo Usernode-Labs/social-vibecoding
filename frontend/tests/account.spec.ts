@@ -14,7 +14,26 @@ test("explains the native capability boundary outside Usernode", async ({ page }
   await expectFullCanvasRoute(page, "account", "Account")
   await expect(page.getByTestId("account")).toContainText("Profile and rewards")
   await expect(page.getByTestId("native-device-unavailable")).toContainText("Open in Usernode")
+  await expect(page.getByRole("link", { name: "View profile" })).toHaveAttribute("href", "/react/account/profile")
   await expect(page.getByRole("link", { name: "View node status" })).toHaveAttribute("href", "/react/node-status")
+})
+
+test("preserves semantic account navigation and browser history", async ({ page }) => {
+  await page.goto("/react/account")
+
+  const profileLink = page.getByRole("link", { name: "View profile" })
+  await expect(profileLink).toHaveAttribute("data-slot", "action-link")
+  await profileLink.click()
+  await expect(page).toHaveURL(/\/react\/account\/profile$/)
+
+  await page.goBack()
+  await expect(page).toHaveURL(/\/react\/account$/)
+  const nodeStatusLink = page.getByRole("link", { name: "View node status" })
+  await expect(nodeStatusLink).toHaveAttribute("data-slot", "action-link")
+  await nodeStatusLink.click()
+  await expect(page).toHaveURL(/\/react\/node-status$/)
+  await page.goBack()
+  await expect(page).toHaveURL(/\/react\/account$/)
 })
 
 test("shows native wallet and node data without deriving it in the web shell", async ({ page }) => {

@@ -90,7 +90,7 @@ export const LongContent: Story = {
         accessibleName="Open long activity"
         indicator={<StatusDot label="Unread" role="attention" showLabel={false} size="sm" subject="Activity" />}
         metadata="@avery-long-user-name · a long metadata value that must remain quiet and truncate"
-        secondaryAction={<Button className="pointer-coarse:min-h-12" size="sm" type="button" variant="ghost">Mark read</Button>}
+        secondaryAction={<Button className="pointer-coarse:min-h-12" size="sm" type="button" variant="ghost"><PlatformIcon data-icon="inline-start" icon={Check} />Mark read</Button>}
         state="unread"
         title="A deliberately long activity title that must not push its sibling action out of the row"
         to="/notifications"

@@ -1,7 +1,7 @@
 import { ArrowRight, RadioTower, UserRound } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
 
+import { ActionLink } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { TopBar } from "@/components/top-bar"
 import { Button } from "@/components/ui/button"
@@ -43,13 +43,13 @@ export function Account() {
 
   return <div className="isolate flex w-full flex-1 flex-col" data-testid="account">
     <TopBar action={<Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline">Refresh</Button>} title="Account" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
-    <Card><CardHeader><div className="flex items-start gap-2"><PlatformIcon icon={UserRound} /><div><CardTitle>Profile and rewards</CardTitle><CardDescription>Points, rank, allocation, and completed challenge history are available in Usernode.</CardDescription></div></div></CardHeader><CardFooter><Button render={<Link to="/account/profile" />} size="sm" variant="outline">View profile<PlatformIcon data-icon="inline-end" icon={ArrowRight} /></Button></CardFooter></Card>
+    <Card><CardHeader><div className="flex items-start gap-2"><PlatformIcon icon={UserRound} /><div><CardTitle>Profile and rewards</CardTitle><CardDescription>Points, rank, allocation, and completed challenge history are available in Usernode.</CardDescription></div></div></CardHeader><CardFooter><ActionLink size="sm" to="/account/profile" variant="outline">View profile<PlatformIcon data-icon="inline-end" icon={ArrowRight} /></ActionLink></CardFooter></Card>
     <NativeDeviceSummary onOpenNativeSettings={openSettings} state={device} />
     <Card>
       <CardHeader>
         <div className="flex items-start gap-2"><PlatformIcon icon={RadioTower} /><div><CardTitle>Platform service status</CardTitle><CardDescription>A public, read-only snapshot of the server, node sidecar, and explorer.</CardDescription></div></div>
       </CardHeader>
-      <CardFooter><Button render={<Link to="/node-status" />} size="sm" variant="outline">View node status<PlatformIcon data-icon="inline-end" icon={ArrowRight} /></Button></CardFooter>
+      <CardFooter><ActionLink size="sm" to="/node-status" variant="outline">View node status<PlatformIcon data-icon="inline-end" icon={ArrowRight} /></ActionLink></CardFooter>
     </Card>
   </div></div>
 }

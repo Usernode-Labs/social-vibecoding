@@ -211,7 +211,10 @@ locally with `403`. Do not combine it with `SV_PRODUCTION_READONLY=true`.
   `/react/settings`, not this read-only account summary. Desktop and old native builds render explicit
   unavailable/update states. It also makes the public `/react/node-status`
   diagnostic explicit as a separate, read-only platform surface rather than
-  conflating server health with a user's device or wallet.
+  conflating server health with a user's device or wallet. Its Profile and
+  Node status actions use the governed semantic link authority while
+  preserving the existing React destinations and browser back history on
+  narrow and desktop viewports.
 - **In progress:** `/react/settings` now owns the established web account
   core rather than treating Settings as only a native escape hatch. Typed
   adapters preserve the current locale, AI progress estimate, Anthropic BYOK
