@@ -42,6 +42,10 @@ function setPlatformKeys(overrides = {}) {
     IFRAME_JWT_PUBLIC_KEY: publicKey,
     WORKER_JWT_SECRET: 'test-worker-jwt-secret-0123456789abcdef0',
     EDGE_JWT_SECRET: 'test-edge-jwt-secret-0123456789abcdef012',
+    // Keep boot tests deterministic when a developer's .env enables local
+    // mode after this helper runs. dotenv will not overwrite this value.
+    USERNODE_LOCAL_DEV: '0',
+    CLI_CANONICAL_ORIGIN: 'https://social-vibecoding.usernodelabs.org',
   };
   const out = {};
   for (const [k, v] of Object.entries({ ...defaults, ...overrides })) {

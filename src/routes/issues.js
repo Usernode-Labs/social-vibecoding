@@ -659,28 +659,45 @@ function issueRoutes(config) {
         payload = typeof payload === 'object' && payload ? payload : {};
       }
 
-      // GitHub twin — skipped for secret_change proposals (see
-      // shouldCreateGithubTwin): env-var proposals are in-app governance,
-      // not repo issues (#132). githubIssueNumber stays null for them,
-      // which the INSERT, chat message, and vote-apply path all handle.
+      // GitHub twin — skipped only for platform-governance kinds. A general
+      // issue is represented by its GitHub issue throughout the board, so
+      // never claim success by inserting a local-only row the UI cannot
+      // render. Configuration and upstream failures return before any local
+      // issue/chat state is written.
       let githubIssueNumber = null;
-      if (github.isEnabled() && app.repo_url && shouldCreateGithubTwin(kind)) {
+      if (shouldCreateGithubTwin(kind)) {
+        const parsed = parseOwnerRepo(app.repo_url);
+        if (!github.isEnabled() || !parsed) {
+          return res.status(422).json({
+            error: 'GitHub is not configured for this app; no issue was created.',
+          });
+        }
         try {
-          const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
-          if (owner && repo) {
-            const ghIssue = await github.createIssue(owner, repo, {
-              title,
-              body: description || '',
+          const ghIssue = await github.createIssue(parsed.owner, parsed.repo, {
+            title,
+            body: description || '',
+          });
+          if (!Number.isInteger(ghIssue?.number) || ghIssue.number <= 0) {
+            throw new Error('GitHub returned an invalid issue number');
+          }
+          githubIssueNumber = ghIssue.number;
+          // #125: seed the open-issues cache so the panel refresh the
+          // pushIssueUpdate below triggers (loadVotePanel → GET
+          // /github-issues) shows this issue immediately instead of
+          // waiting out the cache TTL. Cache bookkeeping is non-authoritative
+          // and must not turn a completed remote create into a retry/duplicate.
+          try {
+            github.noteIssueCreated(parsed.owner, parsed.repo, ghIssue);
+          } catch (cacheErr) {
+            log.warn('issues', 'Created GitHub issue but could not seed cache', {
+              err: cacheErr.message,
             });
-            githubIssueNumber = ghIssue.number;
-            // #125: seed the open-issues cache so the panel refresh the
-            // pushIssueUpdate below triggers (loadVotePanel → GET
-            // /github-issues) shows this issue immediately instead of
-            // waiting out the cache TTL.
-            github.noteIssueCreated(owner, repo, ghIssue);
           }
         } catch (err) {
           log.warn('issues', 'GitHub issue creation failed', { err: err.message });
+          return res.status(503).json({
+            error: 'GitHub issue creation failed; no local issue was created.',
+          });
         }
       }
 

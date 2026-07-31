@@ -16,7 +16,7 @@
 // .test.js loads this file in Node (module.exports branch at the bottom)
 // and pins the bypass list without a browser.
 
-const SW_VERSION = 'v1';
+const SW_VERSION = 'v2';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const API_CACHE = `usernode-api-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
@@ -100,6 +100,7 @@ const NO_FALLBACK_PAGES = [
   '/node-status',
   '/status',
   '/register.html',
+  '/cli/authorize',
 ];
 
 // Pure request classifier — the single source of truth for what the fetch
@@ -137,6 +138,10 @@ function classifyRequest(method, url, acceptHeader, mode, selfOrigin) {
   // Local-dev mock namespace and short-lived credentials.
   if (p.startsWith('/__mock/')) return 'bypass';
   if (p === '/api/iframe-token') return 'bypass';
+  if (p.startsWith('/api/cli/')) return 'bypass';
+  if (p === '/api/me/cli-tokens' || p.startsWith('/api/me/cli-tokens/')) {
+    return 'bypass';
+  }
   // Auth endpoints are online-only — EXCEPT /api/auth/me, which is cached
   // so the SPA's boot check succeeds offline for a logged-in user.
   if (p.startsWith('/api/auth/') && p !== '/api/auth/me') return 'bypass';

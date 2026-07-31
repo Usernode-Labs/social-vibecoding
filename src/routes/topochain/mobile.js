@@ -51,6 +51,7 @@
 'use strict';
 
 const { Router } = require('express');
+const { clientIp } = require('../../services/client-ip');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth } = require('../../middleware/topochain-auth');
@@ -1473,7 +1474,7 @@ function topochainMobileRoutes(config) {
         return fail(res, 422, 'Cannot consent to an unpublished terms version.');
       }
 
-      const ip = req.ip || null;
+      const ip = clientIp(req) || null;
       const respondedAt = new Date();
 
       const { rows } = await pool.query(

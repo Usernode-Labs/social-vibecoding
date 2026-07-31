@@ -105,6 +105,7 @@ function makeHarness({ previewTitle = 'Partial Title' } = {}) {
     // time — a permissive stub keeps the wiring alive; appData stays
     // undefined so the feedback target resolves to 'platform'.
     AppView: new Proxy({}, { get: (t, p) => (p === 'appData' ? undefined : () => {}) }),
+    PlatformUI: { pullToRefresh: () => {} },
     alert: () => {},
   };
   sandbox.window = sandbox;

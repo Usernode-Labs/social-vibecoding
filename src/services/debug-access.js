@@ -54,6 +54,10 @@ const DENIED_TABLES = new Set([
   'pending_secret_declarations', // values held for a declaration PR (AES blobs)
   'mobile_otp_codes',   // topochain: one-time login codes (SPEC §6)
   'mobile_auth_tokens', // topochain: bearer session/set-password tokens (plan Global Constraints #4)
+  'cli_device_authorizations', // global CLI device codes and request IPs
+  'cli_access_tokens',   // global CLI bearer hashes and hints
+  'cli_auth_audit_events', // security audit trail for CLI credentials
+  'cli_auth_rate_limits', // shared security limiter state
 ]);
 
 const DENIED_COLUMNS = {

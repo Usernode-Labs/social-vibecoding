@@ -181,6 +181,7 @@ jobs:
         run: |
           cat > "$OUT_FILE" <<'ENVEOF'
           USERNODE_DOMAIN=${{ vars.USERNODE_DOMAIN }}
+          CLI_CANONICAL_ORIGIN=https://social-vibecoding.usernodelabs.org
           ZEROSSL_API_KEY=${{ secrets.ZEROSSL_API_KEY }}
           ZEROSSL_EAB_KID=${{ secrets.ZEROSSL_EAB_KID }}
           ZEROSSL_EAB_HMAC=${{ secrets.ZEROSSL_EAB_HMAC }}

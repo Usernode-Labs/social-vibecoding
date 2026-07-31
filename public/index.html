@@ -1173,6 +1173,22 @@
         <div id="llm-grants-status" class="text-sm mt-2 hidden"></div>
       </div>
 
+      <!-- Global CLI/Codex credentials. The server returns only a short token
+           hint and non-secret metadata; raw bearer values never enter the
+           browser Settings surface. -->
+      <div id="cli-tokens-section" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">CLI &amp; Codex access</h3>
+        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+          Credentials approved for the Social Vibecoding CLI or Codex. Revoking an active credential takes effect immediately.
+        </p>
+        <div id="cli-tokens-list" class="space-y-2"></div>
+        <button id="cli-tokens-more" type="button"
+          class="hidden mt-3 rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+          Load more
+        </button>
+        <div id="cli-tokens-status" class="text-xs mt-2 hidden"></div>
+      </div>
+
       <!-- Agent instructions & skills (issue #460). Per-user global files
            the coding agent loads on every build/scout run this user
            dispatches, in any app: instruction files are assembled into the

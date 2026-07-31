@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const platformJwt = require('./services/platform-jwt');
+const { PRODUCTION_ORIGIN } = require('./services/cli-auth-constants');
 
 const REQUIRED = [
   'DATABASE_URL',
@@ -79,6 +80,30 @@ function mask(val) {
   return val.slice(0, 4) + '...' + val.slice(-4);
 }
 
+function canonicalCliOrigin(value, { allowLoopbackHttp = false } = {}) {
+  if (typeof value !== 'string' || !value) return null;
+  try {
+    const url = new URL(value);
+    if (url.username || url.password || url.search || url.hash) return null;
+    if (url.pathname !== '' && url.pathname !== '/') return null;
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+    if (url.protocol !== 'https:' && !(allowLoopbackHttp && loopback && url.protocol === 'http:')) {
+      return null;
+    }
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackOrigin(value) {
+  try {
+    return ['localhost', '127.0.0.1', '[::1]'].includes(new URL(value).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function load() {
   const staging = IS_STAGING();
 
@@ -121,6 +146,24 @@ function load() {
     }
   }
 
+  const cliLocalMode = !staging && process.env.USERNODE_LOCAL_DEV === '1';
+  let cliAuthOrigin = null;
+  let cliAuthEnabled = !staging;
+  if (cliAuthEnabled && cliLocalMode) {
+    cliAuthOrigin = canonicalCliOrigin(
+      process.env.CLI_CANONICAL_ORIGIN || `http://localhost:${process.env.PORT || '3000'}`,
+      { allowLoopbackHttp: true }
+    );
+    if (cliAuthOrigin && !isLoopbackOrigin(cliAuthOrigin)) cliAuthOrigin = null;
+  } else if (cliAuthEnabled) {
+    cliAuthOrigin = canonicalCliOrigin(process.env.CLI_CANONICAL_ORIGIN);
+    if (cliAuthOrigin !== PRODUCTION_ORIGIN) cliAuthOrigin = null;
+  }
+  if (cliAuthEnabled && !cliAuthOrigin) {
+    console.error('[config] CLI authentication requires a valid CLI_CANONICAL_ORIGIN; production must use the compiled production origin');
+    process.exit(1);
+  }
+
   const config = {
     // Deployment environment tag (plan Global Constraints #6, topochain
     // mailer): drives ONE behavior today — src/services/topochain/
@@ -131,6 +174,17 @@ function load() {
     port: parseInt(process.env.PORT || '3000', 10),
     databaseUrl: process.env.DATABASE_URL,
     sessionSecret: process.env.SESSION_SECRET,
+    cliAuthEnabled,
+    cliAuthOrigin,
+    cliAuthLocalMode: cliLocalMode,
+    cliDeviceCreateRatePerMinute: parseInt(process.env.CLI_DEVICE_CREATE_RATE_PER_MINUTE || '10', 10),
+    cliDeviceCreateBurst: parseInt(process.env.CLI_DEVICE_CREATE_BURST || '20', 10),
+    cliDeviceLivePerIp: parseInt(process.env.CLI_DEVICE_LIVE_PER_IP || '10', 10),
+    cliDeviceLiveGlobal: parseInt(process.env.CLI_DEVICE_LIVE_GLOBAL || '10000', 10),
+    // Only this resolved Docker peer may supply the client address used by
+    // security gates and rate limits. Local development connects directly.
+    trustedProxyHost: process.env.TRUSTED_PROXY_HOST
+      || (!cliLocalMode && !staging ? 'caddy' : ''),
     adminUsername: process.env.ADMIN_USERNAME,
     adminPassword: process.env.ADMIN_PASSWORD,
     // KDF input for services/secrets.js (AES-256-GCM at rest). Never
@@ -364,6 +418,7 @@ function load() {
   console.log(`  GITHUB_APP_ID=${config.githubAppId || '(not set)'}`);
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
   console.log(`  LOG_LEVEL=${config.logLevel}`);
+  console.log(`  CLI_AUTH=${config.cliAuthEnabled ? config.cliAuthOrigin : '(disabled in staging)'}`);
   console.log(`  MAX_APPS=${config.maxApps}`);
   console.log(`  MAX_GLOBAL_SESSIONS=${config.maxGlobalSessions}`);
   console.log(`  MAX_USER_SESSIONS=${config.maxUserSessions}`);
@@ -417,4 +472,9 @@ function usesMockGithubForImports() {
   return process.env.USERNODE_ENV === 'staging';
 }
 
-module.exports = { load, usesMockGithubForImports };
+module.exports = {
+  load,
+  usesMockGithubForImports,
+  canonicalCliOrigin,
+  isLoopbackOrigin,
+};

@@ -12,3 +12,8 @@ data/
 hackathon-data/
 .playwright-mcp/
 .superpowers/
+
+# Machine-local Codex MCP wiring (absolute checkout/runtime paths).
+.codex/config.toml
+.codex/config.toml.lock
+.codex/.config.toml.tmp-*

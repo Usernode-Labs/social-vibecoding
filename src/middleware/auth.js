@@ -78,6 +78,7 @@ function authMiddleware(config) {
   const pool = getPool(config);
 
   return async (req, res, next) => {
+    if (req.cliAuthenticated && req.user) return next();
     if (PUBLIC_PATHS.some((p) => req.path.startsWith(p))) {
       return next();
     }

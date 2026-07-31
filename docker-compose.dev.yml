@@ -14,7 +14,14 @@
 
 services:
   app:
-    build: .
+    build:
+      context: .
+      # The host uses a loopback DNS proxy. Docker otherwise replaces it
+      # with unreachable public resolvers during RUN steps, which makes apk
+      # report misleading "no such package" errors after index downloads
+      # fail. Host networking is build-only; the running app still uses the
+      # isolated usernode-net network below.
+      network: host
     container_name: vibecoding-dev
     restart: unless-stopped
     ports:
@@ -35,6 +42,7 @@ services:
       # rebuild aborts after 30 healthcheck attempts.
       USERNODE_DB_PASSWORD: localdev
       LOG_LEVEL: DEBUG
+      CLI_CANONICAL_ORIGIN: http://localhost:3000
       # Sidecar node can't sync via WebRTC inside Docker Desktop for Mac.
       # Run the node natively in another terminal — `make node-full` in this
       # repo handles the archive fetch + boot on the right port (3001,

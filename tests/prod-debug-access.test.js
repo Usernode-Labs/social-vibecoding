@@ -102,7 +102,9 @@ test('credential tables are deny-listed', () => {
   // declaration proposal carries until it merges — the same class of
   // material as app_secrets / platform_env_values, so the same treatment.
   for (const t of ['sessions', 'activation_codes', 'app_secrets',
-    'platform_env_values', 'pending_secret_declarations']) {
+    'platform_env_values', 'pending_secret_declarations',
+    'cli_device_authorizations', 'cli_access_tokens',
+    'cli_auth_audit_events', 'cli_auth_rate_limits']) {
     assert.ok(debugAccess.DENIED_TABLES.has(t), `${t} must be denied`);
   }
 });

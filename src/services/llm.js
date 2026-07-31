@@ -490,7 +490,7 @@ ${tail || '(no output yet)'}`;
     // Structured outputs (#323): force Haiku to emit schema-matching JSON so
     // the JSON.parse / fence / smart-quote failure class can't occur for normal
     // completions. claude-haiku-4-5 supports structured outputs, and
-    // @anthropic-ai/sdk 0.89 accepts output_config.format on messages.create().
+    // The current Anthropic SDK accepts output_config.format on messages.create().
     // The schema guarantees type + presence only; the brace-extraction +
     // sanitize path below stays as a defensive fallback for off-schema output
     // (refusal / max_tokens truncation / older models).

@@ -81,6 +81,7 @@ function loadIssues(pool, { gh = {}, active = 2 } = {}) {
     },
     createIssue: async (owner, repo, args) => {
       spies.ghCalls.push({ type: 'createIssue', owner, repo, args });
+      if (gh.createIssue) return gh.createIssue(owner, repo, args);
       return { number: 777 };
     },
     noteIssueCreated: () => {},
@@ -157,6 +158,84 @@ const CLOSE_PROPOSAL = (over) => ({
 });
 
 // ── Creation ─────────────────────────────────────────────────────────────
+
+test('create general issue requires configured GitHub before local writes', async () => {
+  const pool = makePool([]);
+  const { router, spies, restore } = loadIssues(pool, {
+    gh: { isEnabled: () => false },
+  });
+  try {
+    const handler = routeHandler(router, '/api/apps/:slug/issues');
+    const res = mockRes();
+    await handler({
+      params: { slug: 'cool-app' },
+      user: { id: 42, username: 'maker' },
+      body: { kind: 'general', title: 'Visible board issue' },
+    }, res);
+
+    assert.equal(res.statusCode, 422);
+    assert.match(res.body.error, /no issue was created/i);
+    assert.ok(!pool.issued(/INSERT INTO issues/));
+    assert.equal(spies.systemMessages.length, 0);
+    assert.equal(spies.issueUpdates.length, 0);
+  } finally { restore(); }
+});
+
+test('create general issue fails without local writes when GitHub create fails', async () => {
+  const pool = makePool([]);
+  const { router, spies, restore } = loadIssues(pool, {
+    gh: {
+      createIssue: async () => {
+        throw new Error('upstream unavailable');
+      },
+    },
+  });
+  try {
+    const handler = routeHandler(router, '/api/apps/:slug/issues');
+    const res = mockRes();
+    await handler({
+      params: { slug: 'cool-app' },
+      user: { id: 42, username: 'maker' },
+      body: { kind: 'general', title: 'Visible board issue' },
+    }, res);
+
+    assert.equal(res.statusCode, 503);
+    assert.match(res.body.error, /no local issue was created/i);
+    assert.ok(!pool.issued(/INSERT INTO issues/));
+    assert.equal(spies.systemMessages.length, 0);
+    assert.equal(spies.issueUpdates.length, 0);
+  } finally { restore(); }
+});
+
+test('create general issue persists the returned GitHub issue number', async () => {
+  const pool = makePool([
+    [/INSERT INTO issues/, (params) => [{
+      id: 62,
+      app_id: 9,
+      github_issue_number: params[1],
+      title: params[2],
+      kind: params[4],
+    }]],
+  ]);
+  const { router, spies, restore } = loadIssues(pool);
+  try {
+    const handler = routeHandler(router, '/api/apps/:slug/issues');
+    const res = mockRes();
+    await handler({
+      params: { slug: 'cool-app' },
+      user: { id: 42, username: 'maker' },
+      body: { kind: 'general', title: 'Visible board issue' },
+    }, res);
+
+    assert.equal(res.statusCode, 201);
+    const insert = pool.issued(/INSERT INTO issues/);
+    assert.equal(insert.params[1], 777);
+    assert.equal(res.body.issue.github_issue_number, 777);
+    assert.equal(spies.systemMessages.length, 2);
+    assert.deepEqual(spies.systemMessages[1][5], { type: 'issue', ref: 777 });
+    assert.equal(spies.issueUpdates[0].action, 'created');
+  } finally { restore(); }
+});
 
 test('create: happy path files a vote-only proposal, no GitHub twin', async () => {
   const pool = makePool([

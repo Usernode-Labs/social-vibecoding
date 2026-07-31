@@ -4,6 +4,7 @@ const bcrypt = require('bcrypt');
 const { getPool } = require('../db/pool');
 const { adminMiddleware, requireAdminWrite } = require('../middleware/admin');
 const { dbExportLimiter } = require('../middleware/rate-limits');
+const { clientIp } = require('../services/client-ip');
 const { drainGuard } = require('../services/lifecycle');
 const log = require('../services/logger');
 const limits = require('../services/limits');
@@ -12,6 +13,10 @@ const events = require('../services/events');
 const appRollover = require('../services/app-rollover');
 const stagingReap = require('../services/staging-reap');
 const stagingEnv = require('../services/staging-env');
+const {
+  accountRecovery,
+  withTransaction,
+} = require('../services/cli-auth');
 
 // Fixed app-wide key for pg_advisory_xact_lock, dedicated to admin-status
 // mutations (revoke-admin and delete-user). Any code path that could drop
@@ -501,18 +506,21 @@ function adminRoutes(config) {
       const tempPassword = crypto.randomBytes(9).toString('base64url');
       const hash = await bcrypt.hash(tempPassword, 12);
 
-      const { rows } = await pool.query(
-        'UPDATE users SET password = $1 WHERE id = $2 RETURNING id, username',
-        [hash, userId]
-      );
-      if (!rows.length) return res.status(404).json({ error: 'User not found' });
-
-      await pool.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+      const recovery = await withTransaction(pool, (client) => accountRecovery(client, {
+        userId,
+        actorUserId: req.user.id,
+        updatePassword: (tx) => tx.query(
+          `UPDATE users SET password = $1 WHERE id = $2
+           RETURNING id, username, is_admin, admin_readonly`,
+          [hash, userId]
+        ),
+      }));
+      if (!recovery.found) return res.status(404).json({ error: 'User not found' });
 
       log.info('admin', 'Password reset issued', {
-        id: rows[0].id, username: rows[0].username, by: req.user.username,
+        id: recovery.user.id, username: recovery.user.username, by: req.user.username,
       });
-      res.json({ ok: true, username: rows[0].username, tempPassword });
+      res.json({ ok: true, username: recovery.user.username, tempPassword });
     } catch (err) {
       log.error('admin', 'Password reset failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -933,8 +941,8 @@ function adminRoutes(config) {
 
   const DB_EXPORT_HISTORY_MAX = 200;
 
-  function clientIp(req) {
-    return String(req.ip || req.socket?.remoteAddress || '').slice(0, 64) || null;
+  function auditClientIp(req) {
+    return String(clientIp(req)).slice(0, 64) || null;
   }
 
   // Insert the audit row. Deliberately NOT fire-and-forget: callers await
@@ -954,7 +962,7 @@ function adminRoutes(config) {
           dbName || '(unresolved)',
           status,
           deniedReason,
-          clientIp(req),
+          auditClientIp(req),
           String(req.get('user-agent') || '').slice(0, 512) || null,
         ]
       );

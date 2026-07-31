@@ -15,7 +15,7 @@
 // stub the logger, override getPool with an in-memory fixture pool
 // BEFORE requiring the route module, mount on a real express app, hit
 // it over HTTP (loopback passes the private-IP gate; the non-private
-// case uses trust-proxy + X-Forwarded-For). The governance service is
+// case uses the verified-proxy client-IP middleware). The governance service is
 // the REAL one (its SQL runs against the fixture pool); only
 // active-users.getActiveUserStats is patched so the electorate is
 // deterministic while mergeGate's real window math stays in play.
@@ -121,18 +121,22 @@ activeUsers.getActiveUserStats = async () => state.activeStats;
 
 const governance = require('../src/services/governance');
 const appPlatformApiRoutes = require('../src/routes/app-platform-api');
+const { trustedProxyClientIp } = require('../src/services/client-ip');
 
 const express = require('express');
 
 let server;
 test.before(async () => {
   const app = express();
-  // Trust exactly one proxy hop so the non-private-IP test can spoof
-  // its source via X-Forwarded-For; loopback requests without the
-  // header keep req.ip = 127.0.0.1 (private → accepted).
-  app.set('trust proxy', 1);
+  // Model Caddy as this test server's loopback peer. Forwarded client data
+  // is accepted only because the resolver verifies that exact peer.
+  app.set('trust proxy', false);
+  app.use(trustedProxyClientIp({
+    hostname: 'caddy.test',
+    lookup: async () => [{ address: '127.0.0.1', family: 4 }],
+  }));
   app.use(appPlatformApiRoutes({}));
-  await new Promise((resolve) => { server = app.listen(0, resolve); });
+  await new Promise((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
 });
 test.after(() => server?.close());
 

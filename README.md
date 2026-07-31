@@ -218,8 +218,9 @@ retry: `docker exec -u postgres usernode-db dropdb -U usernode app_usernode_2d56
 
 ## Running locally
 
-Fill in `.env.example` → `.env`, set `USERNODE_LOCAL_DEV=1` in your
-local `.env` (so app/staging URLs fall back to `http://localhost:<port>`
+Fill in `.env.example` → `.env`, set `USERNODE_LOCAL_DEV=1` and
+`CLI_CANONICAL_ORIGIN=http://localhost:3000` in your local `.env` (so
+app/staging URLs and CLI authorization stay on the explicit local deployment
 since Caddy can't issue real certs against `localhost`).
 
 The local stack is two pieces because Docker Desktop on Mac can't run
@@ -251,6 +252,54 @@ make down         # stop
 ```
 
 Then visit `http://localhost:3000`.
+
+### Codex CLI authentication and MCP
+
+Ask Codex for the platform operation directly, for example:
+
+```text
+Pull the open issues for app demo.
+Pull the open issues for app demo from local.
+Create and promote a proposal for app demo.
+```
+
+Repository guidance makes Codex use production by default. It selects the
+immutable built-in `local` profile only when the prompt explicitly says local.
+For local requests it checks health and runs `make up` when necessary. It
+creates the ignored project MCP configuration if missing and can finish the
+current request through the generic CLI API client while a new MCP
+configuration waits for the next Codex reload.
+
+Codex also handles authentication. If the selected profile has no usable
+credential, it starts device login and waits. The only expected manual step is
+in the browser: the one-click link opens the request details, you compare the
+displayed code and select **Authorize**. There is no code to copy or type.
+Codex then retries the original API operation; you do not need to type setup
+or login commands.
+
+The MCP exposes generic read and mutation tools for allowed user-facing JSON
+API paths, so endpoints are not hardcoded into individual tools. Existing
+platform app visibility, ownership, role, lock, and quota checks remain
+authoritative. Operations such as opening a PR go through the app/session
+platform APIs, never directly to GitHub.
+
+Credentials are bound to the selected server profile and are stored
+outside the checkout. The ignored `.codex/config.toml` contains absolute
+launcher paths and a reviewed tool allowlist, but no credential or server
+origin. Codex loads project MCP configuration only for a trusted project; do
+not authenticate from an unreviewed or unexpectedly modified checkout.
+
+Optional diagnostic commands:
+
+```bash
+node ./tools/social-vibecoding auth status
+node ./tools/social-vibecoding logout
+node ./tools/social-vibecoding auth server list
+```
+
+If login ends after an ambiguous network failure, check Settings →
+CLI & Codex access and revoke any unexpected credential by its hint and
+creation time before retrying.
 
 A few things won't work locally:
 
