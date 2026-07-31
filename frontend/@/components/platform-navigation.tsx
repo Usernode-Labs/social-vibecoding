@@ -47,6 +47,7 @@ function NavigationItems({
         return (
           <SidebarMenuItem key={item.id}>
             <SidebarMenuButton
+              className="pointer-coarse:min-h-12"
               isActive={active}
               render={
                 <a

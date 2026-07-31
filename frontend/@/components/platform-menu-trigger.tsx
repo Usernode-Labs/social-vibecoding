@@ -32,10 +32,10 @@ export function ShellAttentionProvider({
 export function PlatformMenuTrigger({ className }: { className?: string }) {
   const attentionCount = useContext(ShellAttentionContext)
   return (
-    <span className={cn("relative inline-flex shrink-0", className)}>
+    <span className={cn("relative inline-flex shrink-0 overflow-visible", className)}>
       <SidebarTrigger
         aria-label="Toggle navigation"
-        className="relative after:pointer-fine:hidden after:absolute after:top-1/2 after:left-1/2 after:size-[max(100%,3rem)] after:-translate-1/2 after:content-['']"
+        className="relative after:absolute after:top-1/2 after:left-1/2 after:size-13 after:-translate-1/2 after:content-[''] after:pointer-fine:hidden"
       />
       {attentionCount > 0 ? (
         <StatusDot

@@ -18,9 +18,10 @@ import {
   type PlatformNavigationProps,
   type PlatformNavItem,
 } from "@/components/platform-navigation"
+import { PlatformMenuTrigger } from "@/components/platform-menu-trigger"
 import { StatusDot } from "@/components/status-dot"
 import { SidebarMenuBadge } from "@/components/ui/sidebar"
-import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar"
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar"
 
 const route = (href: string) => (pathname: string) =>
   pathname === href || pathname.startsWith(`${href}/`)
@@ -68,7 +69,7 @@ function NavigationFixture({
       <PlatformNavigation {...props} />
       <SidebarInset className="min-h-screen">
         <header className="flex h-14 items-center border-b px-3">
-          <SidebarTrigger aria-label="Toggle navigation" />
+          <PlatformMenuTrigger />
         </header>
         <div className="p-6 text-sm text-muted-foreground">Route content</div>
       </SidebarInset>

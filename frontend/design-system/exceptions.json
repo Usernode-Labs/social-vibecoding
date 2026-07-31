@@ -320,17 +320,6 @@
       "expires": "2026-09-30"
     },
     {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/components/platform-menu-trigger.tsx",
-      "matches": [
-        "after:size-[max(100%,3rem)]"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "The 48px touch target on the drawer trigger has no named utility; the control moved out of platform-shell.tsx when TopBar became the shell's only route chrome.",
-      "expires": "2026-09-30"
-    },
-    {
       "rule": "no-raw-palette",
       "file": "@/components/ui/alert-dialog.tsx",
       "matches": [
