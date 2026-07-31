@@ -105,6 +105,52 @@ test('recheck stamps pending + broadcasts before responding', async () => {
   }
 });
 
+// Regression for the campaign-dashboard 403: req.user carries camelCase
+// isAdmin/canAdminWrite (middleware/auth.js) — the route once checked the
+// nonexistent `is_admin`, so admins were rejected on every proposal they
+// didn't own (campaign sessions belong to usernode-platform).
+test('a write-capable admin can recheck a session they do not own', async () => {
+  poolQueryHandler = async (sql) => {
+    if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) {
+      return { rows: [sessionRow({ user_id: 999 })] };
+    }
+    return { rows: [] };
+  };
+  const origSet = visuals.setChecksPending;
+  const origNotify = visuals.notifyChecksPending;
+  const origRecheck = stagingRecovery.recheckSessionChecks;
+  visuals.setChecksPending = async () => {};
+  visuals.notifyChecksPending = () => {};
+  stagingRecovery.recheckSessionChecks = async () => 'rechecked';
+  const server = await startServer({ id: 8, username: 'admin', isAdmin: true, canAdminWrite: true });
+  try {
+    const { res, body } = await postRecheck(server);
+    assert.strictEqual(res.status, 200);
+    assert.strictEqual(body.status, 'running');
+  } finally {
+    visuals.setChecksPending = origSet;
+    visuals.notifyChecksPending = origNotify;
+    stagingRecovery.recheckSessionChecks = origRecheck;
+    server.close();
+  }
+});
+
+test('a read-only admin is rejected — rechecks mutate state and cost a build', async () => {
+  poolQueryHandler = async (sql) => {
+    if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) {
+      return { rows: [sessionRow({ user_id: 999 })] };
+    }
+    return { rows: [] };
+  };
+  const server = await startServer({ id: 9, username: 'viewer', isAdmin: true, canAdminWrite: false });
+  try {
+    const { res } = await postRecheck(server);
+    assert.strictEqual(res.status, 403);
+  } finally {
+    server.close();
+  }
+});
+
 test('a non-owner non-admin is rejected before any pending stamp', async () => {
   const calls = [];
   poolQueryHandler = async (sql) => {

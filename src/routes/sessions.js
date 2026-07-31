@@ -3924,7 +3924,10 @@ function sessionRoutes(config) {
         [sessionId]
       );
       if (!rows.length) return res.status(404).end();
-      if (!req.user?.is_admin && rows[0].user_id !== req.user?.id) {
+      // Same camelCase fix as the recheck route below: `is_admin` never
+      // existed on req.user, so admins were silently scoped like regular
+      // users here. Read-only access — plain isAdmin is the right gate.
+      if (!req.user?.isAdmin && rows[0].user_id !== req.user?.id) {
         return res.status(403).end();
       }
     } catch {
@@ -4190,8 +4193,14 @@ function sessionRoutes(config) {
 
       // Owner or admin only — re-running checks costs a staging build +
       // headless run, so it's not opened to every collaborator (deferred).
+      // NB: req.user is the camelCase shape from middleware/auth.js —
+      // `is_admin` doesn't exist on it, and checking it meant admins were
+      // 403'd on every proposal they didn't own (surfaced by the campaign
+      // dashboard, whose sessions belong to usernode-platform). Rechecks
+      // mutate check state and cost a build, so gate on canAdminWrite
+      // (excludes read-only admins), matching the dashboard's CAN_WRITE.
       const isOwner = session.user_id === req.user.id;
-      if (!isOwner && !req.user?.is_admin) {
+      if (!isOwner && !req.user?.canAdminWrite) {
         return res.status(403).json({ error: 'Not allowed' });
       }
 
