@@ -830,6 +830,21 @@ function maybeAutoMergeAfterChecks(config, pool, session, state) {
   });
 }
 
+// #866: which git ref identifies this session's code in the app's OWN repo.
+// Native rows push their work to a branch there, so the branch name resolves.
+// An imported PR may be headed by a FORK: `branch_name` is the PR's head ref,
+// which need not exist in the base repo at all, so compares and file reads
+// against it 404 (and, worse, silently resolve to an unrelated same-named
+// branch when one does exist). The head SHA is always reachable in the base
+// repo — GitHub publishes every PR head under refs/pull/<N>/head — so pin to
+// that for imported rows and keep the branch for native ones.
+function sessionGitRef(session, commitHash) {
+  if (session && session.source === 'imported') {
+    return session.imported_pr_head_sha || commitHash || null;
+  }
+  return (session && session.branch_name) || null;
+}
+
 async function captureForSession(config, session, app, commitHash, stagingResult, { send } = {}) {
   if (_inFlight.has(session.id)) {
     // Re-queue instead of dropping: park the NEWER run's arguments (latest
@@ -861,10 +876,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // Heuristic gate. If the compare call fails, default to capturing —
     // staging exists, and a wasted screenshot is cheaper than a missed one.
     let uiAffecting = true;
-    if (github.isEnabled() && repoOwner && repoName && session.branch_name) {
+    const gitRef = sessionGitRef(session, commitHash);
+    if (github.isEnabled() && repoOwner && repoName && gitRef) {
       try {
         const files = await github.listChangedFiles(
-          repoOwner, repoName, `main...${session.branch_name}`
+          repoOwner, repoName, `main...${gitRef}`
         );
         uiAffecting = isUiAffecting(files);
       } catch (err) {
@@ -882,7 +898,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     const media = uiAffecting;
     if (!media) {
       log.info('visuals', 'No frontend files in commit range — console-only check', {
-        sessionId: session.id, branch: session.branch_name,
+        sessionId: session.id, ref: gitRef,
       });
     }
 
@@ -1077,7 +1093,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // errors" test per capture path — so every proposal gets at least the
     // #381 coverage. Each test's route is resolved to the same staging
     // origin + token (and self-app hash normalisation) as the after target.
-    const declaredTests = await resolveDeclaredTests(repoOwner, repoName, session.branch_name);
+    const declaredTests = await resolveDeclaredTests(repoOwner, repoName, gitRef);
     const tests = (declaredTests.length
       ? declaredTests
       : capturePaths.map((p) => ({ name: `Loads ${p}`, path: p, expectSelector: '', expectText: '', allowConsoleErrors: false }))
@@ -1342,21 +1358,23 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   }
 }
 
-// #47: fetch the proposal branch's declared dapp.json `tests` from GitHub
-// (the staging clone is gone by now) and normalise via the manifest
-// reader. Returns [] when GitHub is disabled, the file is absent, or
-// anything goes wrong — the caller then synthesizes the baseline suite.
-async function resolveDeclaredTests(repoOwner, repoName, branch) {
-  if (!github.isEnabled() || !repoOwner || !repoName || !branch) return [];
+// #47: fetch the proposal's declared dapp.json `tests` from GitHub (the
+// staging clone is gone by now) and normalise via the manifest reader.
+// `ref` is anything getFileContent accepts — a branch for native rows, a
+// head SHA for imported (possibly fork-headed) ones, see sessionGitRef.
+// Returns [] when GitHub is disabled, the file is absent, or anything goes
+// wrong — the caller then synthesizes the baseline suite.
+async function resolveDeclaredTests(repoOwner, repoName, ref) {
+  if (!github.isEnabled() || !repoOwner || !repoName || !ref) return [];
   try {
-    const raw = await github.getFileContent(repoOwner, repoName, appManifest.MANIFEST_FILENAME, branch);
+    const raw = await github.getFileContent(repoOwner, repoName, appManifest.MANIFEST_FILENAME, ref);
     if (!raw) return [];
     let parsed;
     try { parsed = JSON.parse(raw); } catch { return []; }
     return appManifest.readTests(parsed);
   } catch (err) {
     log.warn('visuals', 'Declared-test fetch failed — using baseline', {
-      repo: `${repoOwner}/${repoName}`, branch, err: err.message,
+      repo: `${repoOwner}/${repoName}`, ref, err: err.message,
     });
     return [];
   }
@@ -1461,6 +1479,7 @@ module.exports = {
   maybeAutoMergeAfterChecks,
   consoleSnapshotFromTests,
   resolveDeclaredTests,
+  sessionGitRef,
   isFrontendFile,
   isUiAffecting,
   parseShots,

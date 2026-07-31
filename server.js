@@ -63,6 +63,10 @@ const recoveryPills = require('./src/services/recovery-pills');
 const sessionLifecycle = require('./src/services/session-lifecycle');
 const stagingRecovery = require('./src/services/staging-recovery');
 const stagingReap = require('./src/services/staging-reap');
+// #866: the sweeper needs staging.hasInFlightBuild() to leave sessions whose
+// preview is being built right now alone (see Pass 2 / Pass 3 below). Named
+// stagingSvc because recoverActiveWorkers() already binds a local `staging`.
+const stagingSvc = require('./src/services/staging');
 const limits = require('./src/services/limits');
 const ws = require('./src/services/ws');
 const log = require('./src/services/logger');
@@ -2443,12 +2447,21 @@ function startSessionAutoPauseSweeper(config) {
     // sessions cold past the (much longer) staging-idle window. Skips
     // promoted/merging (their preview backs the group vote) and anything
     // mid-turn. Status is untouched — only the preview is reclaimed.
+    //
+    // #866: 'archived' is now IN scope. A withdrawn proposal keeps no vote
+    // to back, so its container is pure waste — and imported proposals made
+    // that leak routine: the build takes minutes, the author can withdraw
+    // mid-build, and the post-build status re-check (pr-import-sync) only
+    // tears down the container it built itself. Anything already running
+    // when the withdrawal landed (or built by a process that then died)
+    // stayed up forever, since the old filter excluded archived rows. The
+    // in-flight guard below is what keeps this from racing a live build.
     if (config.stagingIdleTeardownMs && config.stagingIdleTeardownMs > 0) {
       try {
         const { rows } = await pool.query(
           `SELECT id FROM chat_sessions
            WHERE staging_container_id IS NOT NULL
-             AND status NOT IN ('promoted', 'merging', 'merged', 'archived')
+             AND status NOT IN ('promoted', 'merging', 'merged')
              AND last_activity_at < NOW() - make_interval(secs => $1::double precision / 1000.0)
            ORDER BY last_activity_at ASC
            LIMIT 20`,
@@ -2456,6 +2469,10 @@ function startSessionAutoPauseSweeper(config) {
         );
         for (const row of rows) {
           if (activeWorkersSvc.isSessionBusy(row.id)) continue;
+          // Never reclaim under a build that's still running in this process:
+          // it would delete the container/DB the build is about to record,
+          // leaving a staging_url pointing at nothing.
+          if (stagingSvc.hasInFlightBuild(row.id)) continue;
           try {
             await sessionLifecycle.teardownStagingForSession({ pool, sessionId: row.id, reason: 'idle-gc' });
           } catch (err) {
@@ -2575,6 +2592,13 @@ function startSessionAutoPauseSweeper(config) {
       for (const session of rows) {
         if (healed >= MAX_HEALS_PER_SWEEP) break;
         if (worker.isInFlight(session.id)) continue;
+        // #866: worker.isInFlight only covers agent turns. An imported
+        // proposal's first staging build runs from the import path with no
+        // worker attached, and it can take minutes — during which
+        // staging_url is still NULL, so stagingNeedsRebuild() says "missing"
+        // and this pass would start a second, concurrent build of the same
+        // commit. hasInFlightBuild() is the flag that build sets.
+        if (stagingSvc.hasInFlightBuild(session.id)) continue;
         if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) continue;
         const last = stagingHealAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;

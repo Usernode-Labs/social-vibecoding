@@ -850,6 +850,21 @@
       "name": "Topochain seasons screen renders at #topochain/seasons (Task 14)",
       "path": "/#topochain/seasons",
       "expectSelector": "#topochain-seasons-screen:not(.hidden) #tc-se-grid"
+    },
+    {
+      "name": "Imported proposal mid-build shows the Preview building pill (#866)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Preview building"
+    },
+    {
+      "name": "Imported proposal whose preview failed shows the unavailable chip (#866)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Preview unavailable"
+    },
+    {
+      "name": "A failed imported preview offers Retry preview (#866)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectText": "Retry preview"
     }
   ],
   "governance": {

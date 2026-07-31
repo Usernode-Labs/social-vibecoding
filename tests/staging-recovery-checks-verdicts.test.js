@@ -69,6 +69,7 @@ function loadRecovery() {
   const errorChecks = [];
   const drains = [];
   const broadcasts = [];
+  const notes = [];
   const originals = [
     [paths.logger, stubModule(paths.logger, { info() {}, warn() {}, error() {}, debug() {} })],
     [paths.visuals, stubModule(paths.visuals, {
@@ -86,6 +87,11 @@ function loadRecovery() {
     [paths.ws, stubModule(paths.ws, {
       broadcastGlobal: (m) => broadcasts.push(m),
       pushSessionUpdate: () => {},
+      // #866: imported proposals narrate into the group discussion thread
+      // (they have no dev chat), so this is now part of the failure path.
+      sendSystemMessage: async (_pool, appId, text, kind, metadata, target) => {
+        notes.push({ appId, text, kind, metadata, target });
+      },
     })],
   ];
   delete require.cache[paths.subject];
@@ -96,7 +102,7 @@ function loadRecovery() {
     }
     delete require.cache[paths.subject];
   };
-  return { subject, skippedCalls, errorChecks, drains, broadcasts, restore };
+  return { subject, skippedCalls, errorChecks, drains, broadcasts, notes, restore };
 }
 
 const SESSION = {
@@ -243,4 +249,123 @@ test("storeChecks 'error' branch keeps the backoff bookkeeping the compare-throw
     assert.equal(q.params[0], 'error');
     assert.match(String(q.params[4]), /could not compare/);
   } finally { restore(); }
+});
+
+// ── #866: imported proposals heal by SHA and narrate where they're visible ──
+//
+// An imported PR reaches this file the moment its preview is GC'd or lost to a
+// restart, and every assumption the heal made about a session was a native
+// one: compare `main...<branch_name>` (a fork's head ref isn't in the base
+// repo → permanent 'error' verdict), open a PR if none exists (there always is
+// one — it's someone else's), and write the breadcrumb to
+// chat_session_messages (a surface an imported proposal cannot open).
+//
+// The compare path itself can't be driven here — rebuildSessionStaging does
+// `await import('@octokit/rest')`, which isn't installed in the test tree (see
+// the header note), and an ESM dynamic import can't be require.cache-stubbed.
+// So the reachable half is asserted behaviourally and the rest as source
+// invariants, the same convention as tests/staging-pill-fixture-visibility.js.
+
+// A pool that answers recordStagingBootFailure's streak readback, so the
+// notify/post half of the function actually runs.
+function makeStreakPool(row) {
+  const queries = [];
+  return {
+    queries,
+    async query(sql, params) {
+      queries.push({ sql: String(sql), params });
+      if (/SELECT user_id, app_id, pr_number/.test(String(sql))) return { rows: [row] };
+      return { rows: [], rowCount: 1 };
+    },
+  };
+}
+
+const STREAK_ROW = { user_id: 3, app_id: 5, pr_number: 9401, consecutive_check_failures: 1, check_error_notified_at: null };
+
+test('boot failure on an IMPORTED proposal posts to the discussion thread, not the dev transcript', async () => {
+  const { subject, notes, restore } = loadRecovery();
+  const pool = makeStreakPool(STREAK_ROW);
+  try {
+    await subject.recordStagingBootFailure({
+      config: {}, pool,
+      session: { ...SESSION, source: 'imported', imported_pr_head_sha: 'abc123', pr_number: 9401 },
+      commitHash: 'abc123',
+      err: new Error('missing required secret OPENAI_KEY'),
+    });
+    assert.equal(notes.length, 1, 'exactly one post per failure streak');
+    const n = notes[0];
+    assert.deepEqual(n.target, { type: 'session', ref: 42 },
+      'targets the proposal discussion thread — an imported PR has no dev chat to read');
+    assert.match(n.text, /Staging preview failed to start/);
+    assert.match(n.text, /missing required secret OPENAI_KEY/, 'names the blocking reason');
+    assert.match(n.text, /can't merge yet/, 'connects the failure to the blocked merge');
+    assert.equal(n.metadata.checkError, true);
+    assert.equal(n.metadata.prNumber, 9401);
+    assert.ok(!pool.queries.some((q) => /INSERT INTO chat_session_messages/.test(q.sql)),
+      'no row written to the invisible surface');
+  } finally { restore(); }
+});
+
+test('boot failure on a NATIVE session still writes the dev-chat transcript row', async () => {
+  const { subject, notes, restore } = loadRecovery();
+  const pool = makeStreakPool(STREAK_ROW);
+  try {
+    await subject.recordStagingBootFailure({
+      config: {}, pool, session: { ...SESSION },
+      commitHash: 'cafe1234', err: new Error('port already in use'),
+    });
+    assert.equal(notes.length, 0, 'native sessions do not post to the group thread');
+    const insert = pool.queries.find((q) => /INSERT INTO chat_session_messages/.test(q.sql));
+    assert.ok(insert, 'the dev chat is where a native session reads its failures');
+    assert.match(String(insert.params[1]), /port already in use/);
+  } finally { restore(); }
+});
+
+test('a quiet backoff retry narrates nothing, imported or not', async () => {
+  const { subject, notes, restore } = loadRecovery();
+  const pool = makeStreakPool({ ...STREAK_ROW, consecutive_check_failures: 3, check_error_notified_at: '2026-07-01T00:00:00Z' });
+  try {
+    await subject.recordStagingBootFailure({
+      config: {}, pool, session: { ...SESSION, source: 'imported' },
+      commitHash: 'abc123', err: new Error('still broken'),
+    });
+    assert.equal(notes.length, 0, 'the streak was already announced');
+    assert.ok(!pool.queries.some((q) => /UPDATE chat_sessions SET check_error_notified_at/.test(q.sql)),
+      'and the stamp is not rewritten');
+  } finally { restore(); }
+});
+
+// ── source invariants for the compare/PR/breadcrumb branches ────────────
+
+const RECOVERY_SRC = require('node:fs').readFileSync(
+  require('node:path').join(__dirname, '..', 'src', 'services', 'staging-recovery.js'), 'utf8'
+);
+
+test('the heal compares and pins the IMPORTED head sha, never the fork branch name', () => {
+  assert.match(RECOVERY_SRC, /const importedHead = imported \? \(session\.imported_pr_head_sha \|\| null\) : null;/,
+    'the recorded head sha is the imported identity');
+  assert.match(RECOVERY_SRC, /const compareHead = importedHead \|\| session\.branch_name;/,
+    'imported → sha, native → branch (a fork head ref is not in this repo)');
+  assert.match(RECOVERY_SRC, /base: 'main', head: compareHead/, 'the compare uses it');
+  assert.match(RECOVERY_SRC, /const commitHash = importedHead\s*\n\s*\|\|/,
+    'and the build is pinned to it, not to the compare tip');
+});
+
+test('an imported row with no recorded head sha records a terminal skip', () => {
+  assert.match(RECOVERY_SRC, /if \(imported && !importedHead\) \{[\s\S]*?reason: 'imported PR has no recorded head commit — nothing to preview'/,
+    'nothing to pin → an explicit gate-passing verdict, not a NULL that the sweeper re-picks forever');
+});
+
+test('the heal never opens a PR for an imported proposal', () => {
+  assert.match(RECOVERY_SRC, /if \(!session\.pr_number && !imported\)/,
+    "the PR already exists on GitHub and belongs to its author — creating one would fork the discussion");
+});
+
+test('the rebuilt-preview breadcrumb goes to the surface the proposal can show', () => {
+  const idx = RECOVERY_SRC.indexOf("session.source === 'imported'");
+  assert.ok(idx > 0, 'the breadcrumb branches on the session kind');
+  assert.match(RECOVERY_SRC, /\{ type: 'session', ref: session\.id \}/,
+    'imported → the discussion thread');
+  assert.match(RECOVERY_SRC, /INSERT INTO chat_session_messages/,
+    'native → the dev transcript, unchanged');
 });

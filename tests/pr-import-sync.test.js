@@ -71,6 +71,7 @@ fakeModule('../src/services/staging-recovery', {
 
 const fakeVisuals = require('../src/services/visuals');
 const fakeStaging = require('../src/services/staging');
+const fakeRecovery = require('../src/services/staging-recovery');
 const prImportSync = require('../src/services/pr-import-sync');
 
 // ── governedGate head-scoping ─────────────────────────────────────────
@@ -266,11 +267,77 @@ test('syncImportedProposal: head change resets tally, posts re-review, re-runs p
     assert.match(sysMessages[0].content, /updated on GitHub/i);
     assert.match(sysMessages[0].content, /re-review/i);
     assert.deepEqual(sysMessages[0].thread, { type: 'session', ref: SESSION.id });
+    // #866: the rebuild rides as an appended clause on that ONE note rather
+    // than a second post — the card's Preview slot going back to
+    // "building…" is a consequence of the same event.
+    assert.match(sysMessages[0].content, /preview and automated checks are being rebuilt/i);
 
     assert.ok(sqls.some((s) => /SET behind_main = \$1/.test(s)), 'behind_main refreshed');
 
     assert.equal(buildSha, NEW, 'staging build pinned to the new head SHA');
     assert.equal(captureSha, NEW, 'checks captured against the new head SHA');
+  });
+});
+
+// #866 — the rebuild path shares the withdrawn-mid-build guard with the
+// import-time kick: a proposal closed while the (minutes-long) rebuild ran
+// must not have the finished preview persisted onto it.
+test('rerunChecksForNewHead discards the rebuild when the proposal is no longer open', async () => {
+  const NEW = 'c'.repeat(40);
+  let toreDown = null;
+  await withStubs([
+    [fakeStaging, 'buildAndDeployStaging', async () => ({ containerId: 'cid2', stagingUrl: 'https://s2', hostname: 'h' })],
+    [fakeStaging, 'teardownStaging', async (s, app) => {
+      toreDown = { containerId: s.staging_container_id, url: s.staging_url, slug: app && app.slug };
+    }],
+  ], async () => {
+    const calls = [];
+    const pool = {
+      calls,
+      query: async (sql, params) => {
+        calls.push({ sql, params });
+        if (/SELECT status FROM chat_sessions/.test(sql)) return { rows: [{ status: 'archived' }] };
+        return { rows: [] };
+      },
+    };
+    await prImportSync.rerunChecksForNewHead({
+      config: {}, pool, session: { ...SESSION }, newHead: NEW,
+    });
+
+    assert.ok(!calls.some((c) => /UPDATE chat_sessions SET staging_container_id/.test(c.sql)),
+      'no staging_url written onto a withdrawn proposal');
+    assert.deepEqual(toreDown, { containerId: 'cid2', url: 'https://s2', slug: 'demo' },
+      'the fresh container + URL are torn down instead');
+  });
+});
+
+// #866 — a failed rebuild records the terminal verdict (which is what
+// narrates the reason into the thread — see recordStagingBootFailure) and
+// pushes staging_failed so open cards flip to "Preview unavailable" live
+// instead of holding a spinner until something else refetches.
+test('rerunChecksForNewHead records the failure and pushes staging_failed', async () => {
+  const NEW = 'd'.repeat(40);
+  const pushes = [];
+  const recorded = [];
+  await withStubs([
+    [fakeStaging, 'buildAndDeployStaging', async () => { throw new Error('missing secret OPENAI_KEY'); }],
+    [fakeRecovery, 'recordStagingBootFailure', async ({ commitHash, err }) => {
+      recorded.push({ commitHash, message: err.message });
+    }],
+    [fakeWs, 'pushSessionUpdate', (payload) => { pushes.push(payload); }],
+  ], async () => {
+    const pool = recordingPool();
+    await assert.rejects(
+      prImportSync.rerunChecksForNewHead({ config: {}, pool, session: { ...SESSION }, newHead: NEW }),
+      /missing secret/,
+      'the failure still propagates to the caller (which logs it)'
+    );
+    assert.deepEqual(recorded, [{ commitHash: NEW, message: 'missing secret OPENAI_KEY' }],
+      'verdict recorded against the new head');
+    assert.deepEqual(pushes.map((p) => p.action), ['staging_failed']);
+    assert.equal(pushes[0].appSlug, 'demo');
+    assert.ok(!pool.calls.some((c) => /UPDATE chat_sessions SET staging_container_id/.test(c.sql)),
+      'no preview persisted for a build that failed');
   });
 });
 

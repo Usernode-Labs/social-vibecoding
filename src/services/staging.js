@@ -83,6 +83,32 @@ function hasInFlightBuild(sessionId) {
   return _stagingBuilds.has(Number(sessionId));
 }
 
+// #866 — display-only preview state for a proposal row, derived on read.
+//
+// An imported PR is promoted the instant it's imported, so its card exists
+// for minutes before its preview does. With nothing but `staging_url` to go
+// on the client can't tell "still building" from "will never build", and a
+// row with no Preview button reads as a bug either way. These two derived
+// fields close that gap WITHOUT a persisted staging_state column: the
+// building flag is the in-memory build map above, the error is the reason
+// the checks pass already captured in check_error_detail.
+//
+// Deliberate limitation of the in-memory flag: a platform restart mid-build
+// loses it, so the card falls back to "unavailable" until the staging-heal
+// sweep (server.js Pass 3) re-arms a build and the next refresh flips it
+// back to building. Sub-optimal for a few minutes after a restart, versus a
+// schema change plus a write path that has to be correct on every crash —
+// the trade the spec picks on purpose.
+function previewDisplayState(row) {
+  const missing = !row.staging_url;
+  return {
+    staging_building: !!(missing && hasInFlightBuild(row.id)),
+    staging_error: (missing && row.check_state === 'error' && row.check_error_detail)
+      ? row.check_error_detail
+      : null,
+  };
+}
+
 async function buildAndDeployStaging(config, session, app, commitHash) {
   const key = session.id;
   const current = _stagingBuilds.get(key);
@@ -138,6 +164,20 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // pushing (#687). Pinning the checkout closes that gap.
     const pinnedSha = commitHash && commitHash !== 'latest' ? commitHash : null;
 
+    // #866: a PR opened FROM A FORK has a head ref that doesn't exist in this
+    // app's repo, so `git clone --branch <head ref>` fails outright and the
+    // preview never builds (the reviewer just sees "Checks couldn't run").
+    // GitHub publishes every PR's head commit — fork or not — under
+    // refs/pull/<N>/head in the BASE repo, so when the caller pinned a
+    // concrete commit and the session carries a PR number we clone the repo's
+    // default branch and fetch that ref instead of the head branch. One path
+    // covers both same-repo and fork imports.
+    //
+    // Native sessions (branches the platform itself owns and pushed) keep the
+    // historical branch clone untouched — same behaviour, same timings.
+    const prNumber = Number(session.pr_number) || null;
+    const viaPullRef = !!(pinnedSha && prNumber);
+
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
     // --recurse-submodules + --shallow-submodules so dapps that vendor
     // upstream sources via submodules (e.g. falling-sands → sandspiel)
@@ -146,32 +186,51 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     await docker.execFileAsync('git', [
       'clone', '--depth', '1',
       '--recurse-submodules', '--shallow-submodules',
-      '--branch', session.branch_name, cloneUrl, cloneDir,
+      ...(viaPullRef ? [] : ['--branch', session.branch_name]),
+      cloneUrl, cloneDir,
     ], { timeout: 120000 });
 
     // Exact-SHA pin (#687): when a concrete commit was requested, check out
-    // exactly that commit. The shallow branch clone above only carries the
-    // branch tip, so if the branch has advanced past the pinned SHA the
-    // plain checkout fails and we fetch just that commit first (GitHub
-    // permits fetching a reachable SHA), then check it out. Detaches HEAD at
-    // the pinned commit; a no-op detach when the tip already IS that SHA.
-    // Submodules are re-synced to the checked-out commit afterwards (a no-op
-    // for dapps without any). Scoped strictly to this checkout step — the
-    // rest of the build (secrets gating, DB clone, container run, teardown)
-    // is unchanged.
+    // exactly that commit. The shallow clone above only carries one tip, so
+    // the commit usually isn't present yet: fetch it first (via the PR head
+    // ref when we have a PR number — the only way to reach a fork's commit
+    // through the base repo — else the bare SHA, which GitHub permits for a
+    // reachable commit), then check it out. Detaches HEAD at the pinned
+    // commit; a no-op detach when the tip already IS that SHA. Submodules are
+    // re-synced to the checked-out commit afterwards (a no-op for dapps
+    // without any). Scoped strictly to this checkout step — the rest of the
+    // build (secrets gating, DB clone, container run, teardown) is unchanged.
     if (pinnedSha) {
-      try {
-        await docker.execFileAsync('git', [
-          '-C', cloneDir, 'checkout', '--detach', pinnedSha,
-        ], { timeout: 30000 });
-      } catch {
-        await docker.execFileAsync('git', [
-          '-C', cloneDir, 'fetch', '--depth', '1', 'origin', pinnedSha,
-        ], { timeout: 120000 });
-        await docker.execFileAsync('git', [
-          '-C', cloneDir, 'checkout', '--detach', pinnedSha,
-        ], { timeout: 30000 });
+      const detach = () => docker.execFileAsync('git', [
+        '-C', cloneDir, 'checkout', '--detach', pinnedSha,
+      ], { timeout: 30000 });
+      const fetchRefs = [
+        ...(viaPullRef ? [`refs/pull/${prNumber}/head`] : []),
+        pinnedSha,
+      ];
+      let checkedOut = false;
+      // A plain detach only works when the pinned commit is already in the
+      // shallow clone (same-repo import whose branch tip IS the pinned SHA).
+      // Skip it for the pull-ref path: we cloned the default branch there, so
+      // it can only ever fail.
+      if (!viaPullRef) {
+        try {
+          await detach();
+          checkedOut = true;
+        } catch { /* fall through to the fetch attempts below */ }
       }
+      let lastErr = null;
+      for (const ref of fetchRefs) {
+        if (checkedOut) break;
+        try {
+          await docker.execFileAsync('git', [
+            '-C', cloneDir, 'fetch', '--depth', '1', 'origin', ref,
+          ], { timeout: 120000 });
+          await detach();
+          checkedOut = true;
+        } catch (err) { lastErr = err; }
+      }
+      if (!checkedOut) throw lastErr || new Error(`Could not check out ${pinnedSha}`);
       await docker.execFileAsync('git', [
         '-C', cloneDir, 'submodule', 'update', '--init', '--recursive', '--depth', '1',
       ], { timeout: 120000 }).catch(() => {});
@@ -733,6 +792,7 @@ async function rebuildProductionInner(config, app) {
 module.exports = {
   buildAndDeployStaging,
   hasInFlightBuild,
+  previewDisplayState,
   warmStagingCert,
   teardownStaging,
   rebuildProduction,

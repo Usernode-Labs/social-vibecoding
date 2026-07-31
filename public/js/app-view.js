@@ -4752,6 +4752,15 @@ const AppView = {
     const importedNote = imported
       ? `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">Imported pull request${pr.imported_pr_author ? ` — authored by <span class="font-medium">${escapeHtml(pr.imported_pr_author)}</span>` : ''}. The code is maintained on GitHub; there's no in-app dev session for it. Voting and checks work the same as any proposal.</div>`
       : '';
+    // #866: say in prose what the Preview slot says in a pill, so the
+    // detail view explains why there's no Preview button yet (or why there
+    // won't be one) instead of leaving a reviewer to guess.
+    let previewNote = '';
+    if (!pr.staging_url && pr.staging_building) {
+      previewNote = '<div class="text-xs text-zinc-500 dark:text-zinc-400 mt-1">A staging preview is being built for this proposal — it usually takes a few minutes, and a Preview button appears as soon as it\'s ready. Automated checks run against that preview, so they\'ll still be pending until then.</div>';
+    } else if (!pr.staging_url && pr.staging_error) {
+      previewNote = `<div class="text-xs text-amber-600 dark:text-amber-400 mt-1">The staging preview couldn't be built, so there's nothing to preview and the automated checks can't run: ${escapeHtml(String(pr.staging_error).slice(0, 300))}</div>`;
+    }
     const lockedNote = (ctx.locked && pr.status !== 'merged')
       ? '<div class="text-xs text-amber-500 mt-1">App is locked — this also needs at least one admin yes before it merges.</div>'
       : '';
@@ -4791,6 +4800,7 @@ const AppView = {
       <div class="text-xs text-zinc-500 dark:text-zinc-400 mt-2 px-1">
         <div>${details.join(' · ')}${helpBtn}</div>
         ${importedNote}
+        ${previewNote}
         ${chips ? `<div class="mt-1 flex flex-wrap gap-1 items-center"><span>Linked issues:</span> ${chips}</div>` : ''}
         ${AppView._mergeConflictDetailHtml(pr)}
         ${AppView._checksDetailHtml(pr)}
@@ -8153,12 +8163,15 @@ const AppView = {
     } else {
       delete AppView._sessionTesting[pr.id];
     }
-    const preview = pr.staging_url
-      ? `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`
-      : '';
+    const preview = AppView._previewAffordanceHtml(pr);
     // #621: read-only viewers keep the Preview affordance but get no
     // vote controls — the tally pill on the card already shows counts.
+    // #866: they also get no "Retry preview" (the ensure POST is
+    // collab-gated), so the unavailable chip renders bare for them.
     if (AppView.readOnly) return preview;
+    const retryPreview = (!pr.staging_url && pr.staging_error)
+      ? `<button class="gc-vote-btn" title="Try building this proposal's staging preview again" onclick="AppView.swapToStagingForSession(${pr.id}, '')">Retry preview</button>`
+      : '';
     // #788: force-merge is available to platform admins AND to the app's
     // own declared admins (ctx.canManage covers creator + app admins,
     // but only app admins / platform admins get force-merge — the
@@ -8176,7 +8189,40 @@ const AppView = {
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
     const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${yesT.label})</button>`;
     const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no')">No (${noT.label})</button>`;
-    return preview + yesBtn + noBtn + adminMerge;
+    return preview + retryPreview + yesBtn + noBtn + adminMerge;
+  },
+
+  // #866: the Preview slot has three states, not two.
+  //
+  // Native proposals are promoted only after their preview is already up, so
+  // "has staging_url" was a fine proxy for "previewable". An imported PR is
+  // promoted the instant it's imported and its preview is built afterwards,
+  // which leaves the card in a state the old two-way branch rendered as
+  // nothing at all — indistinguishable from a permanent failure, and read by
+  // reviewers as a broken card. So:
+  //   staging_url        → the Preview button (unchanged).
+  //   staging_building   → a non-interactive "Preview building…" pill. Not a
+  //                        button: clicking through to ensure-staging while
+  //                        the first build is still running would only ever
+  //                        return 'rebuilding' and park a loader.
+  //   staging_error      → "Preview unavailable" with the captured reason in
+  //                        the tooltip; voteButtonsHtml adds "Retry preview"
+  //                        beside it for viewers who can trigger a rebuild.
+  // Neither flag (a plain GC'd or not-yet-built native row) keeps today's
+  // empty slot.
+  _previewAffordanceHtml(pr) {
+    if (!pr) return '';
+    if (pr.staging_url) {
+      return `<button class="gc-vote-btn gc-vote-btn-preview" onclick="AppView.swapToStagingForSession(${pr.id}, '${pr.staging_url}')">Preview</button>`;
+    }
+    if (pr.staging_building) {
+      return '<span class="gc-checks-running-badge" title="The staging preview for this proposal is being built — this usually takes a few minutes. A Preview button appears here as soon as it&#39;s ready.">'
+        + '<span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Preview building…</span>';
+    }
+    if (pr.staging_error) {
+      return `<span class="gc-conflict-badge" title="${escapeAttr(String(pr.staging_error).slice(0, 300))}">Preview unavailable</span>`;
+    }
+    return '';
   },
 
   // #695: the Yes/No button tally. On invited-approver apps (row carries
@@ -8476,12 +8522,20 @@ const AppView = {
       const head = escapeHtml(String(c.headBranch || ''));
       const base = escapeHtml(String(c.baseBranch || ''));
       const url = escapeAttr(String(c.htmlUrl || ''));
+      // #866: fork provenance. A fork-headed PR's branch lives in someone
+      // else's repo — the preview is built from the PR head ref instead, and
+      // the code is an outside contributor's. Say so on the row so the choice
+      // is informed rather than discovered after importing.
+      const fork = c.fromFork
+        ? `<span class="block text-xs text-amber-600 dark:text-amber-400 mt-0.5" title="This branch lives in a fork, not in this app's own repository. The preview is built from the pull request's head commit. Review the changes on GitHub before importing.">from a fork — <span class="font-mono">${escapeHtml(String(c.headRepo || 'unknown fork'))}</span></span>`
+        : '';
       return `
         <label class="flex items-start gap-3 p-3 rounded-lg border border-zinc-200 dark:border-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-800/60 cursor-pointer transition-colors">
           <input type="radio" name="import-pr-choice" value="${num}" class="mt-1 accent-violet-600">
           <span class="flex-1 min-w-0">
             <span class="block text-sm font-medium text-zinc-800 dark:text-zinc-200">#${num} · ${title}</span>
             <span class="block text-xs text-zinc-500 dark:text-zinc-400 mt-0.5">${author} — <span class="font-mono">${head} → ${base}</span></span>
+            ${fork}
             ${url ? `<a href="${url}" target="_blank" rel="noopener" class="inline-block text-xs text-violet-500 hover:underline mt-1" onclick="event.stopPropagation()">View on GitHub ↗</a>` : ''}
           </span>
         </label>`;
@@ -8608,8 +8662,11 @@ const AppView = {
       await AppView.openTopic('proposal', sessionId);
     } catch (_) {
       // The proposal exists regardless; say so rather than swallowing it.
+      // #866: set the expectation that the Preview button isn't there yet —
+      // the staging build takes minutes, and until it lands the proposal
+      // shows "Preview building…" with checks pending.
       if (typeof PlatformUI !== 'undefined' && PlatformUI.toast) {
-        PlatformUI.toast(`PR #${pr} was imported — find it in the Dev proposals list.`);
+        PlatformUI.toast(`PR #${pr} was imported — its preview is being built now. Find it in the Dev proposals list.`);
       }
     }
     AppView.closeImportPrModal();
