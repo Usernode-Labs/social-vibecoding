@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "scope": "social-vibecoding-react-shell",
   "fallback": "route",
   "excludes": [
@@ -9,8 +9,11 @@
   ],
   "changedFileScope": [
     "AGENTS.md",
+    "CLAUDE.md",
+    ".gitignore",
+    ".github/workflows/frontend-checks.yml",
     "NATIVE-BRIDGE.md",
-    "agent-skills/ui-development/",
+    "agent-skills/",
     "frontend/",
     "public/",
     "server.js",
@@ -18,6 +21,62 @@
     "tool/"
   ],
   "workflows": {
+    "harness": {
+      "priority": 110,
+      "description": "Maintain agent instructions, skills, discovery adapters, workflow routing, fitness evidence, or agent batteries.",
+      "terms": [
+        "agent harness",
+        "harness fitness",
+        "agent skill",
+        "agent-skills",
+        "workflow resolver",
+        "workflow router",
+        "instruction adapter",
+        "agent battery",
+        "agents.md",
+        "claude.md"
+      ],
+      "paths": [
+        "AGENTS.md",
+        "CLAUDE.md",
+        ".gitignore",
+        ".github/workflows/frontend-checks.yml",
+        "agent-skills/",
+        "tool/",
+        "frontend/scripts/check-harness",
+        "frontend/scripts/harness-fingerprint",
+        "frontend/scripts/run-agent-battery",
+        "frontend/scripts/run-live-agent-battery",
+        "frontend/scripts/ui-workflow",
+        "frontend/design-system/agent-battery.tasks.json",
+        "frontend/design-system/harness-fitness"
+      ],
+      "suppresses": [
+        "review"
+      ],
+      "context": [
+        "AGENTS.md",
+        "agent-skills/harness-fitness/SKILL.md",
+        "agent-skills/ui-development/SKILL.md",
+        "agent-skills/ui-development/workflows.json",
+        "frontend/AGENTS.md",
+        "frontend/scripts/check-harness-fitness.mjs",
+        "frontend/scripts/check-harness-integrity.mjs",
+        "frontend/scripts/run-agent-battery.mjs"
+      ],
+      "checks": [
+        "npm run check:harness-integrity",
+        "npm run check:harness-fitness",
+        "npm run test:harness",
+        "npm run test:agent-battery"
+      ],
+      "evidence": [
+        "Every harness-owned routing case resolves to the expected workflow without stealing unrelated work.",
+        "Supported Claude and Codex adapters resolve the same canonical skills.",
+        "Fitness findings report loaded context and evidence age without weakening blocking integrity."
+      ],
+      "stop": "Stop before recording a new baseline or portability claim without accepted exact-state and matched-runner evidence."
+    },
     "authority": {
       "priority": 100,
       "description": "Change tokens, component contracts, registry distribution, or design-system policy.",
@@ -75,6 +134,7 @@
         "native"
       ],
       "paths": [
+        "NATIVE-BRIDGE.md",
         "frontend/@/lib/native-bridge",
         "frontend/@/lib/auth",
         "frontend/@/lib/external-links",
@@ -221,7 +281,6 @@
         "release",
         "handoff",
         "final",
-        "audit",
         "taste",
         "ui.sh"
       ],
@@ -254,7 +313,9 @@
         "responsive"
       ],
       "paths": [
-        "frontend/@/features/"
+        "frontend/@/features/",
+        "server.js",
+        "tests/"
       ],
       "context": [
         "frontend/AGENTS.md",
@@ -277,6 +338,78 @@
       "stop": "Stop before retiring a legacy route until the route-parity record is complete and reviewed."
     }
   },
+  "routingCases": [
+    {
+      "id": "harness-task",
+      "task": "Audit whether the agent harness is equally usable by Claude and Codex",
+      "files": [],
+      "expected": ["harness"],
+      "forbidden": ["review", "route"]
+    },
+    {
+      "id": "harness-path",
+      "task": "",
+      "files": ["tool/ui-workflow.mjs"],
+      "expected": ["harness"],
+      "forbidden": ["route", "review"]
+    },
+    {
+      "id": "canonical-skill-path",
+      "task": "",
+      "files": ["agent-skills/ui-development/workflows.json"],
+      "expected": ["harness"],
+      "forbidden": ["route"]
+    },
+    {
+      "id": "root-instructions",
+      "task": "",
+      "files": ["AGENTS.md"],
+      "expected": ["harness"],
+      "forbidden": ["route"]
+    },
+    {
+      "id": "native-contract",
+      "task": "",
+      "files": ["NATIVE-BRIDGE.md"],
+      "expected": ["contract"],
+      "forbidden": ["harness"]
+    },
+    {
+      "id": "component-review",
+      "task": "Polish Activity feed component copy and add Storybook state",
+      "files": [],
+      "expected": ["content", "component", "review"],
+      "forbidden": ["harness"]
+    },
+    {
+      "id": "ordinary-route",
+      "task": "Change the Apps route",
+      "files": ["frontend/@/features/apps/apps-route.tsx"],
+      "expected": ["route"],
+      "forbidden": ["harness"]
+    },
+    {
+      "id": "public-contract",
+      "task": "",
+      "files": ["public/sw.js"],
+      "expected": ["contract"],
+      "forbidden": ["harness"]
+    },
+    {
+      "id": "server-fallback",
+      "task": "",
+      "files": ["server.js"],
+      "expected": ["route"],
+      "forbidden": ["harness"]
+    },
+    {
+      "id": "test-contract",
+      "task": "Review native bridge compatibility",
+      "files": ["tests/usernode-bridge.test.js"],
+      "expected": ["contract"],
+      "forbidden": ["harness"]
+    }
+  ],
   "fullGate": [
     {
       "cwd": "root",
@@ -327,6 +460,11 @@
       "cwd": "frontend",
       "command": "npm run check:harness-integrity",
       "ciEvidence": "npm run check:harness-integrity"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:harness-fitness",
+      "ciEvidence": "npm run check:harness-fitness"
     },
     {
       "cwd": "frontend",

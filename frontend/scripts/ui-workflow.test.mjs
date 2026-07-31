@@ -41,3 +41,21 @@ test("unrelated files do not contaminate a task classification", () => {
   assert.deepEqual(result.changedFiles, [])
   assert.deepEqual(result.classifications, ["route"])
 })
+
+test("harness audit selects harness checks without the UI review gate", () => {
+  const result = resolve("Audit whether the agent harness is equally usable by Claude and Codex")
+  assert.deepEqual(result.classifications, ["harness"])
+  assert.ok(result.checks.includes("npm run check:harness-integrity"))
+  assert.ok(result.checks.includes("npm run check:harness-fitness"))
+  assert.ok(!result.checks.includes("npm run check:ui"))
+})
+
+test("router source changes route back to the harness workflow", () => {
+  const result = resolve("", ["tool/ui-workflow.mjs"])
+  assert.deepEqual(result.classifications, ["harness"])
+})
+
+test("generic audit language does not steal ordinary feature work", () => {
+  const result = resolve("Audit the Apps route behavior", ["frontend/@/features/apps/apps-route.tsx"])
+  assert.deepEqual(result.classifications, ["route"])
+})

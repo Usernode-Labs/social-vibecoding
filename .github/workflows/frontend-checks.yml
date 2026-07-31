@@ -21,7 +21,7 @@ on:
       - "server.js"
       - "AGENTS.md"
       - "CLAUDE.md"
-      - "agent-skills/ui-development/**"
+      - "agent-skills/**"
       - "docs/react-migration.md"
       - "tool/**"
   push:
@@ -64,6 +64,17 @@ jobs:
       - run: npm run check:content
       - run: npm run test:content
       - run: npm run check:harness-integrity
+      - name: Report harness fitness
+        env:
+          HARNESS_FITNESS_OUTPUT: ${{ runner.temp }}/harness-fitness.json
+        run: npm run check:harness-fitness
+      - name: Upload harness fitness report
+        uses: actions/upload-artifact@v4
+        with:
+          name: harness-fitness-${{ github.sha }}
+          path: ${{ runner.temp }}/harness-fitness.json
+          if-no-files-found: error
+          retention-days: 30
       - run: npm run check:harness
       - run: npm run test:harness
       - run: npm run test:agent-battery

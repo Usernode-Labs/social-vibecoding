@@ -18,9 +18,14 @@ data/
 hackathon-data/
 .playwright-mcp/
 .superpowers/
-.agents/
-.claude/
-.codex/
+# Generated local Agent Skills discovery links. Keep the surrounding adapter
+# directories reviewable so future vendor configuration cannot vanish silently.
+.agents/skills/ui-development
+.agents/skills/harness-fitness
+.claude/skills/ui-development
+.claude/skills/harness-fitness
+# Legacy generated link from the former, unsupported repository adapter.
+.codex/skills/ui-development
 
 *storybook.log
 storybook-static

@@ -13,9 +13,11 @@ This file is deliberately vendor-neutral. Codex, Claude, and other coding
 agents should read it before making migration changes.
 
 For React route, component, or UI-review work, read
-`agent-skills/ui-development/SKILL.md`. Run `tool/setup-agent-skills.sh` to
-expose that same canonical skill through local `.agents`, `.claude`, and
-`.codex` discovery paths; those generated adapters are intentionally ignored.
+`agent-skills/ui-development/SKILL.md`. For agent-harness maintenance or model
+fitness review, read `agent-skills/harness-fitness/SKILL.md`. Run
+`tool/setup-agent-skills.sh` to expose canonical project skills through the
+local `.agents` Codex and `.claude` Claude discovery paths; those generated
+links are intentionally ignored.
 Begin UI work with `node tool/ui-workflow.mjs --task "<task>"`; it provides
 progressive, task-specific context and gates without depending on one agent
 vendor's hook runtime. Its classifications compose: follow every selected

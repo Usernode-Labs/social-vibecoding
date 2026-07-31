@@ -1,0 +1,4 @@
+interface:
+  display_name: "Harness Fitness"
+  short_description: "Audit harness drift and model fitness"
+  default_prompt: "Use $harness-fitness to audit this repository harness and propose one measured improvement."

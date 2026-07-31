@@ -40,8 +40,9 @@ function changedFiles() {
 }
 
 function matchesPath(file, hint) {
-  if (hint.startsWith(".")) return file.endsWith(hint)
-  return hint.endsWith("/") ? file.startsWith(hint) : file.includes(hint)
+  if (hint.endsWith("/")) return file.startsWith(hint)
+  if (hint.startsWith(".") && !hint.includes("/")) return file.endsWith(hint)
+  return file.includes(hint)
 }
 
 function classify(task, files) {
@@ -54,7 +55,10 @@ function classify(task, files) {
     .sort(([, left], [, right]) => right.priority - left.priority)
     .map(([id]) => id)
 
-  return matches.length ? matches : [authority.fallback]
+  if (!matches.length) return [authority.fallback]
+
+  const suppressed = new Set(matches.flatMap((id) => workflows[id].suppresses || []))
+  return matches.filter((id) => !suppressed.has(id))
 }
 
 function unique(items) {

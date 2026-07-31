@@ -163,7 +163,7 @@ const evidence = {
   excludes: ["child-app source", "app-factory design system", "hosted usernode-native/v1 consumers"],
   taskDefinition: path.relative(frontendRoot, tasksPath),
   authority: "design-system/authority.json",
-  actor: process.env.AGENT_ACTOR || "codex-current-task",
+  actor: process.env.AGENT_ACTOR || "not-exposed-by-host",
   model: process.env.AGENT_MODEL || "not-exposed-by-host",
   harnessFingerprint: harnessFingerprint().value,
   gitRevision: execFileSync("git", ["rev-parse", "HEAD"], { cwd: repoRoot, encoding: "utf8" }).trim(),
