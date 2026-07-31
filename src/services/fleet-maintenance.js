@@ -52,7 +52,22 @@ const MAX_TOOL_ITERATIONS = 12;
 // Truncation guard for read_file RESULTS only — edits still apply
 // against the full content held in memory, so an old_string deep in a
 // huge file keeps matching even when the model saw a truncated view.
+//
+// The window alone proved insufficient for campaign #1 (JWT switchover,
+// 2026-07-31): the three apps whose server.js exceeded 100 KB
+// (puzzlechain 350 KB, block-game 345 KB, number-guessing 125 KB) all
+// exhausted the tool budget. Their JWT code sat in the visible first
+// 100 KB, but the instructions said "find EVERY place" — and with no way
+// to inspect the rest of the file, the model kept re-reading the same
+// truncated view trying to confirm completeness and never called finish.
+// Every sub-100 KB app succeeded. Hence `offset` on read_file (page
+// through the remainder) and search_file (answer "every place?" in one
+// bounded call).
 const MAX_READ_RESULT_CHARS = 100 * 1024;
+// search_file caps: enough to enumerate every JWT/auth touchpoint in the
+// worst real repo without ever flooding the context.
+const MAX_SEARCH_MATCHES = 50;
+const MAX_SEARCH_LINE_CHARS = 300;
 // Pause between merge-green merges: each one triggers a production
 // rebuild, and stampeding docker builds helps nobody.
 const MERGE_GREEN_DELAY_MS = 2000;
@@ -97,11 +112,26 @@ async function ensurePlatformUser(pool) {
 const CAMPAIGN_TOOLS = [
   {
     name: 'read_file',
-    description: 'Read a file from the app repository (main branch, plus any edits you have already staged). Returns the file content, or "File not found." Start with server.js for backend changes and public/index.html for frontend ones.',
+    description: 'Read a file from the app repository (main branch, plus any edits you have already staged). Returns the file content, or "File not found." Start with server.js for backend changes and public/index.html for frontend ones. Large files are returned in windows: if the result says it was truncated, call read_file again with `offset` to continue, or use search_file to locate what you need.',
     input_schema: {
       type: 'object',
-      properties: { path: { type: 'string', description: 'Repo-relative path, e.g. "server.js"' } },
+      properties: {
+        path: { type: 'string', description: 'Repo-relative path, e.g. "server.js"' },
+        offset: { type: 'integer', description: 'Character offset to start reading from (default 0). Use the value suggested by a truncated read to page through a large file.' },
+      },
       required: ['path'],
+    },
+  },
+  {
+    name: 'search_file',
+    description: 'Find every occurrence of a literal string in one file (main branch, plus any edits you have already staged). Returns matching lines with line numbers. Use this to confirm you have found ALL relevant code in a file too large to read in one window (e.g. search server.js for "JWT_SECRET" or "jwt.verify").',
+    input_schema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Repo-relative path, e.g. "server.js"' },
+        query: { type: 'string', description: 'Literal text to search for (case-sensitive, not a regex)' },
+      },
+      required: ['path', 'query'],
     },
   },
   {
@@ -195,9 +225,34 @@ async function runAppChange({ campaign, app, exemplarSummary, onUsage }) {
     if (tc.name === 'read_file') {
       const content = await readCurrent(String(input.path || ''));
       if (content == null) return 'File not found.';
-      return content.length > MAX_READ_RESULT_CHARS
-        ? `${content.slice(0, MAX_READ_RESULT_CHARS)}\n…[truncated at ${MAX_READ_RESULT_CHARS} chars — edit_file still matches against the full file]`
-        : content;
+      const offset = Math.max(0, Number(input.offset) || 0);
+      if (offset >= content.length && offset > 0) {
+        return `[offset ${offset} is past the end of the file (${content.length} chars) — nothing more to read]`;
+      }
+      const window = content.slice(offset, offset + MAX_READ_RESULT_CHARS);
+      const end = offset + window.length;
+      if (end < content.length) {
+        return `${window}\n…[showing chars ${offset}–${end} of ${content.length} — call read_file with offset=${end} for the next window, or search_file to locate text. edit_file matches against the full file.]`;
+      }
+      return offset > 0 ? `[chars ${offset}–${end} of ${content.length}]\n${window}` : window;
+    }
+    if (tc.name === 'search_file') {
+      const query = String(input.query ?? '');
+      if (!query) return 'Error: query is required.';
+      const content = await readCurrent(String(input.path || ''));
+      if (content == null) return 'File not found.';
+      const matches = [];
+      const lines = content.split('\n');
+      for (let i = 0; i < lines.length; i++) {
+        if (!lines[i].includes(query)) continue;
+        matches.push(`line ${i + 1}: ${lines[i].slice(0, MAX_SEARCH_LINE_CHARS)}`);
+        if (matches.length >= MAX_SEARCH_MATCHES) {
+          matches.push(`…[stopped at ${MAX_SEARCH_MATCHES} matches — narrow the query]`);
+          break;
+        }
+      }
+      if (!matches.length) return 'No matches.';
+      return `${matches.length >= MAX_SEARCH_MATCHES ? matches.length - 1 : matches.length} match(es):\n${matches.join('\n')}`;
     }
     if (tc.name === 'edit_file') {
       const path = String(input.path || '');
