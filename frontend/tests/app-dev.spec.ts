@@ -224,6 +224,39 @@ test("keeps the four lifecycle columns and uses a single mobile column selector"
   await expect(page.getByRole("img", { name: "Filter pantry staples, needs vote" })).toBeVisible()
 })
 
+test("gives the mobile board tabs honest non-overlapping reach", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.route("**/api/apps/recipebot/github-issues", (route) => route.fulfill({ json: { issues: [{ number: 72, title: "Review ingredient substitutions", created_by_username: "sam" }] } }))
+  await page.goto("/react/apps/recipebot/dev?view=kanban")
+
+  const coarsePointer = await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)
+  const tablist = page.getByRole("tablist", { name: "Development board columns" })
+  const tabs = tablist.getByRole("tab")
+  await expect(tabs).toHaveCount(4)
+  const targets = []
+  for (let index = 0; index < await tabs.count(); index += 1) {
+    const target = await probeHitTarget(tabs.nth(index))
+    expect(target.visualHeight).toBeLessThan(48)
+    if (coarsePointer) expect(target.effectiveHeight).toBeGreaterThanOrEqual(48)
+    else expect(target.effectiveHeight).toBeLessThan(48)
+    targets.push(target)
+  }
+  for (let index = 0; index < targets.length - 1; index += 1) {
+    expect(hitTargetOverlap(targets[index], targets[index + 1])).toBe(0)
+  }
+
+  const inReview = tabs.filter({ hasText: "In review" })
+  if (coarsePointer) {
+    const box = await inReview.boundingBox()
+    expect(box).not.toBeNull()
+    await page.mouse.click(box!.x + box!.width / 2, box!.y - 4)
+  } else {
+    await inReview.click()
+  }
+  await expect(inReview).toHaveAttribute("aria-selected", "true")
+  await expect(page.locator('section[aria-label="In review column"]')).toBeVisible()
+})
+
 test("routes completed proposals and governance changes to owned React details", async ({ page }, testInfo) => {
   await page.route("**/api/apps/recipebot/merged**", (route) => route.fulfill({ json: {
     merged: [

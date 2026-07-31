@@ -1,5 +1,32 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Locator } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
+
+async function probeHitTarget(target: Locator) {
+  return target.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect()
+    const centerX = Math.floor(rectangle.left + rectangle.width / 2)
+    const centerY = Math.floor(rectangle.top + rectangle.height / 2)
+    const ownsPoint = (x: number, y: number) => {
+      const hit = document.elementFromPoint(x, y)
+      return hit === element || (hit ? element.contains(hit) : false)
+    }
+    const scan = (deltaX: number, deltaY: number) => {
+      let distance = 0
+      while (distance < 64 && ownsPoint(centerX + deltaX * (distance + 1), centerY + deltaY * (distance + 1))) distance += 1
+      return distance
+    }
+    const left = scan(-1, 0)
+    const right = scan(1, 0)
+    const top = scan(0, -1)
+    const bottom = scan(0, 1)
+    return {
+      effectiveHeight: top + bottom + 1,
+      effectiveWidth: left + right + 1,
+      visualHeight: rectangle.height,
+      visualWidth: rectangle.width,
+    }
+  })
+}
 
 const recipeBot = {
   id: "recipebot", slug: "recipebot", name: "RecipeBot", status: "running",
@@ -267,6 +294,38 @@ test("loads and saves the web-owned platform preferences", async ({ page }) => {
   await page.getByRole("switch", { name: "AI progress estimate" }).click()
   await expect.poll(() => progressRequest).toEqual({ enabled: true })
   await expect(page.getByRole("switch", { name: "AI progress estimate" })).toBeChecked()
+})
+
+test("gives Switch controls honest coarse-pointer reach without changing fine-pointer geometry", async ({ page }) => {
+  let progressRequest: unknown = null
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    json: { user: { id: 7, username: "ava", aiProgressEstimate: false } },
+  }))
+  await page.route("**/api/me/ai-progress-estimate", async (route) => {
+    progressRequest = route.request().postDataJSON()
+    await route.fulfill({ json: { ok: true, enabled: true } })
+  })
+
+  await page.goto("/react/settings")
+  const control = page.getByRole("switch", { name: "AI progress estimate" })
+  const target = await probeHitTarget(control)
+  const coarsePointer = await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)
+  expect(target.visualWidth).toBe(44)
+  expect(target.visualHeight).toBe(20)
+  if (coarsePointer) {
+    expect(target.effectiveWidth).toBeGreaterThanOrEqual(48)
+    expect(target.effectiveHeight).toBeGreaterThanOrEqual(48)
+  } else {
+    expect(target.effectiveWidth).toBe(64)
+    expect(target.effectiveHeight).toBeGreaterThanOrEqual(32)
+    expect(target.effectiveHeight).toBeLessThanOrEqual(33)
+  }
+
+  const box = await control.boundingBox()
+  expect(box).not.toBeNull()
+  await page.mouse.click(box!.x + box!.width / 2, box!.y - 4)
+  await expect.poll(() => progressRequest).toEqual({ enabled: true })
+  await expect(control).toBeChecked()
 })
 
 test("shows the canonical platform and personal-key spend when BYOK is active", async ({ page }) => {
