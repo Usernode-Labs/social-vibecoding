@@ -85,13 +85,33 @@ function AlertDescription({
   )
 }
 
-function AlertAction({ className, ...props }: React.ComponentProps<"div">) {
+type AlertActionChildProps = { className?: string }
+type AlertActionProps = Omit<React.ComponentProps<"div">, "children"> & {
+  children: React.ReactElement<AlertActionChildProps>
+}
+
+/**
+ * One direct recovery action. Coarse-pointer reach belongs to the interactive
+ * child: padding this wrapper would create dead space because clicks do not
+ * travel from a parent into its child. The canonical 52-pixel floor is
+ * intentional; the browser's exclusive far edge measures a 48-pixel box as
+ * 47 hits.
+ */
+function AlertAction({ children, className, ...props }: AlertActionProps) {
+  const action = React.cloneElement(children, {
+    className: cn(
+      "relative after:pointer-fine:hidden after:absolute after:top-1/2 after:left-1/2 after:size-13 after:-translate-1/2 after:content-['']",
+      children.props.className
+    ),
+  })
   return (
     <div
       data-slot="alert-action"
       className={cn("absolute top-2.5 right-3", className)}
       {...props}
-    />
+    >
+      {action}
+    </div>
   )
 }
 

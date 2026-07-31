@@ -1,10 +1,39 @@
-import { expect, test, type Page } from "@playwright/test"
+import { expect, test, type Locator, type Page } from "@playwright/test"
 
 import AxeBuilder from "@axe-core/playwright"
 
 const forum = {
   promoted: [{ id: 7, pr_number: 1, status: "promoted", yes_count: 0, no_count: 0, created_at: "2026", pr_title: "Proposal" }],
   issues: [{ id: 9, title: "Governance", kind: "rename", status: "open", up_count: 0, down_count: 0, created_at: "2026" }],
+}
+
+async function probeHitTarget(target: Locator) {
+  return target.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect()
+    const centerX = Math.floor(rectangle.left + rectangle.width / 2)
+    const centerY = Math.floor(rectangle.top + rectangle.height / 2)
+    const ownsPoint = (x: number, y: number) => {
+      const hit = document.elementFromPoint(x, y)
+      return hit === element || (hit ? element.contains(hit) : false)
+    }
+    const scan = (deltaX: number, deltaY: number) => {
+      let distance = 0
+      while (distance < 64 && ownsPoint(centerX + deltaX * (distance + 1), centerY + deltaY * (distance + 1))) {
+        distance += 1
+      }
+      return distance
+    }
+    const left = scan(-1, 0)
+    const right = scan(1, 0)
+    const top = scan(0, -1)
+    const bottom = scan(0, 1)
+    return {
+      effectiveHeight: top + bottom + 1,
+      effectiveWidth: left + right + 1,
+      visualHeight: rectangle.height,
+      visualWidth: rectangle.width,
+    }
+  })
 }
 
 async function routeForum(page: Page) {
@@ -99,6 +128,21 @@ test("capability failure stays unknown and retries without navigation", async ({
   const composer = discussion.getByRole("form", { name: "Post a topic discussion message" })
   await expect(composer).toHaveAttribute("aria-disabled", "true")
   await expect(composer.getByRole("textbox", { name: "Discussion message" })).toBeDisabled()
+  const retry = statusAlert.getByRole("button", { name: "Retry" })
+  const hitTarget = await probeHitTarget(retry)
+  const coarsePointer = await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)
+  expect(hitTarget.visualHeight).toBeLessThan(48)
+  if (coarsePointer) {
+    expect(hitTarget.effectiveHeight).toBeGreaterThanOrEqual(48)
+    expect(hitTarget.effectiveWidth).toBeGreaterThanOrEqual(48)
+    const retryBox = await retry.boundingBox()
+    expect(retryBox).not.toBeNull()
+    const requestsBeforeExpandedHit = capabilityRequests
+    await page.mouse.click(retryBox!.x + retryBox!.width / 2, retryBox!.y - 4)
+    await expect.poll(() => capabilityRequests).toBe(requestsBeforeExpandedHit + 1)
+  } else {
+    expect(hitTarget.effectiveHeight).toBeLessThan(48)
+  }
   if (process.env.STATUS_REPRESENTATIVE_CAPTURE_DIR) {
     await page.screenshot({
       fullPage: true,
@@ -109,7 +153,7 @@ test("capability failure stays unknown and retries without navigation", async ({
   const urlBeforeRetry = page.url()
   const requestsBeforeRetry = capabilityRequests
   capabilityAvailable = true
-  await statusAlert.getByRole("button", { name: "Retry" }).click()
+  await retry.click()
   await expect.poll(() => capabilityRequests).toBe(requestsBeforeRetry + 1)
   expect(capabilityMethods).toEqual(Array.from({ length: capabilityRequests }, () => "GET"))
   expect(page.url()).toBe(urlBeforeRetry)
