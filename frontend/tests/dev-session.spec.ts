@@ -1,5 +1,34 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Locator } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
+
+async function probeHitTarget(target: Locator) {
+  return target.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect()
+    const centerX = Math.floor(rectangle.left + rectangle.width / 2)
+    const centerY = Math.floor(rectangle.top + rectangle.height / 2)
+    const ownsPoint = (x: number, y: number) => {
+      const hit = document.elementFromPoint(x, y)
+      return hit === element || (hit ? element.contains(hit) : false)
+    }
+    const scan = (deltaX: number, deltaY: number) => {
+      let distance = 0
+      while (distance < 64 && ownsPoint(centerX + deltaX * (distance + 1), centerY + deltaY * (distance + 1))) {
+        distance += 1
+      }
+      return distance
+    }
+    const left = scan(-1, 0)
+    const right = scan(1, 0)
+    const top = scan(0, -1)
+    const bottom = scan(0, 1)
+    return {
+      effectiveHeight: top + bottom + 1,
+      effectiveWidth: left + right + 1,
+      visualHeight: rectangle.height,
+      visualWidth: rectangle.width,
+    }
+  })
+}
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: {
@@ -475,7 +504,7 @@ test("restores an archived owner session through the existing reversible lifecyc
   await expect(page.getByRole("button", { name: "Resume session" })).toBeVisible()
 })
 
-test("uploads an attachment before it becomes eligible to send", async ({ page }) => {
+test("uploads an attachment and gives its remove action honest coarse-pointer reach", async ({ page }) => {
   await page.route("**/api/sessions/9/attachments?filename=notes.txt", (route) => route.fulfill({ json: {
     id: "attachment-1", kind: "text", filename: "notes.txt", contentType: "text/plain", sizeBytes: 16, meta: null,
   } }))
@@ -485,8 +514,27 @@ test("uploads an attachment before it becomes eligible to send", async ({ page }
     mimeType: "text/plain",
     buffer: Buffer.from("pantry notes"),
   })
-  await expect(page.getByLabel("Pending attachments")).toContainText("notes.txt")
+  const attachments = page.getByLabel("Pending attachments")
+  await expect(attachments).toContainText("notes.txt")
   await expect(page.getByRole("button", { name: "Send message" })).toBeEnabled()
+  const remove = attachments.getByRole("button", { name: "Remove notes.txt" })
+  await remove.scrollIntoViewIfNeeded()
+  const hitTarget = await probeHitTarget(remove)
+  const coarsePointer = await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)
+  expect(hitTarget.visualHeight).toBeLessThan(48)
+  expect(hitTarget.visualWidth).toBeLessThan(48)
+  if (coarsePointer) {
+    expect(hitTarget.effectiveHeight).toBeGreaterThanOrEqual(48)
+    expect(hitTarget.effectiveWidth).toBeGreaterThanOrEqual(48)
+    const removeBox = await remove.boundingBox()
+    expect(removeBox).not.toBeNull()
+    await page.mouse.click(removeBox!.x + removeBox!.width / 2, removeBox!.y - 4)
+  } else {
+    expect(hitTarget.effectiveHeight).toBeLessThan(48)
+    expect(hitTarget.effectiveWidth).toBeLessThan(48)
+    await remove.click()
+  }
+  await expect(attachments).toHaveCount(0)
 })
 
 for (const mode of ["light", "dark"] as const) {

@@ -134,7 +134,10 @@ function AttachmentActions({
     <div
       data-slot="attachment-actions"
       className={cn(
-        "relative z-20 flex shrink-0 items-center group-data-[orientation=vertical]/attachment:absolute group-data-[orientation=vertical]/attachment:top-3 group-data-[orientation=vertical]/attachment:right-3 group-data-[orientation=vertical]/attachment:gap-1",
+        // A failed attachment can show Retry and Remove together. Keep their
+        // expanded coarse-pointer targets disjoint instead of letting the
+        // later button silently steal the overlap.
+        "relative z-20 flex shrink-0 items-center pointer-coarse:gap-8 group-data-[orientation=vertical]/attachment:absolute group-data-[orientation=vertical]/attachment:top-3 group-data-[orientation=vertical]/attachment:right-3 group-data-[orientation=vertical]/attachment:gap-1 group-data-[orientation=vertical]/attachment:pointer-coarse:gap-8",
         className
       )}
       {...props}
@@ -153,7 +156,12 @@ function AttachmentAction({
       data-slot="attachment-action"
       variant={variant ?? "ghost"}
       size={size}
-      className={cn(className)}
+      className={cn(
+        // Expand the interactive child itself. Wrapper padding would be a
+        // painted door: visually generous dead space that cannot activate it.
+        "relative after:pointer-fine:hidden after:absolute after:top-1/2 after:left-1/2 after:size-13 after:-translate-1/2 after:content-['']",
+        className
+      )}
       {...props}
     />
   )
