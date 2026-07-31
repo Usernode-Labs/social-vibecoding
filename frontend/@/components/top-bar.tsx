@@ -52,7 +52,13 @@ export function TopBar({
       </h1>
       {action || onBack ? (
         <div
-          className="flex shrink-0 items-center gap-1"
+          className={cn(
+            // The slot owns reach for caller-provided buttons and links. Keep
+            // adjacent coarse targets disjoint instead of letting later
+            // actions silently steal the expanded edge.
+            "flex shrink-0 items-center gap-1 pointer-coarse:gap-5 pointer-coarse:[&>div]:gap-5",
+            "[&_:is(a,button)]:relative [&_:is(a,button)]:after:absolute [&_:is(a,button)]:after:top-1/2 [&_:is(a,button)]:after:left-1/2 [&_:is(a,button)]:after:size-13 [&_:is(a,button)]:after:-translate-1/2 [&_:is(a,button)]:after:content-[''] [&_:is(a,button)]:after:pointer-fine:hidden"
+          )}
           data-slot="top-bar-action"
         >
           {action}

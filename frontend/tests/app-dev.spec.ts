@@ -1,5 +1,57 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Locator } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
+
+async function probeHitTarget(target: Locator) {
+  return target.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect()
+    const centerX = Math.floor(rectangle.left + rectangle.width / 2)
+    const centerY = Math.floor(rectangle.top + rectangle.height / 2)
+    const ownsPoint = (x: number, y: number) => {
+      const hit = document.elementFromPoint(x, y)
+      return hit === element || (hit ? element.contains(hit) : false)
+    }
+    const scan = (deltaX: number, deltaY: number) => {
+      let distance = 0
+      while (distance < 64 && ownsPoint(centerX + deltaX * (distance + 1), centerY + deltaY * (distance + 1))) {
+        distance += 1
+      }
+      return distance
+    }
+    const left = scan(-1, 0)
+    const right = scan(1, 0)
+    const top = scan(0, -1)
+    const bottom = scan(0, 1)
+    return {
+      effectiveBottom: centerY + bottom,
+      effectiveHeight: top + bottom + 1,
+      effectiveLeft: centerX - left,
+      effectiveRight: centerX + right,
+      effectiveTop: centerY - top,
+      effectiveWidth: left + right + 1,
+      visualHeight: rectangle.height,
+      visualWidth: rectangle.width,
+    }
+  })
+}
+
+function hitTargetOverlap(
+  first: Awaited<ReturnType<typeof probeHitTarget>>,
+  second: Awaited<ReturnType<typeof probeHitTarget>>
+) {
+  const width = Math.max(
+    0,
+    Math.min(first.effectiveRight, second.effectiveRight)
+      - Math.max(first.effectiveLeft, second.effectiveLeft)
+      + 1
+  )
+  const height = Math.max(
+    0,
+    Math.min(first.effectiveBottom, second.effectiveBottom)
+      - Math.max(first.effectiveTop, second.effectiveTop)
+      + 1
+  )
+  return width * height
+}
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: { id: "recipebot", slug: "recipebot", name: "RecipeBot", status: "running", active_users: 24, can_collaborate: true } } }))
@@ -60,6 +112,48 @@ test("uses the shared Improve chrome with reciprocal Use and one route heading",
 
   await page.getByRole("button", { name: "Use" }).click()
   await expect(page).toHaveURL("/react/apps/recipebot/open")
+})
+
+test("gives compact TopBar actions honest coarse-pointer reach", async ({ page }) => {
+  const coarsePointer = await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)
+
+  await page.goto("/react/apps/recipebot/dev")
+  const chrome = page.locator('[data-slot="top-bar"]')
+  const use = chrome.getByRole("button", { name: "Use" })
+  const close = chrome.getByRole("button", { name: "Close RecipeBot" })
+  const useTarget = await probeHitTarget(use)
+  const closeTarget = await probeHitTarget(close)
+  expect(useTarget.visualHeight).toBeLessThan(48)
+  expect(hitTargetOverlap(useTarget, closeTarget)).toBe(0)
+  if (coarsePointer) {
+    expect(useTarget.effectiveHeight).toBeGreaterThanOrEqual(48)
+    const useBox = await use.boundingBox()
+    expect(useBox).not.toBeNull()
+    await page.mouse.click(useBox!.x + useBox!.width / 2, useBox!.y - 4)
+  } else {
+    expect(useTarget.effectiveHeight).toBeLessThan(48)
+    await use.click()
+  }
+  await expect(page).toHaveURL("/react/apps/recipebot/open")
+
+  await page.goto("/react/apps/recipebot/dev/proposals/19")
+  const nestedChrome = page.getByTestId("proposal-detail").locator('[data-slot="top-bar"]')
+  const back = nestedChrome.getByRole("button", { name: "Back" })
+  const nestedClose = nestedChrome.getByRole("button", { name: "Close RecipeBot" })
+  const backTarget = await probeHitTarget(back)
+  const nestedCloseTarget = await probeHitTarget(nestedClose)
+  expect(backTarget.visualHeight).toBeLessThan(48)
+  expect(hitTargetOverlap(backTarget, nestedCloseTarget)).toBe(0)
+  if (coarsePointer) {
+    expect(backTarget.effectiveHeight).toBeGreaterThanOrEqual(48)
+    const backBox = await back.boundingBox()
+    expect(backBox).not.toBeNull()
+    await page.mouse.click(backBox!.x + backBox!.width / 2, backBox!.y - 4)
+  } else {
+    expect(backTarget.effectiveHeight).toBeLessThan(48)
+    await back.click()
+  }
+  await expect(page).toHaveURL(/\/react\/apps\/recipebot\/dev$/)
 })
 
 test("closes the Improve context to Home", async ({ page }) => {
