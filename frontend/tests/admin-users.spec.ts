@@ -54,13 +54,16 @@ test("updates and clears the per-user daily override through the existing contra
     await route.fulfill({ json: { ok: true, daily_limit_cents: cents } })
   })
   await openAdminUsers(page)
-  await page.getByRole("spinbutton", { name: "Daily cap for sam", exact: true }).fill("1200")
+  const dailyCap = page.getByRole("textbox", { name: "Daily cap for sam", exact: true })
+  await expect(dailyCap).toHaveValue("")
+  await dailyCap.fill("12.00")
   const saveResponse = page.waitForResponse((candidate) => candidate.url().endsWith("/api/admin/users/3/daily-limit") && candidate.request().method() === "PUT")
   await page.getByRole("button", { name: "Save daily cap for sam" }).click()
   await saveResponse
   await expect.poll(() => updates).toEqual([{ cents: 1200 }])
   await expect(page.getByTestId("admin-users")).toContainText("$12.00")
-  await page.getByRole("spinbutton", { name: "Daily cap for sam", exact: true }).fill("")
+  await expect(dailyCap).toHaveValue("12.00")
+  await dailyCap.fill("")
   const clearResponse = page.waitForResponse((candidate) => candidate.url().endsWith("/api/admin/users/3/daily-limit") && candidate.request().method() === "PUT")
   await page.getByRole("button", { name: "Save daily cap for sam" }).click()
   await clearResponse

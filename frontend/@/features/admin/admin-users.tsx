@@ -8,9 +8,11 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from "@/components/ui/input-group"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AdminAccessError, getAdminUser, getAdminUsers, updateAdminUserDailyLimit, updateAdminUserQuota, type AdminUser, type AdminUserRecord } from "@/lib/admin-api"
+import { formatUsd, formatUsdInput, parseUsdInput } from "@/lib/currency-input"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
 
 type State =
@@ -21,10 +23,6 @@ type State =
 
 function role(user: AdminUserRecord) {
   return user.is_admin ? user.admin_readonly ? "View-only admin" : "Admin" : "User"
-}
-
-function money(cents?: number | null) {
-  return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD" }).format(Number(cents || 0) / 100)
 }
 
 function compactWallet(wallet?: string | null) {
@@ -73,10 +71,10 @@ export function AdminUsersList({ users }: { users: AdminUserRecord[] }) {
 
 function UserCard({ canWrite = false, onUpdate, user }: { canWrite?: boolean; onUpdate?: (id: number, updates: Partial<AdminUserRecord>) => void; user: AdminUserRecord }) {
   const [quota, setQuota] = useState(String(user.app_quota ?? 0))
-  const [dailyLimit, setDailyLimit] = useState(user.daily_limit_cents == null ? "" : String(user.daily_limit_cents))
+  const [dailyLimit, setDailyLimit] = useState(() => formatUsdInput(user.daily_limit_cents))
   const [saving, setSaving] = useState<"quota" | "daily" | null>(null)
   const [error, setError] = useState<string | null>(null)
-  useEffect(() => { setQuota(String(user.app_quota ?? 0)); setDailyLimit(user.daily_limit_cents == null ? "" : String(user.daily_limit_cents)) }, [user.app_quota, user.daily_limit_cents])
+  useEffect(() => { setQuota(String(user.app_quota ?? 0)); setDailyLimit(formatUsdInput(user.daily_limit_cents)) }, [user.app_quota, user.daily_limit_cents])
   const saveQuota = async () => {
     const value = Number(quota)
     if (!Number.isInteger(value) || value < 0) return setError("Quota must be a non-negative whole number.")
@@ -84,10 +82,10 @@ function UserCard({ canWrite = false, onUpdate, user }: { canWrite?: boolean; on
     try { const response = await updateAdminUserQuota(user.id, value); onUpdate?.(user.id, { app_quota: response.app_quota }) } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to update quota.") } finally { setSaving(null) }
   }
   const saveDailyLimit = async () => {
-    const value = dailyLimit === "" ? null : Number(dailyLimit)
-    if (value !== null && (!Number.isInteger(value) || value < 0)) return setError("Daily cap must be a non-negative whole-cent amount or blank.")
+    const value = dailyLimit.trim() === "" ? null : parseUsdInput(dailyLimit)
+    if (dailyLimit.trim() !== "" && value === null) return setError("Daily cap must be a non-negative dollar amount with no more than two decimal places, or blank.")
     setSaving("daily"); setError(null)
     try { const response = await updateAdminUserDailyLimit(user.id, value); onUpdate?.(user.id, { daily_limit_cents: response.daily_limit_cents }) } catch (cause) { setError(cause instanceof Error ? cause.message : "Unable to update daily cap.") } finally { setSaving(null) }
   }
-  return <Card><CardHeader className="grid-cols-[minmax(0,1fr)_auto] gap-3"><div className="min-w-0"><CardTitle className="truncate">{user.username}{user.is_self ? " (you)" : ""}</CardTitle><CardDescription>{compactWallet(user.usernode_pubkey)}</CardDescription></div><Badge variant={user.is_admin ? "secondary" : "outline"}>{role(user)}</Badge></CardHeader><CardContent className="grid gap-3 text-sm sm:grid-cols-3"><dl><dt className="text-muted-foreground">Apps</dt><dd className="mt-1 tabular-nums">{Number(user.apps_created || 0)} / {user.app_quota ?? 0}</dd></dl><dl><dt className="text-muted-foreground">Today’s LLM spend</dt><dd className="mt-1 tabular-nums">{money(user.cost_today_cents)}</dd></dl><dl><dt className="text-muted-foreground">Daily cap</dt><dd className="mt-1 tabular-nums">{user.daily_limit_cents == null ? "Platform default" : money(user.daily_limit_cents)}</dd></dl>{user.activation_code ? <p className="sm:col-span-3 text-muted-foreground">Activation code: <code>{user.activation_code}</code></p> : null}{onUpdate ? <div className="grid gap-3 border-t pt-3 sm:col-span-3 sm:grid-cols-2"><div className="grid gap-1"><span className="text-muted-foreground">App quota</span><div className="flex gap-2"><Input aria-label={`App quota for ${user.username}`} disabled={!canWrite || saving !== null} inputMode="numeric" min="0" onChange={(event) => setQuota(event.target.value)} step="1" type="number" value={quota} /><Button aria-label={`Save app quota for ${user.username}`} disabled={!canWrite || saving !== null} onClick={() => void saveQuota()} size="sm" type="button" variant="outline">Save</Button></div></div><div className="grid gap-1"><span className="text-muted-foreground">Daily cap (cents)</span><div className="flex gap-2"><Input aria-label={`Daily cap for ${user.username}`} disabled={!canWrite || saving !== null} inputMode="numeric" min="0" onChange={(event) => setDailyLimit(event.target.value)} placeholder="Platform default" step="1" type="number" value={dailyLimit} /><Button aria-label={`Save daily cap for ${user.username}`} disabled={!canWrite || saving !== null} onClick={() => void saveDailyLimit()} size="sm" type="button" variant="outline">Save</Button></div></div>{error ? <Alert className="sm:col-span-2" variant="destructive"><AlertTitle>Could not update {user.username}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}</div> : null}</CardContent></Card>
+  return <Card><CardHeader className="grid-cols-[minmax(0,1fr)_auto] gap-3"><div className="min-w-0"><CardTitle className="truncate">{user.username}{user.is_self ? " (you)" : ""}</CardTitle><CardDescription>{compactWallet(user.usernode_pubkey)}</CardDescription></div><Badge variant={user.is_admin ? "secondary" : "outline"}>{role(user)}</Badge></CardHeader><CardContent className="grid gap-3 text-sm sm:grid-cols-3"><dl><dt className="text-muted-foreground">Apps</dt><dd className="mt-1 tabular-nums">{Number(user.apps_created || 0)} / {user.app_quota ?? 0}</dd></dl><dl><dt className="text-muted-foreground">Today’s LLM spend</dt><dd className="mt-1 tabular-nums">{formatUsd(user.cost_today_cents)}</dd></dl><dl><dt className="text-muted-foreground">Daily cap</dt><dd className="mt-1 tabular-nums">{user.daily_limit_cents == null ? "Platform default" : formatUsd(user.daily_limit_cents)}</dd></dl>{user.activation_code ? <p className="sm:col-span-3 text-muted-foreground">Activation code: <code>{user.activation_code}</code></p> : null}{onUpdate ? <div className="grid gap-3 border-t pt-3 sm:col-span-3 sm:grid-cols-2"><div className="grid gap-1"><span className="text-muted-foreground">App quota</span><div className="flex gap-2"><Input aria-label={`App quota for ${user.username}`} disabled={!canWrite || saving !== null} inputMode="numeric" min="0" onChange={(event) => setQuota(event.target.value)} step="1" type="number" value={quota} /><Button aria-label={`Save app quota for ${user.username}`} disabled={!canWrite || saving !== null} onClick={() => void saveQuota()} size="sm" type="button" variant="outline">Save</Button></div></div><div className="grid gap-1"><span className="text-muted-foreground">Daily cap override</span><div className="flex gap-2"><InputGroup className="flex-1"><InputGroupAddon><InputGroupText aria-hidden="true">$</InputGroupText></InputGroupAddon><InputGroupInput aria-label={`Daily cap for ${user.username}`} autoComplete="off" disabled={!canWrite || saving !== null} inputMode="decimal" onChange={(event) => setDailyLimit(event.target.value)} placeholder="Platform default" spellCheck={false} value={dailyLimit} /></InputGroup><Button aria-label={`Save daily cap for ${user.username}`} disabled={!canWrite || saving !== null} onClick={() => void saveDailyLimit()} size="sm" type="button" variant="outline">Save</Button></div><span className="text-muted-foreground">United States dollars; leave blank to use the platform default.</span></div>{error ? <Alert className="sm:col-span-2" variant="destructive"><AlertTitle>Could not update {user.username}</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}</div> : null}</CardContent></Card>
 }

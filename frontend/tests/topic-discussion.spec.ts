@@ -104,20 +104,22 @@ test("mobile topic transcript has no serious axe violations", async ({ page }) =
 test("capability failure stays unknown and retries without navigation", async ({ page }, testInfo) => {
   let capabilityRequests = 0
   let capabilityAvailable = false
+  let transcriptMounted = false
   const capabilityMethods: string[] = []
   await routeForum(page)
   await page.unroute("**/api/apps/recipebot")
   await page.route("**/api/apps/recipebot", (route) => {
     capabilityRequests += 1
     capabilityMethods.push(route.request().method())
-    // The proposal owner resolves its app snapshot twice under the development
-    // double-mount. Only later requests belong to TopicDiscussionTranscript.
-    if (capabilityRequests > 2 && !capabilityAvailable) {
+    if (transcriptMounted && !capabilityAvailable) {
       return route.fulfill({ status: 503, json: { error: "Capability unavailable" } })
     }
     return route.fulfill({ json: { app: { id: "recipebot", slug: "recipebot", name: "RecipeBot", can_collaborate: false } } })
   })
-  await page.route("**/api/apps/recipebot/messages**", (route) => route.fulfill({ json: { messages: [] } }))
+  await page.route("**/api/apps/recipebot/messages**", (route) => {
+    transcriptMounted = true
+    return route.fulfill({ json: { messages: [] } })
+  })
 
   await page.goto("/react/apps/recipebot/dev/proposals/7")
   const discussion = page.getByTestId("topic-discussion")

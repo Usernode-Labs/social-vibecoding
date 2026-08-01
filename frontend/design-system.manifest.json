@@ -540,11 +540,11 @@
       }
     },
     {
-      "id": "spend-limits-cards",
-      "name": "SpendLimitsCards",
+      "id": "spend-limits-summary",
+      "name": "SpendLimitsSummary",
       "tier": "feature",
       "module": "@/features/admin/spend-limits.tsx",
-      "export": "SpendLimitsCards",
+      "export": "SpendLimitsSummary",
       "story": {
         "module": "@/features/admin/spend-limits.stories.tsx",
         "states": [

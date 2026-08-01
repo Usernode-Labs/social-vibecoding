@@ -3,9 +3,11 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { expect, fn, userEvent, within } from "storybook/test"
 
 import {
-  SpendLimitsCards,
   SpendLimitsForm,
+  SpendLimitsSummary,
   type SpendLimitsDraft,
+  type SpendLimitsFieldErrors,
+  type SpendLimitsNotice,
 } from "@/features/admin/spend-limits"
 
 const limits = {
@@ -16,19 +18,31 @@ const limits = {
 
 function FormFixture({
   canWrite = true,
-  error = null,
+  fieldErrors = {},
+  notice = null,
   saving = false,
 }: {
   canWrite?: boolean
-  error?: string | null
+  fieldErrors?: SpendLimitsFieldErrors
+  notice?: SpendLimitsNotice | null
   saving?: boolean
 }) {
   const [draft, setDraft] = useState<SpendLimitsDraft>({
-    global: "20000",
-    system: "2500",
-    user: "2500",
+    global: "200.00",
+    system: "25.00",
+    user: "25.00",
   })
-  return <SpendLimitsForm canWrite={canWrite} draft={draft} error={error} onChange={setDraft} onSubmit={fn()} saving={saving} />
+  return (
+    <SpendLimitsForm
+      canWrite={canWrite}
+      draft={draft}
+      fieldErrors={fieldErrors}
+      notice={notice}
+      onChange={(key, value) => setDraft((current) => ({ ...current, [key]: value }))}
+      onSubmit={fn()}
+      saving={saving}
+    />
+  )
 }
 
 const meta = {
@@ -41,7 +55,7 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const Summary: Story = {
-  render: () => <SpendLimitsCards limits={limits} />,
+  render: () => <SpendLimitsSummary limits={limits} />,
 }
 
 // Preserve the existing manifest state until the source-derived authority
@@ -54,8 +68,8 @@ export const EditableForm: Story = {
     const canvas = within(canvasElement)
     const input = canvas.getByLabelText("Default per-user daily cap")
     await userEvent.clear(input)
-    await userEvent.type(input, "3000")
-    await expect(input).toHaveValue(3000)
+    await userEvent.type(input, "30.00")
+    await expect(input).toHaveValue("30.00")
     await expect(canvas.getByRole("button", { name: "Save limits" })).toBeEnabled()
   },
 }
@@ -63,12 +77,20 @@ export const EditableForm: Story = {
 export const Saving: Story = {
   render: () => <FormFixture saving />,
   play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).getByRole("button", { name: "Saving…" })).toBeDisabled()
+    await expect(within(canvasElement).getByRole("button", { name: "Saving limits…" })).toBeDisabled()
   },
 }
 
 export const Invalid: Story = {
-  render: () => <FormFixture error="Enter whole, non-negative cent amounts for every limit." />,
+  render: () => <FormFixture fieldErrors={{ global: "Enter a non-negative dollar amount with no more than two decimal places." }} />,
+}
+
+export const SaveFailed: Story = {
+  render: () => <FormFixture notice={{ kind: "error", message: "The service is unavailable. Your entries remain in the form; the current limits above are still the last confirmed server values." }} />,
+}
+
+export const Saved: Story = {
+  render: () => <FormFixture notice={{ kind: "success", message: "The current limits now match the values confirmed by the server." }} />,
 }
 
 export const ReadOnly: Story = {
