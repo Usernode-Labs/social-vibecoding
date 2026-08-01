@@ -37,7 +37,8 @@
           "ReadAndUnread",
           "Mobile",
           "Dark",
-          "LongContent"
+          "LongContent",
+          "ComparableRecords"
         ]
       }
     },

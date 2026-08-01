@@ -2,7 +2,7 @@ import type { ReactNode } from "react"
 import type { Meta, StoryObj } from "@storybook/react-vite"
 import { expect, fn, userEvent, within } from "storybook/test"
 
-import { HomeView } from "@/features/apps/home"
+import { HomeView, type HomeViewProps } from "@/features/apps/home"
 import { homeActivityItems } from "@/features/apps/home-explore-model"
 import type { AppRecord } from "@/lib/apps-api"
 import type { NotificationsPage } from "@/lib/notifications-api"
@@ -87,22 +87,30 @@ type Story = StoryObj<typeof meta>
 const baseArgs = {
   activity: [
     {
+      createdAt: "2026-07-29T10:00:00Z",
       id: "invite:collab:9",
+      kind: "invite",
       title: "Collaborator invitation",
       detail: "@ava invited you to RecipeBot.",
     },
     {
+      createdAt: "2026-07-29T09:00:00Z",
       id: "notification:1",
+      kind: "notification",
       title: "Can we add a pantry filter?",
       detail: "RecipeBot · @ava",
     },
     {
+      createdAt: "2026-07-29T08:00:00Z",
       id: "notification:3",
+      kind: "notification",
       title: "A reply worth reading",
       detail: "RecipeBot · @sam",
     },
     {
+      createdAt: "2026-07-29T07:00:00Z",
       id: "notification:4",
+      kind: "notification",
       title: "A fourth item",
       detail: "Game Corner",
     },
@@ -112,7 +120,7 @@ const baseArgs = {
   onMoveApp,
   onReorderingChange,
   onRetry,
-}
+} satisfies HomeViewProps
 
 export const PersonalApps: Story = {
   args: baseArgs,
@@ -135,10 +143,12 @@ export const PersonalApps: Story = {
       "/notifications"
     )
     const activitySection = canvas
-      .getByRole("heading", { name: "Needs attention" })
+      .getByRole("heading", { name: "Needs attention · 4" })
       .closest("section")
     await expect(activitySection).toBeTruthy()
-    await expect(activitySection?.querySelectorAll("li")).toHaveLength(3)
+    await expect(
+      activitySection?.querySelectorAll('[data-slot="stream-row"]')
+    ).toHaveLength(3)
   },
 }
 

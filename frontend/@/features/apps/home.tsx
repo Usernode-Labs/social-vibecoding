@@ -1,8 +1,9 @@
 import { useEffect, useId, useMemo, useState } from "react"
-import { AppWindow, Bell } from "lucide-react"
+import { AppWindow, Bell, Handshake } from "lucide-react"
 import { Link } from "react-router-dom"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import { StreamRow } from "@/components/stream-row"
 import { TopBar } from "@/components/top-bar"
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button, buttonVariants } from "@/components/ui/button"
@@ -28,6 +29,11 @@ import { getNotificationsPage } from "@/lib/notifications-api"
 import { appOpenPath } from "@/lib/routes"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
 import { cn } from "@/lib/utils"
+
+const activityDateFormatter = new Intl.DateTimeFormat(undefined, {
+  day: "numeric",
+  month: "short",
+})
 
 function HomeLoading() {
   const placeholders = ["first", "second", "third"] as const
@@ -91,30 +97,16 @@ function ActivityPreview({ items }: { items: readonly HomeActivityItem[] }) {
   if (items.length === 0) return null
 
   return (
-    <section aria-labelledby={headingId} className="flex flex-col gap-4">
+    <section aria-labelledby={headingId} className="flex flex-col gap-3">
       <h2
         className="font-heading text-xl font-medium tracking-tight text-balance"
         id={headingId}
       >
-        Needs attention
+        Needs attention <span className="text-muted-foreground">· {items.length}</span>
       </h2>
-      <ul className="divide-y divide-border" role="list">
-        {items.slice(0, 3).map((item) => (
-          <li className="py-3 first:pt-0 last:pb-0" key={item.id}>
-            <Link
-              className="group flex min-w-0 flex-col gap-0.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              to="/notifications"
-            >
-              <p className="font-medium text-pretty group-hover:underline">{item.title}</p>
-              {item.detail ? (
-                <p className="text-pretty text-base text-muted-foreground sm:text-sm">
-                  {item.detail}
-                </p>
-              ) : null}
-            </Link>
-          </li>
-        ))}
-      </ul>
+      <div className="overflow-hidden rounded-2xl border bg-background">
+        {items.slice(0, 3).map((item) => <StreamRow accessibleName={`Open activity: ${item.title}`} anchor={<PlatformIcon icon={item.kind === "invite" ? Handshake : Bell} />} key={item.id} metadata={item.detail} state="default" title={item.title} to="/notifications" trailing={formatActivityDate(item.createdAt)} />)}
+      </div>
       <Link
         className={cn(buttonVariants({ size: "sm", variant: "outline" }), "self-start")}
         to="/notifications"
@@ -123,6 +115,12 @@ function ActivityPreview({ items }: { items: readonly HomeActivityItem[] }) {
       </Link>
     </section>
   )
+}
+
+function formatActivityDate(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return <time dateTime={value}>{activityDateFormatter.format(date)}</time>
 }
 
 export type HomeViewProps = {

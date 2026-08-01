@@ -110,6 +110,7 @@ test("renders public proposal recognition with React detail and explicit GitHub 
 
   await expectFullCanvasRoute(page, "leaderboard", "Kudos leaderboard")
   await expect(page.getByTestId("leaderboard")).toContainText("Make recipes easier to find")
+  await expect(page.getByRole("region", { name: "Top proposals" }).locator('[data-slot="stream-row"]')).toHaveCount(1)
   await expect(page.getByRole("link", { name: "View Make recipes easier to find" })).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/42")
   await expect(page.getByRole("link", { name: "Open Make recipes easier to find on GitHub" })).toHaveAttribute("href", "https://github.com/Usernode-Labs/social-vibecoding/pull/18")
 })
@@ -121,6 +122,7 @@ test("preserves the user and period choices in browser-visible route state", asy
 
   await expect(page).toHaveURL(/tab=users&window=week/)
   await expect(page.getByTestId("leaderboard")).toContainText("@ava")
+  await expect(page.getByRole("region", { name: "Top contributors" }).locator('[data-slot="stream-row"]')).toHaveCount(1)
   await expect(page.getByText("Active on RecipeBot")).toBeVisible()
 })
 
@@ -144,6 +146,7 @@ test("renders the private give-side history with typed React source destinations
   await expect(page.getByTestId("leaderboard-history")).toContainText("Everything you’ve given")
   await expect(page.getByTestId("leaderboard-history")).toContainText("Make recipes easier to find")
   await expect(page.getByTestId("leaderboard-history")).toContainText("Pledged kudos on issue #12")
+  await expect(page.getByRole("region", { name: "Your recognition history" }).locator('[data-slot="stream-row"]')).toHaveCount(3)
   await expect(page.getByRole("link", { name: "View Make recipes easier to find" })).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/42")
   await expect(page.getByRole("link", { name: "View Pledged kudos on issue #12" })).toHaveAttribute("href", "/react/apps/recipebot/dev/issues/12")
 })
@@ -187,6 +190,7 @@ test("keeps the history route usable at a mobile width", async ({ page }) => {
 
 test("loads another public-profile page without losing earlier proposals", async ({ page }) => {
   await page.goto("/react/community/leaderboard/users/ava")
+  await expect(page.getByRole("region", { name: "ava's proposals" }).locator('[data-slot="stream-row"]')).toHaveCount(1)
   await page.getByRole("button", { name: "Load more" }).click()
 
   await expect(page.getByTestId("leaderboard-profile")).toContainText("Make recipes easier to find")

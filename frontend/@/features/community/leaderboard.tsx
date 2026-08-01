@@ -1,13 +1,14 @@
-import { Award, ChevronRight, ExternalLink, HandHeart, History, ThumbsUp, UsersRound, Vote } from "lucide-react"
+import { Award, ExternalLink, HandHeart, History, ThumbsUp, Vote } from "lucide-react"
 import { useEffect, useState } from "react"
 import { Link, useParams, useSearchParams } from "react-router-dom"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { ActionAnchor } from "@/components/action-link"
+import { PlatformIcon } from "@/components/platform-icon"
+import { StreamRow } from "@/components/stream-row"
 import { TopBar } from "@/components/top-bar"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { PlatformIcon } from "@/components/platform-icon"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ApiRequestError, getLeaderboardUserProfile, getMyHistory, getTopPrs, getTopUsers, type HistoryItem, type HistoryType, type LeaderboardPr, type LeaderboardUser, type LeaderboardUserProfilePr, type LeaderboardWindow } from "@/lib/leaderboard-api"
@@ -69,7 +70,7 @@ export function Leaderboard() {
       {error ? <Alert variant="destructive"><AlertTitle>Leaderboard unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!items && !error ? <PaneSkeleton /> : null}
       {items?.length === 0 ? <Alert><AlertTitle>No kudos yet</AlertTitle><AlertDescription>Completed proposals will appear here when the community recognizes them.</AlertDescription></Alert> : null}
-      {items?.map((item, index) => "author_username" in item ? <PrRow item={item} key={item.session_id} rank={index + 1} /> : <UserRow item={item} key={item.username} rank={index + 1} window={window} />)}
+      {items?.length ? <section aria-label={tab === "prs" ? "Top proposals" : "Top contributors"} className="overflow-hidden rounded-2xl border bg-background">{items.map((item, index) => "author_username" in item ? <PrRow item={item} key={item.session_id} rank={index + 1} /> : <UserRow item={item} key={item.username} rank={index + 1} window={window} />)}</section> : null}
     </div></div>
   )
 }
@@ -103,11 +104,11 @@ function historyDetail(item: HistoryItem) {
   return `${item.vote === "up" ? "Upvote" : "Downvote"} · current vote · ${appName}`
 }
 
-function historyBadge(item: HistoryItem) {
-  if (item.type === "bounty") return <Badge variant="secondary">Bounty</Badge>
-  if (item.type === "pr_vote") return <Badge variant={item.vote === "yes" ? "secondary" : "outline"}>{item.vote === "yes" ? "Yes" : "No"}</Badge>
-  if (item.type === "proposal_vote") return <Badge variant={item.vote === "up" ? "secondary" : "outline"}>{item.vote === "up" ? "Upvote" : "Downvote"}</Badge>
-  return <Badge variant="secondary">Kudos</Badge>
+function historyLabel(item: HistoryItem) {
+  if (item.type === "bounty") return "Bounty"
+  if (item.type === "pr_vote") return item.vote === "yes" ? "Yes vote" : "No vote"
+  if (item.type === "proposal_vote") return item.vote === "up" ? "Upvote" : "Downvote"
+  return "Kudos"
 }
 
 function HistoryRow({ item }: { item: HistoryItem }) {
@@ -118,16 +119,7 @@ function HistoryRow({ item }: { item: HistoryItem }) {
       : appDevPath(item.app.slug)
   const title = historyTitle(item)
 
-  return <Card size="sm">
-    <CardHeader className="grid-cols-[auto_1fr_auto] gap-3">
-      <HistoryMarker item={item} />
-      <div className="min-w-0"><CardTitle className="truncate">{title}</CardTitle><CardDescription className="mt-1">{historyDetail(item)}</CardDescription></div>
-      <div className="flex flex-col items-end gap-1.5"><time className="shrink-0 text-sm text-muted-foreground" dateTime={item.created_at}>{formatDate(item.created_at)}</time>{historyBadge(item)}</div>
-    </CardHeader>
-    <CardContent>
-      <Button className="w-full" render={<Link aria-label={`View ${title}`} to={destination} />} size="sm" variant="outline">View source<PlatformIcon data-icon="inline-end" icon={ChevronRight} size="sm" /></Button>
-    </CardContent>
-  </Card>
+  return <StreamRow accessibleName={`View ${title}`} anchor={<HistoryMarker item={item} />} metadata={`${historyLabel(item)} · ${historyDetail(item)}`} state="default" title={title} to={destination} trailing={<time dateTime={item.created_at}>{formatDate(item.created_at)}</time>} />
 }
 
 /**
@@ -192,53 +184,35 @@ export function LeaderboardHistory() {
     {error ? <Alert variant={error.unauthorized ? "default" : "destructive"}><AlertTitle>{error.unauthorized ? "Sign in to view your history" : "History unavailable"}</AlertTitle><AlertDescription>{error.unauthorized ? "Your giving history is private to your signed-in account." : error.message}</AlertDescription></Alert> : null}
     {!history && !error ? <PaneSkeleton /> : null}
     {history?.items.length === 0 ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={History} /></EmptyMedia><EmptyTitle>Nothing here yet</EmptyTitle><EmptyDescription>Kudos, bounty pledges, and votes you give will appear here.</EmptyDescription></EmptyHeader></Empty> : null}
-    {history?.items.length ? <section aria-label="Your recognition history" className="flex flex-col gap-3">{history.items.map((item, index) => <HistoryRow item={item} key={`${item.type}-${item.created_at}-${index}`} />)}</section> : null}
+    {history?.items.length ? <section aria-label="Your recognition history" className="overflow-hidden rounded-2xl border bg-background">{history.items.map((item, index) => <HistoryRow item={item} key={`${item.type}-${item.created_at}-${index}`} />)}</section> : null}
     {paginationError ? <Alert variant="destructive"><AlertTitle>Couldn’t load more history</AlertTitle><AlertDescription>{paginationError}</AlertDescription></Alert> : null}
     {history?.nextBefore ? <Button className="self-center" disabled={loadingMore} onClick={() => void loadMore()} variant="outline">{loadingMore ? "Loading…" : "Load more"}</Button> : null}
   </div></div>
 }
 
 function Rank({ value }: { value: number }) {
-  return <span aria-label={`Rank ${value}`} className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium tabular-nums">{value}</span>
+  return <span aria-label={`Rank ${value}`} className="text-sm font-medium tabular-nums">{value}</span>
+}
+
+function KudosValue({ value }: { value: number }) {
+  return <span className="flex flex-col items-end"><strong className="text-base font-semibold text-foreground tabular-nums">{value}</strong><span className="text-xs">Kudos</span></span>
 }
 
 function PrRow({ item, rank }: { item: LeaderboardPr; rank: number }) {
-  return (
-    <Card>
-      <CardHeader className="grid-cols-[auto_1fr_auto] gap-3">
-        <Rank value={rank} />
-        <div className="min-w-0"><CardTitle className="truncate">{item.pr_title || "Untitled proposal"}</CardTitle><CardDescription>by @{item.author_username || "unknown"} · {item.app_name}</CardDescription></div>
-        <Badge><PlatformIcon data-icon="inline-start" icon={Award} size="xs" />{item.kudos_count}</Badge>
-      </CardHeader>
-      <CardContent className="flex flex-wrap gap-2">
-        <Button render={<Link aria-label={`View ${item.pr_title || "proposal"}`} to={appDevProposalPath(item.app_slug, item.session_id)} />} size="sm" variant="outline">View details</Button>
-        {item.pr_url ? <Button render={<a aria-label={`Open ${item.pr_title || "proposal"} on GitHub`} href={item.pr_url} rel="noreferrer" target="_blank" />} size="sm" variant="ghost"><PlatformIcon data-icon="inline-start" icon={ExternalLink} size="sm" />GitHub</Button> : null}
-      </CardContent>
-    </Card>
-  )
+  const title = item.pr_title || "Untitled proposal"
+  return <StreamRow accessibleName={`View ${title}`} anchor={<Rank value={rank} />} metadata={`@${item.author_username || "unknown"} · ${item.app_name}`} secondaryAction={item.pr_url ? <ActionAnchor aria-label={`Open ${title} on GitHub`} className="pointer-coarse:min-h-12" href={item.pr_url} rel="noreferrer" size="icon" target="_blank" variant="ghost"><PlatformIcon icon={ExternalLink} /></ActionAnchor> : undefined} state="default" title={title} to={appDevProposalPath(item.app_slug, item.session_id)} trailing={<KudosValue value={item.kudos_count} />} />
 }
 
 function UserRow({ item, rank, window }: { item: LeaderboardUser; rank: number; window: LeaderboardWindow }) {
-  return (
-    <Card>
-      <CardHeader className="grid-cols-[auto_1fr_auto] gap-3">
-        <Rank value={rank} />
-        <div className="min-w-0"><CardTitle className="truncate">@{item.username}</CardTitle><CardDescription>{item.prs_kudosed || 0} kudosed proposals{item.prs_merged ? ` · ${item.prs_merged} merged` : ""}</CardDescription></div>
-        <Badge><PlatformIcon data-icon="inline-start" icon={Award} size="xs" />{item.kudos_received_prs_merged}</Badge>
-      </CardHeader>
-      <CardContent className="flex flex-wrap items-center justify-between gap-3">
-        {item.active_apps?.length ? <span className="flex min-w-0 items-start gap-2"><PlatformIcon className="mt-0.5 text-muted-foreground" icon={UsersRound} /><span className="text-sm text-muted-foreground">Active on {item.active_apps.map((app) => app.name).join(", ")}</span></span> : <span className="text-sm text-muted-foreground">View their public proposals and recognition.</span>}
-        <Button aria-label={`View @${item.username}'s profile`} render={<Link to={leaderboardUserPath(item.username, window)} />} size="sm" variant="outline">View profile</Button>
-      </CardContent>
-    </Card>
-  )
+  const activity = item.active_apps?.length ? `Active on ${item.active_apps.map((app) => app.name).join(", ")}` : `${item.prs_kudosed || 0} kudosed proposals${item.prs_merged ? ` · ${item.prs_merged} merged` : ""}`
+  return <StreamRow accessibleName={`View @${item.username}'s profile`} anchor={<Rank value={rank} />} metadata={activity} state="default" title={`@${item.username}`} to={leaderboardUserPath(item.username, window)} trailing={<KudosValue value={item.kudos_received_prs_merged} />} />
 }
 
-function StatusBadge({ status }: { status: string }) {
-  if (status === "merged") return <Badge variant="secondary">Merged</Badge>
-  if (status === "merging") return <Badge variant="outline">Merging</Badge>
-  if (status === "archived") return <Badge variant="outline">Closed</Badge>
-  return <Badge variant="outline">Open</Badge>
+function statusLabel(status: string) {
+  if (status === "merged") return "Merged"
+  if (status === "merging") return "Merging"
+  if (status === "archived") return "Closed"
+  return "Open"
 }
 
 function formatDate(value: string) {
@@ -249,7 +223,9 @@ function formatDate(value: string) {
 
 function ProfilePrRow({ item }: { item: LeaderboardUserProfilePr }) {
   const title = item.pr_title || `PR #${item.pr_number || item.session_id}`
-  return <Card size="sm"><CardHeader className="grid-cols-[1fr_auto] gap-3"><div className="min-w-0 space-y-1"><CardTitle className="truncate">{title}</CardTitle><CardDescription className="flex flex-wrap items-center gap-x-1.5 gap-y-1"><StatusBadge status={item.status} /><span>{item.app_name || item.app_slug}</span>{formatDate(item.created_at) ? <><span aria-hidden="true">·</span><span>{formatDate(item.created_at)}</span></> : null}</CardDescription></div><Badge><PlatformIcon data-icon="inline-start" icon={Award} size="xs" />{item.kudos_count}</Badge></CardHeader><CardContent className="flex flex-wrap gap-2"><Button render={<Link aria-label={`View ${title}`} to={appDevProposalPath(item.app_slug, item.session_id)} />} size="sm" variant="outline">View details</Button>{item.pr_url ? <Button render={<a href={item.pr_url} rel="noreferrer" target="_blank" />} size="sm" variant="ghost"><PlatformIcon data-icon="inline-start" icon={ExternalLink} size="sm" />GitHub</Button> : null}</CardContent></Card>
+  const date = formatDate(item.created_at)
+  const metadata = [statusLabel(item.status), item.app_name || item.app_slug, date].filter(Boolean).join(" · ")
+  return <StreamRow accessibleName={`View ${title}`} anchor={<PlatformIcon icon={Award} />} metadata={metadata} secondaryAction={item.pr_url ? <ActionAnchor aria-label={`Open ${title} on GitHub`} className="pointer-coarse:min-h-12" href={item.pr_url} rel="noreferrer" size="icon" target="_blank" variant="ghost"><PlatformIcon icon={ExternalLink} /></ActionAnchor> : undefined} state="default" title={title} to={appDevProposalPath(item.app_slug, item.session_id)} trailing={<KudosValue value={item.kudos_count} />} />
 }
 
 export function LeaderboardUserProfile() {
@@ -289,6 +265,6 @@ export function LeaderboardUserProfile() {
     <TopBar title={`@${profile?.user.username || username}`} /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {error ? <Alert variant={error.notFound ? "default" : "destructive"}><AlertTitle>{error.notFound ? "User not found" : "Profile unavailable"}</AlertTitle><AlertDescription>{error.notFound ? "This public profile may have been removed or renamed." : error.message}</AlertDescription></Alert> : null}
     {!profile && !error ? <PaneSkeleton /> : null}
-    {profile ? <><div aria-label="Contributor recognition" className="flex flex-wrap gap-2"><Badge><PlatformIcon data-icon="inline-start" icon={Award} size="xs" />{profile.stats.kudos_merged} kudos on merged</Badge><Badge variant="secondary">{profile.stats.prs_merged} merged</Badge><Badge variant="outline">{profile.stats.prs_total} proposed</Badge></div>{profile.items.length === 0 ? <Alert><AlertTitle>No public proposals yet</AlertTitle><AlertDescription>Public proposals will appear here when this contributor creates one.</AlertDescription></Alert> : <section aria-label={`${profile.user.username}'s proposals`} className="space-y-3">{profile.items.map((item) => <ProfilePrRow item={item} key={item.session_id} />)}</section>}{profile.nextBefore ? <Button className="self-center" disabled={loadingMore} onClick={() => void loadMore()} variant="outline">{loadingMore ? "Loading…" : "Load more"}</Button> : null}</> : null}
+    {profile ? <><div aria-label="Contributor recognition" className="flex flex-wrap gap-2"><Badge><PlatformIcon data-icon="inline-start" icon={Award} size="xs" />{profile.stats.kudos_merged} kudos on merged</Badge><Badge variant="secondary">{profile.stats.prs_merged} merged</Badge><Badge variant="outline">{profile.stats.prs_total} proposed</Badge></div>{profile.items.length === 0 ? <Alert><AlertTitle>No public proposals yet</AlertTitle><AlertDescription>Public proposals will appear here when this contributor creates one.</AlertDescription></Alert> : <section aria-label={`${profile.user.username}'s proposals`} className="overflow-hidden rounded-2xl border bg-background">{profile.items.map((item) => <ProfilePrRow item={item} key={item.session_id} />)}</section>}{profile.nextBefore ? <Button className="self-center" disabled={loadingMore} onClick={() => void loadMore()} variant="outline">{loadingMore ? "Loading…" : "Load more"}</Button> : null}</> : null}
   </div></div>
 }

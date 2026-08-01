@@ -130,7 +130,7 @@ function NotificationGroup({ group, onMarkRead, onOpen }: { group: Notification[
       ? <StreamRow accessibleName={label} key={notification.id} metadata={metadata} onNavigate={() => onOpen(notification)} state="read" title={notificationCopy(notification)} to={href} />
       : <StreamRow
           accessibleName={label}
-          indicator={<StatusDot label="Unread" role="attention" showLabel={false} size="sm" subject={notification.appName || "Activity"} />}
+          anchor={<StatusDot label="Unread" role="attention" showLabel={false} size="sm" subject={notification.appName || "Activity"} />}
           key={notification.id}
           metadata={metadata}
           onNavigate={() => onOpen(notification)}

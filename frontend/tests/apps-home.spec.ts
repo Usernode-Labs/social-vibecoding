@@ -144,10 +144,12 @@ test("previews at most three unresolved Activity items without duplicating Work"
   await page.goto("/react/")
 
   const activity = page.getByRole("region", { name: "Needs attention" })
-  await expect(activity.getByRole("listitem")).toHaveCount(3)
+  await expect(activity.locator('[data-slot="stream-row"]')).toHaveCount(3)
   await expect(activity).toContainText("Collaborator invitation")
   await expect(activity).toContainText("Can we add pantry filters?")
   await expect(activity).not.toContainText("Builder session finished")
+  await expect(activity.getByRole("link", { name: "Open activity: Collaborator invitation" })).toHaveAttribute("href", "/react/notifications")
+  await expect(activity.getByRole("link", { name: "Open activity: Can we add pantry filters?" })).toHaveAttribute("href", "/react/notifications")
   await expect(activity.getByRole("link", { name: "View all activity" })).toHaveAttribute("href", "/react/notifications")
 })
 

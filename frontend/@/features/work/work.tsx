@@ -1,13 +1,11 @@
 import { Gauge, RefreshCw, Vote } from "lucide-react"
-import { useEffect, useMemo, useState } from "react"
-import { Link } from "react-router-dom"
+import { type ReactNode, useEffect, useMemo, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import { StreamRow } from "@/components/stream-row"
 import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { appDevGovernancePath, appDevProposalPath, appDevSessionPath } from "@/lib/routes"
@@ -19,7 +17,11 @@ function sessionTitle(session: WorkSession) {
 }
 
 function WorkSkeleton() {
-  return <div className="space-y-3">{Array.from({ length: 3 }, (_, index) => <Skeleton className="h-24 w-full" key={index} />)}</div>
+  return <div className="flex flex-col gap-3">{Array.from({ length: 3 }, (_, index) => <Skeleton className="h-24 w-full" key={index} />)}</div>
+}
+
+function WorkSection({ children, count, title }: { children: ReactNode; count: number; title: string }) {
+  return <section aria-labelledby={`work-${title.toLocaleLowerCase().replaceAll(" ", "-")}`} className="flex flex-col gap-3"><h2 className="text-lg font-medium" id={`work-${title.toLocaleLowerCase().replaceAll(" ", "-")}`}>{title} <span className="text-muted-foreground">· {count}</span></h2><div className="overflow-hidden rounded-2xl border bg-background">{children}</div></section>
 }
 
 export function Work() {
@@ -85,25 +87,25 @@ export function Work() {
       {error ? <Alert variant="destructive"><AlertTitle>Work unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!snapshot && !error ? <WorkSkeleton /> : null}
       {isEmpty ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={Gauge} /></EmptyMedia><EmptyTitle>No work in progress</EmptyTitle><EmptyDescription>Open an app and start building.</EmptyDescription></EmptyHeader></Empty> : null}
-      {snapshot?.proposals.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Proposals</h3>{snapshot.proposals.map((proposal) => <ProposalRow key={proposal.id} proposal={proposal} />)}</section> : null}
-      {snapshot?.governance.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Governance proposals</h3>{snapshot.governance.map((proposal) => <GovernanceRow key={proposal.id} proposal={proposal} />)}</section> : null}
-      {sessions.length ? <section className="space-y-3"><h3 className="text-lg font-medium">Sessions</h3>{sessions.map((session) => <SessionRow key={session.id} session={session} />)}</section> : null}
+      {snapshot?.proposals.length ? <WorkSection count={snapshot.proposals.length} title="Proposals">{snapshot.proposals.map((proposal) => <ProposalRow key={proposal.id} proposal={proposal} />)}</WorkSection> : null}
+      {snapshot?.governance.length ? <WorkSection count={snapshot.governance.length} title="Governance proposals">{snapshot.governance.map((proposal) => <GovernanceRow key={proposal.id} proposal={proposal} />)}</WorkSection> : null}
+      {sessions.length ? <WorkSection count={sessions.length} title="Sessions">{sessions.map((session) => <SessionRow key={session.id} session={session} />)}</WorkSection> : null}
     </div></div>
   )
 }
 
 function SessionRow({ session }: { session: WorkSession }) {
   const state = session.busy ? "Working" : session.status === "paused" ? "Paused" : session.status === "promoted" ? "In vote" : "Active"
-  return <Card><CardHeader className="grid-cols-[1fr_auto] gap-3"><div className="min-w-0"><CardTitle className="truncate">{sessionTitle(session)}</CardTitle><CardDescription>{session.app_name}</CardDescription></div><Badge variant={session.busy ? "secondary" : "outline"}>{session.busy ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={RefreshCw} size="xs" /> : null}{state}</Badge></CardHeader><CardContent><Button render={<Link aria-label={`View ${sessionTitle(session)} session`} to={appDevSessionPath(session.app_slug, session.id)} />} size="sm" variant="outline">View session</Button></CardContent></Card>
+  return <StreamRow accessibleName={`View ${sessionTitle(session)} session`} anchor={<PlatformIcon className={session.busy ? "animate-spin" : undefined} icon={session.busy ? RefreshCw : Gauge} />} metadata={session.app_name} state="default" title={sessionTitle(session)} to={appDevSessionPath(session.app_slug, session.id)} trailing={state} />
 }
 
 function ProposalRow({ proposal }: { proposal: WorkProposal }) {
   const votesRequired = proposal.votes_required || proposal.majority || 1
   const title = proposal.pr_title || `Proposal #${proposal.pr_number || proposal.id}`
-  return <Card><CardHeader className="grid-cols-[1fr_auto] gap-3"><div className="min-w-0"><CardTitle className="truncate">{title}</CardTitle><CardDescription>{proposal.app_name}</CardDescription></div><Badge><PlatformIcon data-icon="inline-start" icon={Vote} size="xs" />{proposal.yes_count} / {votesRequired}</Badge></CardHeader><CardContent><Button render={<Link aria-label={`View ${title} proposal`} to={appDevProposalPath(proposal.app_slug, proposal.id)} />} size="sm" variant="outline">View proposal</Button></CardContent></Card>
+  return <StreamRow accessibleName={`View ${title} proposal`} anchor={<PlatformIcon icon={Vote} />} metadata={proposal.app_name} state="default" title={title} to={appDevProposalPath(proposal.app_slug, proposal.id)} trailing={`${proposal.yes_count} / ${votesRequired} votes`} />
 }
 
 function GovernanceRow({ proposal }: { proposal: WorkGovernance }) {
   const votesRequired = proposal.votes_required || proposal.majority || 1
-  return <Card><CardHeader className="grid-cols-[1fr_auto] gap-3"><div className="min-w-0"><CardTitle className="truncate">{proposal.title}</CardTitle><CardDescription>{proposal.app_name}</CardDescription></div><Badge><PlatformIcon data-icon="inline-start" icon={Vote} size="xs" />{proposal.up_count} / {votesRequired}</Badge></CardHeader><CardContent><Button render={<Link aria-label={`View ${proposal.title} governance item`} to={appDevGovernancePath(proposal.app_slug, proposal.id)} />} size="sm" variant="outline">View governance</Button></CardContent></Card>
+  return <StreamRow accessibleName={`View ${proposal.title} governance item`} anchor={<PlatformIcon icon={Vote} />} metadata={proposal.app_name} state="default" title={proposal.title} to={appDevGovernancePath(proposal.app_slug, proposal.id)} trailing={`${proposal.up_count} / ${votesRequired} votes`} />
 }

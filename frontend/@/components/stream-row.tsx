@@ -5,54 +5,60 @@ import { cn } from "@/lib/utils"
 
 type StreamRowBaseProps = {
   accessibleName: string
+  anchor?: ReactNode
   className?: string
-  indicator?: ReactNode
   metadata: ReactNode
   onNavigate?: MouseEventHandler<HTMLAnchorElement>
   title: ReactNode
   to: string
+  trailing?: ReactNode
 }
 
 export type StreamRowProps = StreamRowBaseProps & (
+  | { state?: "default"; secondaryAction?: ReactNode }
   | { state: "unread"; secondaryAction: ReactNode }
   | { state: "read"; secondaryAction?: never }
 )
 
 /**
- * A comparable stream record with one real row destination and, while unread,
- * one sibling action. The type contract forbids a dead action gutter on read
- * rows; the DOM contract forbids nested interactive elements.
+ * A comparable stream record with one real row destination, a stable caller-owned
+ * anchor, an optional quiet trailing value, and at most one sibling action. Unread
+ * rows require that action, read rows forbid it, and default records may optionally
+ * supply it. The DOM contract forbids nested interactive elements.
  */
 export function StreamRow({
   accessibleName,
+  anchor,
   className,
-  indicator,
   metadata,
   onNavigate,
+  secondaryAction,
+  state = "default",
   title,
   to,
-  ...stateProps
+  trailing,
 }: StreamRowProps) {
-  const unread = stateProps.state === "unread"
+  const unread = state === "unread"
 
   return (
     <article
       className={cn("flex items-stretch border-b border-border last:border-b-0", className)}
-      data-read-state={stateProps.state}
+      data-read-state={state === "default" ? undefined : state}
       data-slot="stream-row"
+      data-stream-state={state}
     >
       <Link
         aria-label={accessibleName}
-        className="group/stream-row-link flex min-h-16 min-w-0 flex-1 items-start gap-3 rounded-xl px-3 py-3 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:z-20 focus-visible:ring-3 focus-visible:ring-ring/30"
+        className="group/stream-row-link flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-3 text-left outline-none transition-colors hover:bg-muted/60 focus-visible:z-20 focus-visible:ring-3 focus-visible:ring-ring/30"
         data-slot="stream-row-link"
         onClick={onNavigate}
         to={to}
       >
         <span
-          className="mt-1.5 flex size-2.5 shrink-0 items-center justify-center"
-          data-slot="stream-row-indicator"
+          className="flex size-8 shrink-0 items-center justify-center text-muted-foreground"
+          data-slot="stream-row-anchor"
         >
-          {unread ? indicator : null}
+          {anchor}
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
           <span className={cn("truncate text-sm text-foreground", unread && "font-medium")} data-slot="stream-row-title">
@@ -60,13 +66,14 @@ export function StreamRow({
           </span>
           <span className="truncate text-sm text-muted-foreground" data-slot="stream-row-metadata">{metadata}</span>
         </span>
+        {trailing ? <span className="shrink-0 text-right text-sm text-muted-foreground" data-slot="stream-row-trailing">{trailing}</span> : null}
       </Link>
-      {unread ? (
+      {secondaryAction ? (
         <span
           className="relative z-10 flex shrink-0 items-center pr-2"
           data-slot="stream-row-action"
         >
-          {stateProps.secondaryAction}
+          {secondaryAction}
         </span>
       ) : null}
     </article>

@@ -7,7 +7,9 @@ import {
 } from "@/lib/notifications-api"
 
 export type HomeActivityItem = {
+  createdAt: string
   id: string
+  kind: "invite" | "notification"
   title: string
   detail: string
 }
@@ -56,7 +58,9 @@ function inviteItem(invite: PendingInvite): HomeActivityItem {
       : "Collaborator invitation"
   const appName = invite.appName || invite.appSlug
   return {
+    createdAt: invite.createdAt,
     id: `invite:${invite.kind}:${invite.appId}`,
+    kind: "invite",
     title,
     detail: invite.invitedBy
       ? `@${invite.invitedBy} invited you to ${appName}.`
@@ -77,7 +81,9 @@ export function homeActivityItems(page: NotificationsPage) {
         isBellNotification(notification) && notification.readAt === null
     )
     .map((notification) => ({
+      createdAt: notification.createdAt,
       id: `notification:${notification.id}`,
+      kind: "notification" as const,
       title: notificationTitle(notification),
       detail: notificationDetail(notification),
     }))

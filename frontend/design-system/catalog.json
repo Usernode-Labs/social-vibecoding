@@ -1451,7 +1451,8 @@
         "ReadAndUnread",
         "Mobile",
         "Dark",
-        "LongContent"
+        "LongContent",
+        "ComparableRecords"
       ],
       "tokens": [
         "foundation.font.sans",
@@ -1466,11 +1467,11 @@
           "Destination precedes the secondary action in keyboard order and both show visible focus.",
           "Coarse-pointer targets provide at least 48 by 48 CSS-pixel reach without overlap."
         ],
-        "evidence": "StreamRow read/unread, mobile, dark, and long-content stories plus Activity browser tests for semantics, focus, navigation, mutation, read-only behavior, and geometry."
+        "evidence": "StreamRow read/unread, comparable-record, mobile, dark, and long-content stories plus Activity, Work, Home-attention, and Leaderboard browser tests for semantics, focus, navigation, mutation, read-only behavior, and geometry."
       },
       "dataBoundary": {
         "kind": "props-only",
-        "contract": "StreamRow receives a typed destination, visible content, read state, indicator, and caller-owned secondary action. It owns no fetching, mutation, authorization, or domain routing."
+        "contract": "StreamRow receives a typed destination, visible content, optional read emphasis, a stable caller-owned anchor, optional quiet trailing value, and at most one caller-owned sibling action. It owns no fetching, mutation, authorization, or domain routing."
       },
       "responsive": [
         "narrow-mobile",
@@ -1498,7 +1499,8 @@
           "ReadAndUnread",
           "Mobile",
           "Dark",
-          "LongContent"
+          "LongContent",
+          "ComparableRecords"
         ]
       }
     },

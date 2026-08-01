@@ -71,10 +71,15 @@ test("keeps active sessions and proposals distinct while handing read paths to R
   await expect(work).toHaveCSS("max-width", "none")
   await expect(work).toContainText("Improve pantry search")
   await expect(work).toContainText("Improve matching")
+  await expect(work.locator('[data-slot="stream-row"]')).toHaveCount(3)
+  await expect(work.getByRole("heading", { exact: true, name: "Proposals · 1" })).toBeVisible()
+  await expect(work.getByRole("heading", { exact: true, name: "Governance proposals · 1" })).toBeVisible()
+  await expect(work.getByRole("heading", { exact: true, name: "Sessions · 1" })).toBeVisible()
   await expect(page.getByRole("link", { name: "View Improve pantry search session" })).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/23")
   await expect(page.getByRole("link", { name: "View Improve matching proposal" })).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/24")
   await expect(page.getByRole("link", { name: "View Rotate a development secret governance item" })).toHaveAttribute("href", "/react/apps/recipebot/dev/governance/5")
   await expect(page.getByText("Working")).toBeVisible()
+  await expect(page.getByText("View session", { exact: true })).toHaveCount(0)
 })
 
 test("re-reads Work after a typed session_update instead of patching an incomplete socket payload", async ({ page }) => {

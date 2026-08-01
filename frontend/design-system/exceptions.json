@@ -617,30 +617,6 @@
       "expires": "2026-09-30"
     },
     {
-      "rule": "no-space-utilities",
-      "file": "@/features/community/leaderboard.tsx",
-      "matches": [
-        "space-y-1",
-        "space-y-3"
-      ],
-      "count": 2,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/features/community/leaderboard.tsx",
-      "matches": [
-        "grid-cols-[1fr_auto]",
-        "grid-cols-[auto_1fr_auto]"
-      ],
-      "count": 4,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
       "rule": "no-arbitrary-utilities",
       "file": "@/features/dev/dev-conversation.stories.tsx",
       "matches": [
@@ -649,28 +625,6 @@
       "count": 2,
       "owner": "frontend-platform",
       "reason": "Story-only viewport evidence predates a named evidence-layout variant; the exact-match ratchet prevents expansion.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-space-utilities",
-      "file": "@/features/work/work.tsx",
-      "matches": [
-        "space-y-3"
-      ],
-      "count": 4,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/features/work/work.tsx",
-      "matches": [
-        "grid-cols-[1fr_auto]"
-      ],
-      "count": 3,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
       "expires": "2026-09-30"
     }
   ],

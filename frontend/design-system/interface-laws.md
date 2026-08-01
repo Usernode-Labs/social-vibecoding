@@ -78,14 +78,17 @@ do not fade merely because one child control is unavailable.
   action mutates read state without navigation.
 - Both targets provide at least 48 by 48 CSS-pixel reach for coarse pointers,
   and their hit regions do not overlap.
-- Anatomy is a stable left indicator anchor, title, one quiet metadata line,
-  optional quiet trailing state, and the sibling action. No repeated Open/View
-  control remains.
+- Anatomy is a stable caller-owned left anchor, title, one quiet metadata line,
+  optional quiet trailing value, and at most one sibling action. Read-state
+  streams may use the anchor for an unread indicator; comparable domain streams
+  use rank, identity, or category. Unread rows require a sibling action; read rows
+  never carry one. No repeated Open/View control remains.
 - A read row renders no secondary action and reserves no dead gutter for it.
   The content anchor remains stable when the mutation lands.
 - Evidence covers read/unread side by side, loading, empty, fetch error,
   invitation error, pagination, live connection, read-only, long content,
   light/dark, desktop/mobile, focus, navigation, and mutation.
 
-No route family may adopt StreamRow until this representative passes the Codex
-engineering gate and Claude craft gate.
+The Activity representative passed the Codex engineering gate and Claude craft
+gate before route-family adoption. New consumers preserve this anatomy and keep
+fetching, mutation, authorization, and destination ownership in their routes.
