@@ -114,7 +114,9 @@ test("keeps personal launching on Home and catalog discovery in Explore", async 
   await expect(page.getByRole("heading", { name: "Explore", exact: true })).toBeVisible()
   await expect(page.getByTestId("explore-app-card-recipebot")).toContainText("RecipeBot")
   await expect(page.getByTestId("explore-app-card-game-corner")).toContainText("Game Corner")
-  await expect(page.getByRole("link", { name: "View details for RecipeBot" })).toHaveAttribute("href", "/react/apps/recipebot")
+  const detailsLink = page.getByRole("link", { name: "View details for RecipeBot" })
+  await expect(detailsLink).toHaveAttribute("data-slot", "action-link")
+  await expect(detailsLink).toHaveAttribute("href", "/react/apps/recipebot")
 })
 
 test("previews at most three unresolved Activity items without duplicating Work", async ({ page }) => {

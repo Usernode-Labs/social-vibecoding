@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
+import { expect, within } from "storybook/test"
 
 import { GitHubIssues } from "@/features/dev/github-issues"
 
@@ -9,6 +10,13 @@ const meta = { title: "Features/Dev/GitHub issues", component: GitHubIssues, par
 export default meta
 type Story = StoryObj<typeof meta>
 
-export const WithActivity: Story = { args: { issues, slug: "recipebot" } }
+export const WithActivity: Story = {
+  args: { issues, slug: "recipebot" },
+  play: async ({ canvasElement }) => {
+    const link = within(canvasElement).getByRole("link", { name: "View Make pantry filters easier to find" })
+    await expect(link).toHaveAttribute("data-slot", "action-link")
+    await expect(link).toHaveAttribute("href", "/apps/recipebot/dev/issues/84")
+  },
+}
 export const Empty: Story = { args: { issues: [], slug: "recipebot" } }
 export const Loading: Story = { args: { issues: null, slug: "recipebot" } }

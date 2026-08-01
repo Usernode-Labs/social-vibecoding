@@ -250,7 +250,9 @@ test("creates a vote-only close proposal without directly closing GitHub", async
     },
   })
   await expect(page.getByRole("alert").filter({ hasText: "Close proposal created" })).toBeVisible()
-  await expect(page.getByRole("link", { name: "Close proposed" })).toHaveAttribute("href", "/react/apps/recipebot/dev/governance/910")
+  const closeProposalLink = page.getByRole("link", { name: "Close proposed" })
+  await expect(closeProposalLink).toHaveAttribute("data-slot", "action-link")
+  await expect(closeProposalLink).toHaveAttribute("href", "/react/apps/recipebot/dev/governance/910")
 })
 
 test("renders the existing close proposal instead of offering a duplicate", async ({ page }) => {
@@ -272,7 +274,18 @@ test("renders the existing close proposal instead of offering a duplicate", asyn
 
   await page.goto("/react/apps/recipebot/dev/issues/84")
   await expect(page.getByRole("button", { name: "Propose to close" })).toHaveCount(0)
-  await expect(page.getByRole("link", { name: "Close proposed" })).toHaveAttribute("href", "/react/apps/recipebot/dev/governance/910")
+  const closeProposalLink = page.getByRole("link", { name: "Close proposed" })
+  await expect(closeProposalLink).toHaveAttribute("data-slot", "action-link")
+  await expect(closeProposalLink).toHaveAttribute("href", "/react/apps/recipebot/dev/governance/910")
+})
+
+test("keeps a completed headless proposal on its caller-owned session route", async ({ page }) => {
+  await installIssueFixture(page, [{ ...issue, headless: { status: "ready", mySessionId: 44 } }])
+  await page.goto("/react/apps/recipebot/dev/issues/84")
+
+  const sessionLink = page.getByRole("link", { name: "Go to my session" })
+  await expect(sessionLink).toHaveAttribute("data-slot", "action-link")
+  await expect(sessionLink).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/44")
 })
 
 test("keeps a rejected close proposal actionable with the canonical server reason", async ({ page }) => {
@@ -468,7 +481,8 @@ test("links the Dev board issue card to the owned GitHub issue detail", async ({
   await page.goto("/react/apps/recipebot/dev?view=kanban")
   const board = page.getByTestId("dev-board")
   if (testInfo.project.name === "mobile") await board.getByRole("tab", { name: "In progress" }).click()
-  await expect(board.getByRole("link", { name: `View ${issue.title}` })).toHaveAttribute("href", "/react/apps/recipebot/dev/issues/84")
+  const issueLink = board.getByRole("link", { name: `View ${issue.title}` })
+  await expect(issueLink).toHaveAttribute("href", "/react/apps/recipebot/dev/issues/84")
 })
 
 test("renders a loading skeleton before resolving the GitHub issue and its comments", async ({ page }) => {

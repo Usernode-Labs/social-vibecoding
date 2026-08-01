@@ -5,6 +5,7 @@ import { GripVertical, Search, Vote } from "lucide-react"
 import { useEffect, useMemo, useState, type HTMLAttributes } from "react"
 import { Link } from "react-router-dom"
 
+import { ActionLink } from "@/components/action-link"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
@@ -313,7 +314,7 @@ function WorkCard({ card }: { card: BoardCard }) {
       <div className="flex items-start justify-between gap-3"><div className="min-w-0"><CardTitle className="line-clamp-2 text-base font-medium">{card.title}</CardTitle><CardDescription className="mt-1 line-clamp-2 text-base leading-6 sm:text-sm sm:leading-5">{card.description}</CardDescription></div>{card.status ? <Badge className="shrink-0" variant={card.status === "Working" ? "secondary" : "outline"}>{card.status}</Badge> : null}</div>
     </CardHeader>
     {metadata.length || card.needsVote ? <CardContent className="flex flex-wrap gap-2 px-4 pb-3">{metadata.map((value) => <Badge key={value} variant="secondary">{value}</Badge>)}{card.needsVote ? <StatusDot label="Needs vote" role="attention" subject={card.title} /> : null}</CardContent> : null}
-    <CardFooter className="border-t p-3"><Button className="w-full" render={<Link aria-label={session ? `Open ${card.title}` : `View ${card.title}`} to={card.href} />} size="sm" variant="outline">{action}</Button></CardFooter>
+    <CardFooter className="border-t p-3"><ActionLink aria-label={session ? `Open ${card.title}` : `View ${card.title}`} className="w-full" size="sm" to={card.href} variant="outline">{action}</ActionLink></CardFooter>
   </Card>
 }
 

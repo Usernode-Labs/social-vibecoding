@@ -207,7 +207,16 @@ test("keeps the server's generic-session error visible and does not navigate", a
 
 test("links the Dev overview to the read-only general discussion", async ({ page }) => {
   await page.goto("/react/apps/recipebot/dev")
-  await expect(page.getByRole("link", { name: "Open RecipeBot discussion" })).toHaveAttribute("href", "/react/apps/recipebot/dev/chat")
+  const discussionLink = page.getByRole("link", { name: "Open RecipeBot discussion" })
+  await expect(discussionLink).toHaveAttribute("data-slot", "action-link")
+  await expect(discussionLink).toHaveAttribute("href", "/react/apps/recipebot/dev/chat")
+  await page.goto("/react/apps/recipebot/dev?view=list")
+  const sessionLink = page.getByRole("link", { name: "Open Improve pantry search" })
+  await expect(sessionLink).toHaveAttribute("data-slot", "action-link")
+  await expect(sessionLink).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/9")
+  const proposalLink = page.getByRole("link", { name: "View Filter pantry staples" })
+  await expect(proposalLink).toHaveAttribute("data-slot", "action-link")
+  await expect(proposalLink).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/19")
 })
 
 test("keeps the four lifecycle columns and uses a single mobile column selector", async ({ page }) => {

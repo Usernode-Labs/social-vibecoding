@@ -1,7 +1,7 @@
 import { Eye, GitPullRequest, LockKeyhole, UsersRound } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
 
+import { ActionLink } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
@@ -216,9 +216,9 @@ export function AppVisibilitySettings({
           </Button>
         ) : null}
         {proposal.kind === "ready" ? (
-          <Button render={<Link to={proposal.proposalHref} />} variant="outline">
+          <ActionLink to={proposal.proposalHref} variant="outline">
             Open proposal
-          </Button>
+          </ActionLink>
         ) : null}
       </CardFooter>
 

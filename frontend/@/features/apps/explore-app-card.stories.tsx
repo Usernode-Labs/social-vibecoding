@@ -53,7 +53,9 @@ export const Running: Story = {
   args,
   play: async ({ canvasElement }) => {
     const canvas = light(canvasElement)
-    await expect(canvas.getByRole("link", { name: "View details for Game Corner" })).toHaveAttribute("href", "/apps/game-corner")
+    const link = canvas.getByRole("link", { name: "View details for Game Corner" })
+    await expect(link).toHaveAttribute("data-slot", "action-link")
+    await expect(link).toHaveAttribute("href", "/apps/game-corner")
     await expect(canvas.getByText("Running")).toBeVisible()
   },
 }

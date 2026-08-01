@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
+import { useLocation, useNavigate, useParams } from "react-router-dom"
 
+import { ActionLink } from "@/components/action-link"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -168,7 +169,7 @@ export function AppDev() {
     <div className="flex w-full flex-col gap-6" data-testid="app-dev-content">
       {error ? <Alert variant="destructive"><AlertTitle>Improve didn’t load</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!app && !error ? <Skeleton className="h-32 w-full" /> : null}
-      {app ? <header className="flex flex-col gap-4"><div className="flex flex-wrap items-start justify-end gap-4"><div className="flex flex-wrap gap-2"><Button render={<Link aria-label={`Open ${app.name} discussion`} to={appDevChatPath(app.slug)} />} variant="outline">Discussion</Button><Button aria-label={`Create a session in ${app.name}`} disabled={creating || isProductionReadOnlyReview} onClick={createSession} type="button">{creating ? "Creating…" : "New session"}</Button></div></div><ToggleGroup aria-label="Improve workspace view" onValueChange={(values) => selectView(values[0] ?? null)} size="sm" spacing={0} value={[view]} variant="outline"><ToggleGroupItem aria-label="List view" value="list">List</ToggleGroupItem><ToggleGroupItem aria-label="Kanban view" value="kanban">Board</ToggleGroupItem><ToggleGroupItem aria-label="Tasks by assignee view" value="pm">By person</ToggleGroupItem></ToggleGroup></header> : null}
+      {app ? <header className="flex flex-col gap-4"><div className="flex flex-wrap items-start justify-end gap-4"><div className="flex flex-wrap gap-2"><ActionLink aria-label={`Open ${app.name} discussion`} to={appDevChatPath(app.slug)} variant="outline">Discussion</ActionLink><Button aria-label={`Create a session in ${app.name}`} disabled={creating || isProductionReadOnlyReview} onClick={createSession} type="button">{creating ? "Creating…" : "New session"}</Button></div></div><ToggleGroup aria-label="Improve workspace view" onValueChange={(values) => selectView(values[0] ?? null)} size="sm" spacing={0} value={[view]} variant="outline"><ToggleGroupItem aria-label="List view" value="list">List</ToggleGroupItem><ToggleGroupItem aria-label="Kanban view" value="kanban">Board</ToggleGroupItem><ToggleGroupItem aria-label="Tasks by assignee view" value="pm">By person</ToggleGroupItem></ToggleGroup></header> : null}
       {isProductionReadOnlyReview ? <Alert><AlertTitle>Read-only</AlertTitle><AlertDescription>Creating sessions and changing work order or assignees are unavailable.</AlertDescription></Alert> : null}
       {creationError ? <Alert variant="destructive"><AlertTitle>Could not create a session</AlertTitle><AlertDescription>{creationError}</AlertDescription></Alert> : null}
       {board === null && !error ? <div className="flex flex-col gap-3"><Skeleton className="h-40 w-full" /><Skeleton className="h-40 w-full" /></div> : null}

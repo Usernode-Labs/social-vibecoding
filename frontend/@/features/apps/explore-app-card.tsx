@@ -1,8 +1,6 @@
 import { Users } from "lucide-react"
-import { Link } from "react-router-dom"
-
+import { ActionLink } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { StatusDot } from "@/components/status-dot"
 import { AppIdentity } from "@/features/apps/app-identity"
@@ -41,9 +39,9 @@ export function ExploreAppCard({ app, href, showCommunitySignal = false, status 
         ) : null}
       </CardContent>
       <CardFooter>
-        <Button className="w-full" render={<Link aria-label={`View details for ${app.name}`} to={href} />} variant="outline">
+        <ActionLink aria-label={`View details for ${app.name}`} className="w-full" to={href} variant="outline">
           View details
-        </Button>
+        </ActionLink>
       </CardFooter>
     </Card>
   )

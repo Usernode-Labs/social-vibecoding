@@ -1,8 +1,8 @@
 import { Award, ExternalLink, HandHeart, History, ThumbsUp, Vote } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Link, useParams, useSearchParams } from "react-router-dom"
+import { useParams, useSearchParams } from "react-router-dom"
 
-import { ActionAnchor } from "@/components/action-link"
+import { ActionAnchor, ActionLink } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { StreamRow } from "@/components/stream-row"
 import { TopBar } from "@/components/top-bar"
@@ -65,7 +65,7 @@ export function Leaderboard() {
           <Button aria-pressed={window === "all"} onClick={() => select(tab, "all")} size="sm" type="button" variant={window === "all" ? "secondary" : "outline"}>All-time</Button>
           <Button aria-pressed={window === "week"} onClick={() => select(tab, "week")} size="sm" type="button" variant={window === "week" ? "secondary" : "outline"}>This week</Button>
         </div>
-        <Button render={<Link to={leaderboardHistoryPath()} />} size="sm" variant="ghost"><PlatformIcon data-icon="inline-start" icon={History} size="sm" />My history</Button>
+        <ActionLink size="sm" to={leaderboardHistoryPath()} variant="ghost"><PlatformIcon data-icon="inline-start" icon={History} size="sm" />My history</ActionLink>
       </div>
       {error ? <Alert variant="destructive"><AlertTitle>Leaderboard unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!items && !error ? <PaneSkeleton /> : null}

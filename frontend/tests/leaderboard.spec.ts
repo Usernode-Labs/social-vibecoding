@@ -128,7 +128,9 @@ test("preserves the user and period choices in browser-visible route state", asy
 
 test("uses a public profile deep link with browser-visible route state and keeps the private route signed in", async ({ page }) => {
   await page.goto("/react/community/leaderboard?tab=users&window=week")
-  await expect(page.getByRole("link", { name: "My history" })).toHaveAttribute("href", "/react/community/leaderboard/history")
+  const historyLink = page.getByRole("link", { name: "My history" })
+  await expect(historyLink).toHaveAttribute("data-slot", "action-link")
+  await expect(historyLink).toHaveAttribute("href", "/react/community/leaderboard/history")
   await page.getByRole("link", { name: "View @ava's profile" }).click()
 
   await expect(page).toHaveURL(/\/community\/leaderboard\/users\/ava\?window=week/)

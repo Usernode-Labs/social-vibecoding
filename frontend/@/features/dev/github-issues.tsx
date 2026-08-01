@@ -1,8 +1,6 @@
 import { Bot, MessageCircle, Sparkles, Timer } from "lucide-react"
-import { Link } from "react-router-dom"
-
+import { ActionLink } from "@/components/action-link"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -44,7 +42,7 @@ function IssueCard({ issue, slug }: { issue: GitHubIssue; slug: string }) {
     </CardHeader>
     <CardContent><IssueStatus issue={issue} /></CardContent>
     <CardFooter className="flex flex-wrap gap-2">
-      <Button render={<Link aria-label={`View ${issue.title}`} to={appDevGitHubIssuePath(slug, issue.number)} />} size="sm" variant="outline">View details</Button>
+      <ActionLink aria-label={`View ${issue.title}`} size="sm" to={appDevGitHubIssuePath(slug, issue.number)} variant="outline">View details</ActionLink>
     </CardFooter>
   </Card>
 }

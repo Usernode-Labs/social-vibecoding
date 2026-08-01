@@ -127,7 +127,9 @@ test("explains exhausted shared credits and links to the unified settings surfac
 
   const alert = page.getByTestId("dev-budget-exhausted")
   await expect(alert).toContainText("Today’s free AI credits are used up")
-  await expect(alert.getByRole("link", { name: "Open settings" })).toHaveAttribute("href", "/react/settings")
+  const settingsLink = alert.getByRole("link", { name: "Open settings" })
+  await expect(settingsLink).toHaveAttribute("data-slot", "action-link")
+  await expect(settingsLink).toHaveAttribute("href", "/react/settings")
 })
 
 test("loads a legacy saved draft and sends it only after an explicit action", async ({ page }) => {

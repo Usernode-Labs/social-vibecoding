@@ -139,7 +139,9 @@ test("creates a visibility proposal without changing the current access policy l
     body: { collabVisibility: "public", viewVisibility: "public" },
   })
   await expect(page.getByTestId("app-visibility-settings")).toContainText("Visibility proposal created")
-  await expect(page.getByRole("link", { name: "Open proposal" })).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/71")
+  const createdProposalLink = page.getByRole("link", { name: "Open proposal" })
+  await expect(createdProposalLink).toHaveAttribute("data-slot", "action-link")
+  await expect(createdProposalLink).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/71")
   await expect(page.getByTestId("app-visibility-settings")).toContainText("Only accepted collaborators can build or open this app.")
 })
 
@@ -159,7 +161,9 @@ test("continues an already-open visibility proposal returned by the server", asy
   await page.getByRole("alertdialog").getByRole("button", { name: "Open proposal" }).click()
 
   await expect(page.getByTestId("app-visibility-settings")).toContainText("Visibility proposal already open")
-  await expect(page.getByRole("link", { name: "Open proposal" })).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/64")
+  const existingProposalLink = page.getByRole("link", { name: "Open proposal" })
+  await expect(existingProposalLink).toHaveAttribute("data-slot", "action-link")
+  await expect(existingProposalLink).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/64")
 })
 
 test("keeps visibility read-only for a collaborator without manage authority", async ({ page }) => {

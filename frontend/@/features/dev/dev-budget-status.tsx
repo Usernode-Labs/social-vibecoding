@@ -1,11 +1,9 @@
 import { CircleDollarSign } from "lucide-react"
 import { useEffect, useState } from "react"
-import { Link } from "react-router-dom"
-
+import { ActionLink } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { getAiBudget, getWebSettings, type AiBudget } from "@/lib/settings-api"
 
 export type DevBudgetStatusState = {
@@ -76,9 +74,9 @@ export function DevBudgetStatusView({ budget, hasApiKey, keyLast4 }: DevBudgetSt
               ? "No platform or personal AI provider is available."
               : "The shared allowance resets at midnight UTC. You can add your own Anthropic API key to continue sooner."}
           </span>
-          <Button render={<Link to="/settings" />} size="sm" variant="outline">
+          <ActionLink size="sm" to="/settings" variant="outline">
             Open settings
-          </Button>
+          </ActionLink>
         </AlertDescription>
       </Alert>
     )
