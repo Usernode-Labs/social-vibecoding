@@ -72,7 +72,7 @@ function messageAttachments(message: ConversationMessage): HistoricalAttachment[
 
 function ConversationMessage({ message, sessionId }: { message: ConversationMessage; sessionId?: string }) {
   if (message.role === "system") {
-    return <Marker variant="separator"><MarkerIcon><PlatformIcon icon={CircleAlert} size="sm" /></MarkerIcon><MarkerContent>{message.content || "Session update"}</MarkerContent></Marker>
+    return <Marker variant="separator"><MarkerIcon><PlatformIcon icon={CircleAlert} /></MarkerIcon><MarkerContent>{message.content || "Session update"}</MarkerContent></Marker>
   }
 
   const isUser = message.role === "user"
@@ -112,8 +112,8 @@ export function DevConversation({ messages, sessionId, streamState = "idle" }: D
   return <MessageScrollerProvider><MessageScroller aria-label="Development session conversation" className="min-h-96" data-slot="dev-conversation">
     <MessageScrollerViewport><MessageScrollerContent className="gap-5 p-4 sm:p-6">
       {messages.map((message, index) => <MessageScrollerItem key={message.id} scrollAnchor={index === messages.length - 1}><ConversationMessage message={message} sessionId={sessionId} /></MessageScrollerItem>)}
-      {streamState === "streaming" ? <MessageScrollerItem scrollAnchor><Marker><MarkerIcon><PlatformIcon icon={Bot} size="sm" /></MarkerIcon><MarkerContent>Builder is responding…</MarkerContent></Marker></MessageScrollerItem> : null}
-      {streamState === "error" ? <MessageScrollerItem scrollAnchor><Marker><MarkerIcon><PlatformIcon icon={CircleAlert} size="sm" /></MarkerIcon><MarkerContent>Builder reported an error.</MarkerContent></Marker></MessageScrollerItem> : null}
+      {streamState === "streaming" ? <MessageScrollerItem scrollAnchor><Marker><MarkerIcon><PlatformIcon icon={Bot} /></MarkerIcon><MarkerContent>Builder is responding…</MarkerContent></Marker></MessageScrollerItem> : null}
+      {streamState === "error" ? <MessageScrollerItem scrollAnchor><Marker><MarkerIcon><PlatformIcon icon={CircleAlert} /></MarkerIcon><MarkerContent>Builder reported an error.</MarkerContent></Marker></MessageScrollerItem> : null}
     </MessageScrollerContent></MessageScrollerViewport>
     <MessageScrollerButton />
   </MessageScroller></MessageScrollerProvider>

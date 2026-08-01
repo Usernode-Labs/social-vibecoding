@@ -119,7 +119,7 @@ function SystemMessage({ message, onReact, onReply, writable }: { message: Group
   const label = message.msg_type === "spec_share"
     ? message.metadata?.specShare?.title || `Shared spec${message.metadata?.specShare?.version ? ` v${message.metadata.specShare.version}` : ""}`
     : message.content || "Discussion update"
-  return <div className="space-y-2"><Marker variant="separator"><MarkerIcon><PlatformIcon icon={icon} size="sm" /></MarkerIcon><MarkerContent>{label}</MarkerContent></Marker><Reactions message={message} onReact={onReact} writable={writable} />{writable ? <ReplyButton message={message} onReply={onReply} /> : null}</div>
+  return <div className="space-y-2"><Marker variant="separator"><MarkerIcon><PlatformIcon icon={icon} /></MarkerIcon><MarkerContent>{label}</MarkerContent></Marker><Reactions message={message} onReact={onReact} writable={writable} />{writable ? <ReplyButton message={message} onReply={onReply} /> : null}</div>
 }
 
 function isSameUser(left: number | string | null | undefined, right: number | string | null | undefined) {

@@ -1,5 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
 import { Bot, CalendarClock } from "lucide-react"
+import { expect, within } from "storybook/test"
 
 import { PlatformIcon } from "@/components/platform-icon"
 import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
@@ -16,6 +17,13 @@ type Story = StoryObj<typeof meta>
 
 export const Status: Story = {
   render: () => <Marker><MarkerIcon><PlatformIcon icon={Bot} /></MarkerIcon><MarkerContent>Builder is responding…</MarkerContent></Marker>,
+  play: async ({ canvasElement }) => {
+    const marker = within(canvasElement).getByText("Builder is responding…").closest('[data-slot="marker"]')
+    const icon = marker?.querySelector('[data-slot="marker-icon"] > [data-slot="platform-icon"]')
+    await expect(icon).not.toBeNull()
+    await expect(getComputedStyle(icon!).width).toBe("16px")
+    await expect(getComputedStyle(icon!).height).toBe("16px")
+  },
 }
 
 export const Separator: Story = {
