@@ -160,7 +160,7 @@ test('1 season', () => {
   assert.equal((body.match(/INSERT INTO seasons/g) || []).length, 1);
 });
 
-test('2 season_events: one regular with epochs + scoring_formula, one type=\'season\'', () => {
+test('3 season_events: regular (current), type=\'season\', and a fully-past one', () => {
   const start = body.indexOf('INSERT INTO season_events');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   assert.match(block, /'\{"metrics": \[\], "offchain_weight": 1\}'::jsonb/g);
@@ -168,7 +168,15 @@ test('2 season_events: one regular with epochs + scoring_formula, one type=\'sea
   assert.match(block, /'regular'/);
   assert.match(block, /'season'/);
   const scoringFormulaCount = (block.match(/::jsonb/g) || []).length;
-  assert.equal(scoringFormulaCount, 2, 'both season_events rows carry a scoring_formula');
+  assert.equal(scoringFormulaCount, 3, 'all three season_events rows carry a scoring_formula');
+
+  // The third event exists specifically so the between-events fallback
+  // (public/js/topochain-events.js) is reachable in a staging preview: the
+  // other two both span "now", so without a fully-past event the
+  // "nothing is running right now" state can never be reviewed.
+  assert.match(block, /NOW\(\) - INTERVAL '120 days', NOW\(\) - INTERVAL '90 days'/,
+    'the third event is entirely in the past');
+  assert.match(block, /Finished Sprint/);
 });
 
 test('4 challenge_kinds', () => {
@@ -187,15 +195,19 @@ test('5 challenge_templates', () => {
   assert.equal(ids.length, 5);
 });
 
-test('8 challenges split across both season_events', () => {
+test('10 challenges split across all three season_events', () => {
   const start = body.indexOf('INSERT INTO challenges');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   const ids = block.match(/^\s*\(9005\d\d, \$/gm) || [];
-  assert.equal(ids.length, 8);
+  assert.equal(ids.length, 10);
   const regularEventRows = block.match(/\(9005\d\d, \$1,/g) || [];
   const seasonEventRows = block.match(/\(9005\d\d, \$2,/g) || [];
+  // The ended event needs its own challenges, or selecting it renders an
+  // empty list that reads like the fallback is broken.
+  const endedEventRows = block.match(/\(9005\d\d, \$3,/g) || [];
   assert.equal(regularEventRows.length, 5, '5 challenges on the regular event');
   assert.equal(seasonEventRows.length, 3, '3 challenges on the season-type event');
+  assert.equal(endedEventRows.length, 2, '2 challenges on the fully-past event');
 });
 
 test('6 users with emails, one exclude_podium=TRUE, one with a real bcrypt password', () => {
@@ -255,19 +267,23 @@ test('epoch_stats: 3 epochs x 3 wallets, including one wallet-only (user_id NULL
   assert.equal((block.match(/, NULL, \d+,/g) || []).length, 3, '3 wallet-only rows (user_id NULL)');
 });
 
-test('leaderboard_snapshots: 2 snapshot times x 6 users, unique per (user, snapshot_at)', () => {
+test('leaderboard_snapshots: 2 snapshot times x 6 users, plus 4 on the ended event', () => {
   const start = body.indexOf('INSERT INTO leaderboard_snapshots');
   const block = body.slice(start, body.indexOf('ON CONFLICT (id) DO NOTHING', start));
   const ids = block.match(/^\s*\(9005\d\d,/gm) || [];
-  assert.equal(ids.length, 12);
+  assert.equal(ids.length, 16);
   const earlierRows = (block.match(/EARLIER_SNAPSHOT/g) || []).length;
   const laterRows = (block.match(/LATER_SNAPSHOT/g) || []).length;
   assert.equal(earlierRows, 6);
   assert.equal(laterRows, 6);
-  // Every row's season_event_id placeholder is the same token — all 12
-  // rows target the single display_leaderboard-flagged regular event.
+  // Two events are targeted now: the regular one (12 rows across two
+  // snapshot times) and the fully-past one (4 rows), so a preview of the
+  // between-events fallback shows a POPULATED table under the "nothing is
+  // running right now" caption rather than an empty one.
   const eventTokens = new Set((block.match(/\(9005\d\d, (\$\d),/g) || []).map((m) => m.match(/\$\d/)[0]));
-  assert.equal(eventTokens.size, 1, 'every snapshot row targets the same season_event_id');
+  assert.equal(eventTokens.size, 2, 'snapshots target the regular event and the ended one');
+  const endedRows = (block.match(/NOW\(\) - INTERVAL '90 days'/g) || []).length;
+  assert.equal(endedRows, 4, '4 standings rows on the fully-past event');
 });
 
 test('1 terms_version + 2 user_terms_consents', () => {

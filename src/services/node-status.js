@@ -40,6 +40,11 @@
 //   latencyMs: round-trip time of last probe
 //   error:     last error message if not ok
 //   hasBeenOk: latched true once we ever observe ok
+//   consecutiveFailures: probes that have failed back-to-back (0 when ok)
+//   downSince: Date.now() of the FIRST failure in the current streak, or
+//              null when the explorer is reachable. The status pages turn
+//              this into "unreachable for 2h" — without it a blip and a
+//              day-long outage render identically.
 //   at:        Date.now() of last update
 
 const https = require('https');
@@ -83,8 +88,24 @@ let explorerSnapshot = {
   latencyMs: null,
   error: null,
   hasBeenOk: false,
+  // How many probes in a row have failed, and when the streak began. The
+  // status pages render these as "unreachable for 2h" — without them a
+  // one-off blip and a day-long outage look identical.
+  consecutiveFailures: 0,
+  downSince: null,
   at: Date.now(),
 };
+
+// Streak accounting for the explorer probe. Mirrors the same two fields
+// chain-poller and genesis-accounts now expose, so all three read the same
+// way on /status and /node-status.
+function explorerFailure() {
+  const failures = explorerSnapshot.consecutiveFailures + 1;
+  return {
+    consecutiveFailures: failures,
+    downSince: explorerSnapshot.downSince || Date.now(),
+  };
+}
 
 let nodeRpcUrl = null;
 let timer = null;
@@ -226,6 +247,7 @@ async function tickExplorer() {
         latencyMs: Date.now() - startedAt,
         error: 'missing chain_id in /active_chain response',
         hasBeenOk: explorerSnapshot.hasBeenOk,
+        ...explorerFailure(),
         at: Date.now(),
       };
       logExplorerStatusChange('bad_response', explorerSnapshot.error);
@@ -238,6 +260,8 @@ async function tickExplorer() {
       latencyMs: Date.now() - startedAt,
       error: null,
       hasBeenOk: true,
+      consecutiveFailures: 0,
+      downSince: null,
       at: Date.now(),
     };
     logExplorerStatusChange('ok', null);
@@ -250,6 +274,7 @@ async function tickExplorer() {
       latencyMs: null,
       error: errMsg,
       hasBeenOk: explorerSnapshot.hasBeenOk,
+      ...explorerFailure(),
       at: Date.now(),
     };
     logExplorerStatusChange('unreachable', errMsg);
@@ -340,4 +365,10 @@ function safe(fn, fallback) {
   try { return fn(); } catch (_) { return fallback; }
 }
 
-module.exports = { start, stop, get, getFull };
+// Explorer-only snapshot, for the main /status dashboard's explorer card
+// (the full /node-status viewer reads the same block out of getFull()).
+function getExplorer() {
+  return { ...explorerSnapshot };
+}
+
+module.exports = { start, stop, get, getFull, getExplorer };

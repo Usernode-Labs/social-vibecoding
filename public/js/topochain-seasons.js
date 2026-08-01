@@ -30,6 +30,10 @@ const TopochainSeasons = {
   _eventDetail: null,
   _eventLoading: false,
   _eventError: null,
+  // True when the default we landed on is an event that already ENDED —
+  // i.e. nothing is running. Drives the explanatory caption; cleared the
+  // moment the user picks an event themselves.
+  _endedFallback: false,
 
   _challenges: [],
   _challengesLoading: false,
@@ -137,6 +141,8 @@ const TopochainSeasons = {
       const id = parseInt(e.target.value, 10);
       if (Number.isInteger(id)) {
         TopochainSeasons._eventId = id;
+        // An explicit choice is not a fallback — drop the caption.
+        TopochainSeasons._endedFallback = false;
         TopochainSeasons.loadEventAndChallenges();
       }
     });
@@ -158,9 +164,17 @@ const TopochainSeasons = {
     if (ok && data?.success && Array.isArray(data.data)) {
       TopochainSeasons._events = data.data;
       // Default: the currently-running event, else the most recent one
-      // (the list is already ordered starts_at DESC).
-      const current = data.data.find((ev) => ev.is_current);
-      TopochainSeasons._eventId = (current || data.data[0] || {}).id ?? null;
+      // that has already started. Shared with the leaderboard and
+      // challenges screens (public/js/topochain-events.js) so all three
+      // agree on which event they are describing — otherwise the
+      // standings and the challenge list can silently show different
+      // weeks.
+      const pick = window.TopochainEvents
+        ? TopochainEvents.pickDefault(data.data)
+        : (data.data.find((ev) => ev.is_current) || data.data[0] || null);
+      TopochainSeasons._eventId = pick ? pick.id : null;
+      TopochainSeasons._endedFallback = window.TopochainEvents
+        ? TopochainEvents.hasEnded(pick) : false;
       TopochainSeasons._renderEventOptions();
     } else {
       TopochainSeasons._eventError = (data && data.error) || 'Failed to load events.';
@@ -260,6 +274,10 @@ const TopochainSeasons = {
           ${esc(fmt(ev.starts_at))} &ndash; ${esc(fmt(ev.ends_at))}
           ${ev.users_count != null ? ` · ${esc(ev.users_count)} users enrolled` : ''}
         </p>
+        ${TopochainSeasons._endedFallback ? `
+        <p id="tc-se-fallback-note" class="text-xs text-zinc-500 mt-2">
+          Nothing is running right now — showing the most recent event.
+        </p>` : ''}
       </div>`;
   },
 
