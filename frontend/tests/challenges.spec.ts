@@ -137,6 +137,27 @@ test("keeps every atomic progress state readable inside the title-and-rail contr
   await expect(challenges).not.toContainText("Community")
 })
 
+test("binds completed and in-progress rails to their governed visual contracts", async ({ page }) => {
+  await page.goto("/react/community/challenges")
+  const completedCard = page.getByTestId("challenge-card-4")
+  const completedRail = completedCard.getByRole("progressbar")
+  const inProgressRail = page.getByTestId("challenge-card-2").getByRole("progressbar")
+  const inProgressFill = inProgressRail.getByTestId("challenge-progress-fill")
+
+  await expect(completedRail).toHaveAttribute("data-status-tone", "positive")
+  await expect(completedRail.locator("span").last()).toHaveCSS("font-weight", "600")
+  await expect(completedCard.getByRole("link")).toHaveCount(1)
+  await expect(completedCard.getByRole("button")).toHaveCount(0)
+
+  const railBox = await inProgressRail.boundingBox()
+  const fillBox = await inProgressFill.boundingBox()
+  expect(railBox).not.toBeNull()
+  expect(fillBox).not.toBeNull()
+  expect(fillBox!.y).toBeCloseTo(railBox!.y, 0)
+  expect(fillBox!.height).toBeCloseTo(railBox!.height, 0)
+  expect(fillBox!.width / railBox!.width).toBeCloseTo(0.5, 2)
+})
+
 test("renders fractional and unknown metrics without unsafe numeric output", async ({ page }) => {
   await page.goto("/react/community/challenges")
   const challenges = page.getByTestId("challenges")

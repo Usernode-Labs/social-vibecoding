@@ -35,3 +35,8 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const FairRewardsContractMatrix: Story = { args: { snapshot, now } }
+
+export const FairRewardsContractMatrixDark: Story = {
+  ...FairRewardsContractMatrix,
+  globals: { theme: "dark" },
+}

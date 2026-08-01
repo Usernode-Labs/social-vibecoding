@@ -146,11 +146,11 @@ function ChallengeCard({ card }: { card: ChallengeCardModel }) {
     <CardContent className="p-4">
       <Link aria-label={`${title}, ${status}, ${rewardText(item, phase)}`} className="block space-y-2 focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" to={challengeDetailPath(item.id)}>
         <h4 className="text-balance text-base font-medium sm:text-sm">{title}</h4>
-        <div aria-label={`${title} progress`} aria-valuemax={progress?.target} aria-valuemin={0} aria-valuenow={progress?.current} className="relative isolate flex h-12 overflow-hidden rounded-md bg-muted" role="progressbar">
-          {fill !== undefined && phase === "in-progress" ? <div aria-hidden="true" className="absolute bottom-0 left-0 h-1 bg-primary" style={{ "--challenge-fill": `${fill}%`, width: "var(--challenge-fill)" } as CSSProperties} /> : null}
+        <div aria-label={`${title} progress`} aria-valuemax={progress?.target} aria-valuemin={0} aria-valuenow={progress?.current} className={phase === "completed" ? "status-surface relative isolate flex h-12 overflow-hidden rounded-md" : "relative isolate flex h-12 overflow-hidden rounded-md bg-muted"} data-status-tone={phase === "completed" ? "positive" : undefined} role="progressbar">
+          {fill !== undefined && phase === "in-progress" ? <div aria-hidden="true" className="absolute inset-y-0 left-0 bg-primary/15" data-testid="challenge-progress-fill" style={{ "--challenge-fill": `${fill}%`, width: "var(--challenge-fill)" } as CSSProperties} /> : null}
           <div className="relative z-10 flex min-w-0 flex-1 items-center justify-between gap-3 px-3 text-base/7 sm:text-sm/6">
             <span className="min-w-0 truncate">{phase === "completed" ? <><PlatformIcon className="mr-1 inline-block align-text-bottom" icon={CheckCircle2} size="sm" />{status}</> : status}</span>
-            <span className="shrink-0 font-medium tabular-nums">{rewardText(item, phase)}</span>
+            <span className={phase === "completed" ? "shrink-0 font-semibold tabular-nums" : "shrink-0 font-medium tabular-nums"}>{rewardText(item, phase)}</span>
           </div>
         </div>
       </Link>

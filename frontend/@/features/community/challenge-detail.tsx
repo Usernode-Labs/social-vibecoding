@@ -62,6 +62,7 @@ function earnedPoints(challenge: Challenge, progress?: ChallengeProgress) {
 function CompletedStatus({ challenge, progress }: { challenge: Challenge; progress?: ChallengeProgress }) {
   const points = earnedPoints(challenge, progress)
   const anchor = points === undefined ? challenge.reward || "Reward confirmed" : format(points)
+  const rewardCaption = challenge.reward && challenge.reward !== anchor && !rewardRepeatsPoints(challenge.reward, points) ? challenge.reward : undefined
   return <Card aria-labelledby="challenge-reward-earned" className="status-surface bg-linear-to-br from-[var(--status-surface)] to-background shadow-none" data-challenge-phase="completed" data-status-tone="positive" role="region">
     <CardContent className="flex flex-col gap-6 p-6 sm:p-8">
       <div className="flex items-center gap-2 font-medium"><PlatformIcon icon={CheckCircle2} size="sm" />Completed</div>
@@ -69,12 +70,18 @@ function CompletedStatus({ challenge, progress }: { challenge: Challenge; progre
         <p aria-label={points === undefined ? anchor : `${format(points)} points earned`} className="text-4xl font-semibold tracking-tight tabular-nums">{anchor}</p>
         <div className="flex flex-col gap-1">
           <h2 className="text-balance text-xl font-semibold" id="challenge-reward-earned">Reward earned</h2>
-          {challenge.reward ? <p className="text-pretty text-base/7 text-current/80 sm:text-sm/6">{challenge.reward}</p> : null}
+          {rewardCaption ? <p className="text-pretty text-base/7 text-current/80 sm:text-sm/6">{rewardCaption}</p> : null}
         </div>
       </div>
       <ActionLink className="w-fit pointer-coarse:min-h-12" size="sm" to={challengesPath()} variant="ghost">View season history<PlatformIcon data-icon="inline-end" icon={ArrowRight} size="sm" /></ActionLink>
     </CardContent>
   </Card>
+}
+
+function rewardRepeatsPoints(reward: string, points: number | undefined) {
+  if (points === undefined) return false
+  const match = reward.trim().toLowerCase().replaceAll(",", "").match(/^(\d+(?:\.\d+)?)\s*(?:points?|pts?)$/)
+  return match ? Number(match[1]) === points : false
 }
 
 function format(value: number) { return Number.isInteger(value) ? new Intl.NumberFormat().format(value) : value.toLocaleString(undefined, { maximumFractionDigits: 2 }) }

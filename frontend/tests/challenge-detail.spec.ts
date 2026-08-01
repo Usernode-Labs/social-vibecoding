@@ -50,7 +50,7 @@ test("uses public data without requesting participant progress on desktop", asyn
 
 test("loads the full season list when an active list omits a deep-linked completed challenge", async ({ page }) => {
   const data = fixture()
-  const completed = { ...data.challenges[0], id: 99, goal: "Completed season challenge", completed: true }
+  const completed = { ...data.challenges[0], id: 99, goal: "Completed season challenge", completed: true, earned_points: 300 }
   await page.route("**/challenges-api/seasons", (route) => route.fulfill({ json: [data.season] }))
   await page.route("**/challenges-api/challenges**", (route) => {
     const activeOnly = new URL(route.request().url()).searchParams.get("active_only") === "1"
@@ -61,7 +61,9 @@ test("loads the full season list when an active list omits a deep-linked complet
   const detail = page.getByTestId("challenge-detail")
   const terminal = detail.getByTestId("challenge-terminal-content")
   await expect(detail).toContainText("Completed season challenge")
-  await expect(terminal.getByRole("region", { name: "Reward earned" })).toBeVisible()
+  const rewardPanel = terminal.getByRole("region", { name: "Reward earned" })
+  await expect(rewardPanel).toBeVisible()
+  await expect(rewardPanel.getByText("300 points", { exact: true })).toHaveCount(0)
   await expect(terminal.getByRole("button")).toHaveCount(0)
   await expect(terminal.locator('[data-slot="action-link"]')).toHaveCount(1)
   const continuation = terminal.getByRole("link", { name: "View season history" })
