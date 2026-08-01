@@ -105,16 +105,41 @@ the independent reviewer re-derives its evidence.
   private checkpoints with one reviewable commit.
 - Run `npm run check:ui` exactly once on that clean final commit. The runner
   rejects `wip(` commits in the publish range, records every stage's command,
-  duration, port and worker ownership, result and failure class beneath
-  `frontend/.artifacts/ui-gate/`, and fails if source state moves during the run.
+  duration, dependency, machine-unit budget, port and worker ownership, result,
+  and failure class beneath `frontend/.artifacts/ui-gate/`, and fails if source
+  state moves during the run. A change to the runner itself may compare one
+  serial and one parallel run at the same immutable commit; this is a measured
+  parity experiment, not permission to duplicate routine boundary gates.
+- The full gate defaults to the dependency graph in
+  `agent-skills/ui-development/workflows.json`. One repository-wide machine
+  lease admits the run, dedicated default ports and per-lane Playwright output
+  directories prevent suite collisions, and the graph never exceeds its
+  declared machine-unit budget. After the first failure no new stage starts;
+  already-running stages finish and remain visible in the artifact.
+  `npm run check:ui -- --serial` is the authoritative fallback. The output
+  isolation was proven necessary by Buzz event
+  `0dba585cd0ca6694d705175df1546eb1ae4637fc49811a406a90cdd5f31755c1`,
+  where two correctly port-isolated lanes still collided while cleaning the
+  same default Playwright artifact directory.
 - Independent craft checks disclose their port and worker use and do not overlap
-  an announced full gate. A later scheduler may mechanize that lease; until then
-  it is an explicit coordination contract.
+  an announced full gate. The machine lease covers canonical gate invocations;
+  direct focused commands remain an explicit cross-agent coordination contract.
+- Failure classification distinguishes proven environment signatures from the
+  command's declared test, build, or check kind. It is triage evidence, not a
+  claim about product root cause; `UI_GATE_FAILURE_CLASS` is a disclosed operator
+  override.
 - Never push a `wip(` commit. Continuous integration fetches full history and
   enforces the same publish-range rule.
 
-Proof: `npm run test:harness`, `npm run check:harness-integrity`, and one clean
-exact-commit `npm run check:ui` from `frontend/`.
+The scheduling rule was triggered by the same owner event above after measured
+gate runs showed that duplicate execution and cross-agent contention, rather
+than the 25-stage contract, caused the waiting tax. The implementation lead owns
+the graph and lease; the independent reviewer owns the matched-outcome check.
+
+Proof: `npm run test:harness`, `npm run check:harness-integrity`, one clean
+exact-commit `npm run check:ui -- --serial`, and one clean exact-commit
+`npm run check:ui` from `frontend/` when the scheduler changes. Routine slices
+run only the latter.
 
 ## Design-authority scope
 

@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 
 import { wipCommitsInPublishRange } from "./slice-boundary.mjs"
+import { gateMachineUnits, resolveGateGraph } from "./ui-gate-scheduler.mjs"
 
 const frontendRoot = process.cwd()
 const repoRoot = path.resolve(frontendRoot, "..")
@@ -147,10 +148,29 @@ for (const routingCase of workflows.routingCases || []) {
 }
 if (!(workflows.routingCases || []).length) violations.push("workflows.json must define routing regression cases")
 
+const fixedGatePorts = new Map()
+const fixedGateArtifacts = new Map()
 for (const gate of workflows.fullGate || []) {
   const script = scriptForCommand(gate.command)
   if (gate.cwd === "frontend" && (!script || !frontendPackage.scripts[script])) {
     violations.push(`full gate command is not a frontend package script: ${gate.command}`)
+  }
+  for (const artifact of gate.resources?.artifacts || []) {
+    if (!artifact.name || typeof artifact.name !== "string") {
+      violations.push(`full gate artifact needs a name: ${gate.command}`)
+    }
+    if (typeof artifact.default !== "string" || !artifact.default.startsWith(".artifacts/")) {
+      violations.push(`full gate artifact must stay below frontend/.artifacts: ${gate.command}`)
+    }
+    if (artifact.commandEnv !== undefined && !/^[A-Z][A-Z0-9_]*$/.test(artifact.commandEnv)) {
+      violations.push(`full gate artifact command environment is invalid: ${gate.command}`)
+    }
+    const owner = fixedGateArtifacts.get(artifact.default)
+    if (owner) {
+      violations.push(`full gate artifact ${artifact.default} is shared by ${owner} and ${gate.command}`)
+    } else {
+      fixedGateArtifacts.set(artifact.default, gate.command)
+    }
   }
   if (gate.cwd === "root" && gate.command === "npm test" && !rootPackage.scripts?.test) {
     violations.push("root npm test is missing")
@@ -170,13 +190,45 @@ for (const gate of workflows.fullGate || []) {
     if (port.overrideEnv !== undefined && !/^[A-Z][A-Z0-9_]*$/.test(port.overrideEnv)) {
       violations.push(`full gate resource port override must name an environment variable: ${gate.command}`)
     }
+    if (port.commandEnv !== undefined && !/^[A-Z][A-Z0-9_]*$/.test(port.commandEnv)) {
+      violations.push(`full gate resource port command environment is invalid: ${gate.command}`)
+    }
+    if (fixed) {
+      const owner = fixedGatePorts.get(port.default)
+      if (owner) {
+        violations.push(`full gate fixed port ${port.default} is shared by ${owner} and ${gate.command}`)
+      } else {
+        fixedGatePorts.set(port.default, gate.command)
+      }
+    }
   }
   if (gate.resources?.workers !== undefined) {
     const workers = gate.resources.workers
-    if (!(Number.isInteger(workers) && workers > 0) && !(typeof workers === "string" && workers.length > 0)) {
+    const validWorkerValue = (value) => (Number.isInteger(value) && value > 0)
+      || (typeof value === "string" && value.length > 0)
+    const validWorkerObject = workers && typeof workers === "object"
+      && validWorkerValue(workers.serial)
+      && validWorkerValue(workers.parallel)
+      && (workers.overrideEnv === undefined || /^[A-Z][A-Z0-9_]*$/.test(workers.overrideEnv))
+      && (workers.commandEnv === undefined || /^[A-Z][A-Z0-9_]*$/.test(workers.commandEnv))
+    if (!validWorkerValue(workers) && !validWorkerObject) {
       violations.push(`full gate worker ownership is invalid: ${gate.command}`)
     }
   }
+}
+
+if (!["serial", "parallel"].includes(workflows.gateGraph?.defaultMode)) {
+  violations.push("gateGraph defaultMode must be serial or parallel")
+}
+try {
+  const units = gateMachineUnits(
+    workflows.gateGraph?.machineUnits,
+    {},
+    os.availableParallelism(),
+  )
+  resolveGateGraph(workflows.fullGate || [], workflows.gateGraph, units)
+} catch (cause) {
+  violations.push(`gateGraph is invalid: ${cause instanceof Error ? cause.message : cause}`)
 }
 
 if (!frontendPackage.scripts?.["finalize:slice"]?.includes("scripts/finalize-slice.mjs")) {

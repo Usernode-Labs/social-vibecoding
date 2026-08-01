@@ -21,22 +21,80 @@ export function observedWorkers(output) {
   return matches.length ? Number(matches.at(-1)[1]) : null
 }
 
-export function resolveGateResources(resources = {}, environment = process.env, owner = "canonical-ui-gate") {
+function positiveInteger(value, label) {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 1) throw new Error(`${label} must be a positive integer`)
+  return parsed
+}
+
+export function resolveGateResources(
+  resources = {},
+  environment = process.env,
+  owner = "canonical-ui-gate",
+  mode = "serial",
+) {
   const ports = (resources.ports || []).map((port) => {
-    if (port.allocation === "dynamic") return { name: port.name, effective: "dynamic" }
+    if (port.allocation === "dynamic") return { name: port.name, effective: "dynamic", commandEnv: port.commandEnv || null }
     const override = port.overrideEnv ? environment[port.overrideEnv] : null
-    const effective = override ? Number(override) : port.default
+    const effective = positiveInteger(override || port.default, `${port.name} port`)
     return {
       name: port.name,
       effective,
       source: override ? port.overrideEnv : "authority-default",
+      commandEnv: port.commandEnv || null,
     }
   })
+  const artifacts = (resources.artifacts || []).map((artifact) => ({
+    name: artifact.name,
+    effective: artifact.default,
+    source: "authority-default",
+    commandEnv: artifact.commandEnv || null,
+  }))
+  let workers = null
+  if (resources.workers !== undefined) {
+    if (typeof resources.workers === "object") {
+      const override = resources.workers.overrideEnv ? environment[resources.workers.overrideEnv] : null
+      const requested = override
+        ? positiveInteger(override, "UI gate worker override")
+        : resources.workers[mode]
+      workers = {
+        requested,
+        observed: null,
+        source: override ? resources.workers.overrideEnv : `authority-${mode}`,
+        commandEnv: resources.workers.commandEnv || null,
+      }
+    } else {
+      workers = {
+        requested: resources.workers,
+        observed: null,
+        source: "authority-fixed",
+        commandEnv: null,
+      }
+    }
+  }
   return {
     owner,
     ports,
-    workers: resources.workers ? { requested: resources.workers, observed: null } : null,
+    artifacts,
+    workers,
   }
+}
+
+export function gateResourceEnvironment(resolvedResources) {
+  const environment = {}
+  for (const port of resolvedResources.ports || []) {
+    if (port.commandEnv && Number.isInteger(port.effective)) {
+      environment[port.commandEnv] = String(port.effective)
+    }
+  }
+  for (const artifact of resolvedResources.artifacts || []) {
+    if (artifact.commandEnv) environment[artifact.commandEnv] = artifact.effective
+  }
+  const workers = resolvedResources.workers
+  if (workers?.commandEnv && Number.isInteger(workers.requested)) {
+    environment[workers.commandEnv] = String(workers.requested)
+  }
+  return environment
 }
 
 export function defaultGateArtifactPath(frontendRoot, startedAt, revision) {

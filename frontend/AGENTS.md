@@ -66,6 +66,7 @@ npm run check:bundle
 npm run test:storybook
 npm run check:cutover-contract
 npm run check:ui
+npm run check:ui -- --serial
 ```
 
 `npm run test:e2e` is a fixture-driven parity check, not proof of live native
@@ -119,7 +120,14 @@ gets a separately reviewed replacement.
 `agent-skills/ui-development/workflows.json` is the canonical composable task
 router and full-gate authority. `node tool/ui-workflow.mjs --task "<task>"`
 may select several workflows; follow all of them. `npm run check:ui` executes
-the same full gate continuous integration is required to expose.
+the same full gate continuous integration is required to expose. It defaults to
+the authority's measured dependency graph under one repository-wide machine
+lease, fixed suite ports, isolated Playwright output directories, and one
+explicit machine-unit budget. The runner stops launching new work after a
+failure, records in-flight completions, and writes the complete schedule to its
+timing artifact. Use `npm run check:ui -- --serial` as
+the behavior-preserving fallback and for matched scheduler validation; do not
+replace a failed parallel result with an undisclosed serial rerun.
 `check:harness-integrity` validates skill packages, routing cases, context
 paths, package scripts, continuous-integration parity, `.agents`/`.claude`
 adapters, and deterministic agent-battery coverage.

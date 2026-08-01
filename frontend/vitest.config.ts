@@ -23,6 +23,7 @@ export default defineConfig({
         ],
         test: {
           name: "storybook",
+          isolate: false,
           browser: {
             enabled: true,
             provider: playwright({}),

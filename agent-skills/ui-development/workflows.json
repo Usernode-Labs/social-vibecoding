@@ -410,11 +410,46 @@
       "forbidden": ["harness"]
     }
   ],
+  "gateGraph": {
+    "defaultMode": "parallel",
+    "machineUnits": {
+      "default": 16,
+      "overrideEnv": "UI_GATE_MACHINE_UNITS"
+    },
+    "stages": [
+      { "id": "root-suite", "step": 1, "units": 1, "priority": 90 },
+      { "id": "lint", "step": 2, "units": 1, "priority": 10 },
+      { "id": "tokens", "step": 3, "units": 1, "priority": 10 },
+      { "id": "design-system", "step": 4, "units": 1, "priority": 10 },
+      { "id": "relationships", "step": 5, "units": 1, "priority": 10 },
+      { "id": "registry", "step": 6, "units": 1, "priority": 10 },
+      { "id": "style-policy", "step": 7, "units": 1, "priority": 10 },
+      { "id": "content", "step": 8, "units": 1, "priority": 10 },
+      { "id": "content-tests", "step": 9, "units": 1, "priority": 20 },
+      { "id": "harness-integrity", "step": 10, "units": 1, "priority": 20 },
+      { "id": "harness-fitness", "step": 11, "units": 1, "priority": 10 },
+      { "id": "harness-policy", "step": 12, "units": 1, "priority": 10 },
+      { "id": "harness-tests", "step": 13, "units": 1, "priority": 20 },
+      { "id": "agent-battery", "step": 14, "units": 1, "priority": 20 },
+      { "id": "typecheck", "step": 15, "units": 1, "priority": 20 },
+      { "id": "native-bridge", "step": 16, "units": 2, "priority": 60 },
+      { "id": "build", "step": 17, "units": 2, "priority": 80 },
+      { "id": "service-worker", "step": 18, "units": 2, "priority": 70, "dependsOn": ["build"] },
+      { "id": "browser-matrix", "step": 19, "units": 9, "priority": 100 },
+      { "id": "production-guard", "step": 20, "units": 3, "priority": 75 },
+      { "id": "production-smoke", "step": 21, "units": 2, "priority": 65 },
+      { "id": "cutover-contract", "step": 22, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
+      { "id": "bundle-budget", "step": 23, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
+      { "id": "storybook-tests", "step": 24, "units": 4, "priority": 85 },
+      { "id": "storybook-build", "step": 25, "units": 2, "priority": 55 }
+    ]
+  },
   "fullGate": [
     {
       "cwd": "root",
       "command": "npm test",
-      "ciEvidence": "name: Run authoritative root suite"
+      "ciEvidence": "name: Run authoritative root suite",
+      "kind": "test"
     },
     {
       "cwd": "frontend",
@@ -454,7 +489,8 @@
     {
       "cwd": "frontend",
       "command": "npm run test:content",
-      "ciEvidence": "npm run test:content"
+      "ciEvidence": "npm run test:content",
+      "kind": "test"
     },
     {
       "cwd": "frontend",
@@ -474,12 +510,14 @@
     {
       "cwd": "frontend",
       "command": "npm run test:harness",
-      "ciEvidence": "npm run test:harness"
+      "ciEvidence": "npm run test:harness",
+      "kind": "test"
     },
     {
       "cwd": "frontend",
       "command": "npm run test:agent-battery",
-      "ciEvidence": "npm run test:agent-battery"
+      "ciEvidence": "npm run test:agent-battery",
+      "kind": "test"
     },
     {
       "cwd": "frontend",
@@ -493,15 +531,24 @@
       "kind": "test",
       "resources": {
         "ports": [
-          { "name": "vite-development-server", "default": 4173, "overrideEnv": "PLAYWRIGHT_PORT" }
+          { "name": "native-bridge-server", "default": 4299, "overrideEnv": "UI_GATE_NATIVE_PORT", "commandEnv": "PLAYWRIGHT_PORT" }
         ],
-        "workers": "playwright-default"
+        "artifacts": [
+          { "name": "native-bridge-output", "default": ".artifacts/ui-gate/playwright/native-bridge", "commandEnv": "PLAYWRIGHT_OUTPUT_DIR" }
+        ],
+        "workers": {
+          "serial": "playwright-default",
+          "parallel": 1,
+          "overrideEnv": "UI_GATE_NATIVE_WORKERS",
+          "commandEnv": "PLAYWRIGHT_WORKERS"
+        }
       }
     },
     {
       "cwd": "frontend",
       "command": "npm run build",
-      "ciEvidence": "name: Build immutable React shell"
+      "ciEvidence": "name: Build immutable React shell",
+      "kind": "build"
     },
     {
       "cwd": "frontend",
@@ -510,7 +557,10 @@
       "kind": "test",
       "resources": {
         "ports": [
-          { "name": "production-preview", "default": 4363, "overrideEnv": "PLAYWRIGHT_SW_PORT" }
+          { "name": "production-preview", "default": 4363, "overrideEnv": "UI_GATE_SERVICE_WORKER_PORT", "commandEnv": "PLAYWRIGHT_SW_PORT" }
+        ],
+        "artifacts": [
+          { "name": "service-worker-output", "default": ".artifacts/ui-gate/playwright/service-worker", "commandEnv": "PLAYWRIGHT_OUTPUT_DIR" }
         ],
         "workers": 1
       }
@@ -522,9 +572,17 @@
       "kind": "test",
       "resources": {
         "ports": [
-          { "name": "vite-development-server", "default": 4173, "overrideEnv": "PLAYWRIGHT_PORT" }
+          { "name": "browser-matrix-server", "default": 4298, "overrideEnv": "UI_GATE_E2E_PORT", "commandEnv": "PLAYWRIGHT_PORT" }
         ],
-        "workers": "playwright-default"
+        "artifacts": [
+          { "name": "browser-matrix-output", "default": ".artifacts/ui-gate/playwright/browser-matrix", "commandEnv": "PLAYWRIGHT_OUTPUT_DIR" }
+        ],
+        "workers": {
+          "serial": "playwright-default",
+          "parallel": 8,
+          "overrideEnv": "UI_GATE_E2E_WORKERS",
+          "commandEnv": "PLAYWRIGHT_WORKERS"
+        }
       }
     },
     {
@@ -536,7 +594,15 @@
         "ports": [
           { "name": "production-review-server", "default": 4274 }
         ],
-        "workers": "playwright-default"
+        "artifacts": [
+          { "name": "production-review-output", "default": ".artifacts/ui-gate/playwright/production-review", "commandEnv": "PLAYWRIGHT_OUTPUT_DIR" }
+        ],
+        "workers": {
+          "serial": "playwright-default",
+          "parallel": 2,
+          "overrideEnv": "UI_GATE_PRODUCTION_GUARD_WORKERS",
+          "commandEnv": "PLAYWRIGHT_WORKERS"
+        }
       }
     },
     {
@@ -547,6 +613,9 @@
       "resources": {
         "ports": [
           { "name": "production-smoke-server", "default": 4275 }
+        ],
+        "artifacts": [
+          { "name": "production-smoke-output", "default": ".artifacts/ui-gate/playwright/production-smoke", "commandEnv": "PLAYWRIGHT_OUTPUT_DIR" }
         ],
         "workers": 1
       }
@@ -576,7 +645,8 @@
     {
       "cwd": "frontend",
       "command": "npm run check:storybook-build",
-      "ciEvidence": "npm run check:storybook-build"
+      "ciEvidence": "npm run check:storybook-build",
+      "kind": "build"
     }
   ]
 }

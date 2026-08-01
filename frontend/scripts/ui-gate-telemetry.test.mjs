@@ -5,6 +5,7 @@ import path from "node:path"
 import test from "node:test"
 
 import {
+  gateResourceEnvironment,
   observedWorkers,
   resolveGateResources,
   writeGateArtifact,
@@ -18,17 +19,49 @@ test("extracts the effective browser worker count from suite output", () => {
 test("resolves fixed, overridden, and dynamic resource ownership", () => {
   assert.deepEqual(resolveGateResources({
     ports: [
-      { name: "app", default: 4173, overrideEnv: "PLAYWRIGHT_PORT" },
+      { name: "app", default: 4298, overrideEnv: "UI_GATE_E2E_PORT", commandEnv: "PLAYWRIGHT_PORT" },
       { name: "storybook", allocation: "dynamic" },
     ],
-    workers: "playwright-default",
-  }, { PLAYWRIGHT_PORT: "4296" }, "slice-a-gate"), {
-    owner: "slice-a-gate",
-    ports: [
-      { name: "app", effective: 4296, source: "PLAYWRIGHT_PORT" },
-      { name: "storybook", effective: "dynamic" },
+    artifacts: [
+      { name: "playwright-output", default: ".artifacts/ui-gate/playwright/matrix", commandEnv: "PLAYWRIGHT_OUTPUT_DIR" },
     ],
-    workers: { requested: "playwright-default", observed: null },
+    workers: {
+      serial: "playwright-default",
+      parallel: 8,
+      overrideEnv: "UI_GATE_E2E_WORKERS",
+      commandEnv: "PLAYWRIGHT_WORKERS",
+    },
+  }, { UI_GATE_E2E_PORT: "4301" }, "slice-b-gate", "parallel"), {
+    owner: "slice-b-gate",
+    ports: [
+      { name: "app", effective: 4301, source: "UI_GATE_E2E_PORT", commandEnv: "PLAYWRIGHT_PORT" },
+      { name: "storybook", effective: "dynamic", commandEnv: null },
+    ],
+    artifacts: [{
+      name: "playwright-output",
+      effective: ".artifacts/ui-gate/playwright/matrix",
+      source: "authority-default",
+      commandEnv: "PLAYWRIGHT_OUTPUT_DIR",
+    }],
+    workers: {
+      requested: 8,
+      observed: null,
+      source: "authority-parallel",
+      commandEnv: "PLAYWRIGHT_WORKERS",
+    },
+  })
+})
+
+test("derives only command-facing resource environment", () => {
+  const resources = resolveGateResources({
+    ports: [{ name: "app", default: 4298, commandEnv: "PLAYWRIGHT_PORT" }],
+    artifacts: [{ name: "playwright-output", default: ".artifacts/ui-gate/playwright/matrix", commandEnv: "PLAYWRIGHT_OUTPUT_DIR" }],
+    workers: { serial: "playwright-default", parallel: 8, commandEnv: "PLAYWRIGHT_WORKERS" },
+  }, {}, "gate", "parallel")
+  assert.deepEqual(gateResourceEnvironment(resources), {
+    PLAYWRIGHT_PORT: "4298",
+    PLAYWRIGHT_OUTPUT_DIR: ".artifacts/ui-gate/playwright/matrix",
+    PLAYWRIGHT_WORKERS: "8",
   })
 })
 

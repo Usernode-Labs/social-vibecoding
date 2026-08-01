@@ -31,6 +31,9 @@ const roots = [
   "frontend/scripts/run-live-agent-battery.mjs",
   "frontend/scripts/run-ui-gate.mjs",
   "frontend/scripts/slice-boundary.mjs",
+  "frontend/scripts/ui-gate-failure.mjs",
+  "frontend/scripts/ui-gate-machine-lease.mjs",
+  "frontend/scripts/ui-gate-scheduler.mjs",
   "frontend/scripts/ui-gate-telemetry.mjs",
   ".github/workflows/frontend-checks.yml",
 ]

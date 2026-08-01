@@ -1,9 +1,18 @@
-export function parseGateOptions(argv, gateCount) {
+export function parseGateOptions(argv, gateCount, defaultMode = "serial") {
   let fromIndex = 0
   const skips = new Map()
+  let mode = defaultMode
+
+  if (!["serial", "parallel"].includes(defaultMode)) {
+    throw new Error(`unknown default UI gate mode: ${defaultMode}`)
+  }
 
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index]
+    if (argument === "--serial") {
+      mode = "serial"
+      continue
+    }
     if (argument === "--from") {
       const step = Number(argv[index + 1])
       if (!Number.isInteger(step) || step < 1 || step > gateCount) {
@@ -32,5 +41,5 @@ export function parseGateOptions(argv, gateCount) {
     }
   }
 
-  return { fromIndex, skips }
+  return { fromIndex, skips, mode }
 }
