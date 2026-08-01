@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AdminAccessError, getAdminUser, getMergeDebugApps, getMergeRun, getMergeRuns, type MergeDebugApp, type MergeDebugStep, type MergeRun, type MergeRunsPage } from "@/lib/admin-api"
 
@@ -31,7 +32,42 @@ export function MergeDebugPage() {
   return <div className="isolate flex w-full flex-1 flex-col" data-testid="merge-debug"><TopBar action={state.kind === "ready" ? <Button onClick={() => setReload((value) => value + 1)} type="button" variant="outline">Refresh</Button> : undefined} title="Merge debug" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">{state.kind === "loading" ? <><Skeleton className="h-24" /><Skeleton className="h-32" /></> : null}{state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}{state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Merge diagnostics unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}{state.kind === "ready" ? <><DebugFilters apps={state.apps} filters={filters} onChange={setFilters} /><div className="flex justify-end"><Button render={<a href="/debug" />} variant="outline">Open debug tools<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button></div><MergeRunList runs={state.page.runs} />{state.page.hasMore ? <Button className="self-center" onClick={() => void load(filters, true, state.page.nextCursor || undefined)} variant="outline">Load older</Button> : null}</> : null}</div></div>
 }
 
-function DebugFilters({ apps, filters, onChange }: { apps: MergeDebugApp[]; filters: Filters; onChange: (next: Filters) => void }) { const set = (key: keyof Filters, value: string) => onChange({ ...filters, [key]: value }); return <section aria-label="Merge diagnostic filters" className="grid gap-3 rounded-lg border p-3 sm:grid-cols-2 lg:grid-cols-5"><label className="grid gap-1 text-sm">App<Select onValueChange={(value) => set("app", value || "")} value={filters.app}><SelectTrigger aria-label="Debug app"><SelectValue placeholder="All apps" /></SelectTrigger><SelectContent><SelectItem value="">All apps</SelectItem>{apps.map((app) => <SelectItem key={app.id} value={app.slug}>{app.name || app.slug}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1 text-sm">PR #<Input aria-label="PR number" inputMode="numeric" onChange={(event) => set("prNumber", event.target.value)} value={filters.prNumber} /></label><label className="grid gap-1 text-sm">Session id<Input aria-label="Session id" inputMode="numeric" onChange={(event) => set("sessionId", event.target.value)} value={filters.sessionId} /></label><label className="grid gap-1 text-sm">Outcome<Select onValueChange={(value) => set("outcome", value || "")} value={filters.outcome}><SelectTrigger aria-label="Outcome"><SelectValue placeholder="Any outcome" /></SelectTrigger><SelectContent><SelectItem value="">Any outcome</SelectItem>{outcomes.map((value) => <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>)}</SelectContent></Select></label><label className="grid gap-1 text-sm">Kind<Select onValueChange={(value) => set("kind", value || "")} value={filters.kind}><SelectTrigger aria-label="Run kind"><SelectValue placeholder="Any kind" /></SelectTrigger><SelectContent><SelectItem value="">Any kind</SelectItem><SelectItem value="merge">Merge</SelectItem><SelectItem value="conflict_resolution">Conflict resolution</SelectItem></SelectContent></Select></label></section> }
+function DebugFilters({ apps, filters, onChange }: { apps: MergeDebugApp[]; filters: Filters; onChange: (next: Filters) => void }) {
+  const set = (key: keyof Filters, value: string) => onChange({ ...filters, [key]: value })
+  return <section aria-label="Merge diagnostic filters" className="rounded-lg border p-3">
+    <FieldGroup className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <Field className="gap-1">
+        <FieldLabel htmlFor="merge-debug-app">App</FieldLabel>
+        <Select onValueChange={(value) => set("app", value || "")} value={filters.app}>
+          <SelectTrigger aria-label="Debug app" id="merge-debug-app"><SelectValue placeholder="All apps" /></SelectTrigger>
+          <SelectContent><SelectGroup><SelectItem value="">All apps</SelectItem>{apps.map((app) => <SelectItem key={app.id} value={app.slug}>{app.name || app.slug}</SelectItem>)}</SelectGroup></SelectContent>
+        </Select>
+      </Field>
+      <Field className="gap-1">
+        <FieldLabel htmlFor="merge-debug-pr-number">PR #</FieldLabel>
+        <Input aria-label="PR number" id="merge-debug-pr-number" inputMode="numeric" onChange={(event) => set("prNumber", event.target.value)} value={filters.prNumber} />
+      </Field>
+      <Field className="gap-1">
+        <FieldLabel htmlFor="merge-debug-session-id">Session id</FieldLabel>
+        <Input aria-label="Session id" id="merge-debug-session-id" inputMode="numeric" onChange={(event) => set("sessionId", event.target.value)} value={filters.sessionId} />
+      </Field>
+      <Field className="gap-1">
+        <FieldLabel htmlFor="merge-debug-outcome">Outcome</FieldLabel>
+        <Select onValueChange={(value) => set("outcome", value || "")} value={filters.outcome}>
+          <SelectTrigger aria-label="Outcome" id="merge-debug-outcome"><SelectValue placeholder="Any outcome" /></SelectTrigger>
+          <SelectContent><SelectGroup><SelectItem value="">Any outcome</SelectItem>{outcomes.map((value) => <SelectItem key={value} value={value}>{value.replaceAll("_", " ")}</SelectItem>)}</SelectGroup></SelectContent>
+        </Select>
+      </Field>
+      <Field className="gap-1">
+        <FieldLabel htmlFor="merge-debug-kind">Kind</FieldLabel>
+        <Select onValueChange={(value) => set("kind", value || "")} value={filters.kind}>
+          <SelectTrigger aria-label="Run kind" id="merge-debug-kind"><SelectValue placeholder="Any kind" /></SelectTrigger>
+          <SelectContent><SelectGroup><SelectItem value="">Any kind</SelectItem><SelectItem value="merge">Merge</SelectItem><SelectItem value="conflict_resolution">Conflict resolution</SelectItem></SelectGroup></SelectContent>
+        </Select>
+      </Field>
+    </FieldGroup>
+  </section>
+}
 
 export function MergeRunList({ runs }: { runs: MergeRun[] }) { return !runs.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={RefreshCw} /></EmptyMedia><EmptyTitle>No merge runs</EmptyTitle><EmptyDescription>No merge attempts match these filters.</EmptyDescription></EmptyHeader></Empty> : <section aria-label="Merge runs" className="space-y-3">{runs.map((run) => <MergeRunCard key={run.id} run={run} />)}</section> }
 
