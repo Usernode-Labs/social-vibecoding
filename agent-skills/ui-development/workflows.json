@@ -489,7 +489,14 @@
     {
       "cwd": "frontend",
       "command": "npm run test:native-bridge-contract",
-      "ciEvidence": "npm run test:native-bridge-contract"
+      "ciEvidence": "npm run test:native-bridge-contract",
+      "kind": "test",
+      "resources": {
+        "ports": [
+          { "name": "vite-development-server", "default": 4173, "overrideEnv": "PLAYWRIGHT_PORT" }
+        ],
+        "workers": "playwright-default"
+      }
     },
     {
       "cwd": "frontend",
@@ -499,22 +506,50 @@
     {
       "cwd": "frontend",
       "command": "npm run test:service-worker-contract",
-      "ciEvidence": "react-service-worker.spec.ts"
+      "ciEvidence": "react-service-worker.spec.ts",
+      "kind": "test",
+      "resources": {
+        "ports": [
+          { "name": "production-preview", "default": 4363, "overrideEnv": "PLAYWRIGHT_SW_PORT" }
+        ],
+        "workers": 1
+      }
     },
     {
       "cwd": "frontend",
       "command": "npm run test:e2e",
-      "ciEvidence": "npm run test:e2e"
+      "ciEvidence": "npm run test:e2e",
+      "kind": "test",
+      "resources": {
+        "ports": [
+          { "name": "vite-development-server", "default": 4173, "overrideEnv": "PLAYWRIGHT_PORT" }
+        ],
+        "workers": "playwright-default"
+      }
     },
     {
       "cwd": "frontend",
       "command": "npm run test:production-guard",
-      "ciEvidence": "npm run test:production-guard"
+      "ciEvidence": "npm run test:production-guard",
+      "kind": "test",
+      "resources": {
+        "ports": [
+          { "name": "production-review-server", "default": 4274 }
+        ],
+        "workers": "playwright-default"
+      }
     },
     {
       "cwd": "frontend",
       "command": "npm run test:production-smoke",
-      "ciEvidence": "npm run test:production-smoke"
+      "ciEvidence": "npm run test:production-smoke",
+      "kind": "test",
+      "resources": {
+        "ports": [
+          { "name": "production-smoke-server", "default": 4275 }
+        ],
+        "workers": 1
+      }
     },
     {
       "cwd": "frontend",
@@ -529,7 +564,14 @@
     {
       "cwd": "frontend",
       "command": "npm run test:storybook",
-      "ciEvidence": "npm run test:storybook"
+      "ciEvidence": "npm run test:storybook",
+      "kind": "test",
+      "resources": {
+        "ports": [
+          { "name": "storybook-browser-server", "allocation": "dynamic" }
+        ],
+        "workers": "vitest-default"
+      }
     },
     {
       "cwd": "frontend",

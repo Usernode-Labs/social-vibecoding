@@ -3,6 +3,8 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
+import { wipCommitsInPublishRange } from "./slice-boundary.mjs"
+
 const frontendRoot = process.cwd()
 const repoRoot = path.resolve(frontendRoot, "..")
 const violations = []
@@ -155,6 +157,48 @@ for (const gate of workflows.fullGate || []) {
   }
   if (!gate.ciEvidence || !ci.includes(gate.ciEvidence)) {
     violations.push(`full gate lacks continuous-integration evidence: ${gate.command}`)
+  }
+  for (const port of gate.resources?.ports || []) {
+    if (!port.name || typeof port.name !== "string") {
+      violations.push(`full gate resource port needs a name: ${gate.command}`)
+    }
+    const fixed = Number.isInteger(port.default) && port.default > 0 && port.default < 65536
+    const dynamic = port.allocation === "dynamic"
+    if (fixed === dynamic) {
+      violations.push(`full gate resource port needs exactly one fixed default or dynamic allocation: ${gate.command}`)
+    }
+    if (port.overrideEnv !== undefined && !/^[A-Z][A-Z0-9_]*$/.test(port.overrideEnv)) {
+      violations.push(`full gate resource port override must name an environment variable: ${gate.command}`)
+    }
+  }
+  if (gate.resources?.workers !== undefined) {
+    const workers = gate.resources.workers
+    if (!(Number.isInteger(workers) && workers > 0) && !(typeof workers === "string" && workers.length > 0)) {
+      violations.push(`full gate worker ownership is invalid: ${gate.command}`)
+    }
+  }
+}
+
+if (!frontendPackage.scripts?.["finalize:slice"]?.includes("scripts/finalize-slice.mjs")) {
+  violations.push("frontend package must expose the canonical slice finalizer")
+}
+for (const boundaryEvidence of [
+  "fetch-depth: 0",
+  "SLICE_BOUNDARY_CHECK:",
+  "SLICE_PUBLISH_BASE:",
+]) {
+  if (!ci.includes(boundaryEvidence)) {
+    violations.push(`continuous integration is missing publish-boundary evidence: ${boundaryEvidence}`)
+  }
+}
+
+if (process.env.CI || process.env.SLICE_BOUNDARY_CHECK === "true") {
+  try {
+    for (const checkpoint of wipCommitsInPublishRange(repoRoot)) {
+      violations.push(`publish range contains private checkpoint ${checkpoint.commit.slice(0, 12)}: ${checkpoint.subject}`)
+    }
+  } catch (cause) {
+    violations.push(`publish-range validation failed: ${cause instanceof Error ? cause.message : cause}`)
   }
 }
 

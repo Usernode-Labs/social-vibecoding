@@ -53,6 +53,7 @@ npm run check:harness
 npm run check:harness-integrity
 npm run check:harness-fitness
 npm run test:harness
+npm run finalize:slice -- --help
 npm run test:agent-battery
 npm run typecheck
 npm run test:e2e
@@ -127,3 +128,7 @@ duplication, and evidence age without blocking the gate. The live-agent
 evaluator is reserved for model changes, measured instruction experiments,
 and prerelease diagnostics. `check:harness` remains the source architecture
 boundary and is not a substitute for harness self-integrity.
+Root `AGENTS.md` owns the private-checkpoint and final-slice discipline. The
+slice finalizer preserves checkpoint messages oldest-first behind a recovery
+reference; the full UI gate then writes exact-commit timing and resource
+evidence to the ignored `frontend/.artifacts/ui-gate/` directory.

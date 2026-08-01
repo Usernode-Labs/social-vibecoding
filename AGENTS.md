@@ -52,10 +52,12 @@ Write for a future reader who has the diff but not the task conversation.
 - Add a body only when the change has context the diff cannot explain.
 - Preserve the reason for the change and any important decision, tradeoff, or
   intentional deviation.
-- Record meaningful verification that was actually performed and any known
-  remaining risk that affects future work.
-- Derive verification and risk claims from command output produced at the exact
-  commit being described, not from session memory or a dirty neighboring tree.
+- Record meaningful verification completed before the commit was created and
+  any known remaining risk that affects future work. Never predict a pass.
+- Record exact-commit boundary results after the commit in the generated UI-gate
+  timing artifact and a signed Buzz receipt keyed to the immutable commit. Do
+  not amend the commit to backfill those results; that would change the state
+  the gate verified.
 - Omit empty headings, diff summaries, file lists, session transcripts,
   abandoned debugging paths, and agent, model, token, or task metadata.
 - Never claim a test or check passed unless it was run.
@@ -70,10 +72,49 @@ Write for a future reader who has the diff but not the task conversation.
 - Treat roughly 400 hand-written changed lines or 20 files as a soft review
   limit. If a semantic commit exceeds it, explain in the body why the change
   cannot be split without breaking its contract.
-- Every commit must pass its required gate on its own. A commit that cannot be
-  checked independently is either too large or cut at the wrong boundary.
+- Every published slice commit must pass its required gate on its own. A commit
+  that cannot be checked independently is either too large or cut at the wrong
+  boundary. Private slice checkpoints are the explicit exception below.
 - Keep enforcement advisory unless a specific failure proves a mechanical rule
   is needed. Commit shape remains a review judgment, not a line-count contest.
+
+## Private slice checkpoints and boundary gates
+
+Use private checkpoints to protect small increments without multiplying the
+authoritative gate cost. This rule was triggered by owner event
+`5686d957a1d9c393f87c432bbcb370baa125c6ba432821af11b1e51627863b1f`,
+after empty commit bodies and duplicate full-gate runs made the existing process
+neither durable nor economical. The implementation lead owns the final boundary;
+the independent reviewer re-derives its evidence.
+
+- During one slice, commit coherent increments as `wip(<slice-name>): <step>`.
+  Keep them private. Each checkpoint needs a meaningful body plus the normal
+  human trailers, but no authoritative full gate. Narrow feedback such as
+  `npx playwright test --only-changed <slice-base>` is permitted and must not be
+  reported as boundary evidence.
+- Run the finalizer once with `--dry-run`, then without it:
+
+  ```sh
+  cd frontend
+  npm run finalize:slice -- --base <slice-base> --slice <slice-name> \
+    --subject "<outcome>" --origin-event <buzz-event-id>
+  ```
+
+  The finalizer preserves checkpoint messages oldest-first, creates a recovery
+  reference under `refs/buzz/slice-recovery/`, and atomically replaces the
+  private checkpoints with one reviewable commit.
+- Run `npm run check:ui` exactly once on that clean final commit. The runner
+  rejects `wip(` commits in the publish range, records every stage's command,
+  duration, port and worker ownership, result and failure class beneath
+  `frontend/.artifacts/ui-gate/`, and fails if source state moves during the run.
+- Independent craft checks disclose their port and worker use and do not overlap
+  an announced full gate. A later scheduler may mechanize that lease; until then
+  it is an explicit coordination contract.
+- Never push a `wip(` commit. Continuous integration fetches full history and
+  enforces the same publish-range rule.
+
+Proof: `npm run test:harness`, `npm run check:harness-integrity`, and one clean
+exact-commit `npm run check:ui` from `frontend/`.
 
 ## Design-authority scope
 

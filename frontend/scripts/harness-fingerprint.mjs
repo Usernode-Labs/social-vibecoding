@@ -24,11 +24,14 @@ const roots = [
   "frontend/scripts/check-harness-policy.mjs",
   "frontend/scripts/check-style-policy.mjs",
   "frontend/scripts/component-relationship-tools.mjs",
+  "frontend/scripts/finalize-slice.mjs",
   "frontend/scripts/query-design-system.mjs",
   "frontend/scripts/live-agent-runners.mjs",
   "frontend/scripts/run-agent-battery.mjs",
   "frontend/scripts/run-live-agent-battery.mjs",
   "frontend/scripts/run-ui-gate.mjs",
+  "frontend/scripts/slice-boundary.mjs",
+  "frontend/scripts/ui-gate-telemetry.mjs",
   ".github/workflows/frontend-checks.yml",
 ]
 

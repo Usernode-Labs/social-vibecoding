@@ -42,6 +42,8 @@ jobs:
         working-directory: frontend
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -63,7 +65,11 @@ jobs:
       - run: npm run check:style-policy
       - run: npm run check:content
       - run: npm run test:content
-      - run: npm run check:harness-integrity
+      - name: Check harness integrity and publish boundary
+        env:
+          SLICE_BOUNDARY_CHECK: "true"
+          SLICE_PUBLISH_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: npm run check:harness-integrity
       - name: Report harness fitness
         env:
           HARNESS_FITNESS_OUTPUT: ${{ runner.temp }}/harness-fitness.json
