@@ -1088,7 +1088,9 @@ const AdminConsole = {
     });
     list.querySelectorAll('.admin-share-code-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const url = `${location.origin}/register.html?code=${encodeURIComponent(btn.dataset.code)}`;
+        // In-SPA register route (fold-auth-pages-into-SPA); the old
+        // /register.html?code=… form still works via the redirect stub.
+        const url = `${location.origin}/#register/${encodeURIComponent(btn.dataset.code)}`;
         navigator.clipboard.writeText(url);
         btn.textContent = 'Link copied!';
         setTimeout(() => { btn.textContent = 'Share link'; }, 1500);

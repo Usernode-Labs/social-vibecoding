@@ -65,7 +65,7 @@
     );
     if (response.status === 401) {
       sessionStorage.setItem(STORAGE_KEY, code);
-      window.location.replace('/login.html?return_to=%2Fcli%2Fauthorize');
+      window.location.replace('/?return_to=%2Fcli%2Fauthorize#login');
       return;
     }
     if (response.status === 404) return invalidOrExpired();
@@ -96,7 +96,7 @@
       });
       if (response.status === 401) {
         sessionStorage.setItem(STORAGE_KEY, canonicalCode);
-        window.location.replace('/login.html?return_to=%2Fcli%2Fauthorize');
+        window.location.replace('/?return_to=%2Fcli%2Fauthorize#login');
         return;
       }
       if (response.status === 404) return invalidOrExpired();

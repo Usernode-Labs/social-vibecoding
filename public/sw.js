@@ -16,7 +16,7 @@
 // .test.js loads this file in Node (module.exports branch at the bottom)
 // and pins the bypass list without a browser.
 
-const SW_VERSION = 'v2';
+const SW_VERSION = 'v3';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const API_CACHE = `usernode-api-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;
@@ -29,7 +29,7 @@ const API_CACHE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000; // 14 days
 const CACHED_AT_HEADER = 'sw-cached-at';
 
 // Cross-origin script URLs the shell's <script> tags load. Kept in sync
-// with index.html / login.html by tests/pwa-shell-wiring.test.js.
+// with index.html by tests/pwa-shell-wiring.test.js.
 const CDN_ASSETS = [
   'https://cdn.tailwindcss.com',
   'https://cdn.jsdelivr.net/gh/davidshimjs/qrcodejs/qrcode.min.js',
@@ -39,16 +39,18 @@ const CDN_ASSETS = [
 
 // Same-origin shell assets precached on install so the very next offline
 // load works even for screens the session never touched. Must list every
-// local script/stylesheet index.html and login.html reference — the
-// precache-list sync test enforces that.
+// local script/stylesheet index.html references — the precache-list sync
+// test enforces that. (login.html etc. are redirect stubs into the SPA's
+// hash routes now — fold-auth-pages-into-SPA — so index.html is the one
+// document to precache.)
 const SHELL_ASSETS = [
   '/index.html',
-  '/login.html',
   '/css/app.css',
   '/usernode-native/v1/native.css',
   '/usernode-native/v1/native.js',
   '/usernode-bridge.js',
   '/js/admin-console.js',
+  '/js/auth-screens.js',
   '/js/admin-topochain.js',
   '/js/app-secrets.js',
   '/js/platform-ui.js',
@@ -99,7 +101,6 @@ const NO_FALLBACK_PAGES = [
   '/debug',
   '/node-status',
   '/status',
-  '/register.html',
   '/cli/authorize',
 ];
 
@@ -107,7 +108,7 @@ const NO_FALLBACK_PAGES = [
 // handler does with a request. Returns one of:
 //   'bypass'   — don't touch it; the browser talks to the network directly.
 //   'navigate' — page navigation: network-first, offline falls back to the
-//                cached SPA shell (index.html / login.html).
+//                cached SPA shell (index.html).
 //   'shell'    — same-origin HTML/JS/CSS/manifest/icons: network-first.
 //   'api'      — GET /api/* JSON: network-first, cache 200s for offline.
 //   'immutable'— content-addressed images (/app-icons, /visuals): cache-first.
@@ -234,10 +235,10 @@ if (typeof module !== 'undefined' && module.exports) {
       return await fetch(event.request);
     } catch (err) {
       // Any SPA path serves index.html online (the server's catch-all), so
-      // the cached shell is the correct offline fallback for every route.
-      const page = new URL(event.request.url).pathname === '/login.html'
-        ? '/login.html' : '/index.html';
-      const hit = await cache.match(page);
+      // the cached shell is the correct offline fallback for every route —
+      // including the old standalone auth pages, which are redirect stubs
+      // into the SPA's hash routes now (fold-auth-pages-into-SPA).
+      const hit = await cache.match('/index.html');
       if (hit) return hit;
       throw err;
     }

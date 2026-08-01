@@ -796,7 +796,12 @@
       // device can't see this user's cached feed. Belt-and-braces: the SW
       // also clears the API cache when it sees the logout POST above.
       try { await this._clearSwApiCache(); } catch (_) {}
-      window.location.href = '/login.html';
+      // Hard navigation on purpose: enterAuthed is one-shot per document
+      // (WS connections, intervals, module state all assume a single
+      // session), so a real reload is the correct teardown for a session
+      // switch. #login lands the fresh document on the in-SPA login
+      // screen (fold-auth-pages-into-SPA).
+      window.location.href = '/#login';
     },
 
     // Ask the active service worker to drop its API cache; resolves on ack

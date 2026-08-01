@@ -1,82 +1,17 @@
 <!DOCTYPE html>
-<html lang="en" class="dark">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Waiting for access</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>tailwind.config = {
-    darkMode: 'class',
-    theme: { extend: { colors: {
-      zinc: { 50:'#f6f6fb',100:'#eeeef6',200:'#d4d4e4',300:'#b0b0c8',400:'#9898b0',500:'#6e6e8a',600:'#4e4e6a',700:'#484870',800:'#2e2e50',900:'#1a1a30',950:'#08080f' },
-      violet: { 400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9' },
-    } } },
-  }</script>
   <script>
-    if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
-      document.documentElement.classList.remove('dark');
-    }
+    // Redirect stub (fold-auth-pages-into-SPA): the waiting room is now
+    // the SPA's #waiting screen. This file only exists so old bookmarks
+    // and service-worker-cached copies keep working.
+    location.replace('/#waiting');
   </script>
-  <script src="/js/theme.js"></script>
-  <link rel="manifest" href="/manifest.webmanifest">
-  <meta name="theme-color" content="#08080f">
-  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
-  <link rel="apple-touch-icon" href="/icons/icon-192.png">
 </head>
-<body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen flex items-center justify-center">
-  <div class="w-full max-w-sm px-6 text-center">
-    <h1 class="text-2xl font-bold mb-1">You're in the queue</h1>
-    <p class="text-xs text-zinc-500 dark:text-zinc-400 mb-8 italic">Usernode Social Vibecoding</p>
-
-    <div class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 text-left space-y-3">
-      <p class="text-sm">
-        Your account <span id="who" class="font-semibold"></span> doesn't have
-        platform access yet. We let people in from the waitlist in batches —
-        you'll get in automatically when your turn comes.
-      </p>
-      <p class="text-sm text-zinc-500 dark:text-zinc-400">
-        This page checks for you every so often; you can also just come back later.
-      </p>
-      <p id="check-state" class="text-xs text-zinc-400 dark:text-zinc-500"></p>
-    </div>
-
-    <div class="mt-6 space-y-3">
-      <a href="/landing.html" class="block w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
-        Browse public apps while you wait
-      </a>
-      <button id="logout" class="w-full rounded-lg border border-zinc-300 dark:border-zinc-700 px-4 py-2 text-sm font-medium text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">
-        Log out
-      </button>
-    </div>
-  </div>
-
-  <script>
-    (function () {
-      const state = document.getElementById('check-state');
-
-      async function check() {
-        try {
-          const res = await fetch('/api/auth/me', { credentials: 'same-origin' });
-          if (res.status === 401) { window.location.href = '/login.html'; return; }
-          const data = await res.json();
-          const user = data && data.user;
-          if (!user) return;
-          document.getElementById('who').textContent = user.username || '';
-          if (user.hasPlatformAccess) { window.location.href = '/'; return; }
-          if (state) state.textContent = 'Last checked ' + new Date().toLocaleTimeString();
-        } catch (_) {
-          if (state) state.textContent = 'Connection issue — will retry';
-        }
-      }
-
-      document.getElementById('logout').addEventListener('click', async () => {
-        try { await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
-        window.location.href = '/login.html';
-      });
-
-      check();
-      setInterval(check, 30000);
-    })();
-  </script>
+<body>
+  <noscript><a href="/#waiting">Continue to Usernode Social Vibecoding</a></noscript>
 </body>
 </html>

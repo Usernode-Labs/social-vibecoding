@@ -14,10 +14,11 @@ const path = require('node:path');
 const PUBLIC = path.join(__dirname, '..', 'public');
 const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
 
+// login.html / register.html dropped: they're redirect stubs into the
+// SPA's hash routes now (fold-auth-pages-into-SPA) — the in-SPA auth
+// screens live inside index.html, which stays themed.
 const THEMED_PAGES = [
   'index.html',
-  'login.html',
-  'register.html',
   'admin.html',
   'dashboard.html',
   'status.html',

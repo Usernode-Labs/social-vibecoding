@@ -4,12 +4,17 @@ const log = require('../services/logger');
 const platformJwt = require('../services/platform-jwt');
 
 const PUBLIC_PATHS = [
+  // Legacy standalone auth pages, now tiny redirect stubs into the SPA's
+  // hash routes (#landing/#login/#signup/#register/#waiting) so old
+  // bookmarks, share links, and SW-cached copies keep working. The SPA
+  // shell itself ('/') is NOT listed here — it must flow through the
+  // middleware (staging iframe-JWT minting rides on '/?token=…'); an
+  // anonymous '/' is served by redirectOrReject falling through to
+  // static instead of redirecting.
   '/login.html',
   '/register.html',
-  // Anonymous front door (onboarding flow alignment): public app
-  // directory + waitlist join + sign-in CTAs. Sessionless `/` redirects
-  // here (see redirectOrReject).
   '/landing.html',
+  '/waiting.html',
   '/api/auth/login',
   '/api/auth/register',
   '/api/auth/wallet-check',
@@ -54,8 +59,11 @@ const PUBLIC_PATHS = [
 // keep a small allowlist and get the waiting room instead of the SPA.
 //
 // What deliberately stays OPEN to a no-access session:
-//   - /waiting.html — the waiting-room page itself (plus /css/, /js/,
-//     icons etc., which are PUBLIC_PATHS and never reach this gate).
+//   - the SPA shell ('/' + '/index.html') — the waiting room is an
+//     in-SPA screen now (auth-screens.js); the client routes a gated
+//     session to #waiting and the API 403 below remains the actual
+//     security boundary. (/css/, /js/, icons etc. are PUBLIC_PATHS and
+//     never reach this gate.)
 //   - /api/auth/ — me / logout / change-password: account basics.
 //   - /api/iframe-token — login-required CHILD APPS are usable by any
 //     account per the onboarding doc's ladder ("uses login-required
@@ -67,7 +75,8 @@ const PUBLIC_PATHS = [
 //     bearer-token surface are unaffected by the gate.
 // Admins always bypass (belt-and-braces — they're also grandfathered).
 const GATE_OPEN_PATHS = [
-  '/waiting.html',
+  // ('/waiting.html' is a PUBLIC_PATHS redirect stub now and never
+  // reaches this gate.)
   '/api/auth/',
   '/api/iframe-token',
 ];
@@ -83,7 +92,11 @@ function enforcePlatformAccessGate(req, res, user) {
     });
     return true;
   }
-  res.redirect('/waiting.html');
+  // The SPA shell serves for a gated session; app.js routes it to the
+  // in-SPA waiting room (#waiting). Any other navigation bounces to the
+  // shell for the same client-side routing.
+  if (req.path === '/' || req.path === '/index.html') return false;
+  res.redirect('/');
   return true;
 }
 
@@ -242,7 +255,7 @@ function authMiddleware(config) {
       }
     }
 
-    return redirectOrReject(req, res);
+    return redirectOrReject(req, res, next);
   };
 }
 
@@ -336,18 +349,20 @@ async function tryMintSessionFromIframeJwt(pool, config, jwtToken, res) {
   };
 }
 
-function redirectOrReject(req, res) {
+function redirectOrReject(req, res, next) {
   if (req.path.startsWith('/api/')) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
-  // Sessionless visitors hitting the front door get the public landing
-  // page (app directory + waitlist join + sign-in CTAs) instead of a
-  // bare login form; deeper paths keep the login redirect so a shared
-  // link to a gated page still lands on sign-in.
+  // Anonymous SPA boot (fold-auth-pages-into-SPA): the shell serves
+  // without a session and boots into the in-SPA landing/login screens
+  // (auth-screens.js); every data read stays behind the /api/* 401
+  // above. Deeper paths bounce to the shell — the URL fragment survives
+  // the redirect, so a shared deep link (e.g. /#app/<slug>/full) still
+  // reaches the login screen with the destination preserved.
   if (req.path === '/' || req.path === '/index.html') {
-    return res.redirect('/landing.html');
+    return next();
   }
-  return res.redirect('/login.html');
+  return res.redirect('/');
 }
 
 module.exports = { authMiddleware };

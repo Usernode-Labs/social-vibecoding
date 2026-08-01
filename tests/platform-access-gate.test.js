@@ -1,24 +1,27 @@
 // src/middleware/auth.js — the platform-access gate (onboarding flow
 // alignment). A session is no longer the whole story: users.has_platform_access
-// gates the SV platform surfaces (SPA home / social / build). Accounts
-// without it keep a small allowlist and land on the waiting room instead
-// of the SPA; sessionless visitors hitting the front door get the public
-// landing page.
+// gates the SV platform surfaces (SPA home / social / build). Since the
+// fold-auth-pages-into-SPA migration the SPA shell itself serves
+// anonymously (the client boots into in-SPA landing/login screens and a
+// gated session is routed to the in-SPA #waiting room); the API 401/403
+// remain the security boundary.
 //
 // Contracts guarded here:
 //
 //   1. Grandfathered / released users (has_platform_access TRUE) pass the
 //      middleware exactly as before — no behavior change at deploy time.
-//   2. A no-access session gets the waiting room for page loads and a 403
-//      with code `platform_access_required` for /api/* calls.
-//   3. GATE_OPEN_PATHS survive the gate: /waiting.html itself, /api/auth/*
-//      (me / logout / change-password), and /api/iframe-token — because
-//      login-required CHILD APPS stay usable for any account per the
-//      onboarding doc's ladder.
+//   2. A no-access session still gets the SPA shell for page loads (the
+//      client routes it to #waiting) and a 403 with code
+//      `platform_access_required` for /api/* calls.
+//   3. GATE_OPEN_PATHS survive the gate: /api/auth/* (me / logout /
+//      change-password) and /api/iframe-token — because login-required
+//      CHILD APPS stay usable for any account per the onboarding doc's
+//      ladder.
 //   4. Admins bypass the gate even with has_platform_access FALSE.
-//   5. Sessionless `/` redirects to the public landing page; deeper paths
-//      keep the login redirect; anonymous /api/* stays a plain 401.
-//   6. /landing.html is a PUBLIC_PATH (served pre-auth).
+//   5. Sessionless `/` serves the SPA shell; deeper page paths bounce to
+//      the shell; anonymous /api/* stays a plain 401.
+//   6. The legacy standalone pages (landing/login/register/waiting .html)
+//      are PUBLIC_PATH redirect stubs (served pre-auth).
 //
 // HTTP-level tests against a throwaway express app + a substring-
 // dispatching mock pool (same idiom as tests/mobile-auth-from-session.test.js).
@@ -148,15 +151,21 @@ test('a user WITH platform access reaches the SPA and APIs', async () => {
   });
 });
 
-// ─── 2. No-access sessions land in the waiting room ───────────────────
+// ─── 2. No-access sessions get the shell (client routes to #waiting) ──
 
-test('a user WITHOUT access is redirected to the waiting room on page loads', async () => {
+test('a user WITHOUT access still gets the SPA shell on the front door', async () => {
   await withServer(async (base) => {
-    for (const p of ['/', '/social']) {
-      const res = await get(base, p, 'waiting-session');
-      assert.equal(res.status, 302);
-      assert.equal(res.headers.get('location'), '/waiting.html');
-    }
+    const res = await get(base, '/', 'waiting-session');
+    assert.equal(res.status, 200);
+    assert.equal(await res.text(), 'SPA');
+  });
+});
+
+test('a user WITHOUT access is bounced to the shell from deeper pages', async () => {
+  await withServer(async (base) => {
+    const res = await get(base, '/social', 'waiting-session');
+    assert.equal(res.status, 302);
+    assert.equal(res.headers.get('location'), '/');
   });
 });
 
@@ -171,8 +180,9 @@ test('a user WITHOUT access gets 403 platform_access_required on APIs', async ()
 
 // ─── 3. The gate's allowlist ──────────────────────────────────────────
 
-test('the waiting room, auth APIs, and iframe-token stay open to a no-access session', async () => {
+test('the waiting stub, auth APIs, and iframe-token stay open to a no-access session', async () => {
   await withServer(async (base) => {
+    // The old standalone waiting page is a PUBLIC_PATHS redirect stub now.
     const waiting = await get(base, '/waiting.html', 'waiting-session');
     assert.equal(waiting.status, 200);
     assert.equal(await waiting.text(), 'WAITING');
@@ -201,27 +211,59 @@ test('an admin bypasses the gate even without the access flag', async () => {
 
 // ─── 5. Sessionless routing ───────────────────────────────────────────
 
-test('sessionless / redirects to the landing page, deeper paths to login', async () => {
+test('sessionless / serves the SPA shell; deeper paths bounce to it; APIs 401', async () => {
   await withServer(async (base) => {
+    // Anonymous SPA boot (fold-auth-pages-into-SPA): the shell serves
+    // without a session and the client shows the in-SPA landing screen.
     const front = await get(base, '/');
-    assert.equal(front.status, 302);
-    assert.equal(front.headers.get('location'), '/landing.html');
+    assert.equal(front.status, 200);
+    assert.equal(await front.text(), 'SPA');
 
+    // Deeper paths bounce to the shell — the URL fragment survives a
+    // redirect, so shared deep links still reach the login screen.
     const deep = await get(base, '/social');
     assert.equal(deep.status, 302);
-    assert.equal(deep.headers.get('location'), '/login.html');
+    assert.equal(deep.headers.get('location'), '/');
 
     const api = await get(base, '/api/apps');
     assert.equal(api.status, 401);
   });
 });
 
-// ─── 6. The landing page is public ────────────────────────────────────
+// ─── 6. The legacy standalone pages are public redirect stubs ─────────
 
-test('landing.html is served without a session', async () => {
+test('the landing/waiting stubs are served without a session', async () => {
   await withServer(async (base) => {
-    const res = await get(base, '/landing.html');
-    assert.equal(res.status, 200);
-    assert.equal(await res.text(), 'LANDING');
+    const landing = await get(base, '/landing.html');
+    assert.equal(landing.status, 200);
+    assert.equal(await landing.text(), 'LANDING');
+
+    const waiting = await get(base, '/waiting.html');
+    assert.equal(waiting.status, 200);
+    assert.equal(await waiting.text(), 'WAITING');
   });
+});
+
+// ─── 7. The on-disk stubs carry the right SPA hash routes ─────────────
+
+test('the four standalone pages are redirect stubs into SPA hash routes', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const read = (f) => fs.readFileSync(path.join(__dirname, '..', 'public', f), 'utf8');
+
+  assert.match(read('landing.html'), /location\.replace\('\/#landing'\)/);
+  assert.match(read('waiting.html'), /location\.replace\('\/#waiting'\)/);
+
+  // login stub: #login base route, #signup for ?signup=1, and it carries
+  // a deep-link fragment + remaining query (return_to) through.
+  const login = read('login.html');
+  assert.match(login, /#signup/);
+  assert.match(login, /#login/);
+  assert.match(login, /deepLink/);
+  assert.match(login, /location\.replace\(/);
+
+  // register stub: #register[/<code>] with the ?code= prefill preserved.
+  const register = read('register.html');
+  assert.match(register, /#register\/'\s*\+\s*encodeURIComponent\(code\)/);
+  assert.match(register, /location\.replace\(/);
 });

@@ -65,59 +65,106 @@ const App = {
     App.PlatformUpdating.installFetchWrap();
     App.PlatformUpdating.restoreFromSessionStorage();
 
+    // Chrome wiring is session-independent and has no re-entry guards
+    // (double listeners otherwise), so it runs exactly once per document
+    // — BEFORE we know whether a session exists. The anonymous shell
+    // needs the popstate/hashchange wiring too (auth screens are
+    // hash-routed).
+    App.bindEvents();
+
     try {
       // Offline note (#487): the service worker serves this network-first
       // with a cached fallback, so an offline reload by a logged-in user
       // resolves `res.ok` from the last successful copy and boot proceeds
       // to the cached shell. A real 401 (only reachable online — errors
-      // never enter the SW cache) still lands in the redirect below.
+      // never enter the SW cache) boots the anonymous shell below.
       const res = await fetch('/api/auth/me');
       if (!res.ok) {
-        // Keep the fragment so login can bounce back to the deep link
-        // (e.g. the chromeless #app/<slug>/full view a share-link
-        // redirect landed on) instead of the home feed.
-        window.location.href = '/login.html' + window.location.hash;
+        App.enterAnonymous();
         return;
       }
       const data = await res.json();
-      App.user = data.user;
-      // "View as non-admin" admin tool. We mask `App.user.isAdmin`
-      // for client-side UI gating (admin buttons, retry, delete, lock,
-      // app-secrets edit, etc. — see grep for App.user?.isAdmin) so
-      // an admin can preview the experience a regular user gets.
-      // Server-side `req.user.isAdmin` is unaffected — this is purely
-      // visual, not a privilege drop. We stash the real value on
-      // App._realIsAdmin so settings.js knows whether to render the
-      // toggle, and the body class lets a thin header banner reveal
-      // the masked state at all times so the admin doesn't forget
-      // they're in preview mode.
-      App._realIsAdmin = !!App.user?.isAdmin;
-      // View-only admin role (issue #311): mutating controls gate on
-      // `canAdminWrite`, view affordances on `isAdmin`. Mask BOTH under the
-      // "View as non-admin" preview so the admin sees the true non-admin
-      // experience. Server-side gates are unaffected — purely visual.
-      App._realCanAdminWrite = !!App.user?.canAdminWrite;
-      App._viewAsNonAdmin = App._realIsAdmin
-        && localStorage.getItem('viewAsNonAdmin') === '1';
-      if (App._viewAsNonAdmin && App.user) {
-        App.user.isAdmin = false;
-        App.user.canAdminWrite = false;
-        App.user.role = 'user';
-        document.body.classList.add('is-view-as-non-admin');
-      }
+      App.enterAuthed(data.user);
     } catch {
       // Network failure with no service-worker-cached /api/auth/me —
       // i.e. offline on a device that never logged in (or predates the
-      // SW). login.html is precached, so this shows the login page with
-      // its own offline note instead of a browser error; no loop, since
-      // login.html never bounces back here on its own.
-      window.location.href = '/login.html' + window.location.hash;
+      // SW). Boot the anonymous shell; offline.js owns the connectivity
+      // banner and the login screen refuses submits while offline.
+      App.enterAnonymous();
+    }
+  },
+
+  // ── Staged boot (fold-auth-pages-into-SPA) ──────────────────────────
+  // The SPA now serves anonymous visitors too: landing / login / signup /
+  // register / waiting are hash-routed in-SPA screens (auth-screens.js),
+  // and login is reload-free — the authed shell boots in place. Three
+  // stages:
+  //   bindEvents (chrome)  — once per document, session-independent.
+  //   enterAnonymous       — no session: show the auth screens.
+  //   enterAuthed(user)    — session established: set App.user, then
+  //                          either the waiting room (no platform access)
+  //                          or the full one-shot authed boot.
+  _authedBooted: false,
+
+  enterAnonymous() {
+    if (window.AuthScreens) AuthScreens.enter();
+  },
+
+  enterAuthed(user) {
+    App.user = user;
+    // "View as non-admin" admin tool. We mask `App.user.isAdmin`
+    // for client-side UI gating (admin buttons, retry, delete, lock,
+    // app-secrets edit, etc. — see grep for App.user?.isAdmin) so
+    // an admin can preview the experience a regular user gets.
+    // Server-side `req.user.isAdmin` is unaffected — this is purely
+    // visual, not a privilege drop. We stash the real value on
+    // App._realIsAdmin so settings.js knows whether to render the
+    // toggle, and the body class lets a thin header banner reveal
+    // the masked state at all times so the admin doesn't forget
+    // they're in preview mode.
+    App._realIsAdmin = !!App.user?.isAdmin;
+    // View-only admin role (issue #311): mutating controls gate on
+    // `canAdminWrite`, view affordances on `isAdmin`. Mask BOTH under the
+    // "View as non-admin" preview so the admin sees the true non-admin
+    // experience. Server-side gates are unaffected — purely visual.
+    App._realCanAdminWrite = !!App.user?.canAdminWrite;
+    App._viewAsNonAdmin = App._realIsAdmin
+      && localStorage.getItem('viewAsNonAdmin') === '1';
+    if (App._viewAsNonAdmin && App.user) {
+      App.user.isAdmin = false;
+      App.user.canAdminWrite = false;
+      App.user.role = 'user';
+      document.body.classList.add('is-view-as-non-admin');
+    }
+
+    // A web session exists (platform access or not). The native login
+    // handoff listens for this — wallet provisioning and the node work
+    // for waiting-room users too (apps are usable without platform
+    // access; only the SV social/build surfaces are gated).
+    document.dispatchEvent(new CustomEvent('sv:session', {
+      detail: { user: App.user },
+    }));
+
+    // Platform-access gate (onboarding flow alignment): a released
+    // session boots the full shell; an unreleased one gets the waiting
+    // room, which re-calls enterAuthed once /api/auth/me reports access.
+    // `=== false` on purpose — an older cached /me without the field
+    // must not lock anyone out.
+    if (App.user?.hasPlatformAccess === false && window.AuthScreens) {
+      AuthScreens.showWaiting();
       return;
     }
 
-    App.bindEvents();
+    if (App._authedBooted) {
+      App.restoreFromHash();
+      return;
+    }
+    App._authedBooted = true;
+
+    if (window.AuthScreens) AuthScreens.hideAll();
+
     // Header admin/moderation icon — revealed for admins (full or
-    // view-only) once App.user is resolved. Called after bindEvents so
+    // view-only) once App.user is resolved. bindEvents already ran, so
     // the click handler is attached before the button can be seen.
     App.renderAdminButton();
     App.connectEvents();
@@ -127,6 +174,12 @@ const App = {
     // Monday-UTC rollover). Refreshes opportunistically on every
     // successful give + on the leaderboard screen mount.
     if (window.Kudos?.Budget?.init) Kudos.Budget.init();
+    // Session-gated boot fetches (notifications bell, work drawer)
+    // defer to this event instead of firing a guaranteed 401 on an
+    // anonymous document load.
+    document.dispatchEvent(new CustomEvent('sv:authed', {
+      detail: { user: App.user },
+    }));
     App.restoreFromHash();
 
     // Re-poll the platform version every 10s so the header pill flips to
@@ -2324,8 +2377,55 @@ const App = {
       // (#app/<slug>/full?path=/t/123). Split it off before the segment
       // split so every existing route parses byte-for-byte as before.
       const qIdx = rawHash.indexOf('?');
-      const hash = qIdx === -1 ? rawHash : rawHash.slice(0, qIdx);
+      let hash = qIdx === -1 ? rawHash : rawHash.slice(0, qIdx);
       const fragQuery = qIdx === -1 ? '' : rawHash.slice(qIdx + 1);
+
+      // ── Anonymous-shell routing (fold-auth-pages-into-SPA) ─────────
+      // #landing / #login / #signup / #register[/<code>] / #waiting are
+      // in-SPA screens (auth-screens.js). Which set of routes is live
+      // depends on the boot stage:
+      //   - no session: auth routes render; every other hash is a deep
+      //     link — remembered for after login, which is offered first
+      //     (parity with the old server redirect: '/' → landing.html,
+      //     deeper paths → login.html).
+      //   - gated session (waiting room): only #waiting and #landing
+      //     (public-app browsing) render; everything else returns to
+      //     the waiting room. The server's API 403 remains the actual
+      //     security boundary.
+      //   - full session: auth hashes are stale (bookmark / back
+      //     button) — strip them and land on home.
+      if (window.AuthScreens) {
+        const authRoute = AuthScreens.routeFromHash(hash);
+        const authSeg = hash.split('/')[1] || null;
+        if (!App.user) {
+          if (authRoute && authRoute !== 'waiting') {
+            AuthScreens.show(authRoute, authSeg);
+            return;
+          }
+          if (!hash || authRoute === 'waiting') {
+            AuthScreens.show('landing');
+            return;
+          }
+          AuthScreens.rememberDeepLink(location.hash);
+          AuthScreens.show('login');
+          return;
+        }
+        if (App.user.hasPlatformAccess === false) {
+          if (authRoute === 'landing') {
+            AuthScreens.show('landing');
+            return;
+          }
+          if (!authRoute && hash) AuthScreens.rememberDeepLink(location.hash);
+          AuthScreens.showWaiting();
+          return;
+        }
+        if (authRoute) {
+          AuthScreens.hideAll();
+          history.replaceState(null, '', '/');
+          hash = '';
+        }
+      }
+
       if (!hash) {
         App.setChromeless(false);
         if (App.currentApp) App.navigateHome();
