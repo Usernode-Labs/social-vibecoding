@@ -140,7 +140,12 @@ test("lets a write admin clear a specific collaborator's stale in-progress mark"
 
   await page.goto("/react/apps/recipebot/dev/issues/84")
   await expect(page.getByRole("heading", { name: "In-progress claims" })).toBeVisible()
-  await page.getByRole("button", { name: "Clear sam's in-progress claim" }).click()
+  const clearClaim = page.getByRole("button", { name: "Clear sam's in-progress claim" })
+  await expect(clearClaim).toHaveCSS("width", "24px")
+  await expect(clearClaim).toHaveCSS("height", "24px")
+  await expect(clearClaim.locator(':scope > [data-slot="platform-icon"]')).toHaveCSS("width", "12px")
+  await expect(clearClaim.locator(':scope > [data-slot="platform-icon"]')).toHaveCSS("height", "12px")
+  await clearClaim.click()
 
   await expect.poll(() => request).toEqual({ method: "DELETE", body: { userId: 8 } })
 })

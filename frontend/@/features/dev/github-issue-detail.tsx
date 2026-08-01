@@ -155,7 +155,7 @@ export function GitHubIssueDetailContent({ app, attributeError, attributes = EMP
           if (claim.userId === null || claim.userId === undefined) return null
           const clearing = String(claimClearingUserId) === String(claim.userId)
           const username = claim.username || "Unknown collaborator"
-          return <Badge className="gap-1 pl-2.5 pr-1" key={String(claim.userId)} variant="outline"><span>{username}</span><Button aria-label={`Clear ${username}'s in-progress claim`} disabled={claimClearingUserId !== null} onClick={() => void onClearClaim?.(claim.userId!)} size="icon-xs" type="button" variant="ghost"><PlatformIcon icon={clearing ? CircleX : X} size="xs" /></Button></Badge>
+          return <Badge className="gap-1 pl-2.5 pr-1" key={String(claim.userId)} variant="outline"><span>{username}</span><Button aria-label={`Clear ${username}'s in-progress claim`} disabled={claimClearingUserId !== null} onClick={() => void onClearClaim?.(claim.userId!)} size="icon-xs" type="button" variant="ghost"><PlatformIcon icon={clearing ? CircleX : X} /></Button></Badge>
         })}</div><p className="text-sm text-muted-foreground">Clearing a stale mark does not close the issue or stop an active Dev session.</p></section> : null}
         {canSetAttributes ? <TopicAttributeControls attributes={attributes} disabled={isProductionReadOnlyReview} onChange={(field, value) => onAttribute?.(field, value) || Promise.resolve(false)} pendingField={attributeUpdating} /> : null}
         <p className="whitespace-pre-wrap text-base text-pretty text-foreground sm:text-sm">{issue.body || "No issue description was provided."}</p>
