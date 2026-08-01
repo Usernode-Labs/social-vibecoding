@@ -37,7 +37,7 @@ export function DevVoteControls({ disabled = false, kind, noCount, onVote, pendi
   const unavailable = disabled || pending
 
   return <div className="flex flex-wrap items-center gap-2" aria-label={proposal ? "Vote on this proposal" : "Vote on this governance proposal"} role="group">
-    <Badge className="tabular-nums" variant="outline"><PlatformIcon data-icon="inline-start" icon={Vote} size="xs" />{tally}</Badge>
+    <Badge className="tabular-nums" variant="outline"><PlatformIcon data-icon="inline-start" icon={Vote} />{tally}</Badge>
     <Button aria-pressed={selectedVote === affirmative} disabled={unavailable} onClick={() => onVote(affirmative)} size="sm" type="button" variant={selectedVote === affirmative ? "secondary" : "outline"}>
       <PlatformIcon data-icon="inline-start" icon={ThumbsUp} size="xs" />Yes <span className="tabular-nums">({count(yesCount)})</span>
     </Button>

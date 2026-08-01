@@ -144,7 +144,7 @@ export function GitHubIssueDetailContent({ app, attributeError, attributes = EMP
         {sessionError ? <Alert variant="destructive"><AlertTitle>Dev session was not created</AlertTitle><AlertDescription>{sessionError}</AlertDescription></Alert> : null}
         {isProductionReadOnlyReview && currentUsername ? <Alert><AlertTitle>Production review mode</AlertTitle><AlertDescription>Issue details can be reviewed here, but editing, close proposals, priority, in-progress marks, and kudos pledges are disabled.</AlertDescription></Alert> : null}
         <div className="flex flex-wrap gap-2">
-          {issue.headless?.status === "ready" ? <Badge variant="secondary"><PlatformIcon data-icon="inline-start" icon={Sparkles} size="xs" />Proposal ready</Badge> : null}
+          {issue.headless?.status === "ready" ? <Badge variant="secondary"><PlatformIcon data-icon="inline-start" icon={Sparkles} />Proposal ready</Badge> : null}
           {issue.headless?.status === "generating" ? <Badge variant="secondary">Proposal generating</Badge> : null}
           {issue.in_progress?.count || issue.in_progress?.claims?.length ? <Badge variant="outline">In progress</Badge> : null}
           {issue.priority?.top ? <Badge variant="outline">{issue.priority.top} priority</Badge> : null}

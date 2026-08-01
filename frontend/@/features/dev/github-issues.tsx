@@ -27,10 +27,10 @@ function IssueStatus({ issue }: { issue: GitHubIssue }) {
   const headless = headlessLabel(issue)
   const active = count(issue.in_progress?.count) || issue.in_progress?.claims?.length
   return <div className="flex flex-wrap gap-2">
-    {headless ? <Badge variant="secondary"><PlatformIcon data-icon="inline-start" icon={issue.headless?.status === "generating" ? Timer : Sparkles} size="xs" />{headless}</Badge> : null}
+    {headless ? <Badge variant="secondary"><PlatformIcon data-icon="inline-start" icon={issue.headless?.status === "generating" ? Timer : Sparkles} />{headless}</Badge> : null}
     {active ? <Badge variant="outline">In progress{active > 1 ? ` · ${active}` : ""}</Badge> : null}
     {count(issue.bounty_count) ? <Badge variant="outline">{count(issue.bounty_count)} kudos pledged</Badge> : null}
-    {count(issue.chatCount) ? <Badge variant="outline"><PlatformIcon data-icon="inline-start" icon={MessageCircle} size="xs" />{count(issue.chatCount)}</Badge> : null}
+    {count(issue.chatCount) ? <Badge variant="outline"><PlatformIcon data-icon="inline-start" icon={MessageCircle} />{count(issue.chatCount)}</Badge> : null}
   </div>
 }
 

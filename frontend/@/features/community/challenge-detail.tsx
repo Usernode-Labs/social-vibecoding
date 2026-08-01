@@ -49,7 +49,7 @@ function Status({ challenge, progress }: { challenge: Challenge; progress?: Chal
   const showProgress = typeof progress?.current === "number" && typeof target === "number" && target > 0 && ["count", "sum", "percentage"].includes(challenge.metric?.kind?.toLowerCase() ?? "")
   const current = showProgress ? Math.max(0, Math.min(progress!.current!, target!)) : undefined
   const label = current === undefined ? (progress?.description || detail.copy) : `${format(current)} / ${format(target!)}${challenge.metric?.label ? ` ${challenge.metric.label}` : ""}`
-  return <Card className="bg-muted/30" data-challenge-phase={value}><CardHeader className="gap-2"><div className="flex flex-wrap items-center gap-2"><Badge variant={detail.variant}><PlatformIcon data-icon="inline-start" icon={detail.icon} size="xs" />{detail.label}</Badge>{challenge.category ? <Badge variant="outline">{challenge.category}</Badge> : null}</div><CardDescription className="text-sm">{label}</CardDescription></CardHeader>{current !== undefined ? <CardContent><div aria-label="Challenge progress" aria-valuemax={target} aria-valuemin={0} aria-valuenow={current} className="h-2 overflow-hidden rounded-full bg-border" role="progressbar"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.round(current / target! * 100)}%` }} /></div></CardContent> : null}</Card>
+  return <Card className="bg-muted/30" data-challenge-phase={value}><CardHeader className="gap-2"><div className="flex flex-wrap items-center gap-2"><Badge variant={detail.variant}><PlatformIcon data-icon="inline-start" icon={detail.icon} />{detail.label}</Badge>{challenge.category ? <Badge variant="outline">{challenge.category}</Badge> : null}</div><CardDescription className="text-sm">{label}</CardDescription></CardHeader>{current !== undefined ? <CardContent><div aria-label="Challenge progress" aria-valuemax={target} aria-valuemin={0} aria-valuenow={current} className="h-2 overflow-hidden rounded-full bg-border" role="progressbar"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.round(current / target! * 100)}%` }} /></div></CardContent> : null}</Card>
 }
 
 function earnedPoints(challenge: Challenge, progress?: ChallengeProgress) {
@@ -91,7 +91,7 @@ export function ChallengeDetailContent({ challenge, progress, native, season }: 
   const value = challengePhase(challenge, progress)
   const terminal = value === "completed" || value === "missed"
   return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="challenge-detail">
-    <div className="flex flex-wrap items-center gap-2">{season ? <Badge variant="outline">{season}</Badge> : null}<Badge variant="secondary"><PlatformIcon data-icon="inline-start" icon={native ? ShieldCheck : CalendarClock} size="xs" />{native ? "Personal progress available" : "Public challenge data"}</Badge></div>
+    <div className="flex flex-wrap items-center gap-2">{season ? <Badge variant="outline">{season}</Badge> : null}<Badge variant="secondary"><PlatformIcon data-icon="inline-start" icon={native ? ShieldCheck : CalendarClock} />{native ? "Personal progress available" : "Public challenge data"}</Badge></div>
     <TopBar title={title} />
     <div className="flex flex-col gap-6" data-testid="challenge-terminal-content">
       {task ? <p className="max-w-[65ch] text-pretty text-base/7 text-muted-foreground sm:text-sm/6">{task}</p> : null}
