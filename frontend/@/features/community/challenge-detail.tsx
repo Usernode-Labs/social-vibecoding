@@ -11,6 +11,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "@/components/u
 import { Skeleton } from "@/components/ui/skeleton"
 import { PlatformIcon } from "@/components/platform-icon"
 import { getChallengeSnapshot, type Challenge, type ChallengeProgress, type ChallengeSnapshot } from "@/lib/challenges-api"
+import { challengePhase } from "@/lib/challenge-lifecycle"
 import { getNativeProfileInfo } from "@/lib/native-bridge"
 
 type DetailState =
@@ -34,16 +35,8 @@ function progressFor(snapshot: ChallengeSnapshot, challenge: Challenge) {
   return matches.length === 1 ? matches[0] : matches.find((candidate) => candidate.event_id === undefined)
 }
 
-function phase(challenge: Challenge, progress?: ChallengeProgress) {
-  if (challenge.completed || progress?.state === "earned") return "completed" as const
-  if (progress?.state === "pending") return "pending" as const
-  if (progress?.state === "missed" || progress?.state === "declined") return "missed" as const
-  if (progress?.state === "in_progress" || (progress?.current ?? 0) > 0) return "in-progress" as const
-  return "open" as const
-}
-
 function Status({ challenge, progress }: { challenge: Challenge; progress?: ChallengeProgress }) {
-  const value = phase(challenge, progress)
+  const value = challengePhase(challenge, progress)
   const detail = {
     open: { label: "Open", icon: CircleDashed, variant: "outline" as const, copy: "Not started" },
     "in-progress": { label: "In progress", icon: CircleDashed, variant: "secondary" as const, copy: "Progress is being tracked" },
@@ -55,7 +48,7 @@ function Status({ challenge, progress }: { challenge: Challenge; progress?: Chal
   const showProgress = typeof progress?.current === "number" && typeof target === "number" && target > 0 && ["count", "sum", "percentage"].includes(challenge.metric?.kind?.toLowerCase() ?? "")
   const current = showProgress ? Math.max(0, Math.min(progress!.current!, target!)) : undefined
   const label = current === undefined ? (progress?.description || detail.copy) : `${format(current)} / ${format(target!)}${challenge.metric?.label ? ` ${challenge.metric.label}` : ""}`
-  return <Card className="bg-muted/30"><CardHeader className="gap-2"><div className="flex flex-wrap items-center gap-2"><Badge variant={detail.variant}><PlatformIcon data-icon="inline-start" icon={detail.icon} size="xs" />{detail.label}</Badge>{challenge.category ? <Badge variant="outline">{challenge.category}</Badge> : null}</div><CardDescription className="text-sm">{label}</CardDescription></CardHeader>{current !== undefined ? <CardContent><div aria-label="Challenge progress" aria-valuemax={target} aria-valuemin={0} aria-valuenow={current} className="h-2 overflow-hidden rounded-full bg-border" role="progressbar"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.round(current / target! * 100)}%` }} /></div></CardContent> : null}</Card>
+  return <Card className="bg-muted/30" data-challenge-phase={value}><CardHeader className="gap-2"><div className="flex flex-wrap items-center gap-2"><Badge variant={detail.variant}><PlatformIcon data-icon="inline-start" icon={detail.icon} size="xs" />{detail.label}</Badge>{challenge.category ? <Badge variant="outline">{challenge.category}</Badge> : null}</div><CardDescription className="text-sm">{label}</CardDescription></CardHeader>{current !== undefined ? <CardContent><div aria-label="Challenge progress" aria-valuemax={target} aria-valuemin={0} aria-valuenow={current} className="h-2 overflow-hidden rounded-full bg-border" role="progressbar"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.round(current / target! * 100)}%` }} /></div></CardContent> : null}</Card>
 }
 
 function format(value: number) { return Number.isInteger(value) ? new Intl.NumberFormat().format(value) : value.toLocaleString(undefined, { maximumFractionDigits: 2 }) }

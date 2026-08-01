@@ -10,44 +10,26 @@ import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
-import { getChallengeSnapshot, type Challenge, type ChallengeSnapshot } from "@/lib/challenges-api"
+import { getChallengeSnapshot, type ChallengeSnapshot } from "@/lib/challenges-api"
+import {
+  challengePhase,
+  challengeProgressEvidence,
+  type ChallengeLifecycleSource,
+  type ChallengePhase,
+} from "@/lib/challenge-lifecycle"
 import { getNativeProfileInfo } from "@/lib/native-bridge"
 import { challengeDetailPath } from "@/lib/routes"
 
 const pointsFormatter = new Intl.NumberFormat()
 const metricFormatter = new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 })
 
-type ChallengeProgress = {
-  state?: string
-  description?: string
-  current?: number
-  target?: number
-  earned_points?: number
-  pending_points?: number
-}
-
-/**
- * The challenges service is being widened independently. This narrow adapter
- * keeps the feed tolerant of the existing flat response and the richer Fair
- * Rewards presentation fields, without putting parsing or API calls in UI.
- */
-type ChallengeFeedItem = Challenge & {
+type ChallengeFeedItem = ChallengeLifecycleSource & {
   schedule_end?: string
   ends_at?: string
   deadline?: string
   featured_order?: number
-  state?: string
-  reward_state?: string
-  current?: number
-  target?: number
-  earned_points?: number
-  pending_points?: number
   metric?: { kind?: string; label?: string; target?: number }
-  challenge_progress?: ChallengeProgress
-  progress?: ChallengeProgress
 }
-
-type ChallengePhase = "open" | "in-progress" | "pending" | "completed" | "missed"
 type ChallengeBandName = "Featured" | "Today" | "This week" | "Season"
 
 type ChallengeCardModel = {
@@ -67,25 +49,8 @@ function numberValue(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined
 }
 
-function readProgress(item: ChallengeFeedItem) {
-  return item.challenge_progress ?? item.progress
-}
-
-function challengePhase(item: ChallengeFeedItem): ChallengePhase {
-  const progress = readProgress(item)
-  const state = (progress?.state ?? item.reward_state ?? item.state ?? "").toLowerCase()
-  const earned = numberValue(progress?.earned_points) ?? numberValue(item.earned_points) ?? 0
-  const pending = numberValue(progress?.pending_points) ?? numberValue(item.pending_points) ?? 0
-
-  if (item.completed || state === "earned" || state === "completed" || earned > 0) return "completed"
-  if (state === "pending" || state === "submitted" || pending > 0) return "pending"
-  if (state === "missed" || state === "declined" || state === "expired") return "missed"
-  if (state === "in_progress" || state === "in-progress" || (numberValue(progress?.current) ?? numberValue(item.current) ?? 0) > 0) return "in-progress"
-  return "open"
-}
-
 function metricProgress(item: ChallengeFeedItem) {
-  const progress = readProgress(item)
+  const progress = challengeProgressEvidence(item)
   const current = numberValue(progress?.current) ?? numberValue(item.current)
   const kind = item.metric?.kind?.toLowerCase()
   const target = numberValue(progress?.target) ?? numberValue(item.target) ?? numberValue(item.metric?.target) ?? (kind === "percentage" && current !== undefined ? 100 : undefined)
@@ -149,7 +114,7 @@ function formatPoints(value: number) {
 }
 
 function rewardText(item: ChallengeFeedItem, phase: ChallengePhase) {
-  const progress = readProgress(item)
+  const progress = challengeProgressEvidence(item)
   const earned = numberValue(progress?.earned_points) ?? numberValue(item.earned_points) ?? 0
   const pending = numberValue(progress?.pending_points) ?? numberValue(item.pending_points) ?? 0
   if (phase === "completed" && earned > 0) return `Completed ${formatPoints(earned)}`
@@ -159,7 +124,7 @@ function rewardText(item: ChallengeFeedItem, phase: ChallengePhase) {
 
 function phaseCopy(item: ChallengeFeedItem, phase: ChallengePhase, progress?: ChallengeCardModel["progress"]) {
   if (progress) return `${formatMetric(progress.current)} / ${formatMetric(progress.target)}${progress.label ? ` ${progress.label}` : ""}`
-  const description = readProgress(item)?.description
+  const description = challengeProgressEvidence(item)?.description
   if (description && phase !== "open") return description
   return phase === "completed" ? "Completed" : phase === "pending" ? "Submitted — awaiting review" : phase === "missed" ? "No longer available" : phase === "in-progress" ? "In progress" : "Not done"
 }
@@ -177,7 +142,7 @@ function ChallengeCard({ card }: { card: ChallengeCardModel }) {
   // Mirrors the mobile AtomicChallengeCard contract from Flutter PR #463:
   // one earning mechanic, title, and one truthful progress/reward rail. No
   // category, task prose, badge, or action competes with the detail screen.
-  return <Card className="relative" data-testid={`challenge-card-${item.id}`}>
+  return <Card className="relative" data-challenge-phase={phase} data-testid={`challenge-card-${item.id}`}>
     <CardContent className="p-4">
       <Link aria-label={`${title}, ${status}, ${rewardText(item, phase)}`} className="block space-y-2 focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" to={challengeDetailPath(item.id)}>
         <h4 className="text-balance text-base font-medium sm:text-sm">{title}</h4>
