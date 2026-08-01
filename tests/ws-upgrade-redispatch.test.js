@@ -67,7 +67,7 @@ test.before(async () => {
   app.get('/__caddy/access', (_req, res) => res.status(200).send('ok'));
   server = http.createServer(app);
   ws.attach(server, { jwtSecret: 'test-secret' });
-  await new Promise((resolve) => server.listen(0, resolve));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   port = server.address().port;
 });
 

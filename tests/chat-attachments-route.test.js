@@ -55,7 +55,7 @@ function startServer(userId = 5) {
   app.use((req, _res, next) => { req.user = { id: userId, username: 'alice' }; next(); });
   app.use(chatRoutes({}));
   return new Promise((resolve) => {
-    const server = app.listen(0, () => resolve(server));
+    const server = app.listen(0, '127.0.0.1', () => resolve(server));
   });
 }
 

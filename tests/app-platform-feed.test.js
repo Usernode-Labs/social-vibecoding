@@ -132,7 +132,7 @@ test.before(async () => {
   // header keep req.ip = 127.0.0.1 (private → accepted).
   app.set('trust proxy', 1);
   app.use(appPlatformApiRoutes({}));
-  await new Promise((resolve) => { server = app.listen(0, resolve); });
+  await new Promise((resolve) => { server = app.listen(0, '127.0.0.1', resolve); });
 });
 test.after(() => server?.close());
 

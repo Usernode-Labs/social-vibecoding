@@ -144,7 +144,7 @@ async function withServer({ getPRImpl, reopenImpl } = {}, fn) {
   app.use(express.json());
   app.use((req, _res, next) => { req.user = { id: 3, username: 'evan' }; next(); });
   app.use(ctx.voteRoutes({ jwtSecret: 's', maxUserPromotedSessions: 3 }));
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {

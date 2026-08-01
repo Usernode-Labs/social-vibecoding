@@ -103,7 +103,7 @@ test.before(async () => {
   app.use(express.json());
   app.use((req, _res, next) => { if (currentUser) req.user = currentUser; next(); });
   app.use(adminRoutes(CONFIG));
-  server = app.listen(0);
+  server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
 

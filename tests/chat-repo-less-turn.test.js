@@ -85,7 +85,7 @@ function startServer() {
   app.use((req, res, next) => { req.user = VIEWER; next(); });
   app.use(sessionRoutes({ jwtSecret: 's' }));
   return new Promise((resolve) => {
-    const server = app.listen(0, () => resolve(server));
+    const server = app.listen(0, '127.0.0.1', () => resolve(server));
   });
 }
 

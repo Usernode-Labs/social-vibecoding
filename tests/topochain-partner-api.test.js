@@ -239,7 +239,7 @@ function startServer(config) {
     // Synchronous callback deliberately not awaited (mirrors
     // topochain-public-api.test.js's test.before note on this pattern).
     withMockPool(config, (app) => {
-      server = app.listen(0);
+      server = app.listen(0, '127.0.0.1');
       server.once('listening', () => resolve());
     });
   });
@@ -298,7 +298,7 @@ test('GET /delegations: wrong X-API-Key -> 401', async () => {
 
 test('unconfigured server -> 500 before the key is even checked (own server instance)', async () => {
   await withMockPool({ databaseUrl: 'postgres://fake/fake', topochainPartnerApiKey: '' }, async (app) => {
-    const s = app.listen(0);
+    const s = app.listen(0, '127.0.0.1');
     await new Promise((r) => s.once('listening', r));
     try {
       const b = `http://127.0.0.1:${s.address().port}`;

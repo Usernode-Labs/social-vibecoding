@@ -82,7 +82,7 @@ test.before(async () => {
   app.use(adminRoutes({ jwtSecret: 'test' }));
   app.use(appRoutes({ jwtSecret: 'test' }));
   app.use(voteRoutes({ jwtSecret: 'test' }));
-  server = app.listen(0);
+  server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });

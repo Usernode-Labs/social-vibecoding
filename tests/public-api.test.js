@@ -109,7 +109,7 @@ async function startTestServer(pool) {
     app.use(express.json());
     app.use(publicApiRoutes({}));
     return new Promise((resolve) => {
-      const server = app.listen(0, () => {
+      const server = app.listen(0, '127.0.0.1', () => {
         resolve({
           baseUrl: `http://127.0.0.1:${server.address().port}`,
           close: () => new Promise((r) => server.close(r)),

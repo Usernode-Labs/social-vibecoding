@@ -26,7 +26,7 @@ function startServer() {
   const app = express();
   app.use(appIconRoutes({}));
   return new Promise((resolve) => {
-    const server = app.listen(0, () => resolve(server));
+    const server = app.listen(0, '127.0.0.1', () => resolve(server));
   });
 }
 

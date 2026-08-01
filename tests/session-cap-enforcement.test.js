@@ -66,7 +66,7 @@ async function createSession({ user, config }) {
   app.use((req, res, next) => { req.user = user; next(); });
   app.use(sessionRoutes(config || {}));
   const server = await new Promise((resolve) => {
-    const s = app.listen(0, () => resolve(s));
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
   try {
     const res = await fetch(`http://127.0.0.1:${server.address().port}/api/apps/whiteboard/sessions`, {

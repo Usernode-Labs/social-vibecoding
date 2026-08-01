@@ -110,7 +110,7 @@ test.before(async () => {
   const app = express();
   app.use((req, res, next) => { req.user = { id: 1, username: 'admin', isAdmin: true }; next(); });
   app.use(dashboardRoutes({ jwtSecret: 'test' }));
-  server = app.listen(0);
+  server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });

@@ -245,7 +245,7 @@ let base;
 function startServer(config) {
   return new Promise((resolve) => {
     withMockPool(config, (app) => {
-      server = app.listen(0);
+      server = app.listen(0, '127.0.0.1');
       server.once('listening', () => resolve());
     });
   });
@@ -314,7 +314,7 @@ test('GET /onchain-accounts needs no ingest key (public read)', async () => {
 
 test('unconfigured server -> 500 before the ingest key is even checked (own server instance)', async () => {
   await withMockPool({ databaseUrl: 'postgres://fake/fake', topochainIngestApiKey: '' }, async (app) => {
-    const s = app.listen(0);
+    const s = app.listen(0, '127.0.0.1');
     await new Promise((r) => s.once('listening', r));
     try {
       const b = `http://127.0.0.1:${s.address().port}`;

@@ -69,7 +69,7 @@ test.before(async () => {
   app.use('/api/issues/:id', appAccess.issueCollabGuard(pool));
   app.all('/api/sessions/:id/thing', (_req, res) => res.json({ ok: true }));
   app.all('/api/issues/:id/thing', (_req, res) => res.json({ ok: true }));
-  server = app.listen(0);
+  server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
 });

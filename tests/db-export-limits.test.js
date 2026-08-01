@@ -78,7 +78,7 @@ test('a full admin is throttled after 3 successful requests', async () => {
   const user = { id: 4242, username: 'fullish', isAdmin: true, canAdminWrite: true };
   app.use((req, _res, next) => { req.user = user; next(); });
   app.post('/t', dbExportLimiter, (_req, res) => res.json({ ok: true }));
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${server.address().port}/t`;
 
@@ -105,7 +105,7 @@ test('each admin gets their own budget', async () => {
   let user = { id: 5001, username: 'a', isAdmin: true, canAdminWrite: true };
   app.use((req, _res, next) => { req.user = user; next(); });
   app.post('/t', dbExportLimiter, (_req, res) => res.json({ ok: true }));
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${server.address().port}/t`;
 

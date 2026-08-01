@@ -177,7 +177,7 @@ function loadProxy(pool, { turnMode = 'build', forwardResult = {} } = {}) {
   };
 
   const call = async () => {
-    if (!server.listening) await new Promise((r) => server.listen(0, r));
+    if (!server.listening) await new Promise((r) => server.listen(0, '127.0.0.1', r));
     const { port } = server.address();
     const res = await fetch(`http://127.0.0.1:${port}/api/internal/anthropic/v1/messages`, {
       method: 'POST',

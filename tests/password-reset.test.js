@@ -73,7 +73,7 @@ function startRpc() {
       res.end(JSON.stringify({ valid: rpcValid }));
     });
   });
-  return new Promise((resolve) => srv.listen(0, () => resolve(srv)));
+  return new Promise((resolve) => srv.listen(0, '127.0.0.1', () => resolve(srv)));
 }
 
 let currentUser = null;
@@ -83,7 +83,7 @@ function startApp(makeRouter, config) {
   app.use((req, _res, next) => { if (currentUser) req.user = currentUser; next(); });
   app.use(makeRouter(config));
   return new Promise((resolve) => {
-    const server = app.listen(0, () => resolve(server));
+    const server = app.listen(0, '127.0.0.1', () => resolve(server));
   });
 }
 

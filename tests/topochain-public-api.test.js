@@ -575,7 +575,7 @@ test.before(async () => {
       next();
     });
     app.use(topochainPublicRoutes({ databaseUrl: 'postgres://fake/fake' }));
-    server = app.listen(0);
+    server = app.listen(0, '127.0.0.1');
   });
   await new Promise((r) => server.once('listening', r));
   base = `http://127.0.0.1:${server.address().port}`;
@@ -606,7 +606,7 @@ test('optionalSessionAuth is scoped to /api/v4/: a non-API request with a sessio
     app.use(topochainPublicRoutes({ databaseUrl: 'postgres://fake/fake' }));
     // Stand-ins for the platform routes mounted after this router.
     app.get('/dashboard', (_req, res) => res.status(200).send('DASHBOARD'));
-    srv = app.listen(0);
+    srv = app.listen(0, '127.0.0.1');
   });
   await new Promise((r) => srv.once('listening', r));
   const localBase = `http://127.0.0.1:${srv.address().port}`;

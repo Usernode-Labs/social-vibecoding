@@ -152,7 +152,7 @@ async function startTestServer(pool, user = null) {
     if (user) app.use((req, _res, next) => { req.user = user; next(); });
     app.use(kudosRoutes({}));
     return new Promise((resolve) => {
-      const server = app.listen(0, () => {
+      const server = app.listen(0, '127.0.0.1', () => {
         const port = server.address().port;
         resolve({
           baseUrl: `http://127.0.0.1:${port}`,

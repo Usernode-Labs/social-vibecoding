@@ -84,7 +84,7 @@ function startServer(mod) {
   app.use((req, res, next) => { req.user = { id: 7, username: 'tester' }; next(); });
   app.use(mod.notificationsRoutes({}));
   return new Promise((resolve) => {
-    const server = app.listen(0, () => resolve({ server, port: server.address().port }));
+    const server = app.listen(0, '127.0.0.1', () => resolve({ server, port: server.address().port }));
   });
 }
 

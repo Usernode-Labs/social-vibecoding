@@ -189,7 +189,7 @@ async function startTestServer(loaded, user = { id: 1, username: 'alice' }) {
   app.use((req, _res, next) => { req.user = req.testUser || user; next(); });
   app.use(loaded.subject.sessionRoutes({ jwtSecret: 'test' }));
   return new Promise((resolve) => {
-    const server = app.listen(0, () => {
+    const server = app.listen(0, '127.0.0.1', () => {
       resolve({
         baseUrl: `http://127.0.0.1:${server.address().port}`,
         close: () => new Promise((r) => server.close(r)),

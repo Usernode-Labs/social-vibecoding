@@ -113,7 +113,7 @@ function startServer({ user = { id: 7, username: 'tester' } } = {}) {
   app.use((req, res, next) => { req.user = user; next(); });
   app.use(llmGrantsRoutes({}));
   return new Promise((resolve) => {
-    const server = app.listen(0, () => resolve(server));
+    const server = app.listen(0, '127.0.0.1', () => resolve(server));
   });
 }
 

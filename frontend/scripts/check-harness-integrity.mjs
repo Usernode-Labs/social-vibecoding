@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 
 import { wipCommitsInPublishRange } from "./slice-boundary.mjs"
+import { wildcardEphemeralListeners } from "./test-loopback-listeners.mjs"
 import { gateMachineUnits, resolveGateGraph } from "./ui-gate-scheduler.mjs"
 
 const frontendRoot = process.cwd()
@@ -11,6 +12,15 @@ const repoRoot = path.resolve(frontendRoot, "..")
 const violations = []
 const readJson = (relativePath) => JSON.parse(fs.readFileSync(path.join(repoRoot, relativePath), "utf8"))
 const exists = (relativePath) => fs.existsSync(path.join(repoRoot, relativePath))
+
+function filesBelow(relativeDirectory, predicate) {
+  const directory = path.join(repoRoot, relativeDirectory)
+  return fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const relativePath = path.join(relativeDirectory, entry.name)
+    if (entry.isDirectory()) return filesBelow(relativePath, predicate)
+    return predicate(relativePath) ? [relativePath] : []
+  })
+}
 
 function validateSkill(skillDirectory) {
   const name = path.basename(skillDirectory)
@@ -60,6 +70,16 @@ if (!skillDirectories.length) violations.push("agent-skills must contain at leas
 skillDirectories.forEach(validateSkill)
 validateClaudeAdapter("CLAUDE.md")
 validateClaudeAdapter("frontend/CLAUDE.md")
+
+// Trigger: Buzz event c96af214339c272aa1d227ce441341f21ab594215f26e86aa25836f7a1723d7d
+// proved that wildcard ephemeral listeners can be shadowed by a more-specific
+// loopback listener on macOS. Proof: npm run check:harness-integrity. Owner: lead-codex.
+for (const testPath of filesBelow("tests", (filePath) => filePath.endsWith(".test.js"))) {
+  const source = fs.readFileSync(path.join(repoRoot, testPath), "utf8")
+  for (const finding of wildcardEphemeralListeners(source, testPath)) {
+    violations.push(`${finding.file}:${finding.line}:${finding.column} ephemeral test listeners must bind 127.0.0.1 explicitly`)
+  }
+}
 
 const gitignore = fs.readFileSync(path.join(repoRoot, ".gitignore"), "utf8").split("\n")
 for (const broadIgnore of [".agents/", ".claude/", ".codex/"]) {

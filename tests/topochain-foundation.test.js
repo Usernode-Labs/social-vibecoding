@@ -494,7 +494,7 @@ test('unmounted /api/v4/* paths fall through to authMiddleware (401 for anonymou
   app.use(authMiddleware(cfg));
   app.use((req, res) => res.status(404).json({ error: 'fallback 404' }));
 
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
@@ -525,7 +525,7 @@ test('topochainPartnerRoutes and topochainIngestRoutes __ping stubs respond 200 
   const app = express();
   app.use(topochainPartnerRoutes({}));
   app.use(topochainIngestRoutes({}));
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
@@ -555,7 +555,7 @@ test('topochainAdminRoutes: __ping sits behind adminMiddleware — 403 for a non
     next();
   });
   app.use(topochainAdminRoutes({}));
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   const base = `http://127.0.0.1:${server.address().port}`;
   try {
