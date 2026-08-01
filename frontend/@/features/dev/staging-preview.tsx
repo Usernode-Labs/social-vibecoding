@@ -2,7 +2,7 @@ import { ArrowLeft, ExternalLink, FlaskConical, RefreshCw, TriangleAlert } from 
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 
-import { ActionLink } from "@/components/action-link"
+import { ActionAnchor, ActionLink } from "@/components/action-link"
 import { useDevConsoleFrame } from "@/hooks/use-dev-console-frame"
 import { DevConsoleTrigger } from "@/components/dev-console-provider"
 import { PlatformIcon } from "@/components/platform-icon"
@@ -10,7 +10,6 @@ import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { getIframeToken, waitForHostedTls } from "@/lib/apps-api"
@@ -114,7 +113,7 @@ export function StagingPreview() {
       {...topBar}
       action={<>
         <div className="status-surface rounded-full border" data-slot="staged-console-control" data-status-tone="info"><DevConsoleTrigger /></div>
-        <Button render={<a href={source} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open externally</Button>
+        <ActionAnchor href={source} rel="noreferrer" size="sm" target="_blank"><PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open externally</ActionAnchor>
       </>}
     /><div className="status-surface flex min-h-0 flex-1 flex-col border bg-[var(--status-surface)] p-1 sm:p-2" data-slot="staged-content-boundary" data-status-tone="info">
       <div className="flex min-h-8 shrink-0 items-center gap-2 px-2"><Badge variant="outline">Staged</Badge><span className="text-xs text-current/80">Review environment</span></div>

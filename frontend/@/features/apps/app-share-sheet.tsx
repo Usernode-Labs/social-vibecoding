@@ -1,6 +1,7 @@
 import { Copy, ExternalLink } from "lucide-react"
 import { useRef, useState } from "react"
 
+import { ActionAnchor } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -125,13 +126,10 @@ export function AppShareSheet({
           <Button onClick={() => void copy()} type="button">
             {copyState.kind === "copied" ? "Copied" : "Copy link"}
           </Button>
-          <Button
-            render={<a href={shareUrl} rel="noreferrer" target="_blank" />}
-            variant="outline"
-          >
+          <ActionAnchor href={shareUrl} rel="noreferrer" target="_blank">
             <PlatformIcon data-icon="inline-start" icon={ExternalLink} />
             Open in new tab
-          </Button>
+          </ActionAnchor>
         </SheetFooter>
       </SheetContent>
     </Sheet>

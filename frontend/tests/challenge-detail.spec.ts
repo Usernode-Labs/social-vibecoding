@@ -36,7 +36,11 @@ test("renders the native-aware read-only challenge detail and legacy action hand
   await expect(detail).toContainText("1.5 / 3 reviews")
   await expect(detail).toContainText("Personal progress available")
   await expect(detail).toContainText("Points are awarded after review approval.")
-  await expect(detail.getByRole("link", { name: /Review in legacy/i })).toHaveAttribute("href", "/#challenges/12")
+  const challengeAction = detail.getByRole("link", { name: /Review in legacy/i })
+  await expect(challengeAction).toHaveAttribute("data-slot", "action-anchor")
+  await expect(challengeAction).toHaveAttribute("href", "/#challenges/12")
+  await expect(challengeAction).toHaveAttribute("target", "_self")
+  await expect(challengeAction).toHaveAttribute("rel", "noreferrer")
 })
 
 test("uses public data without requesting participant progress on desktop", async ({ page }) => {

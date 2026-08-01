@@ -2,6 +2,7 @@ import { ExternalLink, Lightbulb } from "lucide-react"
 import { useEffect, useRef, useState, type FormEvent } from "react"
 import { useSearchParams } from "react-router-dom"
 
+import { ActionAnchor } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -109,7 +110,7 @@ export function Feedback() {
       target={chosenTarget}
       title={title}
     />
-    {submitted ? <Alert data-testid="feedback-success"><PlatformIcon icon={Lightbulb} /><AlertTitle>Thanks for the feedback</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-2">{submitted.title ? `Filed “${submitted.title}”.` : "Your feedback was filed."}{submitted.url ? <Button render={<a href={submitted.url} rel="noreferrer" target="_blank" />} size="sm" variant="outline">View issue<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button> : null}</AlertDescription></Alert> : null}
+    {submitted ? <Alert data-testid="feedback-success"><PlatformIcon icon={Lightbulb} /><AlertTitle>Thanks for the feedback</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-2">{submitted.title ? `Filed “${submitted.title}”.` : "Your feedback was filed."}{submitted.url ? <ActionAnchor href={submitted.url} rel="noreferrer" size="sm" target="_blank">View issue<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></ActionAnchor> : null}</AlertDescription></Alert> : null}
   </div></div>
 }
 

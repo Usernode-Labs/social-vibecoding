@@ -283,7 +283,11 @@ test("shares the canonical bare app URL from the app detail action hub", async (
   await expect(page.getByRole("heading", { name: "Share RecipeBot" })).toBeVisible()
   await expect(page.getByText("Anyone with this link can open the app outside Usernode. Some visitors may need to sign in.", { exact: true })).toBeVisible()
   await expect(page.getByRole("textbox", { name: "App link" })).toHaveValue("https://recipebot.example.test")
-  await expect(page.getByRole("link", { name: "Open in new tab" })).toHaveAttribute("href", "https://recipebot.example.test")
+  const openInNewTab = page.getByRole("link", { name: "Open in new tab" })
+  await expect(openInNewTab).toHaveAttribute("data-slot", "action-anchor")
+  await expect(openInNewTab).toHaveAttribute("href", "https://recipebot.example.test")
+  await expect(openInNewTab).toHaveAttribute("target", "_blank")
+  await expect(openInNewTab).toHaveAttribute("rel", "noreferrer")
 
   await page.getByRole("button", { name: "Copy link" }).click()
   await expect.poll(() => page.evaluate(() => localStorage.getItem("copied-app-url"))).toBe("https://recipebot.example.test")

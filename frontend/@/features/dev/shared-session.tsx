@@ -2,11 +2,10 @@ import { ArrowLeft, Eye, MessageCircle, RadioTower } from "lucide-react"
 import { type ReactNode, useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 
-import { ActionLink } from "@/components/action-link"
+import { ActionAnchor, ActionLink } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -48,7 +47,7 @@ export function SharedSessionDetailContent({ children, session, slug }: { childr
         {session.branch_name ? <p className="break-all font-mono text-sm text-muted-foreground">{session.branch_name}</p> : null}
         {linkedIssues.length ? <div className="flex flex-wrap gap-2" aria-label="Linked GitHub issues">{linkedIssues.map((number) => <Badge key={number} render={<Link to={appDevGitHubIssuePath(slug, number)} />} variant="outline">Issue #{number}</Badge>)}</div> : null}
       </CardContent>
-      {session.staging_url ? <CardFooter><Button render={<a href={session.staging_url} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><PlatformIcon data-icon="inline-start" icon={Eye} />Open live preview</Button></CardFooter> : null}
+      {session.staging_url ? <CardFooter><ActionAnchor href={session.staging_url} rel="noreferrer" size="sm" target="_blank"><PlatformIcon data-icon="inline-start" icon={Eye} />Open live preview</ActionAnchor></CardFooter> : null}
     </Card>
     {children}
   </div>

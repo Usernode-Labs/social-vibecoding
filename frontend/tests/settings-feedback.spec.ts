@@ -1010,7 +1010,11 @@ test("files app feedback through the canonical endpoint with its validated app c
     title: "Recipe search misses pantry items",
   })
   await expect(page.getByTestId("feedback-success")).toContainText("Recipe search misses pantry items")
-  await expect(page.getByRole("link", { name: "View issue" })).toHaveAttribute("href", "https://github.com/example/recipebot/issues/42")
+  const issueLink = page.getByRole("link", { name: "View issue" })
+  await expect(issueLink).toHaveAttribute("data-slot", "action-anchor")
+  await expect(issueLink).toHaveAttribute("href", "https://github.com/example/recipebot/issues/42")
+  await expect(issueLink).toHaveAttribute("target", "_blank")
+  await expect(issueLink).toHaveAttribute("rel", "noreferrer")
 })
 
 test("keeps platform feedback available when no compatible app context exists", async ({ page }) => {

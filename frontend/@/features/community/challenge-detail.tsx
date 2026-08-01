@@ -2,11 +2,10 @@ import { ArrowRight, Award, CalendarClock, CheckCircle2, CircleDashed, Clock3, E
 import { useEffect, useState } from "react"
 import { useParams } from "react-router-dom"
 
-import { ActionLink } from "@/components/action-link"
+import { ActionAnchor, ActionLink } from "@/components/action-link"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { TopBar } from "@/components/top-bar"
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -99,7 +98,7 @@ export function ChallengeDetailContent({ challenge, progress, native, season }: 
       {value === "completed" ? <CompletedStatus challenge={challenge} progress={progress} /> : <Status challenge={challenge} progress={progress} />}
       <section aria-labelledby="challenge-details" className="space-y-3"><h2 className="text-xl font-semibold" id="challenge-details">Challenge details</h2><Card><CardContent className="space-y-5 pt-6">{challenge.description ? <Detail label="Description" value={challenge.description} /> : null}{challenge.requirements ? <Detail label="Requirements" value={challenge.requirements} /> : null}{challenge.reward ? <Detail icon={Gift} label="Reward" value={challenge.reward} /> : null}{challenge.reward_logic ? <Detail icon={Award} label="Reward logic" value={challenge.reward_logic} /> : null}{!challenge.description && !challenge.requirements && !challenge.reward && !challenge.reward_logic ? <p className="text-sm text-muted-foreground">Challenge details will be added by the season organizer.</p> : null}</CardContent></Card></section>
       {value === "missed" ? <ActionLink className="w-fit pointer-coarse:min-h-12" size="sm" to={challengesPath()} variant="ghost">View season history<PlatformIcon data-icon="inline-end" icon={ArrowRight} size="sm" /></ActionLink> : null}
-      {challenge.cta_link && !terminal ? <Button className="w-fit" render={<a href={challenge.cta_link} rel="noreferrer" target="_self" />} variant="outline">{challenge.cta_label || "Open challenge action"}<PlatformIcon data-icon="inline-end" icon={ExternalLink} size="sm" /></Button> : null}
+      {challenge.cta_link && !terminal ? <ActionAnchor className="w-fit" href={challenge.cta_link} rel="noreferrer" target="_self">{challenge.cta_label || "Open challenge action"}<PlatformIcon data-icon="inline-end" icon={ExternalLink} size="sm" /></ActionAnchor> : null}
     </div>
   </div>
 }
