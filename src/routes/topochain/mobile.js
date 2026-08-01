@@ -744,7 +744,8 @@ function topochainMobileRoutes(config) {
   router.get('/api/v4/mobile/me', mobileTokenAuth(config), async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT id, email, display_name, email_confirmed, is_in_waitlist, github, x, password_set
+        `SELECT id, email, display_name, email_confirmed, is_in_waitlist, github, x, password_set,
+                is_admin, has_platform_access, bp_requested_at, bp_released_at
            FROM users WHERE id = $1`,
         [req.user.id]
       );
@@ -766,6 +767,13 @@ function topochainMobileRoutes(config) {
           github: user.github,
           x: user.x,
           level,
+          // Onboarding flow alignment. `has_platform_access` mirrors the
+          // web gate; `bp_released` is what the mobile app's node gates
+          // block production on (bp_requested surfaces "request pending"
+          // in the SV settings UI). Admins implicitly have access.
+          has_platform_access: !!user.has_platform_access || !!user.is_admin,
+          bp_requested: !!user.bp_requested_at,
+          bp_released: !!user.bp_released_at,
         },
       });
     } catch (err) {
@@ -773,6 +781,64 @@ function topochainMobileRoutes(config) {
       return fail(res, 500, 'Internal server error.');
     }
   });
+
+  // ── Block-producer queue (onboarding flow alignment) ─────────────────
+  // "Ask to participate in block production." Sets bp_requested_at
+  // (idempotent — asking twice keeps the original request time) and
+  // queues the user for an admin's manual key release (bp_released_at,
+  // set from the admin BP queue). Any authenticated account may ask;
+  // the SV settings UI only shows the button once the account has
+  // platform access, but the server doesn't hard-require it — an admin
+  // releasing the request implies approval either way. Hoisted function
+  // declarations (same dual-registration pattern as the terms handlers)
+  // so the /challenges-api web twins below can reuse them with session
+  // auth.
+  async function bpStateHandler(req, res) {
+    try {
+      const { rows } = await pool.query(
+        `SELECT is_admin, has_platform_access, bp_requested_at, bp_released_at
+           FROM users WHERE id = $1`,
+        [req.user.id]
+      );
+      if (!rows.length) return fail(res, 401, 'Unauthenticated.');
+      const u = rows[0];
+      return ok(res, {
+        data: {
+          has_platform_access: !!u.has_platform_access || !!u.is_admin,
+          bp_requested: !!u.bp_requested_at,
+          bp_released: !!u.bp_released_at,
+        },
+      });
+    } catch (err) {
+      log.error('topochain-mobile', 'GET bp/state failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  }
+
+  async function bpRequestHandler(req, res) {
+    try {
+      const { rows } = await pool.query(
+        `UPDATE users
+            SET bp_requested_at = COALESCE(bp_requested_at, NOW())
+          WHERE id = $1
+          RETURNING bp_requested_at, bp_released_at`,
+        [req.user.id]
+      );
+      if (!rows.length) return fail(res, 401, 'Unauthenticated.');
+      return ok(res, {
+        data: {
+          bp_requested: true,
+          bp_released: !!rows[0].bp_released_at,
+        },
+      });
+    } catch (err) {
+      log.error('topochain-mobile', 'POST bp/request failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  }
+
+  router.get('/api/v4/mobile/bp/state', mobileTokenAuth(config), bpStateHandler);
+  router.post('/api/v4/mobile/bp/request', mobileTokenAuth(config), bpRequestHandler);
 
   // ── GET /me/ranking (SPEC 1769-1820) ─────────────────────────────────
   // Scope resolution: season_event_id > season_id > neither (global) —
@@ -1360,6 +1426,11 @@ function topochainMobileRoutes(config) {
   // the handlers are hoisted function declarations defined further down.
   router.get('/challenges-api/terms/current', webSessionAuth, requireSessionUser, termsCurrentHandler);
   router.post('/challenges-api/terms/consent', webSessionAuth, requireSessionUser, termsConsentHandler);
+  // Block-producer queue (onboarding flow alignment): the SV settings UI
+  // shows "Ask to produce blocks" and its pending/released state with
+  // the platform session. Same handlers as /api/v4/mobile/bp/*.
+  router.get('/challenges-api/bp/state', webSessionAuth, requireSessionUser, bpStateHandler);
+  router.post('/challenges-api/bp/request', webSessionAuth, requireSessionUser, bpRequestHandler);
   // Everything else under /challenges-api keeps the old proxy allowlist's
   // "off-list -> 404" contract instead of falling through to the SPA
   // catch-all (which would 200 with index.html) or authMiddleware's 401.
@@ -1863,6 +1934,16 @@ function topochainMobileRoutes(config) {
 
         await client.query('COMMIT');
 
+        // Block-production release state rides along so the app can
+        // persist it off the same response it stores the wallet from
+        // (NodeAccountReconciler) — the wallet always works for dapp
+        // transactions; bp_released additionally gates whether the
+        // node runs as a block producer.
+        const { rows: bpRows } = await pool.query(
+          'SELECT bp_released_at FROM users WHERE id = $1',
+          [req.user.id]
+        );
+
         return ok(res, {
           data: {
             address: account.address,
@@ -1871,6 +1952,7 @@ function topochainMobileRoutes(config) {
             season_id: seasonId,
             season_event_id: account.season_event_id != null ? Number(account.season_event_id) : null,
             newly_allocated: newlyAllocated,
+            bp_released: !!(bpRows[0] && bpRows[0].bp_released_at),
           },
         });
       } catch (err) {

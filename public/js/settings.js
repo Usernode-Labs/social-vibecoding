@@ -1698,6 +1698,11 @@
         s.nodeSleepEnabled !== false,
         (v) => this._unApply(window.usernode.setNodeSleepEnabled(v)));
 
+      // Block production (onboarding flow alignment): producing blocks is
+      // a released capability. The wallet works for dapp transactions
+      // either way; this section is the "ask to produce blocks" queue.
+      this._renderBpSection(section);
+
       // Privacy & identity.
       const privBox = this._unSection(section, 'Usernode app — privacy & identity',
         'Controls for the ZK passport identity flow.');
@@ -1757,30 +1762,63 @@
       // Account (thin-shell migration). Platform login is the only
       // sign-in surface: the native app's credential is provisioned from
       // the web session by the boot handoff (native-chrome.js), so there
-      // is no separate "log in to the app" path anymore — the old native
-      // settings deep-link row is gone. A not-yet-authenticated native
-      // side just means the handoff hasn't finished (or an old build);
-      // say so instead of offering a dead-end button. Native logout stays
-      // available for authenticated installs; the main "Log out" at the
-      // top of this modal tears down both sides at once.
-      const acctBox = this._unSection(section, 'Usernode app — account');
-      if (s.authStatus === 'authenticated') {
-        this._unButton(acctBox, 'Log out of the Usernode app', async () => {
-          const ok = await PlatformUI.confirm({
-            title: 'Log out of the Usernode app?',
-            message: 'You will need to sign in again to keep earning points.',
-            confirmLabel: 'Log out',
-            danger: true,
-          });
-          if (!ok) return;
-          await window.usernode.logout();
-        }, { danger: true });
-      } else {
+      // is no separate "log in to the app" path anymore. The redundant
+      // native-only "Log out of the Usernode app" row is gone too
+      // (onboarding flow alignment): it was a no-op in practice — the
+      // boot handoff would immediately re-authenticate the native side
+      // from the still-live web session — and the main "Log out" at the
+      // top of this modal already tears down both sides at once. Only
+      // the not-yet-authenticated hint remains.
+      if (s.authStatus !== 'authenticated') {
+        const acctBox = this._unSection(section, 'Usernode app — account');
         acctBox.appendChild(this._unEl('p',
           'text-xs text-zinc-500 dark:text-zinc-400',
           'The app signs in automatically with your platform account. ' +
           'If this message persists, try closing and reopening the app.'));
       }
+    },
+
+    // Block production queue (onboarding flow alignment). State comes
+    // from the session-authed /challenges-api twins; the async load
+    // fills the section in place so the rest of the usernode body never
+    // waits on it.
+    _renderBpSection(section) {
+      const box = this._unSection(section, 'Usernode app — block production',
+        'Producing blocks earns points. Access is released manually — ask below and an admin will release your keys in batches.');
+      const holder = this._unEl('div');
+      box.appendChild(holder);
+
+      const note = (text) => {
+        holder.appendChild(this._unEl('p',
+          'text-xs text-zinc-500 dark:text-zinc-400', text));
+      };
+
+      const render = (state) => {
+        holder.textContent = '';
+        if (!state) return note('Could not check block-production status right now.');
+        if (state.bp_released) return note('Released — your node produces blocks when it wins slots.');
+        if (state.bp_requested) return note('Request pending — you\u2019ll start producing automatically once an admin releases your keys.');
+        if (!state.has_platform_access) return note('Available once your account has platform access.');
+        this._unButton(holder, 'Ask to produce blocks', async () => {
+          try {
+            const res = await fetch('/challenges-api/bp/request', {
+              method: 'POST', credentials: 'same-origin',
+            });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || !data || data.success === false) throw new Error((data && data.error) || 'Request failed');
+            if (window.PlatformUI) PlatformUI.toast('Request sent — an admin will release your keys');
+            render({ ...state, bp_requested: true });
+          } catch (e) {
+            if (window.PlatformUI) PlatformUI.toast(e.message || 'Request failed', { error: true });
+          }
+        });
+      };
+
+      note('Checking status\u2026');
+      fetch('/challenges-api/bp/state', { credentials: 'same-origin' })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => render(data && data.success !== false ? data.data : null))
+        .catch(() => render(null));
     },
 
     // Static port of the native FaqSection copy (Help & Info tiles).

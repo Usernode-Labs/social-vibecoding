@@ -198,7 +198,9 @@ test('auth middleware selects the column and maps req.user.locale', () => {
   const mw = read('src/middleware/auth.js');
   // Both user-row lookups (cookie-session join + staging by-id) carry it.
   assert.match(mw, /u\.locale/, 'session SELECT must include the column');
-  assert.match(mw, /ai_progress_estimate, locale FROM users WHERE id = \$1/);
+  // has_platform_access rides the same by-id lookup since the onboarding
+  // flow alignment (platform-access gate).
+  assert.match(mw, /ai_progress_estimate, locale, has_platform_access FROM users WHERE id = \$1/);
   assert.match(mw, /locale: rows\[0\]\.locale \|\| null/);
   assert.match(mw, /locale: userRow\.locale \|\| null/);
 });

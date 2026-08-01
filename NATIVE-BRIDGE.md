@@ -210,6 +210,15 @@ validates the address belongs to the current (ready) identity and rejects
 otherwise; omitting `address` starts with the identity's active account.
 No native auto-start exists anymore — SV requests every node start.
 
+Block production is a released capability (onboarding flow alignment):
+the node always runs, syncs, and signs wallet transactions, but only
+configures a block-producer key when the platform has released the user
+(`bp_released` on `GET /api/v4/mobile/me` and
+`POST /api/v4/mobile/wallet/provision`, persisted natively per account).
+Users ask via the SV settings "Block production" section
+(`POST /challenges-api/bp/request`); admins release from the admin panel's
+Waitlist tab. No bridge payload change — the contract stays at v4.
+
 #### `stopNode()` → `{ stopped: true }`
 
 Stops the node. Idempotent. Called by SV on web logout before clearing

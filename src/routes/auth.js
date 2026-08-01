@@ -7,6 +7,7 @@ const { getPool } = require('../db/pool');
 const log = require('../services/logger');
 const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits');
 const genesisAccounts = require('../services/genesis-accounts');
+const waitlist = require('../services/waitlist');
 const events = require('../services/events');
 const { validatePassword } = require('../services/password-policy');
 const {
@@ -146,6 +147,12 @@ function authRoutes(config) {
         [userId, codeId]
       );
 
+      // An activation code is an admin-minted invite — stronger than a
+      // waitlist release — so it carries platform access with it
+      // (onboarding flow alignment). Without this, every invited user
+      // would land in the waiting room, a regression on the invite flow.
+      await waitlist.grantPlatformAccess(pool, userId);
+
       const token = crypto.randomBytes(32).toString('hex');
       const expiresAt = new Date(Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000);
       await pool.query(
@@ -244,6 +251,11 @@ function authRoutes(config) {
         // it via the iframe JWT `locale` claim and the bridge's
         // usernode.getUserLocale().
         locale: req.user.locale ?? null,
+        // Platform-access gate (onboarding flow alignment). FALSE means
+        // the account is waiting to be released off the platform
+        // waitlist — the waiting room polls this to know when to let
+        // the user through.
+        hasPlatformAccess: !!req.user.hasPlatformAccess || !!req.user.isAdmin,
         hasApiKey,
         keyLast4,
         usernodePubkey,
@@ -825,6 +837,10 @@ function authRoutes(config) {
         [username.trim(), hash, pubkey.trim(), linkToken, linkExpiresAt]
       );
       const userId = rows[0].id;
+
+      // Genesis-ledger registration is invite-equivalent (the genesis
+      // allowlist IS the invite) — grant platform access directly.
+      await waitlist.grantPlatformAccess(pool, userId);
 
       const { token, expiresAt } = await createSession(pool, userId);
       createSessionCookie(res, token, expiresAt);

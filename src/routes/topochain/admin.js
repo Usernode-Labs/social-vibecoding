@@ -32,6 +32,7 @@ const { challengesAdminRoutes } = require('./admin/challenges');
 const { appVersionConfigsAdminRoutes } = require('./admin/app-version-configs');
 const { settingsAdminRoutes } = require('./admin/settings');
 const { dbToolsAdminRoutes } = require('./admin/db-tools');
+const { waitlistAdminRoutes } = require('./admin/waitlist');
 
 function topochainAdminRoutes(config) {
   const router = Router();
@@ -117,6 +118,12 @@ function topochainAdminRoutes(config) {
   // templates) — no path collision with anything above (its own
   // `/database/...` and `/sql-query/...` prefixes are unused elsewhere).
   router.use(dbToolsAdminRoutes(config));
+
+  // Onboarding flow alignment: platform waitlist + BP queue. Its
+  // `/waitlist...`, `/bp-queue`, and `/users/:id/(grant-access|
+  // release-bp)` paths don't collide with users.js (whose `/users/:id`
+  // routes are one segment shorter and never POST to a sub-action).
+  router.use(waitlistAdminRoutes(config));
 
   return router;
 }

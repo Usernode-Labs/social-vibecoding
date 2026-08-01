@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Usernode Social Vibecoding</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>tailwind.config = {
+    darkMode: 'class',
+    theme: { extend: { colors: {
+      zinc: { 50:'#f6f6fb',100:'#eeeef6',200:'#d4d4e4',300:'#b0b0c8',400:'#9898b0',500:'#6e6e8a',600:'#4e4e6a',700:'#484870',800:'#2e2e50',900:'#1a1a30',950:'#08080f' },
+      violet: { 400:'#a78bfa',500:'#8b5cf6',600:'#7c3aed',700:'#6d28d9' },
+    } } },
+  }</script>
+  <script>
+    if (localStorage.theme === 'light' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+      document.documentElement.classList.remove('dark');
+    }
+  </script>
+  <script src="/js/theme.js"></script>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#08080f">
+  <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="/icons/icon-192.png">
+</head>
+<body class="bg-white dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen">
+  <main class="max-w-3xl mx-auto px-6 py-12">
+
+    <!-- Hero -->
+    <header class="text-center mb-10">
+      <h1 class="text-3xl font-bold mb-2">Usernode Social Vibecoding</h1>
+      <p class="text-sm text-zinc-500 dark:text-zinc-400 italic mb-6">A place where users own and build apps together</p>
+      <div class="flex items-center justify-center gap-3">
+        <a href="/login.html" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 font-medium transition-colors text-white text-sm">Sign in</a>
+        <a href="/login.html" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-5 py-2 font-medium text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Create account</a>
+      </div>
+    </header>
+
+    <!-- Waitlist join -->
+    <section class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10">
+      <h2 class="text-lg font-semibold mb-1">Join the waitlist</h2>
+      <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+        Platform access opens in batches. Leave your email and we'll let you
+        in when your turn comes — the apps below are open to everyone right now.
+      </p>
+      <form id="waitlist-form" class="flex flex-col sm:flex-row gap-2">
+        <input id="waitlist-email" type="email" required maxlength="255" placeholder="you@example.com"
+          autocomplete="email"
+          class="flex-1 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+        <button type="submit" id="waitlist-submit"
+          class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-5 py-2 text-sm font-medium text-white transition-colors">
+          Join waitlist
+        </button>
+      </form>
+      <p id="waitlist-msg" class="hidden text-sm mt-3"></p>
+    </section>
+
+    <!-- Public app directory -->
+    <section>
+      <h2 class="text-lg font-semibold mb-1">Apps built here</h2>
+      <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
+        Community-built apps on the Usernode chain. No account needed to look around.
+      </p>
+      <div id="apps" class="grid gap-3 sm:grid-cols-2">
+        <p class="text-sm text-zinc-500">Loading&hellip;</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    (function () {
+      // If a session already exists, the platform is the better front door
+      // (the server redirects no-access sessions to the waiting room).
+      fetch('/api/auth/me', { credentials: 'same-origin' })
+        .then((r) => { if (r.ok) window.location.href = '/'; })
+        .catch(() => {});
+
+      // ── Waitlist form ────────────────────────────────────────────────
+      const form = document.getElementById('waitlist-form');
+      const emailEl = document.getElementById('waitlist-email');
+      const btn = document.getElementById('waitlist-submit');
+      const msg = document.getElementById('waitlist-msg');
+
+      function showMsg(text, isError) {
+        msg.textContent = text;
+        msg.className = 'text-sm mt-3 ' + (isError
+          ? 'text-red-500 dark:text-red-400'
+          : 'text-emerald-600 dark:text-emerald-400');
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/public/waitlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: emailEl.value.trim() }),
+          });
+          const data = await res.json().catch(() => null);
+          if (res.ok) {
+            showMsg((data && data.message) || "You're on the waitlist.", false);
+            form.reset();
+          } else {
+            showMsg((data && data.error) || 'Something went wrong — try again.', true);
+          }
+        } catch (_) {
+          showMsg('Connection issue — try again.', true);
+        }
+        btn.disabled = false;
+      });
+
+      // ── App directory ────────────────────────────────────────────────
+      const appsEl = document.getElementById('apps');
+
+      function el(tag, cls, text) {
+        const node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text != null) node.textContent = text;
+        return node;
+      }
+
+      async function loadApps() {
+        try {
+          const res = await fetch('/api/public/apps?include_wallets=0');
+          if (!res.ok) throw new Error('http ' + res.status);
+          const data = await res.json();
+          const apps = (data && data.apps) || [];
+          appsEl.textContent = '';
+          if (!apps.length) {
+            appsEl.appendChild(el('p', 'text-sm text-zinc-500', 'No public apps yet.'));
+            return;
+          }
+          for (const app of apps) {
+            const card = el('a',
+              'block rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-4 hover:border-violet-400 dark:hover:border-violet-500 transition-colors');
+            card.href = app.url || '#';
+            card.target = '_blank';
+            card.rel = 'noopener';
+            card.appendChild(el('div', 'font-medium text-sm mb-1', app.name || app.slug));
+            const contributors = (app.contributors || []).map((c) => c.username).filter(Boolean);
+            card.appendChild(el('div', 'text-xs text-zinc-500 dark:text-zinc-400',
+              contributors.length
+                ? 'By ' + contributors.slice(0, 3).join(', ') + (contributors.length > 3 ? ` +${contributors.length - 3}` : '')
+                : 'Community app'));
+            appsEl.appendChild(card);
+          }
+        } catch (_) {
+          appsEl.textContent = '';
+          appsEl.appendChild(el('p', 'text-sm text-zinc-500', 'Could not load apps right now.'));
+        }
+      }
+
+      loadApps();
+    })();
+  </script>
+</body>
+</html>
