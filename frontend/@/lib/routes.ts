@@ -86,6 +86,11 @@ export function challengeDetailPath(challengeId: number | string) {
   return `/community/challenges/${encodeURIComponent(String(challengeId))}`
 }
 
+/** Read-only Fair Rewards season history home. */
+export function challengesPath() {
+  return "/community/challenges"
+}
+
 /** Read-only detail route. Voting and other proposal actions stay in legacy Dev. */
 export function appDevProposalPath(slug: string, proposalId: number | string) {
   return `${appDevPath(slug)}/proposals/${encodeURIComponent(proposalId)}`

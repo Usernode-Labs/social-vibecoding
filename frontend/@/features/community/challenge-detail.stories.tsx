@@ -31,4 +31,5 @@ export const NativeInProgress: Story = { args: { challenge, native: true, progre
 export const PublicOpen: Story = { args: { challenge, native: false, progress: { challenge_id: 12, state: "none" }, season: "Summer build" } }
 export const Pending: Story = { args: { challenge, native: true, progress: { challenge_id: 12, state: "pending", pending_points: 300, description: "Submitted — awaiting review" }, season: "Summer build" } }
 export const Completed: Story = { args: { challenge: { ...challenge, completed: true }, native: true, progress: { challenge_id: 12, state: "earned", earned_points: 300 }, season: "Summer build" } }
+export const CompletedDark: Story = { ...Completed, globals: { theme: "dark" } }
 export const Missed: Story = { args: { challenge, native: false, progress: { challenge_id: 12, state: "missed" }, season: "Summer build" } }
