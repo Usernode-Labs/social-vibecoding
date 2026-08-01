@@ -1,6 +1,7 @@
 import { Activity, ExternalLink, ShieldAlert } from "lucide-react"
 import { useEffect, useState, type ReactNode } from "react"
 
+import { ActionAnchor, ActionLink } from "@/components/action-link"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { TopBar } from "@/components/top-bar"
 import { Badge } from "@/components/ui/badge"
@@ -10,7 +11,6 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Skeleton } from "@/components/ui/skeleton"
 import { PlatformIcon } from "@/components/platform-icon"
 import { AdminAccessError, getAdminOverview, getAdminUser, type AdminOverview, type AdminUser } from "@/lib/admin-api"
-import { Link } from "react-router-dom"
 
 type State =
   | { kind: "loading" }
@@ -88,7 +88,9 @@ export function AdminOperationsOverview({ user, overview }: { user: AdminUser; o
       <ListCard title="Stuck apps" empty="No apps are stuck." items={stuckApps.map((app) => <div key={app.slug} className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-mono text-sm">{app.slug || "Unknown app"}</p><p className="text-sm text-muted-foreground">{app.dbStatus || "Unknown state"}{app.createdBy ? ` · created by ${app.createdBy}` : ""}</p></div><Badge variant="outline">{app.dbStatus || "Unknown"}</Badge></div>)} />
       <ListCard title="Orphan workers" empty="No orphan workers found." items={orphanWorkers.map((worker) => <div key={worker.name} className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-mono text-sm">{worker.name || "Unknown worker"}</p><p className="text-sm text-muted-foreground">{worker.appSlug ? `App ${worker.appSlug}` : "No associated app"}{worker.sessionArchived ? " · archived session" : ""}</p></div><Badge variant="outline">Up {formatUptime(worker.uptimeSeconds)}</Badge></div>)} />
       <ListCard title="Top LLM spenders today" empty="No LLM spend recorded today." items={spenders.slice(0, 5).map((spender, index) => <div key={`${spender.username}-${index}`} className="flex items-center justify-between gap-3"><span>{spender.username || "Unknown user"}</span><span className="font-mono text-sm text-muted-foreground">{formatMoney(spender.costCents)}</span></div>)} />
-      <Card><CardHeader><CardTitle>Admin tools</CardTitle></CardHeader><CardContent className="flex flex-wrap gap-2">{legacyTools.map((tool) => <Button key={tool.href} render={tool.react ? <Link to={tool.href.replace("/react", "")} /> : <a href={tool.href} />} size="sm" variant="outline">{tool.label}{tool.react ? null : <PlatformIcon data-icon="inline-end" icon={ExternalLink} size="sm" />}</Button>)}</CardContent></Card>
+      <Card><CardHeader><CardTitle>Admin tools</CardTitle></CardHeader><CardContent className="flex flex-wrap gap-2">{legacyTools.map((tool) => tool.react
+        ? <ActionLink key={tool.href} size="sm" to={tool.href.replace("/react", "")} variant="outline">{tool.label}</ActionLink>
+        : <ActionAnchor href={tool.href} key={tool.href} size="sm" variant="outline">{tool.label}<PlatformIcon data-icon="inline-end" icon={ExternalLink} size="sm" /></ActionAnchor>)}</CardContent></Card>
     </section>
   </>
 }

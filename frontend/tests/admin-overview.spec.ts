@@ -28,8 +28,32 @@ test("renders the read-only operations snapshot and preserves legacy tools", asy
   await expect(page.getByRole("heading", { exact: true, level: 1, name: "Operations" })).toHaveCount(1)
   await expect(overview).toContainText("View-only administrator")
   await expect(overview).toContainText("recipebot")
-  await expect(page.getByRole("link", { name: "Users" })).toHaveAttribute("href", "/react/admin/users")
-  await expect(page.getByRole("link", { name: "Screenshot gallery" })).toHaveAttribute("href", "/react/admin/gallery")
+  const routerTools = [
+    ["Users", "/react/admin/users"],
+    ["Activation codes", "/react/admin/codes"],
+    ["Spend limits", "/react/admin/limits"],
+    ["Submitted features", "/react/admin/features"],
+    ["Merge debug", "/react/admin/debug"],
+    ["Screenshot gallery", "/react/admin/gallery"],
+  ] as const
+  for (const [name, href] of routerTools) {
+    const link = page.getByRole("link", { exact: true, name })
+    await expect(link).toHaveAttribute("data-slot", "action-link")
+    await expect(link).toHaveAttribute("href", href)
+  }
+
+  const documentTools = [
+    ["Analytics dashboard", "/dashboard"],
+    ["Platform status", "/status"],
+  ] as const
+  for (const [name, href] of documentTools) {
+    const link = page.getByRole("link", { exact: true, name })
+    await expect(link).toHaveAttribute("data-slot", "action-anchor")
+    await expect(link).toHaveAttribute("href", href)
+    await expect(link).not.toHaveAttribute("target")
+    await expect(link).not.toHaveAttribute("rel")
+    await expect(link).not.toHaveAttribute("download")
+  }
 })
 
 test("exposes the operations route from platform navigation only to admins", async ({ page }) => {
