@@ -1,6 +1,7 @@
 import { ExternalLink, ListTodo, ShieldAlert } from "lucide-react"
 import { useCallback, useEffect, useState } from "react"
 
+import { ActionAnchor } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -113,7 +114,7 @@ export function AdminFeaturesPage() {
             <SelectContent>{statuses.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
           </Select>
         </label>
-        <div className="flex flex-wrap gap-2"><Button disabled={downloading} onClick={() => void exportCsv()} type="button" variant="outline">{downloading ? "Preparing CSV…" : "Download CSV"}</Button><Button render={<a href="/admin-features" />} variant="outline">Open feature requests<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button></div>
+        <div className="flex flex-wrap gap-2"><Button disabled={downloading} onClick={() => void exportCsv()} type="button" variant="outline">{downloading ? "Preparing CSV…" : "Download CSV"}</Button><ActionAnchor href="/admin-features">Open feature requests<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></ActionAnchor></div>
       </section>
       {downloadError ? <Alert variant="destructive"><AlertTitle>CSV unavailable</AlertTitle><AlertDescription>{downloadError}</AlertDescription></Alert> : null}
       <p className="text-sm text-muted-foreground">{state.total} {state.total === 1 ? "request" : "requests"}.</p>

@@ -1,8 +1,9 @@
 import { ExternalLink, ShieldAlert, UsersRound } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { ActionAnchor } from "@/components/action-link"
 import { TopBar } from "@/components/top-bar"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -61,7 +62,7 @@ export function AdminUsersPage() {
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Users unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "ready" && !state.user.canAdminWrite ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>View-only administrator</AlertTitle><AlertDescription>You can inspect users, but a write administrator is required to change quotas or spend overrides.</AlertDescription></Alert> : null}
     {state.kind === "ready" && isProductionReadOnlyReview ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Changes unavailable</AlertTitle><AlertDescription>Quota and spend changes are disabled.</AlertDescription></Alert> : null}
-    {state.kind === "ready" ? <><div className="flex flex-wrap items-center justify-between gap-3"><Input aria-label="Filter users" className="max-w-sm" onChange={(event) => setQuery(event.target.value)} placeholder="Filter users" value={query} /><Button render={<a href="/#admin/users" />} variant="outline">Manage accounts<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button></div>{!users.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={UsersRound} /></EmptyMedia><EmptyTitle>No matching users</EmptyTitle><EmptyDescription>Try another name, or clear the filter.</EmptyDescription></EmptyHeader></Empty> : <section aria-label="Platform users" className="space-y-3">{users.map((user) => <UserCard canWrite={canWrite} key={user.id} onUpdate={updateUser} user={user} />)}</section>}</> : null}
+    {state.kind === "ready" ? <><div className="flex flex-wrap items-center justify-between gap-3"><Input aria-label="Filter users" className="max-w-sm" onChange={(event) => setQuery(event.target.value)} placeholder="Filter users" value={query} /><ActionAnchor href="/#admin/users">Manage accounts<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></ActionAnchor></div>{!users.length ? <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={UsersRound} /></EmptyMedia><EmptyTitle>No matching users</EmptyTitle><EmptyDescription>Try another name, or clear the filter.</EmptyDescription></EmptyHeader></Empty> : <section aria-label="Platform users" className="space-y-3">{users.map((user) => <UserCard canWrite={canWrite} key={user.id} onUpdate={updateUser} user={user} />)}</section>}</> : null}
   </div></div>
 }
 

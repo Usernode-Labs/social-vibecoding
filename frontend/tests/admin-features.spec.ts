@@ -19,7 +19,9 @@ test("shows the server-ranked read-only feature feed and feature-request destina
   await expect(route).toContainText("#1")
   await expect(route).toContainText("Share app templates")
   await expect(route).toContainText("28 up · 2 down")
-  await expect(page.getByRole("link", { name: "Open feature requests" })).toHaveAttribute("href", "/admin-features")
+  const featureRequestsLink = page.getByRole("link", { name: "Open feature requests" })
+  await expect(featureRequestsLink).toHaveAttribute("data-slot", "action-anchor")
+  await expect(featureRequestsLink).toHaveAttribute("href", "/admin-features")
 })
 
 test("uses the existing status query to filter server-ranked requests", async ({ page }) => {

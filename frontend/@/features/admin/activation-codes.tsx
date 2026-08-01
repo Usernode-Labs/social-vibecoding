@@ -1,8 +1,9 @@
 import { ExternalLink, Eye, EyeOff, KeyRound, ShieldAlert } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { ActionAnchor } from "@/components/action-link"
 import { TopBar } from "@/components/top-bar"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -106,7 +107,7 @@ export function ActivationCodesPage() {
     {creationError ? <Alert variant="destructive"><AlertTitle>Could not generate activation code</AlertTitle><AlertDescription>{creationError}</AlertDescription></Alert> : null}
     {copyError ? <Alert variant="destructive"><AlertTitle>Could not copy activation code</AlertTitle><AlertDescription>{copyError}</AlertDescription></Alert> : null}
     {revocationError ? <Alert variant="destructive"><AlertTitle>Could not revoke activation code</AlertTitle><AlertDescription>{revocationError}</AlertDescription></Alert> : null}
-    {state.kind === "ready" ? <><div className="flex justify-end"><Button render={<a href="/#admin/codes" />} variant="outline">Manage codes<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></Button></div><ActivationCodesList canRevoke={canRevoke} codes={codes} copiedCodeId={copiedCodeId} onCopy={(code) => void copy(code)} onRevoke={setRevocationTarget} />
+    {state.kind === "ready" ? <><div className="flex justify-end"><ActionAnchor href="/#admin/codes">Manage codes<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></ActionAnchor></div><ActivationCodesList canRevoke={canRevoke} codes={codes} copiedCodeId={copiedCodeId} onCopy={(code) => void copy(code)} onRevoke={setRevocationTarget} />
       <AlertDialog onOpenChange={(open) => { if (!open && !revoking) setRevocationTarget(null) }} open={Boolean(revocationTarget)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>Revoke activation code?</AlertDialogTitle><AlertDialogDescription>This invalidates <code>{revocationTarget?.code}</code>. It cannot be used to register and this action cannot be undone.</AlertDialogDescription></AlertDialogHeader>{revocationError ? <Alert variant="destructive"><AlertTitle>Could not revoke activation code</AlertTitle><AlertDescription>{revocationError}</AlertDescription></Alert> : null}<AlertDialogFooter><AlertDialogCancel disabled={revoking}>Cancel</AlertDialogCancel><AlertDialogAction disabled={revoking} onClick={() => void revoke()} type="button" variant="destructive">{revoking ? "Revoking…" : "Revoke code"}</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
     </> : null}
   </div></div>

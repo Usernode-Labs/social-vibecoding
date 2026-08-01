@@ -27,7 +27,9 @@ test("shows user administration with its account-management destination", async 
   await expect(page.getByRole("heading", { exact: true, level: 1, name: "Users" })).toHaveCount(1)
   await expect(route).toContainText("ava (you)")
   await expect(route).toContainText("View-only admin")
-  await expect(page.getByRole("link", { name: "Manage accounts" })).toHaveAttribute("href", "/#admin/users")
+  const managementLink = page.getByRole("link", { name: "Manage accounts" })
+  await expect(managementLink).toHaveAttribute("data-slot", "action-anchor")
+  await expect(managementLink).toHaveAttribute("href", "/#admin/users")
 })
 
 test("updates an individual app quota through the existing write-admin contract", async ({ page }) => {
