@@ -171,7 +171,7 @@ function OrdinaryDiscussionMessage({
   }
 
   return <Message align="start">
-    <MessageAvatar aria-hidden="true"><PlatformIcon icon={MessageCircle} size="sm" /></MessageAvatar>
+    <MessageAvatar aria-hidden="true"><PlatformIcon icon={MessageCircle} /></MessageAvatar>
     <MessageContent>
       <MessageHeader>{message.username || "Member"}</MessageHeader>
       {message.has_unread_notification ? <span className="sr-only">Unread mention, reply, or reaction</span> : null}

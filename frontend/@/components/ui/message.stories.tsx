@@ -1,5 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
+import { Bot } from "lucide-react"
+import { expect, within } from "storybook/test"
 
+import { PlatformIcon } from "@/components/platform-icon"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
 import { Message, MessageAvatar, MessageContent, MessageFooter, MessageGroup, MessageHeader } from "@/components/ui/message"
@@ -25,6 +28,30 @@ export const Incoming: Story = {
       </MessageContent>
     </Message>
   ),
+}
+
+export const IconAvatar: Story = {
+  render: () => (
+    <Message>
+      <MessageAvatar><PlatformIcon icon={Bot} /></MessageAvatar>
+      <MessageContent>
+        <MessageHeader>Builder</MessageHeader>
+        <Bubble variant="secondary"><BubbleContent>I’ll inspect the current route first.</BubbleContent></Bubble>
+      </MessageContent>
+    </Message>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const message = canvas.getByText("Builder").closest('[data-slot="message"]')
+    const avatar = message?.querySelector('[data-slot="message-avatar"]')
+    const icon = avatar?.querySelector(':scope > [data-slot="platform-icon"]')
+    await expect(avatar).not.toBeNull()
+    await expect(getComputedStyle(avatar!).width).toBe("32px")
+    await expect(getComputedStyle(avatar!).height).toBe("32px")
+    await expect(icon).not.toBeNull()
+    await expect(getComputedStyle(icon!).width).toBe("16px")
+    await expect(getComputedStyle(icon!).height).toBe("16px")
+  },
 }
 
 export const Outgoing: Story = {

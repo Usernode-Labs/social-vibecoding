@@ -78,7 +78,7 @@ function ConversationMessage({ message, sessionId }: { message: ConversationMess
   const isUser = message.role === "user"
   const attachments = sessionId ? messageAttachments(message) : []
   return <Message align={isUser ? "end" : "start"}>
-    <MessageAvatar aria-hidden="true"><PlatformIcon icon={isUser ? UserRound : Bot} size="sm" /></MessageAvatar>
+    <MessageAvatar aria-hidden="true"><PlatformIcon icon={isUser ? UserRound : Bot} /></MessageAvatar>
     <MessageContent>
       <MessageHeader>{isUser ? "You" : "Builder"}</MessageHeader>
       <Bubble align={isUser ? "end" : "start"} variant={isUser ? "default" : "secondary"}>

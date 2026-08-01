@@ -841,6 +841,7 @@
       "distribution": "shell-internal",
       "variants": [
         "Incoming",
+        "IconAvatar",
         "Outgoing",
         "Grouped"
       ],
@@ -871,6 +872,7 @@
         "story": "@/components/ui/message.stories.tsx",
         "states": [
           "Incoming",
+          "IconAvatar",
           "Outgoing",
           "Grouped"
         ]
