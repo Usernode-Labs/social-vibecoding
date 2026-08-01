@@ -97,8 +97,7 @@ function ConversationMessage({ message, sessionId }: { message: ConversationMess
               <AttachmentDescription>{attachment.kind} · {formatSize(attachment.sizeBytes)}</AttachmentDescription>
             </AttachmentContent>
             <AttachmentTrigger
-              aria-label={`${image ? "Open" : "Download"} ${attachment.filename}`}
-              render={<a download={image ? undefined : attachment.filename} href={url} rel="noopener" target="_blank" />}
+              render={<a aria-label={`${image ? "Open" : "Download"} ${attachment.filename}`} download={image ? undefined : attachment.filename} href={url} rel="noopener" target="_blank" />}
             />
           </Attachment>
         })}

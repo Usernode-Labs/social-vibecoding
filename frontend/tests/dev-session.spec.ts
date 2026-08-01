@@ -250,19 +250,32 @@ test("combines selected answers for a multi-question assistant prompt", async ({
 
 test("renders authenticated historical attachments from message metadata", async ({ page }) => {
   const attachmentId = "b22bd5f60bcd5450b22bd5f60bcd5450"
+  const imageId = "c33ce6f71cde6561c33ce6f71cde6561"
   await page.route("**/api/sessions/9", (route) => route.fulfill({ json: {
     session: { id: 9, app_slug: "recipebot", app_name: "RecipeBot", branch_name: "feature/pantry", session_title: "Improve pantry search", pr_title: null, status: "active", created_at: "2026-07-28T12:00:00.000Z" },
     messages: [
-      { id: 1, role: "user", content: "Use these pantry notes.", model: null, token_count: null, cost_cents: null, metadata: { attachments: [{ id: attachmentId, kind: "text", filename: "pantry-notes.txt", contentType: "text/plain", sizeBytes: 2048 }] }, created_at: "2026-07-28T12:01:03.000Z" },
+      { id: 1, role: "user", content: "Use these pantry notes.", model: null, token_count: null, cost_cents: null, metadata: { attachments: [
+        { id: attachmentId, kind: "text", filename: "pantry-notes.txt", contentType: "text/plain", sizeBytes: 2048 },
+        { id: imageId, kind: "image", filename: "pantry-preview.png", contentType: "image/png", sizeBytes: 4096 },
+      ] }, created_at: "2026-07-28T12:01:03.000Z" },
     ],
   } }))
   await page.goto("/react/apps/recipebot/dev/sessions/9")
 
   await expect(page.getByLabel("Message attachments")).toContainText("pantry-notes.txt")
-  await expect(page.getByRole("link", { name: "Download pantry-notes.txt" })).toHaveAttribute(
-    "href",
-    `/api/sessions/9/attachments/${attachmentId}`,
-  )
+  const download = page.getByRole("link", { name: "Download pantry-notes.txt" })
+  await expect(download).toHaveAttribute("data-slot", "attachment-trigger")
+  await expect(download).toHaveAttribute("href", `/api/sessions/9/attachments/${attachmentId}`)
+  await expect(download).toHaveAttribute("download", "pantry-notes.txt")
+  await expect(download).toHaveAttribute("target", "_blank")
+  await expect(download).toHaveAttribute("rel", "noopener")
+
+  const image = page.getByRole("link", { name: "Open pantry-preview.png" })
+  await expect(image).toHaveAttribute("data-slot", "attachment-trigger")
+  await expect(image).toHaveAttribute("href", `/api/sessions/9/attachments/${imageId}`)
+  await expect(image).not.toHaveAttribute("download")
+  await expect(image).toHaveAttribute("target", "_blank")
+  await expect(image).toHaveAttribute("rel", "noopener")
 })
 
 test("renders safe live token events through the resumable session stream", async ({ page }) => {

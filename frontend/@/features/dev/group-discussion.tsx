@@ -85,7 +85,7 @@ function AttachmentLink({ attachment, slug }: { attachment: GroupChatAttachment;
   return <Attachment size="sm">
     <AttachmentMedia variant="icon"><PlatformIcon icon={isImage ? ImageIcon : FileText} size="sm" /></AttachmentMedia>
     <AttachmentContent><AttachmentTitle>{attachment.filename}</AttachmentTitle></AttachmentContent>
-    <AttachmentTrigger aria-label={`Open attachment ${attachment.filename}`} render={<a download={attachment.filename} href={href} />} />
+    <AttachmentTrigger render={<a aria-label={`Open attachment ${attachment.filename}`} download={attachment.filename} href={href} />} />
   </Attachment>
 }
 
