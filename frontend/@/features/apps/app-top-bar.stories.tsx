@@ -24,6 +24,11 @@ const app = {
   can_collaborate: true,
 } satisfies AppDetail
 
+const longNameApp = {
+  ...app,
+  name: "Recipe planning and pantry collaboration",
+} satisfies AppDetail
+
 type StoryArgs = Pick<
   AppTopBarProps,
   "app" | "consoleError" | "fallbackTitle" | "onOpenOverflow" | "placement"
@@ -114,4 +119,17 @@ export const LoadingIdentity: Story = {
 
 export const Mobile: Story = {
   parameters: { viewport: { defaultViewport: "mobile1" } },
+  args: { app: longNameApp },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const title = canvas.getByRole("heading", { level: 1, name: longNameApp.name })
+    const identity = canvasElement.querySelector('[data-slot="top-bar-identity"]')
+    const trailing = canvasElement.querySelector('[data-slot="top-bar-action"]')
+    await expect(getComputedStyle(title).whiteSpace).toBe("normal")
+    await expect(title.scrollWidth).toBeLessThanOrEqual(title.clientWidth)
+    await expect(identity).toBeTruthy()
+    await expect(trailing).toBeTruthy()
+    await expect(trailing!.getBoundingClientRect().top).toBeGreaterThanOrEqual(identity!.getBoundingClientRect().bottom)
+    await expect(canvas.getByRole("button", { name: `Close ${longNameApp.name}` })).toBeTruthy()
+  },
 }

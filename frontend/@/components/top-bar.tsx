@@ -37,7 +37,7 @@ export function TopBar({
   return (
     <header
       className={cn(
-        "flex min-h-14 items-center gap-2 px-3",
+        "flex min-h-14 flex-col items-stretch gap-1 px-3 py-2 sm:flex-row sm:items-center sm:gap-2 sm:py-0",
         placement === "overlay"
           ? "absolute inset-x-0 top-0 z-10 border-b border-border/50 bg-background/80 supports-backdrop-filter:bg-background/60 supports-backdrop-filter:backdrop-blur-md"
           : "shrink-0 border-b",
@@ -46,17 +46,19 @@ export function TopBar({
       data-placement={placement}
       data-slot="top-bar"
     >
-      <PlatformMenuTrigger />
-      <h1 className="min-w-0 flex-1 truncate text-base font-semibold">
-        {title}
-      </h1>
+      <div className="flex min-w-0 flex-1 items-center gap-2" data-slot="top-bar-identity">
+        <PlatformMenuTrigger />
+        <h1 className="min-w-0 flex-1 break-words text-base font-semibold sm:truncate">
+          {title}
+        </h1>
+      </div>
       {action || onBack ? (
         <div
           className={cn(
             // The slot owns reach for caller-provided buttons and links. Keep
             // adjacent coarse targets disjoint instead of letting later
             // actions silently steal the expanded edge.
-            "flex shrink-0 items-center gap-1 pointer-coarse:gap-5 pointer-coarse:[&>div]:gap-5",
+            "flex w-full flex-wrap items-center justify-end gap-1 sm:w-auto sm:shrink-0 pointer-coarse:gap-5 pointer-coarse:[&>div]:gap-5",
             "[&_:is(a,button)]:relative [&_:is(a,button)]:after:absolute [&_:is(a,button)]:after:top-1/2 [&_:is(a,button)]:after:left-1/2 [&_:is(a,button)]:after:size-13 [&_:is(a,button)]:after:-translate-1/2 [&_:is(a,button)]:after:content-[''] [&_:is(a,button)]:after:pointer-fine:hidden"
           )}
           data-slot="top-bar-action"

@@ -48,6 +48,13 @@ Selection remains owned by Tabs, ToggleGroup, radio, or select. Its selected
 treatment is an elevated pill on a recessed track, never primary filled and
 never visually confused with submission.
 
+On narrow screens, the identity anchor remains complete before utilities take
+space: application identity anchors application routes, the page name anchors
+platform routes, and Back remains available. Caller-owned utilities move to a
+secondary row before the identity truncates; wide screens keep the single-row
+composition. Responsive placement never changes an action's meaning, emphasis,
+or keyboard order.
+
 ## 4. Status by consequence
 
 StatusDot owns ambient state. Badge owns category or classification. A progress

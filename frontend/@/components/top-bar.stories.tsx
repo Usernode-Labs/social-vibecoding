@@ -109,7 +109,7 @@ export const LongTitle: Story = {
   parameters: { viewport: { defaultViewport: "mobile1" } },
   args: {
     title:
-      "A deliberately very long nested route title that must truncate instead of wrapping or clipping the action",
+      "A deliberately very long nested route title that must remain complete before utilities",
     onBack: () => {},
     action: (
       <Button size="sm" type="button" variant="outline">
@@ -120,11 +120,14 @@ export const LongTitle: Story = {
   play: async ({ canvasElement }) => {
     const title = within(canvasElement).getByRole("heading", { level: 1 })
     const style = getComputedStyle(title)
-    await expect(style.overflow).toBe("hidden")
-    await expect(style.textOverflow).toBe("ellipsis")
-    await expect(style.whiteSpace).toBe("nowrap")
+    await expect(style.overflow).toBe("visible")
+    await expect(style.whiteSpace).toBe("normal")
+    await expect(title.scrollWidth).toBeLessThanOrEqual(title.clientWidth)
     const trailing = canvasElement.querySelector('[data-slot="top-bar-action"]')
+    const identity = canvasElement.querySelector('[data-slot="top-bar-identity"]')
     await expect(trailing).toBeTruthy()
+    await expect(identity).toBeTruthy()
+    await expect(trailing!.getBoundingClientRect().top).toBeGreaterThanOrEqual(identity!.getBoundingClientRect().bottom)
     await expect(within(trailing as HTMLElement).getByRole("button", { name: "Back" })).toBeTruthy()
   },
 }

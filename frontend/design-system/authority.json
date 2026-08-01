@@ -261,10 +261,10 @@
           "The TopBar renders the screen's sole h1, whether that name is a platform destination or a dApp context.",
           "Menu, Back, Close and overflow controls have specific accessible names and 48 CSS-pixel targets.",
           "The platform menu shows an attention dot, never a count, and the dot is understandable without color.",
-          "Long titles truncate without creating horizontal overflow at the narrow-mobile contract.",
+          "At narrow-mobile width, application identity or the platform page name remains complete while caller-owned utilities move to a secondary row and Back remains available.",
           "Use and Improve are never presented as permanent equal-weight modes."
         ],
-        "evidence": "Default, attention, action, icon-action, nested-back, overlay, long-title, mobile and dark stories render both themes with interaction assertions; the composition preview proves one bar and one h1 per screen."
+        "evidence": "Default, attention, action, icon-action, nested-back, overlay, long-title, mobile and dark stories render both themes with interaction assertions; TopBar and AppTopBar narrow stories prove complete identity above reachable utilities, and route contracts prove one bar and one h1 per screen."
       }
     },
     "platform-navigation": {
