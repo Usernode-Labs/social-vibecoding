@@ -56,7 +56,7 @@ function hitTargetOverlap(
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: { id: "recipebot", slug: "recipebot", name: "RecipeBot", status: "running", active_users: 24, can_collaborate: true } } }))
   await page.route("**/api/apps/recipebot/sessions", (route) => route.fulfill({ json: { sessions: [{ id: 9, branch_name: "feature/pantry", pr_title: null, session_title: "Improve pantry search", status: "active", warm: true, created_at: "2026-07-28T12:00:00.000Z" }] } }))
-  await page.route("**/api/apps/recipebot/promoted", (route) => route.fulfill({ json: { promoted: [{ id: 19, pr_number: 47, pr_title: "Filter pantry staples", status: "promoted", yes_count: 2, no_count: 0, votes_required: 3, chat_count: 4, created_at: "2026-07-28T12:00:00.000Z" }] } }))
+  await page.route("**/api/apps/recipebot/promoted", (route) => route.fulfill({ json: { promoted: [{ id: 19, pr_number: 47, pr_title: "Filter pantry staples", pr_url: "https://github.com/Usernode-Labs/social-vibecoding/pull/47", status: "promoted", yes_count: 2, no_count: 0, votes_required: 3, chat_count: 4, created_at: "2026-07-28T12:00:00.000Z" }] } }))
   await page.route("**/api/apps/recipebot/issues", (route) => route.fulfill({ json: { issues: [{ id: 12, title: "Add allergy tags", kind: "rename", status: "open", up_count: 1, down_count: 0, votes_required: 3, chat_count: 1, created_at: "2026-07-28T12:00:00.000Z" }] } }))
   await page.route("**/api/apps/recipebot/messages**", (route) => route.fulfill({ json: { messages: [] } }))
   await page.route("**/api/apps/recipebot/github-issues", (route) => route.fulfill({ json: { issues: [] } }))
@@ -554,6 +554,12 @@ test("records a proposal vote through the existing server contract and retains f
     expect(actionsBox!.y).toBeGreaterThanOrEqual(identityBox!.y + identityBox!.height)
   }
   await expect(detail).toHaveCSS("max-width", "none")
+  const pullRequest = detail.getByRole("link", { name: "View PR" })
+  await expect(pullRequest).toHaveAttribute("data-slot", "badge")
+  await expect(pullRequest).toHaveAttribute("href", "https://github.com/Usernode-Labs/social-vibecoding/pull/47")
+  await expect(pullRequest).toHaveAttribute("target", "_blank")
+  await expect(pullRequest).toHaveAttribute("rel", "noreferrer")
+  await expect(pullRequest).not.toHaveAttribute("download")
   await page.getByRole("button", { name: "Yes (2)" }).click()
   await expect.poll(() => vote).toEqual({ vote: "yes" })
   const legacyActions = page.getByRole("link", { name: "Open Filter pantry staples in legacy Dev for force-merge and moderation" })
