@@ -33,7 +33,7 @@ const bcrypt = require('bcrypt');
 const { Router } = require('express');
 const { getPool } = require('../../db/pool');
 const log = require('../../services/logger');
-const { mobileTokenAuth, extractBearerToken } = require('../../middleware/topochain-auth');
+const { mobileTokenAuth, optionalSessionAuth, extractBearerToken } = require('../../middleware/topochain-auth');
 const { topochainMobileAuthLimiter } = require('../../middleware/rate-limits');
 const { sendOtpMail } = require('../../services/topochain/mailer');
 const { ok, fail } = require('./helpers');
@@ -386,6 +386,51 @@ function topochainMobileAuthRoutes(config) {
         return ok(res, { token, user: userPayload });
       } catch (err) {
         log.error('topochain-mobile-auth', 'POST /set-password failed', { message: err.message });
+        return fail(res, 500, 'Internal server error.');
+      }
+    }
+  );
+
+  // ── POST /from-session (platform-login unification) ──────────────────
+  // Exchanges a live platform WEB session (the `session` cookie) for a
+  // mobile bearer token, so the SV shell can log the user in ONCE on the
+  // web surface and then hand the native app a credential over the JS
+  // bridge (NATIVE-BRIDGE.md, bridge v4 `completeLogin`). This is the only
+  // bridge between the two auth systems: everything else about the token
+  // (ability, TTL, hashing, revocation) is identical to /login's output —
+  // it IS issueToken with a cookie-shaped front door.
+  //
+  // Auth: session cookie (optionalSessionAuth + explicit user check, the
+  // same pattern as the /challenges-api web reads in mobile.js). CSRF is a
+  // non-issue: a forged cross-site POST could mint a token but can never
+  // read the response, and the token is returned once, never persisted
+  // in a cookie.
+  //
+  // Response: identical `{token, user}` shape to /login (SPEC 1632-1642)
+  // so the native side can feed it to the same AuthSession model. Web-only
+  // accounts (username/password, no email) are first-class here — `email`
+  // rides as null; the native client keys off `user.id`.
+  const fromSessionAuth = optionalSessionAuth(config);
+  router.post(
+    '/api/v4/mobile/auth/from-session',
+    topochainMobileAuthLimiter,
+    fromSessionAuth,
+    async (req, res) => {
+      try {
+        if (!req.user) return fail(res, 401, 'Unauthenticated.');
+
+        const { rows } = await pool.query(
+          'SELECT id, email, display_name, email_confirmed, password_set FROM users WHERE id = $1',
+          [req.user.id]
+        );
+        const user = rows[0];
+        if (!user) return fail(res, 401, 'Unauthenticated.');
+
+        const token = await issueToken(pool, user.id, 'session', SESSION_TOKEN_TTL_MS);
+        const userPayload = await buildUserPayload(pool, user);
+        return ok(res, { token, user: userPayload });
+      } catch (err) {
+        log.error('topochain-mobile-auth', 'POST /from-session failed', { message: err.message });
         return fail(res, 500, 'Internal server error.');
       }
     }

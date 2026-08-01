@@ -19,7 +19,7 @@ detect with `getBridgeInfo`.
 - `version` bumps only on breaking changes. New methods are additive and
   appear in `capabilities`.
 - Feature-detect with `capabilities.includes('<method>')`, not `version`.
-- Current version: **3**.
+- Current version: **4**.
 
 ## Methods
 
@@ -115,12 +115,13 @@ sends, which run through the shell's bridge).
 
 #### `openNativeScreen({ screen })` → `true`
 
-Pushes an allowlisted native route. Allowed screens: `settings`, `profile`
-(legacy — both now have web equivalents), plus the v3 deep-link additions
-`benchmark`, `httpLogs`, and `terms`. Rejected for any other value, and
-rejected entirely unless the top frame is the trusted SV origin (sub-apps
-cannot drive native navigation). Escape hatch for chrome that stays native
-while SV owns the rest of the UI.
+Pushes an allowlisted native route. Allowed screens: `diagnostics` (the
+minimal native diagnostics screen), `benchmark`, and `httpLogs` — the
+debugging UIs over native-only data that survive the thin-shell migration.
+The former `settings`, `profile`, and `terms` screens were deleted with
+their web replacements and are rejected like any other value. Rejected
+entirely unless the top frame is the trusted SV origin (sub-apps cannot
+drive native navigation).
 
 ### Profile & settings (v3 — profile-and-settings-to-web migration)
 
@@ -149,20 +150,22 @@ profile row shows only inside the app webview) and forward compatibility.
   "nodeSleepEnabled": true,
   "debugMode": false,
   "facematchStrict": true,
-  "termsAccepted": true,          // null while terms haven't loaded
   "authStatus": "authenticated",  // AuthStatus enum name
   "permissions": {
     "platform": "android",        // android | ios
     "exactAlarmGranted": true,
     "batteryOptDisabled": false,  // Android only, else null
-    "deviceManufacturer": "samsung", // Android only, else null
-    "iosKeepAliveActive": null    // iOS only, else null
+    "deviceManufacturer": "samsung" // Android only, else null
   }
 }
 ```
 
-Permission probes and terms loading can take a few seconds on a fresh app
-start; the bridge wrapper uses a longer (12s) timeout for this method.
+v4 removed `termsAccepted` (terms moved to the session-authed
+`/challenges-api/terms/*` web routes) and `iosKeepAliveActive` (the iOS
+foreground keep-alive service was deleted; iOS block production is off).
+
+Permission probes can take a few seconds on a fresh app start; the bridge
+wrapper uses a longer (12s) timeout for this method.
 
 #### Setters — each resolves the refreshed settings snapshot
 
@@ -171,8 +174,9 @@ start; the bridge wrapper uses a longer (12s) timeout for this method.
 | `setNodeSleepEnabled(enabled)` | `{ enabled: bool }` | toggles node sleep on inactivity |
 | `setDebugMode(enabled)` | `{ enabled: bool }` | toggles the app's debug mode |
 | `setFacematchStrict(enabled)` | `{ enabled: bool }` | toggles strict ZK-passport facematch |
-| `setIosKeepAlive(enabled)` | `{ enabled: bool }` | starts/stops the iOS foreground keep-alive |
 | `requestPermissions()` | — | native alarm-permission prompt; snapshot plus a `granted` bool |
+
+`setIosKeepAlive` was removed in v4 with the iOS keep-alive service.
 
 #### Actions — resolve `true`
 
@@ -180,7 +184,47 @@ start; the bridge wrapper uses a longer (12s) timeout for this method.
 |---|---|
 | `resetZkChallenge()` | discards in-progress ZK identity registration (confirm web-side first) |
 | `openBatterySettings()` | opens Android battery-optimization settings |
-| `logout()` | logs out of the app account; the native auth flow takes over (confirm web-side first) |
+| `logout()` | logs out of the app account (confirm web-side first); with platform login, SV should also call `stopNode()` and clear its web session |
+
+### Platform login + node lifecycle (v4 — thin-shell migration)
+
+All v4 methods are trusted-SV-origin gated. Login/onboarding is
+platform-owned: the SV shell signs the user in on the web, exchanges the
+session for a mobile bearer token (`POST /api/v4/mobile/auth/from-session`),
+hands the credential to the app, and then drives the node. Orchestration
+lives in `public/js/native-chrome.js` (`runLoginHandoff`,
+`handleWebLogout`).
+
+#### `completeLogin({ token, user })` → auth status snapshot
+
+Imports the platform credential into the native identity: the app stores
+the bearer token, provisions/imports the custodial wallet
+(`POST /api/v4/mobile/wallet/provision`), and settles the identity at
+`ready`. Idempotent for the same user. Wallet provisioning can take a
+while on a fresh install — the bridge wrapper allows up to 120s.
+
+#### `startNode({ address? })` → node status snapshot
+
+Starts the native node bound to the given wallet address. The native side
+validates the address belongs to the current (ready) identity and rejects
+otherwise; omitting `address` starts with the identity's active account.
+No native auto-start exists anymore — SV requests every node start.
+
+#### `stopNode()` → `{ stopped: true }`
+
+Stops the node. Idempotent. Called by SV on web logout before clearing
+the session.
+
+#### `getAuthStatus()` → `{ phase, address }`
+
+Poll-style twin of the push events below. `phase` is the identity phase
+(`unknown | transitioning | unauthenticated | guest | reconciling |
+ready`); `address` is the active wallet address once `ready`.
+
+**Push events:** the app dispatches a `usernode:auth-status` `CustomEvent`
+on `window` with the same shape as `detail` — once per page load and on
+every identity-phase transition. SV listens and requests `startNode` when
+the phase reaches `ready`.
 
 ## Trust model
 
