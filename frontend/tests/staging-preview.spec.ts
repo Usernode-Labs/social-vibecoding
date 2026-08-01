@@ -80,6 +80,8 @@ test("preserves the preview loading gutter while allowing a larger device inset"
   await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
   const loading = page.locator('[data-slot="staging-preview-surface"][data-state="loading"]')
   await expect(loading).toBeVisible()
+  await expect(loading.locator('[data-slot="card-title"] > [data-slot="platform-icon"]')).toHaveCSS("width", "16px")
+  await expect(loading.locator('[data-slot="card-title"] > [data-slot="platform-icon"]')).toHaveCSS("height", "16px")
   const loadingRecoveryLink = loading.getByRole("link", { name: "Return to session" })
   await expect(loadingRecoveryLink).toHaveAttribute("data-slot", "action-link")
   await expect(loadingRecoveryLink).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/9")

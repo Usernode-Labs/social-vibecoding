@@ -1,5 +1,8 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
+import { Flag } from "lucide-react"
+import { expect, within } from "storybook/test"
 
+import { PlatformIcon } from "@/components/platform-icon"
 import {
   Field,
   FieldContent,
@@ -33,6 +36,23 @@ export const Default: Story = {
       <FieldDescription>Use a name collaborators will recognize.</FieldDescription>
     </Field>
   ),
+}
+
+export const IconLabel: Story = {
+  render: () => (
+    <Field>
+      <FieldLabel htmlFor="field-priority"><PlatformIcon icon={Flag} />Priority</FieldLabel>
+      <Input id="field-priority" placeholder="High" />
+    </Field>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const label = canvas.getByText("Priority").closest('[data-slot="field-label"]')
+    const icon = label?.querySelector(':scope > [data-slot="platform-icon"]')
+    await expect(icon).not.toBeNull()
+    await expect(getComputedStyle(icon!).width).toBe("14px")
+    await expect(getComputedStyle(icon!).height).toBe("14px")
+  },
 }
 
 export const Invalid: Story = {

@@ -475,6 +475,7 @@
       "distribution": "shell-internal",
       "variants": [
         "Default",
+        "IconTitle",
         "Compact"
       ],
       "tokens": [
@@ -504,6 +505,7 @@
         "story": "@/components/ui/card.stories.tsx",
         "states": [
           "Default",
+          "IconTitle",
           "Compact"
         ]
       }
@@ -563,6 +565,7 @@
       "distribution": "shell-internal",
       "variants": [
         "Default",
+        "IconLabel",
         "Invalid",
         "Responsive",
         "Fieldset"
@@ -594,6 +597,7 @@
         "story": "@/components/ui/field.stories.tsx",
         "states": [
           "Default",
+          "IconLabel",
           "Invalid",
           "Responsive",
           "Fieldset"

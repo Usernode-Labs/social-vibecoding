@@ -12,7 +12,7 @@ function visualSource(media: { png?: string; gif?: string } | null) {
 /** Immutable server-captured review evidence. This does not start a preview or rebuild. */
 export function DevVisualEvidence({ visuals }: { visuals: DevVisuals | null | undefined }) {
   if (!visuals?.captures?.length) return null
-  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={Images} size="sm" />Before and after</CardTitle><CardDescription>Captured review evidence for the latest staging change.</CardDescription></CardHeader><CardContent className="flex flex-col gap-5">
+  return <Card><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={Images} />Before and after</CardTitle><CardDescription>Captured review evidence for the latest staging change.</CardDescription></CardHeader><CardContent className="flex flex-col gap-5">
     {visuals.captures.map((capture) => {
       const before = visualSource(capture.before)
       const after = visualSource(capture.after)

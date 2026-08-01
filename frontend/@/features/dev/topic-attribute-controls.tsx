@@ -61,7 +61,7 @@ export function TopicAttributeControls({ attributes, disabled = false, onChange,
 
     return <Field className="min-w-0" key={field}>
       <div className="flex flex-wrap items-center gap-2">
-        <FieldLabel className="flex items-center gap-2" htmlFor={`topic-attribute-${field}`}><PlatformIcon icon={icon} size="sm" />{label}</FieldLabel>
+        <FieldLabel className="flex items-center gap-2" htmlFor={`topic-attribute-${field}`}><PlatformIcon icon={icon} />{label}</FieldLabel>
         {tally(attribute) ? <Badge className="max-w-full truncate" variant="outline">Community: {tally(attribute)}</Badge> : null}
       </div>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">

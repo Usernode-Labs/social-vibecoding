@@ -38,7 +38,11 @@ type Story = StoryObj<typeof meta>
 export const Comparisons: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
-    await expect(canvas.getByText("Before and after")).toBeTruthy()
+    const title = canvas.getByText("Before and after").closest('[data-slot="card-title"]')
+    const icon = title?.querySelector(':scope > [data-slot="platform-icon"]')
+    await expect(icon).not.toBeNull()
+    await expect(getComputedStyle(icon!).width).toBe("16px")
+    await expect(getComputedStyle(icon!).height).toBe("16px")
     await expect(canvas.getAllByRole("region", { name: /Visual comparison/ })).toHaveLength(2)
     await expect(canvas.getByText(/production capture used the home route/)).toBeTruthy()
   },
