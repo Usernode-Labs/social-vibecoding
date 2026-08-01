@@ -231,6 +231,12 @@ locally with `403`. Do not combine it with `SV_PRODUCTION_READONLY=true`.
   authenticated wallet-signed password change through the existing single-use
   challenge and `signMessage` contract, while ordinary browsers retain
   current-password verification.
+  PI-05 progressive disclosure now presents that authority as one divided
+  Settings surface instead of a stack of competing cards. Identity, account
+  permissions, wallet state, and security remain visible; developer and
+  Usernode-app preferences remain mounted inside collapsed native disclosures,
+  so unsaved browser and bridge-backed state survives close and reopen. Route
+  coverage exercises both disclosure states on phone and desktop.
   Loading, empty, rejection, read-only production-review, and successful
   mutation states have desktop/mobile route evidence. A separate
   `NativeAppSettings` pattern now renders the bridge-v3 settings snapshot and
@@ -643,6 +649,11 @@ locally with `403`. Do not combine it with `SV_PRODUCTION_READONLY=true`.
   invites, creator/app-admin removal rights, and self-leave. The React view
   never infers those permissions from its own list; it merely hides impossible
   controls and reloads the canonical roster after a server-confirmed write.
+  PI-05 keeps accepted collaborators, pending invitations, and the invite
+  workflow visible together inside one continuous Members surface. Advanced
+  visibility policy remains mounted inside a collapsed native disclosure; its
+  unsaved draft survives close and reopen while the server-deployed policy
+  remains the visible authority.
   Visibility is presented alongside membership as a governance proposal, not
   an instant settings mutation: neither current access nor pending invitations
   change locally before the accepted proposal deploys. Production-review mode

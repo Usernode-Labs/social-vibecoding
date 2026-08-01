@@ -255,13 +255,8 @@ export function AiPermissionsSettings({
   return (
     <Card data-testid="settings-ai-permissions">
       <CardHeader>
-        <div className="flex items-start gap-2">
-          <PlatformIcon icon={Bot} />
-          <div>
-            <CardTitle>App AI permissions</CardTitle>
-            <CardDescription>Control the budget and personal-key access granted to each hosted app.</CardDescription>
-          </div>
-        </div>
+        <CardTitle>App AI permissions</CardTitle>
+        <CardDescription>Control the budget and personal-key access granted to each hosted app.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         {state.kind === "loading" ? (
@@ -277,10 +272,10 @@ export function AiPermissionsSettings({
           </Alert>
         ) : null}
         {state.kind === "ready" && state.grants.length === 0 ? (
-          <Empty>
+          <Empty className="p-6">
             <EmptyHeader>
               <EmptyMedia variant="icon"><PlatformIcon icon={Bot} /></EmptyMedia>
-              <EmptyTitle>No app AI permissions yet</EmptyTitle>
+              <EmptyTitle className="text-base">No app AI permissions yet</EmptyTitle>
               <EmptyDescription>Apps appear here after they ask to use AI on your behalf.</EmptyDescription>
             </EmptyHeader>
           </Empty>

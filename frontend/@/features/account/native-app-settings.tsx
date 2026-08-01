@@ -286,13 +286,8 @@ export function NativeAppSettings({ readOnly = false }: { readOnly?: boolean }) 
     <section aria-label="Usernode app settings" className="flex flex-col gap-6" data-testid="native-app-settings">
       <Card>
         <CardHeader>
-          <div className="flex items-start gap-2">
-            <PlatformIcon icon={Smartphone} />
-            <div>
-              <CardTitle>Usernode app · device permissions</CardTitle>
-              <CardDescription>Block production needs the app to wake your device at exact slot times.</CardDescription>
-            </div>
-          </div>
+          <CardTitle>Usernode app · device permissions</CardTitle>
+          <CardDescription>Block production needs the app to wake your device at exact slot times.</CardDescription>
           <CardAction>
             <Badge variant="outline">{permissions.platform || "Device"}</Badge>
           </CardAction>

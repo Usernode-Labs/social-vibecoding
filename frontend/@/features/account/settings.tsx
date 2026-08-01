@@ -1,11 +1,12 @@
 import {
   Bot,
+  ChevronDown,
   EyeOff,
   KeyRound,
   Languages,
   LogOut,
 } from "lucide-react"
-import { useEffect, useState } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import { useNavigate } from "react-router-dom"
 
 import { PlatformIcon } from "@/components/platform-icon"
@@ -63,6 +64,7 @@ import { DeveloperPreferencesSettings } from "@/features/account/developer-prefe
 import { NativeAppSettings } from "@/features/account/native-app-settings"
 import { PasswordSettings } from "@/features/account/password-settings"
 import { WalletLinkSettings } from "@/features/account/wallet-link-settings"
+import { cn } from "@/lib/utils"
 
 type WebSettingsState =
   | { kind: "loading" }
@@ -95,6 +97,35 @@ const localeOptions = [
 
 function messageFrom(cause: unknown, fallback: string) {
   return cause instanceof Error && cause.message ? cause.message : fallback
+}
+
+function SettingsDisclosure({
+  children,
+  description,
+  testId,
+  title,
+}: {
+  children: ReactNode
+  description: string
+  testId: string
+  title: string
+}) {
+  return (
+    <details className="group" data-testid={testId}>
+      <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-4 border-b px-6 py-4 outline-none transition-colors hover:bg-muted/40 focus-visible:ring-3 focus-visible:ring-ring/30">
+        <span className="min-w-0">
+          <span className="block font-heading text-base font-medium">{title}</span>
+          <span className="mt-1 block text-sm text-muted-foreground">{description}</span>
+        </span>
+        <PlatformIcon className="transition-transform group-open:rotate-180" icon={ChevronDown} size="sm" />
+      </summary>
+      <div className="bg-muted/15 [&>[data-slot=alert]]:m-6">{children}</div>
+    </details>
+  )
+}
+
+function SettingsNotice({ children, className }: { children: ReactNode; className?: string }) {
+  return <div className={cn("border-b px-6 py-4", className)}>{children}</div>
 }
 
 export function Settings() {
@@ -230,17 +261,24 @@ export function Settings() {
       className="isolate flex w-full flex-1 flex-col"
       data-testid="settings"
     >
-      <TopBar action={<Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline">Refresh</Button>} title="Settings" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
+      <TopBar action={<Button onClick={() => setRefreshKey((value) => value + 1)} size="sm" type="button" variant="outline">Refresh</Button>} title="Settings" />
+      <div className="w-full flex-1 px-4 py-4 antialiased sm:px-6">
+      <Card
+        className="gap-0 overflow-visible py-0 [&_[data-slot=card]]:gap-4 [&_[data-slot=card]]:overflow-visible [&_[data-slot=card]]:rounded-none [&_[data-slot=card]]:border-b [&_[data-slot=card]]:bg-transparent [&_[data-slot=card]]:py-6 [&_[data-slot=card]]:shadow-none [&_[data-slot=card]]:ring-0"
+        data-testid="settings-surface"
+      >
 
       {preferencesReadOnly ? (
-        <Alert data-testid={isProductionReadOnlyReview ? "settings-production-review" : "settings-app-write-scope"}>
-          <AlertTitle>Read-only</AlertTitle>
-          <AlertDescription>
-            {isProductionReadOnlyReview
-              ? "Account, wallet, and device setting changes are unavailable. Appearance remains available in this browser."
-              : "Account preference, AI permission, agent file, wallet, and password changes are unavailable. Appearance and device settings remain available."}
-          </AlertDescription>
-        </Alert>
+        <SettingsNotice>
+          <Alert data-testid={isProductionReadOnlyReview ? "settings-production-review" : "settings-app-write-scope"}>
+            <AlertTitle>Read-only</AlertTitle>
+            <AlertDescription>
+              {isProductionReadOnlyReview
+                ? "Account, wallet, and device setting changes are unavailable. Appearance remains available in this browser."
+                : "Account preference, AI permission, agent file, wallet, and password changes are unavailable. Appearance and device settings remain available."}
+            </AlertDescription>
+          </Alert>
+        </SettingsNotice>
       ) : null}
 
       <Card data-testid="settings-appearance">
@@ -253,7 +291,9 @@ export function Settings() {
         <CardContent>
           <Field>
             <FieldLabel>Color mode</FieldLabel>
-            <ThemeSwitcher />
+            <div>
+              <ThemeSwitcher className="max-w-full" />
+            </div>
             <FieldDescription>Your choice also follows this WebView when it is opened inside Usernode.</FieldDescription>
           </Field>
         </CardContent>
@@ -332,39 +372,6 @@ export function Settings() {
             </CardContent>
           </Card>
 
-          {webState.settings.isAdmin ? (
-            <Card data-testid="settings-admin-preview">
-              <CardHeader>
-                <CardTitle>Admin preview</CardTitle>
-                <CardDescription>
-                  Preview the platform as a regular user. Your administrator permissions do not change; the page reloads to apply this view.
-                </CardDescription>
-                <CardAction>
-                  <Badge variant="outline">
-                    {webState.settings.canAdminWrite ? "Administrator" : "View-only administrator"}
-                  </Badge>
-                </CardAction>
-              </CardHeader>
-              <CardContent>
-                <Field orientation="responsive">
-                  <FieldContent>
-                    <FieldLabel htmlFor="settings-admin-preview">
-                      <PlatformIcon icon={EyeOff} />
-                      View as non-admin
-                    </FieldLabel>
-                  </FieldContent>
-                  <Switch
-                    checked={adminPreview}
-                    id="settings-admin-preview"
-                    onCheckedChange={changeAdminPreview}
-                  />
-                </Field>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          <DeveloperPreferencesSettings />
-
           <Card data-testid="settings-ai-billing">
             <CardHeader>
               <CardTitle>AI billing</CardTitle>
@@ -419,10 +426,11 @@ export function Settings() {
               </Button>
               {webState.settings.hasApiKey ? (
                 <Button
+                  className="text-destructive hover:text-destructive"
                   disabled={preferencesReadOnly || apiKeyBusy !== null}
                   onClick={() => setRemoveKeyOpen(true)}
                   type="button"
-                  variant="destructive"
+                  variant="outline"
                 >
                   Remove key
                 </Button>
@@ -437,8 +445,6 @@ export function Settings() {
             readOnly={preferencesReadOnly}
           />
 
-          <AgentFilesSettings readOnly={preferencesReadOnly} />
-
           <WalletLinkSettings
             enabled={webState.settings.walletLinkEnabled}
             linkedPubkey={webState.settings.usernodePubkey}
@@ -449,43 +455,95 @@ export function Settings() {
             readOnly={preferencesReadOnly}
           />
 
-          <PasswordSettings
-            readOnly={preferencesReadOnly}
-            walletPubkey={webState.settings.usernodePubkey}
-          />
+          <SettingsDisclosure
+            description="Admin preview, browser preferences, and personal agent files."
+            testId="settings-developer-disclosure"
+            title="Developer preferences"
+          >
+            {webState.settings.isAdmin ? (
+              <Card data-testid="settings-admin-preview">
+                <CardHeader>
+                  <CardTitle>Admin preview</CardTitle>
+                  <CardDescription>
+                    Preview the platform as a regular user. Your administrator permissions do not change; the page reloads to apply this view.
+                  </CardDescription>
+                  <CardAction>
+                    <Badge variant="outline">
+                      {webState.settings.canAdminWrite ? "Administrator" : "View-only administrator"}
+                    </Badge>
+                  </CardAction>
+                </CardHeader>
+                <CardContent>
+                  <Field orientation="responsive">
+                    <FieldContent>
+                      <FieldLabel htmlFor="settings-admin-preview">
+                        <PlatformIcon icon={EyeOff} />
+                        View as non-admin
+                      </FieldLabel>
+                    </FieldContent>
+                    <Switch
+                      checked={adminPreview}
+                      id="settings-admin-preview"
+                      onCheckedChange={changeAdminPreview}
+                    />
+                  </Field>
+                </CardContent>
+              </Card>
+            ) : null}
+            <DeveloperPreferencesSettings />
+            <AgentFilesSettings readOnly={preferencesReadOnly} />
+          </SettingsDisclosure>
         </>
       ) : null}
 
       {preferenceError ? (
-        <Alert data-testid="settings-preference-error" variant="destructive">
-          <AlertTitle>Could not save preference</AlertTitle>
-          <AlertDescription>{preferenceError}</AlertDescription>
-        </Alert>
+        <SettingsNotice>
+          <Alert data-testid="settings-preference-error" variant="destructive">
+            <AlertTitle>Could not save preference</AlertTitle>
+            <AlertDescription>{preferenceError}</AlertDescription>
+          </Alert>
+        </SettingsNotice>
       ) : null}
 
-      <NativeAppSettings readOnly={isProductionReadOnlyReview} />
+      <SettingsDisclosure
+        description="Device permissions, node behavior, diagnostics, and native account controls."
+        testId="settings-native-disclosure"
+        title="Usernode app preferences"
+      >
+        <NativeAppSettings readOnly={isProductionReadOnlyReview} />
+      </SettingsDisclosure>
 
-      <Card data-testid="settings-web-session">
-        <CardHeader>
-          <div className="flex items-start gap-2">
-            <PlatformIcon icon={LogOut} />
-            <div>
-              <CardTitle>Social Vibecoding session</CardTitle>
-              <CardDescription>End this web session in this browser or WebView.</CardDescription>
-            </div>
-          </div>
-        </CardHeader>
-        <CardFooter>
-          <Button onClick={() => setLogoutOpen(true)} type="button" variant="destructive">
-            Log out
-          </Button>
-        </CardFooter>
-      </Card>
+      <section aria-labelledby="settings-security-title" className="bg-destructive/5">
+        <div className="px-6 pt-6">
+          <h2 className="font-heading text-base font-medium" id="settings-security-title">Account security</h2>
+          <p className="mt-1 text-sm text-muted-foreground">Change your login credential or end this web session.</p>
+        </div>
+        {webState.kind === "ready" ? (
+          <PasswordSettings
+            readOnly={preferencesReadOnly}
+            walletPubkey={webState.settings.usernodePubkey}
+          />
+        ) : null}
+        <Card data-testid="settings-web-session">
+          <CardHeader>
+            <CardTitle>Social Vibecoding session</CardTitle>
+            <CardDescription>End this web session in this browser or WebView.</CardDescription>
+          </CardHeader>
+          <CardFooter>
+            <Button onClick={() => setLogoutOpen(true)} type="button" variant="destructive">
+              <PlatformIcon data-icon="inline-start" icon={LogOut} />
+              Log out
+            </Button>
+          </CardFooter>
+        </Card>
+      </section>
       {logoutError ? (
-        <Alert variant="destructive">
-          <AlertTitle>Could not log out</AlertTitle>
-          <AlertDescription>{logoutError}</AlertDescription>
-        </Alert>
+        <SettingsNotice className="bg-destructive/5">
+          <Alert variant="destructive">
+            <AlertTitle>Could not log out</AlertTitle>
+            <AlertDescription>{logoutError}</AlertDescription>
+          </Alert>
+        </SettingsNotice>
       ) : null}
 
       <AlertDialog onOpenChange={(open) => { if (!loggingOut) setLogoutOpen(open) }} open={logoutOpen}>
@@ -530,6 +588,8 @@ export function Settings() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div></div>
+      </Card>
+    </div>
+    </div>
   )
 }

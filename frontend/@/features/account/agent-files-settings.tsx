@@ -1,4 +1,4 @@
-import { Bot, FileCode2, FileText, RefreshCw, Trash2, Upload } from "lucide-react"
+import { FileCode2, FileText, RefreshCw, Trash2, Upload } from "lucide-react"
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
@@ -299,15 +299,10 @@ export function AgentFilesSettings({ readOnly }: { readOnly: boolean }) {
   return (
     <Card data-testid="settings-agent-files">
       <CardHeader>
-        <div className="flex items-start gap-2">
-          <PlatformIcon icon={Bot} />
-          <div>
-            <CardTitle>Agent instructions and skills</CardTitle>
-            <CardDescription>
-              Personal markdown files supplied to coding agents on every build or scout run you start.
-            </CardDescription>
-          </div>
-        </div>
+        <CardTitle>Agent instructions and skills</CardTitle>
+        <CardDescription>
+          Personal markdown files supplied to coding agents on every build or scout run you start.
+        </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <input

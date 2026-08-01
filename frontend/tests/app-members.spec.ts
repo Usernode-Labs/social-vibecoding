@@ -30,6 +30,13 @@ function roster(rows = [
   return { collaborators: rows, collabVisibility: "private", viewVisibility: "private", creatorId: 7 }
 }
 
+async function openPermissions(page: import("@playwright/test").Page) {
+  const disclosure = page.getByTestId("members-permissions-disclosure")
+  if (await disclosure.getAttribute("open") === null) await disclosure.locator("summary").click()
+  await expect(disclosure).toHaveAttribute("open", "")
+  return disclosure
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { id: 7, username: "ava" } } }))
   await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app } }))
@@ -53,10 +60,12 @@ test("links App Detail to the collaboration manager and renders member/pending-i
   await expect.poll(() => members.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
   await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("@ava")
   await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("Creator")
-  await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("@max")
-  await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("Invited")
+  await expect(page.getByRole("list", { name: "RecipeBot pending invitations" })).toContainText("@max")
+  await expect(page.getByRole("list", { name: "RecipeBot pending invitations" })).toContainText("Invited")
   await expect(page.getByRole("button", { name: "Remove @lin" })).toBeVisible()
   await expect(page.getByRole("button", { name: "Revoke @max" })).toBeVisible()
+  await expect(page.getByTestId("members-permissions-disclosure")).not.toHaveAttribute("open", "")
+  await expect(page.getByTestId("app-visibility-settings")).toBeHidden()
   await chrome.getByRole("button", { name: "Back" }).click()
   await expect(page).toHaveURL("/react/apps/recipebot")
 })
@@ -80,7 +89,7 @@ test("uses the canonical typeahead and invite endpoints, then reloads the canoni
 
   await expect.poll(() => inviteRequest).toEqual({ method: "POST", body: { username: "mira" } })
   await expect(page.getByText("Invited @mira.")).toBeVisible()
-  await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("@mira")
+  await expect(page.getByRole("list", { name: "RecipeBot pending invitations" })).toContainText("@mira")
 })
 
 test("confirms the exact remove endpoint and refreshes the roster", async ({ page }) => {
@@ -113,9 +122,14 @@ test("creates a visibility proposal without changing the current access policy l
   })
 
   await page.goto("/react/apps/recipebot/members")
+  const permissions = await openPermissions(page)
   await expect(page.getByTestId("app-visibility-settings")).toContainText("Only accepted collaborators can build or open this app.")
   await page.getByRole("group", { name: "Who can build" }).getByRole("button", { name: "Anyone" }).click()
   await expect(page.getByTestId("app-visibility-settings")).toContainText("Anyone on the platform can build and open this app.")
+  await permissions.locator("summary").click()
+  await expect(permissions).not.toHaveAttribute("open", "")
+  await permissions.locator("summary").click()
+  await expect(page.getByRole("group", { name: "Who can build" }).getByRole("button", { name: "Anyone" })).toHaveAttribute("aria-pressed", "true")
   await page.getByRole("button", { name: "Propose visibility change" }).click()
   await expect(page.getByRole("alertdialog")).toContainText("The change applies only after the group approves it")
   await page.getByRole("alertdialog").getByRole("button", { name: "Open proposal" }).click()
@@ -139,6 +153,7 @@ test("continues an already-open visibility proposal returned by the server", asy
   }))
 
   await page.goto("/react/apps/recipebot/members")
+  await openPermissions(page)
   await page.getByRole("group", { name: "Who can open the app" }).getByRole("button", { name: "Everyone" }).click()
   await page.getByRole("button", { name: "Propose visibility change" }).click()
   await page.getByRole("alertdialog").getByRole("button", { name: "Open proposal" }).click()
@@ -160,6 +175,7 @@ test("keeps visibility read-only for a collaborator without manage authority", a
   })
 
   await page.goto("/react/apps/recipebot/members")
+  await openPermissions(page)
   await expect(page.getByTestId("app-visibility-settings")).toContainText("Only the app creator or an administrator")
   await expect(page.getByRole("group", { name: "Who can build" }).getByRole("button", { name: "Anyone" })).toBeDisabled()
   await expect(page.getByRole("button", { name: "Propose visibility change" })).toBeDisabled()
@@ -198,6 +214,7 @@ test("production review disables every collaborator mutation without requests", 
   await page.route("**/api/apps/recipebot/collaborators/*", (route) => { writes += 1; return route.fulfill({ status: 500 }) })
   await page.route("**/api/apps/recipebot/visibility-pr", (route) => { writes += 1; return route.fulfill({ status: 500 }) })
   await page.goto("/react/apps/recipebot/members")
+  await openPermissions(page)
   await expect(page.getByTestId("members-production-review")).toContainText("Read-only")
   await expect(page.getByTestId("members-production-review")).toContainText("Invitations, collaborator changes, and visibility changes are unavailable.")
   await expect(page.getByRole("button", { name: "Send invite" })).toBeDisabled()

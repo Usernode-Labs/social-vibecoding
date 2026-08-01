@@ -40,6 +40,12 @@ async function expectPlatformAdminLink(page: import("@playwright/test").Page) {
   }
 }
 
+async function openDeveloperPreferences(page: import("@playwright/test").Page) {
+  const disclosure = page.getByTestId("settings-developer-disclosure")
+  if (await disclosure.getAttribute("open") === null) await disclosure.locator("summary").click()
+  await expect(disclosure).toHaveAttribute("open", "")
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: admin } }))
   await page.route((url) => url.pathname === "/api/me/llm-grants", (route) => route.fulfill({ json: { grants: [] } }))
@@ -51,12 +57,14 @@ test.beforeEach(async ({ page }) => {
 test("persists the administrator preview across routes and restores the full shell", async ({ page }) => {
   await page.goto("/react/settings")
 
+  await openDeveloperPreferences(page)
   await expect(page.getByTestId("settings-admin-preview")).toBeVisible()
   await expectPlatformAdminLink(page)
 
   await page.getByRole("switch", { name: "View as non-admin" }).click()
 
   await expect(page.getByTestId("admin-preview-banner")).toBeVisible()
+  await openDeveloperPreferences(page)
   await expect(page.getByRole("switch", { name: "View as non-admin" })).toBeChecked()
   await expect(page.getByRole("navigation", { name: "Platform navigation" }).getByRole("link", { exact: true, name: "Admin" })).toHaveCount(0)
   await expect.poll(() => page.evaluate(() => localStorage.getItem("viewAsNonAdmin"))).toBe("1")
@@ -64,6 +72,7 @@ test("persists the administrator preview across routes and restores the full she
   await page.getByRole("button", { name: "Switch back" }).click()
 
   await expect(page.getByTestId("admin-preview-banner")).toHaveCount(0)
+  await openDeveloperPreferences(page)
   await expectPlatformAdminLink(page)
   await expect(page.getByRole("switch", { name: "View as non-admin" })).not.toBeChecked()
   await expect.poll(() => page.evaluate(() => localStorage.getItem("viewAsNonAdmin"))).toBeNull()

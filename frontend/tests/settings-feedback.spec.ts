@@ -63,6 +63,16 @@ async function expectFullCanvasRoute(page: import("@playwright/test").Page, test
   await expect.poll(() => route.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
 }
 
+async function openSettingsDisclosure(
+  page: import("@playwright/test").Page,
+  testId: "settings-developer-disclosure" | "settings-native-disclosure"
+) {
+  const disclosure = page.getByTestId(testId)
+  if (await disclosure.getAttribute("open") === null) await disclosure.locator("summary").click()
+  await expect(disclosure).toHaveAttribute("open", "")
+  return disclosure
+}
+
 test("replaces the dead shell hashes with React settings and feedback routes", async ({ page }) => {
   await page.goto("/react/")
 
@@ -83,6 +93,14 @@ test("makes the native-settings boundary explicit in a regular browser", async (
   await expect(page.getByTestId("settings-unavailable")).toContainText("Native controls need Usernode")
   await expect(page.getByTestId("settings-unavailable")).toContainText("native permissions, wallet controls")
   await expect(page.getByTestId("settings-web-session")).toContainText("Social Vibecoding session")
+  await expect(page.getByTestId("settings-developer-disclosure")).not.toHaveAttribute("open", "")
+  await expect(page.getByTestId("settings-native-disclosure")).not.toHaveAttribute("open", "")
+  await expect(page.getByRole("heading", { name: "Account security" })).toBeVisible()
+  const themeTrack = await page.getByRole("group", { name: "Color mode" }).boundingBox()
+  const settingsSurface = await page.getByTestId("settings-surface").boundingBox()
+  expect(themeTrack).not.toBeNull()
+  expect(settingsSurface).not.toBeNull()
+  expect(themeTrack!.width).toBeLessThan(settingsSurface!.width * 0.8)
 })
 
 test("ends the web session after explicit confirmation", async ({ page }) => {
@@ -349,6 +367,7 @@ test("shows the canonical platform and personal-key spend when BYOK is active", 
 
 test("persists browser-owned developer preferences without a server mutation", async ({ page }) => {
   await page.goto("/react/settings")
+  const disclosure = await openSettingsDisclosure(page, "settings-developer-disclosure")
 
   const consoleToggle = page.getByRole("switch", { name: "Always show developer console" })
   const alertsToggle = page.getByRole("switch", { name: "Dev-chat sound and alerts" })
@@ -358,12 +377,19 @@ test("persists browser-owned developer preferences without a server mutation", a
   await consoleToggle.click()
   await alertsToggle.click()
 
+  await disclosure.locator("summary").click()
+  await expect(disclosure).not.toHaveAttribute("open", "")
+  await disclosure.locator("summary").click()
+  await expect(consoleToggle).toBeChecked()
+  await expect(alertsToggle).not.toBeChecked()
+
   await expect.poll(() => page.evaluate(() => ({
     console: localStorage.getItem("usernode:devConsoleMode"),
     alerts: localStorage.getItem("devchat_alerts_enabled"),
   }))).toEqual({ console: "always", alerts: "0" })
 
   await page.reload()
+  await openSettingsDisclosure(page, "settings-developer-disclosure")
   await expect(page.getByRole("switch", { name: "Always show developer console" })).toBeChecked()
   await expect(page.getByRole("switch", { name: "Dev-chat sound and alerts" })).not.toBeChecked()
 })
@@ -804,6 +830,7 @@ test("uploads, inspects, and deletes personal agent files", async ({ page }) => 
   })
 
   await page.goto("/react/settings")
+  await openSettingsDisclosure(page, "settings-developer-disclosure")
   const existing = page.getByTestId("agent-file-instruction-code-style")
   await existing.getByRole("button", { name: "View file" }).click()
   await expect(existing.getByText("Prefer small functions.")).toBeVisible()
@@ -838,6 +865,7 @@ test("falls back to the allowlisted native settings screen on an older bridge", 
     },
   }))
   await page.goto("/react/settings")
+  await openSettingsDisclosure(page, "settings-native-disclosure")
 
   await expect(page.getByTestId("settings-unsupported")).toBeVisible()
   await page.getByRole("button", { name: "Open native settings" }).click()
@@ -922,6 +950,7 @@ test("renders and operates the full trusted Usernode app settings surface", asyn
     })
   })
   await page.goto("/react/settings")
+  await openSettingsDisclosure(page, "settings-native-disclosure")
 
   await expect(page.getByTestId("native-app-settings")).toBeVisible()
   await expect(page.getByText("App 1.4.2 (87) · Node 0.9.1 · a1b2c3d")).toBeVisible()
@@ -1050,6 +1079,8 @@ test("production review mode prevents feedback and native settings actions", asy
   }))
 
   await page.goto("/react/settings")
+  await openSettingsDisclosure(page, "settings-developer-disclosure")
+  await openSettingsDisclosure(page, "settings-native-disclosure")
   await expect(page.getByTestId("settings-production-review")).toContainText("Read-only")
   await expect(page.getByTestId("settings-production-review")).toContainText("Account, wallet, and device setting changes are unavailable. Appearance remains available in this browser.")
   await expect(page.getByLabel("Language")).toBeDisabled()
