@@ -5,8 +5,13 @@ import { ChallengeFeed } from "@/features/community/challenges"
 const now = new Date("2026-07-28T12:00:00.000Z")
 
 const snapshot = {
-  season: { season_id: 8, name: "Summer build", is_active: true },
-  entries: [],
+  season: { season_id: 8, name: "Summer build", is_active: true, ends_at: "2026-08-18T12:00:00.000Z" },
+  seasonPoints: 675,
+  entries: [
+    { rank: 1, display_name: "Ava", user_id: 41, total_points: 1200 },
+    { rank: 2, display_name: "Mira", user_id: 42, total_points: 950 },
+    { rank: 3, display_name: "Noah", user_id: 43, total_points: 825 },
+  ],
   challengeProgress: [
     { challenge_id: 1, state: "in_progress" as const, current: 1.5, target: 3 },
     { challenge_id: 2, state: "pending" as const, pending_points: 100 },
@@ -39,4 +44,16 @@ export const FairRewardsContractMatrix: Story = { args: { snapshot, now } }
 export const FairRewardsContractMatrixDark: Story = {
   ...FairRewardsContractMatrix,
   globals: { theme: "dark" },
+}
+
+export const FairRewardsContractMatrixMobile: Story = {
+  ...FairRewardsContractMatrix,
+  parameters: { viewport: { defaultViewport: "mobile1" } },
+}
+
+export const PublicFeed: Story = {
+  args: {
+    snapshot: { ...snapshot, challengeProgress: [], seasonPoints: undefined },
+    now,
+  },
 }

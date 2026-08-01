@@ -2423,7 +2423,10 @@
       "maturity": "candidate",
       "distribution": "shell-internal",
       "variants": [
-        "FairRewardsContractMatrix"
+        "FairRewardsContractMatrix",
+        "FairRewardsContractMatrixDark",
+        "FairRewardsContractMatrixMobile",
+        "PublicFeed"
       ],
       "tokens": [
         "foundation.font.sans",
@@ -2451,7 +2454,10 @@
       "evidence": {
         "story": "@/features/community/challenges.stories.tsx",
         "states": [
-          "FairRewardsContractMatrix"
+          "FairRewardsContractMatrix",
+          "FairRewardsContractMatrixDark",
+          "FairRewardsContractMatrixMobile",
+          "PublicFeed"
         ]
       }
     },

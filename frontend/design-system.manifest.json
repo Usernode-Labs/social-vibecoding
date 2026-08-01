@@ -290,7 +290,10 @@
       "story": {
         "module": "@/features/community/challenges.stories.tsx",
         "states": [
-          "FairRewardsContractMatrix"
+          "FairRewardsContractMatrix",
+          "FairRewardsContractMatrixDark",
+          "FairRewardsContractMatrixMobile",
+          "PublicFeed"
         ]
       }
     },

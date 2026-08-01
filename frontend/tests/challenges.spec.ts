@@ -12,7 +12,7 @@ function challengeFixture() {
   const at = (millisecondsFromNow: number) => new Date(now + millisecondsFromNow).toISOString()
 
   return {
-    season: { season_id: 8, name: "Summer build", is_active: true },
+    season: { season_id: 8, name: "Summer build", is_active: true, ends_at: at(21 * 24 * 60 * 60 * 1000) },
     challenges: [
       {
         id: 1,
@@ -71,14 +71,19 @@ function challengeFixture() {
       },
     ],
     progress: {
-      challenge_progress: [
+      scope: "season",
+      events: [{
+        event_id: 80,
+        total_points: 675,
+        challenge_progress: [
         { challenge_id: 1, state: "none", current: 0, target: 1, pending_points: 0, earned_points: 0 },
         // Fractional values intentionally prove the rail is not integer-only.
         { challenge_id: 2, state: "in progress", current: 1.5, target: 3, pending_points: 0, earned_points: 0 },
         { challenge_id: 3, state: "pending", pending_points: 100, earned_points: 0, description: "Survey submitted" },
         // The unknown metric must still render safely as a terminal card.
         { challenge_id: 4, state: "earned", pending_points: 0, earned_points: 500, description: "Approved" },
-      ],
+        ],
+      }],
     },
     leaderboard: { leaderboard: [{ rank: 1, display_name: "Ava", total_points: 1200 }] },
   }
@@ -112,6 +117,8 @@ test("renders the backend-driven challenges feed in perceived-time bands", async
 
   await expect(challenges.getByRole("heading", { level: 1 })).toHaveCount(1)
   await expect(challenges).toHaveCSS("max-width", "none")
+  await expect(challenges.getByTestId("challenge-season-anchor")).toContainText("675")
+  await expect(challenges.getByTestId("challenge-season-anchor")).toContainText("Current window")
   await expect(challenges.getByRole("heading", { name: "Featured" })).toBeVisible()
   await expect(challenges.getByRole("heading", { name: "Today" })).toBeVisible()
   await expect(challenges.getByRole("heading", { name: "This week" })).toBeVisible()
@@ -140,12 +147,11 @@ test("keeps every atomic progress state readable inside the title-and-rail contr
 test("binds completed and in-progress rails to their governed visual contracts", async ({ page }) => {
   await page.goto("/react/community/challenges")
   const completedCard = page.getByTestId("challenge-card-4")
-  const completedRail = completedCard.getByRole("progressbar")
   const inProgressRail = page.getByTestId("challenge-card-2").getByRole("progressbar")
   const inProgressFill = inProgressRail.getByTestId("challenge-progress-fill")
 
-  await expect(completedRail).toHaveAttribute("data-status-tone", "positive")
-  await expect(completedRail.locator("span").last()).toHaveCSS("font-weight", "600")
+  await expect(completedCard.getByRole("link")).toHaveAttribute("data-status-tone", "positive")
+  await expect(completedCard.getByText("Completed 500 pts")).toHaveCSS("font-weight", "600")
   await expect(completedCard.getByRole("link")).toHaveCount(1)
   await expect(completedCard.getByRole("button")).toHaveCount(0)
 
@@ -167,7 +173,7 @@ test("renders fractional and unknown metrics without unsafe numeric output", asy
   await expect(challenges).not.toContainText("Infinity")
 })
 
-test("stacks challenge cards in one linear column instead of a responsive grid", async ({ page }) => {
+test("renders continuous challenge rows in one linear band instead of cards", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto("/react/community/challenges")
   const first = page.getByTestId("challenge-card-4")
@@ -178,6 +184,20 @@ test("stacks challenge cards in one linear column instead of a responsive grid",
   expect(secondBox).not.toBeNull()
   expect(secondBox!.x).toBeCloseTo(firstBox!.x, 0)
   expect(Math.abs(secondBox!.y - firstBox!.y)).toBeGreaterThan(Math.min(firstBox!.height, secondBox!.height) - 1)
+  await expect(first).toHaveCSS("box-shadow", "none")
+  await expect(second).toHaveCSS("box-shadow", "none")
+})
+
+test("renders leaderboard points as the row anchor without badges or cards", async ({ page }) => {
+  await page.goto("/react/community/challenges")
+  const leaderboard = page.getByRole("heading", { name: "Season leaderboard" }).locator("..")
+  const row = page.getByTestId("challenge-leaderboard-row")
+
+  await expect(row).toHaveCount(1)
+  await expect(row).toContainText("#1")
+  await expect(row).toContainText("Ava")
+  await expect(row.getByLabel("1,200 points")).toBeVisible()
+  await expect(leaderboard.getByRole("button")).toHaveCount(0)
 })
 
 test("keeps the dynamic feed usable at a mobile width", async ({ page }) => {
@@ -187,6 +207,10 @@ test("keeps the dynamic feed usable at a mobile width", async ({ page }) => {
   const challenges = page.getByTestId("challenges")
   await expect(challenges).toBeVisible()
   await expect(challenges.getByRole("heading", { name: "Featured" })).toBeVisible()
+  const firstLink = challenges.getByTestId("challenge-card-1").getByRole("link")
+  const firstLinkBox = await firstLink.boundingBox()
+  expect(firstLinkBox).not.toBeNull()
+  expect(firstLinkBox!.height).toBeGreaterThanOrEqual(48)
   expect(await challenges.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
 })
 

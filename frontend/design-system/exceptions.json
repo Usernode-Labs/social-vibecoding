@@ -37,30 +37,6 @@
       "expires": "2026-09-30"
     },
     {
-      "rule": "no-space-utilities",
-      "file": "@/features/community/challenges.tsx",
-      "matches": [
-        "space-y-2",
-        "space-y-3",
-        "space-y-8"
-      ],
-      "count": 5,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt; exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/features/community/challenges.tsx",
-      "matches": [
-        "grid-cols-[auto_1fr_auto]"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Feed typography and leaderboard layout require named variants before removal.",
-      "expires": "2026-09-30"
-    },
-    {
       "rule": "no-inline-style",
       "file": "@/features/community/challenges.tsx",
       "matches": [

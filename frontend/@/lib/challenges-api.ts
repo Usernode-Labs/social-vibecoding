@@ -74,6 +74,7 @@ export type ChallengeLeaderboardEntry = {
   rank: number
   display_name?: string
   participant_id?: number
+  user_id?: number
   total_points?: number
 }
 
@@ -83,6 +84,8 @@ export type ChallengeSnapshot = {
   entries: ChallengeLeaderboardEntry[]
   /** Empty when no participant ID was supplied or a read-only breakdown fails. */
   challengeProgress: ChallengeProgress[]
+  /** Season-scoped participant points from the already-loaded breakdown. */
+  seasonPoints?: number
 }
 
 export type ChallengeSnapshotOptions = {
@@ -100,11 +103,13 @@ export type ChallengeBreakdownEvent = {
   event_id?: number
   event?: { id?: number }
   challenge_progress?: unknown
+  total_points?: number | string
 }
 
 export type ChallengeBreakdown = {
   scope?: string
   challenge_progress?: unknown
+  total_points?: number | string
   event_id?: number
   event?: { id?: number }
   events?: ChallengeBreakdownEvent[]
@@ -192,6 +197,20 @@ export function collectChallengeProgress(breakdown: ChallengeBreakdown | null | 
   ]
 }
 
+/** Keeps the anchor on the same season breakdown already used for progress. */
+export function challengeSeasonPoints(breakdown: ChallengeBreakdown | null | undefined): number | undefined {
+  if (!breakdown) return undefined
+  const direct = asNumber(breakdown.total_points)
+  if (direct !== undefined) return direct
+  if (breakdown.scope !== "season" || !breakdown.events) return undefined
+  const eventTotals = breakdown.events.flatMap((event) => {
+    const total = asNumber(event.total_points)
+    return total === undefined ? [] : [total]
+  })
+  if (!eventTotals.length) return undefined
+  return eventTotals.reduce((total, points) => total + points, 0)
+}
+
 /**
  * Keeps the API-to-presentation boundary fixture-testable without coupling it
  * to a live session or component. This is the production normalization path.
@@ -202,6 +221,7 @@ export function normalizeChallengeSnapshot(payload: ChallengeSnapshotPayload): C
     challenges: payload.challenges,
     entries: payload.leaderboard?.leaderboard || payload.leaderboard?.entries || [],
     challengeProgress: collectChallengeProgress(payload.breakdown),
+    seasonPoints: challengeSeasonPoints(payload.breakdown),
   }
 }
 
