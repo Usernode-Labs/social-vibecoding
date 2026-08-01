@@ -193,8 +193,9 @@ test('schema adds a generalized native reviewed-head stamp', () => {
 test('native head reconciliation clears stale votes and re-runs checks at the new SHA', async () => {
   const ctx = loadVotes({ liveHead: NEW });
   const pool = recordingPool([
-    [/UPDATE chat_sessions[\s\S]*reviewed_head_sha/, [{ reviewed_head_sha: NEW }]],
-    [/DELETE FROM pr_votes/, { rows: [], rowCount: 2 }],
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_deleted: 2,
+    }]],
   ]);
   const session = nativeSession();
   try {
@@ -209,10 +210,10 @@ test('native head reconciliation clears stale votes and re-runs checks at the ne
     const update = pool.queries.find((q) => /UPDATE chat_sessions/.test(q.sql));
     assert.deepEqual(update.params, [NEW, session.id, OLD],
       'optimistic update cannot overwrite a newer concurrent head');
-    const deletion = pool.queries.find((q) => /DELETE FROM pr_votes/.test(q.sql));
-    assert.match(deletion.sql, /head_sha IS DISTINCT FROM \$2/,
+    assert.match(update.sql, /DELETE FROM pr_votes/,
+      'the head move and stale-vote cleanup share one atomic statement');
+    assert.match(update.sql, /head_sha IS DISTINCT FROM \$1/,
       'only approvals for another revision are deleted');
-    assert.deepEqual(deletion.params, [session.id, NEW]);
     assert.deepEqual(ctx.pendingCalls, [{ sessionId: session.id, sha: NEW }]);
     assert.equal(ctx.rerunCalls[0].newHead, NEW);
     assert.ok(ctx.messages.some((m) => /earlier votes were cleared/i.test(m)));
@@ -242,8 +243,9 @@ test('a native PR without repository identity fails closed', async () => {
 test('background governance sweep refreshes native head before it can count or reject votes', async () => {
   const ctx = loadVotes({ liveHead: NEW });
   const pool = recordingPool([
-    [/UPDATE chat_sessions[\s\S]*reviewed_head_sha/, [{ reviewed_head_sha: NEW }]],
-    [/DELETE FROM pr_votes/, { rows: [], rowCount: 3 }],
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_deleted: 3,
+    }]],
   ]);
   const session = nativeSession();
   try {
@@ -323,8 +325,9 @@ test('native head-moved merge returns to review and resets against the new live 
   const pool = recordingPool([
     [/SET status = 'merging'/, [{ id: 41 }]],
     [/SET status = 'promoted'/, { rows: [], rowCount: 1 }],
-    [/UPDATE chat_sessions[\s\S]*reviewed_head_sha/, [{ reviewed_head_sha: NEW }]],
-    [/DELETE FROM pr_votes/, { rows: [], rowCount: 1 }],
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, [{
+      reviewed_head_sha: NEW, votes_deleted: 1,
+    }]],
   ]);
   const session = nativeSession();
   try {
@@ -403,6 +406,73 @@ test('an ambiguous native 409 defers when GitHub cannot verify the live head', a
     assert.equal(ctx.rebuilds.length, 0);
     assert.ok(pool.queries.some((q) => /SET status = 'promoted'/.test(q.sql)),
       'the merge claim is released for a safe retry');
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('a vote is accepted only for the native revision rendered by the browser', () => {
+  const ctx = loadVotes({ liveHead: NEW });
+  try {
+    assert.equal(ctx.subject.voteMatchesReviewedRevision(NEW, {
+      enforced: true, headSha: NEW,
+    }), true);
+    assert.equal(ctx.subject.voteMatchesReviewedRevision(OLD, {
+      enforced: true, headSha: NEW,
+    }), false, 'a click rendered for the old commit cannot approve the new one');
+    assert.equal(ctx.subject.voteMatchesReviewedRevision(null, {
+      enforced: true, headSha: NEW,
+    }), false, 'cached clients without a revision stamp fail closed');
+    assert.equal(ctx.subject.voteMatchesReviewedRevision(null, {
+      enforced: false, headSha: null,
+    }), true, 'GitHub-disabled/local rows retain their existing behavior');
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('native vote write locks and verifies the stored reviewed head atomically', async () => {
+  const ctx = loadVotes({ liveHead: NEW });
+  const pool = recordingPool([
+    [/WITH current_session AS/, [{ id: 99 }]],
+  ]);
+  const session = nativeSession({ reviewed_head_sha: NEW });
+  try {
+    const result = await ctx.subject.recordVote({
+      pool, session, userId: 8, vote: 'yes', headSha: NEW, revisionEnforced: true,
+    });
+    assert.equal(result.rowCount, 1);
+    const write = pool.queries[0];
+    assert.match(write.sql, /reviewed_head_sha = \$4::varchar/);
+    assert.match(write.sql, /FOR UPDATE/,
+      'a concurrent head transition cannot slip between verification and insert');
+    assert.match(write.sql, /INSERT INTO pr_votes/);
+    assert.deepEqual(write.params, [session.id, 8, 'yes', NEW]);
+  } finally {
+    ctx.restore();
+  }
+});
+
+test('a 409 recognizes a new head already installed by a concurrent verifier', async () => {
+  const refused = new Error('head changed');
+  refused.headMoved = true;
+  const ctx = loadVotes({ liveHead: NEW, mergeImpl: async () => { throw refused; } });
+  const pool = recordingPool([
+    [/SET status = 'merging'/, [{ id: 41 }]],
+    [/WITH claimed AS[\s\S]*UPDATE chat_sessions/, []],
+    [/SELECT reviewed_head_sha FROM chat_sessions/, [{ reviewed_head_sha: NEW }]],
+    [/SET status = 'promoted'/, { rows: [], rowCount: 1 }],
+  ]);
+  const session = nativeSession();
+  try {
+    const result = await ctx.subject.checkAndMerge({}, pool, session, {
+      force: true,
+      forceBy: { id: 1, username: 'admin' },
+    });
+    assert.equal(result.headMoved, true);
+    assert.equal(result.reviewedHeadSha, NEW);
+    assert.equal(result.revisionBlocked, undefined,
+      'a verified different head is not reported as an unverifiable revision');
   } finally {
     ctx.restore();
   }

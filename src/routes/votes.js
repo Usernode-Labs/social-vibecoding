@@ -18,6 +18,10 @@ const topicAttrs = require('../services/topic-attributes');
 const { usesMockGithubForImports } = require('../config');
 const { drainGuard } = require('../services/lifecycle');
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
+const {
+  reviewedHeadForSession,
+  currentVotePredicateSql,
+} = require('../services/pr-vote-revision');
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 
@@ -707,12 +711,6 @@ function nativeGithubTarget(session) {
   return owner && repo ? { owner, repo: repo.replace(/\.git$/, '') } : null;
 }
 
-function reviewedHeadForSession(session) {
-  return session?.source === 'imported'
-    ? (session.imported_pr_head_sha || null)
-    : (session?.reviewed_head_sha || null);
-}
-
 async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
   const visuals = require('../services/visuals');
   await visuals.setChecksPending(pool, session.id, headSha)
@@ -820,13 +818,27 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
   }
 
   const oldHead = session.reviewed_head_sha || null;
+  // Install the new head and remove stale approvals in ONE statement. If the
+  // cleanup fails, PostgreSQL rolls the head update back too, so a later retry
+  // cannot mistake a partially-reconciled row for a clean one.
   const { rows: claimed } = await pool.query(
-    `UPDATE chat_sessions
-        SET reviewed_head_sha = $1, stale_notified_at = NULL
-      WHERE id = $2
-        AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
-        AND reviewed_head_sha IS DISTINCT FROM $1
-      RETURNING reviewed_head_sha`,
+    `WITH claimed AS (
+       UPDATE chat_sessions
+          SET reviewed_head_sha = $1, stale_notified_at = NULL
+        WHERE id = $2
+          AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
+          AND reviewed_head_sha IS DISTINCT FROM $1
+        RETURNING reviewed_head_sha
+     ), deleted AS (
+       DELETE FROM pr_votes
+        WHERE session_id = $2
+          AND head_sha IS DISTINCT FROM $1
+          AND EXISTS (SELECT 1 FROM claimed)
+        RETURNING 1
+     )
+     SELECT reviewed_head_sha,
+            (SELECT COUNT(*)::int FROM deleted) AS votes_deleted
+       FROM claimed`,
     [liveHead, session.id, oldHead]
   );
 
@@ -853,11 +865,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
   }
 
   session.reviewed_head_sha = liveHead;
-  const deleted = await pool.query(
-    `DELETE FROM pr_votes
-      WHERE session_id = $1 AND head_sha IS DISTINCT FROM $2`,
-    [session.id, liveHead]
-  );
+  const votesDeleted = parseInt(claimed[0]?.votes_deleted, 10) || 0;
 
   // A platform-authored push may already have run checks for this exact head.
   // Preserve that verdict; otherwise invalidate the old result synchronously
@@ -879,7 +887,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     } catch (_) { /* ws failures are non-fatal */ }
   }
 
-  if (notify && (oldHead || deleted.rowCount > 0)) {
+  if (notify && (oldHead || votesDeleted > 0)) {
     const label = session.pr_title
       ? `PR #${session.pr_number} — ${session.pr_title}`
       : `PR #${session.pr_number}`;
@@ -897,7 +905,7 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     sessionId: session.id,
     oldHead,
     newHead: liveHead,
-    votesDropped: deleted.rowCount || 0,
+    votesDropped: votesDeleted,
     checksReset: needsChecks,
   });
   return {
@@ -906,8 +914,64 @@ async function reconcileNativeReviewedHead({ config, pool, session, fresh = fals
     updated: true,
     initialized: oldHead == null,
     changed: oldHead != null,
-    votesDropped: deleted.rowCount || 0,
+    votesDropped: votesDeleted,
   };
+}
+
+const SHA40_RE = /^[0-9a-f]{40}$/i;
+
+function normalizedSha(value) {
+  return typeof value === 'string' && SHA40_RE.test(value) ? value.toLowerCase() : null;
+}
+
+function voteMatchesReviewedRevision(expectedHeadSha, revision) {
+  if (!revision?.enforced) return true;
+  const expected = normalizedSha(expectedHeadSha);
+  const current = normalizedSha(revision.headSha);
+  return !!expected && expected === current;
+}
+
+function revisionChangedVoteResponse(res, headSha, message = null) {
+  return res.status(409).json({
+    error: message
+      || 'This proposal changed since it was shown. Refresh it, review the new revision, then vote again.',
+    headChanged: true,
+    refreshRequired: true,
+    reviewedHeadSha: headSha || null,
+  });
+}
+
+// Record a native vote only while chat_sessions still points at the revision
+// the browser reviewed. SELECT ... FOR UPDATE and the INSERT share one SQL
+// statement, so a concurrent head reconciliation either happens before the
+// predicate is checked (zero rows) or after the vote is safely written (and
+// then removes it as stale). Imported/local rows keep their existing write.
+async function recordVote({ pool, session, userId, vote, headSha, revisionEnforced }) {
+  if (!revisionEnforced) {
+    return pool.query(
+      `INSERT INTO pr_votes (session_id, user_id, vote, head_sha) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha, created_at = NOW()
+       RETURNING id`,
+      [session.id, userId, vote, headSha]
+    );
+  }
+
+  return pool.query(
+    `WITH current_session AS (
+       SELECT id
+         FROM chat_sessions
+        WHERE id = $1
+          AND status IN ('promoted', 'merging')
+          AND reviewed_head_sha = $4::varchar
+        FOR UPDATE
+     )
+     INSERT INTO pr_votes (session_id, user_id, vote, head_sha)
+     SELECT id, $2, $3, $4 FROM current_session
+     ON CONFLICT (session_id, user_id) DO UPDATE
+       SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha, created_at = NOW()
+     RETURNING id`,
+    [session.id, userId, vote, headSha]
+  );
 }
 
 // The background merge/rejection sweep has no user vote event to refresh a
@@ -957,6 +1021,7 @@ function mergedRowSelect() {
            -- #687 (PR-import): provenance for the "Imported PR" badge +
            -- GitHub-maintained note (kept visible on merged rows too).
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
+           cs.reviewed_head_sha,
            -- #381: console-error check snapshot so the warning + detail
            -- block stay visible on a merged proposal for post-hoc review.
            cs.console_check_state, cs.console_errors, cs.console_checked_at,
@@ -980,9 +1045,15 @@ function mergedRowSelect() {
            -- activity row can keep its "x / y" pill and "You voted X" box
            -- after the PR merges (status='merged'), rather than the controls
            -- vanishing. Mirrors the /promoted subqueries.
-           (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
-           (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
-           (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
+           (SELECT COUNT(*) FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+               AND ${currentVotePredicateSql('pv', 'cs')}) as yes_count,
+           (SELECT COUNT(*) FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'no'
+               AND ${currentVotePredicateSql('pv', 'cs')}) as no_count,
+           (SELECT pv.vote FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.user_id = $2
+               AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
            -- kudos_count folds in any issue bounties AWARDED to this PR on
            -- merge (a bounty resolves into kudos credit for the closing PR's
            -- author), so the count matches the leaderboards. my_kudos is
@@ -1806,6 +1877,15 @@ function voteRoutes(config) {
         return res.status(403).json({ error: CLI_CREDENTIAL_MANAGEMENT_ERROR });
       }
 
+      // A click approves the revision that was actually rendered in the
+      // voter's browser, not whichever commit happens to be newest by the time
+      // this request reaches GitHub. Reconciliation above still advances the
+      // proposal and clears stale votes, but a changed/missing browser stamp
+      // requires a refresh and a second explicit click.
+      if (!voteMatchesReviewedRevision(req.body?.expectedHeadSha, revision)) {
+        return revisionChangedVoteResponse(res, revision.headSha);
+      }
+
       // Was this a new vote, or a flip? Distinguishing matters because
       // without this, a user mashing "Yes" would post the same
       // "X voted yes on PR #N" line to group chat every time AND fire a
@@ -1827,11 +1907,26 @@ function voteRoutes(config) {
       // proposals retain imported_pr_head_sha; native proposals use the new
       // reviewed_head_sha populated above. Governance counts only approvals
       // matching the current revision.
-      await pool.query(
-        `INSERT INTO pr_votes (session_id, user_id, vote, head_sha) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (session_id, user_id) DO UPDATE SET vote = EXCLUDED.vote, head_sha = EXCLUDED.head_sha, created_at = NOW()`,
-        [session.id, req.user.id, vote, voteHeadSha]
-      );
+      const recorded = await recordVote({
+        pool,
+        session,
+        userId: req.user.id,
+        vote,
+        headSha: voteHeadSha,
+        revisionEnforced: !!revision.enforced,
+      });
+      if (revision.enforced && (recorded.rowCount || 0) === 0) {
+        // The DB head moved after the GitHub read but before the write lock.
+        // Refresh the proposal state, but never transfer this click to it.
+        const latest = await reconcileNativeReviewedHead({
+          config, pool, session, fresh: true,
+        }).catch(() => null);
+        return revisionChangedVoteResponse(
+          res,
+          latest && !latest.blocked ? latest.headSha : reviewedHeadForSession(session),
+          'This proposal changed while your vote was being recorded. Refresh it, review the new revision, then vote again.'
+        );
+      }
 
       // Any voting activity revives a going-stale PR: clear the warning
       // flag so the stale sweeper restarts its clock instead of archiving.
@@ -1946,8 +2041,11 @@ function voteRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT pv.vote, u.username, pv.user_id
-         FROM pr_votes pv JOIN users u ON pv.user_id = u.id
-         WHERE pv.session_id = $1`,
+         FROM pr_votes pv
+         JOIN users u ON pv.user_id = u.id
+         JOIN chat_sessions cs ON cs.id = pv.session_id
+         WHERE pv.session_id = $1
+           AND ${currentVotePredicateSql('pv', 'cs')}`,
         [req.params.id]
       );
 
@@ -1999,9 +2097,14 @@ function voteRoutes(config) {
                 -- building/unavailable preview state the proposal card
                 -- shows (see staging.previewDisplayState below).
                 cs.staging_url, cs.source,
+                cs.imported_pr_head_sha, cs.reviewed_head_sha,
                 a.id AS app_id, a.slug AS app_slug, a.name AS app_name,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'no'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
          FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
          WHERE cs.user_id = $1 AND cs.status IN ('promoted', 'merging')
            AND cs.is_headless = FALSE
@@ -2041,7 +2144,9 @@ function voteRoutes(config) {
         const gov = govByApp[s.app_id];
         const electorate = electorateByApp[s.app_id];
         const q = electorate?.approverIds
-          ? await governanceSvc.qualifiedCounts(pool, 'pr', s.id, electorate.approverIds)
+          ? await governanceSvc.qualifiedCounts(
+            pool, 'pr', s.id, electorate.approverIds, reviewedHeadForSession(s)
+          )
           : { yes: s.yes_count, no: s.no_count };
         // Per-row dynamic merge gate + rejection countdown, mirroring
         // /api/apps/:slug/promoted (same anchor: promoted_at || created_at).
@@ -2179,6 +2284,7 @@ function voteRoutes(config) {
            -- "Imported PR" badge + GitHub-maintained note and hide the
            -- dev-side controls for externally-authored proposals.
            cs.source, cs.imported_pr_author, cs.imported_pr_head_sha,
+           cs.reviewed_head_sha,
            -- #361: persisted merge-conflict snapshot for the card badge +
            -- detail block (state, conflicting file paths, last-checked).
            cs.merge_conflict_state, cs.behind_main, cs.conflict_files, cs.conflict_checked_at,
@@ -2200,9 +2306,15 @@ function voteRoutes(config) {
            -- reports no merge_window_ends_at, so no countdown renders) and
            -- shows the "Explicit approval" chip.
            cs.requires_explicit_approval,
-           (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') as yes_count,
-           (SELECT COUNT(*) FROM pr_votes WHERE session_id = cs.id AND vote = 'no') as no_count,
-           (SELECT vote FROM pr_votes WHERE session_id = cs.id AND user_id = $2) as my_vote,
+           (SELECT COUNT(*) FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+               AND ${currentVotePredicateSql('pv', 'cs')}) as yes_count,
+           (SELECT COUNT(*) FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.vote = 'no'
+               AND ${currentVotePredicateSql('pv', 'cs')}) as no_count,
+           (SELECT pv.vote FROM pr_votes pv
+             WHERE pv.session_id = cs.id AND pv.user_id = $2
+               AND ${currentVotePredicateSql('pv', 'cs')}) as my_vote,
            -- Kudos counts piggy-back on this query so the vote panel
            -- doesn't fan out to N extra round-trips per PR card. The
            -- (session_id, giver_user_id) UNIQUE constraint makes EXISTS
@@ -3431,7 +3543,9 @@ async function checkAndMerge(config, pool, session, options = {}) {
     // condition, not a replacement. Toggled via the home-card lock icon
     // (admin-only); see POST /api/apps/:slug/lock in routes/apps.js.
     if (await isAppLocked(pool, session.app_id)) {
-      const adminYes = await hasAdminYesVote(pool, session.id);
+      const adminYes = await hasAdminYesVote(
+        pool, session.id, reviewedHeadForSession(session)
+      );
       if (!adminYes) {
         log.info('votes', 'Threshold + window met but app is locked; awaiting admin yes', {
           sessionId: session.id, yesCount, required,
@@ -3754,7 +3868,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
               // fresh read says the native PR is still on the exact pinned
               // SHA, this was not a revision change; route it through the
               // existing conflict recovery path instead of clearing review.
-              if (nativeRefresh?.unchanged && nativeRefresh.headSha === pinnedSha) {
+              if (!nativeRefresh?.blocked && nativeRefresh?.headSha === pinnedSha) {
                 err.headMoved = false;
                 err.status = 405;
                 throw err;
@@ -3763,8 +3877,7 @@ async function checkAndMerge(config, pool, session, options = {}) {
               // A 409 plus an unverifiable revision is ambiguous. Release the
               // claim and fail closed without claiming either a head move or a
               // merge conflict; a later vote/sweep can retry the live read.
-              if (!nativeRefresh || nativeRefresh.blocked
-                  || (!nativeRefresh.updated && !nativeRefresh.changed)) {
+              if (!nativeRefresh || nativeRefresh.blocked || !nativeRefresh.headSha) {
                 await pool.query(
                   `UPDATE chat_sessions SET status = 'promoted' WHERE id = $1 AND status = 'merging'`,
                   [session.id]
@@ -4435,4 +4548,6 @@ module.exports = {
   reconcileNativeReviewedHead,
   reconcilePromotedSweepHead,
   reviewedHeadForSession,
+  voteMatchesReviewedRevision,
+  recordVote,
 };

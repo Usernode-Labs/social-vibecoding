@@ -81,6 +81,7 @@ const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
+const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
 
 const config = loadConfig();
 log.setLevel(config.logLevel);
@@ -2850,8 +2851,12 @@ function startStalePrSweeper(config) {
     try {
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no')  AS no_count
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'no'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.status = 'promoted' AND cs.is_headless = FALSE
             AND (cs.behind_main IS NULL OR cs.behind_main = 0)
