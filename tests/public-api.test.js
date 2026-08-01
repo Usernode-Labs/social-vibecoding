@@ -52,17 +52,29 @@ const CONTRIBUTORS = {
 };
 
 // View-public apps the list query would return (collab-public + collab-
-// private, both view-public).
+// private, both view-public). The presentation columns (icon_emoji,
+// icon_image_id, anon_shell, active_users) ride the same SELECT — the
+// three anon_shell values here cover the requires_login mapping: only a
+// positive 'public' classification reads as no-login; 'gated' and
+// 'unknown' both fail safe to account-required.
 const APPS = [
   {
     id: 1, name: 'App One', slug: 'app-one', status: 'running',
     collab_visibility: 'public', view_visibility: 'public',
     created_at: '2026-06-01T00:00:00.000Z', last_deploy_at: '2026-06-10T00:00:00.000Z',
+    icon_emoji: '🎯', icon_image_id: null, anon_shell: 'public', active_users: '5',
   },
   {
     id: 2, name: 'App Two', slug: 'app-two', status: 'running',
     collab_visibility: 'private', view_visibility: 'public',
     created_at: '2026-06-02T00:00:00.000Z', last_deploy_at: '2026-06-09T00:00:00.000Z',
+    icon_emoji: null, icon_image_id: 'deadbeefdeadbeefdeadbeefdeadbeef', anon_shell: 'gated', active_users: '0',
+  },
+  {
+    id: 3, name: 'App Three', slug: 'app-three', status: 'running',
+    collab_visibility: 'public', view_visibility: 'public',
+    created_at: '2026-06-03T00:00:00.000Z', last_deploy_at: '2026-06-08T00:00:00.000Z',
+    icon_emoji: null, icon_image_id: null, anon_shell: 'unknown', active_users: '0',
   },
 ];
 
@@ -133,7 +145,7 @@ test('apps list: 200 with apps + embedded contributors, wallets by default', asy
   try {
     const { status, body } = await get(srv.baseUrl, '/api/public/apps');
     assert.equal(status, 200);
-    assert.equal(body.apps.length, 2);
+    assert.equal(body.apps.length, 3);
 
     const one = body.apps.find((a) => a.slug === 'app-one');
     assert.equal(one.collab_visibility, 'public');
@@ -154,7 +166,37 @@ test('apps list: both build-visibility statuses appear (collab public + private)
   try {
     const { body } = await get(srv.baseUrl, '/api/public/apps');
     const statuses = body.apps.map((a) => a.collab_visibility).sort();
-    assert.deepEqual(statuses, ['private', 'public']);
+    assert.deepEqual(statuses, ['private', 'public', 'public']);
+  } finally { await srv.close(); }
+});
+
+test('apps list: home-card fields (icon, active_users) and requires_login mapping', async () => {
+  const srv = await startTestServer(makeMockPool());
+  try {
+    const { body } = await get(srv.baseUrl, '/api/public/apps');
+    const one = body.apps.find((a) => a.slug === 'app-one');
+    const two = body.apps.find((a) => a.slug === 'app-two');
+    const three = body.apps.find((a) => a.slug === 'app-three');
+
+    // Icons: emoji passthrough; icon_url server-built from icon_image_id.
+    assert.equal(one.icon_emoji, '🎯');
+    assert.equal(one.icon_url, null);
+    assert.equal(two.icon_emoji, null);
+    assert.equal(two.icon_url, '/app-icons/deadbeefdeadbeefdeadbeefdeadbeef');
+    assert.equal(three.icon_url, null);
+
+    // active_users: numeric (pg COUNT arrives as a string).
+    assert.equal(one.active_users, 5);
+    assert.equal(two.active_users, 0);
+
+    // requires_login: only anon_shell='public' reads as open; 'gated'
+    // and 'unknown' both fail safe to account-required.
+    assert.equal(one.requires_login, false);
+    assert.equal(two.requires_login, true);
+    assert.equal(three.requires_login, true);
+
+    // The raw probe column never rides the wire shape.
+    assert.ok(!('anon_shell' in one));
   } finally { await srv.close(); }
 });
 

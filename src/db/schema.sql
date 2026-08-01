@@ -1779,6 +1779,18 @@ BEGIN
   END IF;
 END $$;
 
+-- Anonymous-shell probe result (landing-page app directory).
+--   anon_shell: whether the app's own HTML shell serves without a
+--     platform session. 'public' = anonymous GET / returns 2xx (echo /
+--     lastwin style), 'gated' = it 401s or bounces to the platform (the
+--     scaffold default), 'unknown' = never probed or unclassifiable.
+--     Written ONLY by services/shell-probe.js; consumed by
+--     GET /api/public/apps as `requires_login` (anything not 'public').
+--     'unknown' renders as account-required — the safe default, matching
+--     the scaffold's gated-by-default behavior.
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell VARCHAR(10) NOT NULL DEFAULT 'unknown';
+ALTER TABLE apps ADD COLUMN IF NOT EXISTS anon_shell_checked_at TIMESTAMPTZ;
+
 -- Per-app proposal-approval governance (issue #646).
 --   approver_policy:    who can approve proposals. 'anyone' = every
 --     eligible voter's vote counts toward the merge gate (today's

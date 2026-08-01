@@ -460,9 +460,12 @@
       <header class="text-center mb-10">
         <h1 class="text-3xl font-bold mb-2">Usernode Social Vibecoding</h1>
         <p class="text-sm text-zinc-500 dark:text-zinc-400 italic mb-6">A place where users own and build apps together</p>
+        <!-- Two entry points only (issue: landing simplification). Account
+             creation is deferred: it happens at the end of the waitlist
+             journey, or when a gated app below routes to #signup. -->
         <div id="landing-ctas" class="flex items-center justify-center gap-3">
           <a href="#login" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 font-medium transition-colors text-white text-sm">Sign in</a>
-          <a href="#signup" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-5 py-2 font-medium text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Create account</a>
+          <button type="button" id="landing-waitlist-cta" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-5 py-2 font-medium text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</button>
         </div>
         <!-- Shown instead of the CTAs when a (waiting-room) session exists. -->
         <div id="landing-back-to-waiting" class="hidden">
@@ -470,7 +473,9 @@
         </div>
       </header>
 
-      <section id="landing-waitlist" class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10">
+      <!-- Collapsed by default so "Join waitlist" appears once (the header
+           CTA); clicking the CTA reveals this form and focuses the email. -->
+      <section id="landing-waitlist" class="hidden rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10">
         <h2 class="text-lg font-semibold mb-1">Join the waitlist</h2>
         <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
           Platform access opens in batches. Leave your email and we'll let you
@@ -491,9 +496,11 @@
       <section>
         <h2 class="text-lg font-semibold mb-1">Apps built here</h2>
         <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          Community-built apps on the Usernode chain. No account needed to look around.
+          Community-built apps on the Usernode chain. Many are open to
+          everyone — the grayed-out ones need an account.
         </p>
-        <div id="landing-apps" class="grid gap-3 sm:grid-cols-2">
+        <!-- Same launcher-grid shape as the authed homescreen (#app-list). -->
+        <div id="landing-apps" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2">
           <p class="text-sm text-zinc-500">Loading&hellip;</p>
         </div>
       </section>
