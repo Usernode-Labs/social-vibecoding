@@ -23,6 +23,8 @@ function FormFixture({
   initialAccess = null,
   initialMode = "new",
   initialName = "",
+  repositoryError = null,
+  submitError = null,
   submitting = false,
 }: {
   checking?: boolean
@@ -30,6 +32,8 @@ function FormFixture({
   initialAccess?: VerifyRepoAccess | null
   initialMode?: CreateAppMode
   initialName?: string
+  repositoryError?: string | null
+  submitError?: string | null
   submitting?: boolean
 }) {
   const [access, setAccess] = useState(initialAccess)
@@ -63,6 +67,8 @@ function FormFixture({
       onSubmit={fn((event) => event.preventDefault())}
       onViewVisibilityChange={setViewVisibility}
       repoUrl={repoUrl}
+      repositoryError={repositoryError}
+      submitError={submitError}
       submitting={submitting}
       viewVisibility={viewVisibility}
     />
@@ -89,6 +95,8 @@ const meta = {
     onSubmit: fn((event) => event.preventDefault()),
     onViewVisibilityChange: fn(),
     repoUrl: "",
+    repositoryError: null,
+    submitError: null,
     submitting: false,
     viewVisibility: "public",
   },
@@ -121,6 +129,10 @@ export const ImportVerified: Story = {
   render: () => <FormFixture initialAccess={verifiedRepository} initialMode="import" initialName="RecipeBot" />,
 }
 
+export const ImportFailed: Story = {
+  render: () => <FormFixture initialMode="import" repositoryError="Invite usernode-bot with Write access first." />,
+}
+
 export const Private: Story = {
   render: () => <FormFixture initialName="Private workspace" />,
   play: async ({ canvasElement }) => {
@@ -140,6 +152,12 @@ export const Submitting: Story = {
 
 export const ReadOnly: Story = {
   render: () => <FormFixture disabled initialName="RecipeBot" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    await expect(canvas.getByText("Invite-only")).toBeVisible()
+    await expect(canvas.getByRole("radio", { name: /Invite-only/ })).toBeDisabled()
+    await expect(canvas.getByText("Members")).toBeVisible()
+  },
 }
 
 export const Mobile: Story = {
