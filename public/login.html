@@ -51,74 +51,19 @@
         </button>
       </div>
 
-      <!-- Options when pubkey is not linked -->
-      <div id="wallet-options" class="hidden space-y-3">
-        <button id="btn-register-new" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
-          Register
-        </button>
-        <p class="text-sm text-center text-zinc-500 dark:text-zinc-400">
-          Already created an account on the WebUI? Link your account <a id="btn-link-existing" href="#" class="text-violet-400 hover:text-violet-300">here →</a>
-        </p>
-      </div>
-
-      <!-- Link existing account form -->
-      <form id="wallet-link-form" class="hidden space-y-4">
-        <p class="text-sm text-zinc-400">Log in to link your wallet.</p>
-        <div>
-          <label class="block text-sm font-medium text-zinc-400 mb-1">Username</label>
-          <input name="username" type="text" required autocomplete="username"
-            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
-            placeholder="username">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-zinc-400 mb-1">Password</label>
-          <input name="password" type="password" required autocomplete="current-password"
-            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
-            placeholder="password">
-        </div>
-        <div id="wallet-link-error" class="text-red-400 text-sm hidden"></div>
-        <button type="submit" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
-          Log in & link wallet
-        </button>
-        <button type="button" id="btn-link-back" class="w-full text-sm text-zinc-500 hover:text-zinc-300">Back</button>
-      </form>
-
-      <!-- Register new account form -->
-      <form id="wallet-register-form" class="hidden space-y-4">
-        <p class="text-sm text-zinc-400">Create an account linked to your wallet. No activation code needed.</p>
-        <div>
-          <label class="block text-sm font-medium text-zinc-400 mb-1">Username</label>
-          <input name="username" type="text" required autocomplete="username"
-            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
-            placeholder="choose a username">
-        </div>
-        <div>
-          <label class="block text-sm font-medium text-zinc-400 mb-1">Password</label>
-          <input name="password" type="password" required autocomplete="new-password"
-            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
-            placeholder="choose a password">
-        </div>
-        <div id="wallet-register-error" class="text-red-400 text-sm hidden"></div>
-        <button type="submit" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
-          Register & link wallet
-        </button>
-        <button type="button" id="btn-register-back" class="w-full text-sm text-zinc-500 hover:text-zinc-300">Back</button>
-      </form>
-
-      <!-- Wallet linking progress -->
-      <div id="wallet-linking" class="hidden space-y-3 text-center">
-        <p class="text-sm text-zinc-400">Sending wallet link transaction...</p>
-        <div class="w-full h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-          <div id="wallet-link-progress" class="h-full bg-violet-500 rounded-full transition-all duration-500" style="width: 0%"></div>
-        </div>
-        <p id="wallet-link-progress-label" class="text-xs text-zinc-500">Sending...</p>
+      <!-- Divider between wallet fast-path and the standard form -->
+      <div id="wallet-divider" class="hidden flex items-center gap-3 text-xs text-zinc-500">
+        <div class="flex-1 h-px bg-zinc-300 dark:bg-zinc-800"></div>
+        or
+        <div class="flex-1 h-px bg-zinc-300 dark:bg-zinc-800"></div>
       </div>
     </div>
 
-    <!-- Normal login form (hidden when wallet auth is active) -->
+    <!-- Standard login form (always available; wallet sign-in above is an
+         optional fast path when the native app carries a linked wallet) -->
     <form id="login-form" class="space-y-4">
       <div>
-        <label for="username" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Username</label>
+        <label for="username" class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Username or email</label>
         <input
           id="username"
           name="username"
@@ -126,7 +71,7 @@
           required
           autocomplete="username"
           class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent"
-          placeholder="username"
+          placeholder="username or email"
         >
       </div>
 
@@ -157,9 +102,86 @@
       <a id="forgot-password-link" href="#" class="text-zinc-500 dark:text-zinc-400 hover:text-violet-400">Forgot password?</a>
     </p>
 
+    <p id="otp-link-wrap" class="text-center text-sm mt-1">
+      <a id="otp-link" href="#" class="text-zinc-500 dark:text-zinc-400 hover:text-violet-400">Sign in with an email code</a>
+    </p>
+
     <p id="register-link" class="text-center text-sm text-zinc-500 dark:text-zinc-400 mt-6">
       Have an activation code? <a href="/register.html" class="text-violet-400 hover:text-violet-300">Register</a>
     </p>
+
+    <!-- Email-code sign-in sub-view (thin-shell migration). The mobile
+         app's native OTP screens are gone; this is now the ONE email-code
+         path, backed by the public v4 endpoints (otp/request, otp/verify,
+         set-password). It serves both first-time sign-ups (otp/verify
+         creates the account) and the migrated password-less participants
+         (they set their first password here); accounts that already own a
+         password are refused by the server and should use the form above. -->
+    <div id="otp-view" class="hidden space-y-4">
+      <h2 class="text-lg font-bold text-center">Sign in with email</h2>
+
+      <!-- Step 1: email -->
+      <div id="otp-step-email" class="space-y-3">
+        <p class="text-sm text-zinc-500 dark:text-zinc-400">
+          We'll email you a 6-digit code. New here? This also creates your account.
+        </p>
+        <div>
+          <label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Email</label>
+          <input id="otp-email" type="email" autocomplete="email"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            placeholder="you@example.com">
+        </div>
+        <button id="btn-otp-request" type="button"
+          class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
+          Email me a code
+        </button>
+      </div>
+
+      <!-- Step 2: code -->
+      <div id="otp-step-code" class="hidden space-y-3">
+        <p class="text-sm text-zinc-500 dark:text-zinc-400">
+          Enter the 6-digit code we sent to <span id="otp-email-echo" class="font-medium text-zinc-700 dark:text-zinc-300"></span>.
+        </p>
+        <div>
+          <label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Code</label>
+          <input id="otp-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 tracking-widest text-center"
+            placeholder="123456">
+        </div>
+        <button id="btn-otp-verify" type="button"
+          class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
+          Verify code
+        </button>
+        <button id="btn-otp-resend" type="button" class="w-full text-sm text-zinc-500 hover:text-zinc-300">Send a new code</button>
+      </div>
+
+      <!-- Step 3: choose a password -->
+      <div id="otp-step-password" class="hidden space-y-3">
+        <p class="text-sm text-zinc-500 dark:text-zinc-400">
+          Code verified — now choose a password for your account.
+        </p>
+        <div>
+          <label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">New password</label>
+          <input id="otp-new-password" type="password" autocomplete="new-password"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            placeholder="at least 8 characters">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-zinc-500 dark:text-zinc-400 mb-1">Confirm password</label>
+          <input id="otp-confirm-password" type="password" autocomplete="new-password"
+            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-zinc-900 dark:text-zinc-100 placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500"
+            placeholder="re-enter password">
+        </div>
+        <button id="btn-otp-set-password" type="button"
+          class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 font-medium transition-colors text-white">
+          Set password & sign in
+        </button>
+      </div>
+
+      <div id="otp-error" class="text-red-400 text-sm hidden"></div>
+      <div id="otp-status" class="text-sm text-zinc-400 hidden"></div>
+      <button id="btn-otp-back" type="button" class="w-full text-sm text-zinc-500 hover:text-zinc-300">Back to login</button>
+    </div>
 
     <!-- Password recovery sub-view (issue #282). Hidden until "Forgot
          password?" is tapped. Picks one of two paths by context: a
@@ -216,11 +238,15 @@
     const walletStatus = document.getElementById('wallet-status');
     const walletError = document.getElementById('wallet-error');
     const walletSignIn = document.getElementById('wallet-sign-in');
-    const walletOptions = document.getElementById('wallet-options');
-    const walletLinkForm = document.getElementById('wallet-link-form');
-    const walletRegisterForm = document.getElementById('wallet-register-form');
-    const walletLinking = document.getElementById('wallet-linking');
+    const walletDivider = document.getElementById('wallet-divider');
     const registerLink = document.getElementById('register-link');
+    const otpLinkWrap = document.getElementById('otp-link-wrap');
+    const otpView = document.getElementById('otp-view');
+    const otpStepEmail = document.getElementById('otp-step-email');
+    const otpStepCode = document.getElementById('otp-step-code');
+    const otpStepPassword = document.getElementById('otp-step-password');
+    const otpError = document.getElementById('otp-error');
+    const otpStatus = document.getElementById('otp-status');
     const forgotLinkWrap = document.getElementById('forgot-link-wrap');
     const forgotPasswordLink = document.getElementById('forgot-password-link');
     const recoveryView = document.getElementById('recovery-view');
@@ -253,6 +279,9 @@
     // false on plain desktop web (no native bridge), so those users always
     // get the "ask an admin" message.
     let walletLinked = false;
+    // Whether the wallet fast-path UI was activated by walletDetect —
+    // drives what hideRecovery/hideOtp restore.
+    let walletUiActive = false;
 
     function showError(el, msg) {
       el.textContent = msg;
@@ -262,10 +291,6 @@
 
     function showOnly(section) {
       walletSignIn.classList.add('hidden');
-      walletOptions.classList.add('hidden');
-      walletLinkForm.classList.add('hidden');
-      walletRegisterForm.classList.add('hidden');
-      walletLinking.classList.add('hidden');
       hideError(walletError);
       if (section) section.classList.remove('hidden');
     }
@@ -300,6 +325,8 @@
       loginForm.classList.add('hidden');
       registerLink.classList.add('hidden');
       forgotLinkWrap.classList.add('hidden');
+      otpLinkWrap.classList.add('hidden');
+      otpView.classList.add('hidden');
       walletAuth.classList.add('hidden');
       recoveryView.classList.remove('hidden');
 
@@ -317,15 +344,12 @@
     function hideRecovery() {
       recoveryView.classList.add('hidden');
       forgotLinkWrap.classList.remove('hidden');
-      // Restore whichever primary view applies. On native with wallet UI
-      // active the login form stays hidden (walletAuth drives it); on
-      // desktop web the normal login form returns.
-      if (isNative && walletAuth && !walletAuth.classList.contains('hidden')) {
-        walletAuth.classList.remove('hidden');
-      } else {
-        loginForm.classList.remove('hidden');
-        registerLink.classList.remove('hidden');
-      }
+      otpLinkWrap.classList.remove('hidden');
+      // The standard form is always the base view now; the wallet
+      // fast-path re-appears above it when it was detected earlier.
+      loginForm.classList.remove('hidden');
+      registerLink.classList.remove('hidden');
+      if (walletUiActive) walletAuth.classList.remove('hidden');
     }
 
     forgotPasswordLink.addEventListener('click', (e) => { e.preventDefault(); showRecovery(); });
@@ -404,77 +428,218 @@
       registerAnchor.href = '/register.html' + window.location.hash;
     }
 
+    // ── Email-code sign-in (thin-shell migration) ─────────────────────
+    // Runs on every surface (desktop web included) — it replaces the
+    // deleted native OTP screens. Steps: request a code (public v4
+    // endpoint, also creates the account at verify time) → verify →
+    // choose a password → immediately log in with it for the web session.
+    let otpEmail = null;
+    let otpSetPasswordToken = null;
+
+    function otpShowStep(step) {
+      otpStepEmail.classList.add('hidden');
+      otpStepCode.classList.add('hidden');
+      otpStepPassword.classList.add('hidden');
+      hideError(otpError);
+      step.classList.remove('hidden');
+    }
+
+    function otpSetStatus(msg) {
+      if (msg) {
+        otpStatus.textContent = msg;
+        otpStatus.classList.remove('hidden');
+      } else {
+        otpStatus.classList.add('hidden');
+      }
+    }
+
+    function showOtp() {
+      loginForm.classList.add('hidden');
+      registerLink.classList.add('hidden');
+      forgotLinkWrap.classList.add('hidden');
+      otpLinkWrap.classList.add('hidden');
+      walletAuth.classList.add('hidden');
+      recoveryView.classList.add('hidden');
+      otpSetStatus(null);
+      otpShowStep(otpStepEmail);
+      otpView.classList.remove('hidden');
+    }
+
+    function hideOtp() {
+      otpView.classList.add('hidden');
+      loginForm.classList.remove('hidden');
+      registerLink.classList.remove('hidden');
+      forgotLinkWrap.classList.remove('hidden');
+      otpLinkWrap.classList.remove('hidden');
+      if (walletUiActive) walletAuth.classList.remove('hidden');
+    }
+
+    document.getElementById('otp-link').addEventListener('click', (e) => { e.preventDefault(); showOtp(); });
+    document.getElementById('btn-otp-back').addEventListener('click', hideOtp);
+
+    async function otpRequestCode() {
+      hideError(otpError);
+      const email = document.getElementById('otp-email').value.trim().toLowerCase();
+      if (!email || !email.includes('@')) {
+        showError(otpError, 'Enter a valid email address');
+        return;
+      }
+      otpSetStatus('Sending code...');
+      try {
+        const res = await fetch('/api/v4/mobile/auth/otp/request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const data = await res.json();
+        otpSetStatus(null);
+        if (!res.ok || !data.success) {
+          showError(otpError, data.error || 'Could not send a code');
+          return;
+        }
+        otpEmail = email;
+        document.getElementById('otp-email-echo').textContent = email;
+        document.getElementById('otp-code').value = '';
+        otpShowStep(otpStepCode);
+      } catch {
+        otpSetStatus(null);
+        showError(otpError, 'Network error');
+      }
+    }
+
+    document.getElementById('btn-otp-request').addEventListener('click', otpRequestCode);
+    document.getElementById('btn-otp-resend').addEventListener('click', async () => {
+      // Same request, from the code step — jump back visually so the user
+      // sees the send happen, then land back on the code entry.
+      document.getElementById('otp-email').value = otpEmail || '';
+      await otpRequestCode();
+    });
+
+    document.getElementById('btn-otp-verify').addEventListener('click', async () => {
+      hideError(otpError);
+      const code = document.getElementById('otp-code').value.trim();
+      if (!code) { showError(otpError, 'Enter the code from the email'); return; }
+      otpSetStatus('Verifying...');
+      try {
+        const res = await fetch('/api/v4/mobile/auth/otp/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: otpEmail, code }),
+        });
+        const data = await res.json();
+        otpSetStatus(null);
+        if (!res.ok || !data.success || !data.set_password_token) {
+          // The server's one generic message covers wrong/expired codes —
+          // and also accounts that already have a password (they must use
+          // the password form instead). Say both.
+          showError(otpError, (data.error || 'Invalid or expired code.') +
+            ' If your account already has a password, sign in with it instead.');
+          return;
+        }
+        otpSetPasswordToken = data.set_password_token;
+        otpShowStep(otpStepPassword);
+      } catch {
+        otpSetStatus(null);
+        showError(otpError, 'Network error');
+      }
+    });
+
+    document.getElementById('btn-otp-set-password').addEventListener('click', async () => {
+      hideError(otpError);
+      const password = document.getElementById('otp-new-password').value;
+      const confirm = document.getElementById('otp-confirm-password').value;
+      if (password.length < 8) { showError(otpError, 'Password must be at least 8 characters'); return; }
+      if (password !== confirm) { showError(otpError, 'Passwords do not match'); return; }
+      otpSetStatus('Setting password...');
+      try {
+        const res = await fetch('/api/v4/mobile/auth/set-password', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + otpSetPasswordToken,
+          },
+          body: JSON.stringify({ password, password_confirmation: confirm }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          otpSetStatus(null);
+          showError(otpError, data.error || 'Could not set the password');
+          return;
+        }
+        otpSetPasswordToken = null;
+        // Password is set — now open the WEB session with it (the v4
+        // token in `data.token` is a mobile bearer, not a cookie; the
+        // shell mints its own via /from-session after this login).
+        otpSetStatus('Signing you in...');
+        const loginRes = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: otpEmail, password }),
+        });
+        const loginData = await loginRes.json();
+        if (!loginRes.ok) {
+          otpSetStatus(null);
+          showError(otpError, loginData.error || 'Sign-in failed — try the password form');
+          return;
+        }
+        otpSetStatus('Signed in! Redirecting...');
+        finishLogin();
+      } catch {
+        otpSetStatus(null);
+        showError(otpError, 'Network error');
+      }
+    });
+
     if (!isNative) return;
 
-    walletAuth.classList.remove('hidden');
-    walletStatus.textContent = 'Connecting to wallet...';
-
+    // ── Wallet fast-path probe (thin-shell migration rework) ──────────
+    // The wallet sign-in is now strictly OPTIONAL and additive: the
+    // standard login form stays visible throughout, and every failure
+    // mode (no wallet in a fresh shell, transport error, non-genesis,
+    // unlinked) quietly leaves the standard form as the only option
+    // instead of surfacing a blocking "wallet detection failed" error.
+    // Wallet custody now follows platform login (custodial provisioning
+    // over the bridge), so a wallet-less shell at login time is the
+    // NORMAL state, not an error. The legacy genesis-gated wallet
+    // register/link forms are gone for the same reason.
     (async function walletDetect() {
       try {
         walletPubkey = await window.getNodeAddress();
-        if (!walletPubkey) {
-          walletStatus.textContent = '';
-          showError(walletError, 'Could not get wallet address');
-          return;
-        }
+      } catch (e) {
+        console.warn('[login] no native wallet available:', e && e.message ? e.message : e);
+        return;
+      }
+      if (!walletPubkey) return;
 
-        walletStatus.textContent = 'Checking wallet...';
+      try {
         const checkRes = await fetch('/api/auth/wallet-check', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ pubkey: walletPubkey }),
         });
         const checkData = await checkRes.json();
-
-        walletStatus.textContent = '';
-
-        // Treat any non-2xx as a real transport/server error and surface
-        // it; falling through to the "not linked" UI here is misleading
-        // (e.g. a 429 from the auth rate-limiter would tell a user with
-        // a perfectly-linked wallet that their wallet isn't linked).
         if (!checkRes.ok) {
-          const msg = (checkData && checkData.error)
-            ? checkData.error
-            : ('Wallet check failed (HTTP ' + checkRes.status + ')');
-          showError(walletError, msg);
-          loginForm.classList.remove('hidden');
-          registerLink.classList.remove('hidden');
+          console.warn('[login] wallet-check failed (HTTP ' + checkRes.status + ')');
           return;
         }
 
         // Track link status independent of the genesis gate: password
         // RESET is allowed for any linked wallet (no genesis requirement,
-        // issue #282), even though wallet sign-in/register below stays
-        // genesis-gated. This lets a linked non-genesis wallet still reach
+        // issue #282). This lets a linked non-genesis wallet still reach
         // the wallet-reset path from "Forgot password?".
         walletLinked = checkData.status === 'linked';
 
-        if (checkData.isGenesis === false) {
-          showError(walletError, 'Your wallet is not in the genesis ledger. Only genesis participants can use wallet authentication.');
-          loginForm.classList.remove('hidden');
-          registerLink.classList.remove('hidden');
-          return;
-        }
+        // Only a linked, genesis wallet gets the sign-in fast path.
+        if (checkData.isGenesis === false) return;
+        if (checkData.status !== 'linked' || !checkData.challenge) return;
 
-        if (checkData.status === 'linked' && checkData.challenge) {
-          cachedChallenge = checkData.challenge;
-          // Native app with a wallet already linked to an account: offer
-          // wallet sign-in only. The username/password form and the
-          // activation-code register link are noise here, so hide them.
-          loginForm.classList.add('hidden');
-          registerLink.classList.add('hidden');
-          showOnly(walletSignIn);
-        } else {
-          // Unlinked wallet in the native app: only offer the link/register
-          // options. The username/password form and activation-code link
-          // below are noise here, so keep them hidden.
-          loginForm.classList.add('hidden');
-          registerLink.classList.add('hidden');
-          showOnly(walletOptions);
-        }
+        cachedChallenge = checkData.challenge;
+        walletUiActive = true;
+        walletAuth.classList.remove('hidden');
+        walletDivider.classList.remove('hidden');
+        showOnly(walletSignIn);
       } catch (e) {
-        walletStatus.textContent = '';
-        showError(walletError, 'Wallet detection failed: ' + (e.message || e));
+        console.warn('[login] wallet probe failed:', e && e.message ? e.message : e);
       }
     })();
 
@@ -536,126 +701,6 @@
       }
     });
 
-    // Option buttons
-    document.getElementById('btn-link-existing').addEventListener('click', (e) => { e.preventDefault(); showOnly(walletLinkForm); });
-    document.getElementById('btn-register-new').addEventListener('click', () => showOnly(walletRegisterForm));
-    document.getElementById('btn-link-back').addEventListener('click', () => showOnly(walletOptions));
-    document.getElementById('btn-register-back').addEventListener('click', () => showOnly(walletOptions));
-
-    // Link existing account
-    walletLinkForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const errEl = document.getElementById('wallet-link-error');
-      hideError(errEl);
-      const username = walletLinkForm.username.value.trim();
-      const password = walletLinkForm.password.value;
-      try {
-        const res = await fetch('/api/auth/wallet-link-login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password, pubkey: walletPubkey }),
-        });
-        const data = await res.json();
-        if (!res.ok) { showError(errEl, data.error || 'Login failed'); return; }
-
-        if (data.walletLink) {
-          await sendLinkingTx(data.walletLink);
-        } else {
-          finishLogin();
-        }
-      } catch (e) { showError(errEl, 'Network error: ' + (e.message || e)); }
-    });
-
-    // Register new account
-    walletRegisterForm.addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const errEl = document.getElementById('wallet-register-error');
-      hideError(errEl);
-      const username = walletRegisterForm.username.value.trim();
-      const password = walletRegisterForm.password.value;
-      try {
-        const res = await fetch('/api/auth/wallet-register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, password, pubkey: walletPubkey }),
-        });
-        const data = await res.json();
-        if (!res.ok) { showError(errEl, data.error || 'Registration failed'); return; }
-
-        if (data.walletLink) {
-          await sendLinkingTx(data.walletLink);
-        } else {
-          finishLogin();
-        }
-      } catch (e) { showError(errEl, 'Network error: ' + (e.message || e)); }
-    });
-
-    async function sendLinkingTx(walletLink) {
-      showOnly(walletLinking);
-      const progressBar = document.getElementById('wallet-link-progress');
-      const progressLabel = document.getElementById('wallet-link-progress-label');
-      const startTime = Date.now();
-
-      const tickInterval = setInterval(() => {
-        const elapsed = (Date.now() - startTime) / 1000;
-        let pct;
-        if (elapsed <= 30) {
-          const t = elapsed / 30;
-          pct = 95 * (1 - Math.pow(1 - t, 3));
-        } else {
-          pct = 95 + 5 * (1 - Math.exp(-(elapsed - 30) / 120));
-        }
-        progressBar.style.width = pct + '%';
-        if (elapsed >= 60) {
-          progressLabel.textContent = 'Taking longer than expected...';
-          progressLabel.className = 'text-xs text-yellow-400';
-        }
-      }, 400);
-
-      try {
-        await window.sendTransaction(walletLink.to, walletLink.amount, walletLink.memo, {
-          timeoutMs: 90000,
-          pollIntervalMs: 1500,
-          waitForInclusion: false,
-          confirmTitle: 'Link Wallet',
-          confirmSubtitle: 'Link your Usernode wallet to your Social Vibecoding account.',
-        });
-
-        progressBar.style.width = '100%';
-        progressBar.className = 'h-full bg-green-500 rounded-full transition-all duration-500';
-        progressLabel.textContent = 'Transaction sent! Waiting for confirmation...';
-        progressLabel.className = 'text-xs text-green-400';
-
-        let linked = false;
-        for (let i = 0; i < 30; i++) {
-          await new Promise(r => setTimeout(r, 3000));
-          try {
-            const statusRes = await fetch('/api/me/wallet-link/status');
-            const statusData = await statusRes.json();
-            if (statusData.linked) { linked = true; break; }
-          } catch {}
-        }
-
-        clearInterval(tickInterval);
-        if (linked) {
-          progressLabel.textContent = 'Wallet linked! Redirecting...';
-          finishLogin();
-        } else {
-          progressLabel.textContent = 'Transaction sent. The link may take a moment to finalize. Redirecting...';
-          progressLabel.className = 'text-xs text-yellow-400';
-          setTimeout(finishLogin, 2000);
-        }
-      } catch (e) {
-        clearInterval(tickInterval);
-        progressBar.style.width = '0%';
-        const msg = e.message && e.message.includes('denied')
-          ? 'Transaction was denied. Redirecting to app...'
-          : 'Transaction failed: ' + (e.message || e) + '. Redirecting...';
-        progressLabel.textContent = msg;
-        progressLabel.className = 'text-xs text-red-400';
-        setTimeout(finishLogin, 3000);
-      }
-    }
   })();
   </script>
   <script src="/js/offline.js"></script>

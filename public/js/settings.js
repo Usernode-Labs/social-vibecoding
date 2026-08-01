@@ -775,6 +775,15 @@
     async logout() {
       const btn = document.getElementById('settings-logout');
       if (btn) btn.disabled = true;
+      // Thin-shell migration: web logout also tears down the native side
+      // (stop node, drop the mobile credential) so the next login starts
+      // clean. Bounded + best-effort inside handleWebLogout — never hangs
+      // the web logout on a wedged bridge, no-op outside the app.
+      try {
+        if (window.NativeChrome && NativeChrome.handleWebLogout) {
+          await NativeChrome.handleWebLogout();
+        }
+      } catch (_) {}
       try {
         await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
       } catch (_) {
@@ -1393,8 +1402,10 @@
     // NATIVE-BRIDGE.md). Capability-gated: hidden on desktop, in child-app
     // iframes, and on old app builds. Every setter resolves the refreshed
     // snapshot, so the section re-renders from a single source of truth.
-    // Device benchmark / HTTP debug logs / terms stay native and are
-    // reached via openNativeScreen deep-links.
+    // Device benchmark / HTTP debug logs stay native and are reached via
+    // openNativeScreen deep-links; terms render in a web sheet backed by
+    // the session-authed /challenges-api terms twins (thin-shell
+    // migration).
 
     _usernodeState: null,
 
@@ -1534,6 +1545,118 @@
       }
     },
 
+    // ── Terms (thin-shell migration) ──────────────────────────────────
+    // The native terms screen is gone; the current published terms and
+    // the consent write now live on the session-authed /challenges-api
+    // twins of the v4 terms endpoints (src/routes/topochain/mobile.js).
+    // Shared by the About & legal section below and profile.js's gated
+    // token-allocation notice. `onAccepted` fires after a successful
+    // accept so callers can refresh their own terms-gated UI.
+    async showTermsSheet(onAccepted) {
+      let payload = null;
+      try {
+        const res = await fetch('/challenges-api/terms/current', {
+          credentials: 'same-origin',
+        });
+        const body = await res.json().catch(() => ({}));
+        if (res.status === 404) {
+          // No published terms version — nothing to accept.
+          if (window.PlatformUI) PlatformUI.toast('No terms to review right now');
+          return;
+        }
+        if (!res.ok || !body.success) {
+          throw new Error(body.error || `HTTP ${res.status}`);
+        }
+        payload = body.data;
+      } catch (err) {
+        console.warn('[settings] terms fetch failed:', err);
+        if (window.PlatformUI) PlatformUI.toast('Could not load the terms');
+        return;
+      }
+
+      const el = (tag, cls, text) => this._unEl(tag, cls, text);
+      const panel = el('div', 'px-4 pb-5');
+      panel.appendChild(el('div', 'text-lg font-bold py-3',
+        payload.title || 'Terms'));
+      const meta = [];
+      if (payload.version) meta.push(`Version ${payload.version}`);
+      if (payload.published_at) {
+        try {
+          meta.push('published ' +
+            new Date(payload.published_at).toLocaleDateString());
+        } catch (_) {}
+      }
+      if (meta.length) {
+        panel.appendChild(el('p',
+          'text-xs text-zinc-500 dark:text-zinc-400 mb-2', meta.join(' · ')));
+      }
+      if (payload.terms_link) {
+        const a = el('a',
+          'block text-sm text-violet-600 dark:text-violet-400 underline mb-3',
+          'Read the full terms');
+        a.href = payload.terms_link;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        panel.appendChild(a);
+      }
+
+      const accepted = !!(payload.consent && payload.consent.accepted);
+      const statusEl = el('p', 'text-sm mb-3 ' + (accepted
+        ? 'text-emerald-600 dark:text-emerald-400'
+        : 'text-zinc-600 dark:text-zinc-400'),
+      accepted
+        ? 'You accepted this version' +
+          (payload.consent.responded_at
+            ? ' on ' + new Date(payload.consent.responded_at).toLocaleDateString()
+            : '') + '.'
+        : 'You have not accepted this version yet.');
+      panel.appendChild(statusEl);
+
+      let sheet = null;
+      if (!accepted) {
+        const acceptBtn = el('button',
+          'w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 ' +
+          'text-sm font-medium text-white', 'Accept the terms');
+        acceptBtn.addEventListener('click', async () => {
+          acceptBtn.disabled = true;
+          try {
+            const res = await fetch('/challenges-api/terms/consent', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              credentials: 'same-origin',
+              body: JSON.stringify({
+                terms_version_id: payload.id,
+                status: 'accepted',
+              }),
+            });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok || !body.success) {
+              throw new Error(body.error || `HTTP ${res.status}`);
+            }
+            if (window.PlatformUI) PlatformUI.toast('Terms accepted');
+            if (sheet && sheet.dismiss) sheet.dismiss();
+            if (typeof onAccepted === 'function') onAccepted();
+          } catch (err) {
+            console.warn('[settings] terms consent failed:', err);
+            if (window.PlatformUI) PlatformUI.toast('Could not record your consent');
+            acceptBtn.disabled = false;
+          }
+        });
+        panel.appendChild(acceptBtn);
+      }
+      const closeBtn = el('button',
+        'w-full px-4 py-2 mt-2 text-sm text-zinc-500 dark:text-zinc-400',
+      'Close');
+      closeBtn.addEventListener('click', () => {
+        if (sheet && sheet.dismiss) sheet.dismiss();
+      });
+      panel.appendChild(closeBtn);
+
+      sheet = window.PlatformUI && PlatformUI.sheet
+        ? PlatformUI.sheet({ contentEl: panel })
+        : null;
+    },
+
     _renderUsernodeBody() {
       const section = document.getElementById('settings-usernode-section');
       const s = this._usernodeState;
@@ -1563,11 +1686,10 @@
             'text-xs text-zinc-500 dark:text-zinc-500 mt-2',
             `Device: ${perms.deviceManufacturer}`));
         }
-      } else {
-        this._unToggle(permBox, 'Keep-alive mode (stay awake in foreground)',
-          perms.iosKeepAliveActive === true,
-          (v) => this._unApply(window.usernode.setIosKeepAlive(v)));
       }
+      // (The iOS keep-alive toggle is gone — thin-shell migration: block
+      // production is disabled on iOS and the keep-alive service was
+      // deleted from the app.)
 
       // Node.
       const nodeBox = this._unSection(section, 'Usernode app — node',
@@ -1623,20 +1745,24 @@
           buildBits.join(' · ')));
       }
       const termsRow = this._unEl('div');
+      // Terms render in a web sheet now (session-authed /challenges-api
+      // twins) — the native terms screen is gone. On accept, refresh the
+      // usernode snapshot so the label flips without reopening Settings.
       this._unButton(termsRow, s.termsAccepted === false
         ? 'Review terms (not yet accepted)' : 'Terms', () =>
-        this._openNativeScreen('terms', 'Could not open the terms screen'));
+        this.showTermsSheet(() => this._renderUsernodeSection()));
       aboutBox.appendChild(termsRow);
       this._renderUsernodeFaq(aboutBox, isAndroid, perms.deviceManufacturer);
 
-      // Account. Auth-aware like the native settings screen: authenticated
-      // users get Log out; guests get Log in. Guest is the state where no
-      // wallet account exists yet — native onboarding (which creates the
-      // wallet) only runs after the app's own login, and since this modal
-      // replaced the native-push App Settings drawer row, this button is
-      // the only in-shell path to that flow. It deep-links the native
-      // Settings screen (allowlisted since bridge v2), whose Account
-      // section shows the Log in tile for guests.
+      // Account (thin-shell migration). Platform login is the only
+      // sign-in surface: the native app's credential is provisioned from
+      // the web session by the boot handoff (native-chrome.js), so there
+      // is no separate "log in to the app" path anymore — the old native
+      // settings deep-link row is gone. A not-yet-authenticated native
+      // side just means the handoff hasn't finished (or an old build);
+      // say so instead of offering a dead-end button. Native logout stays
+      // available for authenticated installs; the main "Log out" at the
+      // top of this modal tears down both sides at once.
       const acctBox = this._unSection(section, 'Usernode app — account');
       if (s.authStatus === 'authenticated') {
         this._unButton(acctBox, 'Log out of the Usernode app', async () => {
@@ -1652,11 +1778,8 @@
       } else {
         acctBox.appendChild(this._unEl('p',
           'text-xs text-zinc-500 dark:text-zinc-400',
-          'You are browsing as a guest. Log in to the Usernode app to ' +
-          'create your wallet and start earning points.'));
-        this._unButton(acctBox, 'Log in to the Usernode app', () =>
-          this._openNativeScreen('settings',
-            'Could not open the app settings'));
+          'The app signs in automatically with your platform account. ' +
+          'If this message persists, try closing and reopening the app.'));
       }
     },
 

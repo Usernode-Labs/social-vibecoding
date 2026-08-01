@@ -1354,6 +1354,12 @@ function topochainMobileRoutes(config) {
   router.get('/challenges-api/leaderboard', webSessionAuth, requireSessionUser, leaderboardHandler);
   router.get('/challenges-api/me/ranking', webSessionAuth, requireSessionUser, meRankingHandler);
   router.get('/challenges-api/me/breakdown', webSessionAuth, requireSessionUser, meBreakdownHandler);
+  // Terms review + consent (thin-shell migration): the native terms
+  // screen is gone; SV settings renders the current terms and posts the
+  // consent with the platform session. Same dual-registration pattern —
+  // the handlers are hoisted function declarations defined further down.
+  router.get('/challenges-api/terms/current', webSessionAuth, requireSessionUser, termsCurrentHandler);
+  router.post('/challenges-api/terms/consent', webSessionAuth, requireSessionUser, termsConsentHandler);
   // Everything else under /challenges-api keeps the old proxy allowlist's
   // "off-list -> 404" contract instead of falling through to the SPA
   // catch-all (which would 200 with index.html) or authMiddleware's 401.
@@ -1392,7 +1398,11 @@ function topochainMobileRoutes(config) {
   });
 
   // ── GET /terms/current (SPEC 2046-2065) ──────────────────────────────
-  router.get('/api/v4/mobile/terms/current', mobileTokenAuth(config), async (req, res) => {
+  // Hoisted function declaration (not inline) so the /challenges-api web
+  // registrations above — which sit BEFORE this point so they beat the
+  // 404 catch-all — can reference it (thin-shell migration: terms review
+  // and consent moved into SV settings, session-cookie authed).
+  async function termsCurrentHandler(req, res) {
     try {
       const { rows } = await pool.query(
         `SELECT id, version, title, terms_link, published_at FROM terms_versions
@@ -1426,7 +1436,8 @@ function topochainMobileRoutes(config) {
       log.error('topochain-mobile', 'GET /terms/current failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
-  });
+  }
+  router.get('/api/v4/mobile/terms/current', mobileTokenAuth(config), termsCurrentHandler);
 
   // ── POST /terms/consent (SPEC 2067-2090) ─────────────────────────────
   // One row per (user, terms_version) — `user_terms_consents`'s own
@@ -1434,8 +1445,9 @@ function topochainMobileRoutes(config) {
   // which is how re-posting a DIFFERENT status withdraws/changes consent
   // (SPEC's own words: "overwritten on re-post ... how a user withdraws
   // consent"). IP + app_version are recorded but never echoed back in the
-  // response (SPEC 2089).
-  router.post('/api/v4/mobile/terms/consent', mobileTokenAuth(config), async (req, res) => {
+  // response (SPEC 2089). Hoisted for the same /challenges-api dual
+  // registration as termsCurrentHandler.
+  async function termsConsentHandler(req, res) {
     try {
       const body = req.body || {};
       const details = {};
@@ -1502,7 +1514,8 @@ function topochainMobileRoutes(config) {
       log.error('topochain-mobile', 'POST /terms/consent failed', { message: err.message });
       return fail(res, 500, 'Internal server error.');
     }
-  });
+  }
+  router.post('/api/v4/mobile/terms/consent', mobileTokenAuth(config), termsConsentHandler);
 
   // ── POST /zkpassport/complete (SPEC 2092-2141; 2939, 2961-2973 for the
   // replay-index/metadata resolution) ──────────────────────────────────

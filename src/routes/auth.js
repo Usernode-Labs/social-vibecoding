@@ -50,10 +50,28 @@ function authRoutes(config) {
     }
 
     try {
-      const { rows } = await pool.query(
-        'SELECT id, password, is_admin, admin_readonly FROM users WHERE username = $1',
-        [username]
-      );
+      // The identifier can be a username OR an email (thin-shell
+      // migration: mobile-created accounts are email-keyed, and platform
+      // login is now the only sign-in surface for the app). Email lookup
+      // uses the normalized lower-case form the mobile OTP flow stores
+      // (src/routes/topochain/mobile-auth.js). Email is tried first for
+      // @-shaped identifiers, falling back to an exact username match so
+      // legacy accounts whose username merely looks like an email keep
+      // working.
+      const identifier = String(username).trim();
+      let rows;
+      if (identifier.includes('@')) {
+        ({ rows } = await pool.query(
+          'SELECT id, username, password, is_admin, admin_readonly FROM users WHERE email = $1',
+          [identifier.toLowerCase()]
+        ));
+      }
+      if (!rows || rows.length === 0) {
+        ({ rows } = await pool.query(
+          'SELECT id, username, password, is_admin, admin_readonly FROM users WHERE username = $1',
+          [identifier]
+        ));
+      }
 
       if (rows.length === 0) {
         log.warn('auth', 'Login failed - unknown user', { username });
@@ -85,10 +103,12 @@ function authRoutes(config) {
         expires: expiresAt,
       });
 
-      log.info('auth', 'Login successful', { userId: user.id, username });
+      log.info('auth', 'Login successful', { userId: user.id, username: user.username });
 
       res.json({
-        user: { id: user.id, username, ...roleFields(user.is_admin, user.admin_readonly) },
+        // Echo the account's real username, not the raw identifier — the
+        // identifier may have been an email.
+        user: { id: user.id, username: user.username, ...roleFields(user.is_admin, user.admin_readonly) },
       });
     } catch (err) {
       log.error('auth', 'Login error', { message: err.message });

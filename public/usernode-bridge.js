@@ -4055,10 +4055,75 @@
     );
   };
 
-  // logout() → true. Confirm web-side; the post-logout auth flow stays
-  // native chrome (same category as onboarding).
+  // logout() → true. Confirm web-side; SV chrome owns the post-logout
+  // flow (bridge v4: it also calls stopNode and returns the user to the
+  // platform login page).
   window.usernode.logout = function () {
     return callNativeChromeAction("logout", {}, _SETTINGS_STATE_TIMEOUT_MS);
+  };
+
+  // =====================================================================
+  //  Public API: platform login + node lifecycle (bridge v4)
+  //  (usernode.completeLogin / startNode / stopNode)
+  // =====================================================================
+  //
+  // Thin-shell migration: the platform (SV) is the ONLY sign-in surface
+  // and the node lifecycle is platform-controlled. After a web login, SV
+  // exchanges its session cookie for a mobile bearer token
+  // (POST /api/v4/mobile/auth/from-session) and hands it to the native
+  // app here; the app provisions/imports the custodial wallet and reports
+  // identity progress via `usernode:auth-status` CustomEvents on window
+  // (detail: { phase, address } — same convention as
+  // `usernode:node-status`). Node start/stop is then requested explicitly
+  // by SV chrome (public/js/native-chrome.js owns the orchestration).
+  //
+  // All three reject on old builds / outside the app / from non-SV
+  // origins. Contract: NATIVE-BRIDGE.md (bridge v4).
+
+  // completeLogin({ token, user }) → identity snapshot
+  //   { phase, address } once the native side has stored the credential
+  //   and finished (or failed) wallet provisioning. `token` is the v4
+  //   mobile bearer from /from-session; `user` is that response's user
+  //   object. Generous timeout: provisioning round-trips the leaderboard
+  //   API and may import a wallet.
+  var _COMPLETE_LOGIN_TIMEOUT_MS = 120000;
+  window.usernode.completeLogin = function (payload) {
+    payload = payload || {};
+    return callNativeChromeAction(
+      "completeLogin",
+      { token: payload.token, user: payload.user || null },
+      _COMPLETE_LOGIN_TIMEOUT_MS
+    );
+  };
+
+  // startNode({ address }) → { started, nodeStatus } (or rejects when the
+  // address doesn't belong to the current identity / identity gates
+  // disallow). The native side binds the node to that wallet.
+  var _NODE_LIFECYCLE_TIMEOUT_MS = 60000;
+  window.usernode.startNode = function (payload) {
+    payload = payload || {};
+    return callNativeChromeAction(
+      "startNode", { address: payload.address || null },
+      _NODE_LIFECYCLE_TIMEOUT_MS
+    );
+  };
+
+  // stopNode() → { stopped }. Idempotent — resolves true-shaped even
+  // when the node wasn't running.
+  window.usernode.stopNode = function () {
+    return callNativeChromeAction(
+      "stopNode", {}, _NODE_LIFECYCLE_TIMEOUT_MS
+    );
+  };
+
+  // getAuthStatus() → { phase, address } or null (old build / outside
+  // the app). Poll-style twin of the `usernode:auth-status` event for
+  // boot-time orchestration.
+  window.usernode.getAuthStatus = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getAuthStatus", {}, _CHROME_PROBE_TIMEOUT_MS, null
+    );
   };
 
   // =====================================================================

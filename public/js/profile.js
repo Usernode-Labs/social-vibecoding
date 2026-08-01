@@ -211,14 +211,11 @@ const Profile = {
         'border-violet-500 text-violet-600 dark:text-violet-400 ' +
         'hover:bg-violet-50 dark:hover:bg-violet-950', 'Review terms');
       btn.addEventListener('click', () => {
-        if (window.usernode &&
-            typeof window.usernode.openNativeScreen === 'function') {
-          window.usernode.openNativeScreen('terms').catch((err) => {
-            console.warn('[profile] openNativeScreen(terms) failed:', err);
-            if (window.PlatformUI) {
-              PlatformUI.toast('Could not open the terms screen');
-            }
-          });
+        // Web terms sheet (thin-shell migration) — the native terms
+        // screen is gone. Refresh the profile after an accept so the
+        // token allocation un-gates immediately.
+        if (window.Settings && typeof Settings.showTermsSheet === 'function') {
+          Settings.showTermsSheet(() => Profile._load());
         }
       });
       card.appendChild(btn);
