@@ -1,5 +1,27 @@
-import { expect, test } from "@playwright/test"
+import { expect, test, type Locator } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
+
+async function probeHitTarget(target: Locator) {
+  return target.evaluate((element) => {
+    const rectangle = element.getBoundingClientRect()
+    const centerX = Math.floor(rectangle.left + rectangle.width / 2)
+    const centerY = Math.floor(rectangle.top + rectangle.height / 2)
+    const ownsPoint = (x: number, y: number) => {
+      const hit = document.elementFromPoint(x, y)
+      return hit === element || (hit ? element.contains(hit) : false)
+    }
+    const scan = (deltaX: number, deltaY: number) => {
+      let distance = 0
+      while (distance < 64 && ownsPoint(centerX + deltaX * (distance + 1), centerY + deltaY * (distance + 1))) distance += 1
+      return distance
+    }
+    const left = scan(-1, 0)
+    const right = scan(1, 0)
+    const top = scan(0, -1)
+    const bottom = scan(0, 1)
+    return { effectiveHeight: top + bottom + 1, effectiveWidth: left + right + 1, visualHeight: rectangle.height, visualWidth: rectangle.width }
+  })
+}
 
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({ json: { user: { isAdmin: true, canAdminWrite: true } } }))
@@ -23,6 +45,7 @@ test("creates an activation code with the established POST contract", async ({ p
   await expect(page.getByRole("heading", { exact: true, level: 1, name: "Activation codes" })).toHaveCount(1)
   await expect(route).toContainText("c82ea91f11ad")
   await expect(route).toContainText("Used by ava")
+  await expect(route).toContainText("1 available, 1 used")
   await page.getByRole("button", { name: "Generate code" }).click()
   await expect(page.getByTestId("activation-codes")).toContainText("newcode123456")
   expect(creationRequests).toBe(1)
@@ -37,6 +60,39 @@ test("copies an activation code locally without calling a server mutation", asyn
   await page.getByRole("button", { name: "Copy activation code c82ea91f11ad" }).click()
   await expect.poll(() => page.evaluate(() => (window as unknown as { __copiedActivationCode?: string }).__copiedActivationCode)).toBe("c82ea91f11ad")
   await expect(page.getByRole("button", { name: "Copy activation code c82ea91f11ad" })).toContainText("Copied")
+})
+
+test("keeps used provenance visible by default and masks it locally", async ({ page }) => {
+  let mutationRequests = 0
+  await page.route("**/api/admin/codes**", async (route) => {
+    if (route.request().method() !== "GET") mutationRequests += 1
+    await route.fallback()
+  })
+  await page.goto("/react/admin/codes")
+  const route = page.getByTestId("activation-codes")
+  await expect(route.getByText("deaf2b58a554", { exact: true })).toBeVisible()
+  await expect(route).toContainText("Used by ava")
+  const hide = page.getByRole("button", { name: "Hide used code details" })
+  await expect(hide).toHaveAttribute("aria-pressed", "true")
+  const hitTarget = await probeHitTarget(hide)
+  if (await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)) {
+    expect(hitTarget.effectiveHeight).toBeGreaterThanOrEqual(48)
+    expect(hitTarget.effectiveWidth).toBeGreaterThanOrEqual(48)
+  } else {
+    expect(hitTarget.visualHeight).toBeLessThan(48)
+    expect(hitTarget.visualWidth).toBeLessThan(48)
+  }
+  await hide.click()
+  await expect(route).not.toContainText("deaf2b58a554")
+  await expect(route).not.toContainText("Used by ava")
+  await expect(route).toContainText("Used details hidden")
+  await expect(page.getByRole("button", { name: "Copy activation code deaf2b58a554" })).toHaveCount(0)
+  const show = page.getByRole("button", { name: "Show used code details" })
+  await expect(show).toHaveAttribute("aria-pressed", "false")
+  await show.click()
+  await expect(route.getByText("deaf2b58a554", { exact: true })).toBeVisible()
+  await expect(route).toContainText("Used by ava")
+  expect(mutationRequests).toBe(0)
 })
 
 test("surfaces the server creation error directly", async ({ page }) => {
@@ -91,7 +147,9 @@ test("view-only administrators cannot generate activation codes", async ({ page 
   await page.goto("/react/admin/codes")
   await expect(page.getByRole("alert")).toContainText("View-only administrator")
   await expect(page.getByRole("button", { name: "Generate code" })).toBeDisabled()
-  await expect(page.getByRole("button", { name: "Revoke activation code c82ea91f11ad" })).toBeDisabled()
+  const revoke = page.getByRole("button", { name: "Revoke activation code c82ea91f11ad" })
+  await expect(revoke).toBeDisabled()
+  await expect(revoke).not.toHaveClass(/bg-destructive/)
   expect(creationRequests).toBe(0)
 })
 

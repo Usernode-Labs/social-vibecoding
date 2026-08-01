@@ -162,28 +162,6 @@
     },
     {
       "rule": "no-space-utilities",
-      "file": "@/features/admin/activation-codes.tsx",
-      "matches": [
-        "space-y-3"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-arbitrary-utilities",
-      "file": "@/features/admin/activation-codes.tsx",
-      "matches": [
-        "grid-cols-[minmax(0,1fr)_auto]"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Dense admin row needs a named layout variant.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-space-utilities",
       "file": "@/features/admin/admin-features.tsx",
       "matches": [
         "space-y-1",

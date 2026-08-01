@@ -3211,6 +3211,8 @@
       "variants": [
         "AvailableAndUsed",
         "CopyReady",
+        "MaskedUsedProvenance",
+        "ViewOnly",
         "Empty"
       ],
       "tokens": [
@@ -3241,6 +3243,8 @@
         "states": [
           "AvailableAndUsed",
           "CopyReady",
+          "MaskedUsedProvenance",
+          "ViewOnly",
           "Empty"
         ]
       }

@@ -535,6 +535,8 @@
         "states": [
           "AvailableAndUsed",
           "CopyReady",
+          "MaskedUsedProvenance",
+          "ViewOnly",
           "Empty"
         ]
       }

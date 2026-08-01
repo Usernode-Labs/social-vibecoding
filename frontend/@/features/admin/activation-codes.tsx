@@ -1,4 +1,4 @@
-import { ExternalLink, KeyRound, ShieldAlert } from "lucide-react"
+import { ExternalLink, Eye, EyeOff, KeyRound, ShieldAlert } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -6,10 +6,11 @@ import { TopBar } from "@/components/top-bar"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { AdminAccessError, createActivationCode, getActivationCodes, getAdminUser, revokeActivationCode, type ActivationCode, type AdminUser } from "@/lib/admin-api"
 import { isProductionReadOnlyReview } from "@/lib/runtime-mode"
 
@@ -97,7 +98,7 @@ export function ActivationCodesPage() {
   }
   return <div className="isolate flex w-full flex-1 flex-col" data-testid="activation-codes">
     <TopBar action={state.kind === "ready" ? <div className="flex flex-wrap gap-2"><Button disabled={!canCreate || creating} onClick={() => void create()} type="button">{creating ? "Generating…" : "Generate code"}</Button><Button onClick={() => setReloadToken((value) => value + 1)} type="button" variant="outline">Refresh</Button></div> : undefined} title="Activation codes" /><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
-    {state.kind === "loading" ? <><Skeleton className="h-28 w-full" /><Skeleton className="h-28 w-full" /></> : null}
+    {state.kind === "loading" ? <Skeleton className="h-56 w-full" /> : null}
     {state.kind === "denied" ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>Admin access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Activation codes unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "ready" && !state.user.canAdminWrite ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>View-only administrator</AlertTitle><AlertDescription>You can inspect activation codes, but only a write administrator can generate or revoke one.</AlertDescription></Alert> : null}
@@ -111,7 +112,15 @@ export function ActivationCodesPage() {
   </div></div>
 }
 
-export function ActivationCodesList({ canRevoke = false, codes, copiedCodeId, onCopy, onRevoke }: { canRevoke?: boolean; codes: ActivationCode[]; copiedCodeId?: number | null; onCopy?: (code: ActivationCode) => void; onRevoke?: (code: ActivationCode) => void }) {
+export function ActivationCodesList({ canRevoke = false, codes, copiedCodeId, defaultShowUsedProvenance = true, onCopy, onRevoke }: { canRevoke?: boolean; codes: ActivationCode[]; copiedCodeId?: number | null; defaultShowUsedProvenance?: boolean; onCopy?: (code: ActivationCode) => void; onRevoke?: (code: ActivationCode) => void }) {
+  const [showUsedProvenance, setShowUsedProvenance] = useState(defaultShowUsedProvenance)
   if (!codes.length) return <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={KeyRound} /></EmptyMedia><EmptyTitle>No activation codes</EmptyTitle><EmptyDescription>Generate a code to invite someone to register.</EmptyDescription></EmptyHeader></Empty>
-  return <section aria-label="Activation codes" className="space-y-3">{codes.map((code) => <Card key={code.id}><CardHeader className="grid-cols-[minmax(0,1fr)_auto] gap-3"><div className="min-w-0"><CardTitle><code className="break-all">{code.code}</code></CardTitle><CardDescription>Created {date(code.created_at)}</CardDescription></div><Badge variant={code.used_by_username ? "outline" : "secondary"}>{code.used_by_username ? "Used" : "Available"}</Badge></CardHeader><CardContent className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground"><span>{code.used_by_username ? `Used by ${code.used_by_username} on ${date(code.used_at)}` : "Not yet used"}</span><div className="flex flex-wrap gap-2">{onCopy ? <Button aria-label={`Copy activation code ${code.code}`} onClick={() => onCopy(code)} size="sm" type="button" variant="outline">{copiedCodeId === code.id ? "Copied" : "Copy"}</Button> : null}{!code.used_by_username && onRevoke ? <Button aria-label={`Revoke activation code ${code.code}`} disabled={!canRevoke} onClick={() => onRevoke(code)} size="sm" type="button" variant="destructive">Revoke</Button> : null}</div></CardContent></Card>)}</section>
+  const usedCount = codes.filter((code) => Boolean(code.used_by_username)).length
+  const availableCount = codes.length - usedCount
+  const provenanceAction = showUsedProvenance ? "Hide used code details" : "Show used code details"
+  return <section aria-label="Activation codes"><Card className="gap-0 py-0"><div className="flex min-h-14 items-center justify-between gap-4 border-b px-4 sm:px-6"><p className="text-sm text-muted-foreground">{availableCount} available, {usedCount} used</p>{usedCount ? <Tooltip><TooltipTrigger render={<Button aria-label={provenanceAction} aria-pressed={showUsedProvenance} className="relative after:absolute after:top-1/2 after:left-1/2 after:size-13 after:-translate-1/2 after:content-[''] after:pointer-fine:hidden" onClick={() => setShowUsedProvenance((visible) => !visible)} size="icon-sm" title={provenanceAction} type="button" variant="ghost" />}><PlatformIcon icon={showUsedProvenance ? EyeOff : Eye} /></TooltipTrigger><TooltipContent>{provenanceAction}</TooltipContent></Tooltip> : null}</div><ul className="divide-y">{codes.map((code) => {
+    const used = Boolean(code.used_by_username)
+    const detailsVisible = !used || showUsedProvenance
+    return <li className="grid gap-3 px-4 py-4 sm:flex sm:items-center sm:justify-between sm:px-6" key={code.id}><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><code className="break-all font-medium">{detailsVisible ? code.code : "••••••••••••"}</code><Badge variant="secondary">{used ? "Used" : "Available"}</Badge></div><p className="mt-1 text-sm text-muted-foreground">Created {date(code.created_at)}</p>{used ? <p className="mt-1 text-sm text-muted-foreground">{showUsedProvenance ? `Used by ${code.used_by_username} on ${date(code.used_at)}` : "Used details hidden"}</p> : null}</div><div className="flex flex-wrap justify-end gap-2">{onCopy && detailsVisible ? <Button aria-label={`Copy activation code ${code.code}`} onClick={() => onCopy(code)} size="sm" type="button" variant="outline">{copiedCodeId === code.id ? "Copied" : "Copy"}</Button> : null}{!used && onRevoke ? <Button aria-label={`Revoke activation code ${code.code}`} disabled={!canRevoke} onClick={() => onRevoke(code)} size="sm" type="button" variant="outline">Revoke</Button> : null}</div></li>
+  })}</ul></Card></section>
 }

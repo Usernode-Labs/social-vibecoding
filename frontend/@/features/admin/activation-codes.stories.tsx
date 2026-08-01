@@ -6,6 +6,8 @@ const meta = { title: "Features/Admin/Activation codes", component: ActivationCo
 export default meta
 type Story = StoryObj<typeof meta>
 
-export const AvailableAndUsed: Story = { args: { codes: [{ id: 1, code: "c82ea91f11ad", created_at: "2026-07-27", used_at: null }, { id: 2, code: "deaf2b58a554", created_at: "2026-07-20", used_at: "2026-07-21", used_by_username: "ava" }] } }
+export const AvailableAndUsed: Story = { args: { canRevoke: true, codes: [{ id: 1, code: "c82ea91f11ad", created_at: "2026-07-27", used_at: null }, { id: 2, code: "deaf2b58a554", created_at: "2026-07-20", used_at: "2026-07-21", used_by_username: "ava" }], onCopy: () => undefined, onRevoke: () => undefined } }
 export const CopyReady: Story = { args: { canRevoke: true, codes: [{ id: 1, code: "c82ea91f11ad", created_at: "2026-07-27", used_at: null }], onCopy: () => undefined, onRevoke: () => undefined } }
+export const MaskedUsedProvenance: Story = { args: { codes: [{ id: 2, code: "deaf2b58a554", created_at: "2026-07-20", used_at: "2026-07-21", used_by_username: "ava" }], defaultShowUsedProvenance: false, onCopy: () => undefined } }
+export const ViewOnly: Story = { args: { codes: [{ id: 1, code: "c82ea91f11ad", created_at: "2026-07-27", used_at: null }], onCopy: () => undefined, onRevoke: () => undefined } }
 export const Empty: Story = { args: { codes: [] } }
