@@ -233,6 +233,46 @@ test("keeps the four lifecycle columns and uses a single mobile column selector"
   await expect(page.getByRole("img", { name: "Filter pantry staples, needs vote" })).toBeVisible()
 })
 
+test("filters board cards immediately through the governed search composition", async ({ page }) => {
+  const filterRequests: string[] = []
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/api/apps/recipebot")) filterRequests.push(request.url())
+  })
+  await page.route("**/api/apps/recipebot/github-issues", (route) => route.fulfill({ json: { issues: [
+    { number: 72, title: "Review ingredient substitutions", created_by_username: "sam" },
+    { number: 73, title: "Add pantry shortcuts", created_by_username: "sam" },
+  ] } }))
+  await page.goto("/react/apps/recipebot/dev?view=kanban")
+
+  const filter = page.getByRole("searchbox", { name: "Filter board cards", exact: true })
+  await expect(filter).toHaveAttribute("name", "board-filter")
+  await expect(filter).toHaveAttribute("placeholder", "Filter by title, author, or number")
+  await expect(filter.locator("xpath=..")).toHaveAttribute("data-slot", "input-group")
+  await expect(page.getByRole("link", { name: "View Add pantry shortcuts" })).toBeVisible()
+  await page.waitForTimeout(300)
+  const requestBaseline = filterRequests.length
+
+  await filter.fill("ingredient")
+  expect(await page.getByRole("link", { name: "View Review ingredient substitutions" }).count()).toBe(1)
+  expect(await page.getByRole("link", { name: "View Add pantry shortcuts" }).count()).toBe(0)
+  await expect(page.getByRole("link", { name: "View Review ingredient substitutions" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "View Add pantry shortcuts" })).toHaveCount(0)
+  await filter.press("Enter")
+  await expect(page).toHaveURL("/react/apps/recipebot/dev?view=kanban")
+
+  await filter.fill("missing")
+  const issues = page.locator('section[aria-label="Issues column"]')
+  await expect(issues.getByText("No matching work in this stage.", { exact: true })).toBeVisible()
+  await expect(issues.getByText("New work will appear here.", { exact: true })).toHaveCount(0)
+
+  await page.getByRole("button", { name: "Clear filters" }).click()
+  await expect(filter).toHaveValue("")
+  await expect(page.getByRole("link", { name: "View Review ingredient substitutions" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "View Add pantry shortcuts" })).toBeVisible()
+  await page.waitForTimeout(300)
+  expect(filterRequests).toHaveLength(requestBaseline)
+})
+
 test("gives the mobile board tabs honest non-overlapping reach", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await page.route("**/api/apps/recipebot/github-issues", (route) => route.fulfill({ json: { issues: [{ number: 72, title: "Review ingredient substitutions", created_by_username: "sam" }] } }))

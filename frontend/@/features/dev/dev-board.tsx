@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
-import { Input } from "@/components/ui/input"
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/components/ui/input-group"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { PlatformIcon } from "@/components/platform-icon"
@@ -276,7 +276,7 @@ export function DevBoard({ slug, snapshot, canReorder, loadingMore = false, merg
     <header className="flex flex-col gap-1"><h3 className="text-lg font-medium" id="dev-board-heading">{workspaceTitle}</h3><p className="text-base text-muted-foreground text-pretty sm:text-sm">{workspaceDescription}</p></header>
     {mode !== "list" ? <div className="flex flex-col gap-2" aria-label="Board filters">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <div className="relative min-w-0 flex-1"><PlatformIcon className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-muted-foreground" icon={Search} /><Input aria-label="Filter board cards" className="pl-8" name="board-filter" onChange={(event) => setFilter((current) => ({ ...current, query: event.target.value }))} placeholder="Filter by title, author, or number" value={filter.query} /></div>
+        <InputGroup className="min-w-0 flex-1"><InputGroupAddon><PlatformIcon icon={Search} /></InputGroupAddon><InputGroupInput aria-label="Filter board cards" name="board-filter" onChange={(event) => setFilter((current) => ({ ...current, query: event.target.value }))} placeholder="Filter by title, author, or number" type="search" value={filter.query} /></InputGroup>
         <Button aria-pressed={filter.needsVote} onClick={() => setFilter((current) => ({ ...current, needsVote: !current.needsVote }))} type="button" variant={filter.needsVote ? "secondary" : "outline"}><PlatformIcon data-icon="inline-start" icon={Vote} />Needs vote</Button>
         {hasFilters ? <Button onClick={() => setFilter(emptyFilter)} type="button" variant="ghost">Clear filters</Button> : null}
       </div>
@@ -292,7 +292,7 @@ export function DevBoard({ slug, snapshot, canReorder, loadingMore = false, merg
         {(Object.keys(columnLabels) as ColumnKey[]).map((key) => <TabsTrigger key={key} value={key}><span className="truncate">{columnLabels[key]}</span><span className="tabular-nums text-muted-foreground">{filteredColumns[key].length}</span></TabsTrigger>)}
       </TabsList>
       <DndContext collisionDetection={closestCenter} onDragEnd={onDragEnd} sensors={sensors}><div className="overflow-x-auto pb-2"><div className="grid min-w-[70rem] items-start gap-4 sm:min-w-0 sm:grid-cols-2 xl:grid-cols-4">
-        {(Object.keys(columnLabels) as ColumnKey[]).map((column) => <BoardColumn active={activeColumn === column} cards={filteredColumns[column]} column={column} disabled={!canReorder || hasFilters || saving !== null} key={column} />)}
+        {(Object.keys(columnLabels) as ColumnKey[]).map((column) => <BoardColumn active={activeColumn === column} cards={filteredColumns[column]} column={column} disabled={!canReorder || hasFilters || saving !== null} filtered={hasFilters} key={column} />)}
       </div></div></DndContext>
     </Tabs> : null}
     {mode === "list" ? <DevListView columns={columns} /> : null}
@@ -465,13 +465,13 @@ function BoardSelect({ includeUnassigned = false, label, onValueChange, options,
   return <Select onValueChange={(nextValue) => { if (nextValue) onValueChange(nextValue) }} value={value}><SelectTrigger aria-label={`Filter by ${label.toLowerCase()}`} size="sm"><SelectValue /></SelectTrigger><SelectContent><SelectGroup><SelectItem value="all">All {label.toLowerCase()}</SelectItem>{includeUnassigned ? <SelectItem value="unassigned">Unassigned</SelectItem> : null}{options.map((option) => <SelectItem key={option} value={option}>{option}</SelectItem>)}</SelectGroup></SelectContent></Select>
 }
 
-function BoardColumn({ active, cards, column, disabled }: { active: boolean; cards: BoardCard[]; column: ColumnKey; disabled: boolean }) {
+function BoardColumn({ active, cards, column, disabled, filtered }: { active: boolean; cards: BoardCard[]; column: ColumnKey; disabled: boolean; filtered: boolean }) {
   const reorderable = (column === "issues" || column === "in-review") && !disabled
   return <section aria-label={`${columnLabels[column]} column`} className={cn("min-w-0 max-sm:hidden", active && "max-sm:flex")}>
     <div className="self-start overflow-hidden rounded-xl border bg-muted/30">
       <div className="flex items-center justify-between border-b px-3 py-2.5"><h4 className="text-base font-medium sm:text-sm">{columnLabels[column]}</h4><Badge variant="outline"><span className="tabular-nums">{cards.length}</span></Badge></div>
       <div className="flex flex-col gap-2 p-2.5">
-        {cards.length === 0 ? <Empty className="min-h-24 border-0 bg-transparent p-3"><EmptyHeader><EmptyTitle>Nothing here yet</EmptyTitle><EmptyDescription>{column === "issues" ? "New work will appear here." : "No matching work in this stage."}</EmptyDescription></EmptyHeader></Empty> : <SortableContext items={cards.map((card) => card.id)} strategy={verticalListSortingStrategy}>{cards.map((card) => <BoardCardView card={card} draggable={reorderable} key={card.id} />)}</SortableContext>}
+        {cards.length === 0 ? <Empty className="min-h-24 border-0 bg-transparent p-3"><EmptyHeader><EmptyTitle>Nothing here yet</EmptyTitle><EmptyDescription>{column === "issues" && !filtered ? "New work will appear here." : "No matching work in this stage."}</EmptyDescription></EmptyHeader></Empty> : <SortableContext items={cards.map((card) => card.id)} strategy={verticalListSortingStrategy}>{cards.map((card) => <BoardCardView card={card} draggable={reorderable} key={card.id} />)}</SortableContext>}
       </div>
     </div>
   </section>

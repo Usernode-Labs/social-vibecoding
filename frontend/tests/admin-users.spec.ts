@@ -109,9 +109,26 @@ test("production review mode does not issue user mutations", async ({ page }) =>
 
 test("filters the read-only list by user name", async ({ page }) => {
   await openAdminUsers(page)
-  await page.getByLabel("Filter users").fill("milo")
+  const filterRequests: string[] = []
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/admin/users") filterRequests.push(request.url())
+  })
+  const filter = page.getByRole("searchbox", { name: "Filter users", exact: true })
+  await expect(filter).toHaveAttribute("placeholder", "Filter users")
+  await filter.fill("milo")
+  expect(await page.getByText("milo", { exact: true }).count()).toBe(1)
   await expect(page.getByTestId("admin-users")).toContainText("milo")
   await expect(page.getByTestId("admin-users")).not.toContainText("ava (you)")
+  await filter.press("Enter")
+  await expect(page).toHaveURL(/\/react\/admin\/users$/)
+  await filter.fill("missing")
+  await expect(page.getByText("No matching users", { exact: true })).toBeVisible()
+  await expect(page.getByText("Try another name, or clear the filter.", { exact: true })).toBeVisible()
+  await filter.fill("")
+  await expect(page.getByTestId("admin-users")).toContainText("ava (you)")
+  await expect(page.getByTestId("admin-users")).toContainText("milo")
+  await page.waitForTimeout(300)
+  expect(filterRequests).toEqual([])
 })
 
 test("has no critical or serious accessibility violations", async ({ page }) => {
