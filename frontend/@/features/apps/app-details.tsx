@@ -1,7 +1,8 @@
 import { LoaderCircle, LockKeyhole, LockKeyholeOpen, UsersRound } from "lucide-react"
 import { useEffect, useRef, useState } from "react"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { useNavigate, useParams } from "react-router-dom"
 
+import { ActionLink } from "@/components/action-link"
 import { AppTopBar } from "@/features/apps/app-top-bar"
 import { AppIdentity } from "@/features/apps/app-identity"
 import { AppShareSheet } from "@/features/apps/app-share-sheet"
@@ -219,11 +220,11 @@ export function AppDetails() {
           </CardContent>
           <CardFooter className="flex flex-col items-start gap-3">
             <ButtonGroup aria-label={`${app.name} actions`} data-testid="app-actions" className="flex-wrap">
-              <Button disabled={app.status !== "running" || (!app.self_hosted && !app.url)} render={<Link aria-label={`Open ${app.name}`} to={appOpenPath(app.slug)} />}>
+              <ActionLink aria-label={`Open ${app.name}`} disabled={app.status !== "running" || (!app.self_hosted && !app.url)} to={appOpenPath(app.slug)} variant="default">
                 Open app
-              </Button>
-              {app.can_collaborate !== false ? <><ButtonGroupSeparator /><Button render={<Link aria-label={`Improve ${app.name}`} to={appDevPath(app.slug)} />} variant="secondary">Improve app</Button></> : null}
-              {app.can_collaborate !== false ? <><ButtonGroupSeparator /><Button render={<Link aria-label={`Manage ${app.name} collaborators`} to={appMembersPath(app.slug)} />} variant="outline">Collaborators</Button></> : null}
+              </ActionLink>
+              {app.can_collaborate !== false ? <><ButtonGroupSeparator /><ActionLink aria-label={`Improve ${app.name}`} to={appDevPath(app.slug)} variant="secondary">Improve app</ActionLink></> : null}
+              {app.can_collaborate !== false ? <><ButtonGroupSeparator /><ActionLink aria-label={`Manage ${app.name} collaborators`} to={appMembersPath(app.slug)}>Collaborators</ActionLink></> : null}
               {app.can_manage ? <><ButtonGroupSeparator /><Button disabled={isProductionReadOnlyReview} onClick={() => { setRenameValue(app.name); setRenameError(null); setRenameOpen(true) }} type="button" variant="outline">Rename</Button></> : null}
               {app.url ? <><ButtonGroupSeparator /><AppShareSheet appName={app.name} url={app.url} /></> : null}
               {shortcutSupport ? (

@@ -89,8 +89,12 @@ test("renders the any-admin metadata index without proxying visual bytes", async
   const galleryLink = gallery.getByRole("link", { name: "Open gallery" })
   await expect(galleryLink).toHaveAttribute("data-slot", "action-anchor")
   await expect(galleryLink).toHaveAttribute("href", "/gallery")
-  await expect(gallery.getByRole("link", { name: "Improve app" })).toHaveAttribute("href", "/react/apps/recipebot/dev")
-  await expect(gallery.getByRole("link", { name: "Open proposal" })).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/41")
+  const improveApp = gallery.getByRole("link", { name: "Improve app" })
+  await expect(improveApp).toHaveAttribute("data-slot", "action-link")
+  await expect(improveApp).toHaveAttribute("href", "/react/apps/recipebot/dev")
+  const openProposal = gallery.getByRole("link", { name: "Open proposal" })
+  await expect(openProposal).toHaveAttribute("data-slot", "action-link")
+  await expect(openProposal).toHaveAttribute("href", "/react/apps/recipebot/dev/proposals/41")
   const pullRequest = gallery.getByRole("link", { name: "PR #81" })
   await expect(pullRequest).toHaveAttribute("data-slot", "action-anchor")
   await expect(pullRequest).toHaveAttribute("href", firstProposal.prUrl)
@@ -100,6 +104,23 @@ test("renders the any-admin metadata index without proxying visual bytes", async
   await expect(gallery.locator("video[aria-label='After /search · mobile']")).toHaveAttribute("src", `/visuals/${recording}`)
   await expect(gallery.locator('[data-media-readiness="ready"]')).toHaveCount(2)
   await expect(gallery.getByTestId("gallery-capture-state-41")).toHaveText("Captured")
+})
+
+test("keeps gallery destinations absent when a proposal has no app slug", async ({ page }) => {
+  await installGalleryFixture(page)
+  await page.unroute("**/api/gallery/proposals**")
+  await page.route("**/api/gallery/proposals**", (route) => route.fulfill({ json: {
+    proposals: [{ ...olderProposal, appSlug: null }],
+    hasMore: false,
+    nextCursor: null,
+  } }))
+  await page.goto("/react/admin/gallery")
+
+  const gallery = page.getByTestId("admin-gallery")
+  await expect(gallery.getByRole("button", { name: "Improve app" })).toBeDisabled()
+  await expect(gallery.getByRole("button", { name: "Open proposal" })).toBeDisabled()
+  await expect(gallery.getByRole("link", { name: "Improve app" })).toHaveCount(0)
+  await expect(gallery.getByRole("link", { name: "Open proposal" })).toHaveCount(0)
 })
 
 test("keeps Captured hidden until declared media bytes are ready", async ({ page }) => {

@@ -7,7 +7,7 @@ import reactHooks from "eslint-plugin-react-hooks"
 import reactRefresh from "eslint-plugin-react-refresh"
 import tseslint from "typescript-eslint"
 
-export default tseslint.config({ ignores: ["dist", "storybook-static", "node_modules"] }, {
+export default tseslint.config({ ignores: [".artifacts", "dist", "storybook-static", "node_modules"] }, {
   extends: [js.configs.recommended, ...tseslint.configs.recommended],
   files: ["**/*.{ts,tsx}"],
   languageOptions: { globals: globals.browser },
