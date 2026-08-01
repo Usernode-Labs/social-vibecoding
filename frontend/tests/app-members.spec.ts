@@ -57,6 +57,8 @@ test("links App Detail to the collaboration manager and renders member/pending-i
   await expect(chrome).toHaveAttribute("data-placement", "flow")
   await expect(members.locator("h1")).toHaveCount(1)
   await expect(members.getByRole("heading", { level: 1, name: "RecipeBot · Members and visibility" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Back" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toHaveCount(0)
   await expect.poll(() => members.evaluate((element) => getComputedStyle(element).maxWidth)).toBe("none")
   await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("@ava")
   await expect(page.getByRole("list", { name: "RecipeBot collaborators" })).toContainText("Creator")

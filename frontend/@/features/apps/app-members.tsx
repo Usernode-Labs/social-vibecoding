@@ -220,7 +220,7 @@ export function AppMembers() {
   }
 
   return <div className="isolate flex w-full flex-1 flex-col" data-testid="app-members">
-    <AppTopBar app={ready ? ready.app : null} backTo={ready ? appDetailsPath(ready.app.slug) : "/"} fallbackTitle="Members and visibility" label="Members and visibility" mode="nested" />
+    <AppTopBar app={ready ? ready.app : null} backTo={ready ? appDetailsPath(ready.app.slug) : "/"} fallbackTitle="Members and visibility" label="Members and visibility" mode="nested" showClose={false} />
     <div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {state.kind === "loading" ? <MembersSkeleton /> : null}
     {state.kind === "not-found" ? <Empty data-testid="members-not-found"><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={UsersRound} /></EmptyMedia><EmptyTitle>Collaborators unavailable</EmptyTitle><EmptyDescription>This collaborators view is not available to this session.</EmptyDescription></EmptyHeader><ActionLink to="/">Back to apps</ActionLink></Empty> : null}
