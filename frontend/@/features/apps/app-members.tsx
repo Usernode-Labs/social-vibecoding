@@ -1,7 +1,8 @@
 import { ChevronDown, LoaderCircle, ShieldAlert, UsersRound } from "lucide-react"
 import { useEffect, useState, type FormEvent } from "react"
-import { Link, useNavigate, useParams } from "react-router-dom"
+import { useNavigate, useParams } from "react-router-dom"
 
+import { ActionLink } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog"
@@ -222,7 +223,7 @@ export function AppMembers() {
     <AppTopBar app={ready ? ready.app : null} backTo={ready ? appDetailsPath(ready.app.slug) : "/"} fallbackTitle="Members and visibility" label="Members and visibility" mode="nested" />
     <div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {state.kind === "loading" ? <MembersSkeleton /> : null}
-    {state.kind === "not-found" ? <Empty data-testid="members-not-found"><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={UsersRound} /></EmptyMedia><EmptyTitle>Collaborators unavailable</EmptyTitle><EmptyDescription>This collaborators view is not available to this session.</EmptyDescription></EmptyHeader><Button render={<Link to="/" />} variant="outline">Back to apps</Button></Empty> : null}
+    {state.kind === "not-found" ? <Empty data-testid="members-not-found"><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={UsersRound} /></EmptyMedia><EmptyTitle>Collaborators unavailable</EmptyTitle><EmptyDescription>This collaborators view is not available to this session.</EmptyDescription></EmptyHeader><ActionLink to="/">Back to apps</ActionLink></Empty> : null}
     {state.kind === "forbidden" ? <Alert variant="destructive"><PlatformIcon icon={ShieldAlert} /><AlertTitle>Collaborator access required</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>Could not load collaborators</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}
     {ready ? <>

@@ -75,6 +75,9 @@ test("preserves the preview loading gutter while allowing a larger device inset"
   await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
   const loading = page.locator('[data-slot="staging-preview-surface"][data-state="loading"]')
   await expect(loading).toBeVisible()
+  const loadingRecoveryLink = loading.getByRole("link", { name: "Return to session" })
+  await expect(loadingRecoveryLink).toHaveAttribute("data-slot", "action-link")
+  await expect(loadingRecoveryLink).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/9")
   await page.evaluate(() => {
     const root = document.documentElement
     root.style.setProperty("--safe-area-bottom", "9px")
@@ -102,6 +105,9 @@ test("preserves the preview error gutter while allowing a larger device inset", 
   await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
   const error = page.locator('[data-slot="staging-preview-surface"][data-state="error"]')
   await expect(error).toBeVisible()
+  const errorRecoveryLink = error.getByRole("link", { name: "Return to session" })
+  await expect(errorRecoveryLink).toHaveAttribute("data-slot", "action-link")
+  await expect(errorRecoveryLink).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/9")
   await page.evaluate(() => {
     const root = document.documentElement
     root.style.setProperty("--safe-area-bottom", "29px")

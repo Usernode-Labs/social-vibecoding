@@ -1,7 +1,8 @@
 import { Github, LoaderCircle, Plus } from "lucide-react"
 import { useEffect, useState, type FormEvent, type ReactNode } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { useNavigate } from "react-router-dom"
 
+import { ActionLink } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -102,7 +103,7 @@ function CreationBlocked({
         {onRetry ? (
           <Button onClick={onRetry} type="button" variant="outline">Try again</Button>
         ) : (
-          <Button render={<Link to="/" />} variant="outline">Back to apps</Button>
+          <ActionLink to="/">Back to apps</ActionLink>
         )}
       </EmptyContent>
     </Empty>

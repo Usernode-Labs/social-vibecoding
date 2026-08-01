@@ -107,6 +107,9 @@ test("does not request a public thread for a session that is no longer shared", 
   await page.route("**/api/apps/recipebot/messages**", (route) => { messageRequested = true; return route.fulfill({ json: { messages } }) })
   await page.goto("/react/apps/recipebot/dev/shared/41")
   await expect(page.getByTestId("shared-session-detail-not-found")).toContainText("Shared session not found")
+  const recoveryLink = page.getByRole("link", { name: "Back to Dev" })
+  await expect(recoveryLink).toHaveAttribute("data-slot", "action-link")
+  await expect(recoveryLink).toHaveAttribute("href", "/react/apps/recipebot/dev")
   expect(messageRequested).toBe(false)
 })
 

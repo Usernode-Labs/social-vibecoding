@@ -189,6 +189,9 @@ test("keeps private existence hidden for a non-disclosing collaborator 404", asy
   await expect(page.getByTestId("members-not-found")).toContainText("This collaborators view is not available to this session.")
   await expect(page.getByTestId("members-not-found")).not.toContainText("RecipeBot")
   await expect(page.locator('[data-slot="top-bar"]')).not.toContainText("RecipeBot")
+  const recoveryLink = page.getByRole("link", { name: "Back to apps" })
+  await expect(recoveryLink).toHaveAttribute("data-slot", "action-link")
+  await expect(recoveryLink).toHaveAttribute("href", "/react")
   await expect(members.locator("h1")).toHaveCount(1)
 })
 

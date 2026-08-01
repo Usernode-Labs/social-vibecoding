@@ -527,7 +527,9 @@ test("renders recoverable unavailable and not-found states", async ({ page }) =>
   await page.goto("/react/apps/recipebot/dev/issues/999")
   await expect(page.getByTestId("github-issue-detail-not-found")).toContainText("GitHub issue not found")
   await expect(page.locator('[data-slot="top-bar"]')).not.toContainText("RecipeBot")
-  await expect(page.getByRole("link", { name: "Back to Dev" })).toHaveAttribute("href", "/react/apps/recipebot/dev")
+  const recoveryLink = page.getByRole("link", { name: "Back to Dev" })
+  await expect(recoveryLink).toHaveAttribute("data-slot", "action-link")
+  await expect(recoveryLink).toHaveAttribute("href", "/react/apps/recipebot/dev")
 })
 
 test("keeps the detail readable without horizontal overflow on a phone", async ({ page }) => {

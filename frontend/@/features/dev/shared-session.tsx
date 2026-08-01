@@ -2,6 +2,7 @@ import { ArrowLeft, Eye, MessageCircle, RadioTower } from "lucide-react"
 import { type ReactNode, useEffect, useState } from "react"
 import { Link, useParams } from "react-router-dom"
 
+import { ActionLink } from "@/components/action-link"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -85,7 +86,7 @@ export function SharedSessionDetail() {
 
   if (error) return <div className="flex flex-1 items-center justify-center p-6" data-testid="shared-session-detail-error"><Alert className="max-w-md" variant="destructive"><AlertTitle>Shared session unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert></div>
   if (result === undefined) return <div className="mx-auto flex w-full max-w-4xl flex-1 flex-col gap-4 px-4 py-8 sm:px-6"><Skeleton className="h-10 w-32" /><Skeleton className="h-56 w-full" /><Skeleton className="h-28 w-full" /></div>
-  if (result.session === null) return <div className="flex flex-1 items-center justify-center p-6" data-testid="shared-session-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={RadioTower} /></EmptyMedia><EmptyTitle>Shared session not found</EmptyTitle><EmptyDescription>It may no longer be shared, may have been archived, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><Button render={<Link to={appDevPath(slug)} />} variant="outline"><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</Button></Empty></div>
+  if (result.session === null) return <div className="flex flex-1 items-center justify-center p-6" data-testid="shared-session-detail-not-found"><Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={RadioTower} /></EmptyMedia><EmptyTitle>Shared session not found</EmptyTitle><EmptyDescription>It may no longer be shared, may have been archived, or you may no longer have access to this app.</EmptyDescription></EmptyHeader><ActionLink to={appDevPath(slug)}><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Back to Dev</ActionLink></Empty></div>
   return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="shared-session-detail">
     <AppTopBar app={app} backTo={appDevPath(slug)} fallbackTitle="Shared Dev session" label="Shared Dev session" mode="nested" />
     <SharedSessionDetailContent session={result.session} slug={slug}>
