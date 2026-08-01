@@ -49,6 +49,18 @@ test('public apps list is sorted by usage (active users first)', () => {
   assert.match(src, /ORDER BY COALESCE\(au\.cnt, 0\) DESC/);
 });
 
+test('landing scroller has kit pull-to-refresh with overscroll containment', () => {
+  const js = read('public/js/auth-screens.js');
+  assert.match(js, /PlatformUI\.pullToRefresh\(byId\('auth-landing-screen'\)/);
+  assert.match(js, /_loadLandingApps\(\)\)/);
+  // Containment keeps the browser's native pull-refresh from competing
+  // with the kit gesture — same treatment as #home-screen.
+  const css = read('public/css/app.css');
+  const block = css.match(/#home-screen,\s*#auth-landing-screen \{[^}]*\}/);
+  assert.ok(block, 'shared containment block exists');
+  assert.match(block[0], /overscroll-behavior-y: contain/);
+});
+
 // ─── index.html: directory grid ───────────────────────────────────
 
 test('landing directory uses the homescreen launcher-grid shape', () => {

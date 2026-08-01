@@ -221,6 +221,15 @@
     },
 
     _wireLanding() {
+      // Kit pull-to-refresh on the landing scroller, same element-mode
+      // wiring as the authed screens (app.js _wirePullToRefresh). The
+      // kit no-ops this on desktop; the refresh re-pulls the app
+      // directory (probe results, active-user counts, new deploys).
+      if (window.PlatformUI) {
+        PlatformUI.pullToRefresh(byId('auth-landing-screen'),
+          () => AuthScreens._loadLandingApps());
+      }
+
       // "Join waitlist" CTA reveals the collapsed email form (hidden by
       // default so the label appears exactly once on the page), scrolls
       // to it, and focuses the input.
