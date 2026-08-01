@@ -185,7 +185,8 @@
         "Complete",
         "Uploading",
         "Error",
-        "Group"
+        "Group",
+        "SizeMatrix"
       ],
       "tokens": [
         "foundation.font.sans",
@@ -216,7 +217,8 @@
           "Complete",
           "Uploading",
           "Error",
-          "Group"
+          "Group",
+          "SizeMatrix"
         ]
       }
     },

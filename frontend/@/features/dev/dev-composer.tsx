@@ -392,7 +392,7 @@ export function DevComposer({
       {attachments.length ? <AttachmentGroup aria-label="Pending attachments">
         {attachments.map((attachment) => <Attachment key={attachment.clientId} size="sm" state={attachment.state}>
           <AttachmentMedia variant={attachment.kind === "image" && attachment.previewUrl ? "image" : "icon"}>
-            {attachment.kind === "image" && attachment.previewUrl ? <img alt="" src={attachment.previewUrl} /> : <PlatformIcon icon={attachmentIcon(attachment.kind)} size="sm" />}
+            {attachment.kind === "image" && attachment.previewUrl ? <img alt="" src={attachment.previewUrl} /> : <PlatformIcon icon={attachmentIcon(attachment.kind)} />}
           </AttachmentMedia>
           <AttachmentContent><AttachmentTitle>{attachment.filename}</AttachmentTitle><AttachmentDescription>{attachment.state === "uploading" ? "Uploading…" : `${attachment.kind} · ${formatSize(attachment.sizeBytes)}`}</AttachmentDescription></AttachmentContent>
           <AttachmentActions>{attachment.state === "done" ? <AttachmentAction aria-label={`Remove ${attachment.filename}`} onClick={() => removeAttachment(attachment.clientId)} type="button"><PlatformIcon data-icon icon={X} /></AttachmentAction> : null}</AttachmentActions>

@@ -90,7 +90,7 @@ function ConversationMessage({ message, sessionId }: { message: ConversationMess
           const image = attachment.kind === "image"
           return <Attachment key={attachment.id} size="sm">
             <AttachmentMedia variant={image ? "image" : "icon"}>
-              {image ? <img alt="" loading="lazy" src={url} /> : <PlatformIcon icon={attachmentIcon(attachment.kind)} size="sm" />}
+              {image ? <img alt="" loading="lazy" src={url} /> : <PlatformIcon icon={attachmentIcon(attachment.kind)} />}
             </AttachmentMedia>
             <AttachmentContent>
               <AttachmentTitle>{attachment.filename}</AttachmentTitle>

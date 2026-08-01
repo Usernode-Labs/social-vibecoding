@@ -83,7 +83,7 @@ function AttachmentLink({ attachment, slug }: { attachment: GroupChatAttachment;
   const href = groupChatAttachmentPath(slug, attachment.id)
   const isImage = attachment.kind === "image"
   return <Attachment size="sm">
-    <AttachmentMedia variant="icon"><PlatformIcon icon={isImage ? ImageIcon : FileText} size="sm" /></AttachmentMedia>
+    <AttachmentMedia variant="icon"><PlatformIcon icon={isImage ? ImageIcon : FileText} /></AttachmentMedia>
     <AttachmentContent><AttachmentTitle>{attachment.filename}</AttachmentTitle></AttachmentContent>
     <AttachmentTrigger render={<a aria-label={`Open attachment ${attachment.filename}`} download={attachment.filename} href={href} />} />
   </Attachment>
@@ -421,7 +421,7 @@ export function GroupDiscussionComposer({ disabled, label = "Post a discussion m
               <AttachmentMedia variant={attachment.kind === "image" && attachment.previewUrl ? "image" : "icon"}>
                 {attachment.kind === "image" && attachment.previewUrl
                   ? <img alt="" src={attachment.previewUrl} />
-                  : <PlatformIcon icon={pendingAttachmentIcon(attachment.kind)} size="sm" />}
+                  : <PlatformIcon icon={pendingAttachmentIcon(attachment.kind)} />}
               </AttachmentMedia>
               <AttachmentContent>
                 <AttachmentTitle>{attachment.filename}</AttachmentTitle>
