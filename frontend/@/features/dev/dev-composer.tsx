@@ -328,7 +328,8 @@ export function DevComposer({
   const defaultReply = suggestions.map((group, index) => `${index + 1}. ${group.answers[0]}`).join("\n")
   const suggestionsDisabled = busy || streaming || Boolean(message.trim()) || attachments.length > 0
 
-  return <form aria-label="Send a message to Builder" className="sticky bottom-0 border-t bg-background py-4" onSubmit={submit}>
+  return <form aria-label="Send a message to Builder" className="sticky bottom-0 z-10 flex flex-col gap-3 rounded-t-2xl border-x border-t bg-background/95 p-3 shadow-lg supports-backdrop-filter:backdrop-blur-md" data-slot="dev-composer" onSubmit={submit}>
+    <DevBudgetStatus />
     <FieldGroup className="gap-3">
       <DevSavedDraftsView
         busy={busy}
@@ -398,31 +399,25 @@ export function DevComposer({
         </Attachment>)}
       </AttachmentGroup> : null}
       <Field data-disabled={busy || undefined}>
-        <FieldLabel htmlFor="dev-model">Model for this turn</FieldLabel>
-        <Select
-          disabled={busy || models.length === 0}
-          items={models.map((model) => ({
-            label: `${model.label}${model.changeSize?.short ? ` — ${model.changeSize.short}` : ""}`,
-            value: model.id,
-          }))}
-          onValueChange={selectModel}
-          value={selectedModel}
-        >
-          <SelectTrigger id="dev-model" size="default"><SelectValue placeholder={modelError ? "Server default" : "Loading models…"} /></SelectTrigger>
-          <SelectContent><SelectGroup>{models.map((model) => <SelectItem key={model.id} value={model.id}>{model.label}{model.changeSize?.short ? ` — ${model.changeSize.short}` : ""}</SelectItem>)}</SelectGroup></SelectContent>
-        </Select>
-        {models.length && !modelError ? <FieldDescription id="dev-model-guidance">{models.find((model) => model.id === selectedModel)?.changeSize?.long || "Choose the model for this Dev turn."}</FieldDescription> : null}
-        {modelError ? <FieldDescription id="dev-model-guidance">{modelError} The server will use its default model for this turn.</FieldDescription> : null}
-      </Field>
-      <DevBudgetStatus />
-      <Field data-disabled={busy || undefined}>
         <FieldLabel className="sr-only" htmlFor="dev-message">Message for Builder</FieldLabel>
         <InputGroup className="has-disabled:opacity-100" data-disabled={busy || undefined}>
           <InputGroupTextarea disabled={busy} id="dev-message" onChange={(event) => setMessage(event.target.value)} placeholder="Describe what to build or improve…" ref={messageInput} rows={3} value={message} />
-          <InputGroupAddon align="block-end">
+          <InputGroupAddon align="block-end" className="flex-wrap">
             <InputGroupButton aria-label="Attach files" disabled={busy} onClick={() => fileInput.current?.click()} size="icon-xs" title="Attach files"><PlatformIcon data-icon icon={Paperclip} /></InputGroupButton>
             <input aria-label="Attach files" className="sr-only" multiple onChange={(event) => { void addFiles(event.target.files); event.target.value = "" }} ref={fileInput} type="file" />
             <span className="text-xs text-foreground">Up to 4 files</span>
+            <Select
+              disabled={busy || models.length === 0}
+              items={models.map((model) => ({
+                label: `${model.label}${model.changeSize?.short ? ` — ${model.changeSize.short}` : ""}`,
+                value: model.id,
+              }))}
+              onValueChange={selectModel}
+              value={selectedModel}
+            >
+              <SelectTrigger aria-describedby="dev-model-guidance" aria-label="Model for this turn" className="ml-auto h-7 max-w-48 bg-transparent px-2 text-xs" id="dev-model" size="sm"><SelectValue placeholder={modelError ? "Server default" : "Loading models…"} /></SelectTrigger>
+              <SelectContent><SelectGroup>{models.map((model) => <SelectItem key={model.id} value={model.id}>{model.label}{model.changeSize?.short ? ` — ${model.changeSize.short}` : ""}</SelectItem>)}</SelectGroup></SelectContent>
+            </Select>
             {streaming ? (
               <InputGroupButton
                 aria-label="Save message as a draft"
@@ -438,6 +433,8 @@ export function DevComposer({
             <InputGroupButton aria-label="Send message" disabled={!canSend} size="icon-xs" title="Send message" type="submit" variant="default"><PlatformIcon data-icon icon={SendHorizontal} /></InputGroupButton>
           </InputGroupAddon>
         </InputGroup>
+        {models.length && !modelError ? <FieldDescription id="dev-model-guidance">{models.find((model) => model.id === selectedModel)?.changeSize?.long || "Choose the model for this Dev turn."}</FieldDescription> : null}
+        {modelError ? <FieldDescription id="dev-model-guidance">{modelError} The server will use its default model for this turn.</FieldDescription> : null}
         {error ? <FieldError>{error}</FieldError> : null}
       </Field>
     </FieldGroup>

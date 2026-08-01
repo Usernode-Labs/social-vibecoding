@@ -8,6 +8,7 @@ import { PlatformIcon } from "@/components/platform-icon"
 import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -111,11 +112,14 @@ export function StagingPreview() {
     <TopBar
       {...topBar}
       action={<>
-        <DevConsoleTrigger />
+        <div className="status-surface rounded-full border" data-slot="staged-console-control" data-status-tone="info"><DevConsoleTrigger /></div>
         <Button render={<a href={source} rel="noreferrer" target="_blank" />} size="sm" variant="outline"><PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open externally</Button>
       </>}
-    /><div className="flex min-h-0 flex-1 flex-col bg-background">
-    {testingInstructions ? <div className="shrink-0 border-b px-4" data-slot="staging-preview-instructions"><Accordion><AccordionItem value="testing"><AccordionTrigger>How to test this change</AccordionTrigger><AccordionContent><pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground">{testingInstructions}</pre></AccordionContent></AccordionItem></Accordion></div> : null}
-    <iframe allow="clipboard-write; pointer-lock" className="min-h-0 flex-1 border-0" data-slot="staging-preview-frame" onLoad={() => setFrameRevision((revision) => revision + 1)} ref={iframe} sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock" src={source} title="Staging preview" />
-  </div></div>
+    /><div className="status-surface flex min-h-0 flex-1 flex-col border bg-[var(--status-surface)] p-1 sm:p-2" data-slot="staged-content-boundary" data-status-tone="info">
+      <div className="flex min-h-8 shrink-0 items-center gap-2 px-2"><Badge variant="outline">Staged</Badge><span className="text-xs text-current/80">Review environment</span></div>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-background">
+        {testingInstructions ? <div className="shrink-0 border-b px-4" data-slot="staging-preview-instructions"><Accordion><AccordionItem value="testing"><AccordionTrigger>How to test this change</AccordionTrigger><AccordionContent><pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground">{testingInstructions}</pre></AccordionContent></AccordionItem></Accordion></div> : null}
+        <iframe allow="clipboard-write; pointer-lock" className="min-h-0 flex-1 border-0" data-slot="staging-preview-frame" onLoad={() => setFrameRevision((revision) => revision + 1)} ref={iframe} sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock" src={source} title="Staging preview" />
+      </div>
+    </div></div>
 }

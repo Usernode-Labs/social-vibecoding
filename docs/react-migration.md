@@ -389,6 +389,13 @@ locally with `403`. Do not combine it with `SV_PRODUCTION_READONLY=true`.
   progress/output/log metadata into a collapsed read-only build timeline; its
   active segment is fed only by the existing session SSE stream. It has no
   retry, rebuild, or separate realtime control path.
+  The session workspace is conversation-first: the transcript and compact
+  composer own the primary region, while branch, visibility, spec, preview,
+  lifecycle and archive controls share one quiet responsive rail. Archive
+  remains behind an overflow disclosure and the existing confirmation step;
+  the nested route keeps Back as its only exit. Credit exhaustion stays
+  directly above the composer, and model selection remains inside the same
+  input surface without changing the current-model request contract.
   React now owns a responsive full-screen staging-preview
   route: normal migration environments call the existing rebuild endpoint and
   wait for TLS readiness; the local production-review profile instead opens
@@ -396,7 +403,11 @@ locally with `403`. Do not combine it with `SV_PRODUCTION_READONLY=true`.
   modes compose only a validated relative testing path under the returned staging
   origin, and requests the existing iframe token before mounting. The
   immutable before/after capture evidence is rendered from the existing
-  server-owned artifact ids.
+  server-owned artifact ids. Once ready, the entire staged viewport and its
+  developer-console control use the existing informational status surface with
+  a persistent `Staged` label and hairline frame. That visual boundary does not
+  alter iframe source validation, sandbox permissions, bridge ownership,
+  testing instructions, or history behavior.
   Cross-app Work now also subscribes to the established authenticated global
   `ws/events` channel through a typed `session_update` adapter. Partial
   events trigger a coalesced re-read of the authorised Work snapshot rather

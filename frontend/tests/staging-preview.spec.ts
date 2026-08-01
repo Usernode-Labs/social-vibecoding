@@ -21,6 +21,9 @@ test("opens a server-authorized preview only after its secure host is reachable"
   await expect(page.getByTestId("staging-preview")).toBeVisible()
   await expect(page.getByTitle("Staging preview")).toHaveAttribute("src", /https:\/\/preview\.example\.test\/pantry\?token=preview-token/)
   await expect(page.getByRole("button", { name: "Back" })).toBeVisible()
+  const staged = page.locator('[data-slot="staged-content-boundary"]')
+  await expect(staged).toHaveAttribute("data-status-tone", "info")
+  await expect(staged.getByText("Staged", { exact: true })).toBeVisible()
   await page.getByRole("button", { name: "How to test this change" }).click()
   await expect(page.getByText("Search for a pantry staple and confirm its filter.")).toBeVisible()
 })
@@ -36,6 +39,7 @@ test("exposes the developer console only from the active preview chrome", async 
   await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
 
   const trigger = page.getByRole("button", { name: "Open developer console" })
+  await expect(page.locator('[data-slot="staged-console-control"]')).toHaveAttribute("data-status-tone", "info")
   await expect(trigger).toBeVisible()
   await trigger.click()
   await expect(page.getByRole("heading", { name: "Developer console" })).toBeVisible()

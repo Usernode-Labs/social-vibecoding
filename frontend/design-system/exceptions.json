@@ -653,17 +653,6 @@
     },
     {
       "rule": "no-space-utilities",
-      "file": "@/features/dev/dev-session.tsx",
-      "matches": [
-        "space-y-2"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Pre-authority shell migration debt exposed by widened enforcement; the exact-match ratchet prevents expansion while the owning slice is normalized.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-space-utilities",
       "file": "@/features/work/work.tsx",
       "matches": [
         "space-y-3"

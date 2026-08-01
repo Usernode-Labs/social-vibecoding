@@ -20,6 +20,7 @@ export type AppTopBarProps = {
   consoleError?: boolean
   onOpenOverflow?: () => void
   placement?: TopBarProps["placement"]
+  showClose?: boolean
 } & AppTopBarMode
 
 /**
@@ -35,6 +36,7 @@ export function AppTopBar(props: AppTopBarProps) {
     fallbackTitle = "App",
     onOpenOverflow,
     placement,
+    showClose = true,
   } = props
   const navigate = useNavigate()
 
@@ -98,16 +100,18 @@ export function AppTopBar(props: AppTopBarProps) {
               ) : null}
             </Button>
           ) : null}
-          <Button
-            aria-label={`Close ${app.name}`}
-            className="size-12"
-            onClick={() => navigate("/", { replace: true })}
-            title={`Close ${app.name}`}
-            type="button"
-            variant="ghost"
-          >
-            <PlatformIcon icon={X} />
-          </Button>
+          {showClose ? (
+            <Button
+              aria-label={`Close ${app.name}`}
+              className="size-12"
+              onClick={() => navigate("/", { replace: true })}
+              title={`Close ${app.name}`}
+              type="button"
+              variant="ghost"
+            >
+              <PlatformIcon icon={X} />
+            </Button>
+          ) : null}
         </>
       }
       onBack={nested ? () => navigate(props.backTo) : undefined}

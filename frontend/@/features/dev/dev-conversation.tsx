@@ -110,7 +110,7 @@ function ConversationMessage({ message, sessionId }: { message: ConversationMess
 
 /** Presentation only: the official scroller owns anchoring and follow state. */
 export function DevConversation({ messages, sessionId, streamState = "idle" }: DevConversationProps) {
-  return <MessageScrollerProvider><MessageScroller aria-label="Development session conversation" className="min-h-96 rounded-xl border bg-card">
+  return <MessageScrollerProvider><MessageScroller aria-label="Development session conversation" className="min-h-96" data-slot="dev-conversation">
     <MessageScrollerViewport><MessageScrollerContent className="gap-5 p-4 sm:p-6">
       {messages.map((message, index) => <MessageScrollerItem key={message.id} scrollAnchor={index === messages.length - 1}><ConversationMessage message={message} sessionId={sessionId} /></MessageScrollerItem>)}
       {streamState === "streaming" ? <MessageScrollerItem scrollAnchor><Marker><MarkerIcon><PlatformIcon icon={Bot} size="sm" /></MarkerIcon><MarkerContent>Builder is responding…</MarkerContent></Marker></MessageScrollerItem> : null}
