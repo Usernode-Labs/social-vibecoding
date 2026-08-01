@@ -65,7 +65,7 @@ export function Leaderboard() {
           <Button aria-pressed={window === "all"} onClick={() => select(tab, "all")} size="sm" type="button" variant={window === "all" ? "secondary" : "outline"}>All-time</Button>
           <Button aria-pressed={window === "week"} onClick={() => select(tab, "week")} size="sm" type="button" variant={window === "week" ? "secondary" : "outline"}>This week</Button>
         </div>
-        <ActionLink size="sm" to={leaderboardHistoryPath()} variant="ghost"><PlatformIcon data-icon="inline-start" icon={History} size="sm" />My history</ActionLink>
+        <ActionLink size="sm" to={leaderboardHistoryPath()} variant="ghost"><PlatformIcon data-icon="inline-start" icon={History} />My history</ActionLink>
       </div>
       {error ? <Alert variant="destructive"><AlertTitle>Leaderboard unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {!items && !error ? <PaneSkeleton /> : null}
@@ -178,8 +178,8 @@ export function LeaderboardHistory() {
     <TopBar title="My history" />
     <p className="max-w-2xl text-pretty text-base text-muted-foreground sm:text-sm">Everything you’ve given — kudos, bounty pledges, and votes — newest first. Only you can see this.</p><div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     <div aria-label="History filters" className="flex flex-wrap gap-2" role="group">
-      <Button aria-pressed={kudosEnabled} onClick={() => toggle("kudos")} size="sm" type="button" variant={kudosEnabled ? "secondary" : "outline"}><PlatformIcon data-icon="inline-start" icon={ThumbsUp} size="sm" />Kudos</Button>
-      <Button aria-pressed={votesEnabled} onClick={() => toggle("votes")} size="sm" type="button" variant={votesEnabled ? "secondary" : "outline"}><PlatformIcon data-icon="inline-start" icon={Vote} size="sm" />Votes</Button>
+      <Button aria-pressed={kudosEnabled} onClick={() => toggle("kudos")} size="sm" type="button" variant={kudosEnabled ? "secondary" : "outline"}><PlatformIcon data-icon="inline-start" icon={ThumbsUp} />Kudos</Button>
+      <Button aria-pressed={votesEnabled} onClick={() => toggle("votes")} size="sm" type="button" variant={votesEnabled ? "secondary" : "outline"}><PlatformIcon data-icon="inline-start" icon={Vote} />Votes</Button>
     </div>
     {error ? <Alert variant={error.unauthorized ? "default" : "destructive"}><AlertTitle>{error.unauthorized ? "Sign in to view your history" : "History unavailable"}</AlertTitle><AlertDescription>{error.unauthorized ? "Your giving history is private to your signed-in account." : error.message}</AlertDescription></Alert> : null}
     {!history && !error ? <PaneSkeleton /> : null}

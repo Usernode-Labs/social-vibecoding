@@ -72,7 +72,7 @@ function CompletedStatus({ challenge, progress }: { challenge: Challenge; progre
           {rewardCaption ? <p className="text-pretty text-base/7 text-current/80 sm:text-sm/6">{rewardCaption}</p> : null}
         </div>
       </div>
-      <ActionLink className="w-fit pointer-coarse:min-h-12" size="sm" to={challengesPath()} variant="ghost">View season history<PlatformIcon data-icon="inline-end" icon={ArrowRight} size="sm" /></ActionLink>
+      <ActionLink className="w-fit pointer-coarse:min-h-12" size="sm" to={challengesPath()} variant="ghost">View season history<PlatformIcon data-icon="inline-end" icon={ArrowRight} /></ActionLink>
     </CardContent>
   </Card>
 }
@@ -97,8 +97,8 @@ export function ChallengeDetailContent({ challenge, progress, native, season }: 
       {task ? <p className="max-w-[65ch] text-pretty text-base/7 text-muted-foreground sm:text-sm/6">{task}</p> : null}
       {value === "completed" ? <CompletedStatus challenge={challenge} progress={progress} /> : <Status challenge={challenge} progress={progress} />}
       <section aria-labelledby="challenge-details" className="space-y-3"><h2 className="text-xl font-semibold" id="challenge-details">Challenge details</h2><Card><CardContent className="space-y-5 pt-6">{challenge.description ? <Detail label="Description" value={challenge.description} /> : null}{challenge.requirements ? <Detail label="Requirements" value={challenge.requirements} /> : null}{challenge.reward ? <Detail icon={Gift} label="Reward" value={challenge.reward} /> : null}{challenge.reward_logic ? <Detail icon={Award} label="Reward logic" value={challenge.reward_logic} /> : null}{!challenge.description && !challenge.requirements && !challenge.reward && !challenge.reward_logic ? <p className="text-sm text-muted-foreground">Challenge details will be added by the season organizer.</p> : null}</CardContent></Card></section>
-      {value === "missed" ? <ActionLink className="w-fit pointer-coarse:min-h-12" size="sm" to={challengesPath()} variant="ghost">View season history<PlatformIcon data-icon="inline-end" icon={ArrowRight} size="sm" /></ActionLink> : null}
-      {challenge.cta_link && !terminal ? <ActionAnchor className="w-fit" href={challenge.cta_link} rel="noreferrer" target="_self">{challenge.cta_label || "Open challenge action"}<PlatformIcon data-icon="inline-end" icon={ExternalLink} size="sm" /></ActionAnchor> : null}
+      {value === "missed" ? <ActionLink className="w-fit pointer-coarse:min-h-12" size="sm" to={challengesPath()} variant="ghost">View season history<PlatformIcon data-icon="inline-end" icon={ArrowRight} /></ActionLink> : null}
+      {challenge.cta_link && !terminal ? <ActionAnchor className="w-fit" href={challenge.cta_link} rel="noreferrer" target="_self">{challenge.cta_label || "Open challenge action"}<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></ActionAnchor> : null}
     </div>
   </div>
 }

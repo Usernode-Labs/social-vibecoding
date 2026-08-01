@@ -44,9 +44,20 @@ export const Sizes: Story = {
 export const WithIcons: Story = {
   render: () => (
     <div className="flex flex-wrap items-center gap-3">
+      <Button size="xs">
+        <PlatformIcon data-icon="inline-start" icon={Bell} />
+        Extra small
+      </Button>
+      <Button size="sm">
+        <PlatformIcon data-icon="inline-start" icon={Bell} />
+        Small
+      </Button>
       <Button>
         Continue
         <PlatformIcon data-icon="inline-end" icon={ArrowRight} />
+      </Button>
+      <Button aria-label="Open compact activity" size="icon-xs" variant="outline">
+        <PlatformIcon icon={Bell} />
       </Button>
       <Button aria-label="Open activity" size="icon" variant="outline">
         <PlatformIcon icon={Bell} />
@@ -54,7 +65,22 @@ export const WithIcons: Story = {
     </div>
   ),
   play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).getByRole("button", { name: "Open activity" })).toBeTruthy()
+    const canvas = within(canvasElement)
+    const extraSmallIcon = canvas.getByRole("button", { name: "Extra small" }).querySelector('[data-slot="platform-icon"]')
+    const smallIcon = canvas.getByRole("button", { name: "Small" }).querySelector('[data-slot="platform-icon"]')
+    const defaultIcon = canvas.getByRole("button", { name: "Continue" }).querySelector('[data-slot="platform-icon"]')
+    const compactIconOnly = canvas.getByRole("button", { name: "Open compact activity" }).querySelector('[data-slot="platform-icon"]')
+    const iconOnly = canvas.getByRole("button", { name: "Open activity" }).querySelector('[data-slot="platform-icon"]')
+    await expect(getComputedStyle(extraSmallIcon!).width).toBe("12px")
+    await expect(getComputedStyle(extraSmallIcon!).height).toBe("12px")
+    await expect(getComputedStyle(smallIcon!).width).toBe("16px")
+    await expect(getComputedStyle(smallIcon!).height).toBe("16px")
+    await expect(getComputedStyle(defaultIcon!).width).toBe("16px")
+    await expect(getComputedStyle(defaultIcon!).height).toBe("16px")
+    await expect(getComputedStyle(compactIconOnly!).width).toBe("12px")
+    await expect(getComputedStyle(compactIconOnly!).height).toBe("12px")
+    await expect(getComputedStyle(iconOnly!).width).toBe("16px")
+    await expect(getComputedStyle(iconOnly!).height).toBe("16px")
   },
 }
 

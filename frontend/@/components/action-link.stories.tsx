@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
-import { ExternalLink } from "lucide-react"
+import { ArrowRight, ExternalLink } from "lucide-react"
 import { expect, within } from "storybook/test"
 
 import { ActionAnchor, ActionLink } from "@/components/action-link"
@@ -19,10 +19,14 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 export const InternalOutline: Story = {
+  render: () => <ActionLink size="sm" to="/notifications" variant="outline">Open activity<PlatformIcon data-icon="inline-end" icon={ArrowRight} /></ActionLink>,
   play: async ({ canvasElement }) => {
     const link = within(canvasElement).getByRole("link", { name: "Open activity" })
     await expect(link).toHaveAttribute("href", "/notifications")
     await expect(link.tagName).toBe("A")
+    const icon = link.querySelector('[data-slot="platform-icon"]')
+    await expect(getComputedStyle(icon!).width).toBe("16px")
+    await expect(getComputedStyle(icon!).height).toBe("16px")
   },
 }
 
@@ -46,4 +50,10 @@ export const External: Story = {
       <PlatformIcon data-icon="inline-end" icon={ExternalLink} />
     </ActionAnchor>
   ),
+  play: async ({ canvasElement }) => {
+    const link = within(canvasElement).getByRole("link", { name: "Open source" })
+    const icon = link.querySelector('[data-slot="platform-icon"]')
+    await expect(getComputedStyle(icon!).width).toBe("16px")
+    await expect(getComputedStyle(icon!).height).toBe("16px")
+  },
 }

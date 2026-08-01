@@ -39,10 +39,10 @@ export function DevVoteControls({ disabled = false, kind, noCount, onVote, pendi
   return <div className="flex flex-wrap items-center gap-2" aria-label={proposal ? "Vote on this proposal" : "Vote on this governance proposal"} role="group">
     <Badge className="tabular-nums" variant="outline"><PlatformIcon data-icon="inline-start" icon={Vote} />{tally}</Badge>
     <Button aria-pressed={selectedVote === affirmative} disabled={unavailable} onClick={() => onVote(affirmative)} size="sm" type="button" variant={selectedVote === affirmative ? "secondary" : "outline"}>
-      <PlatformIcon data-icon="inline-start" icon={ThumbsUp} size="xs" />Yes <span className="tabular-nums">({count(yesCount)})</span>
+      <PlatformIcon data-icon="inline-start" icon={ThumbsUp} />Yes <span className="tabular-nums">({count(yesCount)})</span>
     </Button>
     <Button aria-pressed={selectedVote === negative} disabled={unavailable} onClick={() => onVote(negative)} size="sm" type="button" variant={selectedVote === negative ? "secondary" : "outline"}>
-      <PlatformIcon data-icon="inline-start" icon={ThumbsDown} size="xs" />No <span className="tabular-nums">({count(noCount)})</span>
+      <PlatformIcon data-icon="inline-start" icon={ThumbsDown} />No <span className="tabular-nums">({count(noCount)})</span>
     </Button>
     {pending ? <span className="text-base text-muted-foreground sm:text-sm" role="status">Recording vote…</span> : null}
   </div>

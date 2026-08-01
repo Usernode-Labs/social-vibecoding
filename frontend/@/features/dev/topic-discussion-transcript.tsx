@@ -123,7 +123,7 @@ export function TopicDiscussionContent({
             {onRetryCapability ? (
               <AlertAction>
                 <Button onClick={onRetryCapability} size="sm" type="button" variant="outline">
-                  <PlatformIcon data-icon="inline-start" icon={RotateCcw} size="xs" />
+                  <PlatformIcon data-icon="inline-start" icon={RotateCcw} />
                   Retry
                 </Button>
               </AlertAction>

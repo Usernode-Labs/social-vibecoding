@@ -108,7 +108,7 @@ function ReplyButton({ message, onReply }: { message: GroupChatMessage; onReply?
   const label = target.author ? `Reply to ${target.author}` : "Reply to discussion update"
   return (
     <Button aria-label={label} onClick={() => onReply(target)} size="xs" type="button" variant="ghost">
-      <PlatformIcon data-icon="inline-start" icon={Reply} size="xs" />
+      <PlatformIcon data-icon="inline-start" icon={Reply} />
       Reply
     </Button>
   )
@@ -217,7 +217,7 @@ function OrdinaryDiscussionMessage({
             type="button"
             variant="ghost"
           >
-            <PlatformIcon data-icon="inline-start" icon={Pencil} size="xs" />
+            <PlatformIcon data-icon="inline-start" icon={Pencil} />
             Edit
           </Button>
         ) : null}
@@ -410,7 +410,7 @@ export function GroupDiscussionComposer({ disabled, label = "Post a discussion m
             <p className="line-clamp-2 text-xs text-muted-foreground">{replyTarget.snippet}</p>
           </div>
           <Button aria-label="Cancel reply" onClick={onCancelReply} size="icon-xs" type="button" variant="ghost">
-            <PlatformIcon data-icon icon={X} size="xs" />
+            <PlatformIcon data-icon icon={X} />
           </Button>
         </div>
       ) : null}

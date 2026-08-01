@@ -89,7 +89,7 @@ function MediaSurface({ media, side, capture, onReadinessChange, surfaceId }: { 
               <PlatformIcon icon={CircleX} />
               <AlertTitle>{side} visual didn’t load</AlertTitle>
               <AlertDescription>{source ? "The stored media could not be opened." : "The stored artifact reference is invalid."}</AlertDescription>
-              {source ? <AlertAction className="static col-span-full mt-2 justify-self-start sm:absolute sm:mt-0"><Button onClick={retry} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RotateCcw} size="xs" />Retry</Button></AlertAction> : null}
+              {source ? <AlertAction className="static col-span-full mt-2 justify-self-start sm:absolute sm:mt-0"><Button onClick={retry} size="sm" type="button" variant="outline"><PlatformIcon data-icon="inline-start" icon={RotateCcw} />Retry</Button></AlertAction> : null}
             </Alert>
           </div>
         ) : null}

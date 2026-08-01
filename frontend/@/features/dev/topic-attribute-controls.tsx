@@ -71,7 +71,7 @@ export function TopicAttributeControls({ attributes, disabled = false, onChange,
           </SelectTrigger>
           <SelectContent>{options.map((option) => <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>)}</SelectContent>
         </Select>
-        {attribute?.myValue ? <Button disabled={disabled || pending} onClick={() => void onChange(field, null)} size="sm" type="button" variant="ghost"><PlatformIcon data-icon="inline-start" icon={X} size="xs" />Clear my {label.toLowerCase()}</Button> : null}
+        {attribute?.myValue ? <Button disabled={disabled || pending} onClick={() => void onChange(field, null)} size="sm" type="button" variant="ghost"><PlatformIcon data-icon="inline-start" icon={X} />Clear my {label.toLowerCase()}</Button> : null}
       </div>
       {custom ? <form className="flex flex-col gap-2 sm:flex-row" onSubmit={(event) => { event.preventDefault(); void submitCustom() }}>
         <Input aria-label={field === "assignee" ? "Suggest assignee" : "Suggest category"} disabled={disabled || pending} maxLength={field === "assignee" ? 64 : 32} onChange={(event) => setDraft(event.target.value)} placeholder={field === "assignee" ? "Type a collaborator name" : "Type a category"} value={draft} />

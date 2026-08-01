@@ -90,7 +90,7 @@ export function AdminOperationsOverview({ user, overview }: { user: AdminUser; o
       <ListCard title="Top LLM spenders today" empty="No LLM spend recorded today." items={spenders.slice(0, 5).map((spender, index) => <div key={`${spender.username}-${index}`} className="flex items-center justify-between gap-3"><span>{spender.username || "Unknown user"}</span><span className="font-mono text-sm text-muted-foreground">{formatMoney(spender.costCents)}</span></div>)} />
       <Card><CardHeader><CardTitle>Admin tools</CardTitle></CardHeader><CardContent className="flex flex-wrap gap-2">{legacyTools.map((tool) => tool.react
         ? <ActionLink key={tool.href} size="sm" to={tool.href.replace("/react", "")} variant="outline">{tool.label}</ActionLink>
-        : <ActionAnchor href={tool.href} key={tool.href} size="sm" variant="outline">{tool.label}<PlatformIcon data-icon="inline-end" icon={ExternalLink} size="sm" /></ActionAnchor>)}</CardContent></Card>
+        : <ActionAnchor href={tool.href} key={tool.href} size="sm" variant="outline">{tool.label}<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></ActionAnchor>)}</CardContent></Card>
     </section>
   </>
 }
