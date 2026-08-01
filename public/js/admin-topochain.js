@@ -78,6 +78,7 @@ const AdminTopochain = {
     { key: 'seasons', label: 'Seasons' },
     { key: 'season-events', label: 'Season events' },
     { key: 'users', label: 'Users' },
+    { key: 'waitlist', label: 'Waitlist' },
     { key: 'onchain-accounts', label: 'Onchain accounts' },
     { key: 'user-activities', label: 'User activities' },
     { key: 'challenge-templates', label: 'Challenge templates' },
@@ -310,6 +311,7 @@ const AdminTopochain = {
     switch (AdminTopochain._sub) {
       case 'season-events': return AdminTopochain.renderSeasonEvents(c);
       case 'users': return AdminTopochain.renderUsers(c);
+      case 'waitlist': return AdminTopochain.renderWaitlist(c);
       case 'onchain-accounts': return AdminTopochain.renderOnchainAccounts(c);
       case 'user-activities': return AdminTopochain.renderUserActivities(c);
       case 'challenge-templates': return AdminTopochain.renderChallengeTemplates(c);
@@ -1087,6 +1089,183 @@ const AdminTopochain = {
     // fetched ourselves (never attacker-controlled) — navigation, not a
     // Blob, since this is a streamed CSV attachment.
     window.location.href = `/api/v4/admin/users/export-csv/${encodeURIComponent(id)}`;
+  },
+
+  // ══════════════════════════════════════════════════════════════════
+  // Waitlist — the platform waitlist (email-keyed queue with release)
+  // and the block-producer queue (users who asked to produce blocks),
+  // stacked on one tab. Onboarding flow alignment: "release" on the
+  // platform list grants access now (if an account exists) or at
+  // account creation; "release" on the BP list is the manual key
+  // release that lets the mobile node enable block production.
+  // ══════════════════════════════════════════════════════════════════
+
+  _waitlist: { page: 1, perPage: 50, status: 'pending', items: [], meta: null },
+  _bpq: { page: 1, perPage: 50, status: 'pending', items: [], meta: null },
+
+  renderWaitlist(host) {
+    const esc = AdminTopochain.esc;
+    const statusSelect = (id, current) => `
+      <select id="${esc(id)}"
+        class="rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-2 py-1.5 text-sm">
+        ${['pending', 'released', 'all'].map((v) =>
+          `<option value="${v}"${v === current ? ' selected' : ''}>${v[0].toUpperCase()}${v.slice(1)}</option>`).join('')}
+      </select>`;
+    host.innerHTML = `
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <h2 class="text-lg font-semibold">Platform waitlist</h2>
+        ${statusSelect('admin-topo-wl-status', AdminTopochain._waitlist.status)}
+      </div>
+      <div id="admin-topo-wl-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3 mt-8">
+        <h2 class="text-lg font-semibold">Block-producer queue</h2>
+        ${statusSelect('admin-topo-bpq-status', AdminTopochain._bpq.status)}
+      </div>
+      <div id="admin-topo-bpq-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+    document.getElementById('admin-topo-wl-status').addEventListener('change', (e) => {
+      AdminTopochain._waitlist.status = e.target.value;
+      AdminTopochain._waitlist.page = 1;
+      AdminTopochain._loadWaitlist();
+    });
+    document.getElementById('admin-topo-bpq-status').addEventListener('change', (e) => {
+      AdminTopochain._bpq.status = e.target.value;
+      AdminTopochain._bpq.page = 1;
+      AdminTopochain._loadBpQueue();
+    });
+    AdminTopochain._loadWaitlist();
+    AdminTopochain._loadBpQueue();
+  },
+
+  async _loadWaitlist() {
+    const s = AdminTopochain._waitlist;
+    const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
+    if (s.status !== 'all') params.set('status', s.status);
+    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/waitlist?${params}`);
+    if (AdminTopochain._sub !== 'waitlist') return;
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; }
+    else { s.items = []; s.meta = null; }
+    AdminTopochain._renderWaitlistTable();
+  },
+
+  _renderWaitlistTable() {
+    const table = document.getElementById('admin-topo-wl-table');
+    if (!table) return;
+    const esc = AdminTopochain.esc;
+    const canWrite = AdminTopochain.canWrite();
+    const s = AdminTopochain._waitlist;
+    if (!s.items.length) {
+      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No waitlist entries.</p>';
+      return;
+    }
+    const rows = s.items.map((w) => `
+      <tr class="border-t border-zinc-200 dark:border-zinc-800">
+        <td class="px-3 py-2 text-sm font-mono">${esc(w.email)}</td>
+        <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(w.submitted_at))}</td>
+        <td class="px-3 py-2 text-sm">${w.linked_username
+          ? `${esc(w.linked_username)}${w.has_platform_access ? ' <span class="text-emerald-600 dark:text-emerald-400 text-xs">(has access)</span>' : ''}`
+          : '<span class="text-zinc-400">no account yet</span>'}</td>
+        <td class="px-3 py-2 text-sm">${w.released_at
+          ? `<span class="text-emerald-600 dark:text-emerald-400 text-xs">Released ${esc(AdminTopochain._fmt(w.released_at))}</span>`
+          : '<span class="text-amber-600 dark:text-amber-400 text-xs">pending</span>'}</td>
+        <td class="px-3 py-2 text-right whitespace-nowrap">
+          ${canWrite && !w.released_at
+            ? `<button data-release-wl="${w.id}" data-email="${esc(w.email)}"
+                 class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white">Release</button>`
+            : ''}
+        </td>
+      </tr>`).join('');
+    table.innerHTML = `
+      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table class="w-full">
+          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+            <tr><th class="px-3 py-2 text-left">Email</th><th class="px-3 py-2 text-left">Joined</th>
+              <th class="px-3 py-2 text-left">Account</th><th class="px-3 py-2 text-left">Status</th><th class="px-3 py-2"></th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-wl-pg')}`;
+    table.querySelectorAll('[data-release-wl]').forEach((b) => b.addEventListener('click', () =>
+      AdminTopochain._releaseWaitlist(parseInt(b.dataset.releaseWl, 10), b.dataset.email)));
+    if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-wl-pg', (page) => { s.page = page; AdminTopochain._loadWaitlist(); });
+  },
+
+  async _releaseWaitlist(id, email) {
+    if (!AdminTopochain.canWrite()) return;
+    const okd = await AdminTopochain._confirm({
+      title: 'Release off the waitlist?',
+      message: `${email} gets platform access — immediately if they already have an account, otherwise the moment they create one.`,
+      confirmLabel: 'Release',
+    });
+    if (!okd) return;
+    const { ok, data } = await AdminTopochain.send('POST', `/api/v4/admin/waitlist/${id}/release`);
+    if (!ok || !data?.success) { AdminTopochain._alert(data?.error || 'Release failed.'); return; }
+    AdminTopochain._loadWaitlist();
+  },
+
+  async _loadBpQueue() {
+    const s = AdminTopochain._bpq;
+    const params = new URLSearchParams({ page: String(s.page), per_page: String(s.perPage) });
+    if (s.status !== 'all') params.set('status', s.status);
+    const { ok, data } = await AdminTopochain.fetchJson(`/api/v4/admin/bp-queue?${params}`);
+    if (AdminTopochain._sub !== 'waitlist') return;
+    if (ok && data?.success) { s.items = data.data; s.meta = data.meta; }
+    else { s.items = []; s.meta = null; }
+    AdminTopochain._renderBpQueueTable();
+  },
+
+  _renderBpQueueTable() {
+    const table = document.getElementById('admin-topo-bpq-table');
+    if (!table) return;
+    const esc = AdminTopochain.esc;
+    const canWrite = AdminTopochain.canWrite();
+    const s = AdminTopochain._bpq;
+    if (!s.items.length) {
+      table.innerHTML = '<p class="text-sm text-zinc-500 py-4">No block-production requests.</p>';
+      return;
+    }
+    const rows = s.items.map((u) => `
+      <tr class="border-t border-zinc-200 dark:border-zinc-800">
+        <td class="px-3 py-2 text-sm">${esc(u.display_name || u.username || `user #${u.id}`)}</td>
+        <td class="px-3 py-2 text-xs text-zinc-500 font-mono">${esc(u.email || '—')}</td>
+        <td class="px-3 py-2 text-xs text-zinc-500">${esc(AdminTopochain._fmt(u.bp_requested_at))}</td>
+        <td class="px-3 py-2 text-sm">${u.bp_released_at
+          ? `<span class="text-emerald-600 dark:text-emerald-400 text-xs">Released ${esc(AdminTopochain._fmt(u.bp_released_at))}</span>`
+          : '<span class="text-amber-600 dark:text-amber-400 text-xs">pending</span>'}</td>
+        <td class="px-3 py-2 text-right whitespace-nowrap">
+          ${canWrite && !u.bp_released_at
+            ? `<button data-release-bp="${u.id}" data-identifier="${esc(u.display_name || u.username || u.email || `user #${u.id}`)}"
+                 class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white">Release keys</button>`
+            : ''}
+        </td>
+      </tr>`).join('');
+    table.innerHTML = `
+      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table class="w-full">
+          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+            <tr><th class="px-3 py-2 text-left">User</th><th class="px-3 py-2 text-left">Email</th>
+              <th class="px-3 py-2 text-left">Requested</th><th class="px-3 py-2 text-left">Status</th><th class="px-3 py-2"></th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+      ${AdminTopochain._pagerHtml(s.meta, 'admin-topo-bpq-pg')}`;
+    table.querySelectorAll('[data-release-bp]').forEach((b) => b.addEventListener('click', () =>
+      AdminTopochain._releaseBp(parseInt(b.dataset.releaseBp, 10), b.dataset.identifier)));
+    if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-bpq-pg', (page) => { s.page = page; AdminTopochain._loadBpQueue(); });
+  },
+
+  async _releaseBp(id, identifier) {
+    if (!AdminTopochain.canWrite()) return;
+    const okd = await AdminTopochain._confirm({
+      title: 'Release block production?',
+      message: `${identifier}'s phone will start producing blocks the next time the app syncs its profile.`,
+      confirmLabel: 'Release keys',
+    });
+    if (!okd) return;
+    const { ok, data } = await AdminTopochain.send('POST', `/api/v4/admin/users/${id}/release-bp`);
+    if (!ok || !data?.success) { AdminTopochain._alert(data?.error || 'Release failed.'); return; }
+    AdminTopochain._loadBpQueue();
   },
 
   // ══════════════════════════════════════════════════════════════════

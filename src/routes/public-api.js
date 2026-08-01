@@ -22,6 +22,11 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const { clientIp } = require('../services/client-ip');
+const { waitlistJoinLimiter } = require('../middleware/rate-limits');
+const waitlist = require('../services/waitlist');
+const { sendWaitlistJoinMail } = require('../services/topochain/mailer');
+const { productionHostname } = require('../services/caddy');
 
 // Apps surfaced publicly: not the self-app, view-public, and in a status
 // that means the app actually exists/runs (creating / awaiting_secrets /
@@ -111,6 +116,11 @@ function publicApiRoutes(config) {
           view_visibility: a.view_visibility,
           created_at: a.created_at,
           last_deploy_at: a.last_deploy_at,
+          // Direct subdomain URL — what the public landing page links to.
+          // View-public apps pass the Caddy edge gate without a session;
+          // apps that JWT-gate their own HTML shell will show their
+          // "Open in Usernode" page to anonymous visitors.
+          url: `https://${productionHostname(a.slug)}`,
           contributors: (byApp.get(a.id) || []).map((r) =>
             shapeContributor(r, includeWallets)
           ),
@@ -149,6 +159,32 @@ function publicApiRoutes(config) {
       log.error('public-api', 'contributors failed', {
         slug: req.params.slug, message: err.message,
       });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/public/waitlist — email-only platform waitlist join
+  // (onboarding flow alignment). No account required. Idempotent and
+  // non-enumerating: an email that's already on the list gets the same
+  // 200 as a fresh one. Confirmation mail is best-effort (the mailer
+  // degrades silently when no transport is configured).
+  router.post('/api/public/waitlist', waitlistJoinLimiter, async (req, res) => {
+    const email = waitlist.normalizeEmail(req.body?.email);
+    if (!email) {
+      return res.status(422).json({ error: 'A valid email address is required.' });
+    }
+    try {
+      const { created } = await waitlist.joinWaitlist(pool, {
+        email,
+        ip: clientIp(req),
+      });
+      if (created) {
+        log.info('public-api', 'Waitlist join', {});
+        sendWaitlistJoinMail(config, email); // fire-and-forget, never throws
+      }
+      res.json({ ok: true, message: "You're on the waitlist. We'll email you when access opens up." });
+    } catch (err) {
+      log.error('public-api', 'waitlist join failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

@@ -82,6 +82,9 @@ const DENIED_COLUMNS = {
     'secret_key',        // topochain: on-chain account private key (SPEC §6)
     'registration_code', // topochain: single-use account claim code (SPEC §6)
   ],
+  waitlist_signups: [
+    'ip', // submitter IP — same treatment as users.waitlist_ip
+  ],
 };
 
 // ── Container-log allowlist (used by the prod-debug logs endpoint) ─────

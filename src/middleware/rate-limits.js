@@ -283,4 +283,14 @@ const topochainMobileAuthLimiter = makeLimiter({
   message: 'Too many requests — slow down for a minute.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter };
+// Public waitlist join: 5 / 15 min / IP. Anonymous write endpoint on the
+// landing page — tight enough to stop bulk email harvesting/spam, loose
+// enough that a genuine visitor retrying a typo never hits it.
+const waitlistJoinLimiter = makeLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  name: 'waitlist-join',
+  message: 'Too many signups from this address — try again in a few minutes.',
+});
+
+module.exports = { dbExportLimiter, authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, waitlistJoinLimiter };

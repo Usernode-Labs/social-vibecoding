@@ -36,6 +36,7 @@ const log = require('../../services/logger');
 const { mobileTokenAuth, optionalSessionAuth, extractBearerToken } = require('../../middleware/topochain-auth');
 const { topochainMobileAuthLimiter } = require('../../middleware/rate-limits');
 const { sendOtpMail } = require('../../services/topochain/mailer');
+const waitlist = require('../../services/waitlist');
 const { ok, fail } = require('./helpers');
 
 // ─── Constants (token model, SPEC 1588-1599; OTP model, SPEC 1675-1679) ──
@@ -313,6 +314,11 @@ function topochainMobileAuthRoutes(config) {
           [email, unusablePasswordHash, email]
         );
         user = createdRows[0];
+        // Waitlist linkage (onboarding flow alignment): point any
+        // waitlist row for this email at the new account; if the email
+        // was already released, this grants platform access immediately.
+        // Best-effort — never fails the signup.
+        await waitlist.linkUserByEmail(pool, { userId: user.id, email });
       }
 
       const setPasswordToken = await issueToken(pool, user.id, 'set-password', SET_PASSWORD_TOKEN_TTL_MS);

@@ -69,9 +69,9 @@
     _handoffRunning: false,
     _nodeStartRequested: false,
 
-    // Boot-time orchestration. Called from init() (the SPA only loads
-    // with a live web session — app.js redirects to login.html otherwise)
-    // and safe to call again later. Sequence:
+    // Boot-time orchestration. Runs once a web session exists (init()
+    // defers it to the `sv:session` boot stage — the SPA also boots
+    // anonymously now) and safe to call again later. Sequence:
     //   1. If native identity is already ready → just ensure the node is
     //      started with its wallet.
     //   2. Otherwise exchange the web session for a mobile bearer and run
@@ -281,11 +281,19 @@
     init() {
       NativeChrome._initDrawerRows();
       NativeChrome._initAuthStatusEvents();
-      // First-run permissions ride behind the handoff so a fresh install
-      // sees login → wallet → node → permissions in one flow.
-      NativeChrome.runLoginHandoff().then(
+      // Anonymous SPA boot (fold-auth-pages-into-SPA): the login handoff
+      // needs a live web session (the from-session exchange 401s without
+      // one), so it waits for the session boot stage. `sv:session` fires
+      // on every enterAuthed — including the waiting room, since wallet
+      // provisioning and the node work for unreleased users too — and the
+      // handoff self-guards against repeat runs. First-run permissions
+      // ride behind the handoff so a fresh install sees login → wallet →
+      // node → permissions in one flow.
+      const runHandoff = () => NativeChrome.runLoginHandoff().then(
         () => NativeChrome.maybeShowFirstRunPermissions()
       );
+      if (window.App && App.user) runHandoff();
+      else document.addEventListener('sv:session', runHandoff);
     },
   };
 

@@ -517,6 +517,9 @@ test('GET /me: exact response shape, incl. level', async () => {
       data: {
         id: 1, email: 'alice@example.com', display_name: null, email_confirmed: true,
         is_in_waitlist: false, github: 'alicegh', x: 'aliceX', level: 'member',
+        // Onboarding flow alignment: the platform-access + block-producer
+        // ladder ships on /me (fixture user has none of it granted).
+        has_platform_access: false, bp_requested: false, bp_released: false,
       },
     });
   });

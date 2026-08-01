@@ -87,12 +87,18 @@ test('known CDN scripts classify as cdn; other cross-origin is bypassed', () => 
 
 test('SPA navigations may fall back to the cached shell', () => {
   assert.equal(classify('GET', '/', 'text/html', 'navigate'), 'navigate');
+  // The old standalone auth pages are redirect stubs into the SPA's hash
+  // routes (fold-auth-pages-into-SPA), so falling back to the cached
+  // shell offline is correct for them too.
   assert.equal(classify('GET', '/login.html', 'text/html', 'navigate'), 'navigate');
+  assert.equal(classify('GET', '/register.html', 'text/html', 'navigate'), 'navigate');
+  assert.equal(classify('GET', '/landing.html', 'text/html', 'navigate'), 'navigate');
+  assert.equal(classify('GET', '/waiting.html', 'text/html', 'navigate'), 'navigate');
   assert.equal(classify('GET', '/some/spa/route', 'text/html', 'navigate'), 'navigate');
 });
 
 test('standalone server pages never fall back to the SPA shell', () => {
-  for (const page of ['/admin', '/admin-features', '/dashboard', '/debug', '/node-status', '/status', '/register.html', '/cli/authorize']) {
+  for (const page of ['/admin', '/admin-features', '/dashboard', '/debug', '/node-status', '/status', '/cli/authorize']) {
     assert.ok(NO_FALLBACK_PAGES.includes(page), `${page} missing from NO_FALLBACK_PAGES`);
     assert.equal(classify('GET', page, 'text/html', 'navigate'), 'bypass');
   }

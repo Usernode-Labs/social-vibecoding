@@ -47,4 +47,30 @@ async function sendOtpMail(config, email, code) {
   log.info('topochain-mailer', 'OTP code (no mail transport configured)', { email, code });
 }
 
-module.exports = { sendOtpMail };
+// Waitlist-join confirmation (onboarding flow alignment). Same
+// degrade-silently contract as sendOtpMail: never throws, never makes
+// the join endpoint's response depend on delivery. Transports that only
+// understand the OTP shape simply won't receive a `code` key — a real
+// transport should branch on `kind`.
+async function sendWaitlistJoinMail(config, email) {
+  const transport = config && config.topochainMailTransport;
+
+  if (transport) {
+    try {
+      await transport.send({ to: email, kind: 'waitlist_joined' });
+      return;
+    } catch (err) {
+      log.error('topochain-mailer', 'Waitlist mail transport failed to send', { email, message: err.message });
+      return;
+    }
+  }
+
+  if (config && config.env === 'production') {
+    log.error('topochain-mailer', 'No mail transport configured — waitlist confirmation NOT delivered', { email });
+    return;
+  }
+
+  log.info('topochain-mailer', 'Waitlist join confirmation (no mail transport configured)', { email });
+}
+
+module.exports = { sendOtpMail, sendWaitlistJoinMail };

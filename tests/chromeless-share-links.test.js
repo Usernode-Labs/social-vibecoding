@@ -8,9 +8,12 @@
 //   1. The scaffold template's generated server.js redirects
 //      unauthenticated top-level document navigations to the platform's
 //      chromeless view (real generated output, not source grep).
-//   2. login.html / register.html preserve the URL fragment through the
-//      post-auth redirect (and across the login ↔ register hop), so the
-//      deep link survives sign-in.
+//   2. The auth flow preserves the URL fragment end-to-end. The old
+//      standalone login/register pages are redirect stubs into the SPA's
+//      hash routes (fold-auth-pages-into-SPA): each stub forwards an
+//      incoming fragment verbatim, the SPA's anonymous boot remembers a
+//      non-auth hash as a deep link and offers login first, and the
+//      reload-free finishLogin restores it before the authed boot.
 //   3. The shell (public/js/app.js + index.html) understands the
 //      #app/<slug>/full route: source guards in the style of
 //      tests/cc-progress-summary.test.js so the hash routing, the
@@ -79,33 +82,43 @@ test('scaffold landing page deep-links to the app, not the bare platform origin'
     'landing anchor carries the gated deep path too');
 });
 
-// ── 2. Login / register fragment preservation ───────────────────────────
+// ── 2. Auth-flow fragment preservation (stubs + in-SPA login) ───────────
 
-test('login.html post-auth redirects all preserve the URL fragment', () => {
+test('login.html stub forwards an incoming fragment into the SPA', () => {
   const src = read('public/login.html');
-  assert.ok(!src.includes("window.location.href = '/';"),
-    'no bare go-home redirect remains');
-  assert.ok(src.includes("window.location.href = '/' + window.location.hash;"),
-    'hash-preserving redirect present');
+  // The stub prefers the deep-link fragment over its default #login route
+  // (a share link that bounced through /login.html keeps its target).
+  assert.ok(src.includes("var deepLink = location.hash && location.hash !== '#' ? location.hash : '';"),
+    'stub captures the incoming fragment');
+  assert.ok(src.includes("location.replace('/' + search + (deepLink || route));"),
+    'stub redirect carries the fragment (and remaining query) through');
 });
 
-test('register.html post-auth redirect preserves the URL fragment', () => {
+test('register.html stub forwards an incoming fragment into the SPA', () => {
   const src = read('public/register.html');
-  assert.ok(!src.includes("window.location.href = '/';"));
-  assert.ok(src.includes("window.location.href = '/' + window.location.hash;"));
+  assert.ok(src.includes("var deepLink = location.hash && location.hash !== '#' ? location.hash : '';"),
+    'stub captures the incoming fragment');
+  assert.ok(src.includes("location.replace('/' + (deepLink || route));"),
+    'stub redirect carries the fragment through');
 });
 
-test('login ↔ register cross-links carry the fragment', () => {
-  const login = read('public/login.html');
-  assert.ok(login.includes("registerAnchor.href = '/register.html' + window.location.hash;"));
-  // Must run before the native-wallet early return or web browsers never
-  // execute it.
-  assert.ok(
-    login.indexOf('registerAnchor.href') < login.indexOf('if (!isNative) return;'),
-    'register-link carry runs before the !isNative early return'
-  );
-  const register = read('public/register.html');
-  assert.ok(register.includes("loginLink.href = '/login.html' + window.location.hash;"));
+test('the anonymous SPA boot remembers a deep-link hash and offers login first', () => {
+  const src = read('public/js/app.js');
+  // restoreFromHash's anonymous branch: a non-auth hash (e.g.
+  // #app/<slug>/full) is stored for after login, then the login screen
+  // shows — parity with the old server redirect to login.html.
+  assert.ok(src.includes('AuthScreens.rememberDeepLink(location.hash);'),
+    'anonymous branch stores the deep link');
+  assert.ok(src.includes("AuthScreens.show('login');"),
+    'anonymous branch then shows the login screen');
+});
+
+test('finishLogin restores the pending deep link before the authed boot', () => {
+  const src = read('public/js/auth-screens.js');
+  assert.ok(src.includes('const target = AuthScreens._pendingHash || \'\';'),
+    'finishLogin reads the pending deep link');
+  assert.ok(src.includes("history.replaceState(null, '', '/' + target);"),
+    'finishLogin restores it onto the URL so restoreFromHash lands there');
 });
 
 // ── 3. Shell wiring (source guards) ─────────────────────────────────────
@@ -132,7 +145,9 @@ test('app.js splits the fragment-query off before segment routing', () => {
   const src = read('public/js/app.js');
   assert.ok(src.includes("const qIdx = rawHash.indexOf('?');"),
     'restoreFromHash finds the fragment-query boundary');
-  assert.ok(src.includes('const hash = qIdx === -1 ? rawHash : rawHash.slice(0, qIdx);'),
+  // `let`, not `const`: the authed branch of the anonymous-shell routing
+  // clears a stale auth hash in place (fold-auth-pages-into-SPA).
+  assert.ok(src.includes('let hash = qIdx === -1 ? rawHash : rawHash.slice(0, qIdx);'),
     'routes on the query-stripped hash — plain #app/<slug>/full is unchanged');
   // The value is everything after the first path= (final-param contract,
   // so an inner query string survives raw & / = / ?).
@@ -206,12 +221,16 @@ test('index.html carries the ids setChromeless toggles', () => {
   assert.ok(html.includes('id="app-tabs"'));
 });
 
-test('login redirects out of the shell preserve the fragment', () => {
+test('an expired session boots the anonymous shell in place — no login.html redirect', () => {
   const src = read('public/js/app.js');
-  assert.ok(src.includes("window.location.href = '/login.html' + window.location.hash;"),
-    'App.init keeps the deep link when bouncing an expired session to login');
-  assert.ok(!src.includes("window.location.href = '/login.html';"),
-    'no fragment-dropping login redirect remains in app.js');
+  // fold-auth-pages-into-SPA: a 401 (or offline failure) on /api/auth/me
+  // boots the anonymous shell in the same document. The deep-link hash is
+  // untouched by that path, and restoreFromHash's anonymous branch
+  // remembers it (covered above) — so the fragment still survives.
+  assert.ok(src.includes('App.enterAnonymous();'),
+    'App.init boots the anonymous shell on 401/offline');
+  assert.ok(!src.includes("window.location.href = '/login.html'"),
+    'no redirect to the old standalone login page remains in app.js');
 });
 
 // ── 4. Caddyfile 401 interception ───────────────────────────────────────

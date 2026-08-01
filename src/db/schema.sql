@@ -3369,3 +3369,67 @@ COMMENT ON COLUMN onchain_accounts.registration_code IS 'staging:private';
 -- no-op for every pre-existing account; only the OTP-created path (and,
 -- until it completes set-password, that path alone) ever sets it FALSE.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS password_set BOOLEAN NOT NULL DEFAULT TRUE;
+
+-- ═══════════════════════════════════════════════════════════════════════
+-- Onboarding flow alignment — email-only platform waitlist, enforced
+-- platform-access gate, block-producer queue (user-onboarding-flows doc).
+-- ═══════════════════════════════════════════════════════════════════════
+
+-- Platform waitlist entries are keyed by EMAIL, not by user: joining
+-- requires no account (`POST /api/public/waitlist`), and admins can
+-- release an email before its owner ever registers. `released_at` is the
+-- release marker; when a `users` row with a matching email is created
+-- (OTP verify or classic register), the linkage step points
+-- `linked_user_id` here and — if already released — grants
+-- `has_platform_access` on the spot. Emails are stored lowercased.
+CREATE TABLE IF NOT EXISTS waitlist_signups (
+  id             BIGSERIAL PRIMARY KEY,
+  email          VARCHAR(255) NOT NULL UNIQUE,
+  submitted_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ip             VARCHAR(45),
+  answers        JSONB,
+  released_at    TIMESTAMPTZ,
+  linked_user_id BIGINT REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_waitlist_signups_released ON waitlist_signups (released_at);
+CREATE INDEX IF NOT EXISTS idx_waitlist_signups_linked_user ON waitlist_signups (linked_user_id);
+COMMENT ON COLUMN waitlist_signups.ip IS 'staging:private';
+
+-- Access + block-production state on the user. `has_platform_access`
+-- gates the SV platform surfaces (home/social/build) — NOT login-required
+-- child apps, which any account may use (see src/middleware/auth.js).
+-- `bp_requested_at`/`bp_released_at` are the block-producer queue: any
+-- user with platform access may ask to produce blocks; an admin releases
+-- them manually, which is what lets the mobile node enable its block
+-- producer (surfaced via GET /api/v4/mobile/me).
+ALTER TABLE users ADD COLUMN IF NOT EXISTS has_platform_access        BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS platform_access_granted_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bp_requested_at            TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS bp_released_at             TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_users_has_platform_access ON users (has_platform_access);
+
+-- One-time grandfather + legacy-waitlist backfill, guarded by a
+-- platform_settings marker key because this whole file re-runs on every
+-- boot. First boot after deploy: every pre-existing account keeps full
+-- access (the gate only bites signups created after this ships), and the
+-- migrated topochain waitlist columns on `users` are copied into
+-- `waitlist_signups` (those legacy columns stay read-only thereafter).
+-- Later boots: the marker exists, both statements are no-ops.
+UPDATE users
+  SET has_platform_access = TRUE, platform_access_granted_at = NOW()
+  WHERE NOT EXISTS
+    (SELECT 1 FROM platform_settings WHERE key = 'onboarding_gate_grandfathered');
+
+INSERT INTO waitlist_signups (email, submitted_at, ip, answers, linked_user_id)
+  SELECT LOWER(u.email), COALESCE(u.waitlist_submitted_at, NOW()),
+         u.waitlist_ip, u.waitlist_answers, u.id
+  FROM users u
+  WHERE u.is_in_waitlist = TRUE AND u.email IS NOT NULL
+    AND NOT EXISTS
+      (SELECT 1 FROM platform_settings WHERE key = 'onboarding_gate_grandfathered')
+ON CONFLICT (email) DO NOTHING;
+
+INSERT INTO platform_settings (key, value, description) VALUES
+  ('onboarding_gate_grandfathered', 'true',
+    'Marker: the one-time platform-access grandfather + waitlist backfill has run. Do not delete — deleting re-grants access to every account on next boot.')
+ON CONFLICT (key) DO NOTHING;
