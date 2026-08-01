@@ -221,12 +221,16 @@
     },
 
     _wireLanding() {
-      // "Join waitlist" CTA scrolls to the email form below (no separate
-      // screen — the form is right on the landing page).
+      // "Join waitlist" CTA reveals the collapsed email form (hidden by
+      // default so the label appears exactly once on the page), scrolls
+      // to it, and focuses the input.
       const waitlistCta = byId('landing-waitlist-cta');
       if (waitlistCta) waitlistCta.addEventListener('click', () => {
         const section = byId('landing-waitlist');
-        if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        if (section) {
+          section.classList.remove('hidden');
+          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
         const email = byId('waitlist-email');
         if (email) email.focus({ preventScroll: true });
       });

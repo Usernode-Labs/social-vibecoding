@@ -31,10 +31,22 @@ test('landing CTAs: Sign in + Join waitlist only — no Create account', () => {
   assert.doesNotMatch(ctas[0], /href="#signup"/);
 });
 
-test('landing waitlist CTA scrolls to the on-page form', () => {
+test('landing waitlist CTA reveals the collapsed on-page form', () => {
   const js = read('public/js/auth-screens.js');
   assert.match(js, /landing-waitlist-cta/);
   assert.match(js, /scrollIntoView/);
+  // The form starts hidden ("Join waitlist" appears exactly once — the
+  // header CTA) and the CTA un-hides it.
+  const html = read('public/index.html');
+  const section = html.match(/id="landing-waitlist"[^>]*class="([^"]*)"/);
+  assert.ok(section, 'landing-waitlist section exists');
+  assert.match(section[1], /\bhidden\b/);
+  assert.match(js, /section\.classList\.remove\('hidden'\)/);
+});
+
+test('public apps list is sorted by usage (active users first)', () => {
+  const src = read('src/routes/public-api.js');
+  assert.match(src, /ORDER BY COALESCE\(au\.cnt, 0\) DESC/);
 });
 
 // ─── index.html: directory grid ───────────────────────────────────

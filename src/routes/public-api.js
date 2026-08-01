@@ -118,7 +118,8 @@ function publicApiRoutes(config) {
           WHERE NOT a.self_hosted
             AND a.view_visibility = 'public'
             AND a.status <> ALL($1::text[])
-          ORDER BY a.last_deploy_at DESC NULLS LAST, a.created_at DESC`,
+          ORDER BY COALESCE(au.cnt, 0) DESC,
+                   a.last_deploy_at DESC NULLS LAST, a.created_at DESC`,
         [HIDDEN_APP_STATUSES]
       );
 
