@@ -429,8 +429,8 @@ changed screen instead of the homepage. **The admin surfaces are in-app
 hash routes too**: the former standalone pages (`/dashboard`, `/admin`,
 `/status`, `/node-status`, `/debug`, `/gallery`, `/admin-features`) are
 now sections of the single `#admin` console — write them as
-`/admin/analytics`, `/admin/status`, `/admin/node`, `/admin/merges`,
-`/admin/gallery`, `/admin/features`. Their old pathnames still resolve
+`/admin/analytics`, `/admin/estimator`, `/admin/status`, `/admin/node`,
+`/admin/merges`, `/admin/gallery`, `/admin/features`. Their old pathnames still resolve
 (they serve client-side redirect stubs into the matching section), but
 pointing `path:` straight at the hash route saves a hop. The only
 genuinely standalone server page left is `/cli/authorize`. **Always

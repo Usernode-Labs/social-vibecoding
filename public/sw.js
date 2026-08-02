@@ -58,6 +58,7 @@ const SHELL_ASSETS = [
   '/js/admin-status.js',
   '/js/admin-node.js',
   '/js/admin-analytics.js',
+  '/js/admin-estimator.js',
   '/js/admin-merges.js',
   '/js/admin-gallery.js',
   '/js/admin-campaigns.js',

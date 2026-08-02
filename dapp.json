@@ -463,6 +463,16 @@
       "expectSelector": "#pu-l4"
     },
     {
+      "name": "Estimator accuracy section renders",
+      "path": "/?demo=1#admin/estimator",
+      "expectSelector": "#admin-estimator-root #admin-estimator-card"
+    },
+    {
+      "name": "Estimator accuracy states the leave-experimental verdict",
+      "path": "/?demo=1#admin/estimator",
+      "expectText": "Stays experimental"
+    },
+    {
       "name": "Merge debug section renders",
       "path": "/?demo=1#admin/merges",
       "expectText": "Merge debug"
