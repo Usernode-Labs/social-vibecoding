@@ -108,6 +108,7 @@ test("privately shares the selected version with a suggested collaborator", asyn
   const suggestedRecipient = recipients.getByRole("button", { name: "@Mira" })
   if (await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)) {
     await expect.poll(async () => Math.round((await suggestedRecipient.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(48)
+    await expect.poll(async () => Math.round((await suggestedRecipient.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(48)
   }
   await suggestedRecipient.click()
   await page.getByRole("button", { name: "Share privately" }).last().click()

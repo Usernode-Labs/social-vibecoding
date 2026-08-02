@@ -96,7 +96,15 @@ test("uses the canonical typeahead and invite endpoints, then reloads the canoni
   await suggestion.click()
   await expect(username).toBeFocused()
   await expect(page.getByRole("list", { name: "Invite suggestions" })).toHaveCount(0)
+  const suggestionStatus = page.getByRole("form", { name: "Invite a collaborator" }).locator('[aria-live="polite"]')
+  await expect(suggestionStatus).toHaveText("")
   await expect.poll(() => searchRequests, { intervals: [300, 300], timeout: 700 }).toBe(1)
+
+  await page.unroute("**/api/users/search?*")
+  await page.route("**/api/users/search?*", (route) => route.fulfill({ json: { users: [] } }))
+  await username.fill("zz")
+  await expect(suggestionStatus).toHaveText("No invite suggestions available.")
+  await username.fill("mira")
   await page.getByRole("button", { name: "Send invite" }).click()
 
   await expect.poll(() => inviteRequest).toEqual({ method: "POST", body: { username: "mira" } })

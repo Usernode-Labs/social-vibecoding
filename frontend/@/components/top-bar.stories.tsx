@@ -96,15 +96,6 @@ export const NestedBack: Story = {
   },
 }
 
-export const Overlay: Story = {
-  args: { title: "Puzzle Orbit", placement: "overlay" },
-  play: async ({ canvasElement }) => {
-    const bar = canvasElement.querySelector('[data-slot="top-bar"]')
-    await expect(bar).toHaveAttribute("data-placement", "overlay")
-    await expect(getComputedStyle(bar as HTMLElement).position).toBe("absolute")
-  },
-}
-
 export const LongTitle: Story = {
   parameters: { viewport: { defaultViewport: "mobile1" } },
   args: {

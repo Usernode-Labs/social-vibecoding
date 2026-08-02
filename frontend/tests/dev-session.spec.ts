@@ -120,6 +120,34 @@ test("renders an existing Dev session without a legacy action handoff", async ({
   await expect(page).toHaveURL(/\/react\/apps\/recipebot\/dev$/)
 })
 
+test("keeps conversation before session details in reading and responsive visual order", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto("/react/apps/recipebot/dev/sessions/9")
+  const workspace = page.locator('[data-slot="development-workspace"]')
+  const conversation = workspace.locator('[data-slot="dev-session-conversation-column"]')
+  const rail = workspace.locator('[data-slot="dev-session-rail"]')
+
+  await expect(workspace).toBeVisible()
+  expect(await workspace.evaluate((element) => {
+    const main = element.querySelector('[data-slot="dev-session-conversation-column"]')
+    const aside = element.querySelector('[data-slot="dev-session-rail"]')
+    return Boolean(main && aside && (main.compareDocumentPosition(aside) & Node.DOCUMENT_POSITION_FOLLOWING))
+  })).toBe(true)
+
+  const mobileConversationBox = await conversation.boundingBox()
+  const mobileRailBox = await rail.boundingBox()
+  expect(mobileConversationBox).not.toBeNull()
+  expect(mobileRailBox).not.toBeNull()
+  expect(mobileConversationBox!.y).toBeLessThan(mobileRailBox!.y)
+
+  await page.setViewportSize({ width: 1280, height: 900 })
+  const desktopConversationBox = await conversation.boundingBox()
+  const desktopRailBox = await rail.boundingBox()
+  expect(desktopConversationBox).not.toBeNull()
+  expect(desktopRailBox).not.toBeNull()
+  expect(desktopConversationBox!.x).toBeLessThan(desktopRailBox!.x)
+})
+
 test("explains exhausted shared credits and links to the unified settings surface", async ({ page }) => {
   await page.route("**/api/budget", (route) => route.fulfill({ json: {
     spentCents: 500,

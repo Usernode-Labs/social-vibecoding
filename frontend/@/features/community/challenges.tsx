@@ -138,36 +138,42 @@ function ChallengeRow({ card }: { card: ChallengeRowModel }) {
   const fill = progress ? Math.round((progress.current / progress.target) * 100) : undefined
   const title = item.goal || item.task || "Challenge"
   const status = phaseCopy(item, phase, progress)
+  const reward = rewardText(item, phase)
+  const compactReward = phase === "pending" ? reward.replace(/^Pending\s+/, "") : reward
 
   // One earning mechanic, one destination, and one truthful progress owner.
   // Instruction and category copy stay on detail so the band remains scannable.
   return <li data-challenge-phase={phase} data-testid={`challenge-card-${item.id}`}>
     <Link
-      aria-label={`${title}, ${status}, ${rewardText(item, phase)}`}
+      aria-label={`${title}, ${status}, ${reward}`}
       className={cn(
-        "group relative isolate flex min-h-20 min-w-0 items-center gap-3 overflow-hidden px-3 py-3 outline-none hover:bg-muted/60 focus-visible:z-10 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/30 sm:px-4",
+        "group relative isolate flex min-h-20 min-w-0 items-stretch overflow-hidden outline-none hover:bg-muted/60 focus-visible:z-10 focus-visible:ring-3 focus-visible:ring-inset focus-visible:ring-ring/30",
         phase === "completed" && "status-surface hover:bg-[var(--status-surface)]",
       )}
       data-status-tone={phase === "completed" ? "positive" : undefined}
       to={challengeDetailPath(item.id)}
     >
-      <span
-        aria-label={`${title} progress`}
-        aria-valuemax={progress?.target}
-        aria-valuemin={0}
-        aria-valuenow={progress?.current}
-        aria-valuetext={status}
-        className="pointer-events-none absolute inset-0 overflow-hidden"
-        role="progressbar"
-      >
-        {fill !== undefined && phase === "in-progress" ? <span aria-hidden="true" className="absolute inset-y-0 left-0 bg-primary/15" data-testid="challenge-progress-fill" style={{ "--challenge-fill": `${fill}%`, width: "var(--challenge-fill)" } as CSSProperties} /> : null}
-      </span>
-      <PlatformIcon className={cn("relative z-10", phase === "completed" ? "stroke-[var(--status-surface-foreground)]" : "stroke-muted-foreground")} icon={phase === "completed" ? CheckCircle2 : Award} />
-      <div className="relative z-10 flex min-w-0 flex-1 flex-col gap-1">
-        <h4 className="truncate text-base font-medium sm:text-sm">{title}</h4>
-        <p className={cn("truncate text-base/7 text-muted-foreground sm:text-sm/6", phase === "in-progress" && "text-foreground/80", phase === "completed" && "text-current/80")}>{status}</p>
+      <div className="relative flex min-w-0 flex-1 items-center gap-3 overflow-hidden px-3 py-3 sm:px-4">
+        <span
+          aria-label={`${title} progress`}
+          aria-valuemax={progress?.target}
+          aria-valuemin={0}
+          aria-valuenow={progress?.current}
+          aria-valuetext={status}
+          className="pointer-events-none absolute inset-0 overflow-hidden"
+          role="progressbar"
+        >
+          {fill !== undefined && phase === "in-progress" ? <span aria-hidden="true" className="absolute inset-y-0 left-0 bg-primary/15" data-testid="challenge-progress-fill" style={{ "--challenge-fill": `${fill}%`, width: "var(--challenge-fill)" } as CSSProperties} /> : null}
+        </span>
+        <PlatformIcon className={cn("relative z-10", phase === "completed" ? "stroke-[var(--status-surface-foreground)]" : "stroke-muted-foreground")} icon={phase === "completed" ? CheckCircle2 : Award} />
+        <div className="relative z-10 flex min-w-0 flex-1 flex-col gap-1">
+          <h4 className={cn("text-base font-medium sm:text-sm", phase === "pending" ? "break-words sm:truncate" : "truncate")}>{title}</h4>
+          <p className={cn("text-base/7 text-muted-foreground sm:text-sm/6", phase === "pending" ? "break-words sm:truncate" : "truncate", phase === "in-progress" && "text-foreground/80", phase === "completed" && "text-current/80")}>{status}</p>
+        </div>
       </div>
-      <p className={cn("relative z-10 shrink-0 text-base font-medium text-primary tabular-nums sm:text-sm", phase === "completed" && "font-semibold text-current")}>{rewardText(item, phase)}</p>
+      <p className={cn("relative z-10 flex shrink-0 items-center pr-3 text-base font-medium text-primary tabular-nums sm:pr-4 sm:text-sm", phase === "completed" && "font-semibold text-current")} data-testid="challenge-reward">
+        {phase === "pending" ? <><span className="sm:hidden">{compactReward}</span><span className="max-sm:hidden">{reward}</span></> : reward}
+      </p>
     </Link>
   </li>
 }

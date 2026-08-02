@@ -39,7 +39,7 @@ function challengeFixture() {
       },
       {
         id: 3,
-        goal: "Share Season feedback",
+        goal: "Share Season feedback about the new rewards experience",
         task: "Complete the short feedback survey.",
         category: "Community",
         reward: "100 points",
@@ -67,7 +67,7 @@ function challengeFixture() {
         reward: "75 points",
         enabled: true,
         display_order: 5,
-        metric: { kind: "binary", label: "profile" },
+        metric: { kind: "percentage", label: "profile" },
       },
     ],
     progress: {
@@ -79,9 +79,11 @@ function challengeFixture() {
         { challenge_id: 1, state: "none", current: 0, target: 1, pending_points: 0, earned_points: 0 },
         // Fractional values intentionally prove the rail is not integer-only.
         { challenge_id: 2, state: "in progress", current: 1.5, target: 3, pending_points: 0, earned_points: 0 },
-        { challenge_id: 3, state: "pending", pending_points: 100, earned_points: 0, description: "Survey submitted" },
+        { challenge_id: 3, state: "pending", pending_points: 100, earned_points: 0, description: "Survey submitted and awaiting community review" },
         // The unknown metric must still render safely as a terminal card.
         { challenge_id: 4, state: "earned", pending_points: 0, earned_points: 500, description: "Approved" },
+        // The near-complete rail proves its fill stops before the reward cell.
+        { challenge_id: 5, state: "in progress", current: 99, target: 100, pending_points: 0, earned_points: 0 },
         ],
       }],
     },
@@ -162,6 +164,13 @@ test("binds completed and in-progress rails to their governed visual contracts",
   expect(fillBox!.y).toBeCloseTo(railBox!.y, 0)
   expect(fillBox!.height).toBeCloseTo(railBox!.height, 0)
   expect(fillBox!.width / railBox!.width).toBeCloseTo(0.5, 2)
+
+  const nearCompleteCard = page.getByTestId("challenge-card-5")
+  const nearCompleteFillBox = await nearCompleteCard.getByTestId("challenge-progress-fill").boundingBox()
+  const nearCompleteRewardBox = await nearCompleteCard.getByTestId("challenge-reward").boundingBox()
+  expect(nearCompleteFillBox).not.toBeNull()
+  expect(nearCompleteRewardBox).not.toBeNull()
+  expect(nearCompleteFillBox!.x + nearCompleteFillBox!.width).toBeLessThanOrEqual(nearCompleteRewardBox!.x)
 })
 
 test("renders fractional and unknown metrics without unsafe numeric output", async ({ page }) => {
@@ -212,6 +221,19 @@ test("keeps the dynamic feed usable at a mobile width", async ({ page }) => {
   expect(firstLinkBox).not.toBeNull()
   expect(firstLinkBox!.height).toBeGreaterThanOrEqual(48)
   expect(await challenges.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+
+  const pendingCard = challenges.getByTestId("challenge-card-3")
+  const pendingLink = pendingCard.getByRole("link")
+  const pendingTitle = pendingCard.getByRole("heading", { name: "Share Season feedback about the new rewards experience" })
+  const pendingStatus = pendingCard.getByText("Survey submitted and awaiting community review")
+  const rewardVariants = pendingCard.getByTestId("challenge-reward").locator(":scope > span")
+  await expect(pendingTitle).toHaveCSS("white-space", "normal")
+  await expect(pendingStatus).toHaveCSS("white-space", "normal")
+  await expect(rewardVariants.first()).toHaveText("100 pts")
+  await expect(rewardVariants.first()).toBeVisible()
+  await expect(rewardVariants.last()).toHaveText("Pending 100 pts")
+  await expect(rewardVariants.last()).toBeHidden()
+  await expect(pendingLink).toHaveAccessibleName("Share Season feedback about the new rewards experience, Survey submitted and awaiting community review, Pending 100 pts")
 })
 
 test("has no critical or serious accessibility violations", async ({ page }) => {

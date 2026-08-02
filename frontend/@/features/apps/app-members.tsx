@@ -340,8 +340,9 @@ export function AppMemberInviteForm({
   suggestions: UserSearchResult[]
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
+  const [selectedSuggestion, setSelectedSuggestion] = useState(false)
   const normalizedQuery = query.trim().replace(/^@/, "")
-  const suggestionStatus = normalizedQuery.length < 2
+  const suggestionStatus = normalizedQuery.length < 2 || selectedSuggestion
     ? ""
     : suggestions.length === 1
       ? "1 invite suggestion available."
@@ -349,5 +350,5 @@ export function AppMemberInviteForm({
         ? `${suggestions.length} invite suggestions available.`
         : "No invite suggestions available."
 
-  return <form aria-label="Invite a collaborator" onSubmit={onSubmit}><FieldGroup><Field data-invalid={!!error}><FieldLabel htmlFor="invite-username">Username</FieldLabel><Input autoComplete="off" disabled={!canInvite || inviting} id="invite-username" onChange={(event) => onQueryChange(event.target.value)} placeholder="Start typing a username" ref={inputRef} value={query} />{searchError ? <FieldError>{searchError}</FieldError> : null}{error ? <FieldError>{error}</FieldError> : null}<FieldDescription>Type at least two characters to search eligible users.</FieldDescription><p aria-atomic="true" aria-live="polite" className="sr-only">{suggestionStatus}</p></Field>{suggestions.length ? <ul aria-label="Invite suggestions" className="flex flex-col gap-1 rounded-lg border p-1">{suggestions.map((user) => <li key={user.id}><Button className="w-full justify-start pointer-coarse:min-h-12" disabled={!canInvite || inviting} onClick={() => { onSelectSuggestion(user.username); inputRef.current?.focus() }} size="sm" type="button" variant="ghost">@{user.username}</Button></li>)}</ul> : null}<Button disabled={!canInvite || inviting || !query.trim()} type="submit" variant="outline">{inviting ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}{inviting ? "Inviting…" : "Send invite"}</Button></FieldGroup></form>
+  return <form aria-label="Invite a collaborator" onSubmit={onSubmit}><FieldGroup><Field data-invalid={!!error}><FieldLabel htmlFor="invite-username">Username</FieldLabel><Input autoComplete="off" disabled={!canInvite || inviting} id="invite-username" onChange={(event) => { setSelectedSuggestion(false); onQueryChange(event.target.value) }} placeholder="Start typing a username" ref={inputRef} value={query} />{searchError ? <FieldError>{searchError}</FieldError> : null}{error ? <FieldError>{error}</FieldError> : null}<FieldDescription>Type at least two characters to search eligible users.</FieldDescription><p aria-atomic="true" aria-live="polite" className="sr-only">{suggestionStatus}</p></Field>{suggestions.length ? <ul aria-label="Invite suggestions" className="flex flex-col gap-1 rounded-lg border p-1">{suggestions.map((user) => <li key={user.id}><Button className="w-full justify-start pointer-coarse:min-h-12" disabled={!canInvite || inviting} onClick={() => { setSelectedSuggestion(true); onSelectSuggestion(user.username); inputRef.current?.focus() }} size="sm" type="button" variant="ghost">@{user.username}</Button></li>)}</ul> : null}<Button disabled={!canInvite || inviting || !query.trim()} type="submit" variant="outline">{inviting ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}{inviting ? "Inviting…" : "Send invite"}</Button></FieldGroup></form>
 }

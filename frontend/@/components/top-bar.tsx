@@ -14,11 +14,6 @@ export type TopBarProps = {
    * overflow — most screens need none.
    */
   action?: ReactNode
-  /**
-   * `flow` reserves the bar's height above route content. `overlay` floats the
-   * bar over a full-bleed surface, so a hosted app owns the whole page.
-   */
-  placement?: "flow" | "overlay"
   className?: string
 }
 
@@ -31,19 +26,16 @@ export function TopBar({
   action,
   className,
   onBack,
-  placement = "flow",
   title,
 }: TopBarProps) {
   return (
     <header
       className={cn(
         "flex min-h-14 flex-col items-stretch gap-1 px-3 py-2 sm:flex-row sm:items-center sm:gap-2 sm:py-0",
-        placement === "overlay"
-          ? "absolute inset-x-0 top-0 z-10 border-b border-border/50 bg-background/80 supports-backdrop-filter:bg-background/60 supports-backdrop-filter:backdrop-blur-md"
-          : "shrink-0 border-b",
+        "shrink-0 border-b",
         className
       )}
-      data-placement={placement}
+      data-placement="flow"
       data-slot="top-bar"
     >
       <div className="flex min-w-0 flex-1 items-center gap-2" data-slot="top-bar-identity">

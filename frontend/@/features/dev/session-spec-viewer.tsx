@@ -187,7 +187,7 @@ export function SpecSharingControls({
                 <ul aria-label="Suggested recipients" className="flex flex-wrap gap-2">
                   {matchingSuggestions.map((candidate) => (
                     <li key={candidate}>
-                      <Button className="pointer-coarse:min-h-12" onClick={() => setUsername(candidate)} size="xs" type="button" variant="secondary">
+                      <Button className="pointer-coarse:min-h-12 pointer-coarse:min-w-12" onClick={() => setUsername(candidate)} size="xs" type="button" variant="secondary">
                         @{candidate}
                       </Button>
                     </li>

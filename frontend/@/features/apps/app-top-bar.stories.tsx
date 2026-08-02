@@ -31,7 +31,7 @@ const longNameApp = {
 
 type StoryArgs = Pick<
   AppTopBarProps,
-  "app" | "consoleError" | "fallbackTitle" | "onOpenOverflow" | "placement"
+  "app" | "consoleError" | "fallbackTitle" | "onOpenOverflow"
 > & {
   backTo?: string
   label?: string
@@ -46,7 +46,6 @@ const meta = {
       consoleError: args.consoleError,
       fallbackTitle: args.fallbackTitle,
       onOpenOverflow: args.onOpenOverflow,
-      placement: args.placement,
     }
     return args.mode === "nested"
       ? <AppTopBar {...common} backTo={args.backTo || "/"} label={args.label || "App"} mode="nested" />

@@ -72,7 +72,11 @@ export const Suggestions: Story = {
     await expect(canvas.getByLabelText("Username")).toHaveValue("ava")
     await expect(canvas.getByLabelText("Username")).toHaveFocus()
     await expect(canvas.queryByRole("list", { name: "Invite suggestions" })).toBeNull()
-    await expect(canvas.getByText("No invite suggestions available.")).toBeInTheDocument()
+    const status = canvasElement.querySelector('[aria-live="polite"]')
+    await expect(status).toHaveTextContent("")
+    await userEvent.clear(canvas.getByLabelText("Username"))
+    await userEvent.type(canvas.getByLabelText("Username"), "zz")
+    await expect(status).toHaveTextContent("No invite suggestions available.")
   },
 }
 

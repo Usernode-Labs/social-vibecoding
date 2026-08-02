@@ -309,6 +309,12 @@ export function DevSession() {
       {visibilityError ? <Alert variant="destructive"><AlertTitle>Session visibility was not updated</AlertTitle><AlertDescription>{visibilityError}</AlertDescription></Alert> : null}
       {lifecycleNotice ? <Alert><AlertTitle>Session updated</AlertTitle><AlertDescription>{lifecycleNotice}</AlertDescription></Alert> : null}
       <div className="grid min-h-0 gap-6 xl:grid-cols-4 xl:items-start" data-slot="development-workspace">
+        <main className="flex min-w-0 flex-col gap-4 xl:col-span-3 xl:col-start-1 xl:row-start-1" data-slot="dev-session-conversation-column">
+          <DevBuildTimeline estimate={estimate} liveLines={buildLines} messages={data.messages} />
+          <DevVisualEvidence visuals={data.session.visuals} />
+          {liveMessages.length ? <DevConversation messages={liveMessages} sessionId={sessionId} streamState={streamState} /> : <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={MessagesSquare} /></EmptyMedia><EmptyTitle>{canUnarchive ? "Restore this session to continue" : "No messages yet"}</EmptyTitle><EmptyDescription>{canUnarchive ? "Archived sessions preserve their history but cannot receive a new Builder turn until restored." : "Start this session with Builder below."}</EmptyDescription></EmptyHeader></Empty>}
+          <DevComposer disabled={composerDisabled} onTurnStarted={reload} quickReplies={quickReplies} sessionId={sessionId} streaming={composerStreaming} suggestions={suggestions} />
+        </main>
         <aside aria-label="Session details" className="flex min-w-0 flex-col gap-4 xl:col-start-4 xl:row-start-1 xl:sticky xl:top-4" data-slot="dev-session-rail">
           <div className="overflow-hidden rounded-xl border bg-muted/30">
             <div className="flex flex-col gap-3 p-4">
@@ -334,12 +340,6 @@ export function DevSession() {
           </div>
           <DevSessionActivity status={sessionStatus} />
         </aside>
-        <main className="flex min-w-0 flex-col gap-4 xl:col-span-3 xl:col-start-1 xl:row-start-1" data-slot="dev-session-conversation-column">
-          <DevBuildTimeline estimate={estimate} liveLines={buildLines} messages={data.messages} />
-          <DevVisualEvidence visuals={data.session.visuals} />
-          {liveMessages.length ? <DevConversation messages={liveMessages} sessionId={sessionId} streamState={streamState} /> : <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={MessagesSquare} /></EmptyMedia><EmptyTitle>{canUnarchive ? "Restore this session to continue" : "No messages yet"}</EmptyTitle><EmptyDescription>{canUnarchive ? "Archived sessions preserve their history but cannot receive a new Builder turn until restored." : "Start this session with Builder below."}</EmptyDescription></EmptyHeader></Empty>}
-          <DevComposer disabled={composerDisabled} onTurnStarted={reload} quickReplies={quickReplies} sessionId={sessionId} streaming={composerStreaming} suggestions={suggestions} />
-        </main>
       </div>
     </> : null}
   </div>

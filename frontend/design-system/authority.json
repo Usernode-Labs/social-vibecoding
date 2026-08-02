@@ -234,7 +234,6 @@
         "mountPolicy": "Keep the TopBar and the adjacent hosted app mounted while title, attention, authorization and contextual actions update.",
         "sensitiveInteractions": [
           "Title or action changes must not resize, reload or remount the hosted iframe.",
-          "Overlay placement must not consume viewport estate from the hosted app.",
           "Exactly one reciprocal Use or Improve action remains reachable as authorization changes."
         ],
         "followUp": "profile-before-cutover"
@@ -264,7 +263,7 @@
           "At narrow-mobile width, application identity or the platform page name remains complete while caller-owned utilities move to a secondary row and Back remains available.",
           "Use and Improve are never presented as permanent equal-weight modes."
         ],
-        "evidence": "Default, attention, action, icon-action, nested-back, overlay, long-title, mobile and dark stories render both themes with interaction assertions; TopBar and AppTopBar narrow stories prove complete identity above reachable utilities, and route contracts prove one bar and one h1 per screen."
+        "evidence": "Default, attention, action, icon-action, nested-back, long-title, mobile and dark stories render both themes with interaction assertions; TopBar and AppTopBar narrow stories prove complete identity above reachable utilities, and route contracts prove one bar and one h1 per screen."
       }
     },
     "platform-navigation": {

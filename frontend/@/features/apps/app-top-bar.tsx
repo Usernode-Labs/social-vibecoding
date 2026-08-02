@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 
 import { PlatformIcon } from "@/components/platform-icon"
 import { StatusDot } from "@/components/status-dot"
-import { TopBar, type TopBarProps } from "@/components/top-bar"
+import { TopBar } from "@/components/top-bar"
 import { Button } from "@/components/ui/button"
 import type { AppDetail } from "@/lib/apps-api"
 import { appDevPath, appOpenPath } from "@/lib/routes"
@@ -19,7 +19,6 @@ export type AppTopBarProps = {
   fallbackTitle?: string
   consoleError?: boolean
   onOpenOverflow?: () => void
-  placement?: TopBarProps["placement"]
   showClose?: boolean
 } & AppTopBarMode
 
@@ -35,14 +34,13 @@ export function AppTopBar(props: AppTopBarProps) {
     consoleError = false,
     fallbackTitle = "App",
     onOpenOverflow,
-    placement,
     showClose = true,
   } = props
   const navigate = useNavigate()
 
   // Before the app resolves there is no identity, mode, or exit to offer —
   // the drawer remains the escape route.
-  if (!app) return <TopBar placement={placement} title={fallbackTitle} />
+  if (!app) return <TopBar title={fallbackTitle} />
 
   const nested = props.mode === "nested"
   const label = nested ? props.label : ""
@@ -115,7 +113,6 @@ export function AppTopBar(props: AppTopBarProps) {
         </>
       }
       onBack={nested ? () => navigate(props.backTo) : undefined}
-      placement={placement}
       title={label ? `${app.name} · ${label}` : app.name}
     />
   )
