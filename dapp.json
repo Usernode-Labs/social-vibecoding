@@ -959,6 +959,11 @@
       "name": "Admin Topochain settings reports the outbound-mail state",
       "path": "/#admin/topochain/settings",
       "expectSelector": "#admin-topo-mail-status"
+    },
+    {
+      "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios",
+      "expectSelector": ".un-ptr-layer > .un-ptr-puck"
     }
   ],
   "governance": {
