@@ -110,7 +110,7 @@ test('the menu carries every section, grouped, with no external tools left', () 
   const KEYS = [
     'overview', 'status', 'node', 'merges', 'rollover', 'staging-reap',
     'users', 'codes', 'limits',
-    'analytics', 'gallery', 'features',
+    'analytics', 'estimator', 'gallery', 'features',
     'campaigns', 'db-export', 'topochain',
   ];
   for (const key of KEYS) {
@@ -163,6 +163,8 @@ test('every folded-in section has a module, a script tag and a precache entry', 
     status: 'admin-status',
     node: 'admin-node',
     analytics: 'admin-analytics',
+    // #898: platform analytics split out of the Analytics section.
+    estimator: 'admin-estimator',
     merges: 'admin-merges',
     gallery: 'admin-gallery',
     campaigns: 'admin-campaigns',
@@ -191,7 +193,8 @@ test('every folded-in section has a module, a script tag and a precache entry', 
 // the section that started them.
 test('every section module exposes destroy(), and switches call it first', () => {
   for (const file of ['admin-status', 'admin-node', 'admin-analytics',
-    'admin-merges', 'admin-gallery', 'admin-campaigns', 'admin-topochain']) {
+    'admin-estimator', 'admin-merges', 'admin-gallery', 'admin-campaigns',
+    'admin-topochain']) {
     const src = fs.readFileSync(path.join(root, 'public/js', `${file}.js`), 'utf8');
     assert.match(src, /destroy\(\)\s*\{/, `${file}.js implements destroy()`);
     assert.match(src, /render\(\s*\w+\s*\)\s*\{/, `${file}.js implements render(host)`);
@@ -263,6 +266,8 @@ test('dapp.json locks the rendered page in with checks', () => {
   assert.ok(section, 'a dapp.json test renders a deep-linked section');
   const dbExport = tests.find((t) => t.path === '/#admin/db-export');
   assert.ok(dbExport, 'a dapp.json test renders the database-export section');
+  const estimator = tests.find((t) => t.path === '/?demo=1#admin/estimator');
+  assert.ok(estimator, 'a dapp.json test renders the estimator-accuracy section (#898)');
   assert.match(dbExport.expectSelector, /#admin-db-export-panel/,
     'asserts the export panel actually rendered, not just the shell');
 });

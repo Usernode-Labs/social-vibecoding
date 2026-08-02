@@ -4104,16 +4104,22 @@ html:not(.dark) #admin-node-root {
 #admin-node-root a { color: var(--un-ns-accent); text-decoration: none; }
 #admin-node-root a:hover { text-decoration: underline; }
 
-/* ── Analytics (was public/dashboard.html) ───────────────────────────── */
+/* ── Analytics (was public/dashboard.html) + Estimator accuracy ──────── */
+/* Both console sections share the .dc-* chart idiom: the estimator card was
+   split out of Analytics into #admin/estimator (#898) and carries the same
+   hover rects and (?) icons, so every selector below covers both roots. */
 
 /* Transparent per-column hover targets in the SVG charts. The faint fill on
    hover indicates which column the tooltip is describing. */
-#admin-analytics-root .dc-hover { cursor: pointer; }
-#admin-analytics-root .dc-hover:hover { fill-opacity: 0.10 !important; }
+#admin-analytics-root .dc-hover,
+#admin-estimator-root .dc-hover { cursor: pointer; }
+#admin-analytics-root .dc-hover:hover,
+#admin-estimator-root .dc-hover:hover { fill-opacity: 0.10 !important; }
 
 /* (?) info icon next to each chart heading. Hover/focus shows the floating
-   explanatory tooltip (wired in admin-analytics.js). */
-#admin-analytics-root .dc-info {
+   explanatory tooltip (wired in admin-analytics.js / admin-estimator.js). */
+#admin-analytics-root .dc-info,
+#admin-estimator-root .dc-info {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4131,7 +4137,9 @@ html:not(.dark) #admin-node-root {
   color: #a78bfa;
 }
 #admin-analytics-root .dc-info:hover,
-#admin-analytics-root .dc-info:focus { background: rgba(139, 92, 246, 0.32); outline: none; }
+#admin-analytics-root .dc-info:focus,
+#admin-estimator-root .dc-info:hover,
+#admin-estimator-root .dc-info:focus { background: rgba(139, 92, 246, 0.32); outline: none; }
 
 /* ── Merge debug (was public/debug.html) ─────────────────────────────── */
 
