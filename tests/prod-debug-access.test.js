@@ -297,3 +297,108 @@ test('a token minted with the legacy shared secret is not a valid worker token',
   );
   assert.throws(() => platformJwt.verifyWorkerToken(forged), /invalid signature/);
 });
+
+// ── Boot-race fix (#891) ────────────────────────────────────────────────
+//
+// Both this role's bootstrap and the topochain console role's near-identical
+// one sweep `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public` plus a
+// per-table GRANT loop over the SAME catalog rows. Fired concurrently (they
+// were, both un-awaited in server.js) Postgres raises `tuple concurrently
+// updated` and the loser's capability is dead for the whole process
+// lifetime — observed in production 42ms apart, across consecutive deploys.
+// Two guards: sequencing at the call site, and a bounded retry for
+// contention ordering can't prevent (an overlapping deploy).
+
+test('#891: server.js awaits the two role bootstraps in sequence', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.match(src, /await debugAccess\.ensureRole\(config\)/,
+    'the prod-debug role bootstrap must be awaited');
+  assert.match(src, /await topochainConsoleRole\.ensureConsoleRole\(config\)/,
+    'the topochain console role bootstrap must be awaited');
+  // Ordering: prod-debug first, console role second — they must not overlap.
+  const a = src.indexOf('await debugAccess.ensureRole(config)');
+  const b = src.indexOf('await topochainConsoleRole.ensureConsoleRole(config)');
+  assert.ok(a !== -1 && b !== -1 && a < b, 'the bootstraps must be sequenced');
+  // The un-awaited form that caused the race must be gone.
+  assert.doesNotMatch(src, /\n\s*debugAccess\.ensureRole\(config\)\.catch/,
+    'ensureRole must not be fired un-awaited');
+  assert.doesNotMatch(src, /\n\s*topochainConsoleRole\.ensureConsoleRole\(config\)\.catch/,
+    'ensureConsoleRole must not be fired un-awaited');
+});
+
+test('#891: ensureRole retries a bounded number of times', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'src/services/debug-access.js'), 'utf8'
+  );
+  assert.match(src, /const BOOTSTRAP_ATTEMPTS = 3/, 'attempts must be a named bound');
+  assert.match(src, /const BOOTSTRAP_RETRY_MS = 250/, 'the backoff must be a named constant');
+  assert.match(src, /async function bootstrapRole\(config\)/,
+    'one attempt must be extracted so the caller can retry it');
+  assert.match(src, /for \(let attempt = 1; attempt <= BOOTSTRAP_ATTEMPTS; attempt\+\+\)/,
+    'ensureRole must loop over bounded attempts');
+  // The backoff is awaited during boot, BEFORE the HTTP listener exists —
+  // an unref'd timer lets Node treat the loop as idle and exit, abandoning
+  // the retry and the rest of startup.
+  const sleepLine = src.match(/const sleep = .*/)[0];
+  assert.doesNotMatch(sleepLine, /unref/,
+    'the boot-time backoff timer must NOT be unref\'d');
+});
+
+// Behavioural, not just a source guard: drive the real ensureRole against a
+// stub pool that fails a controllable number of times.
+function stubbedDebugAccess() {
+  const Module = require('module');
+  const origLoad = Module._load;
+  const state = { attempts: 0, failTimes: 0 };
+  Module._load = function (req) {
+    if (req === '../db/pool') {
+      return { getPool: () => ({
+        query: async (sql) => {
+          if (sql.includes('DO $$')) {
+            state.attempts++;
+            if (state.attempts <= state.failTimes) {
+              throw new Error('tuple concurrently updated');
+            }
+          }
+          if (sql.includes('current_database')) return { rows: [{ db: 'usernode' }] };
+          if (sql.includes('information_schema.columns')) {
+            return { rows: [{ table: 'issues', columns: ['id', 'title'] }] };
+          }
+          return { rows: [] };
+        },
+      }) };
+    }
+    if (req === './logger') return new Proxy({}, { get: () => () => {} });
+    return origLoad.apply(this, arguments);
+  };
+  // Fresh copy so the stub is the one it binds to.
+  const p = require.resolve('../src/services/debug-access');
+  delete require.cache[p];
+  const mod = require(p);
+  Module._load = origLoad;
+  delete require.cache[p];
+  return { mod, state };
+}
+
+test('#891: ensureRole recovers from transient catalog contention', async () => {
+  const { mod, state } = stubbedDebugAccess();
+  state.failTimes = 2;                 // fail twice, succeed on the third
+  await mod.ensureRole({});
+  assert.equal(state.attempts, 3, 'must retry up to the bound');
+  assert.equal(mod.isAvailable(), true, 'the capability must come up after a retry');
+});
+
+test('#891: ensureRole gives up cleanly after the bound', async () => {
+  const { mod, state } = stubbedDebugAccess();
+  state.failTimes = Infinity;          // always contended
+  await mod.ensureRole({});
+  assert.equal(state.attempts, 3, 'must stop at the bound, not spin');
+  assert.equal(mod.isAvailable(), false, 'a permanent failure must disable the capability');
+});
+
+test('#891: a clean bootstrap still takes exactly one attempt', async () => {
+  const { mod, state } = stubbedDebugAccess();
+  await mod.ensureRole({});
+  assert.equal(state.attempts, 1, 'the happy path must not pay for the retry');
+  assert.equal(mod.isAvailable(), true);
+});
