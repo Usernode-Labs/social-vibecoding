@@ -174,19 +174,34 @@ const FALLBACK_SENTINEL = ['<fallback>'];
 const currentQuickReplies = loadCurrentQuickReplies();
 
 test('#786 pills resolve from a system recovery breadcrumb', () => {
-  const pills = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
+  const pills = ['Try that again', "What's the current state?"];
   const out = currentQuickReplies([
     { role: 'user', content: 'Sort by score' },
-    // The dispatch preamble has no pills (resolveQuickReplies drops a
-    // phase-1 call when a dispatch co-occurs).
     { role: 'assistant', content: "I'll have the agent do that." },
     { role: 'system', content: 'Claude Code is running...' },
-    { role: 'system', content: 'PR #12 created' },
-    { role: 'system', content: 'Staging deployed (recovered after restart)' },
-    { role: 'system', content: 'Coding turn recovered after a platform restart.', quickReplies: pills },
+    // A turn that couldn't be resumed has no Mayor reply to hang pills on,
+    // so its breadcrumb is still the pill source (#786).
+    { role: 'system', content: "That coding turn didn't finish — please send your request again.", quickReplies: pills },
   ]);
   assert.deepEqual(out, pills,
     'a recovery breadcrumb must be able to supply the pill bar — otherwise a restart leaves it empty forever');
+});
+
+// #896: a recovered BUILD turn now ends on a real Mayor wrap-up, so its
+// pills ride an ordinary assistant row — the same source a live turn uses
+// — with the ordinary card labels above it.
+test('#896 a recovered build turn resolves its pills from the wrap-up assistant row', () => {
+  const pills = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
+  const out = currentQuickReplies([
+    { role: 'user', content: 'Sort by score' },
+    { role: 'assistant', content: "I'll have the agent do that." },
+    { role: 'system', content: 'Claude Code is running...' },
+    { role: 'system', content: 'Claude Code finished' },
+    { role: 'system', content: 'PR #12 created' },
+    { role: 'system', content: 'Staging deployed!' },
+    { role: 'assistant', content: 'Sorted the leaderboard by score.', quickReplies: pills },
+  ]);
+  assert.deepEqual(out, pills);
 });
 
 test('#786 pill-less system rows are skipped, not treated as a stop', () => {
@@ -194,16 +209,16 @@ test('#786 pill-less system rows are skipped, not treated as a stop', () => {
   const out = currentQuickReplies([
     { role: 'user', content: 'Plan it' },
     { role: 'assistant', content: 'Scouting.' },
-    { role: 'system', content: 'Scout finished after restart — drafted a 40-line spec.', quickReplies: pills },
+    { role: 'system', content: 'Scout drafted a 40-line spec from the codebase.', quickReplies: pills },
     // A later staging heal lands ABOVE the pill-carrying breadcrumb.
-    { role: 'system', content: 'Staging recovered after restart' },
+    { role: 'system', content: 'Staging preview rebuilt' },
   ]);
   assert.deepEqual(out, pills);
 });
 
 test('#786 a sent user row still clears the bar', () => {
   const out = currentQuickReplies([
-    { role: 'system', content: 'Coding turn recovered after a platform restart.', quickReplies: ['Make a tweak'] },
+    { role: 'assistant', content: 'Sorted the leaderboard by score.', quickReplies: ['Make a tweak'] },
     { role: 'user', content: 'Actually, change the header' },
   ]);
   assert.equal(out, null, 'pills must clear the moment the user sends');

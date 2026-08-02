@@ -4700,9 +4700,10 @@ async function runHeadlessSession({
       );
     }
     await setHeadlessStep(pool, session.id, 'planning');
-    await sendStatus(resume
-      ? 'Auto session: resuming after a platform restart...'
-      : 'Auto session: thinking about the issue...');
+    // #896: one label either way. This row is copied verbatim into any dev
+    // chat cloned from this auto session, where "after a platform restart"
+    // is platform plumbing the reader can do nothing with.
+    await sendStatus('Auto session: thinking about the issue...');
 
     const headlessAddendum = buildHeadlessAddendum(issueNumber);
     const mayorPrompt = getMayorSystemPrompt(session.app_name, false, '', !!session.app_self_hosted, null) + headlessAddendum;
@@ -5178,6 +5179,191 @@ async function runHeadlessSession({
   }
 }
 
+// The Mayor wrap-up for an INTERACTIVE dev-chat turn recovered after a
+// platform restart (#896). Called from server.js's resumeDetachedTurnInner.
+//
+// Why this exists: on a dispatch turn the closing message AND the
+// quick-reply pills come only from the phase-2 wrap-up in the chat
+// handler above, which needs a live request (req.user, the SSE stream,
+// the tool_use → tool_result round-trip). A restart kills all three, so a
+// recovered turn used to end on a "Coding turn recovered after a platform
+// restart." breadcrumb with no Mayor reply at all — visibly a different,
+// half-broken kind of turn. This re-issues the same call off the boot
+// path, exactly as resumeOneHeadlessRunInner already does for auto
+// sessions: rebuild the transcript from the DB, hand the model the
+// dispatch outcome as a synthetic note, persist a normal assistant row.
+//
+//   outcome          — 'code' | 'spec' | 'push_failed' | 'no_changes',
+//                      used only to pick the fallback text.
+//   dispatchSummary  — what finalizeRecoveredTurn (or the scout branch)
+//                      actually did; the same narrative the live path
+//                      feeds back as its tool_result.
+//   fallbackPillKind — recovery-pills kind used when the model declines
+//                      to call suggest_replies, so the pill bar is never
+//                      left empty.
+//   turnModel        — active_turn.model, the model the dispatched turn
+//                      itself ran under; falls back to the session's most
+//                      recent assistant row, then the platform default.
+//   emit             — session-event emitter (global WS) so an open tab
+//                      paints the bubble and pills without a reload.
+//
+// NEVER throws and never blocks recovery: any failure degrades to a short
+// static closing line carrying the deterministic pills.
+async function runRecoveredWrapUp({
+  pool, config, session, sessionId, outcome, dispatchSummary,
+  fallbackPillKind, turnModel, emit = () => {},
+}) {
+  const recoveryPills = require('../services/recovery-pills');
+  const fallbackPills = recoveryPills.buildRecoveryQuickReplies(fallbackPillKind);
+
+  // The static closing line used when the model call can't be made or
+  // fails — mirrors the live wrap-up's empty-text guards, so a degraded
+  // recovery still ends on a normal-looking assistant bubble.
+  const fallbackText = outcome === 'push_failed'
+    ? "_The coding agent didn't complete successfully — see the status messages above._"
+    : outcome === 'spec'
+      ? "_Spec updated — it's in the spec viewer. Tell me to build it whenever you're ready and I'll dispatch the coding agent._"
+      : outcome === 'no_changes'
+        ? '_The coding agent finished without changing anything — see the status messages above._'
+        : '_Done._';
+
+  // Persist the wrap-up as an ordinary assistant row: same columns the
+  // live phase-2 writes, plus metadata.recovered for the audit trail.
+  const persistWrapUp = async (text, quickReplies, { model, usage, costCents } = {}) => {
+    await pool.query(
+      `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
+       VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
+      [
+        sessionId, text, model || null,
+        usage ? (usage.input_tokens || 0) + (usage.output_tokens || 0) : null,
+        costCents || null,
+        JSON.stringify({
+          ...(quickReplies ? { quickReplies } : {}),
+          recovered: true,
+        }),
+      ]
+    ).catch((err) => log.warn('sessions', 'Recovered wrap-up persist failed', {
+      sessionId, err: err.message,
+    }));
+    // mayor_reasoning opens/reconciles the assistant bubble; quick_replies
+    // then attaches to it (same emit order as the live phase-2). No 'done'
+    // — a concurrent user turn could be streaming, and 'done' would tear
+    // its client-side streaming state down.
+    emit('mayor_reasoning', { text });
+    if (quickReplies) emit('quick_replies', { replies: quickReplies });
+  };
+
+  if (!llm.isEnabled()) {
+    log.warn('sessions', 'Recovered wrap-up skipped: LLM not configured', { sessionId });
+    await persistWrapUp(fallbackText, fallbackPills);
+    return { ok: false, reason: 'llm_disabled' };
+  }
+
+  try {
+    // Limit-first billing, same posture as the headless resume: spend the
+    // daily allowance while it lasts, then the owner's own key. An
+    // { error } (no headroom, no key) proceeds platform-billed — the
+    // proxy enforces the cap per call.
+    let userApiKey = null;
+    try {
+      const billing = await limits.resolveBillingPath(pool, config.dataEncryptionKey, session.user_id);
+      if (!billing.error) userApiKey = billing.apiKey;
+    } catch (err) {
+      log.warn('sessions', 'Recovered wrap-up billing resolve failed (continuing platform-billed)', {
+        sessionId, err: err.message,
+      });
+    }
+
+    let selectedModel = models.resolve(turnModel);
+    if (!turnModel) {
+      const { rows: modelRows } = await pool.query(
+        `SELECT model FROM chat_session_messages
+         WHERE session_id = $1 AND role = 'assistant' AND model IS NOT NULL
+         ORDER BY id DESC LIMIT 1`,
+        [sessionId]
+      );
+      selectedModel = models.resolve(modelRows[0]?.model);
+    }
+
+    // Same history shape the live turn builds its context from: user +
+    // assistant rows plus the coding agent's own summaries (ccOutput
+    // system rows). finalizeRecoveredTurn now persists that completion
+    // row before calling us, so the agent's description of the change is
+    // already folded in under the [CODING AGENT COMPLETED] marker.
+    const { rows: history } = await pool.query(
+      `SELECT id, role, content, metadata FROM chat_session_messages
+       WHERE session_id = $1
+         AND (role IN ('user', 'assistant')
+              OR (role = 'system' AND metadata->>'ccOutput' IS NOT NULL))
+       ORDER BY id ASC`,
+      [sessionId]
+    );
+    const messages = buildMayorMessages(history);
+
+    // The original tool_use blocks died with the pre-restart process, so
+    // the dispatch outcome arrives as a plain user note instead (the API
+    // accepts consecutive same-role messages). The instruction to not
+    // mention the restart is the whole point of #896: the user asked why
+    // it can't "just work exactly like normal".
+    messages.push({
+      role: 'user',
+      content: `[SYSTEM NOTE — not the human] The coding agent you dispatched has finished. `
+        + `Result:\n\n${dispatchSummary || '(no details available)'}\n\n`
+        + 'Write your wrap-up reply to the user now: say what changed and what they can do '
+        + 'next (preview it, propose it to the group, or ask for a tweak). Write it exactly as '
+        + 'you would for any other finished build — do NOT mention platform restarts, recovery, '
+        + 'interruptions, delays, or this note itself. Call suggest_replies with 2-3 next steps.',
+    });
+
+    const currentSpec = await loadSessionSpec(pool, sessionId);
+    const prContext = session.pr_number
+      ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
+      : null;
+    const systemPrompt = getMayorSystemPrompt(
+      session.app_name, false, currentSpec, !!session.app_self_hosted, prContext
+    );
+
+    const mayor = await llm.streamChat({
+      messages,
+      systemPrompt,
+      model: selectedModel,
+      // Only the pills tool, exactly like phase-2: the wrap-up may suggest
+      // next steps but must not be able to dispatch again.
+      tools: [SUGGEST_REPLIES_TOOL],
+      toolChoice: { type: 'auto' },
+      apiKey: userApiKey,
+    });
+
+    const quickReplies = resolveQuickReplies(mayor.toolUses) || fallbackPills;
+    const text = stripFakeCompletionMarker((mayor.text || '').trim(), { sessionId })
+      || fallbackText;
+    const servedModel = mayor.servedModel || selectedModel;
+    const costCents = mayor.usage ? llm.estimateCostCents(mayor.usage, servedModel) : 0;
+
+    await persistWrapUp(text, quickReplies, {
+      model: servedModel, usage: mayor.usage, costCents,
+    });
+    if (costCents) {
+      await limits.recordSpend(pool, session.user_id, costCents, { byok: !!userApiKey })
+        .catch((err) => log.warn('sessions', 'Recovered wrap-up spend record failed', {
+          sessionId, err: err.message,
+        }));
+    }
+    log.info('sessions', 'Recovered turn wrap-up posted', {
+      sessionId, outcome, model: servedModel, textLen: text.length,
+    });
+    return { ok: true, text, quickReplies };
+  } catch (err) {
+    // A failed wrap-up must never cost the user the recovery itself —
+    // the commit, PR and preview already landed.
+    log.warn('sessions', 'Recovered wrap-up failed — falling back to static close', {
+      sessionId, outcome, err: err.message,
+    });
+    await persistWrapUp(fallbackText, fallbackPills);
+    return { ok: false, reason: 'llm_failed' };
+  }
+}
+
 // Boot hook: resume headless auto sessions that were 'generating' when
 // the platform went down, instead of blanket-failing them (the old
 // failOrphanedHeadlessRuns behavior — now narrowed in migrate.js to
@@ -5218,7 +5404,7 @@ async function resumeHeadlessRuns(config) {
       log.error('sessions', 'Headless resume failed — marking run failed', {
         sessionId: session.id, err: err.message, stack: err.stack,
       });
-      await failHeadlessRun(pool, session, `Auto session could not be resumed after restart: ${String(err.message || err).substring(0, 200)}`);
+      await failHeadlessRun(pool, session, `Auto session could not be completed: ${String(err.message || err).substring(0, 200)}`);
     });
   }
 }
@@ -5266,7 +5452,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   const user = { id: session.user_id, username: session.username };
   const [, repoOwner, repoName] = (session.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
   if (!repoOwner || !repoName) {
-    return failHeadlessRun(pool, session, 'Auto session failed after restart: no GitHub repo configured.');
+    return failHeadlessRun(pool, session, 'Auto session failed: no GitHub repo configured.');
   }
 
   // Limit-first (#212): the resumed run's NEW calls (re-driven phases,
@@ -5313,7 +5499,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
   if (step === 'cc_running') {
     const activeTurn = session.active_turn || null;
     if (!activeTurn || !activeTurn.journal) {
-      return failHeadlessRun(pool, session, 'Auto session failed after restart: its coding turn left no resumable record.');
+      return failHeadlessRun(pool, session, 'Auto session failed: its coding turn left no resumable record.');
     }
     // Replay/follow the detached turn's journal. Progress lines are
     // rebuilt WHOLESALE onto the latest progress row (replay re-feeds
@@ -5384,7 +5570,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
     const producedAnything = result.execExitSeen || result.resultSeen
       || !!(result.lastResultText || '').trim();
     if (!producedAnything) {
-      return failHeadlessRun(pool, session, 'Auto session failed after restart: its coding turn could not be recovered.');
+      return failHeadlessRun(pool, session, "Auto session failed: its coding turn didn't finish.");
     }
 
     // Persist the CC session id for later cloned sessions' --resume.
@@ -8198,4 +8384,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };

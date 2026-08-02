@@ -5123,9 +5123,11 @@ async function seedStagingQuickReplyFallback(pool, config) {
 // seedStagingCloneSpecPills; idempotent via the branch-name checks.
 //
 //   1. restart-recovered-pills  — a build turn recovered after a restart:
-//      commit pushed, PR opened, staging rebuilt, but no Mayor wrap-up
-//      (it can't be resumed), so the breadcrumb carries the 'code_done'
-//      pills.
+//      commit pushed, PR opened, staging rebuilt. #896: the transcript is
+//      now indistinguishable from a normal turn's — ordinary card labels
+//      and a real Mayor wrap-up carrying the pills on an assistant row
+//      (the recovery re-issues phase 2 rather than dropping a breadcrumb),
+//      so the fixture exercises the ASSISTANT-row pill source.
 //   2. restart-unanswered-pills — a Mayor turn killed mid-stream before it
 //      persisted any reply: the boot-time backfill sweep posts the
 //      missed-reply breadcrumb, whose first pill is the user's own message
@@ -5172,7 +5174,10 @@ async function seedStagingRestartRecoveredPills(pool, config) {
   const userAsk = 'Make the leaderboard sort by score';
 
   // ── Fixture 1: recovered build turn ─────────────────────────────────
-  const recoveredBranch = 'staging-fixture/restart-recovered-pills';
+  // #896: -v2 because the seed is idempotent on its branch name — without
+  // a new name, staging rows seeded under the old (restart-worded)
+  // transcript would never be refreshed to the new shape.
+  const recoveredBranch = 'staging-fixture/restart-recovered-pills-v2';
   const { rows: existingRecovered } = await pool.query(
     'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
     [appId, recoveredBranch]
@@ -5210,11 +5215,28 @@ async function seedStagingRestartRecoveredPills(pool, config) {
           '[done]',
         ],
       }, '23 minutes'],
-      ['system', 'PR #12 created', { prNumber: 12 }, '22 minutes'],
-      ['system', 'Staging deployed (recovered after restart)', {}, '21 minutes'],
-      // The breadcrumb the recovery path writes — and the pill source.
-      ['system', 'Coding turn recovered after a platform restart.', {
+      // The agent's own summary card, exactly as a live turn writes it.
+      ['system', 'Claude Code finished', {
+        ccOutput: 'Sorted the leaderboard rows by score descending, with a name tiebreak, '
+          + 'and kept the existing rank badges in sync.',
+        ccOutcome: 'success',
+        durationMs: 214000,
+        recovered: true,
+      }, '23 minutes'],
+      ['system', 'PR #12 created', { prNumber: 12, recovered: true }, '22 minutes'],
+      ['system', 'Staging deployed!', {
+        stagingUrl: 'https://staging-demo.invalid/leaderboard',
+        changesReady: true,
+        prNumber: 12,
+        prUrl: 'https://github.invalid/staging-demo/pull/12',
+        recovered: true,
+      }, '21 minutes'],
+      // #896: the Mayor wrap-up the recovery now re-issues — a normal
+      // assistant row, and the turn's pill source.
+      ['assistant', 'Sorted the leaderboard by score — highest first, with ties broken by name. '
+        + "Preview it, or propose it to the group when you're happy with it.", {
         quickReplies: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
+        recovered: true,
       }, '20 minutes'],
     ];
     for (const [role, content, metadata, ago] of rows) {
@@ -5230,7 +5252,9 @@ async function seedStagingRestartRecoveredPills(pool, config) {
   }
 
   // ── Fixture 2: Mayor turn killed before it replied ──────────────────
-  const unansweredBranch = 'staging-fixture/restart-unanswered-pills';
+  // #896: -v2 for the same reason as fixture 1 — the breadcrumb wording
+  // changed, and the seed only runs when its branch name is absent.
+  const unansweredBranch = 'staging-fixture/restart-unanswered-pills-v2';
   const { rows: existingUnanswered } = await pool.query(
     'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
     [appId, unansweredBranch]
@@ -5254,8 +5278,10 @@ async function seedStagingRestartRecoveredPills(pool, config) {
       ['system', 'Thinking about your request...', {}, '14 minutes'],
       // What the boot-time backfill sweep posts: the honest note plus the
       // user's own message as a resend pill.
-      ['system', 'The platform restarted before I could reply — send your message again.', {
+      ["system", "I didn't get to reply to that — send your message again.", {
         quickReplies: [userAsk, "What's the current state?"],
+        recovered: true,
+        recoveredReason: 'unanswered',
       }, '13 minutes'],
     ];
     for (const [role, content, metadata, ago] of rows) {
