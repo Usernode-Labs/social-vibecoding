@@ -93,14 +93,33 @@ function publicApiRoutes(config) {
   router.get('/api/public/apps', async (req, res) => {
     const includeWallets = wantsWallets(req);
     try {
+      // The active-users join mirrors the authed home list's sticky
+      // 10-day rule (routes/apps.js): a user counts iff they ever spent
+      // >= 60s on the app on a single day AND visited within 10 days.
+      // Batched to one row per app — same shape, no per-app round trips.
       const { rows: apps } = await pool.query(
-        `SELECT id, name, slug, status, collab_visibility, view_visibility,
-                created_at, last_deploy_at
-           FROM apps
-          WHERE NOT self_hosted
-            AND view_visibility = 'public'
-            AND status <> ALL($1::text[])
-          ORDER BY last_deploy_at DESC NULLS LAST, created_at DESC`,
+        `SELECT a.id, a.name, a.slug, a.status, a.collab_visibility,
+                a.view_visibility, a.created_at, a.last_deploy_at,
+                a.icon_emoji, a.icon_image_id, a.anon_shell,
+                COALESCE(au.cnt, 0) AS active_users
+           FROM apps a
+           LEFT JOIN (
+             SELECT a1.app_id, COUNT(DISTINCT a1.user_id) AS cnt
+             FROM app_activity a1
+             WHERE a1.date >= CURRENT_DATE - 10
+               AND EXISTS (
+                 SELECT 1 FROM app_activity a2
+                 WHERE a2.app_id = a1.app_id
+                   AND a2.user_id = a1.user_id
+                   AND a2.seconds_spent >= 60
+               )
+             GROUP BY a1.app_id
+           ) au ON au.app_id = a.id
+          WHERE NOT a.self_hosted
+            AND a.view_visibility = 'public'
+            AND a.status <> ALL($1::text[])
+          ORDER BY COALESCE(au.cnt, 0) DESC,
+                   a.last_deploy_at DESC NULLS LAST, a.created_at DESC`,
         [HIDDEN_APP_STATUSES]
       );
 
@@ -116,6 +135,17 @@ function publicApiRoutes(config) {
           view_visibility: a.view_visibility,
           created_at: a.created_at,
           last_deploy_at: a.last_deploy_at,
+          // Home-card presentation fields (landing-page app directory).
+          // icon_url is server-built like the authed list so clients never
+          // assemble ids into paths; /app-icons/:id is a public route.
+          icon_emoji: a.icon_emoji || null,
+          icon_url: a.icon_image_id ? `/app-icons/${a.icon_image_id}` : null,
+          active_users: parseInt(a.active_users, 10) || 0,
+          // From the anonymous-shell probe (services/shell-probe.js):
+          // anything not positively classified 'public' is presented as
+          // account-required — 'unknown' fails safe to gated, matching
+          // the scaffold's default behavior.
+          requires_login: a.anon_shell !== 'public',
           // Direct subdomain URL — what the public landing page links to.
           // View-public apps pass the Caddy edge gate without a session;
           // apps that JWT-gate their own HTML shell will show their

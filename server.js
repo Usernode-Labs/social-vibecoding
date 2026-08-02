@@ -760,6 +760,10 @@ async function start() {
   // `main` we didn't make ourselves and redeploy via the same path
   // that the dev-chat merge flow uses. See main-drift-poller.js.
   require('./src/services/main-drift-poller').start(config);
+  // Anonymous-shell probe: classifies each running app's shell as
+  // public/gated for the landing page's app directory. Re-probes after
+  // deploys and hourly. See services/shell-probe.js.
+  require('./src/services/shell-probe').start(config);
   // Production app-container watchdog (#426): restart/rebuild
   // status='running' apps whose `usernode-app-<slug>` container is
   // stopped or missing — the drift poller above only acts on new

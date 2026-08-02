@@ -221,6 +221,29 @@
     },
 
     _wireLanding() {
+      // Kit pull-to-refresh on the landing scroller, same element-mode
+      // wiring as the authed screens (app.js _wirePullToRefresh). The
+      // kit no-ops this on desktop; the refresh re-pulls the app
+      // directory (probe results, active-user counts, new deploys).
+      if (window.PlatformUI) {
+        PlatformUI.pullToRefresh(byId('auth-landing-screen'),
+          () => AuthScreens._loadLandingApps());
+      }
+
+      // "Join waitlist" CTA reveals the collapsed email form (hidden by
+      // default so the label appears exactly once on the page), scrolls
+      // to it, and focuses the input.
+      const waitlistCta = byId('landing-waitlist-cta');
+      if (waitlistCta) waitlistCta.addEventListener('click', () => {
+        const section = byId('landing-waitlist');
+        if (section) {
+          section.classList.remove('hidden');
+          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+        const email = byId('waitlist-email');
+        if (email) email.focus({ preventScroll: true });
+      });
+
       // Waitlist join form → POST /api/public/waitlist.
       const form = byId('waitlist-form');
       const emailEl = byId('waitlist-email');
@@ -302,33 +325,95 @@
         const apps = (data && data.apps) || [];
         appsEl.textContent = '';
         if (!apps.length) {
-          appsEl.appendChild(el('p', 'text-sm text-zinc-500', 'No public apps yet.'));
+          appsEl.appendChild(el('p', 'text-sm text-zinc-500 col-span-full', 'No public apps yet.'));
           return;
         }
         for (const app of apps) {
-          const card = el('a',
-            'block rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-4 hover:border-violet-400 dark:hover:border-violet-500 transition-colors');
-          // Real href kept for open-in-new-tab affordances; a plain
-          // click opens the in-page viewer so there's always a Back.
-          card.href = app.url || '#';
-          card.rel = 'noopener';
-          card.addEventListener('click', (e) => {
-            if (e.metaKey || e.ctrlKey || e.shiftKey || !app.url) return;
-            e.preventDefault();
-            AuthScreens._openLandingApp(app);
-          });
-          card.appendChild(el('div', 'font-medium text-sm mb-1', app.name || app.slug));
-          const contributors = (app.contributors || []).map((c) => c.username).filter(Boolean);
-          card.appendChild(el('div', 'text-xs text-zinc-500 dark:text-zinc-400',
-            contributors.length
-              ? 'By ' + contributors.slice(0, 3).join(', ') + (contributors.length > 3 ? ` +${contributors.length - 3}` : '')
-              : 'Community app'));
-          appsEl.appendChild(card);
+          appsEl.appendChild(AuthScreens._buildLandingAppTile(app, el));
         }
       } catch (_) {
         appsEl.textContent = '';
-        appsEl.appendChild(el('p', 'text-sm text-zinc-500', 'Could not load apps right now.'));
+        appsEl.appendChild(el('p', 'text-sm text-zinc-500 col-span-full', 'Could not load apps right now.'));
       }
+    },
+
+    // One launcher tile, mirroring the authed homescreen's renderAppCard
+    // shape (home.js): centered 14x14 icon tile (image > emoji > first
+    // letter), then the name row with the active-users badge. Built with
+    // DOM APIs (not innerHTML) because name/emoji are user-authored.
+    //
+    // Gated apps (requires_login — anything the shell probe didn't
+    // positively classify as public) render dimmed with a lock badge and
+    // an "Account required" caption; tapping one remembers the app deep
+    // link and routes to #signup, so the account flow lands the user in
+    // the app they wanted.
+    _buildLandingAppTile(app, el) {
+      const gated = !!app.requires_login;
+      const tile = el('div',
+        'app-card relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 cursor-pointer'
+        + (gated ? ' opacity-50 grayscale' : ''));
+      tile.setAttribute('data-slug', app.slug || '');
+      tile.setAttribute('data-gated', gated ? 'true' : 'false');
+
+      // Icon tile: same priority order as home.js iconTileFor.
+      const iconWrap = el('div', 'relative w-14 h-14 shrink-0');
+      const iconBox = el('div',
+        'w-14 h-14 rounded-xl bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-xl');
+      if (app.icon_url) {
+        const img = document.createElement('img');
+        img.src = app.icon_url;
+        img.alt = '';
+        img.loading = 'lazy';
+        img.draggable = false;
+        img.className = 'w-14 h-14 rounded-xl object-cover';
+        iconBox.setAttribute('data-icon', 'image');
+        iconBox.appendChild(img);
+      } else if (app.icon_emoji) {
+        const span = el('span', 'text-3xl leading-none', app.icon_emoji);
+        span.setAttribute('aria-hidden', 'true');
+        iconBox.setAttribute('data-icon', 'emoji');
+        iconBox.appendChild(span);
+      } else {
+        iconBox.setAttribute('data-icon', 'letter');
+        iconBox.textContent = (app.name || '?').charAt(0).toUpperCase();
+      }
+      iconWrap.appendChild(iconBox);
+      if (gated) {
+        const lock = el('span',
+          'absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300');
+        lock.title = 'Account required';
+        lock.innerHTML = '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"/></svg>';
+        iconWrap.appendChild(lock);
+      }
+      tile.appendChild(iconWrap);
+
+      // Name row + active-users badge (same sticky-10-day count as the
+      // authed home cards; always rendered, 0 included).
+      const body = el('div', 'w-full min-w-0');
+      const nameRow = el('div', 'flex items-center justify-center gap-1.5 min-w-0 max-w-full');
+      nameRow.appendChild(el('span', 'font-medium text-sm truncate min-w-0', app.name || app.slug));
+      const activeUsers = parseInt(app.active_users, 10) || 0;
+      const usersBadge = el('span',
+        'inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[0.65rem] font-medium bg-zinc-500/10 text-zinc-500 dark:text-zinc-400 shrink-0');
+      usersBadge.title = `${activeUsers} active user${activeUsers === 1 ? '' : 's'}`;
+      usersBadge.innerHTML = '<svg class="w-2.5 h-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>';
+      usersBadge.appendChild(document.createTextNode(String(activeUsers)));
+      nameRow.appendChild(usersBadge);
+      body.appendChild(nameRow);
+      if (gated) {
+        body.appendChild(el('p', 'text-xs mt-0.5 text-zinc-400 dark:text-zinc-500', 'Account required'));
+      }
+      tile.appendChild(body);
+
+      tile.addEventListener('click', () => {
+        if (gated) {
+          AuthScreens.rememberDeepLink('#app/' + (app.slug || ''));
+          location.hash = '#signup';
+          return;
+        }
+        if (app.url) AuthScreens._openLandingApp(app);
+      });
+      return tile;
     },
 
     // ── Login (+ signup / OTP + recovery + wallet fast path) ─────────
