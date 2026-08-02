@@ -91,6 +91,26 @@ test('index.html has the theme drawer row inside the header menu panel', () => {
   assert.ok(rowIdx > panelIdx, 'drawer-row-theme must live inside the header menu panel');
 });
 
+// The theme selector was the LAST row in the drawer until the header
+// slim-down promoted it to the first thing in the menu body — above the
+// build/kudos status pane and above every navigation row. Position is
+// the whole point of that change, so pin it here: a later edit that
+// appends a row above it (or drops the control back to the bottom)
+// fails this rather than silently regressing the layout.
+test('the theme control is the FIRST thing in the drawer body', () => {
+  const src = read('index.html');
+  const theme = src.indexOf('id="drawer-row-theme"');
+  const scroller = src.indexOf('id="header-menu-rows"');
+  const status = src.indexOf('id="drawer-status-pane"');
+  const node = src.indexOf('id="drawer-row-node"');
+  assert.ok(scroller !== -1, 'header-menu-rows scroller missing');
+  assert.ok(status !== -1, 'drawer-status-pane missing');
+  assert.ok(node !== -1, 'drawer-row-node missing');
+  assert.ok(theme > scroller, 'the theme control lives inside the drawer scroller');
+  assert.ok(theme < status, 'the theme control comes before the status pane');
+  assert.ok(theme < node, 'the theme control comes before every navigation row');
+});
+
 test('index.html exposes the three data-theme-mode buttons', () => {
   const src = read('index.html');
   for (const mode of ['light', 'dark', 'system']) {
@@ -101,6 +121,31 @@ test('index.html exposes the three data-theme-mode buttons', () => {
   }
 });
 
+test('the three modes render as a labelled radiogroup of segments', () => {
+  const src = read('index.html');
+  const track = src.match(/<div id="drawer-theme-track"[^>]*>/);
+  assert.ok(track, 'drawer-theme-track missing');
+  assert.match(track[0], /role="radiogroup"/, 'the segmented track is a radiogroup');
+  assert.match(track[0], /aria-label="Theme"/, 'the radiogroup is labelled');
+  // Each segment is a radio, so a screen reader announces "2 of 3"
+  // rather than three unrelated buttons.
+  for (const mode of ['light', 'dark', 'system']) {
+    const btn = src.match(new RegExp(`<button[^>]*data-theme-mode="${mode}"[^>]*>`));
+    assert.ok(btn, `segment button for ${mode} missing`);
+    assert.match(btn[0], /role="radio"/, `${mode} segment carries role=radio`);
+    assert.match(btn[0], /class="theme-seg /, `${mode} segment carries the .theme-seg class`);
+  }
+});
+
+test('the selection caret ships exactly once, inside the track', () => {
+  const src = read('index.html');
+  const carets = src.match(/id="drawer-theme-caret"/g) || [];
+  assert.equal(carets.length, 1, 'exactly one #drawer-theme-caret');
+  const track = src.indexOf('id="drawer-theme-track"');
+  assert.ok(src.indexOf('id="drawer-theme-caret"') > track,
+    'the caret lives inside the segmented track (it positions against it)');
+});
+
 // ── app.js wiring ────────────────────────────────────────────────────────
 
 test('app.js HeaderMenu wires Theme.get / Theme.set', () => {
@@ -108,6 +153,35 @@ test('app.js HeaderMenu wires Theme.get / Theme.set', () => {
   assert.match(src, /Theme\.get\(\)/, 'app.js must read Theme.get()');
   assert.match(src, /Theme\.set\(/, 'app.js must call Theme.set()');
   assert.match(src, /_renderThemeButtons/, 'app.js must define/use the _renderThemeButtons helper');
+});
+
+test('_renderThemeButtons drives the caret through the CSS custom property', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'public', 'js', 'app.js'), 'utf8');
+  const fn = src.slice(src.indexOf('    _renderThemeButtons()'));
+  assert.ok(fn.length > 0, '_renderThemeButtons located');
+  const body = fn.slice(0, 1200);
+  assert.match(body, /setProperty\('--theme-caret-index'/,
+    'the caret is positioned by writing --theme-caret-index on the track');
+  assert.match(body, /theme-seg-active/,
+    'the active segment is marked with a class, not inline utility toggles');
+  // A pixel measurement would be read BEFORE PlatformUI.sheet resizes
+  // the panel on touch, so it would be wrong exactly where the control
+  // is widest. The percentage transform must stay.
+  assert.ok(!/offsetLeft|getBoundingClientRect/.test(body),
+    'caret position must not be measured in JS — CSS percentages handle both panel widths');
+});
+
+test('the caret is a CSS transform with a reduced-motion escape hatch', () => {
+  const css = read('css', 'app.css');
+  const block = css.slice(css.indexOf('#drawer-theme-caret {'));
+  assert.ok(block.length > 0, '#drawer-theme-caret rule located');
+  assert.match(block.slice(0, 400), /transform:\s*translateX\(calc\(var\(--theme-caret-index\)/,
+    'the caret translates by --theme-caret-index');
+  assert.match(block.slice(0, 400), /transition:\s*transform/,
+    'the caret slides between segments');
+  const rm = css.slice(css.indexOf('#drawer-theme-caret {'));
+  assert.match(rm, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*#drawer-theme-caret\s*\{\s*transition:\s*none/,
+    'reduced-motion users get a jump, not a slide');
 });
 
 test('the theme button click handler does NOT close the drawer', () => {

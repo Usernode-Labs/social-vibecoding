@@ -1,11 +1,16 @@
-// Topochain public leaderboard screen (Task 14, public screens). Full-page
-// SPA screen hosted at hash route #topochain/leaderboard, hosted in
-// #topochain-leaderboard-screen / #topochain-leaderboard-root
-// (public/index.html) and mounted/unmounted by
-// App.navigateToTopochainLeaderboard / App._exitTopochainLeaderboard
-// (public/js/app.js) — the same shape as the admin console
-// (public/js/admin-console.js), minus the isAdmin gate: this is a public
-// read, reachable by anyone, signed in or not.
+// Topochain public leaderboard (Task 14, public screens). Was a screen of
+// its own (#topochain-leaderboard-screen) until the header slim-down made
+// it the SECOND TAB of the Standings screen: it now renders into
+// #topochain-leaderboard-root inside #leaderboard-screen, and open() /
+// close() are called by the Leaderboard module (public/js/leaderboard.js)
+// when its section flips, not by a navigate* pair in app.js. The legacy
+// #topochain/leaderboard hash still lands here — the router aliases it to
+// #leaderboard/topochain.
+//
+// No isAdmin gate: this is a public read, reachable by anyone, signed in
+// or not. Everything below _renderShell is unchanged by the merge — the
+// module still owns #tc-lb-body / #tc-lb-drill and its own event/page
+// state (deliberately NOT routed through Leaderboard._cache).
 //
 // Every fetch here hits the public /api/v4 group (src/routes/topochain/
 // public.js), which is optionally-authenticated but never 401s.
@@ -119,9 +124,11 @@ const TopochainLeaderboard = {
   _renderShell() {
     const root = document.getElementById('topochain-leaderboard-root');
     if (!root) return;
+    // No title of our own: the Standings screen shell already titles the
+    // page and the section tab above says "Topochain". The event picker
+    // keeps the row to itself and right-aligns like it always did.
     root.innerHTML = `
-      <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
-        <h1 class="text-xl font-bold text-zinc-900 dark:text-zinc-100">Topochain leaderboard</h1>
+      <div class="flex flex-wrap items-center justify-end gap-3 mb-4">
         <label class="flex items-center gap-2 text-sm">
           <span class="text-zinc-500 dark:text-zinc-400">Event</span>
           <select id="tc-lb-event-select"

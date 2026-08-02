@@ -137,10 +137,10 @@
 
 /* Pressed-state opt-outs: the kit gives every button an instant
    scale-press, which reads wrong on dense strip controls that sit
-   flush against siblings (bottom tabs, segmented pills, theme mode
-   pills) — the scale makes adjacent cells appear to shift. Keep the
-   brightness dim, drop the transform. */
-.app-tab:active,
+   flush against siblings (the header App/Dev switch, segmented pills,
+   theme mode pills) — the scale makes adjacent cells appear to shift.
+   Keep the brightness dim, drop the transform. */
+.app-mode-seg:active,
 .create-mode-pill:active,
 .create-vis-pill:active,
 .members-vis-pill:active,
@@ -169,11 +169,6 @@ html, body {
 #auth-landing-scroll {
   overscroll-behavior-y: contain;
 }
-
-/* ── Tabs ──────────────────────────────────────────────── */
-
-.app-tab { color: var(--text-muted); }
-.app-tab.active { color: var(--accent); border-top: 2px solid currentColor; }
 
 /* ── App cards ─────────────────────────────────────────── */
 
@@ -2166,6 +2161,22 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   display: inline-block;
 }
 
+/* Stop requested, not yet landed (#889): the click has to acknowledge
+   itself immediately, and the red square is a lie once pressed — pressing
+   it again does nothing. Muted like the wrap-up spinner state (its closest
+   sibling) with an explicit label, so the button reads as "working on it"
+   rather than "still needs pressing". */
+.dc-btn-stopping {
+  background: var(--bg-tertiary) !important;
+  cursor: not-allowed;
+  gap: 6px;
+}
+.dc-btn-stopping:hover { background: var(--bg-tertiary) !important; }
+/* A touch smaller than the button's own text-sm so the widest state of
+   this button stays close to the Send/Stop width and the composer beside
+   it barely moves. */
+.dc-btn-stopping-label { color: var(--text-secondary); font-size: 12px; }
+
 .dc-send-spinner {
   width: 16px; height: 16px;
   border: 2px solid var(--border);
@@ -3273,39 +3284,74 @@ html.in-native-webview #header-title {
 }
 
 /* ── Mobile pill collapse ─────────────────────────────────
-   On narrow viewports the header's two pill slots (platform +
-   per-app) and the per-card pills on Home eat into the space
-   that the <h1> title and app-name need, producing visible overlap.
-   Hide them by default and only reveal a compact yellow spinner while
-   a deploy is in flight, so users still see "the platform / this app
-   is updating right now" feedback next to the name. */
+   On narrow viewports the per-card pills on Home eat into the space
+   the app name needs, producing visible overlap. Hide them by default
+   and only reveal a compact yellow spinner while a deploy is in
+   flight, so users still see "this app is updating right now" feedback
+   next to the name.
+
+   HEADER SLIM-DOWN: this used to also collapse
+   #platform-version-pill-slot / #app-version-pill-slot, because those
+   two sat in the header and shoved the title around. They live in the
+   drawer's status pane now, where there is room for them at every
+   width, so they are deliberately NOT in the selector below — that
+   collapse was the reason mobile users could never see build status at
+   all. Only the home-card class slot still collapses. */
 @media (max-width: 640px) {
   /* Collapse the slot itself (not just its inner pill) so the
-     mr-3 on header slots and the gap-2 on home-card rows go
-     away too — otherwise the title would still be shoved over
-     by the now-empty slot's margin. */
-  #platform-version-pill-slot:not(:has(.app-version-pill--deploying)),
-  #app-version-pill-slot:not(:has(.app-version-pill--deploying)),
+     gap-2 on home-card rows goes away too — otherwise the app name
+     would still be shoved over by the now-empty slot's margin. */
   .app-version-pill-slot:not(:has(.app-version-pill--deploying)) {
     display: none;
   }
-  /* When a pill IS rendered (deploying state), shed the chrome
-     and the SHA label so only the yellow spinner remains —
-     that lone glyph is the redeploying indicator. */
-  .app-version-pill--deploying {
+  /* When a home-card pill IS rendered (deploying state), shed the
+     chrome and the SHA label so only the yellow spinner remains —
+     that lone glyph is the redeploying indicator. Scoped to the card
+     slot so the drawer's full-fidelity pills are untouched. */
+  .app-version-pill-slot .app-version-pill--deploying {
     padding: 0;
     border: none;
     background: transparent;
   }
-  .app-version-pill--deploying .app-version-pill-label {
+  .app-version-pill-slot .app-version-pill--deploying .app-version-pill-label {
     display: none;
   }
 
   /* #122: no per-breakpoint icon hiding anymore — the secondary header
-     actions (GitHub, Share, Members, Settings) live in the slide-out
-     drawer at every width, and the remaining icons (leaderboard,
-     dev console, feedback, hamburger, notifications) are visible at
-     every width too. */
+     actions live in the slide-out drawer at every width, and the
+     remaining icons (dev console, feedback, work cog, notifications,
+     hamburger) are visible at every width too. */
+}
+
+/* ── Drawer status pane ───────────────────────────────────
+   The platform/app build pills and the fork label render at full
+   fidelity here at every width (unlike the home-card slot above), but
+   the desktop panel is only 15rem wide — keep a long "usernode ·
+   1a2b3c4 · #4210" from pushing the row's label out of the panel.
+
+   The cap is on the SLOT, not the pill: the slot is the row's flex item,
+   so capping it lets flex give the pill everything left over after the
+   row label instead of a fixed fraction of the row (which truncated
+   even short values like "usernode · dev"). The label inside then
+   ellipsises if the value is genuinely too long. */
+#drawer-status-pane .app-version-pill {
+  max-width: 100%;
+  overflow: hidden;
+}
+#drawer-status-pane .app-version-pill-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#drawer-status-pane #app-fork-badge-slot > * {
+  max-width: 100%;
+}
+/* The row's text label never shrinks; the value slot absorbs the
+   squeeze. Without min-width:0 a flex item refuses to shrink below its
+   content's intrinsic width and would push the pane wider than the
+   panel. */
+#drawer-status-pane .text-sm {
+  flex-shrink: 0;
 }
 
 /* Slide-out drawer panel transition. The panel starts off-screen to
@@ -3326,6 +3372,99 @@ html.in-native-webview #header-title {
 }
 #header-menu-overlay[data-open] {
   opacity: 1;
+}
+
+/* ── Drawer theme selector: 3-segment toggle + sliding caret ──────
+   The first control in the drawer. Segment faces reuse the create-app
+   modal's segmented language verbatim (see .create-mode-pill below) so
+   the platform has ONE segmented look; the caret underneath is what's
+   new here, and it's the affordance that says "this one is selected"
+   without relying on the raised face alone.
+
+   Positioning is entirely CSS off --theme-caret-index (0|1|2), which
+   App.HeaderMenu._renderThemeButtons writes on the track. A
+   thirds-width element translated by index * 100% lands centred under
+   segment N at ANY track width — which matters because the panel is
+   15rem as a desktop slide-over and full-viewport as a touch sheet, and
+   the index is written before the sheet resizes it. Never replace this
+   with an offsetLeft measurement. */
+#drawer-theme-track {
+  --theme-caret-index: 0;
+}
+.theme-seg {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.theme-seg:hover {
+  color: var(--text-secondary);
+}
+.theme-seg.theme-seg-active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  cursor: default;
+}
+/* Header App/Dev switch (#app-mode-switch) — the segmented control that
+   replaced the full-width bottom tab bar. Deliberately the same visual
+   system as .theme-seg above (recessed track, raised active face) rather
+   than a second segmented-control idiom: the two are the platform's only
+   segmented controls and should read as one convention.
+
+   No caret rail here — the caret is the drawer control's affordance for
+   pointing down at the list it filters; this switch labels itself. And
+   no sliding thumb: the kit's fidelity rules call for no animation on
+   high-frequency controls like tabs. */
+.app-mode-seg {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.app-mode-seg:hover {
+  color: var(--text-secondary);
+}
+.app-mode-seg.app-mode-seg-active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  cursor: default;
+}
+
+/* Caret rail: spans the track, sits just below it. The track's parent
+   row reserves the height with its pb-3 so the arrow can never collide
+   with #drawer-status-pane's top border. */
+#drawer-theme-caret-track {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  width: 100%;
+  display: block;
+  pointer-events: none;
+}
+#drawer-theme-caret {
+  display: block;
+  width: calc(100% / 3);
+  height: 5px;
+  transform: translateX(calc(var(--theme-caret-index) * 100%));
+  transition: transform 180ms ease-out;
+}
+/* The arrow itself — an upward CSS triangle centred in the third.
+   Coloured from --text-muted rather than the segment's own face:
+   matching the face works in dark mode but is invisible in light (a
+   white caret on a white drawer), whereas the muted token reads
+   clearly against the drawer surface in both. */
+#drawer-theme-caret::after {
+  content: '';
+  display: block;
+  width: 0;
+  height: 0;
+  margin: 0 auto;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-bottom: 5px solid var(--text-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  #drawer-theme-caret {
+    transition: none;
+  }
 }
 
 /* Create-app modal: segmented "Create new | Import existing" toggle.
