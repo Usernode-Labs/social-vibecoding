@@ -72,6 +72,19 @@ const App = {
     // hash-routed).
     App.bindEvents();
 
+    // Screenshot-state deep links for the ANONYMOUS shell (`?shot=anon`,
+    // `?shot=waitlist-joined`). Captures and proposal checks carry a
+    // capture token, so a session always exists for them and
+    // restoreFromHash would strip #landing / #waitlist to the home feed —
+    // the signed-out screens would be unreachable to every shot. These
+    // skip the /api/auth/me fetch so the anonymous shell boots and the
+    // fragment picks the screen. Pure UI state: no writes, no env gate, so
+    // the "before" side starts working the moment this ships.
+    if (App._anonShot()) {
+      App.enterAnonymous();
+      return;
+    }
+
     try {
       // Offline note (#487): the service worker serves this network-first
       // with a cached fallback, so an offline reload by a logged-in user
@@ -108,6 +121,22 @@ const App = {
 
   enterAnonymous() {
     if (window.AuthScreens) AuthScreens.enter();
+  },
+
+  // True for the anonymous-shell screenshot-state links (see init). Also
+  // normalises the fragment for `?shot=waitlist-joined`, which names one
+  // specific screen — so the path needs no hash of its own and the shot
+  // stays deterministic. AuthScreens._waitlistOnShow reads the same param
+  // to paint the post-join state.
+  _anonShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'anon' && shot !== 'waitlist-joined') return false;
+    if (shot === 'waitlist-joined' &&
+        (!location.hash || location.hash === '#')) {
+      try { history.replaceState(null, '', location.search + '#waitlist'); } catch (err) { /* ignore */ }
+    }
+    return true;
   },
 
   enterAuthed(user) {
@@ -2413,6 +2442,13 @@ const App = {
         if (App.user.hasPlatformAccess === false) {
           if (authRoute === 'landing') {
             AuthScreens.show('landing');
+            return;
+          }
+          // #waitlist stays reachable from the waiting room (a bookmark,
+          // the back button) — the screen shows them the "already on the
+          // list" note instead of the join form, which beats bouncing them.
+          if (authRoute === 'waitlist') {
+            AuthScreens.show('waitlist');
             return;
           }
           // The stage-2 waitlist survey stays reachable from the waiting

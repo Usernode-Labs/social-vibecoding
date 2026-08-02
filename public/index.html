@@ -473,7 +473,7 @@
              journey, or when a gated app below routes to #signup. -->
         <div id="landing-header-ctas" class="flex items-center gap-2">
           <a href="#login" id="landing-signin-cta" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs sm:px-5 sm:py-2 sm:text-sm font-medium transition-colors text-white">Sign in</a>
-          <button type="button" id="landing-waitlist-cta" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs sm:px-5 sm:py-2 sm:text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</button>
+          <a href="#waitlist" id="landing-waitlist-cta" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs sm:px-5 sm:py-2 sm:text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</a>
         </div>
         <!-- Shown instead of the CTAs when a (waiting-room) session exists. -->
         <div id="landing-back-to-waiting" class="hidden">
@@ -497,9 +497,11 @@
       </div>
 
       <!-- The CTA block sits where the Sign in / Join waitlist buttons used
-           to be: it explains what the platform is and carries the waitlist
-           form, always visible (the header's "Join waitlist" scrolls here
-           and focuses the email rather than un-hiding anything). -->
+           to be: a compact pitch plus ONE link into the dedicated waitlist
+           screen (#waitlist). The survey itself lives on that screen — a
+           four-question form flat on the homepage buried the app directory
+           under it. Both this link and the header's "Join waitlist" button
+           are plain anchors to the same route. -->
       <section id="landing-waitlist" class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10">
         <h2 class="text-lg font-semibold mb-1">Build apps together, own them together</h2>
         <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
@@ -510,93 +512,17 @@
           of what they build.
         </p>
         <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          Platform access opens in batches. Join the waitlist and we'll email
-          you when your spot opens — the apps below are open to everyone
-          right now. <span class="font-medium text-zinc-700 dark:text-zinc-200">Four questions to join.</span>
+          Platform access opens in batches — the apps below are open to
+          everyone right now.
         </p>
+        <a id="landing-waitlist-link" href="#waitlist"
+          class="inline-block rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 text-sm font-medium text-white transition-colors">
+          Join the waitlist
+        </a>
 
-        <!-- Stage-1 waitlist survey (two-stage waitlist, ported from the
-             original topochain waitlist): email, something you've made,
-             where you are, how you found us. Option chips and the country
-             list render from GET /api/public/waitlist/options so the form
-             and server validation share one definition. -->
-        <form id="waitlist-form" class="space-y-5">
-          <div>
-            <label for="waitlist-email" class="block text-sm font-medium text-zinc-700 dark:text-zinc-200">Your email address <span class="text-red-500">*</span></label>
-            <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">We only email you when your spot comes up. No newsletter.</p>
-            <input id="waitlist-email" type="email" required maxlength="255" placeholder="you@example.com"
-              autocomplete="email"
-              class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
-          </div>
-
-          <div>
-            <label for="waitlist-made-url" class="block text-sm font-medium text-zinc-700 dark:text-zinc-200">Link something you&rsquo;ve made <span class="text-red-500">*</span></label>
-            <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts — we care that it exists, not how you made it.</p>
-            <input id="waitlist-made-url" type="url" maxlength="2000" placeholder="https://"
-              class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
-            <input id="waitlist-made-note" type="text" maxlength="140" placeholder="What is it, in one line? — optional"
-              class="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-200">Where are you? <span class="text-zinc-400 font-normal">Optional</span></label>
-            <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">We balance each group across regions. It&rsquo;s never used to reject anyone — leave it blank if you&rsquo;d rather not say.</p>
-            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              <select id="waitlist-country"
-                class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
-                <option value="">Select a country&hellip;</option>
-              </select>
-              <input id="waitlist-city" type="text" maxlength="120" placeholder="City"
-                class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
-            </div>
-          </div>
-
-          <div>
-            <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-200">How did you find us? <span class="text-red-500">*</span></label>
-            <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">Pick the closest one.</p>
-            <div id="waitlist-discovery-chips" class="flex flex-wrap gap-1.5"></div>
-            <input id="waitlist-discovery-detail" type="text" maxlength="255" placeholder="Which one? — optional"
-              class="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
-            <input id="waitlist-referrer" type="text" maxlength="255" placeholder="Did someone refer you? Their handle — optional"
-              class="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
-          </div>
-
-          <button type="submit" id="waitlist-submit"
-            class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-5 py-2 text-sm font-medium text-white transition-colors">
-            Join the waitlist
-          </button>
-        </form>
-        <p id="waitlist-msg" class="hidden text-sm mt-3"></p>
-
-        <!-- Success state: joined. Stage 2 is offered straight away —
-             people are most willing to keep answering right after they
-             commit; the join email carries the same link for anyone who
-             stops here. -->
-        <div id="waitlist-joined" class="hidden">
-          <p class="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
-            You're on the waitlist — we'll email you when your spot opens.
-          </p>
-          <div id="waitlist-more-offer" class="hidden mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-4">
-            <p class="text-xs font-semibold uppercase tracking-widest text-violet-600 dark:text-violet-400">Optional — moves you up the list</p>
-            <h3 class="mt-1 text-base font-semibold">Want in sooner?</h3>
-            <p class="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
-              Four more questions, about three minutes — the group you&rsquo;d bring,
-              a tool you&rsquo;ve lost, where else you are. These are the answers we
-              actually read when we pick the next group.
-            </p>
-            <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-              <a id="waitlist-more-link" href="#landing"
-                class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">
-                Answer them now
-              </a>
-              <span class="text-xs text-zinc-500 dark:text-zinc-400">Or stop here — you&rsquo;re on the list either way, and the link is in your email.</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Swapped in for the form when a (waiting-room) session exists —
-             they're already on the list, so asking for the email again is
-             noise. -->
+        <!-- Swapped in for the link when a (waiting-room) session exists —
+             they're already on the list, so pointing them at the join form
+             again is noise. -->
         <p id="landing-cta-queued" class="hidden text-sm text-zinc-500 dark:text-zinc-400">
           You're already on the waitlist — we'll email you when your spot opens.
         </p>
@@ -876,6 +802,119 @@
           </button>
         </div>
       </div>
+    </div>
+  </main>
+
+  <!-- Stage-1 waitlist survey — its own screen (#waitlist), reached from
+       the landing CTA block's link and the persistent header's "Join
+       waitlist" button. It used to render flat inside the landing CTA
+       block, which pushed the app directory far down the page. Same shape
+       as #auth-more-screen: a corner Back link (data-auth-back → #landing)
+       over a narrow scrolling column. Deliberately NOT a <header> element —
+       header-layout.js measures document.querySelector('header') and must
+       keep resolving to #platform-header. -->
+  <main id="auth-waitlist-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+    <a href="#landing" data-auth-back class="fixed left-4 z-10 text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400" style="top: calc(env(safe-area-inset-top, 0px) + 1rem)">&larr; Back</a>
+    <div class="max-w-2xl mx-auto px-6 py-16">
+      <h1 class="text-2xl font-bold">Join the waitlist</h1>
+      <p class="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
+        Usernode Social Vibecoding is a place where users describe the app
+        they want in chat, an AI builds it, and the community votes the
+        changes in. Every app in the directory was built here by the people
+        who use it — they run on the Usernode chain, and contributors own a
+        share of what they build.
+      </p>
+      <p class="mt-3 text-sm text-zinc-500 dark:text-zinc-400">
+        Platform access opens in batches. Join the waitlist and we'll email
+        you when your spot opens — the public apps are open to everyone right
+        now. <span class="font-medium text-zinc-700 dark:text-zinc-200">Four questions to join.</span>
+      </p>
+
+      <!-- Stage-1 waitlist survey (two-stage waitlist, ported from the
+           original topochain waitlist): email, something you've made,
+           where you are, how you found us. Option chips and the country
+           list render from GET /api/public/waitlist/options so the form
+           and server validation share one definition. -->
+      <form id="waitlist-form" class="mt-8 space-y-5">
+        <div>
+          <label for="waitlist-email" class="block text-sm font-medium text-zinc-700 dark:text-zinc-200">Your email address <span class="text-red-500">*</span></label>
+          <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">We only email you when your spot comes up. No newsletter.</p>
+          <input id="waitlist-email" type="email" required maxlength="255" placeholder="you@example.com"
+            autocomplete="email"
+            class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+        </div>
+
+        <div>
+          <label for="waitlist-made-url" class="block text-sm font-medium text-zinc-700 dark:text-zinc-200">Link something you&rsquo;ve made <span class="text-red-500">*</span></label>
+          <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">A repo, a site, a bot, a mod, a newsletter, a spreadsheet that runs your fantasy league. Built with AI counts — we care that it exists, not how you made it.</p>
+          <input id="waitlist-made-url" type="url" maxlength="2000" placeholder="https://"
+            class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+          <input id="waitlist-made-note" type="text" maxlength="140" placeholder="What is it, in one line? — optional"
+            class="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-200">Where are you? <span class="text-zinc-400 font-normal">Optional</span></label>
+          <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">We balance each group across regions. It&rsquo;s never used to reject anyone — leave it blank if you&rsquo;d rather not say.</p>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <select id="waitlist-country"
+              class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+              <option value="">Select a country&hellip;</option>
+            </select>
+            <input id="waitlist-city" type="text" maxlength="120" placeholder="City"
+              class="w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium text-zinc-700 dark:text-zinc-200">How did you find us? <span class="text-red-500">*</span></label>
+          <p class="text-xs text-zinc-500 dark:text-zinc-400 mt-0.5 mb-1.5">Pick the closest one.</p>
+          <div id="waitlist-discovery-chips" class="flex flex-wrap gap-1.5"></div>
+          <input id="waitlist-discovery-detail" type="text" maxlength="255" placeholder="Which one? — optional"
+            class="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+          <input id="waitlist-referrer" type="text" maxlength="255" placeholder="Did someone refer you? Their handle — optional"
+            class="mt-2 w-full rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
+        </div>
+
+        <button type="submit" id="waitlist-submit"
+          class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-5 py-2 text-sm font-medium text-white transition-colors">
+          Join the waitlist
+        </button>
+      </form>
+      <p id="waitlist-msg" class="hidden text-sm mt-3"></p>
+
+      <!-- Success state: joined. Stage 2 is offered straight away —
+           people are most willing to keep answering right after they
+           commit; the join email carries the same link for anyone who
+           stops here. -->
+      <div id="waitlist-joined" class="hidden mt-8">
+        <p class="text-sm text-emerald-600 dark:text-emerald-400 font-medium">
+          You're on the waitlist — we'll email you when your spot opens.
+        </p>
+        <div id="waitlist-more-offer" class="hidden mt-4 rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-4">
+          <p class="text-xs font-semibold uppercase tracking-widest text-violet-600 dark:text-violet-400">Optional — moves you up the list</p>
+          <h3 class="mt-1 text-base font-semibold">Want in sooner?</h3>
+          <p class="mt-1.5 text-sm text-zinc-500 dark:text-zinc-400">
+            Four more questions, about three minutes — the group you&rsquo;d bring,
+            a tool you&rsquo;ve lost, where else you are. These are the answers we
+            actually read when we pick the next group.
+          </p>
+          <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+            <a id="waitlist-more-link" href="#landing"
+              class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">
+              Answer them now
+            </a>
+            <span class="text-xs text-zinc-500 dark:text-zinc-400">Or stop here — you&rsquo;re on the list either way, and the link is in your email.</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Swapped in for the form when a (waiting-room) session exists —
+           they already have an account in the queue, so asking them to
+           join again is wrong. Mirrors #landing-cta-queued. -->
+      <p id="waitlist-queued" class="hidden mt-8 text-sm text-zinc-500 dark:text-zinc-400">
+        You're already on the waitlist — we'll email you when your spot opens.
+      </p>
     </div>
   </main>
 

@@ -13,8 +13,9 @@
 //
 // Hash routes: #landing, #login, #signup (login screen with the
 // email-code sub-view open — otp/verify is the account-creation path),
-// #register[/<code>], #waiting. app.js's restoreFromHash owns the
-// routing and calls AuthScreens.show(); this module owns the screens.
+// #register[/<code>], #waiting, #waitlist (stage-1 survey). app.js's
+// restoreFromHash owns the routing and calls AuthScreens.show(); this
+// module owns the screens.
 //
 // The old documents remain as thin redirect stubs so bookmarks, old
 // share links, and SW-cached copies keep working.
@@ -27,13 +28,22 @@
     signup: 'auth-login-screen', // sub-view of the login screen
     register: 'auth-register-screen',
     waiting: 'auth-waiting-screen',
+    // Stage-1 waitlist survey, #waitlist — its own screen rather than a
+    // block on the landing page (the four-question form flat on the
+    // homepage buried the app directory under it).
+    waitlist: 'auth-waitlist-screen',
     // Stage-2 waitlist survey ("Want in sooner?"), #more/<token> — the
     // token is the signup's capability from the join response / email.
     more: 'auth-more-screen',
   };
 
   // Drives push (deeper) vs pop (back toward landing) transition types.
-  const DEPTH = { landing: 0, login: 1, signup: 1, register: 1, waiting: 1, more: 1 };
+  // landing → waitlist → more is a real chain now, so `more` sits a level
+  // below the stage-1 screen it is offered from.
+  const DEPTH = {
+    landing: 0, login: 1, signup: 1, register: 1, waiting: 1, waitlist: 1,
+    more: 2,
+  };
 
   const ROUTES = Object.keys(SCREEN_IDS);
 
@@ -128,6 +138,7 @@
       if (route === 'signup') AuthScreens._loginOnShow(true);
       if (route === 'register') AuthScreens._registerOnShow(seg);
       if (route === 'waiting') AuthScreens._waitingOnShow();
+      if (route === 'waitlist') AuthScreens._waitlistOnShow();
       if (route === 'more') AuthScreens._moreOnShow(seg);
       if (prev === 'waiting' && route !== 'waiting') AuthScreens._stopWaitingPoll();
       // Leaving the landing screen with an app still open: stop the
@@ -171,6 +182,7 @@
       if (id === 'auth-login-screen') AuthScreens._wireLogin();
       if (id === 'auth-register-screen') AuthScreens._wireRegister();
       if (id === 'auth-waiting-screen') AuthScreens._wireWaiting();
+      if (id === 'auth-waitlist-screen') AuthScreens._wireWaitlist();
       if (id === 'auth-more-screen') AuthScreens._wireMore();
     },
 
@@ -264,10 +276,14 @@
         AuthScreens._landingAppsLoaded = true;
         AuthScreens._loadLandingApps();
       }
+      // Warm the survey options (memoised) while the visitor is reading the
+      // pitch, so the #waitlist chips and country list are already filled
+      // by the time they tap through.
+      AuthScreens._waitlistOptions();
     },
 
     // Single writer for the persistent landing header + the CTA block's
-    // form-vs-queued line. Three states:
+    // link-vs-queued line. Three states:
     //   anonymous, directory  → no back button, platform title, both CTAs
     //   anonymous, app open   → back button, app name, both CTAs (a
     //                           visitor can sign up without backing out)
@@ -280,9 +296,11 @@
       if (ctas) ctas.classList.toggle('hidden', hasSession);
       if (back) back.classList.toggle('hidden', !hasSession);
 
-      const form = byId('waitlist-form');
+      // The CTA block is a pitch + one link into #waitlist now; a queued
+      // visitor gets the "already on the list" line in its place.
+      const link = byId('landing-waitlist-link');
       const queued = byId('landing-cta-queued');
-      if (form) form.classList.toggle('hidden', hasSession);
+      if (link) link.classList.toggle('hidden', hasSession);
       if (queued) queued.classList.toggle('hidden', !hasSession);
 
       const open = !!AuthScreens._openAppSlug;
@@ -323,31 +341,18 @@
           () => AuthScreens._loadLandingApps());
       }
 
-      // "Join waitlist" CTA scrolls to the always-visible email form and
-      // focuses the input. When an app is open the viewer covers the
-      // scroller, so close it first — scrollIntoView on a hidden element
-      // is a no-op.
-      const waitlistCta = byId('landing-waitlist-cta');
-      if (waitlistCta) waitlistCta.addEventListener('click', () => {
-        AuthScreens._closeLandingApp();
-        const section = byId('landing-waitlist');
-        if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        const email = byId('waitlist-email');
-        if (email) email.focus({ preventScroll: true });
-      });
-
-      // Sign in leaves the landing screen entirely; close the viewer first
-      // so the login screen never paints over a still-running iframe (the
-      // viewer lives INSIDE this z-40 overlay now, not above it).
-      const signinCta = byId('landing-signin-cta');
-      if (signinCta) signinCta.addEventListener('click', () => {
-        AuthScreens._resetLandingViewer();
-      });
-
-      // Stage-1 waitlist survey form → POST /api/public/waitlist (two-
-      // stage waitlist). Chips + the country list render from the shared
-      // options endpoint the moment the landing screen first shows.
-      AuthScreens._wireStage1Form();
+      // "Join waitlist" and "Sign in" are both plain anchors to another
+      // route, so they leave the landing screen entirely; close the viewer
+      // first so the next screen never paints over a still-running iframe
+      // (the viewer lives INSIDE this z-40 overlay now, not above it).
+      // show() also resets it on the route change — this keeps the teardown
+      // ahead of the transition, same as it has always been for Sign in.
+      for (const id of ['landing-waitlist-cta', 'landing-signin-cta']) {
+        const cta = byId(id);
+        if (cta) cta.addEventListener('click', () => {
+          AuthScreens._resetLandingViewer();
+        });
+      }
 
       // In-page app viewer: public apps open in an iframe here instead of
       // target=_blank (which strands mobile webview users on the app
@@ -426,6 +431,56 @@
 
     // ── Waitlist survey (two-stage, ported from topochain) ───────────
 
+    // Stage 1 lives on its own screen (#waitlist). The landing page only
+    // links here — see the CTA block in index.html.
+    _wireWaitlist() {
+      AuthScreens._wireStage1Form();
+    },
+
+    // Form vs "you're already on the list", plus the screen title. A
+    // waiting-room session already HAS an account in the queue, so the join
+    // form is wrong for them — same predicate _renderLandingHeader uses.
+    _waitlistOnShow() {
+      // `?shot=waitlist-joined` paints the success state instead of the
+      // form (screenshot-state deep link — see App.init / _anonShot).
+      let shot = null;
+      try { shot = new URLSearchParams(location.search).get('shot'); } catch (_) {}
+      if (shot === 'waitlist-joined') AuthScreens._showWaitlistJoinedShot();
+
+      const hasSession = !!(window.App && App.user);
+      const form = byId('waitlist-form');
+      const queued = byId('waitlist-queued');
+      // Never resurrect the form over the success state (a re-show after a
+      // join, e.g. back-then-forward).
+      const joined = byId('waitlist-joined');
+      const isJoined = !!(joined && !joined.classList.contains('hidden'));
+      if (form) form.classList.toggle('hidden', hasSession || isJoined);
+      if (queued) queued.classList.toggle('hidden', !hasSession);
+
+      if (!hasSession && !isJoined) {
+        const email = byId('waitlist-email');
+        if (email) email.focus({ preventScroll: true });
+      }
+      // Mirror into the tab title so the Flutter WebView's AppBar follows
+      // the screen, same as _renderLandingHeader does for the landing page.
+      try { document.title = 'Join the waitlist'; } catch (_) {}
+    },
+
+    // Screenshot-state deep link (`?shot=waitlist-joined`): paints the
+    // post-submit success state with the stage-2 offer so the captures and
+    // the dapp.json check have a URL for it. Pure UI state — it never POSTs,
+    // never writes, and the stage-2 link keeps its inert default href.
+    _showWaitlistJoinedShot() {
+      const form = byId('waitlist-form');
+      const msg = byId('waitlist-msg');
+      const joined = byId('waitlist-joined');
+      const offer = byId('waitlist-more-offer');
+      if (form) form.classList.add('hidden');
+      if (msg) msg.classList.add('hidden');
+      if (joined) joined.classList.remove('hidden');
+      if (offer) offer.classList.remove('hidden');
+    },
+
     // The survey option definitions (chips, selects, countries) come
     // from the server so the form and its validation share one source.
     _optionsPromise: null,
@@ -493,7 +548,7 @@
       }
     },
 
-    // Stage 1: the landing form's four questions. Submits to the join
+    // Stage 1: the #waitlist screen's four questions. Submits to the join
     // endpoint; on a first join the response carries the stage-2
     // capability token, which turns into the "Want in sooner?" offer.
     _stage1Discovery: null,
@@ -509,6 +564,12 @@
           ? 'text-red-500 dark:text-red-400'
           : 'text-emerald-600 dark:text-emerald-400');
       };
+
+      // Registered BEFORE the options await: the visitor lands on this
+      // screen with the email field already focused, so a fast submit
+      // inside the fetch window would otherwise fall through to a native
+      // GET navigation off the SPA.
+      AuthScreens._wireStage1Submit(form, btn, showMsg);
 
       const opts = await AuthScreens._waitlistOptions();
       if (opts) {
@@ -536,7 +597,10 @@
             },
           });
       }
+    },
 
+    _wireStage1Submit(form, btn, showMsg) {
+      const msg = byId('waitlist-msg');
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const emailVal = byId('waitlist-email').value.trim();
