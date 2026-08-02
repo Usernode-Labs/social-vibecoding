@@ -447,10 +447,12 @@
        coordinate header/tab visibility with the authed shell. -->
 
   <!-- Landing screen -->
-  <main id="auth-landing-screen" class="hidden fixed inset-0 z-40 overflow-y-auto bg-white dark:bg-zinc-950">
+  <main id="auth-landing-screen" class="hidden fixed inset-0 z-40 bg-white dark:bg-zinc-950">
     <!-- In-page app viewer: public apps open in an iframe overlay with a
          corner Back instead of a target=_blank (which strands mobile
-         webview users on the app subdomain with no way back). -->
+         webview users on the app subdomain with no way back). Kept OUTSIDE
+         the scroll wrapper: the kit PTR transform on the scroller would
+         otherwise become the containing block for this fixed overlay. -->
     <div id="app-viewer" class="hidden fixed inset-0 z-50 bg-white dark:bg-zinc-950 flex flex-col">
       <div class="flex items-center gap-3 px-4 pb-2 border-b border-zinc-200 dark:border-zinc-800"
            style="padding-top: calc(env(safe-area-inset-top, 0px) + 0.75rem)">
@@ -461,6 +463,12 @@
       <iframe id="app-viewer-frame" class="flex-1 w-full border-0" title="App"></iframe>
     </div>
 
+    <!-- Inner scroller: the kit pull-to-refresh rubber-band translates the
+         element it is attached to. Attaching to the fixed overlay itself
+         would slide the WHOLE screen down and expose the authed shell
+         behind it (z-lower in the same document) — so the overlay stays
+         put as an opaque backstop and this wrapper takes the gesture. -->
+    <div id="auth-landing-scroll" class="h-full overflow-y-auto">
     <div class="max-w-3xl mx-auto px-6 py-12">
       <header class="text-center mb-10">
         <h1 class="text-3xl font-bold mb-2">Usernode Social Vibecoding</h1>
@@ -509,6 +517,7 @@
           <p class="text-sm text-zinc-500">Loading&hellip;</p>
         </div>
       </section>
+    </div>
     </div>
   </main>
 

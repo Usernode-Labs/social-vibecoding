@@ -161,10 +161,12 @@ html, body {
 
 /* The home feed scroller: contain overscroll so a pull that starts on
    a short list can't chain to the browser's own refresh gesture. The
-   anonymous landing scroller carries its own kit pull-to-refresh
-   (auth-screens.js _wireLanding) and needs the same containment. */
+   anonymous landing scroller (the inner wrapper, not the fixed overlay
+   — see index.html #auth-landing-scroll) carries its own kit
+   pull-to-refresh (auth-screens.js _wireLanding) and needs the same
+   containment. */
 #home-screen,
-#auth-landing-screen {
+#auth-landing-scroll {
   overscroll-behavior-y: contain;
 }
 
