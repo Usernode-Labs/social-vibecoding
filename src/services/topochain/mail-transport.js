@@ -43,7 +43,13 @@ function buildMessage(kind, payload) {
       return {
         subject: "You're on the Usernode waitlist",
         text: 'Thanks for joining the Usernode waitlist.\n\n' +
-          "We'll email you at this address as soon as your access is ready.",
+          "We'll email you at this address as soon as your access is ready." +
+          // Two-stage survey: the join response shows this same link once;
+          // the email is its durable home for anyone who stopped there.
+          (payload.url
+            ? '\n\nWant in sooner? A few optional questions move you up the list — ' +
+              `answer (or add to) them any time here: ${payload.url}`
+            : ''),
       };
     case 'waitlist_released':
       return {

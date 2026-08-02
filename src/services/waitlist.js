@@ -13,7 +13,9 @@
 // apps, per the onboarding doc's state ladder.
 'use strict';
 
+const crypto = require('crypto');
 const log = require('./logger');
+const { ANSWERS_VERSION } = require('./waitlist-questions');
 
 function normalizeEmail(raw) {
   if (typeof raw !== 'string') return null;
@@ -26,15 +28,68 @@ function normalizeEmail(raw) {
 // Join the platform waitlist. Idempotent by email: re-joining is a
 // silent no-op (the original submitted_at is kept) so the endpoint never
 // discloses whether an email was already on the list. Returns
-// { created } — created=false means the email already had a row.
+// { created, moreToken } — created=false means the email already had a
+// row, and moreToken is null in that case: the stage-2 capability link
+// only goes to the FIRST join (and its email), never to whoever types
+// the same address again later.
 async function joinWaitlist(pool, { email, ip = null, answers = null }) {
+  const moreToken = crypto.randomBytes(24).toString('hex');
+  const stored = answers
+    ? { _version: ANSWERS_VERSION, ...answers }
+    : null;
   const { rowCount } = await pool.query(
-    `INSERT INTO waitlist_signups (email, ip, answers)
-     VALUES ($1, $2, $3)
+    `INSERT INTO waitlist_signups (email, ip, answers, more_token)
+     VALUES ($1, $2, $3, $4)
      ON CONFLICT (email) DO NOTHING`,
-    [email, ip, answers ? JSON.stringify(answers) : null]
+    [email, ip, stored ? JSON.stringify(stored) : null, moreToken]
   );
-  return { created: rowCount > 0 };
+  const created = rowCount > 0;
+  return { created, moreToken: created ? moreToken : null };
+}
+
+// Look up a signup by its stage-2 capability token. Returns the row
+// (id, email, answers) or null.
+async function getSignupByMoreToken(pool, token) {
+  if (typeof token !== 'string' || !/^[a-f0-9]{48}$/.test(token)) return null;
+  const { rows } = await pool.query(
+    `SELECT id, email, answers FROM waitlist_signups WHERE more_token = $1`,
+    [token]
+  );
+  return rows[0] || null;
+}
+
+// Merge a validated stage-2 payload into the signup's answers. Merging
+// is section-wise (mirrors topochain's Participant::mergeAnswers): a
+// re-submitted section replaces that section, untouched sections keep
+// their previous value, so the form is re-openable and fillable over
+// several visits. Returns the merged answers, or null when the token
+// doesn't resolve.
+async function mergeMoreAnswers(pool, token, patch) {
+  const row = await getSignupByMoreToken(pool, token);
+  if (!row) return null;
+  const current = row.answers && typeof row.answers === 'object' ? row.answers : {};
+  const merged = { ...current, ...patch, _version: ANSWERS_VERSION };
+  await pool.query(
+    `UPDATE waitlist_signups SET answers = $1 WHERE id = $2`,
+    [JSON.stringify(merged), row.id]
+  );
+  return merged;
+}
+
+// Record an OAuth-verified social handle (github / x) on the signup.
+// Verified handles live under answers.verified so they are distinct
+// from the self-reported answers.handles entries.
+async function setVerifiedHandle(pool, token, provider, handle) {
+  const row = await getSignupByMoreToken(pool, token);
+  if (!row) return null;
+  const current = row.answers && typeof row.answers === 'object' ? row.answers : {};
+  const verified = { ...(current.verified || {}), [provider]: handle };
+  const merged = { ...current, verified, _version: ANSWERS_VERSION };
+  await pool.query(
+    `UPDATE waitlist_signups SET answers = $1 WHERE id = $2`,
+    [JSON.stringify(merged), row.id]
+  );
+  return merged;
 }
 
 // Grant platform access to a user (idempotent — re-granting keeps the
@@ -120,6 +175,9 @@ async function releaseWaitlistSignup(pool, signupId) {
 module.exports = {
   normalizeEmail,
   joinWaitlist,
+  getSignupByMoreToken,
+  mergeMoreAnswers,
+  setVerifiedHandle,
   grantPlatformAccess,
   linkUserByEmail,
   releaseWaitlistSignup,

@@ -2415,6 +2415,13 @@ const App = {
             AuthScreens.show('landing');
             return;
           }
+          // The stage-2 waitlist survey stays reachable from the waiting
+          // room — a gated account is exactly who "Want in sooner?" is
+          // for (the link arrives in the join email).
+          if (authRoute === 'more') {
+            AuthScreens.show('more', authSeg);
+            return;
+          }
           if (!authRoute && hash) AuthScreens.rememberDeepLink(location.hash);
           AuthScreens.showWaiting();
           return;

@@ -35,6 +35,9 @@ const assert = require('node:assert/strict');
 const {
   normalizeEmail,
   joinWaitlist,
+  getSignupByMoreToken,
+  mergeMoreAnswers,
+  setVerifiedHandle,
   grantPlatformAccess,
   linkUserByEmail,
   releaseWaitlistSignup,
@@ -59,15 +62,30 @@ function makePool(state) {
     const sql = collapse(rawSql);
 
     if (sql.startsWith('INSERT INTO waitlist_signups')) {
-      const [email] = params;
+      const [email, , answers, moreToken] = params;
       if (state.signups.has(email)) return { rowCount: 0, rows: [] };
       state.signups.set(email, {
         id: state.nextSignupId++,
         email,
+        answers: answers ? JSON.parse(answers) : null,
+        more_token: moreToken || null,
         released_at: null,
         linked_user_id: null,
       });
       return { rowCount: 1, rows: [] };
+    }
+
+    if (sql.includes('WHERE more_token = $1')) {
+      const [token] = params;
+      const s = [...state.signups.values()].find((r) => r.more_token === token);
+      return { rows: s ? [{ id: s.id, email: s.email, answers: s.answers }] : [] };
+    }
+
+    if (sql.includes('SET answers = $1 WHERE id = $2')) {
+      const [answers, id] = params;
+      const s = [...state.signups.values()].find((r) => r.id === id);
+      if (s) s.answers = JSON.parse(answers);
+      return { rowCount: s ? 1 : 0, rows: [] };
     }
 
     if (sql.includes('SET has_platform_access = TRUE')) {
@@ -160,6 +178,77 @@ test('joining is idempotent by email', async () => {
   const again = await joinWaitlist(pool, { email: 'new@example.com' });
   assert.equal(again.created, false);
   assert.equal(state.signups.size, 1);
+});
+
+// ─── 2b. Two-stage survey (topochain waitlist port) ───────────────────
+
+test('first join returns the stage-2 token; a re-join never does', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+
+  const first = await joinWaitlist(pool, {
+    email: 'survey@example.com',
+    answers: { made_url: 'https://example.com/thing' },
+  });
+  assert.match(first.moreToken, /^[a-f0-9]{48}$/);
+  // Stage-1 answers land versioned.
+  const row = state.signups.get('survey@example.com');
+  assert.equal(row.answers._version, 2);
+  assert.equal(row.answers.made_url, 'https://example.com/thing');
+
+  // A second join with the same email must NOT hand out the capability —
+  // anyone can type a stranger's address.
+  const again = await joinWaitlist(pool, { email: 'survey@example.com' });
+  assert.equal(again.moreToken, null);
+});
+
+test('getSignupByMoreToken resolves only well-formed, existing tokens', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+  const { moreToken } = await joinWaitlist(pool, { email: 't@example.com' });
+
+  assert.ok(await getSignupByMoreToken(pool, moreToken));
+  assert.equal(await getSignupByMoreToken(pool, 'f'.repeat(48)), null); // unknown
+  assert.equal(await getSignupByMoreToken(pool, 'not-a-token'), null);  // malformed
+  assert.equal(await getSignupByMoreToken(pool, null), null);
+});
+
+test('mergeMoreAnswers merges section-wise and keeps stage-1 answers', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+  const { moreToken } = await joinWaitlist(pool, {
+    email: 'merge@example.com',
+    answers: { made_url: 'https://a.example' },
+  });
+
+  await mergeMoreAnswers(pool, moreToken, {
+    group: { name: 'Indie devs', size: '10-50' },
+  });
+  // A later visit fills a DIFFERENT section: group survives.
+  await mergeMoreAnswers(pool, moreToken, {
+    loss: { had: 'yes', product: 'Google Reader' },
+  });
+
+  const row = state.signups.get('merge@example.com');
+  assert.equal(row.answers.made_url, 'https://a.example'); // stage 1 kept
+  assert.equal(row.answers.group.name, 'Indie devs');
+  assert.equal(row.answers.loss.product, 'Google Reader');
+
+  // Unknown token → null, nothing written.
+  assert.equal(await mergeMoreAnswers(pool, 'e'.repeat(48), { group: {} }), null);
+});
+
+test('setVerifiedHandle stores OAuth-verified handles apart from self-reported ones', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+  const { moreToken } = await joinWaitlist(pool, { email: 'v@example.com' });
+
+  await mergeMoreAnswers(pool, moreToken, { handles: { discord: 'selfclaimed' } });
+  await setVerifiedHandle(pool, moreToken, 'github', 'octocat');
+
+  const row = state.signups.get('v@example.com');
+  assert.equal(row.answers.verified.github, 'octocat');
+  assert.equal(row.answers.handles.discord, 'selfclaimed');
 });
 
 // ─── 3. Account-creation linkage ──────────────────────────────────────

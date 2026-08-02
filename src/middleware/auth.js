@@ -33,6 +33,10 @@ const PUBLIC_PATHS = [
   // apps and who built them without an account; view-private apps and the
   // self-app are never surfaced. Same privacy tier as the leaderboard.
   '/api/public/',
+  // Waitlist social-connect OAuth round-trip (two-stage waitlist
+  // survey). Pre-login by definition — waitlist signers have no account;
+  // the unguessable more_token in the OAuth state is the capability.
+  '/waitlist/connect/',
   '/health',
   '/css/',
   '/js/',

@@ -55,12 +55,18 @@ async function sendOtpMail(config, email, code) {
 // the join endpoint's response depend on delivery. Transports that only
 // understand the OTP shape simply won't receive a `code` key — a real
 // transport should branch on `kind`.
-async function sendWaitlistJoinMail(config, email) {
+//
+// `moreToken` (two-stage waitlist survey) turns into the stage-2 "Want
+// in sooner?" link carried in the mail, so a signer who skipped the
+// optional questions at join time can come back to them from their
+// inbox — the email is the durable home of the capability link.
+async function sendWaitlistJoinMail(config, email, { moreToken = null } = {}) {
   const transport = config && config.topochainMailTransport;
+  const moreUrl = moreToken ? `${PRODUCTION_ORIGIN}/#more/${moreToken}` : null;
 
   if (transport) {
     try {
-      await transport.send({ to: email, kind: 'waitlist_joined' });
+      await transport.send({ to: email, kind: 'waitlist_joined', url: moreUrl });
       return;
     } catch (err) {
       log.error('topochain-mailer', 'Waitlist mail transport failed to send', { email, message: err.message });
@@ -73,7 +79,7 @@ async function sendWaitlistJoinMail(config, email) {
     return;
   }
 
-  log.info('topochain-mailer', 'Waitlist join confirmation (no mail transport configured)', { email });
+  log.info('topochain-mailer', 'Waitlist join confirmation (no mail transport configured)', { email, moreUrl });
 }
 
 // Waitlist-release notification (the "you're in" mail). Sent by the

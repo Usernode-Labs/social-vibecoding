@@ -3407,6 +3407,17 @@ CREATE INDEX IF NOT EXISTS idx_waitlist_signups_released ON waitlist_signups (re
 CREATE INDEX IF NOT EXISTS idx_waitlist_signups_linked_user ON waitlist_signups (linked_user_id);
 COMMENT ON COLUMN waitlist_signups.ip IS 'staging:private';
 
+-- Two-stage waitlist survey (ported from the original topochain
+-- waitlist). `more_token` is the capability for the optional stage-2
+-- "Want in sooner?" form — shown once after joining and carried in the
+-- join email, it lets the signer re-open and merge answers (and verify
+-- GitHub / X handles via OAuth) without an account. NULL for rows that
+-- predate the survey.
+ALTER TABLE waitlist_signups ADD COLUMN IF NOT EXISTS more_token VARCHAR(64);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_waitlist_signups_more_token
+  ON waitlist_signups (more_token) WHERE more_token IS NOT NULL;
+COMMENT ON COLUMN waitlist_signups.more_token IS 'staging:private';
+
 -- Access + block-production state on the user. `has_platform_access`
 -- gates the SV platform surfaces (home/social/build) — NOT login-required
 -- child apps, which any account may use (see src/middleware/auth.js).

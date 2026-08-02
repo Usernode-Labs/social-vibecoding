@@ -157,6 +157,23 @@ test('sendWaitlistJoinMail passes kind:"waitlist_joined"', async () => {
   assert.equal(seen[0].kind, 'waitlist_joined');
 });
 
+test('a first join carries the stage-2 "Want in sooner?" link; a re-join carries none', async () => {
+  const seen = [];
+  const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
+  const token = 'a'.repeat(48);
+  await sendWaitlistJoinMail(cfg, 'a@b.invalid', { moreToken: token });
+  await sendWaitlistJoinMail(cfg, 'a@b.invalid'); // idempotent re-join: no token
+  assert.match(seen[0].url, new RegExp(`#more/${token}$`));
+  assert.equal(seen[1].url, null);
+
+  // ...and the transport copy actually includes it.
+  const withLink = transport.buildMessage('waitlist_joined', { url: seen[0].url });
+  assert.ok(withLink.text.includes(seen[0].url));
+  assert.match(withLink.text, /Want in sooner\?/);
+  const withoutLink = transport.buildMessage('waitlist_joined', { url: null });
+  assert.equal(withoutLink.text.includes('Want in sooner?'), false);
+});
+
 test('sendWaitlistReleaseMail passes kind:"waitlist_released" and a signup/login link', async () => {
   const seen = [];
   const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };

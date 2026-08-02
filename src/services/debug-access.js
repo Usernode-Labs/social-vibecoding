@@ -83,7 +83,8 @@ const DENIED_COLUMNS = {
     'registration_code', // topochain: single-use account claim code (SPEC §6)
   ],
   waitlist_signups: [
-    'ip', // submitter IP — same treatment as users.waitlist_ip
+    'ip',         // submitter IP — same treatment as users.waitlist_ip
+    'more_token', // stage-2 survey capability — editing rights over the signup's answers
   ],
 };
 
