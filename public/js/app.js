@@ -1443,7 +1443,10 @@ const App = {
         break;
       case 'cc_estimate':
         // Experimental AI progress estimate (opt-in, server-gated).
-        DevChat._applyEstimate(data.text, data.remainingSeconds);
+        // `cleared: true` (#891) blanks the guess at the coding run's end.
+        DevChat._applyEstimate(data.text, data.remainingSeconds, {
+          estimatedAt: data.estimatedAt, cleared: data.cleared,
+        });
         break;
       case 'cc_log':
         DevChat.messages.push({ role: 'system', ccLog: data.log, content: 'Claude Code log', created_at: new Date().toISOString() });

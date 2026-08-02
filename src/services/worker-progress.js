@@ -22,15 +22,23 @@ function set(sessionId, text, { model } = {}) {
 // `value` is { text, remainingSeconds } — remainingSeconds is the
 // numeric remaining-time guess (seconds) or null when the model declined
 // one. A bare string is tolerated for backward compatibility.
+//
+// `estimatedAt` (epoch ms) is stamped here rather than read from the
+// caller: the count-down is anchored ABSOLUTELY client-side
+// (estimatedAt + remainingSeconds * 1000), so re-delivering the same
+// guess over the 3s /status poll can no longer re-anchor it to "now"
+// and freeze the readout at a constant "~X left" (#891).
 function normalizeEstimate(value) {
   if (value == null) return null;
   if (typeof value === 'string') {
-    return { text: value.substring(0, 200), remainingSeconds: null };
+    return { text: value.substring(0, 200), remainingSeconds: null, estimatedAt: Date.now() };
   }
   const rs = value.remainingSeconds;
+  const at = value.estimatedAt;
   return {
     text: (value.text || '').toString().substring(0, 200),
     remainingSeconds: (typeof rs === 'number' && Number.isFinite(rs)) ? rs : null,
+    estimatedAt: (typeof at === 'number' && Number.isFinite(at)) ? at : Date.now(),
   };
 }
 
@@ -51,6 +59,23 @@ function setEstimate(sessionId, value) {
   prev.estimate = estimate;
 }
 
+// Drop just the estimate, keeping the progress entry itself (#891). The
+// estimator is torn down at the coding run's TERMINAL marker, well before
+// the whole entry is cleared at the end of the turn — without this the
+// /status poll keeps serving the last guess through PR creation, the
+// staging build and the Mayor wrap-up, and the client keeps re-painting
+// "nearly done, just wrapping up" onto an already-finished run.
+//
+// Deliberately a no-op when there's no entry: setEstimate(id, null) would
+// CREATE a junk entry via its `!prev` branch, which would then make
+// /status report a bogus in-flight worker.
+function clearEstimate(sessionId) {
+  if (!sessionId) return;
+  const prev = progress.get(sessionId);
+  if (!prev) return;
+  prev.estimate = null;
+}
+
 function get(sessionId) {
   return progress.get(sessionId) || null;
 }
@@ -63,4 +88,4 @@ function all() {
   return Array.from(progress.entries()).map(([sessionId, p]) => ({ sessionId, ...p }));
 }
 
-module.exports = { set, setEstimate, get, clear, all };
+module.exports = { set, setEstimate, clearEstimate, get, clear, all };
