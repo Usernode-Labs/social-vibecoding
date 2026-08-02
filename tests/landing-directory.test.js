@@ -2,7 +2,9 @@
 //   - the header CTA row offers exactly Sign in + Join waitlist (Create
 //     account is deferred to the waitlist journey / gated-app taps), and
 //     survives an app being open alongside Back + the app name,
-//   - the waitlist explainer and form are always visible, not collapsed,
+//   - the landing CTA area is a compact pitch + ONE link into the
+//     dedicated #waitlist screen, and the survey itself lives on that
+//     screen (reachable to shots via ?shot=anon),
 //   - #app-viewer is an in-flow flex sibling of the scroller and opens /
 //     closes with the kit zoom transition (with the outEl the flex-sibling
 //     measurement pitfall requires),
@@ -73,24 +75,138 @@ test('the header keeps Sign in / Join waitlist while an app is open', () => {
   assert.match(fn[0], /document\.title/);
 });
 
-test('the waitlist explainer + form are always visible on the landing page', () => {
+// ─── the landing CTA area vs the #waitlist screen ─────────────────
+
+test('the landing CTA area is a compact CTA + link, and carries no form', () => {
   const html = read('public/index.html');
-  const section = html.match(/id="landing-waitlist"[^>]*class="([^"]*)"/);
+  const section = html.match(/id="landing-waitlist"[\s\S]*?<\/section>/);
   assert.ok(section, 'landing-waitlist section exists');
-  // No longer collapsed behind the CTA — the pitch and the email field are
-  // part of the first paint.
-  assert.doesNotMatch(section[1], /\bhidden\b/);
-  assert.match(html, /id="waitlist-form"/);
-  assert.match(html, /id="waitlist-email"/);
-  // The header CTA now only closes any open app, scrolls to the form and
-  // focuses it — it no longer un-hides anything.
+  const classes = html.match(/id="landing-waitlist"[^>]*class="([^"]*)"/);
+  // Visible on first paint — it's the pitch, not something behind a toggle.
+  assert.doesNotMatch(classes[1], /\bhidden\b/);
+  // One link into the dedicated screen…
+  assert.match(section[0], /id="landing-waitlist-link"[^>]*href="#waitlist"/);
+  // …and none of the survey: a four-question form flat on the homepage
+  // buried the app directory under it.
+  assert.doesNotMatch(section[0], /<form/);
+  assert.doesNotMatch(section[0], /id="waitlist-email"/);
+  // The queued line still swaps in for a waiting-room session.
+  assert.match(section[0], /id="landing-cta-queued"/);
+});
+
+test('the header CTA is an anchor to #waitlist, not a scroll-to-form', () => {
+  const html = read('public/index.html');
+  const cta = html.match(/<a[^>]*id="landing-waitlist-cta"[^>]*>/);
+  assert.ok(cta, 'landing-waitlist-cta is an anchor');
+  assert.match(cta[0], /href="#waitlist"/);
   const js = read('public/js/auth-screens.js');
-  const handler = js.match(/waitlistCta\.addEventListener\('click'[\s\S]*?\n      \}\);/);
-  assert.ok(handler, 'waitlist CTA handler exists');
-  assert.match(handler[0], /_closeLandingApp\(\)/);
-  assert.match(handler[0], /scrollIntoView/);
-  assert.match(handler[0], /focus\(/);
-  assert.doesNotMatch(handler[0], /classList\.remove\('hidden'\)/);
+  // Both header CTAs leave the landing screen, so both tear the viewer down
+  // first — nothing scrolls or focuses on the landing page any more.
+  assert.match(js, /'landing-waitlist-cta', 'landing-signin-cta'/);
+  assert.match(js, /_resetLandingViewer\(\);/);
+  assert.doesNotMatch(js, /scrollIntoView/);
+});
+
+test('the stage-1 survey lives on its own #waitlist screen', () => {
+  const html = read('public/index.html');
+  const screen = html.match(/id="auth-waitlist-screen"[\s\S]*?\n  <\/main>/);
+  assert.ok(screen, 'auth-waitlist-screen exists');
+  const classes = html.match(/id="auth-waitlist-screen"[^>]*class="([^"]*)"/);
+  // Same overlay shape as the other anonymous screens (#more, #login).
+  for (const cls of ['hidden', 'fixed', 'inset-0', 'z-40', 'overflow-y-auto']) {
+    assert.match(classes[1], new RegExp(cls.replace('-', '\\-')), `screen is ${cls}`);
+  }
+  // The whole survey moved here, ids intact so the wiring is a pure move.
+  for (const id of ['waitlist-form', 'waitlist-email', 'waitlist-made-url',
+    'waitlist-country', 'waitlist-discovery-chips', 'waitlist-submit',
+    'waitlist-msg', 'waitlist-joined', 'waitlist-more-offer',
+    'waitlist-more-link', 'waitlist-queued']) {
+    assert.match(screen[0], new RegExp(`id="${id}"`), `${id} is on the screen`);
+  }
+  // Back goes to the landing page via the shared delegated handler.
+  assert.match(screen[0], /data-auth-back/);
+  // NOT a <header>: header-layout.js measures document.querySelector
+  // ('header') and must keep resolving to #platform-header.
+  assert.doesNotMatch(screen[0], /<header/);
+});
+
+test('#waitlist is a registered route ordered under landing, above #more', () => {
+  const js = read('public/js/auth-screens.js');
+  assert.match(js, /waitlist: 'auth-waitlist-screen'/);
+  const depth = js.match(/const DEPTH = \{[\s\S]*?\};/);
+  assert.ok(depth, 'DEPTH map exists');
+  // landing(0) → waitlist(1) → more(2): push in, pop back out.
+  assert.match(depth[0], /landing: 0/);
+  assert.match(depth[0], /waitlist: 1/);
+  assert.match(depth[0], /more: 2/);
+  // Per-show side effects + one-shot wiring are both dispatched.
+  assert.match(js, /if \(route === 'waitlist'\) AuthScreens\._waitlistOnShow\(\);/);
+  assert.match(js, /if \(id === 'auth-waitlist-screen'\) AuthScreens\._wireWaitlist\(\);/);
+});
+
+test('the waitlist screen swaps the form for the queued note on a session', () => {
+  const js = read('public/js/auth-screens.js');
+  const fn = js.match(/_waitlistOnShow\(\)\s*\{[\s\S]*?\n    \},/);
+  assert.ok(fn, '_waitlistOnShow exists');
+  // Same predicate _renderLandingHeader uses.
+  assert.match(fn[0], /window\.App && App\.user/);
+  assert.match(fn[0], /waitlist-form/);
+  assert.match(fn[0], /waitlist-queued/);
+  // AppBar mirroring for the Flutter WebView, same as the landing header.
+  assert.match(fn[0], /document\.title/);
+  // The landing CTA block toggles its LINK now, not a form.
+  const header = js.match(/_renderLandingHeader\(\)\s*\{[\s\S]*?\n    \},/);
+  assert.match(header[0], /landing-waitlist-link/);
+  assert.doesNotMatch(header[0], /waitlist-form/);
+});
+
+test('a gated (waiting-room) session can still reach #waitlist', () => {
+  const js = read('public/js/app.js');
+  const gated = js.match(/if \(App\.user\.hasPlatformAccess === false\) \{[\s\S]*?showWaiting\(\);/);
+  assert.ok(gated, 'gated-session branch exists');
+  assert.match(gated[0], /authRoute === 'waitlist'/);
+  assert.match(gated[0], /AuthScreens\.show\('waitlist'\)/);
+});
+
+test('the anonymous screens are reachable to shots via ?shot=anon', () => {
+  const js = read('public/js/app.js');
+  // Captures carry a capture token, so the /me fetch would give them a full
+  // session and restoreFromHash would strip the auth hash to home. The
+  // override has to run BEFORE that fetch.
+  const init = js.match(/async init\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(init, 'init exists');
+  const shotAt = init[0].indexOf('_anonShot()');
+  const meAt = init[0].indexOf("fetch('/api/auth/me')");
+  assert.ok(shotAt > -1 && meAt > -1, 'both the shot check and the /me fetch are in init');
+  assert.ok(shotAt < meAt, 'the shot override runs before the /me fetch');
+  const fn = js.match(/_anonShot\(\) \{[\s\S]*?\n  \},/);
+  assert.ok(fn, '_anonShot exists');
+  assert.match(fn[0], /'anon'/);
+  assert.match(fn[0], /'waitlist-joined'/);
+  // Pure UI state: no env gate, and no request of its own.
+  assert.doesNotMatch(fn[0], /USERNODE_ENV|fetch\(/);
+  // The joined shot paints the success state client-side — it never POSTs.
+  const auth = read('public/js/auth-screens.js');
+  const joined = auth.match(/_showWaitlistJoinedShot\(\) \{[\s\S]*?\n    \},/);
+  assert.ok(joined, '_showWaitlistJoinedShot exists');
+  assert.doesNotMatch(joined[0], /fetch\(/);
+  assert.match(joined[0], /waitlist-more-offer/);
+});
+
+test('the stage-1 submit handler is wired before the options fetch', () => {
+  const js = read('public/js/auth-screens.js');
+  const fn = js.match(/async _wireStage1Form\(\) \{[\s\S]*?\n    \},/);
+  assert.ok(fn, '_wireStage1Form exists');
+  const wireAt = fn[0].indexOf('_wireStage1Submit(');
+  const awaitAt = fn[0].indexOf('await AuthScreens._waitlistOptions()');
+  assert.ok(wireAt > -1 && awaitAt > -1, 'both the submit wiring and the await are present');
+  // The email field is focused on arrival, so a submit inside the fetch
+  // window must not fall through to a native GET navigation.
+  assert.ok(wireAt < awaitAt, 'submit is wired before the await');
+  const submit = js.match(/_wireStage1Submit\(form, btn, showMsg\) \{[\s\S]*?\n    \},/);
+  assert.ok(submit, '_wireStage1Submit exists');
+  assert.match(submit[0], /preventDefault/);
+  assert.match(submit[0], /'\/api\/public\/waitlist'/);
 });
 
 // ─── index.html + auth-screens.js: in-flow app viewer ─────────────

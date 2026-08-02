@@ -420,6 +420,24 @@
       "expectSelector": ".un-popover[data-surface=\"opaque\"]"
     },
     {
+      "name": "Waitlist survey lives on its own #waitlist screen",
+      "path": "/?shot=anon#waitlist",
+      "expectSelector": "#auth-waitlist-screen #waitlist-form #waitlist-email",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Landing CTA area is a compact link, not the survey",
+      "path": "/?shot=anon#landing",
+      "expectSelector": "#landing-waitlist a[href=\"#waitlist\"]",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Waitlist joined state renders the stage-2 offer",
+      "path": "/?shot=waitlist-joined",
+      "expectText": "Want in sooner?",
+      "allowConsoleErrors": true
+    },
+    {
       "name": "Leaderboard Top-users tab renders",
       "path": "/leaderboard",
       "expectText": "Top users"
