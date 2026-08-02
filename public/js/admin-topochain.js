@@ -1,7 +1,8 @@
 // Topochain admin console screens (Task 15, migration plan Global
 // Constraint #8: "Admin screens are ONE AdminConsole section 'topochain'
 // that renders its own sub-navigation from public/js/admin-topochain.js").
-// Mounted by AdminConsole.renderTopochainSection (public/js/admin-console.js)
+// Mounted by AdminConsole._renderSection via SECTION_MODULES (#860;
+// public/js/admin-console.js)
 // into the section's #admin-section-content host, exactly like every other
 // renderXSection — the only difference is this module owns a SECOND hash
 // level of its own (#admin/topochain/<sub>) that AdminConsole never learns
@@ -250,15 +251,24 @@ const AdminTopochain = {
 
   // ── Shell / sub-nav ──────────────────────────────────────────────────
 
-  // Entry point, called by AdminConsole.renderTopochainSection every time
-  // the top-level "Topochain" nav item is (re)selected. `sub` is read
-  // straight from location.hash (not passed down by admin-console.js —
-  // see the file-header comment) so a hand-typed/deep-linked
+  // Entry point, called by AdminConsole._renderSection every time the
+  // top-level "Topochain" nav item is (re)selected. `sub` is read straight
+  // from location.hash (not passed down by admin-console.js — see the
+  // file-header comment) so a hand-typed/deep-linked
   // #admin/topochain/<sub> lands on the right tab on first paint.
   render(host) {
     AdminTopochain._host = host;
     const sub = AdminTopochain._subFromHash() || AdminTopochain._sub || 'seasons';
     AdminTopochain.setSub(sub);
+  },
+
+  // Half of the render/destroy contract every console section module
+  // implements (#860). Nothing to tear down here: this module holds no
+  // timers and binds every listener on elements inside the section host,
+  // which AdminConsole replaces wholesale on the next section. Dropping
+  // the host reference keeps a detached tree from being retained.
+  destroy() {
+    AdminTopochain._host = null;
   },
 
   _subFromHash() {

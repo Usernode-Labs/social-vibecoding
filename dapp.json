@@ -426,37 +426,37 @@
     },
     {
       "name": "Admin Users list renders",
-      "path": "/admin",
+      "path": "/#admin/users",
       "expectText": "Users"
     },
     {
-      "name": "Dashboard spend distribution chart renders",
-      "path": "/dashboard",
+      "name": "Analytics spend distribution chart renders",
+      "path": "/#admin/analytics",
       "expectSelector": "#spend-distribution"
     },
     {
-      "name": "Dashboard General-users section renders",
-      "path": "/dashboard",
+      "name": "Analytics General-users section renders",
+      "path": "/#admin/analytics",
       "expectSelector": "#gu-mau"
     },
     {
-      "name": "Dashboard Power-users section renders",
-      "path": "/dashboard",
+      "name": "Analytics Power-users section renders",
+      "path": "/#admin/analytics",
       "expectSelector": "#pu-l4"
     },
     {
-      "name": "Merge debug view renders",
-      "path": "/debug?demo=1",
+      "name": "Merge debug section renders",
+      "path": "/?demo=1#admin/merges",
       "expectText": "Merge debug"
     },
     {
       "name": "Merge debug pr_closed badge renders on the demo run",
-      "path": "/debug?demo=1",
+      "path": "/?demo=1#admin/merges",
       "expectText": "PR closed"
     },
     {
-      "name": "Submitted features page renders",
-      "path": "/admin-features?demo=1",
+      "name": "Submitted features section renders",
+      "path": "/?demo=1#admin/features",
       "expectText": "Submitted features"
     },
     {
@@ -735,6 +735,41 @@
       "name": "Admin console deep-links the Activation codes section (#818)",
       "path": "/#admin/codes",
       "expectSelector": "#admin-code-list"
+    },
+    {
+      "name": "Admin console renders the Health & status section (#860)",
+      "path": "/?demo=1#admin/status",
+      "expectSelector": "#admin-status-root #admin-status-summary"
+    },
+    {
+      "name": "Health & status renders the node and explorer cards (#860)",
+      "path": "/?demo=1#admin/status",
+      "expectText": "Block explorer"
+    },
+    {
+      "name": "Admin console renders the Node & chain section (#860)",
+      "path": "/#admin/node",
+      "expectSelector": "#admin-node-root #admin-node-services-body"
+    },
+    {
+      "name": "Admin console renders the Screenshot gallery section (#860)",
+      "path": "/?demo=1#admin/gallery",
+      "expectSelector": "#admin-gallery-root #admin-gallery-proposals"
+    },
+    {
+      "name": "Screenshot gallery shows the seeded staging demo capture (#860)",
+      "path": "/?demo=1#admin/gallery",
+      "expectText": "Staging demo capture"
+    },
+    {
+      "name": "Admin console renders the Maintenance campaigns section (#860)",
+      "path": "/#admin/campaigns",
+      "expectSelector": "#admin-campaigns-root #admin-campaign-list"
+    },
+    {
+      "name": "Admin console groups its section menu under headings (#860)",
+      "path": "/#admin",
+      "expectText": "Operations"
     },
     {
       "name": "Admin console renders the Database export section",

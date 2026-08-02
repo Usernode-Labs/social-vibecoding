@@ -219,10 +219,11 @@ test('mayorPromptBlock names the Mayor tool, dispatch direction, pages, and the 
   // The concrete production starting points a dispatch prompt should name.
   assert.match(block, /merge_debug_runs/);
   assert.match(block, /chat_sessions/);
-  // The admin pages worth pointing users at.
-  assert.match(block, /\/debug/);
-  assert.match(block, /\/status/);
-  assert.match(block, /\/admin/);
+  // The admin surfaces worth pointing users at. #860 folded the standalone
+  // pages into the one #admin console, so these are section hashes now.
+  assert.match(block, /#admin\/merges/);
+  assert.match(block, /#admin\/status/);
+  assert.match(block, /#admin\/users/);
   // The read-only + audit contract.
   assert.match(block, /READ-ONLY/);
   assert.match(block, /audit-logged/);
