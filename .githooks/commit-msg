@@ -1,0 +1,24 @@
+#!/bin/sh
+
+set -eu
+
+message_file=${1:?commit message file is required}
+message=$(git stripspace --strip-comments < "$message_file")
+subject=$(printf '%s\n' "$message" | sed -n '1p')
+subject_length=$(printf '%s\n' "$subject" | awk '{ print length($0) }')
+
+if [ "$subject_length" -gt 72 ]; then
+  printf 'commit subject must be at most 72 characters (found %s)\n' "$subject_length" >&2
+  exit 1
+fi
+
+trailers=$(printf '%s\n' "$message" | git interpret-trailers --parse)
+if [ -z "$trailers" ]; then
+  printf 'commit message must end with a parseable trailer block\n' >&2
+  exit 1
+fi
+
+if ! printf '%s\n' "$trailers" | grep -Eq '^Task:[[:space:]]*[^[:space:]].*$'; then
+  printf 'commit trailer block must contain a non-empty Task: trailer\n' >&2
+  exit 1
+fi

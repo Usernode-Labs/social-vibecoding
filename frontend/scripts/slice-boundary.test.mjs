@@ -21,12 +21,13 @@ function git(repoRoot, args) {
   return run.stdout.trim()
 }
 
-function checkpoint(repoRoot, subject, body) {
+function checkpoint(repoRoot, subject, body, task = "harness-slice-a") {
   git(repoRoot, [
     "commit",
     "--allow-empty",
     "-m", subject,
     "-m", body,
+    "--trailer", `Task: ${task}`,
     "--trailer", `Co-authored-by: ${identity.name} <${identity.email}>`,
     "--trailer", `Signed-off-by: ${identity.name} <${identity.email}>`,
   ])
@@ -69,7 +70,11 @@ test("finalizes checkpoint messages oldest-first with a recovery reference", () 
   assert.match(message, /First checkpoint body\./)
   assert.match(message, /Second checkpoint body\./)
   assert.match(message, new RegExp(`Origin-Buzz-Event: ${originEvent}`))
+  assert.match(message, /Task: harness-slice-a/)
   assert.ok(message.endsWith(`Signed-off-by: ${identity.name} <${identity.email}>`))
+  const trailers = git(repoRoot, ["log", "-1", "--format=%(trailers:key=Task,key=Origin-Buzz-Event)"])
+  assert.match(trailers, /Task: harness-slice-a/)
+  assert.match(trailers, new RegExp(`Origin-Buzz-Event: ${originEvent}`))
 })
 
 test("detects private checkpoints in the publish range", () => {
@@ -100,7 +105,7 @@ test("refuses a dirty tree or a checkpoint from another slice", () => {
   }), /clean working tree/)
 
   const wrong = fixture()
-  checkpoint(wrong.repoRoot, "wip(other-slice): wrong checkpoint", "Wrong slice body.")
+  checkpoint(wrong.repoRoot, "wip(other-slice): wrong checkpoint", "Wrong slice body.", "other-slice")
   assert.throws(() => finalizeSlice({
     repoRoot: wrong.repoRoot,
     base: wrong.base,
@@ -108,6 +113,16 @@ test("refuses a dirty tree or a checkpoint from another slice", () => {
     subject: "Make slice boundaries auditable",
     originEvent,
   }), /must start with wip\(harness-slice-a\):/)
+
+  const wrongTask = fixture()
+  checkpoint(wrongTask.repoRoot, "wip(harness-slice-a): wrong task", "Wrong task body.", "other-slice")
+  assert.throws(() => finalizeSlice({
+    repoRoot: wrongTask.repoRoot,
+    base: wrongTask.base,
+    slice: "harness-slice-a",
+    subject: "Make slice boundaries auditable",
+    originEvent,
+  }), /needs final Task: harness-slice-a/)
 
   const escaped = fixture()
   checkpoint(escaped.repoRoot, "wip(harness-slice-a): escaped body", "First line.\\n\\nSecond line.")

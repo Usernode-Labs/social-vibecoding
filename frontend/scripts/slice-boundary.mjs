@@ -39,13 +39,10 @@ function configuredIdentity(repoRoot) {
   return { name, email }
 }
 
-function meaningfulCheckpointBody(message, identity) {
+function meaningfulCheckpointBody(message) {
   const lines = message.split("\n").slice(1)
-  const trailers = new Set([
-    `Co-authored-by: ${identity.name} <${identity.email}>`,
-    `Signed-off-by: ${identity.name} <${identity.email}>`,
-  ])
-  return lines.some((line) => line.trim() && !trailers.has(line.trim()))
+  const trailer = /^(?:Task|Plan-Step|Decision|Evidence|Origin-Buzz-Event|Co-authored-by|Signed-off-by):/
+  return lines.some((line) => line.trim() && !trailer.test(line.trim()))
 }
 
 function checkpointLog(repoRoot, base, slice, identity) {
@@ -74,19 +71,26 @@ function checkpointLog(repoRoot, base, slice, identity) {
         throw new Error(`checkpoint ${commit.slice(0, 12)} is missing ${trailer}`)
       }
     }
-    if (!meaningfulCheckpointBody(message, identity)) {
+    const trailers = git(repoRoot, ["interpret-trailers", "--parse"], { input: message })
+    if (!trailers.split("\n").includes(`Task: ${slice}`)) {
+      throw new Error(`checkpoint ${commit.slice(0, 12)} needs final Task: ${slice}`)
+    }
+    if (!meaningfulCheckpointBody(message)) {
       throw new Error(`checkpoint ${commit.slice(0, 12)} needs a meaningful body`)
     }
     return { commit, message, subject }
   })
 }
 
-export function buildSliceCommitMessage({ subject, originEvent, checkpoints, identity }) {
+export function buildSliceCommitMessage({ subject, originEvent, checkpoints, identity, task }) {
   if (!subject?.trim() || subject.includes("\n")) {
     throw new Error("--subject must be one non-empty line")
   }
   if (!EVENT_ID.test(originEvent || "")) {
     throw new Error("--origin-event must be a 64-character lowercase hex event identifier")
+  }
+  if (!task?.trim() || task.includes("\n")) {
+    throw new Error("task must be one non-empty line")
   }
 
   const checkpointSections = checkpoints.map((checkpoint, index) => [
@@ -98,14 +102,14 @@ export function buildSliceCommitMessage({ subject, originEvent, checkpoints, ide
   return [
     subject.trim(),
     "",
-    `Origin-Buzz-Event: ${originEvent}`,
-    "",
     "Checkpoint log (oldest first; raw messages preserved):",
     "",
     checkpointSections.join("\n\n"),
     "",
     "Exact-commit verification is recorded after finalization in the UI gate timing artifact and the signed Buzz receipt keyed to this immutable commit.",
     "",
+    `Task: ${task}`,
+    `Origin-Buzz-Event: ${originEvent}`,
     `Co-authored-by: ${identity.name} <${identity.email}>`,
     `Signed-off-by: ${identity.name} <${identity.email}>`,
     "",
@@ -171,7 +175,7 @@ export function finalizeSlice({ repoRoot, base, slice, subject, originEvent, dry
 
   const identity = configuredIdentity(repoRoot)
   const checkpoints = checkpointLog(repoRoot, baseCommit, slice, identity)
-  const message = buildSliceCommitMessage({ subject, originEvent, checkpoints, identity })
+  const message = buildSliceCommitMessage({ subject, originEvent, checkpoints, identity, task: slice })
   if (dryRun) {
     return { baseCommit, oldHead, branchRef, checkpoints, message, recoveryRef: null, newCommit: null }
   }

@@ -48,6 +48,11 @@ per-commit freshness gate.
 
 Write for a future reader who has the diff but not the task conversation.
 
+Follow `docs/commit-grammar.md`. New commits must end with a parseable trailer
+block containing a non-empty `Task:` trailer. The tracked hook lives at
+`.githooks/commit-msg`; configure it with
+`git config core.hooksPath .githooks` in each checkout.
+
 - Use an imperative subject that describes the outcome, not the files changed.
 - Add a body only when the change has context the diff cannot explain.
 - Preserve the reason for the change and any important decision, tradeoff, or
@@ -59,7 +64,9 @@ Write for a future reader who has the diff but not the task conversation.
   not amend the commit to backfill those results; that would change the state
   the gate verified.
 - Omit empty headings, diff summaries, file lists, session transcripts,
-  abandoned debugging paths, and agent, model, token, or task metadata.
+  abandoned debugging paths, and agent, model, token, or conversational task
+  metadata. `Task:` is the durable plan join defined by the grammar, not a
+  transcript field.
 - Never claim a test or check passed unless it was run.
 
 ## Commit size and shape

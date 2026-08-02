@@ -21,7 +21,7 @@ capability.
 
 Evidence:
 
-- `frontend/@/features/community/challenges.tsx`: `ChallengeItem` carries text,
+- `frontend/@/features/community/challenges.tsx`: `ChallengeFeedItem` carries text,
   reward, progress, status, and lifecycle fields only.
 - `frontend/@/lib/challenge-lifecycle.ts`: `ChallengeLifecycleSource` contains
   no artwork or image field.
