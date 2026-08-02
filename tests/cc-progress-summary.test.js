@@ -79,6 +79,23 @@ test('formatCountdown: garbage inputs clamp to "· due now"', () => {
   assert.equal(formatCountdown(undefined, undefined), ' · due now');
 });
 
+// #891: the count-down is anchored on the server's `estimatedAt` (when the
+// guess was MADE), so a target fixed once actually walks down as the ticker
+// advances `nowMs`. Before the fix the same guess, re-delivered by the 3s
+// /status poll, re-anchored the target to arrival time — the readout sat
+// frozen at a constant "~X left" and never reached "due now", which is a
+// large part of why a finished run looked like it was still estimating.
+test('formatCountdown (#891): a fixed anchor decrements as time passes', () => {
+  const estimatedAt = 1_000_000;
+  const target = estimatedAt + 180_000;  // Haiku said "180s left" at that moment
+  assert.equal(formatCountdown(target, estimatedAt), ' · ~3m 00s left');
+  assert.equal(formatCountdown(target, estimatedAt + 60_000), ' · ~2m 00s left');
+  assert.equal(formatCountdown(target, estimatedAt + 150_000), ' · ~30s left');
+  // ...and the run outlasting its own guess settles on "due now", never a
+  // negative value and never a count-up.
+  assert.equal(formatCountdown(target, estimatedAt + 300_000), ' · due now');
+});
+
 // ── 1b. summarizeCcProgress unit tests ──────────────────────────────────
 
 test('summarizeCcProgress: picks the last action line as the current label', () => {

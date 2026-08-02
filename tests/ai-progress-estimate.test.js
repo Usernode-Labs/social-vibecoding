@@ -217,9 +217,11 @@ test('dev-chat renders a live count-down for the remaining-time guess (#359)', (
     '_syncElapsedTicker / _tickElapsed must reference data-countdown-to');
   assert.match(devChat, /formatCountdown/,
     'the count-down text must come from formatCountdown');
+  // #891 added a third `opts` argument (estimatedAt + cleared); the
+  // remainingSeconds pass-through this guard exists for is unchanged.
   assert.match(
     devChat,
-    /_applyEstimate\(data\.text, data\.remainingSeconds\)/,
+    /_applyEstimate\(data\.text, data\.remainingSeconds, \{/,
     'cc_estimate handlers must pass remainingSeconds through'
   );
 });
@@ -236,9 +238,11 @@ test('dev-chat clears the count-down anchor when a step finishes (#359)', () => 
 
 test('cc_estimate SSE payload carries remainingSeconds', () => {
   const sessions = read('src/routes/sessions.js');
+  // #891 broke the payload across lines to add estimatedAt; the
+  // remainingSeconds field this guard exists for is unchanged.
   assert.match(
     sessions,
-    /send\('cc_estimate', \{ text, remainingSeconds/,
+    /send\('cc_estimate', \{\s*\n?\s*text, remainingSeconds/,
     'SSE payload must include remainingSeconds'
   );
 });
@@ -455,4 +459,178 @@ test('#323: _applyEstimate stashes a pending estimate instead of dropping it', (
   // Patch is scoped to THIS run's DOM node by persist-id, not the last span.
   assert.match(devChat, /data-persist-id="\$\{pid\}"\]\s*\.dc-cc-estimate/,
     'in-place patch must target the active run by persist-id');
+});
+
+// ── 5. Terminal-state teardown (#891) ───────────────────────────────────
+//
+// The reported bug: after the coding agent finished, the estimator kept
+// running and the card kept reading "nearly done, just wrapping up". Four
+// compounding defects, each pinned below:
+//   1. the in-memory estimate was served by /status for the whole wrap-up,
+//   2. _applyEstimate re-targeted the finished card via a DOM fallback and
+//      re-anchored its count-down on every 3s poll,
+//   3. an in-flight Haiku call resolving after teardown still emitted,
+//   4. _pendingEstimate survived the turn and could drain onto the next one.
+
+test('#891: worker-progress exports clearEstimate and stamps estimatedAt', () => {
+  const wp = require('../src/services/worker-progress.js');
+  assert.equal(typeof wp.clearEstimate, 'function', 'clearEstimate must be exported');
+
+  // clearEstimate must NOT create an entry — setEstimate(id, null) would,
+  // via its `!prev` branch, and /status would then report a phantom worker.
+  wp.clearEstimate(987654321);
+  assert.equal(wp.get(987654321), null, 'clearEstimate must not create an entry');
+
+  // A real estimate carries an absolute estimatedAt so the client can anchor
+  // the count-down on when the guess was MADE, not when it arrived.
+  const before = Date.now();
+  wp.setEstimate(987654321, { text: 'nearly done', remainingSeconds: 90 });
+  const stored = wp.get(987654321);
+  assert.ok(stored && stored.estimate, 'setEstimate must store an estimate');
+  assert.equal(stored.estimate.text, 'nearly done');
+  assert.equal(stored.estimate.remainingSeconds, 90);
+  assert.ok(Number.isFinite(stored.estimate.estimatedAt), 'estimate must carry estimatedAt');
+  assert.ok(stored.estimate.estimatedAt >= before, 'estimatedAt must be a real timestamp');
+
+  // Clearing drops the guess but keeps the progress entry itself alive —
+  // the run is still going (commit/push/PR), just no longer estimated.
+  wp.clearEstimate(987654321);
+  assert.equal(wp.get(987654321).estimate, null, 'clearEstimate must null the estimate');
+  wp.clear(987654321);
+});
+
+test('#891: sessions defines one idempotent stopEstimator', () => {
+  const sessions = read('src/routes/sessions.js');
+  assert.match(sessions, /const stopEstimator = \(reason\) => \{/,
+    'a single stopEstimator closure must exist');
+  const fnStart = sessions.indexOf('const stopEstimator = (reason) => {');
+  const fnBody = sessions.slice(fnStart, fnStart + 900);
+  assert.match(fnBody, /if \(estimatorDone\) return;/, 'stopEstimator must be idempotent');
+  assert.match(fnBody, /estimatorDone = true/, 'it must latch the torn-down flag');
+  assert.match(fnBody, /clearInterval\(estimator\)/, 'it must clear the interval');
+  assert.match(fnBody, /workerProgress\.clearEstimate\(session\.id\)/,
+    'it must drop the in-memory estimate so /status stops serving it');
+  assert.match(fnBody, /send\('cc_estimate', \{ text: null, remainingSeconds: null, cleared: true \}\)/,
+    'it must emit a cleared cc_estimate so live clients blank the span');
+});
+
+test('#891: stopEstimator is wired to terminal markers, turn end and stop', () => {
+  const sessions = read('src/routes/sessions.js');
+  // (a) the earliest signal — reusing the watchdog's marker list rather than
+  // re-declaring '[done]' / '[push_failed]' / '[interrupted]' here.
+  assert.match(sessions, /turnWatchdog\.TERMINAL_PROGRESS_LINES\.includes\(String\(text\)\.trim\(\)\)/,
+    'the onProgress hook must detect terminal phase markers');
+  assert.match(sessions, /stopEstimator\('terminal_marker'\)/,
+    'a terminal marker must tear the estimator down');
+  // (b) belt-and-braces for a markerless turn, and (c) the user-stop path.
+  assert.match(sessions, /stopEstimator\('turn_end'\)/,
+    'the dispatch finally must tear the estimator down');
+  assert.match(sessions, /stopEstimator\('stopped'\)/,
+    'the user-stop path must tear the estimator down');
+  // The bare clearInterval it replaced must be gone from the finally.
+  assert.doesNotMatch(sessions, /if \(estimator\) clearInterval\(estimator\);/,
+    'the finally must go through stopEstimator, not a bare clearInterval');
+});
+
+test('#891: a tick resolving after teardown emits nothing and records nothing', () => {
+  const sessions = read('src/routes/sessions.js');
+  // The single guard fronting emit + stash + INSERT.
+  assert.match(sessions, /if \(!estimatorDone && !\(stopHandle && stopHandle\.stopped\)\) \{/,
+    'the .then must drop everything when the estimator is torn down');
+  const guardAt = sessions.indexOf('if (!estimatorDone && !(stopHandle && stopHandle.stopped)) {');
+  assert.ok(guardAt !== -1);
+  const guarded = sessions.slice(guardAt, guardAt + 1400);
+  assert.match(guarded, /send\('cc_estimate'/, 'the emit must sit inside the guard');
+  assert.match(guarded, /workerProgress\.setEstimate/, 'the in-memory stash must sit inside the guard');
+  assert.match(guarded, /INSERT INTO progress_estimates/,
+    'the accuracy INSERT must sit inside the guard — the backfill has already run');
+  // The spend debit stays OUTSIDE: those tokens were genuinely spent.
+  const afterGuard = sessions.slice(guardAt);
+  const spendAt = afterGuard.indexOf('limits.recordSpend');
+  const insertAt = afterGuard.indexOf('INSERT INTO progress_estimates');
+  assert.ok(spendAt > insertAt, 'recordSpend must remain outside the drop guard');
+  // The interval body bails too, so a queued tick can't fire post-teardown.
+  assert.match(sessions, /if \(estimatorDone\) return;/,
+    'the interval body must bail once torn down');
+});
+
+test('#891: the estimator emit and /status carry estimatedAt', () => {
+  const sessions = read('src/routes/sessions.js');
+  assert.match(sessions, /estimatedAt: lastEstimateAtMs/,
+    'the SSE payload must carry when the guess was made');
+  assert.match(sessions, /workerProgress\.setEstimate\(session\.id, \{\s*\n?\s*text, remainingSeconds, estimatedAt: lastEstimateAtMs/,
+    'the in-memory stash must carry estimatedAt for the /status poll');
+});
+
+test('#891: _applyEstimate clears instead of swallowing an empty estimate', () => {
+  const devChat = read('public/js/dev-chat.js');
+  assert.match(devChat, /_clearEstimate\(\)\s*\{/, 'a _clearEstimate helper must exist');
+  const fnStart = devChat.indexOf('_applyEstimate(text, remainingSeconds, opts) {');
+  assert.ok(fnStart !== -1, '_applyEstimate must take an opts argument');
+  const fnBody = devChat.slice(fnStart, devChat.indexOf('\n  },', fnStart));
+  assert.match(fnBody, /if \(!clean \|\| o\.cleared\) \{ DevChat\._clearEstimate\(\); return; \}/,
+    'an empty/cleared estimate must clear rather than silently return');
+  // The DOM fallback that painted the guess onto the finished card is gone.
+  assert.doesNotMatch(fnBody, /querySelectorAll\('#dc-messages \.dc-cc-estimate'\)/,
+    'the "last span on the page" fallback must be removed');
+  // Guesses may only attach to a LIVE coding run.
+  assert.match(fnBody, /DevChat\._isLiveCcRun\(DevChat\.messages\[i\]\)/,
+    'the target must be a live CC run row, not any active status row');
+  // A wrap-up status row active → drop, don't stash.
+  assert.match(fnBody, /if \(anyActive\) \{ DevChat\._clearEstimate\(\); return; \}/,
+    'an active non-CC row means the run is over — clear, do not stash');
+});
+
+test('#891: the count-down anchors on estimatedAt and ignores re-deliveries', () => {
+  const devChat = read('public/js/dev-chat.js');
+  // Absolute anchor rather than "now + remaining".
+  assert.match(devChat, /_countdownTarget\(remainingSeconds, estimatedAt\)/,
+    '_countdownTarget must accept the server timestamp');
+  const fnStart = devChat.indexOf('_countdownTarget(remainingSeconds, estimatedAt) {');
+  const fnBody = devChat.slice(fnStart, devChat.indexOf('\n  },', fnStart));
+  assert.match(fnBody, /base \+ n \* 1000/, 'the target must be anchored on estimatedAt');
+  assert.doesNotMatch(fnBody, /return Date\.now\(\) \+ n \* 1000/,
+    'the target must not re-anchor to arrival time');
+  // Same guess delivered twice (SSE + the 3s poll) must not re-anchor.
+  assert.match(devChat, /estimatedAt <= DevChat\._lastEstimateAt/,
+    'a non-newer estimate must be ignored so the count-down keeps moving');
+});
+
+test('#891: the /status poll forwards a null estimate so it can clear', () => {
+  const devChat = read('public/js/dev-chat.js');
+  assert.match(devChat, /estimate \? estimate\.text : null/,
+    'the poll must forward a null estimate rather than skipping it');
+  assert.match(devChat, /estimatedAt: estimate \? estimate\.estimatedAt : null/,
+    'the poll must forward estimatedAt');
+  // All three live event paths pass the new fields through.
+  const app = read('public/js/app.js');
+  for (const [name, src] of [['dev-chat.js', devChat], ['app.js', app]]) {
+    assert.match(src, /estimatedAt: data\.estimatedAt, cleared: data\.cleared/,
+      `${name} cc_estimate handler must forward estimatedAt + cleared`);
+  }
+  const handlers = devChat.match(/estimatedAt: data\.estimatedAt, cleared: data\.cleared/g) || [];
+  assert.ok(handlers.length >= 2,
+    `both dev-chat cc_estimate handlers must forward the fields, found ${handlers.length}`);
+});
+
+test('#891: a stale guess cannot survive the turn or reach the next one', () => {
+  const devChat = read('public/js/dev-chat.js');
+  // _deactivateLastStatus drops the remaining-seconds + the pending stash.
+  const deactStart = devChat.indexOf('_deactivateLastStatus() {');
+  const deactBody = devChat.slice(deactStart, deactStart + 1800);
+  assert.match(deactBody, /delete m\._estimate;/, 'finished step must drop the guess');
+  assert.match(deactBody, /delete m\._estimateRemaining;/, 'it must drop the remaining-seconds too');
+  assert.match(deactBody, /delete m\._countdownTo;/, 'it must drop the count-down anchor');
+  assert.match(deactBody, /DevChat\._pendingEstimate = null;/,
+    'it must drop an undrained pending estimate');
+  // _finishStreaming does the same at turn end.
+  const finStart = devChat.indexOf('_finishStreaming() {');
+  const finBody = devChat.slice(finStart, finStart + 900);
+  assert.match(finBody, /DevChat\._pendingEstimate = null;/,
+    'turn end must drop an undrained pending estimate');
+  assert.match(finBody, /DevChat\._lastEstimateAt = null;/,
+    'turn end must reset the applied-estimate stamp');
+  // The pending drain targets a live CC run, not any active row.
+  assert.match(devChat, /if \(DevChat\._isLiveCcRun\(m\)\) \{\n\s*m\._estimate = DevChat\._pendingEstimate\.text;/,
+    'renderMessages must drain a pending estimate onto a live CC run only');
 });

@@ -3821,7 +3821,12 @@ function sessionRoutes(config) {
 
     // Experimental AI progress estimate: latest in-memory Haiku guess for
     // the run, so the 3s polling fallback carries it when SSE/WS drop.
-    // Null whenever the per-user toggle is off or no estimate exists yet.
+    // Null whenever the per-user toggle is off or no estimate exists yet —
+    // and, since #891, from the coding run's terminal marker onward
+    // (workerProgress.clearEstimate), so the poll stops re-serving a stale
+    // guess through PR creation, the staging build and the Mayor wrap-up.
+    // Carries `estimatedAt` so the client anchors its count-down absolutely
+    // instead of restarting it on every 3s poll.
     const estimate = workerProgress.get(sessionId)?.estimate || null;
 
     // #239: whether the auto-conflict-resolver currently has a resolve
@@ -3835,8 +3840,8 @@ function sessionRoutes(config) {
     // fallback read this the same way the resolving banner reads
     // `resolving`.
     // Keys: busy, progress, phase, stopping, estimate (+ resolving, sync).
-    // `estimate` is { text, remainingSeconds } | null — see
-    // workerProgress.setEstimate.
+    // `estimate` is { text, remainingSeconds, estimatedAt } | null — see
+    // workerProgress.setEstimate / clearEstimate.
     res.json({
       busy, progress, phase, stopping, estimate,
       resolving: isResolving(sessionId),
@@ -7018,10 +7023,39 @@ path: /another/changed/view
     // first guess fires even before any progress line lands, and the
     // remaining-time countdown is re-asked on a wall-clock cadence so it
     // never freezes during a long quiet phase (one slow command/edit).
+    //
+    // Terminal-state teardown (#891): the estimator MUST stop the moment
+    // the coding run reaches a terminal phase marker, not when the whole
+    // turn (PR + staging + Mayor wrap-up) is done. See stopEstimator below.
     const estimatorEnabled = !headless && !!req?.user?.aiProgressEstimate
       && (llm.isEnabled() || !!userApiKey);
     const liveProgressLines = [];
     let estimator = null;
+    // Set by stopEstimator; read by the interval body AND by the in-flight
+    // call's .then so a Haiku response that lands after teardown can't
+    // re-emit a guess (or INSERT an accuracy row the backfill already
+    // ran past, which would strand it with actual_total_ms IS NULL).
+    let estimatorDone = false;
+    // Idempotent teardown for the experimental estimator (#891). Every
+    // exit path funnels through here so there is exactly one place that
+    // knows how to make the guess go away:
+    //   - clear the interval (no further ticks),
+    //   - drop the in-memory estimate so GET /api/sessions/:id/status
+    //     stops serving it to the 3s poll for the rest of the turn,
+    //   - emit a cleared cc_estimate so live clients blank the span
+    //     immediately instead of waiting for the next full re-render.
+    const stopEstimator = (reason) => {
+      if (estimatorDone) return;
+      estimatorDone = true;
+      if (estimator) {
+        clearInterval(estimator);
+        estimator = null;
+      }
+      if (!estimatorEnabled) return;
+      workerProgress.clearEstimate(session.id);
+      send('cc_estimate', { text: null, remainingSeconds: null, cleared: true });
+      log.info('chat', 'AI progress estimator stopped', { sessionId: session.id, reason });
+    };
     // Diagnose the silent-disable case: toggle ON + live turn but no LLM
     // key path means the user sees nothing with no obvious reason (#323).
     if (!headless && !!req?.user?.aiProgressEstimate && !estimatorEnabled) {
@@ -7048,6 +7082,8 @@ path: /another/changed/view
       const IDLE_REFRESH_MS = 180_000;   // re-ask even with no new lines so ~X left moves
       const CC_ACTION_RE = /^(Reading |Writing |Editing |\$ |Using )/;
       estimator = setInterval(() => {
+        // Torn down (terminal marker / turn end / stop) — never tick again.
+        if (estimatorDone) return;
         // One call in flight at a time.
         if (estimateInFlight) return;
         // Runaway backstop: stop for good only on a pathological multi-hour
@@ -7059,7 +7095,7 @@ path: /another/changed/view
               sessionId: session.id, estimates: estimateSuccesses,
             });
           }
-          clearInterval(estimator);
+          stopEstimator('emit_ceiling');
           return;
         }
         // Backoff after failures: wait out the skip window, then retry. The
@@ -7102,11 +7138,21 @@ path: /another/changed/view
           linesAtLastEstimate = linesAtStart;
           lastEstimateAtMs = Date.now();
           const elapsedAtEstimate = lastEstimateAtMs - turnStartedMs;
-          // A call resolving after the user hit stop is dropped — the
-          // running line is already deactivated client-side.
-          if (!(stopHandle && stopHandle.stopped)) {
-            send('cc_estimate', { text, remainingSeconds, elapsedMs: elapsedAtEstimate });
-            workerProgress.setEstimate(session.id, { text, remainingSeconds });
+          // A call resolving after the user hit stop — or after the coding
+          // run reached its terminal marker (#891) — is dropped entirely:
+          // no emit (the run is over, so the guess would land on the
+          // wrap-up), no in-memory stash (the /status poll would re-serve
+          // it for minutes), and no accuracy row (the backfill UPDATE has
+          // already run, so the row would be stranded unresolved forever).
+          // The spend debit below still happens: those tokens were spent.
+          if (!estimatorDone && !(stopHandle && stopHandle.stopped)) {
+            send('cc_estimate', {
+              text, remainingSeconds, elapsedMs: elapsedAtEstimate,
+              estimatedAt: lastEstimateAtMs,
+            });
+            workerProgress.setEstimate(session.id, {
+              text, remainingSeconds, estimatedAt: lastEstimateAtMs,
+            });
             // Persist this tick to the accuracy dataset (#50 follow-up).
             // Fire-and-forget: persistence must never fail or block a turn,
             // matching the progressLog UPDATE posture below. The turn's
@@ -7159,7 +7205,18 @@ path: /another/changed/view
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
-          if (estimatorEnabled) liveProgressLines.push(text);
+          if (estimatorEnabled) {
+            liveProgressLines.push(text);
+            // #891: the earliest honest "coding is finished" signal. run-cc.sh
+            // emits [done] / [push_failed] as its last line and the recovery
+            // paths append [interrupted], so this fires while the worker is
+            // still flushing — ahead of PR creation, the staging build and the
+            // Mayor wrap-up, which is exactly the window where the stale
+            // "nearly done, just wrapping up" guess used to live on.
+            if (turnWatchdog.TERMINAL_PROGRESS_LINES.includes(String(text).trim())) {
+              stopEstimator('terminal_marker');
+            }
+          }
           pool.query(
             `UPDATE chat_session_messages SET metadata = jsonb_set(
               metadata, '{progressLog}',
@@ -7180,7 +7237,12 @@ path: /another/changed/view
       }
     } finally {
       clearInterval(heartbeat);
-      if (estimator) clearInterval(estimator);
+      // Belt-and-braces (#891): a markerless turn (fatal error, container
+      // death, a journal that never emitted [done]) never hit the
+      // terminal-marker teardown above, so guarantee it here. Idempotent,
+      // and it runs BEFORE the backfill so no late tick can slip a row in
+      // behind the UPDATE.
+      stopEstimator('turn_end');
       // Backfill the actual outcome onto this turn's estimate rows (#50
       // follow-up). Single choke point: the turn's wall clock is known
       // here and the interval is being torn down. Per-tick ground-truth
@@ -7223,6 +7285,11 @@ path: /another/changed/view
     // tears down the worker + clears activeWorkers.
     if (stopHandle && stopHandle.stopped) {
       isError = true;
+      // #891: explicit on the stop path too. The dispatch `finally` above
+      // has already run it, but a stopped run must never leave a guess
+      // hanging next to "Claude Code stopped." — idempotent, so this is
+      // a no-op when teardown already happened.
+      stopEstimator('stopped');
       const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
       await sendStatus(`Claude Code stopped${byStr}.`, { durationMs: Date.now() - turnStartedMs });
       summaryParts.push(`Claude Code was stopped${byStr} before it finished. No commit was pushed.`);
