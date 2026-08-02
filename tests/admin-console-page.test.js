@@ -51,9 +51,13 @@ test('the hash router handles #admin[/section]', () => {
 test('navigateToAdminConsole re-checks isAdmin and bails home for non-admins', () => {
   const fn = appJs.slice(appJs.indexOf('  navigateToAdminConsole('));
   assert.ok(fn.length > 0, 'navigateToAdminConsole exists in app.js');
-  assert.match(fn.slice(0, 300), /if \(!App\.user\?\.isAdmin\)/,
+  // #860 restated the gate as `const isAdmin = !!App.user?.isAdmin` plus a
+  // narrow public-section exception, so match on the flag rather than the
+  // old single-line `if`. Still isAdmin (full AND view-only), never
+  // canAdminWrite.
+  assert.match(fn.slice(0, 400), /const isAdmin = !!App\.user\?\.isAdmin;/,
     'gate on isAdmin — full AND view-only admins, never canAdminWrite');
-  assert.match(fn.slice(0, 300), /App\.navigateHome\(\)/,
+  assert.match(fn.slice(0, 400), /App\.navigateHome\(\)/,
     'a hand-typed #admin from a non-admin lands on home');
   assert.ok(!/canAdminWrite/.test(fn.slice(0, fn.indexOf('_exitAdminConsole'))),
     'page visibility must not gate on canAdminWrite — that excludes view-only admins');
@@ -102,17 +106,124 @@ test('the console is not gated on the environment', () => {
     'feature availability must be identical in staging and production');
 });
 
-test('the menu carries every section and the standalone tools', () => {
-  for (const key of ['overview', 'users', 'codes', 'limits', 'features', 'db-export']) {
+test('the menu carries every section, grouped, with no external tools left', () => {
+  const KEYS = [
+    'overview', 'status', 'node', 'merges', 'rollover', 'staging-reap',
+    'users', 'codes', 'limits',
+    'analytics', 'gallery', 'features',
+    'campaigns', 'db-export', 'topochain',
+  ];
+  for (const key of KEYS) {
     assert.ok(new RegExp(`key: '${key}'`).test(consoleJs), `section '${key}' registered`);
   }
+  // #860: nothing in the console opens a new browser tab any more — the
+  // TOOLS external-link block and its target="_blank" anchors are gone.
+  assert.ok(!/TOOLS\s*:/.test(consoleJs), 'the TOOLS external-link array is gone');
+  assert.ok(!/More tools/.test(consoleJs), 'the "More tools" menu block is gone');
   for (const href of ['/dashboard', '/debug', '/gallery', '/status']) {
-    assert.ok(consoleJs.includes(`href: '${href}'`), `tools link to ${href}`);
+    assert.ok(!consoleJs.includes(`href: '${href}'`),
+      `${href} must be a section, not an external link`);
   }
+  // Every section declares a sidebar group so fifteen rows stay scannable.
+  const sectionBlock = consoleJs.slice(
+    consoleJs.indexOf('SECTIONS: ['),
+    consoleJs.indexOf('isOpen()')
+  );
+  const keyCount = (sectionBlock.match(/key: '/g) || []).length;
+  const groupCount = (sectionBlock.match(/group: '/g) || []).length;
+  assert.equal(keyCount, groupCount, 'every SECTIONS entry carries a group');
   // Responsive split: sidebar on md+, tab strip below md.
   assert.ok(consoleJs.includes('id="admin-nav-desktop"'), 'desktop sidebar renders');
   assert.ok(consoleJs.includes('id="admin-nav-mobile"'), 'mobile tab strip renders');
   assert.match(consoleJs, /overflow-x-auto/, 'the mobile strip scrolls sideways, not the page');
+});
+
+// #860: the six folded-in sections each live in their own module, loaded by
+// the shell and precached by the service worker. Losing any of those three
+// registrations shows "module failed to load" instead of the section.
+test('every folded-in section has a module, a script tag and a precache entry', () => {
+  const sw = fs.readFileSync(path.join(root, 'public/sw.js'), 'utf8');
+  const MODULES = {
+    status: 'admin-status',
+    node: 'admin-node',
+    analytics: 'admin-analytics',
+    merges: 'admin-merges',
+    gallery: 'admin-gallery',
+    campaigns: 'admin-campaigns',
+    topochain: 'admin-topochain',
+  };
+  for (const [key, file] of Object.entries(MODULES)) {
+    assert.match(consoleJs, new RegExp(`${key}: '`),
+      `SECTION_MODULES maps '${key}' to a module global`);
+    assert.ok(fs.existsSync(path.join(root, 'public/js', `${file}.js`)),
+      `public/js/${file}.js exists`);
+    assert.ok(html.includes(`<script src="/js/${file}.js"></script>`),
+      `${file}.js is loaded by the shell`);
+    assert.ok(sw.includes(`'/js/${file}.js'`),
+      `${file}.js is precached by the service worker`);
+  }
+  // The retired page scripts are gone, not merely unreferenced.
+  for (const gone of ['dashboard.js', 'debug.js', 'gallery.js', 'admin-features.js']) {
+    assert.ok(!fs.existsSync(path.join(root, 'public/js', gone)),
+      `public/js/${gone} is removed`);
+    assert.ok(!sw.includes(`'/js/${gone}'`), `${gone} dropped from the SW precache`);
+  }
+});
+
+// The lifecycle that keeps a 5s /api/status poll (which shells out to
+// `docker stats` server-side) and a 2s /api/node-status poll from outliving
+// the section that started them.
+test('every section module exposes destroy(), and switches call it first', () => {
+  for (const file of ['admin-status', 'admin-node', 'admin-analytics',
+    'admin-merges', 'admin-gallery', 'admin-campaigns', 'admin-topochain']) {
+    const src = fs.readFileSync(path.join(root, 'public/js', `${file}.js`), 'utf8');
+    assert.match(src, /destroy\(\)\s*\{/, `${file}.js implements destroy()`);
+    assert.match(src, /render\(\s*\w+\s*\)\s*\{/, `${file}.js implements render(host)`);
+  }
+  assert.match(consoleJs, /_teardownActiveSection\(\)\s*\{/,
+    'the console has a single teardown choke point');
+  const renderSection = consoleJs.slice(consoleJs.indexOf('  _renderSection() {'));
+  const head = renderSection.slice(0, 1200);
+  const teardownAt = head.indexOf('_teardownActiveSection()');
+  const renderAt = head.indexOf('mod.render(host)');
+  assert.ok(teardownAt > -1, '_renderSection tears the previous section down');
+  assert.ok(renderAt > -1, '_renderSection delegates to the section module');
+  assert.ok(teardownAt < renderAt, 'teardown happens BEFORE the next section renders');
+  // Leaving the console entirely must stop the polls too.
+  const close = consoleJs.slice(consoleJs.indexOf('  close() {'));
+  assert.match(close.slice(0, 400), /_teardownActiveSection\(\)/,
+    'close() also tears the active section down');
+});
+
+// Public mode: /status and /node-status were public pages before the fold,
+// so a signed-in non-admin following those old links still reaches them —
+// and sees ONLY them. Everything else, including bare #admin, still bounces.
+test('the two formerly-public sections stay reachable for non-admins', () => {
+  for (const key of ['status', 'node']) {
+    assert.match(consoleJs, new RegExp(`key: '${key}'[^}]*public: true`),
+      `section '${key}' is flagged public`);
+  }
+  // Only those two — counted inside the SECTIONS literal, so the
+  // file-header comment explaining the flag doesn't inflate the tally.
+  const sectionBlock = consoleJs.slice(
+    consoleJs.indexOf('SECTIONS: ['),
+    consoleJs.indexOf('isOpen()')
+  );
+  assert.equal((sectionBlock.match(/public: true/g) || []).length, 2,
+    'exactly two sections are public');
+  assert.match(consoleJs, /_visibleSections\(\)\s*\{/, 'the menu filters by visibility');
+  assert.match(consoleJs, /filter\(\(s\) => s\.public\)/,
+    'public mode narrows the menu to the public sections');
+
+  const fn = appJs.slice(appJs.indexOf('  navigateToAdminConsole('));
+  const head = fn.slice(0, 900);
+  assert.match(appJs, /ADMIN_PUBLIC_SECTIONS: \['status', 'node'\]/,
+    'app.js pins the public section list');
+  assert.match(head, /if \(!isAdmin && !publicMode\)/,
+    'a non-admin on any non-public section still bails');
+  assert.match(head, /App\.navigateHome\(\)/, 'and lands on home');
+  assert.match(fn.slice(0, 4000), /publicMode \? 'Platform status' : 'Admin & moderation'/,
+    'public mode retitles the header');
 });
 
 test('section switches replace, never push, history', () => {

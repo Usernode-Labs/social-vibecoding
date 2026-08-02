@@ -142,7 +142,7 @@ test('per-app progress rides the existing version-pill machinery', () => {
 });
 
 test('the console section exists, is admin-visible, and its button is write-gated', () => {
-  assert.match(consoleJs, /\{ key: 'rollover', label: 'Container rollover' \}/,
+  assert.match(consoleJs, /\{ key: 'rollover', label: 'Container rollover', group: '[^']+' \}/,
     'a real section in the admin console nav');
   assert.match(consoleJs, /case 'rollover': return AdminConsole\.renderRolloverSection\(host\)/,
     'wired into the hash router');

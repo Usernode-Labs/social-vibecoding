@@ -6,14 +6,19 @@
 // (public/js/app.js), the same shape as the Challenges / Profile screens.
 //
 // It reorganizes the standalone /admin page's sections (public/admin.html:
-// Operations overview, LLM spend limits, Activation codes, Users) plus the
-// /admin-features viewer (public/js/admin-features.js) into one page with
-// a navigation menu — a fixed sidebar on md+ viewports, a horizontally
+// Operations overview, Maintenance campaigns, LLM spend limits, Activation
+// codes, Users) plus the /admin-features viewer into one page with a
+// navigation menu — a fixed sidebar on md+ viewports, a horizontally
 // scrollable tab strip below md (the Dev board's mobile kanban-tabs
-// pattern, #814). Every data endpoint is an EXISTING /api/admin/* route,
-// enforced server-side by adminMiddleware (reads) and requireAdminWrite
-// (mutations) — this module adds no new capabilities and no new endpoints;
-// the legacy standalone pages keep working unchanged.
+// pattern, #814). Every data endpoint is an EXISTING route, enforced
+// server-side by adminMiddleware (reads) and requireAdminWrite
+// (mutations) — this module adds no new capabilities and no new endpoints.
+//
+// #860 completed the consolidation: /status, /node-status, /dashboard,
+// /debug and /gallery are sections here too, and all seven old URLs are
+// now client-side redirect stubs into the matching #admin/<key>. Nothing
+// in the admin experience opens a new browser tab any more, which is why
+// the old TOOLS external-link block is gone.
 //
 // Permissions: the page itself is reachable for anyone with
 // App.user.isAdmin (full AND view-only admins — the navigation gate lives
@@ -23,62 +28,110 @@
 // "View as non-admin" preview masks both flags before this module can read
 // them (see the boot masking in app.js), so no extra handling is needed
 // here. Never gated on USERNODE_ENV — identical in staging and production.
+//
+// PUBLIC MODE (#860): the two sections carrying a `public: true` flag —
+// Health & status and Node & chain — were publicly reachable as /status
+// and /node-status before the fold, so they stay reachable for a
+// signed-in NON-admin who follows an old link. app.js mounts the console
+// in public mode for those, and _publicMode() below filters the menu down
+// to just them and suppresses the view-only banner. The DATA boundary is
+// entirely server-side: GET /api/status runs the payload through
+// src/services/status.js redact(), which withholds worker progress, model
+// names, spend, host load, stuck sessions and the event log from
+// non-admins.
 
 const AdminConsole = {
   _open: false,
   _section: 'overview',
   _menusWired: false,
+  // Set by app.js when the console is mounted for a non-admin who
+  // deep-linked one of the `public` sections. Never true for an admin.
+  _public: false,
+  // The section module (if any) currently rendered — used to call its
+  // destroy() before swapping in the next one. See _renderSection.
+  _activeModule: null,
 
-  // In-SPA sections. Keys are the #admin/<key> hash segments.
+  // In-SPA sections. Keys are the #admin/<key> hash segments; `group` is
+  // the sidebar heading they sit under (order here IS menu order, and the
+  // mobile tab strip is the same list flattened).
   SECTIONS: [
-    { key: 'overview', label: 'Overview' },
-    { key: 'users', label: 'Users' },
-    { key: 'codes', label: 'Activation codes' },
-    { key: 'limits', label: 'Spend limits' },
-    { key: 'features', label: 'Submitted features' },
-    { key: 'rollover', label: 'Container rollover' },
-    { key: 'staging-reap', label: 'Stale previews' },
-    { key: 'db-export', label: 'Database export' },
+    { key: 'overview', label: 'Overview', group: 'Operations' },
+    // Health & status and Node & chain are the two `public` sections —
+    // see the PUBLIC MODE note above.
+    { key: 'status', label: 'Health & status', group: 'Operations', public: true },
+    { key: 'node', label: 'Node & chain', group: 'Operations', public: true },
+    { key: 'merges', label: 'Merge debug', group: 'Operations' },
+    { key: 'rollover', label: 'Container rollover', group: 'Operations' },
+    { key: 'staging-reap', label: 'Stale previews', group: 'Operations' },
+
+    { key: 'users', label: 'Users', group: 'People' },
+    { key: 'codes', label: 'Activation codes', group: 'People' },
+    { key: 'limits', label: 'Spend limits', group: 'People' },
+
+    { key: 'analytics', label: 'Analytics', group: 'Insights' },
+    { key: 'gallery', label: 'Screenshot gallery', group: 'Insights' },
+    { key: 'features', label: 'Submitted features', group: 'Insights' },
+
+    { key: 'campaigns', label: 'Maintenance campaigns', group: 'Platform' },
+    { key: 'db-export', label: 'Database export', group: 'Platform' },
     // Topochain (Task 15, migration plan Global Constraint #8): ONE
     // section, its own sub-nav under #admin/topochain/<sub> — see
-    // renderTopochainSection below and public/js/admin-topochain.js,
+    // SECTION_MODULES below and public/js/admin-topochain.js,
     // which owns that second hash level entirely on its own (mirrors
     // leaderboard.js's _setSub/_syncHash pattern) rather than teaching
-    // this file general multi-level routing.
-    { key: 'topochain', label: 'Topochain' },
-  ],
-
-  // Heavier admin surfaces that stay standalone full-browser pages for
-  // now (each is its own sizable app — see the spec's deferred work).
-  // Rendered as external links at the bottom of the menu.
-  TOOLS: [
-    { href: '/dashboard', label: 'Analytics dashboard' },
-    { href: '/debug', label: 'Merge debug' },
-    { href: '/gallery', label: 'Gallery' },
-    { href: '/status', label: 'Platform status' },
+    // this file general multi-level routing. Maintenance campaigns does
+    // the same for #admin/campaigns/<id>.
+    { key: 'topochain', label: 'Topochain', group: 'Platform' },
   ],
 
   isOpen() { return AdminConsole._open; },
+
+  // True while the console is mounted for a non-admin on a `public`
+  // section. Belt-and-braces: also require the absence of isAdmin, so a
+  // stale flag can never narrow an admin's own menu.
+  _publicMode() {
+    return !!AdminConsole._public && !(window.App && App.user && App.user.isAdmin);
+  },
+
+  // The sections the current viewer may navigate to.
+  _visibleSections() {
+    return AdminConsole._publicMode()
+      ? AdminConsole.SECTIONS.filter((s) => s.public)
+      : AdminConsole.SECTIONS;
+  },
 
   // Single write gate for every mutating control on the page. View-only
   // admins (is_admin && admin_readonly) carry isAdmin but not
   // canAdminWrite — they see everything read-only.
   canWrite() { return !!(window.App && App.user && App.user.canAdminWrite); },
 
-  open(section) {
+  // `opts.public` is set by app.js when a non-admin deep-linked one of the
+  // `public` sections; it must be resolved BEFORE the first _renderShell so
+  // the menu is filtered on the very first paint.
+  open(section, opts) {
     AdminConsole._open = true;
-    const valid = AdminConsole.SECTIONS.some((s) => s.key === section);
+    AdminConsole._public = !!(opts && opts.public);
+    const visible = AdminConsole._visibleSections();
+    const valid = visible.some((s) => s.key === section);
+    // In public mode, fall back to the first PUBLIC section rather than
+    // Overview (which the viewer can't see) — and never resurrect a
+    // last-visited admin section from an earlier admin login in this tab.
+    const fallback = AdminConsole._publicMode()
+      ? (visible.some((s) => s.key === AdminConsole._section) ? AdminConsole._section : visible[0]?.key)
+      : (AdminConsole._section || 'overview');
     AdminConsole._renderShell();
     // Deep-linked section wins; otherwise keep the last-visited section
     // (instant repaint on re-entry), defaulting to Overview.
-    AdminConsole.setSection(
-      valid ? section : (AdminConsole._section || 'overview'),
-      { writeHash: false }
-    );
+    AdminConsole.setSection(valid ? section : fallback, { writeHash: false });
   },
 
   close() {
     AdminConsole._open = false;
+    AdminConsole._public = false;
+    // Tear the active section's timers/listeners down: leaving the console
+    // must not leave a 5s /api/status or 2s /api/node-status poll running
+    // for the life of the tab (see _teardownActiveSection).
+    AdminConsole._teardownActiveSection();
   },
 
   esc(s) {
@@ -142,9 +195,12 @@ const AdminConsole = {
   // ── Shell: menu (sidebar / tab strip) + content host ──────────────────
 
   _navItemsHtml(mode) {
-    // mode 'side' → vertical sidebar rows; mode 'tabs' → the mobile strip.
+    // mode 'side' → vertical sidebar rows, grouped under headings;
+    // mode 'tabs' → the mobile strip, the same list flattened (a heading
+    // per group would eat most of a phone's horizontal scroll budget).
     const active = AdminConsole._section;
-    const items = AdminConsole.SECTIONS.map((s) => {
+    const sections = AdminConsole._visibleSections();
+    const itemHtml = (s) => {
       const isActive = s.key === active;
       const cls = mode === 'side'
         ? 'admin-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
@@ -157,29 +213,32 @@ const AdminConsole = {
             : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300');
       return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}"
         data-admin-section="${s.key}" class="${cls}">${AdminConsole.esc(s.label)}</button>`;
-    }).join('');
-    const toolCls = mode === 'side'
-      ? 'flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm text-zinc-500 hover:text-violet-500 dark:hover:text-violet-400 hover:bg-zinc-100 dark:hover:bg-zinc-800'
-      : 'shrink-0 flex items-center gap-1 px-3 py-2 text-sm text-zinc-500 hover:text-violet-500 whitespace-nowrap border-b-2 border-transparent';
-    const tools = AdminConsole.TOOLS.map((t) =>
-      `<a href="${t.href}" target="_blank" rel="noopener" class="${toolCls}">
-        <span>${AdminConsole.esc(t.label)}</span>
-        <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
-      </a>`).join('');
-    if (mode === 'side') {
-      return `${items}
-        <div class="mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800">
-          <div class="px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">More tools</div>
-          ${tools}
-        </div>`;
+    };
+    if (mode !== 'side') return sections.map(itemHtml).join('');
+    // Group headings, in first-appearance order. Fifteen flat rows is a lot
+    // to scan; the headings are the mitigation (and stay cheap — no second
+    // level of nav state).
+    const groups = [];
+    for (const s of sections) {
+      const name = s.group || 'Other';
+      let g = groups.find((x) => x.name === name);
+      if (!g) { g = { name, items: [] }; groups.push(g); }
+      g.items.push(s);
     }
-    return items + tools;
+    return groups.map((g, i) => `
+      <div class="${i === 0 ? '' : 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800'}">
+        <div class="px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${AdminConsole.esc(g.name)}</div>
+        ${g.items.map(itemHtml).join('')}
+      </div>`).join('');
   },
 
   _renderShell() {
     const root = document.getElementById('admin-root');
     if (!root) return;
-    const viewOnly = !AdminConsole.canWrite();
+    // In public mode the viewer isn't an admin at all, so the view-only
+    // ADMIN banner would be nonsense — suppress it rather than showing an
+    // amber "you can't make changes" strip to a regular member.
+    const viewOnly = !AdminConsole.canWrite() && !AdminConsole._publicMode();
     root.innerHTML = `
       <div class="md:flex md:items-start md:gap-6">
         <!-- Desktop sidebar menu -->
@@ -224,7 +283,10 @@ const AdminConsole = {
   },
 
   setSection(key, opts) {
-    if (!AdminConsole.SECTIONS.some((s) => s.key === key)) key = 'overview';
+    const visible = AdminConsole._visibleSections();
+    if (!visible.some((s) => s.key === key)) {
+      key = AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview';
+    }
     AdminConsole._section = key;
     // Repaint the active state in both menus without rebuilding the shell.
     const root = document.getElementById('admin-root');
@@ -247,17 +309,64 @@ const AdminConsole = {
   // replaceState, and only while we're actually on the #admin route (the
   // Leaderboard._setSub pattern). Entering/leaving the page still gets a
   // real history entry via normal hash navigation.
+  //
+  // Sections that own a second hash level (topochain, campaigns) are left
+  // alone once we're already inside them, so their own replaceState isn't
+  // fought over on every repaint.
   _writeHash(key) {
     const target = key === 'overview' ? '#admin' : `#admin/${key}`;
+    if (location.hash.startsWith(`${target}/`)) return;
     if (location.hash.startsWith('#admin') && location.hash !== target) {
       history.replaceState(null, '', target);
+    }
+  },
+
+  // Sections whose content is owned by a separate module (#860). Each
+  // exposes render(host) / destroy(); destroy() is what stops their
+  // polling when you navigate away. Resolved lazily by name so a module
+  // that failed to load degrades to a message instead of a crash.
+  SECTION_MODULES: {
+    status: 'AdminStatus',
+    node: 'AdminNode',
+    analytics: 'AdminAnalytics',
+    merges: 'AdminMerges',
+    gallery: 'AdminGallery',
+    campaigns: 'AdminCampaigns',
+    topochain: 'AdminTopochain',
+  },
+
+  // Stop the outgoing section's background work before its DOM is replaced.
+  // Without this, Health & status keeps polling /api/status every 5s (which
+  // shells out to `docker stats` server-side) and Node & chain keeps polling
+  // every 2s, for the rest of the tab's life.
+  _teardownActiveSection() {
+    const mod = AdminConsole._activeModule;
+    AdminConsole._activeModule = null;
+    if (mod && typeof mod.destroy === 'function') {
+      try { mod.destroy(); } catch (err) { console.error('admin section destroy failed', err); }
     }
   },
 
   _renderSection() {
     const host = document.getElementById('admin-section-content');
     if (!host) return;
-    switch (AdminConsole._section) {
+    // Always tear the previous section down first — this is the single
+    // choke point every section switch passes through.
+    AdminConsole._teardownActiveSection();
+
+    const key = AdminConsole._section;
+    const modName = AdminConsole.SECTION_MODULES[key];
+    if (modName) {
+      const mod = window[modName];
+      if (!mod || typeof mod.render !== 'function') {
+        host.innerHTML = `<p class="p-4 text-sm text-zinc-500">The ${AdminConsole.esc(key)} console module failed to load.</p>`;
+        return;
+      }
+      AdminConsole._activeModule = mod;
+      mod.render(host);
+      return;
+    }
+    switch (key) {
       case 'users': return AdminConsole.renderUsersSection(host);
       case 'codes': return AdminConsole.renderCodesSection(host);
       case 'limits': return AdminConsole.renderLimitsSection(host);
@@ -265,26 +374,21 @@ const AdminConsole = {
       case 'rollover': return AdminConsole.renderRolloverSection(host);
       case 'staging-reap': return AdminConsole.renderStalePreviewsSection(host);
       case 'db-export': return AdminConsole.renderDbExportSection(host);
-      case 'topochain': return AdminConsole.renderTopochainSection(host);
       default: return AdminConsole.renderOverviewSection(host);
     }
   },
 
-  // ── Topochain (Task 15) ─────────────────────────────────────────────
+  // ── Delegated sections ──────────────────────────────────────────────
   //
-  // Delegates entirely to AdminTopochain (public/js/admin-topochain.js).
-  // That module owns its own sub-nav under #admin/topochain/<sub> — it
-  // reads location.hash directly for the deep-linked sub-key and writes
-  // it back itself (replaceState, guarded on '#admin/topochain'), the
-  // same pattern leaderboard.js uses for its own tab state. Nothing here
-  // needs to know the sub-nav's keys or track them across re-renders.
-  renderTopochainSection(host) {
-    if (!window.AdminTopochain || typeof AdminTopochain.render !== 'function') {
-      host.innerHTML = '<p class="p-4 text-sm text-zinc-500">Topochain console module failed to load.</p>';
-      return;
-    }
-    AdminTopochain.render(host);
-  },
+  // Topochain (Task 15), Health & status / Node & chain / Analytics /
+  // Merge debug / Screenshot gallery / Maintenance campaigns (#860) all
+  // live in their own modules, dispatched by SECTION_MODULES above rather
+  // than by a render*Section method here. Two of them own a second hash
+  // level entirely on their own — AdminTopochain under
+  // #admin/topochain/<sub> and AdminCampaigns under
+  // #admin/campaigns/<id> — reading location.hash directly and writing it
+  // back with replaceState, the same pattern leaderboard.js uses for its
+  // own tab state, so this file never needs general multi-level routing.
 
   // ── Container rollover ────────────────────────────────────────────────
   //

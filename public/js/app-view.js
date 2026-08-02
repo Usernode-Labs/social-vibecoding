@@ -9015,13 +9015,15 @@ const AppView = {
   },
 
   // #353: the self-app is a hash-routed SPA — its internal screens live in
-  // location.hash (`#app/...`, `#leaderboard`, ...), so a testing path
-  // joined as a server pathname just loads the home feed. Mirror the
+  // location.hash (`#app/...`, `#leaderboard`, `#admin/...`), so a testing
+  // path joined as a server pathname just loads the home feed. Mirror the
   // server-side normalisation (src/services/visuals.js selfAppHashPath):
   // when the path's first segment is one of the SPA hash routes, move it
   // into the fragment; leave the bare '/', an already-'/#...' path, and
-  // standalone server pages (/dashboard, /admin, ...) untouched.
-  _SELF_APP_HASH_ROUTES: ['app', 'leaderboard', 'group-chat', 'individual-chat'],
+  // genuinely standalone server pages (/cli/authorize) untouched. 'admin'
+  // joined the list in #860, when the seven standalone admin pages became
+  // #admin console sections.
+  _SELF_APP_HASH_ROUTES: ['app', 'leaderboard', 'group-chat', 'individual-chat', 'admin'],
   _selfAppHashPath(p) {
     const path = typeof p === 'string' ? p : null;
     if (!path || !path.startsWith('/') || path.startsWith('/#')) return path;

@@ -120,6 +120,11 @@ const App = {
   _authedBooted: false,
 
   enterAnonymous() {
+    // Capture the platform SHA this document booted with. The anonymous
+    // shell has no WS "platform updating" banner, so pull-to-refresh is
+    // its only recovery path after a deploy — and platformMovedOn()
+    // needs a boot-time baseline to compare against.
+    App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
   },
 
@@ -279,6 +284,42 @@ const App = {
       App.PlatformUpdating.observeVersion(info);
       App.renderPlatformVersionPill(info);
     } catch {}
+  },
+
+  // True when /api/version reports a different SHA than the one this
+  // document booted with — i.e. the platform redeployed and this tab is
+  // running stale client code. Fail-closed (false) on any error: a
+  // flaky network must never turn a data refresh into a reload loop.
+  async platformMovedOn() {
+    try {
+      const res = await fetch('/api/version');
+      if (!res.ok) return false;
+      const info = await res.json();
+      if (!info.sha || info.sha === 'dev') return false;
+      if (!App.loadedPlatformSha) {
+        // No boot baseline (first poll lost a race, or the boot fetch
+        // failed) — record what we see and treat this tab as current.
+        App.loadedPlatformSha = info.sha;
+        return false;
+      }
+      return info.sha !== App.loadedPlatformSha;
+    } catch { return false; }
+  },
+
+  // Pull-to-refresh wrapper: run the screen's data refresh, and when the
+  // platform has redeployed since this document loaded, upgrade it to a
+  // full reload — pull-to-refresh means "get me the latest", and data
+  // alone can't deliver new client code. The never-resolving promise
+  // keeps the kit's spinner up until the reload tears the page down.
+  _refreshOrReload(refresh) {
+    return Promise.all([
+      Promise.resolve().then(refresh).catch(() => {}),
+      App.platformMovedOn(),
+    ]).then(([, movedOn]) => {
+      if (!movedOn) return undefined;
+      location.reload();
+      return new Promise(() => {});
+    });
   },
 
   // Four rendering states. Reuses .app-version-pill base styles + a
@@ -1744,7 +1785,10 @@ const App = {
   // own PTR in AppView.renderDevView.
   _wirePullToRefresh() {
     const home = document.getElementById('home-screen');
-    if (home) PlatformUI.pullToRefresh(home, () => Home.load());
+    if (home) {
+      PlatformUI.pullToRefresh(home,
+        () => App._refreshOrReload(() => Home.load()));
+    }
     const lb = document.getElementById('leaderboard-screen');
     if (lb) {
       PlatformUI.pullToRefresh(lb, () => {
@@ -2884,8 +2928,16 @@ const App = {
     if (window.Profile?.close) Profile.close();
   },
 
-  // Show the admin & moderation console (#818). Sibling to
-  // navigateToProfile — hides home + app, reveals the dedicated
+  // Sections of the admin console that were PUBLIC pages before #860
+  // folded them in (/status and /node-status). A signed-in non-admin who
+  // follows one of those old links still gets them — everything else in
+  // the console, including bare #admin, still bounces a non-admin home.
+  // Must stay in sync with the `public: true` flags in
+  // AdminConsole.SECTIONS (public/js/admin-console.js).
+  ADMIN_PUBLIC_SECTIONS: ['status', 'node'],
+
+  // Show the admin & moderation console (#818, extended by #860). Sibling
+  // to navigateToProfile — hides home + app, reveals the dedicated
   // #admin-screen, lets the AdminConsole module render itself into
   // #admin-root. Gate: App.user.isAdmin, which covers BOTH full and
   // view-only admins (see renderAdminButton above) — a hand-typed #admin
@@ -2893,8 +2945,17 @@ const App = {
   // App.user.isAdmin at boot, so preview mode is covered by the same
   // check. Every /api/admin/* endpoint the page calls is independently
   // enforced server-side.
+  //
+  // The one exception is PUBLIC MODE: a non-admin asking for #admin/status
+  // or #admin/node gets the console mounted with only those two sections
+  // in the menu and the header reading "Platform status". The data they
+  // see is the same sanitized /api/status payload the old public /status
+  // page served them (src/services/status.js redact()), so this widens no
+  // boundary — it only keeps the old public URLs working.
   navigateToAdminConsole(section) {
-    if (!App.user?.isAdmin) {
+    const isAdmin = !!App.user?.isAdmin;
+    const publicMode = !isAdmin && App.ADMIN_PUBLIC_SECTIONS.includes(section);
+    if (!isAdmin && !publicMode) {
       App.navigateHome();
       return;
     }
@@ -2925,9 +2986,9 @@ const App = {
     const _drs = document.getElementById('drawer-row-share');
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
-    App.setHeaderTitle('Admin & moderation');
+    App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
     App._inAdmin = true;
-    if (window.AdminConsole?.open) AdminConsole.open(section);
+    if (window.AdminConsole?.open) AdminConsole.open(section, { public: publicMode });
   },
 
   _exitAdminConsole() {

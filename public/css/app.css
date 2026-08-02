@@ -3782,3 +3782,208 @@ button.attr-chip { cursor: pointer; }
 }
 
 .st-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px 0; }
+
+/* ────────────────────────────────────────────────────────────────────────
+   Admin console — folded-in section styles (#860)
+
+   The seven standalone admin pages each carried their own inline <style>
+   block. Folded into the #admin console they share one document with the
+   rest of the SPA, so every rule below is SCOPED to the section root that
+   owns it. Nothing here is global.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* ── Health & status (was public/status.html) ────────────────────────── */
+
+#admin-status-root .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+#admin-status-root .pill .dot { width: 0.5rem; height: 0.5rem; border-radius: 9999px; }
+#admin-status-root .pill-running { background: rgba(34, 197, 94, 0.1); color: #4ade80; }
+#admin-status-root .pill-running .dot { background: #22c55e; box-shadow: 0 0 6px #22c55e; }
+#admin-status-root .pill-stopped { background: rgba(250, 204, 21, 0.1); color: #facc15; }
+#admin-status-root .pill-stopped .dot { background: #facc15; }
+#admin-status-root .pill-missing { background: rgba(239, 68, 68, 0.1); color: #f87171; }
+#admin-status-root .pill-missing .dot { background: #ef4444; }
+#admin-status-root .pill-creating { background: rgba(167, 139, 250, 0.1); color: #a78bfa; }
+#admin-status-root .pill-creating .dot { background: #8b5cf6; }
+
+/* Light-mode pill overrides: the 10%-opacity tint over white is too pale
+   for the bright dark-mode fill colors, so darken the text and slightly
+   strengthen the tint. The shell toggles `.dark` on <html>, so target the
+   light state via html:not(.dark). Dots stay solid and saturated. */
+html:not(.dark) #admin-status-root .pill-running { background: rgba(34, 197, 94, 0.15); color: #15803d; }
+html:not(.dark) #admin-status-root .pill-stopped { background: rgba(202, 138, 4, 0.15); color: #a16207; }
+html:not(.dark) #admin-status-root .pill-missing { background: rgba(239, 68, 68, 0.15); color: #b91c1c; }
+html:not(.dark) #admin-status-root .pill-creating { background: rgba(139, 92, 246, 0.15); color: #6d28d9; }
+
+#admin-status-root .mono,
+#admin-node-root .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+/* The admin-only progressive-disclosure flag. On the standalone page this
+   was `body:not(.is-admin) .admin-only`, which inside the SPA would hide
+   .admin-only markup anywhere in the document — so the class now lives on
+   #admin-status-root itself (set by AdminStatus.refresh from the payload's
+   isAdmin), and the rule is scoped to that subtree. The DATA is already
+   withheld server-side by src/services/status.js redact(); this only hides
+   the now-empty headings. */
+#admin-status-root:not(.is-admin) .admin-only { display: none !important; }
+
+/* ── Node & chain (was public/node-status.html) ──────────────────────────
+   Deliberately keeps the dapp-server.js status-page look rather than being
+   restyled into Tailwind, so the two viewers stay comparable. Its palette
+   variables are re-namespaced --un-ns-* and declared on the section root
+   (not :root) so they can't leak into the shell. */
+
+#admin-node-root {
+  --un-ns-fg: #e7edf7;
+  --un-ns-muted: #a8b3c7;
+  --un-ns-card: #141b26;
+  --un-ns-border: rgba(255, 255, 255, 0.12);
+  --un-ns-accent: #6ea8fe;
+  --un-ns-danger: #ff6b6b;
+  --un-ns-ok: #5dd39e;
+  --un-ns-warn: #e6a817;
+  --un-ns-soft: rgba(255, 255, 255, 0.04);
+  color: var(--un-ns-fg);
+  line-height: 1.5;
+}
+html:not(.dark) #admin-node-root {
+  --un-ns-fg: #0b1220;
+  --un-ns-muted: #4b5568;
+  --un-ns-card: #ffffff;
+  --un-ns-border: rgba(15, 23, 42, 0.12);
+  --un-ns-accent: #2563eb;
+  --un-ns-danger: #c81e1e;
+  --un-ns-ok: #0f766e;
+  --un-ns-warn: #b45309;
+  --un-ns-soft: rgba(15, 23, 42, 0.03);
+}
+
+#admin-node-root .header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+#admin-node-root h2 { font-size: 20px; margin: 0; font-weight: 600; }
+#admin-node-root .conn { font-size: 11px; color: var(--un-ns-muted); }
+#admin-node-root .conn .led {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--un-ns-muted);
+  margin-right: 5px;
+  vertical-align: middle;
+}
+#admin-node-root .conn.live .led { background: var(--un-ns-ok); }
+#admin-node-root .conn.dead .led { background: var(--un-ns-danger); }
+#admin-node-root .header-pill { font-size: 13px; color: var(--un-ns-muted); margin-bottom: 24px; }
+#admin-node-root .card {
+  background: var(--un-ns-card);
+  border: 1px solid var(--un-ns-border);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin: 14px 0;
+}
+#admin-node-root .card h3 {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--un-ns-muted);
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+#admin-node-root .badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.6;
+  vertical-align: middle;
+}
+#admin-node-root .badge.ok { background: rgba(93, 211, 158, 0.15); color: var(--un-ns-ok); }
+#admin-node-root .badge.warn { background: rgba(230, 168, 23, 0.15); color: var(--un-ns-warn); }
+#admin-node-root .badge.err { background: rgba(255, 107, 107, 0.18); color: var(--un-ns-danger); }
+#admin-node-root .badge.muted { background: var(--un-ns-soft); color: var(--un-ns-muted); }
+#admin-node-root .badge.accent { background: rgba(110, 168, 254, 0.18); color: var(--un-ns-accent); }
+#admin-node-root .kv {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: 4px 12px;
+  font-size: 13px;
+}
+#admin-node-root .kv .label { color: var(--un-ns-muted); }
+#admin-node-root .kv .val { word-break: break-all; }
+#admin-node-root code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+}
+#admin-node-root .sync-bar {
+  width: 100%;
+  height: 6px;
+  background: var(--un-ns-border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 8px 0 4px;
+}
+#admin-node-root .sync-fill { height: 100%; background: var(--un-ns-accent); transition: width 0.4s ease; }
+#admin-node-root .sync-fill.full { background: var(--un-ns-ok); }
+#admin-node-root details { background: var(--un-ns-soft); border-radius: 8px; padding: 6px 12px; margin: 8px 0; }
+#admin-node-root details[open] { padding-bottom: 12px; }
+#admin-node-root summary { cursor: pointer; font-size: 13px; padding: 4px 0; font-weight: 500; user-select: none; }
+#admin-node-root summary::marker { color: var(--un-ns-muted); }
+#admin-node-root .err-text { color: var(--un-ns-danger); font-size: 12px; margin: 8px 0; }
+#admin-node-root .warn-text { color: var(--un-ns-warn); font-size: 12px; margin: 8px 0; }
+#admin-node-root .small { font-size: 11px; color: var(--un-ns-muted); }
+#admin-node-root .empty { color: var(--un-ns-muted); font-size: 12px; padding: 6px 0; font-style: italic; }
+#admin-node-root a { color: var(--un-ns-accent); text-decoration: none; }
+#admin-node-root a:hover { text-decoration: underline; }
+
+/* ── Analytics (was public/dashboard.html) ───────────────────────────── */
+
+/* Transparent per-column hover targets in the SVG charts. The faint fill on
+   hover indicates which column the tooltip is describing. */
+#admin-analytics-root .dc-hover { cursor: pointer; }
+#admin-analytics-root .dc-hover:hover { fill-opacity: 0.10 !important; }
+
+/* (?) info icon next to each chart heading. Hover/focus shows the floating
+   explanatory tooltip (wired in admin-analytics.js). */
+#admin-analytics-root .dc-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  height: 1rem;
+  margin-left: 0.4rem;
+  border-radius: 9999px;
+  font-size: 0.7rem;
+  line-height: 1;
+  font-weight: 700;
+  cursor: help;
+  user-select: none;
+  vertical-align: middle;
+  background: rgba(139, 92, 246, 0.18);
+  color: #a78bfa;
+}
+#admin-analytics-root .dc-info:hover,
+#admin-analytics-root .dc-info:focus { background: rgba(139, 92, 246, 0.32); outline: none; }
+
+/* ── Merge debug (was public/debug.html) ─────────────────────────────── */
+
+#admin-merges-root .step-detail { white-space: pre-wrap; word-break: break-word; }
+#admin-merges-root .spin { animation: admin-merges-spin 1s linear infinite; }
+@keyframes admin-merges-spin { to { transform: rotate(360deg); } }

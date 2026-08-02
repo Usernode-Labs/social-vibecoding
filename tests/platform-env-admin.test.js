@@ -249,12 +249,16 @@ test('the session columns are additive and separate from check_state', () => {
 // ── The admin-console section is gone ─────────────────────────────────
 
 test('the console no longer carries a Platform variables section', () => {
-  assert.ok(!/platform-env/.test(consoleJs),
-    'nav entry, router case and render functions all removed — a stale '
-    + '#admin/platform-env hash falls through to the default section because '
-    + 'open() validates against SECTIONS');
-  assert.match(consoleJs, /const valid = AdminConsole\.SECTIONS\.some\(\(s\) => s\.key === section\)/,
+  assert.ok(!/key: 'platform-env'/.test(consoleJs), 'no nav entry');
+  assert.ok(!/case 'platform-env'/.test(consoleJs), 'no router case');
+  assert.ok(!/renderPlatformEnvSection/.test(consoleJs), 'no render function');
+  // A stale #admin/platform-env hash falls through to the default section
+  // because open() validates the requested key against the visible
+  // SECTIONS list (#860 renamed the local, same check).
+  assert.match(consoleJs, /const valid = visible\.some\(\(s\) => s\.key === section\)/,
     'that fallthrough is what makes an old bookmark harmless');
+  assert.match(consoleJs, /_visibleSections\(\)/,
+    'and the visible list is derived from SECTIONS');
 });
 
 // ── Panel UI ──────────────────────────────────────────────────────────

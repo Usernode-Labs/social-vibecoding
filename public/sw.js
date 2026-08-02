@@ -52,6 +52,15 @@ const SHELL_ASSETS = [
   '/js/admin-console.js',
   '/js/auth-screens.js',
   '/js/admin-topochain.js',
+  // Folded-in console sections (#860) — one module per section that used to
+  // be a standalone page. The retired page scripts (/js/dashboard.js,
+  // /js/debug.js, /js/gallery.js, /js/admin-features.js) are gone.
+  '/js/admin-status.js',
+  '/js/admin-node.js',
+  '/js/admin-analytics.js',
+  '/js/admin-merges.js',
+  '/js/admin-gallery.js',
+  '/js/admin-campaigns.js',
   '/js/app-secrets.js',
   '/js/platform-ui.js',
   '/js/app-view.js',
@@ -95,13 +104,15 @@ const SHELL_ASSETS = [
 // Server-rendered standalone pages that stay online-only: never serve the
 // SPA shell as an offline fallback for them (it would render the wrong
 // app entirely). They just fail offline, like today.
+//
+// #860 emptied most of this list: /admin, /admin-features, /dashboard,
+// /debug, /gallery, /node-status and /status are redirect stubs into the
+// SPA's #admin console now, so falling back to the cached shell is exactly
+// right for them (the same change the auth pages got in
+// fold-auth-pages-into-SPA). /cli/authorize is the last genuine standalone
+// server page — a pre-auth device-authorisation flow with its own
+// stylesheet, deliberately outside the app shell.
 const NO_FALLBACK_PAGES = [
-  '/admin',
-  '/admin-features',
-  '/dashboard',
-  '/debug',
-  '/node-status',
-  '/status',
   '/cli/authorize',
 ];
 

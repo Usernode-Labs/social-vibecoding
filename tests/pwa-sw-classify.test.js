@@ -97,11 +97,34 @@ test('SPA navigations may fall back to the cached shell', () => {
   assert.equal(classify('GET', '/some/spa/route', 'text/html', 'navigate'), 'navigate');
 });
 
-test('standalone server pages never fall back to the SPA shell', () => {
-  for (const page of ['/admin', '/admin-features', '/dashboard', '/debug', '/node-status', '/status', '/cli/authorize']) {
-    assert.ok(NO_FALLBACK_PAGES.includes(page), `${page} missing from NO_FALLBACK_PAGES`);
-    assert.equal(classify('GET', page, 'text/html', 'navigate'), 'bypass');
+// #860: the seven standalone admin pages became #admin console sections and
+// their old URLs are redirect stubs into the SPA — exactly the shape the
+// auth pages already had, so the cached shell is the right offline
+// fallback for them now. This is the regression that matters: leaving them
+// in NO_FALLBACK_PAGES would make every old bookmark a hard failure offline
+// rather than a stub that resolves from cache.
+test('the folded-in admin pages fall back to the cached shell', () => {
+  const folded = [
+    '/admin', '/admin.html',
+    '/admin-features', '/admin-features.html',
+    '/dashboard', '/dashboard.html',
+    '/debug', '/debug.html',
+    '/gallery', '/gallery.html',
+    '/status', '/status.html',
+    '/node-status', '/node-status.html',
+  ];
+  for (const page of folded) {
+    assert.ok(!NO_FALLBACK_PAGES.includes(page),
+      `${page} is a redirect stub into the SPA now — it must NOT be in NO_FALLBACK_PAGES`);
+    assert.equal(classify('GET', page, 'text/html', 'navigate'), 'navigate');
   }
+});
+
+test('standalone server pages never fall back to the SPA shell', () => {
+  // /cli/authorize is the last genuine standalone server page: a pre-auth
+  // device-authorisation flow deliberately outside the app shell.
+  assert.deepEqual(NO_FALLBACK_PAGES, ['/cli/authorize']);
+  assert.equal(classify('GET', '/cli/authorize', 'text/html', 'navigate'), 'bypass');
 });
 
 test('unparseable URLs are bypassed', () => {

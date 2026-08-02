@@ -163,12 +163,19 @@ function withToken(url, token) {
 // routes off: if its first segment is one of the SPA hash routes, move
 // the whole path into the URL fragment (pathname stays '/'). Anything
 // else — the bare '/', a path already written as a fragment ('/#...'),
-// or a standalone server-rendered page (/dashboard, /admin, /status,
-// /node-status, /login, /register) — is left exactly as-is so those
-// real routes still resolve. Only applied for the self-app; child apps
-// are genuinely path-routed and pass through untouched.
+// or a genuinely standalone server page (/cli/authorize) — is left
+// exactly as-is so those real routes still resolve. Only applied for the
+// self-app; child apps are genuinely path-routed and pass through
+// untouched.
+//
+// #860 added 'admin': the seven former standalone admin pages
+// (/dashboard, /admin, /status, /node-status, /debug, /gallery,
+// /admin-features) are sections of the #admin console now, so
+// `path: /admin/analytics` normalises straight into the fragment. Their
+// OLD pathnames still work too — they fall through untouched and hit the
+// client-side redirect stubs — just with one extra hop.
 const SELF_APP_HASH_ROUTES = new Set([
-  'app', 'leaderboard', 'group-chat', 'individual-chat', 'create',
+  'app', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin',
 ]);
 function selfAppHashPath(p) {
   const path = typeof p === 'string' ? p : '/';

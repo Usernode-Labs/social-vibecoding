@@ -421,14 +421,22 @@ slash:
 
 - `path: /app/<self-slug>/dev/proposals/<id>`
 - `path: /leaderboard`
+- `path: /admin/analytics`
 
 The platform recognises these self-app routes and moves them into the
 fragment when capturing and when previewing, so the shot shows the
-changed screen instead of the homepage. Standalone server-rendered pages
-(`/dashboard`, `/admin`, `/status`, `/node-status`) stay as plain
-pathnames. **Always point a deep `path:` at the specific changed
-self-app screen** — omitting it defaults to `/` (the home feed), which
-no capture fix can rescue.
+changed screen instead of the homepage. **The admin surfaces are in-app
+hash routes too**: the former standalone pages (`/dashboard`, `/admin`,
+`/status`, `/node-status`, `/debug`, `/gallery`, `/admin-features`) are
+now sections of the single `#admin` console — write them as
+`/admin/analytics`, `/admin/status`, `/admin/node`, `/admin/merges`,
+`/admin/gallery`, `/admin/features`. Their old pathnames still resolve
+(they serve client-side redirect stubs into the matching section), but
+pointing `path:` straight at the hash route saves a hop. The only
+genuinely standalone server page left is `/cli/authorize`. **Always
+point a deep `path:` at the specific changed self-app screen** —
+omitting it defaults to `/` (the home feed), which no capture fix can
+rescue.
 
 ## Proposal tests — "CI for proposals"
 
