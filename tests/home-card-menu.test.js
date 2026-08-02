@@ -36,6 +36,17 @@ function makeHome(user) {
   return makeHomeEnv(user).Home;
 }
 
+// Fake 2D context for _widgetIconDataUrl — the vm sandbox has no real
+// DOM. It draws a rounded-rect tile (white face + grey hairline) before
+// the glyph, so the stub has to answer the path/stroke calls too, not
+// just fillRect/fillText.
+function fakeCtx() {
+  return {
+    beginPath() {}, closePath() {}, moveTo() {}, arcTo() {}, roundRect() {},
+    fill() {}, stroke() {}, fillRect() {}, fillText() {},
+  };
+}
+
 // Like makeHome, but also hands back the vm sandbox (=== window inside
 // the script) so tests can stub `window.usernode` for bridge-call flows.
 function makeHomeEnv(user) {
@@ -164,7 +175,7 @@ test('card layout: icon first with the hamburger badged on its corner, title bel
   // The hamburger badge lives inside the icon wrapper, overlapping its
   // top-right corner — so in markup order: icon initial → menu button
   // → title name.
-  const iconIdx = html.indexOf('bg-violet-600/20');
+  const iconIdx = html.indexOf('app-icon-tile');
   const menuIdx = html.indexOf('card-menu-btn');
   const nameIdx = html.indexOf('Demo App');
   assert.ok(iconIdx !== -1 && iconIdx < menuIdx && menuIdx < nameIdx,
@@ -690,7 +701,7 @@ test('shortcut icons: emoji/letter apps get a canvas data URI, image apps a URL'
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   // Fake 2D canvas — the vm sandbox has no real DOM.
   sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
+    getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
   });
   const added = [];
@@ -709,7 +720,7 @@ test('shortcut icons: emoji/letter apps get a canvas data URI, image apps a URL'
 test('icon heal: has_icon:false entries are silently re-added once', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
+    getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
   });
   const added = [];
@@ -751,7 +762,7 @@ test('icon heal: has_icon:false entries are silently re-added once', async () =>
 test('icon heal: retries entries skipped while apps were still loading', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
+    getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
   });
   const added = [];
@@ -776,7 +787,7 @@ test('icon heal: retries entries skipped while apps were still loading', async (
 test('icon heal: unknown last-sent source re-sends once, then settles', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
+    getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
   });
   const added = [];
@@ -811,7 +822,7 @@ test('icon heal: unknown last-sent source re-sends once, then settles', async ()
 test('icon heal: app gaining an icon after pinning re-sends the new icon', async () => {
   const { Home, sandbox } = makeHomeEnv({ id: ME });
   sandbox.document.createElement = () => ({
-    getContext: () => ({ fillRect() {}, fillText() {} }),
+    getContext: () => fakeCtx(),
     toDataURL: () => 'data:image/png;base64,FAKE',
   });
   const added = [];

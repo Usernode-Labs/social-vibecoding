@@ -820,6 +820,11 @@
       "expectSelector": ".app-card [data-icon='emoji']"
     },
     {
+      "name": "Icon tiles use the white/hairline .app-icon-tile treatment (not the violet tint)",
+      "path": "/?demo=1",
+      "expectSelector": ".app-card .app-icon-tile[data-icon='letter']"
+    },
+    {
       "name": "Home fork-lineage tag renders on forked tiles",
       "path": "/",
       "expectSelector": ".fork-tag"
@@ -964,6 +969,11 @@
       "name": "Admin Topochain settings reports the outbound-mail state",
       "path": "/#admin/topochain/settings",
       "expectSelector": "#admin-topo-mail-status"
+    },
+    {
+      "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios",
+      "expectSelector": ".un-ptr-layer > .un-ptr-puck"
     }
   ],
   "governance": {

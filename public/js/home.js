@@ -545,7 +545,10 @@ const Home = {
     if (app.icon_url) {
       return {
         kind: 'image',
-        html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-14 h-14 rounded-xl object-cover">`,
+        // w-full/h-full (not w-14/h-14): the tile now draws a 1px
+        // hairline border, so the image fills the border box's *content*
+        // area and stays flush inside the ring instead of being cropped.
+        html: `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-xl object-cover">`,
       };
     }
     if (app.icon_emoji) {
@@ -667,7 +670,7 @@ const Home = {
       <div class="app-card app-card-draggable touch-pan-y relative rounded-xl transition-colors p-3 flex flex-col items-center text-center gap-2 ${cursorClass}" data-slug="${app.slug}" data-status="${app.status}" data-locked="${isLocked}"${demoAttr}>
         ${retryHtml}
         <div class="relative w-14 h-14 shrink-0">
-          <div class="w-14 h-14 rounded-xl bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-xl" data-icon="${icon.kind}">
+          <div class="app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl" data-icon="${icon.kind}">
             ${icon.html}
           </div>
           ${menuBadgeHtml}
@@ -687,8 +690,9 @@ const Home = {
 
   // "Your app here" placeholder rendered as the last tile in the
   // grid. Layout mirrors a real tile (thumbnail + title row, pill
-  // stacked on the left) but with a dashed violet border + violet
-  // thumbnail to telegraph "this slot is empty, tap to fill it".
+  // stacked on the left) but with a dashed violet outline around the
+  // card and a dashed, muted thumbnail (.app-icon-tile--empty) to
+  // telegraph "this slot is empty, tap to fill it".
   // The click target is just the inner pill (.home-create-btn,
   // wired in Home.wireCreateButtons) — clicking the surrounding
   // tile chrome is intentionally inert so the tile reads as
@@ -697,7 +701,7 @@ const Home = {
   renderCreateTile() {
     return `
       <div class="home-create-tile rounded-xl bg-violet-500/[0.02] dark:bg-violet-500/[0.04] p-3 flex flex-col items-center text-center gap-2">
-        <div class="w-14 h-14 rounded-xl bg-violet-600/20 flex items-center justify-center text-violet-400 font-bold text-xl shrink-0">
+        <div class="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center font-bold text-xl shrink-0">
           Y
         </div>
         <div class="italic text-sm text-zinc-500 dark:text-zinc-400 truncate max-w-full">Your app here</div>
@@ -758,12 +762,19 @@ const Home = {
     const slug = Home._widgetSlugFor(item);
     const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
     const name = (app && app.name) || item.name || '?';
+    // Same three kinds as the home card's iconTileFor, tagged with the
+    // same data-icon so the tile treatment (app.css) can single out the
+    // letter fallback for its fainter glyph colour.
     let iconHtml;
+    let iconKind;
     if (app && app.icon_url) {
-      iconHtml = `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-10 h-10 rounded-lg object-cover">`;
+      iconKind = 'image';
+      iconHtml = `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-lg object-cover">`;
     } else if (app && app.icon_emoji) {
+      iconKind = 'emoji';
       iconHtml = `<span class="text-xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`;
     } else {
+      iconKind = 'letter';
       iconHtml = escapeHtml(String(name).charAt(0).toUpperCase());
     }
     // touch-pan-y + select-none for the same reason as app cards: keep
@@ -771,7 +782,7 @@ const Home = {
     // gesture (see _onWidgetTilePointerDown).
     return `
       <div class="widget-tile app-card-draggable touch-pan-y relative flex flex-col items-center gap-1 w-16 cursor-grab" data-wid="${escapeHtml(item.id)}"${slug ? ` data-wslug="${escapeHtml(slug)}"` : ''}>
-        <div class="w-10 h-10 rounded-lg bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-base">${iconHtml}</div>
+        <div class="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${iconKind}">${iconHtml}</div>
         <span class="text-[0.65rem] leading-tight truncate w-full text-center">${escapeHtml(name)}</span>
         <button class="widget-remove-btn absolute -top-1.5 right-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500" data-wid="${escapeHtml(item.id)}" title="Remove from widget" aria-label="Remove ${escapeHtml(name)} from widget">✕</button>
       </div>`;
@@ -1116,7 +1127,12 @@ const Home = {
   // makes every canvas tile read as stale and re-send once.
   //   gen 2: pixel-centered glyphs (_drawGlyphCentered) — emoji tiles
   //          used to come out anchored bottom-left on iOS WebKit.
-  WIDGET_ICON_GEN: 2,
+  //   gen 3: white rounded-tile face + faint grey hairline + dark-grey
+  //          letter, matching the new .app-icon-tile treatment (was a
+  //          flat violet-600/20 square with a violet-400 letter).
+  //   gen 4: the letter glyph steps down to the faint grey the in-app
+  //          letter tiles now use (--text-faint); emoji unchanged.
+  WIDGET_ICON_GEN: 4,
   _iconSrcKey: 'sv:widget_icon_src',
   _iconHealTried: null,
   // The icon source the widget *should* have for this app right now.
@@ -1565,11 +1581,15 @@ const Home = {
   },
 
   // Renders the SV emoji/letter tile to a PNG data URI so the native
-  // homescreen widget shows the exact tile the app shows — same violet
-  // tint (violet-600/20 background, violet-400 letter) over a
-  // transparent background that adapts to the widget's light/dark
-  // surface. Apps with a real icon image skip this (the image URL is
-  // passed through instead).
+  // homescreen widget shows the exact tile the app shows — the same
+  // white face + faint grey hairline + faint grey letter as
+  // `.app-icon-tile` (app.css). Drawn as a rounded rect (radius scaled
+  // from the in-app 12px-on-56px tile) so the corners stay transparent
+  // and the shape reads correctly on the widget's own surface, light or
+  // dark. It can't follow the system theme the way the CSS tile does, so
+  // it pins the light-mode face — the treatment homescreen icons expect.
+  // Apps with a real icon image skip this (the image URL is passed
+  // through instead).
   _widgetIconDataUrl(app) {
     try {
       const size = 128;
@@ -1578,14 +1598,36 @@ const Home = {
       canvas.height = size;
       const ctx = canvas.getContext('2d');
       if (!ctx) return null;
-      ctx.fillStyle = 'rgba(124, 58, 237, 0.20)'; // violet-600/20
-      ctx.fillRect(0, 0, size, size);
+      const stroke = 2;
+      const inset = stroke / 2;
+      const radius = Math.round(size * (12 / 56)); // rounded-xl at 56px
+      const box = size - stroke;
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(inset, inset, box, box, radius);
+      } else {
+        // Safari < 16.4 / older WebViews: hand-rolled rounded rect.
+        ctx.beginPath();
+        ctx.moveTo(inset + radius, inset);
+        ctx.arcTo(inset + box, inset, inset + box, inset + box, radius);
+        ctx.arcTo(inset + box, inset + box, inset, inset + box, radius);
+        ctx.arcTo(inset, inset + box, inset, inset, radius);
+        ctx.arcTo(inset, inset, inset + box, inset, radius);
+        ctx.closePath();
+      }
+      ctx.fillStyle = '#ffffff';
+      ctx.fill();
+      ctx.strokeStyle = '#e4e4e7'; // --border-light
+      ctx.lineWidth = stroke;
+      ctx.stroke();
       const text = app.icon_emoji
         || String(app.name || '?').charAt(0).toUpperCase();
       const font = app.icon_emoji
         ? '72px system-ui, sans-serif'
         : 'bold 64px system-ui, sans-serif';
-      const color = app.icon_emoji ? null : '#a78bfa'; // violet-400
+      // Letters only — emoji keep their own colour glyphs. The faint
+      // grey matches .app-icon-tile[data-icon="letter"] (--text-faint).
+      const color = app.icon_emoji ? null : '#a1a1aa'; // --text-faint
       // Pixel-centering first: textAlign/textBaseline metrics misplace
       // emoji glyphs in iOS WebKit (tiles came out anchored bottom-left),
       // and measured glyph bounds are just as unreliable across engines.

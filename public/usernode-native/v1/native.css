@@ -341,13 +341,41 @@ html.un-android .un-switch:checked:active::before {
 
 /* ── Pull-to-refresh ───────────────────────────────────────────────────
    Puck injected by unNative.attachPullToRefresh(); scale/opacity/rotation
-   are driven per-frame by pull progress (never popping at a threshold). */
+   are driven per-frame by pull progress (never popping at a threshold).
+
+   The puck lives inside .un-ptr-layer, an inert clip box whose TOP EDGE is
+   the anchor line — the app header's bottom (opts.topEl / opts.top), or by
+   default the scroller's own top edge (element mode) / the safe-area inset
+   (window mode). Two things keep the header clean: the layer's overflow
+   clip hides the retracted puck (which parks at -40px) instead of letting
+   it ride up over the header, and the layer sits BENEATH the header in
+   stacking order — level 0 and first in tree order in element mode, below
+   .un-navbar's z-index:100 in window mode. So the puck is revealed by the
+   content sliding away rather than painted on top of the chrome. */
+
+.un-ptr-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+/* Window-scroller mode: nothing in flow to anchor to, so pin to the
+   viewport at the safe-area inset unless the caller anchors it lower.
+   z-index stays under .un-navbar (100) — the puck goes behind a fixed
+   header, never over it. */
+.un-ptr-layer.un-ptr-layer-fixed {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  z-index: 90;
+}
 
 .un-ptr-puck {
   position: absolute;
   top: 0;
   left: 50%;
-  z-index: 2;
   width: 34px;
   height: 34px;
   display: flex;
@@ -370,11 +398,6 @@ html.un-android .un-switch:checked:active::before {
 }
 .un-ptr-puck.un-refreshing svg {
   animation: un-ptr-spin 800ms linear infinite;
-}
-/* Window-scroller mode: no positioned parent to anchor to. */
-.un-ptr-puck.un-ptr-puck-fixed {
-  position: fixed;
-  z-index: 9980;
 }
 @keyframes un-ptr-spin {
   to { transform: rotate(360deg); }

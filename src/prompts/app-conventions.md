@@ -1576,8 +1576,17 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   `opts.content` — default `document.body.firstElementChild` (the
   `#app`-style root); pass it explicitly if your `<body>` has several
   top-level children — and the spinner puck is fixed-positioned.
-  `onRefresh()` returns a Promise and the spinner holds until it
-  settles. For element containers, give them
+  `onRefresh()` returns a Promise; the spinner holds until it settles,
+  then lingers ~500ms before retracting so a fast refresh still reads as
+  one. **The puck never paints over the app's header**: it lives in an
+  overflow-clipped layer stacked underneath the header, anchored by
+  default at the scroller's own top edge (element mode) or the safe-area
+  inset (window mode, which also tucks it under `.un-navbar`). For a
+  custom **fixed** header in window mode, pass `opts.topEl` (the header
+  element — re-measured on resize and at each pull, so a collapsing bar
+  stays correct) or `opts.top` (a px offset); a header that lives
+  *inside* the translated content rides down with the pull and needs no
+  anchor. For element containers, give them
   `overscroll-behavior-y: contain` (the kit also sets it defensively).
   No-op on desktop. Never throws: invalid input logs a console warning
   and returns a no-op `{ detach() }`.
