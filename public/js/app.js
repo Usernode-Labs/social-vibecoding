@@ -1452,6 +1452,14 @@ const App = {
         // spinner (wrap-up). Cheap + idempotent — just swaps the button glyph.
         DevChat._setStreamingUI(true, data.phase);
         break;
+      case 'stopping':
+        // #889: someone hit Stop on this session (possibly in another tab or
+        // on another device). Paint the interim "stopping…" state here too —
+        // and note this case is REQUIRED, not decorative: an unhandled type
+        // arriving first on the WS marks its _seq seen and gets the matching
+        // SSE/resumable copy deduped-and-swallowed (see the comment above).
+        DevChat._enterStoppingState({ by: data.by });
+        break;
       case 'stopped':
         // The "Stopped by @user." status row was already persisted + emitted
         // server-side via sendStatus, so just tear down the streaming UI.

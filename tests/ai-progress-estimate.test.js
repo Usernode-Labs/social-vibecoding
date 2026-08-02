@@ -252,7 +252,15 @@ test('settings modal has the experimental toggle wired to the endpoint', () => {
 
 test('/status response carries the estimate for the polling fallback', () => {
   const sessions = read('src/routes/sessions.js');
-  assert.match(sessions, /busy, progress, phase, estimate/, '/status payload must include estimate');
+  // Matched key-by-key rather than as one fixed run, so adding a sibling
+  // key to the payload (e.g. `stopping`, #889) doesn't fail this — the
+  // invariant is that `estimate` ships alongside the polling basics, not
+  // the order they're written in.
+  const payload = sessions.match(/res\.json\(\{\s*\n?\s*busy,[\s\S]{0,200}?\}\);/);
+  assert.ok(payload, 'found the /status res.json payload');
+  for (const key of ['busy', 'progress', 'phase', 'estimate']) {
+    assert.match(payload[0], new RegExp(`\\b${key}\\b`), `/status payload must include ${key}`);
+  }
 });
 
 // ── 3. Mobile visibility (#286) ─────────────────────────────────────────
