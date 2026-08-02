@@ -9,7 +9,11 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { sanitizeQuickReplies, resolveQuickReplies } = require('../src/routes/sessions.js');
+const {
+  sanitizeQuickReplies,
+  resolveQuickReplies,
+  shouldFallbackQuickReplies,
+} = require('../src/routes/sessions.js');
 
 function input(replies) {
   return { replies };
@@ -103,4 +107,53 @@ test('read-only issue data tools do not drop pills', () => {
 
 test('malformed suggest_replies input resolves to null', () => {
   assert.equal(resolveQuickReplies([{ name: 'suggest_replies', input: { replies: 'nope' } }]), null);
+});
+
+// ── shouldFallbackQuickReplies — the #894 substitution rule ──────────
+//
+// Whether a phase-1 turn that produced no pills gets the deterministic
+// fallback set. The pill sets themselves live in services/recovery-pills.js
+// (tests/quick-reply-fallback.test.js); this is only the "does it apply"
+// half.
+
+const SUGGESTIONS = [{ question: 'Which?', answers: ['a', 'b'] }];
+
+test('a bare chat turn gets the fallback', () => {
+  assert.equal(shouldFallbackQuickReplies(null, null, []), true);
+  assert.equal(shouldFallbackQuickReplies(null, null, null), true);
+  // Data tools are read-only and end the turn as a chat reply — they must
+  // not suppress the fallback (mirrors the resolveQuickReplies rule above).
+  assert.equal(
+    shouldFallbackQuickReplies(null, null, [{ name: 'list_github_issues', input: {} }]),
+    true
+  );
+});
+
+test('the model\'s own pills always win over the fallback', () => {
+  assert.equal(shouldFallbackQuickReplies(['Build it'], null, []), false);
+  // Degenerate shapes are "no pills", so they still get the fallback —
+  // otherwise an empty array would produce an empty bar.
+  assert.equal(shouldFallbackQuickReplies([], null, []), true);
+});
+
+test('an answer-chip turn gets NO fallback (inline chips own the turn)', () => {
+  assert.equal(shouldFallbackQuickReplies(null, SUGGESTIONS, []), false);
+  assert.equal(
+    shouldFallbackQuickReplies(null, SUGGESTIONS, [{ name: 'suggest_answers', input: {} }]),
+    false
+  );
+  // An empty suggestions array means the chips never rendered — fall back.
+  assert.equal(shouldFallbackQuickReplies(null, [], []), true);
+});
+
+test('a dispatch turn gets NO fallback (phase-2 owns its pills)', () => {
+  for (const dispatchName of ['dispatch_claude_code', 'dispatch_scout']) {
+    assert.equal(
+      shouldFallbackQuickReplies(null, null, [{ name: dispatchName, input: { prompt: 'go' } }]),
+      false,
+      `${dispatchName} defers to the phase-2 wrap-up`
+    );
+  }
+  // Null entries in the tool list must not throw.
+  assert.equal(shouldFallbackQuickReplies(null, null, [null, undefined, {}]), true);
 });

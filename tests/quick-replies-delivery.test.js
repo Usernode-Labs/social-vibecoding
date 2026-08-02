@@ -160,8 +160,16 @@ function loadCurrentQuickReplies() {
     isStreaming: !!opts.isStreaming,
     messages,
     STARTER_QUICK_REPLIES: ['Change the colors', 'Add a new feature', "Fix something that's broken"],
+    // #894: an assistant reply with no pills now falls back to a
+    // state-derived default instead of an empty bar. Stubbed with a
+    // recognisable sentinel so these tests assert the RESOLUTION rule
+    // (which row wins, when the bar clears) — the real sets and the
+    // state derivation are covered in tests/quick-reply-fallback.test.js.
+    _fallbackQuickReplies: () => FALLBACK_SENTINEL,
   });
 }
+
+const FALLBACK_SENTINEL = ['<fallback>'];
 
 const currentQuickReplies = loadCurrentQuickReplies();
 
@@ -217,10 +225,38 @@ test('#786 stale pills from an earlier turn are never resurrected', () => {
     { role: 'assistant', content: 'Built it.', quickReplies: ['Propose it to the group'] },
     { role: 'user', content: 'And a dark mode?' },
     { role: 'system', content: 'Thinking about your request...' },
-    // Newest assistant reply carries no pills → empty bar, NOT the older set.
+    // Newest assistant reply carries no pills. #894 changed the outcome
+    // here from an empty bar to the fallback set — but the invariant this
+    // test exists for is unchanged: the OLDER turn's pills must never come
+    // back, because the scan stops at the first user/assistant row.
     { role: 'assistant', content: 'Here is what I found.' },
   ]);
-  assert.equal(out, null);
+  assert.deepEqual(out, FALLBACK_SENTINEL);
+  assert.ok(!out.includes('Propose it to the group'),
+    "the previous turn's pills must not be resurrected");
+});
+
+test('#894 an assistant reply with no pills falls back instead of emptying the bar', () => {
+  // The reported symptom: the Mayor replies, skips suggest_replies, and
+  // the bar goes dark.
+  const out = currentQuickReplies([
+    { role: 'user', content: 'What do you think of these two options?' },
+    { role: 'assistant', content: 'Both work; the second is simpler.' },
+  ]);
+  assert.deepEqual(out, FALLBACK_SENTINEL);
+});
+
+test('#894 answer chips keep the bar empty (inline chips own that turn)', () => {
+  const out = currentQuickReplies([
+    { role: 'user', content: 'Make the header better.' },
+    {
+      role: 'assistant',
+      content: '1. Which header?',
+      suggestions: [{ question: 'Which header?', answers: ['The app shell', 'The dev chat'] }],
+    },
+  ]);
+  assert.equal(out, null,
+    'the #32 chips are that turn s affordance — the above-box row stays empty');
 });
 
 test('#786 an assistant reply with pills still wins (unchanged behaviour)', () => {
