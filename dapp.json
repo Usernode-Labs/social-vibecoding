@@ -790,6 +790,11 @@
       "expectText": "Operations"
     },
     {
+      "name": "Admin console deep-links Overview by its explicit segment",
+      "path": "/#admin/overview",
+      "expectSelector": "#admin-section-content #admin-overview-stuck"
+    },
+    {
       "name": "Admin console renders the Database export section",
       "path": "/#admin/db-export",
       "expectSelector": "#admin-db-export-panel #admin-db-export-history"

@@ -1839,7 +1839,15 @@ const App = {
     // back arrow on desktop. Both route through the popstate handler
     // installed in init(), which calls restoreFromHash() to rebuild
     // state from the previous URL.
-    document.getElementById('back-btn').addEventListener('click', () => App.navigateHome());
+    // The header back button is "home" for every screen — except inside a
+    // mobile admin section, where it is that section's back arrow and pops
+    // to the console's section menu (AdminConsole.handleBack returns true
+    // when it consumed the press). Gating on App._inAdmin means there is no
+    // override state that can go stale.
+    document.getElementById('back-btn').addEventListener('click', () => {
+      if (App._inAdmin && window.AdminConsole?.handleBack?.()) return;
+      App.navigateHome();
+    });
 
     // Rename modal
     const renameModal = document.getElementById('rename-modal');
@@ -2915,6 +2923,16 @@ const App = {
       App.navigateHome();
       return;
     }
+    // Already mounted: this is an in-console navigation (a mobile drill-in,
+    // the back button, a hand-typed section hash), not a screen entry. Hand
+    // it to the console — re-running the screen swap below would re-hide
+    // every sibling screen and replay the entry push animation on what is
+    // really a level change inside one screen. Deliberately AFTER the gate
+    // above so it can never be used to bypass it.
+    if (App._inAdmin && window.AdminConsole?.isOpen?.()) {
+      AdminConsole.route(section, { public: publicMode });
+      return;
+    }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
     if (App.currentApp) {
       AppView.close();
@@ -2951,6 +2969,10 @@ const App = {
     App._inAdmin = false;
     const screen = document.getElementById('admin-screen');
     if (screen) screen.classList.add('hidden');
+    // The mobile section view borrows the header's back button as its own
+    // back arrow — hand it back on the way out, or every later screen
+    // inherits a chevron that means "home".
+    App.setBackIcon('home');
     if (window.AdminConsole?.close) AdminConsole.close();
   },
 
@@ -3509,6 +3531,23 @@ const App = {
     App.setHeaderTitle('dApps');
     App.updateHash();
     Home.load();
+  },
+
+  // Which affordance the header's single back button presents. 'home' (the
+  // default for every screen) shows the house icon and leaves the current
+  // screen entirely; 'arrow' shows the chevron and means "up one level
+  // inside this screen" — currently only the mobile admin console's
+  // section view, which is what #back-icon-arrow in index.html was
+  // shipped for. Always reset to 'home' when leaving the screen that
+  // asked for the arrow (see _exitAdminConsole).
+  setBackIcon(mode) {
+    const arrow = mode === 'arrow';
+    const home = document.getElementById('back-icon-home');
+    const chevron = document.getElementById('back-icon-arrow');
+    if (home) home.classList.toggle('hidden', arrow);
+    if (chevron) chevron.classList.toggle('hidden', !arrow);
+    const btn = document.getElementById('back-btn');
+    if (btn) btn.setAttribute('aria-label', arrow ? 'Back' : 'Home');
   },
 
   // Mirror the visible header text into both the on-screen <h1> and

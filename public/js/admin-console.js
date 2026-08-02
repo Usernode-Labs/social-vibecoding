@@ -8,11 +8,29 @@
 // It reorganizes the standalone /admin page's sections (public/admin.html:
 // Operations overview, Maintenance campaigns, LLM spend limits, Activation
 // codes, Users) plus the /admin-features viewer into one page with a
-// navigation menu — a fixed sidebar on md+ viewports, a horizontally
-// scrollable tab strip below md (the Dev board's mobile kanban-tabs
-// pattern, #814). Every data endpoint is an EXISTING route, enforced
-// server-side by adminMiddleware (reads) and requireAdminWrite
-// (mutations) — this module adds no new capabilities and no new endpoints.
+// navigation menu — a fixed sidebar on md+ viewports. Every data endpoint
+// is an EXISTING route, enforced server-side by adminMiddleware (reads)
+// and requireAdminWrite (mutations) — this module adds no new capabilities
+// and no new endpoints.
+//
+// MOBILE HIERARCHY: below md the sidebar has no room, and the horizontally
+// scrolling tab strip that used to stand in for it (the Dev board's
+// kanban-tabs pattern, #814) made fifteen ungrouped sections a thumb-swipe
+// scavenger hunt. Phones now get a real two-level nav instead:
+//
+//   level 1 (#admin)        the grouped section menu, one tappable row per
+//                           section under the same Operations / People /
+//                           Insights / Platform headings as the sidebar;
+//   level 2 (#admin/<key>)  that one section, full width, with the platform
+//                           header's back button flipped to an arrow and
+//                           its title set to the section label.
+//
+// The hash stays the single source of truth for WHICH section shows; the
+// level is derived from it (bare #admin on mobile = the menu). A menu tap
+// is a REAL hash navigation, so it pushes a history entry and the device /
+// WebView back gesture pops back to the menu through exactly the same code
+// path as the on-screen arrow (see _openSection / handleBack / route).
+// Desktop is untouched: same sidebar, same instant switching, same URLs.
 //
 // #860 completed the consolidation: /status, /node-status, /dashboard,
 // /debug and /gallery are sections here too, and all seven old URLs are
@@ -51,9 +69,32 @@ const AdminConsole = {
   // destroy() before swapping in the next one. See _renderSection.
   _activeModule: null,
 
+  // ── Mobile two-level state ───────────────────────────────────────────
+  // Which level the phone layout is showing: 1 = the section menu,
+  // 2 = one section. Kept in sync on desktop too (it is ignored there)
+  // so a viewport crossing resolves without guessing.
+  _level: 1,
+  // True while the level-2 entry we're sitting on was PUSHED by a menu
+  // tap during this mount — the only case where history.back() is
+  // guaranteed to land on our own menu entry. A deep link (bookmark, one
+  // of the retired-page redirect stubs) leaves it false, and back
+  // replaces the entry instead of creating a forward one. Per-mount
+  // state: open() resets it, because the stack below the console stops
+  // being ours to reason about the moment we leave.
+  _pushedFromMenu: false,
+  // #admin-screen scrollTop saved on drill-in, restored on the way back.
+  _menuScrollTop: 0,
+  _mediaBound: false,
+
+  // The single source of truth in JS for where the sidebar layout starts.
+  // Must stay in step with the `md:` classes in _renderShell (Tailwind's
+  // md breakpoint IS 768px) — same discipline as AppView's
+  // KANBAN_MULTICOL_MEDIA / _STAGING_DOCK_MEDIA.
+  DESKTOP_MEDIA: '(min-width: 768px)',
+
   // In-SPA sections. Keys are the #admin/<key> hash segments; `group` is
-  // the sidebar heading they sit under (order here IS menu order, and the
-  // mobile tab strip is the same list flattened).
+  // the heading they sit under — in the desktop sidebar AND in the mobile
+  // level-1 menu, which share _groupedSections(). Order here IS menu order.
   SECTIONS: [
     { key: 'overview', label: 'Overview', group: 'Operations' },
     // Health & status and Node & chain are the two `public` sections —
@@ -86,6 +127,42 @@ const AdminConsole = {
 
   isOpen() { return AdminConsole._open; },
 
+  // Below the sidebar breakpoint — i.e. the two-level layout is live.
+  // Anything that can't answer (no matchMedia) is treated as desktop, so
+  // a browser without it keeps today's behaviour rather than a phone
+  // layout it never asked for.
+  _isMobile() {
+    try { return !window.matchMedia(AdminConsole.DESKTOP_MEDIA).matches; }
+    catch { return false; }
+  },
+
+  // One-time viewport listener: crossing the breakpoint re-resolves the
+  // layout in place. Crossing UP renders the active section in the
+  // sidebar shell; crossing DOWN keeps that section as level 2 (no menu
+  // flash) and writes its explicit hash so the address matches what's on
+  // screen. Lazy-bound like AppView._ensureStagingDockListeners.
+  _ensureMediaListener() {
+    if (AdminConsole._mediaBound || !window.matchMedia) return;
+    try {
+      const mql = window.matchMedia(AdminConsole.DESKTOP_MEDIA);
+      const onChange = () => {
+        if (!AdminConsole._open) return;
+        // A real section is showing (or was, on desktop) → keep it as
+        // level 2 on the way down. Only a menu-level mobile view, or a
+        // desktop view sitting on the bare #admin overview, lands on 1.
+        if (!mql.matches && AdminConsole._level !== 1) {
+          AdminConsole._writeHash(AdminConsole._section);
+        }
+        AdminConsole._renderShell();
+        AdminConsole._renderContent();
+        AdminConsole._syncChrome();
+      };
+      if (mql.addEventListener) mql.addEventListener('change', onChange);
+      else if (mql.addListener) mql.addListener(onChange);
+      AdminConsole._mediaBound = true;
+    } catch { /* no matchMedia — desktop path stands */ }
+  },
+
   // True while the console is mounted for a non-admin on a `public`
   // section. Belt-and-braces: also require the absence of isAdmin, so a
   // stale flag can never narrow an admin's own menu.
@@ -111,6 +188,9 @@ const AdminConsole = {
   open(section, opts) {
     AdminConsole._open = true;
     AdminConsole._public = !!(opts && opts.public);
+    AdminConsole._pushedFromMenu = false;
+    AdminConsole._menuScrollTop = 0;
+    AdminConsole._ensureMediaListener();
     const visible = AdminConsole._visibleSections();
     const valid = visible.some((s) => s.key === section);
     // In public mode, fall back to the first PUBLIC section rather than
@@ -119,19 +199,159 @@ const AdminConsole = {
     const fallback = AdminConsole._publicMode()
       ? (visible.some((s) => s.key === AdminConsole._section) ? AdminConsole._section : visible[0]?.key)
       : (AdminConsole._section || 'overview');
+    // On mobile, a bare #admin means the MENU — never a last-visited
+    // section resurrected from earlier in this tab. On desktop it keeps
+    // meaning Overview (or the last section), exactly as before.
+    if (AdminConsole._isMobile() && !valid) {
+      AdminConsole._level = 1;
+      AdminConsole._section = fallback;
+      AdminConsole._renderShell();
+      AdminConsole._renderContent();
+      AdminConsole._syncChrome();
+      return;
+    }
+    AdminConsole._level = 2;
     AdminConsole._renderShell();
     // Deep-linked section wins; otherwise keep the last-visited section
     // (instant repaint on re-entry), defaulting to Overview.
     AdminConsole.setSection(valid ? section : fallback, { writeHash: false });
+    // Runs after app.js's own setHeaderTitle, so on a mobile deep link the
+    // header ends up showing the section's name rather than the console's.
+    AdminConsole._syncChrome();
   },
 
   close() {
     AdminConsole._open = false;
     AdminConsole._public = false;
+    AdminConsole._pushedFromMenu = false;
     // Tear the active section's timers/listeners down: leaving the console
     // must not leave a 5s /api/status or 2s /api/node-status poll running
     // for the life of the tab (see _teardownActiveSection).
     AdminConsole._teardownActiveSection();
+  },
+
+  // Re-entry while the console is ALREADY mounted (app.js routes here
+  // instead of re-running the whole screen swap — see
+  // navigateToAdminConsole). Resolves the target level from the requested
+  // section, picks the transition direction by comparing it to the level
+  // we're on, and repaints. On desktop this is just setSection.
+  route(section, opts) {
+    if (opts && typeof opts.public === 'boolean') AdminConsole._public = !!opts.public;
+    const visible = AdminConsole._visibleSections();
+    const valid = !!section && visible.some((s) => s.key === section);
+    if (!AdminConsole._isMobile()) {
+      // Desktop: bare #admin is Overview, as it has always been.
+      AdminConsole.setSection(
+        valid ? section : (AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview'),
+        { writeHash: false },
+      );
+      AdminConsole._level = 2;
+      AdminConsole._syncChrome();
+      return;
+    }
+    const targetLevel = valid ? 2 : 1;
+    // 1→2 push, 2→1 pop, same level (section→section deep link) instant:
+    // the kit's fidelity rule is no animation on same-level repaints.
+    const type = targetLevel === AdminConsole._level
+      ? 'none'
+      : (targetLevel === 2 ? 'push' : 'pop');
+    if (targetLevel === 2) {
+      AdminConsole._menuScrollTop = AdminConsole._level === 1
+        ? AdminConsole._scrollTop()
+        : AdminConsole._menuScrollTop;
+      AdminConsole._section = section;
+    } else {
+      AdminConsole._pushedFromMenu = false;
+    }
+    AdminConsole._level = targetLevel;
+    AdminConsole._transition(() => {
+      AdminConsole._renderShell();
+      AdminConsole._renderContent();
+      AdminConsole._syncChrome();
+      AdminConsole._restoreScroll();
+    }, type);
+  },
+
+  // The on-screen back arrow AND the platform header's back button both
+  // land here (app.js:back-btn). Returns true when the press was consumed
+  // — i.e. mobile, inside a section — so the header falls through to
+  // navigateHome() everywhere else (all of desktop included).
+  handleBack() {
+    if (!AdminConsole._open) return false;
+    if (!AdminConsole._isMobile() || AdminConsole._level !== 2) return false;
+    if (AdminConsole._pushedFromMenu) {
+      // We pushed that entry ourselves, so the one below it IS our menu:
+      // popping routes back through popstate → restoreFromHash → route(),
+      // the same path the device back gesture takes.
+      history.back();
+      return true;
+    }
+    // Deep link / redirect stub: nothing of ours below. REPLACE the entry
+    // with the menu rather than pushing one, so back can't bounce the
+    // viewer between the section and the menu forever.
+    try { history.replaceState(null, '', '#admin'); } catch { /* non-fatal */ }
+    AdminConsole._level = 1;
+    AdminConsole._transition(() => {
+      AdminConsole._renderShell();
+      AdminConsole._renderContent();
+      AdminConsole._syncChrome();
+      AdminConsole._restoreScroll();
+    }, 'pop');
+    return true;
+  },
+
+  // Drill-in from a level-1 menu row. A REAL hash navigation (the
+  // leaderboard profile drill-in precedent) so the pushed entry makes the
+  // browser / WebView back gesture work for free; restoreFromHash routes
+  // it back into route() a tick later. Assigning location.hash preserves
+  // the query string, so ?demo=1 survives the drill-in.
+  _openSection(key) {
+    AdminConsole._menuScrollTop = AdminConsole._scrollTop();
+    AdminConsole._pushedFromMenu = true;
+    const target = `#admin/${key}`;
+    if (location.hash === target) {
+      // Same-value assignment fires no hashchange — route by hand.
+      AdminConsole.route(key);
+      return;
+    }
+    location.hash = target;
+  },
+
+  _transition(fn, type) {
+    if (window.PlatformUI?.transition) PlatformUI.transition(fn, { type: type || 'none' });
+    else fn();
+  },
+
+  _scrollTop() {
+    const el = document.getElementById('admin-screen');
+    return el ? el.scrollTop : 0;
+  },
+
+  // A pushed screen starts at the top; a pop restores where the menu was.
+  _restoreScroll() {
+    const el = document.getElementById('admin-screen');
+    if (!el) return;
+    el.scrollTop = (AdminConsole._isMobile() && AdminConsole._level === 1)
+      ? AdminConsole._menuScrollTop
+      : 0;
+  },
+
+  // Platform-header chrome for the current level: inside a mobile section
+  // the header becomes that section's nav bar (arrow + section name),
+  // everywhere else it stays the console's own title and the home icon.
+  // setHeaderTitle mirrors into document.title, so the native shell's
+  // AppBar picks the section name up too.
+  _syncChrome() {
+    if (!window.App) return;
+    const inSection = AdminConsole._isMobile() && AdminConsole._level === 2;
+    if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home');
+    if (!App.setHeaderTitle) return;
+    if (inSection) {
+      const s = AdminConsole._visibleSections().find((x) => x.key === AdminConsole._section);
+      App.setHeaderTitle(s ? s.label : 'Admin & moderation');
+    } else {
+      App.setHeaderTitle(AdminConsole._publicMode() ? 'Platform status' : 'Admin & moderation');
+    }
   },
 
   esc(s) {
@@ -192,44 +412,68 @@ const AdminConsole = {
     } catch { return false; }
   },
 
-  // ── Shell: menu (sidebar / tab strip) + content host ──────────────────
+  // ── Shell: menu (sidebar / mobile list) + content host ────────────────
 
-  _navItemsHtml(mode) {
-    // mode 'side' → vertical sidebar rows, grouped under headings;
-    // mode 'tabs' → the mobile strip, the same list flattened (a heading
-    // per group would eat most of a phone's horizontal scroll budget).
-    const active = AdminConsole._section;
-    const sections = AdminConsole._visibleSections();
-    const itemHtml = (s) => {
-      const isActive = s.key === active;
-      const cls = mode === 'side'
-        ? 'admin-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
-          + (isActive
-            ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
-            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800')
-        : 'admin-nav-item shrink-0 px-3 py-2 text-sm font-medium border-b-2 whitespace-nowrap transition-colors '
-          + (isActive
-            ? 'border-violet-500 text-violet-600 dark:text-violet-400'
-            : 'border-transparent text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300');
-      return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}"
-        data-admin-section="${s.key}" class="${cls}">${AdminConsole.esc(s.label)}</button>`;
-    };
-    if (mode !== 'side') return sections.map(itemHtml).join('');
-    // Group headings, in first-appearance order. Fifteen flat rows is a lot
-    // to scan; the headings are the mitigation (and stay cheap — no second
-    // level of nav state).
+  // The visible sections bucketed by `group`, in first-appearance order.
+  // Shared by the desktop sidebar and the mobile level-1 menu so the two
+  // can never drift into different groupings.
+  _groupedSections() {
     const groups = [];
-    for (const s of sections) {
+    for (const s of AdminConsole._visibleSections()) {
       const name = s.group || 'Other';
       let g = groups.find((x) => x.name === name);
       if (!g) { g = { name, items: [] }; groups.push(g); }
       g.items.push(s);
     }
-    return groups.map((g, i) => `
+    return groups;
+  },
+
+  // Desktop sidebar rows, grouped under headings. Fifteen flat rows is a
+  // lot to scan; the headings are the mitigation (and stay cheap — no
+  // second level of nav state).
+  _navItemsHtml() {
+    const active = AdminConsole._section;
+    const itemHtml = (s) => {
+      const isActive = s.key === active;
+      const cls = 'admin-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
+        + (isActive
+          ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
+          : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+      return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}"
+        data-admin-section="${s.key}" class="${cls}">${AdminConsole.esc(s.label)}</button>`;
+    };
+    return AdminConsole._groupedSections().map((g, i) => `
       <div class="${i === 0 ? '' : 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800'}">
         <div class="px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${AdminConsole.esc(g.name)}</div>
         ${g.items.map(itemHtml).join('')}
       </div>`).join('');
+  },
+
+  // Mobile level 1: the section menu. A list, not a tab set — so plain
+  // buttons in a <nav>, no role="tab"/aria-selected, and the drawer-row
+  // idiom from index.html (44px minimum, hairline between rows, chevron
+  // on the right) rather than the kit's inset-grouped card, which would
+  // read as a foreign surface next to the rest of the platform.
+  _mobileMenuHtml() {
+    const chevron = `<svg class="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>`;
+    const rowHtml = (s) => `
+      <button type="button" data-admin-section="${s.key}"
+              class="admin-menu-row flex items-center gap-3 w-full text-left min-h-[44px] px-4 py-2
+                     border-b border-zinc-100 dark:border-zinc-800
+                     text-zinc-700 dark:text-zinc-200
+                     hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors">
+        <span class="flex-1 min-w-0 text-sm font-medium truncate">${AdminConsole.esc(s.label)}</span>
+        ${chevron}
+      </button>`;
+    const groups = AdminConsole._groupedSections().map((g) => `
+      <div class="mb-5">
+        <div class="px-4 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${AdminConsole.esc(g.name)}</div>
+        <div class="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900
+                    [&>button:last-child]:border-b-0">
+          ${g.items.map(rowHtml).join('')}
+        </div>
+      </div>`).join('');
+    return `<nav id="admin-mobile-menu" aria-label="Admin sections" class="-mx-4">${groups}</nav>`;
   },
 
   _renderShell() {
@@ -241,18 +485,14 @@ const AdminConsole = {
     const viewOnly = !AdminConsole.canWrite() && !AdminConsole._publicMode();
     root.innerHTML = `
       <div class="md:flex md:items-start md:gap-6">
-        <!-- Desktop sidebar menu -->
+        <!-- Desktop sidebar menu. Below md there is no nav here at all:
+             phones get the two-level hierarchy instead (the level-1 menu
+             renders INTO #admin-section-content). -->
         <nav id="admin-nav-desktop" aria-label="Admin sections"
              class="hidden md:block md:w-56 shrink-0 space-y-1">
-          ${AdminConsole._navItemsHtml('side')}
+          ${AdminConsole._navItemsHtml()}
         </nav>
         <div class="flex-1 min-w-0">
-          <!-- Mobile tab strip (the Dev board kanban-tabs pattern, #814):
-               only the strip itself scrolls sideways. -->
-          <nav id="admin-nav-mobile" role="tablist" aria-label="Admin sections"
-               class="md:hidden flex items-stretch gap-1 mb-3 -mx-4 px-4 overflow-x-auto border-b border-zinc-200 dark:border-zinc-800">
-            ${AdminConsole._navItemsHtml('tabs')}
-          </nav>
           <!-- View-only admin banner (issue #311), same copy as /admin. -->
           <div id="admin-view-only-banner" class="${viewOnly ? '' : 'hidden '}bg-amber-100 dark:bg-amber-950/50 border border-amber-300 dark:border-amber-800 text-amber-800 dark:text-amber-200 rounded-lg px-4 py-3 mb-4 text-sm">
             <span class="font-semibold">View-only — read access only.</span>
@@ -277,8 +517,20 @@ const AdminConsole = {
         </div>
       </div>`;
 
+    AdminConsole._wireSectionButtons(root);
+  },
+
+  // Every [data-admin-section] control routes through here. On mobile a
+  // press is a DRILL-IN (a real hash navigation that pushes history); on
+  // desktop it's the same in-place sidebar switch it has always been.
+  _wireSectionButtons(root) {
+    if (!root) return;
     root.querySelectorAll('[data-admin-section]').forEach((btn) => {
-      btn.addEventListener('click', () => AdminConsole.setSection(btn.dataset.adminSection));
+      btn.addEventListener('click', () => {
+        const key = btn.dataset.adminSection;
+        if (AdminConsole._isMobile()) AdminConsole._openSection(key);
+        else AdminConsole.setSection(key);
+      });
     });
   },
 
@@ -288,18 +540,14 @@ const AdminConsole = {
       key = AdminConsole._publicMode() ? (visible[0]?.key || 'status') : 'overview';
     }
     AdminConsole._section = key;
-    // Repaint the active state in both menus without rebuilding the shell.
+    // Repaint the sidebar's active state without rebuilding the shell.
     const root = document.getElementById('admin-root');
     if (!root || !document.getElementById('admin-section-content')) {
       AdminConsole._renderShell();
     } else {
       const sideHost = document.getElementById('admin-nav-desktop');
-      const tabHost = document.getElementById('admin-nav-mobile');
-      if (sideHost) sideHost.innerHTML = AdminConsole._navItemsHtml('side');
-      if (tabHost) tabHost.innerHTML = AdminConsole._navItemsHtml('tabs');
-      root.querySelectorAll('[data-admin-section]').forEach((btn) => {
-        btn.addEventListener('click', () => AdminConsole.setSection(btn.dataset.adminSection));
-      });
+      if (sideHost) sideHost.innerHTML = AdminConsole._navItemsHtml();
+      AdminConsole._wireSectionButtons(root);
     }
     if (!opts || opts.writeHash !== false) AdminConsole._writeHash(key);
     AdminConsole._renderSection();
@@ -313,8 +561,15 @@ const AdminConsole = {
   // Sections that own a second hash level (topochain, campaigns) are left
   // alone once we're already inside them, so their own replaceState isn't
   // fought over on every repaint.
+  //
+  // Mobile writes #admin/overview rather than bare #admin: down here a
+  // bare #admin means the MENU, so Overview needs an explicit segment to
+  // stay distinguishable (and deep-linkable) from level 1. Desktop keeps
+  // the historical overview → #admin mapping.
   _writeHash(key) {
-    const target = key === 'overview' ? '#admin' : `#admin/${key}`;
+    const target = (key === 'overview' && !AdminConsole._isMobile())
+      ? '#admin'
+      : `#admin/${key}`;
     if (location.hash.startsWith(`${target}/`)) return;
     if (location.hash.startsWith('#admin') && location.hash !== target) {
       history.replaceState(null, '', target);
@@ -345,6 +600,29 @@ const AdminConsole = {
     if (mod && typeof mod.destroy === 'function') {
       try { mod.destroy(); } catch (err) { console.error('admin section destroy failed', err); }
     }
+  },
+
+  // The single dispatcher for what goes in the content host: the mobile
+  // level-1 menu, or a section. Everything that changes level goes through
+  // here so the teardown below can't be skipped.
+  _renderContent() {
+    if (AdminConsole._isMobile() && AdminConsole._level === 1) {
+      const host = document.getElementById('admin-section-content');
+      if (!host) return;
+      // Leaving a section for the menu MUST tear it down: otherwise a back
+      // press out of Health & status leaves its 5s /api/status poll (which
+      // shells out to `docker stats` server-side) running for the life of
+      // the tab — exactly the leak #860's lifecycle work fixed.
+      AdminConsole._teardownActiveSection();
+      AdminConsole._renderMobileMenu(host);
+      return;
+    }
+    AdminConsole._renderSection();
+  },
+
+  _renderMobileMenu(host) {
+    host.innerHTML = AdminConsole._mobileMenuHtml();
+    AdminConsole._wireSectionButtons(host);
   },
 
   _renderSection() {
