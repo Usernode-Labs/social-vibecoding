@@ -37,14 +37,32 @@ function makeHome(user) {
 }
 
 // Fake 2D context for _widgetIconDataUrl — the vm sandbox has no real
-// DOM. It draws a rounded-rect tile (white face + grey hairline) before
-// the glyph, so the stub has to answer the path/stroke calls too, not
-// just fillRect/fillText.
-function fakeCtx() {
-  return {
-    beginPath() {}, closePath() {}, moveTo() {}, arcTo() {}, roundRect() {},
-    fill() {}, stroke() {}, fillRect() {}, fillText() {},
+// DOM. It draws a rounded-rect tile (face + hairline) before the glyph,
+// so the stub has to answer the path/stroke calls too, not just
+// fillRect/fillText.
+//
+// `paints` records the colour assigned at each fill()/stroke() call, so
+// tests can assert WHICH palette was used without a real canvas: the
+// tile face is the first fill, the hairline the first stroke, the glyph
+// a later fill (emoji leave fillStyle at the face colour — they carry
+// their own colour glyphs and are never recoloured).
+function fakeCtx(paints) {
+  const rec = (kind) => () => {
+    if (paints) {
+      paints.push({
+        op: kind,
+        color: kind === 'stroke' ? ctx.strokeStyle : ctx.fillStyle,
+      });
+    }
   };
+  const ctx = {
+    fillStyle: null,
+    strokeStyle: null,
+    beginPath() {}, closePath() {}, moveTo() {}, arcTo() {}, roundRect() {},
+    fill: rec('fill'), stroke: rec('stroke'),
+    fillRect: rec('fill'), fillText: rec('fill'),
+  };
+  return ctx;
 }
 
 // Like makeHome, but also hands back the vm sandbox (=== window inside
@@ -811,7 +829,11 @@ test('icon heal: unknown last-sent source re-sends once, then settles', async ()
   await Home._refreshWidgetItems();
   assert.equal(added.length, 2, 'both entries refreshed when sources are unknown');
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
-  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:`, 'canvas tile source recorded');
+  assert.equal(
+    srcMap.w1,
+    `tile:${Home.WIDGET_ICON_GEN}:${Home._widgetScheme()}:`,
+    'canvas tile source recorded, keyed by generation + colour scheme'
+  );
   assert.equal(srcMap.w2, 'https://sv.test/icons/x.png', 'image icon source recorded');
   // Sources now recorded → later refreshes send nothing.
   Home._iconHealTried = null; // even across a fresh page load
@@ -841,7 +863,7 @@ test('icon heal: app gaining an icon after pinning re-sends the new icon', async
   Home._apps = [baseApp()];
   sandbox.localStorage.setItem(
     'sv:widget_icon_src',
-    JSON.stringify({ w1: `tile:${Home.WIDGET_ICON_GEN}:` })
+    JSON.stringify({ w1: `tile:${Home.WIDGET_ICON_GEN}:${Home._widgetScheme()}:` })
   );
   await Home._refreshWidgetItems();
   assert.equal(added.length, 0, 'up-to-date tile is left alone');
@@ -855,6 +877,192 @@ test('icon heal: app gaining an icon after pinning re-sends the new icon', async
   assert.equal(added[0].silent, true);
   const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
   assert.equal(srcMap.w1, 'https://sv.test/icons/new.png', 'new source recorded');
+});
+
+// ── Widget tile palette follows the system appearance ────────────────
+//
+// The widget PNG is baked once and can't restyle itself on the
+// homescreen, so the palette is picked at render time from
+// prefers-color-scheme and the scheme rides in the source marker. A
+// light↔dark flip therefore has to (a) paint the other palette and
+// (b) actually re-send every pinned canvas tile.
+
+// Installs a settable prefers-color-scheme query on the sandbox and
+// returns a setter that fires the registered change listeners, so a
+// test can flip the system appearance the way the OS would.
+function stubScheme(sandbox, initialDark) {
+  let dark = !!initialDark;
+  const listeners = [];
+  sandbox.matchMedia = (media) => ({
+    media,
+    get matches() { return dark; },
+    addEventListener: (_type, fn) => listeners.push(fn),
+    removeEventListener: () => {},
+  });
+  return (next) => {
+    dark = !!next;
+    listeners.forEach((fn) => fn({ matches: dark }));
+  };
+}
+
+test('widget tile PNG paints the light palette in light appearance', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubScheme(sandbox, false);
+  const paints = [];
+  sandbox.document.createElement = () => ({
+    getContext: () => fakeCtx(paints),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  Home._widgetIconDataUrl(baseApp());
+  const face = paints.find((p) => p.op === 'fill');
+  const hairline = paints.find((p) => p.op === 'stroke');
+  const glyph = paints.filter((p) => p.op === 'fill').pop();
+  assert.equal(face.color, '#ffffff', 'white face');
+  assert.equal(hairline.color, '#e4e4e7', 'faint light-grey hairline');
+  assert.equal(glyph.color, '#a1a1aa', 'faint grey letter (--text-faint)');
+});
+
+test('widget tile PNG paints the dark palette in dark appearance', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  stubScheme(sandbox, true);
+  const paints = [];
+  sandbox.document.createElement = () => ({
+    getContext: () => fakeCtx(paints),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  Home._widgetIconDataUrl(baseApp());
+  const face = paints.find((p) => p.op === 'fill');
+  const hairline = paints.find((p) => p.op === 'stroke');
+  const glyph = paints.filter((p) => p.op === 'fill').pop();
+  assert.equal(face.color, '#1a1a30', 'dark face (--bg-secondary)');
+  assert.equal(hairline.color, '#2e2e50', 'hairline kept, stepped to --border');
+  assert.equal(glyph.color, '#9898b0', 'faint letter (--text-faint, dark)');
+  // The hairline is what keeps the tile legible against iOS's own dark
+  // widget material — a dark face with no ring would vanish.
+  assert.notEqual(hairline.color, face.color);
+});
+
+test('widget tile PNG never recolours an emoji glyph', () => {
+  for (const dark of [false, true]) {
+    const { Home, sandbox } = makeHomeEnv({ id: ME });
+    stubScheme(sandbox, dark);
+    const paints = [];
+    sandbox.document.createElement = () => ({
+      getContext: () => fakeCtx(paints),
+      toDataURL: () => 'data:image/png;base64,FAKE',
+    });
+    Home._widgetIconDataUrl(baseApp({ icon_emoji: '\u{1F3AF}' }));
+    const palette = Home.WIDGET_TILE_PALETTE[dark ? 'dark' : 'light'];
+    const glyph = paints.filter((p) => p.op === 'fill').pop();
+    assert.notEqual(glyph.color, palette.letter, 'emoji keep their own colours');
+  }
+});
+
+test('icon heal: a system light→dark flip re-sends every canvas tile once', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const setDark = stubScheme(sandbox, false);
+  sandbox.document.createElement = () => ({
+    getContext: () => fakeCtx(),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: true },
+        { id: 'w2', name: 'Iconed', url: 'https://sv.test/#app/iconed', has_icon: true },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [
+    baseApp(),
+    baseApp({ slug: 'iconed', name: 'Iconed', icon_url: '/icons/x.png' }),
+  ];
+  // Both already pinned with current sources → the first pass is quiet.
+  sandbox.localStorage.setItem('sv:widget_icon_src', JSON.stringify({
+    w1: `tile:${Home.WIDGET_ICON_GEN}:light:`,
+    w2: 'https://sv.test/icons/x.png',
+  }));
+  Home._watchWidgetScheme();
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 0, 'nothing to do while the scheme is unchanged');
+
+  // The phone switches to dark appearance.
+  setDark(true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 1, 'exactly the canvas tile re-sends');
+  assert.match(added[0].url, /#app\/demo-app/);
+  assert.equal(added[0].silent, true, 're-send stays silent — no walkthrough');
+  const srcMap = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
+  assert.equal(srcMap.w1, `tile:${Home.WIDGET_ICON_GEN}:dark:`, 'dark source recorded');
+  assert.equal(srcMap.w2, 'https://sv.test/icons/x.png', 'image tile untouched');
+
+  // A second event at the SAME scheme must not re-send anything: the
+  // equality guard is what stops a spurious media event from replaying
+  // the whole grid.
+  setDark(true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 1, 'no re-send when the scheme did not move');
+
+  // …and flipping back re-sends once more, in the light palette.
+  setDark(false);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 2, 'flipping back re-sends once');
+  const back = JSON.parse(sandbox.localStorage.getItem('sv:widget_icon_src'));
+  assert.equal(back.w1, `tile:${Home.WIDGET_ICON_GEN}:light:`);
+});
+
+// _iconHealTried caps sends to one attempt per shortcut id per page
+// load. A scheme flip marks every canvas tile stale, so without
+// clearing that Set the flip would find the work and then skip it —
+// the re-send would silently never happen.
+test('icon heal: a scheme flip clears the per-load heal-tried set', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const setDark = stubScheme(sandbox, false);
+  sandbox.document.createElement = () => ({
+    getContext: () => fakeCtx(),
+    toDataURL: () => 'data:image/png;base64,FAKE',
+  });
+  const added = [];
+  sandbox.usernode = {
+    isNative: true,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+    getHomeScreenShortcuts: async () => ({
+      items: [
+        { id: 'w1', name: 'Demo App', url: 'https://sv.test/#app/demo-app', has_icon: false },
+      ],
+    }),
+  };
+  Home._shortcutSupport = { mechanism: 'widget' };
+  Home._apps = [baseApp()];
+  Home._watchWidgetScheme();
+  await Home._refreshWidgetItems();
+  assert.equal(added.length, 1, 'healed once on load');
+  assert.ok(Home._iconHealTried && Home._iconHealTried.has('w1'), 'id marked tried');
+
+  setDark(true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 2, 'the flip re-sends despite the earlier attempt');
+});
+
+test('scheme watching is inert without the widget mechanism', async () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  const setDark = stubScheme(sandbox, false);
+  const added = [];
+  sandbox.usernode = {
+    isNative: false,
+    addHomeScreenShortcut: async (opts) => { added.push(opts); return { added: true }; },
+  };
+  // Plain browser / Android: the probe never reports the widget grid.
+  Home._shortcutSupport = null;
+  Home._apps = [baseApp()];
+  Home._watchWidgetScheme();
+  setDark(true);
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(added.length, 0, 'no bridge traffic off the widget path');
 });
 
 test('icon heal: unpinned shortcut records are pruned from the source map', async () => {

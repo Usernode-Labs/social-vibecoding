@@ -1062,6 +1062,11 @@ const Home = {
   _probeShortcutSupport() {
     if (Home._shortcutProbeStarted) return;
     Home._shortcutProbeStarted = true;
+    // Start watching the system appearance here rather than inside the
+    // widget branch below: the probe resolves asynchronously, so the
+    // registration would otherwise race a flip that happens during it.
+    // The handler is inert until the widget mechanism is known anyway.
+    Home._watchWidgetScheme();
     const bridge = window.usernode;
     if (!bridge || typeof bridge.getHomeScreenShortcutSupport !== 'function') return;
     bridge.getHomeScreenShortcutSupport().then((support) => {
@@ -1132,16 +1137,92 @@ const Home = {
   //          flat violet-600/20 square with a violet-400 letter).
   //   gen 4: the letter glyph steps down to the faint grey the in-app
   //          letter tiles now use (--text-faint); emoji unchanged.
-  WIDGET_ICON_GEN: 4,
+  //   gen 5: the tile is rendered per colour scheme instead of pinning
+  //          the light face — gen 3/4 baked an opaque #ffffff square,
+  //          which read as a bright white tile on a dark homescreen.
+  //          The scheme is also part of the source marker below, so a
+  //          light↔dark flip re-sends on top of this one-time bump.
+  WIDGET_ICON_GEN: 5,
+  // The two faces the canvas tile can wear, mirroring `.app-icon-tile`
+  // in app.css. Light is the pre-existing treatment, unchanged; dark
+  // uses the same tokens the CSS tile resolves to under `.dark`
+  // (--bg-secondary / --border / --text-faint). Emoji glyphs are never
+  // recoloured — they carry their own colours in both schemes.
+  WIDGET_TILE_PALETTE: {
+    light: { face: '#ffffff', hairline: '#e4e4e7', letter: '#a1a1aa' },
+    dark: { face: '#1a1a30', hairline: '#2e2e50', letter: '#9898b0' },
+  },
+  // The colour scheme the widget PNG should be painted for.
+  //
+  // Deliberately the SYSTEM appearance (prefers-color-scheme), NOT the
+  // `.dark` class / Theme.get(): the PNG is consumed by the iOS
+  // homescreen widget, which renders under the system appearance and
+  // cannot see SV's in-app Light/Dark/System override. Keying off the
+  // in-app theme would paint a light widget onto a dark homescreen
+  // whenever someone forces SV to light.
+  //
+  // Falls back to 'light' wherever matchMedia is missing (old WebViews,
+  // the vm sandbox in tests) — _desiredIconSrcFor runs on every heal
+  // pass, so throwing here would break icon healing outright.
+  _schemeQuery() {
+    try {
+      return typeof window.matchMedia === 'function'
+        ? window.matchMedia('(prefers-color-scheme: dark)')
+        : null;
+    } catch (_) { return null; }
+  },
+  _widgetScheme() {
+    const mq = Home._schemeQuery();
+    return (mq && mq.matches) ? 'dark' : 'light';
+  },
   _iconSrcKey: 'sv:widget_icon_src',
   _iconHealTried: null,
   // The icon source the widget *should* have for this app right now.
   // Image icons: the absolute URL (matches _shortcutPayloadFor). Canvas
-  // tiles: an opaque marker keyed by emoji + rendering generation.
+  // tiles: an opaque marker keyed by emoji + rendering generation + the
+  // scheme the PNG was painted for, so flipping the system appearance
+  // marks every canvas tile stale and re-sends it. The scheme is NOT
+  // part of the image-icon marker — that payload is the app's own URL
+  // and looks identical in both schemes, so folding it in would re-send
+  // every image tile on each flip for no visual change.
   _desiredIconSrcFor(app) {
     return app.icon_url
       ? new URL(app.icon_url, location.origin).href
-      : `tile:${Home.WIDGET_ICON_GEN}:${app.icon_emoji || ''}`;
+      : `tile:${Home.WIDGET_ICON_GEN}:${Home._widgetScheme()}:${app.icon_emoji || ''}`;
+  },
+  // Re-paint pinned canvas tiles when the system appearance flips.
+  //
+  // Registered once per page load. The heal pass itself is gated on the
+  // widget mechanism + the bridge, so this is inert on web, Android and
+  // desktop; the handler only does work when the scheme ACTUALLY moved,
+  // so a spurious media event can't re-send the whole grid.
+  _widgetSchemeWatching: false,
+  _widgetSchemeSeen: null,
+  _watchWidgetScheme() {
+    if (Home._widgetSchemeWatching) return;
+    Home._widgetSchemeWatching = true;
+    Home._widgetSchemeSeen = Home._widgetScheme();
+    const mq = Home._schemeQuery();
+    if (mq && typeof mq.addEventListener === 'function') {
+      mq.addEventListener('change', Home._onWidgetSchemeChange);
+    }
+    // Theme also re-broadcasts OS changes while the user is in "system"
+    // mode. Redundant with the query above, but free: the equality
+    // guard below turns a duplicate notification into a no-op, and it
+    // costs nothing where window.Theme isn't loaded (tests, standalone).
+    if (window.Theme && typeof window.Theme.onChange === 'function') {
+      window.Theme.onChange(Home._onWidgetSchemeChange);
+    }
+  },
+  _onWidgetSchemeChange() {
+    const scheme = Home._widgetScheme();
+    if (scheme === Home._widgetSchemeSeen) return;
+    Home._widgetSchemeSeen = scheme;
+    // Load-bearing: _iconHealTried caps sends to one attempt per
+    // shortcut id per page load. Without clearing it the flip would
+    // mark every tile stale and then skip all of them.
+    Home._iconHealTried = null;
+    Promise.resolve(Home._healWidgetIcons()).catch(() => {});
   },
   _loadIconSrcMap() {
     try {
@@ -1582,14 +1663,17 @@ const Home = {
 
   // Renders the SV emoji/letter tile to a PNG data URI so the native
   // homescreen widget shows the exact tile the app shows — the same
-  // white face + faint grey hairline + faint grey letter as
-  // `.app-icon-tile` (app.css). Drawn as a rounded rect (radius scaled
-  // from the in-app 12px-on-56px tile) so the corners stay transparent
-  // and the shape reads correctly on the widget's own surface, light or
-  // dark. It can't follow the system theme the way the CSS tile does, so
-  // it pins the light-mode face — the treatment homescreen icons expect.
-  // Apps with a real icon image skip this (the image URL is passed
-  // through instead).
+  // face + hairline + faint letter as `.app-icon-tile` (app.css). Drawn
+  // as a rounded rect (radius scaled from the in-app 12px-on-56px tile)
+  // so the corners stay transparent and the shape reads correctly on the
+  // widget's own surface, light or dark.
+  //
+  // A PNG can't follow the system theme the way the CSS tile does, so
+  // the palette is chosen at render time from the CURRENT system
+  // appearance (_widgetScheme) and the scheme rides along in the source
+  // marker — a light↔dark flip makes every pinned tile stale and
+  // _healWidgetIcons re-sends it in the other palette. Apps with a real
+  // icon image skip this (the image URL is passed through instead).
   _widgetIconDataUrl(app) {
     try {
       const size = 128;
@@ -1615,9 +1699,16 @@ const Home = {
         ctx.arcTo(inset, inset, inset + box, inset, radius);
         ctx.closePath();
       }
-      ctx.fillStyle = '#ffffff';
+      // Light: #ffffff face / #e4e4e7 hairline (unchanged).
+      // Dark: #1a1a30 face / #2e2e50 hairline — the tokens `.dark
+      // .app-icon-tile` resolves to. The hairline is what keeps the
+      // tile shape legible against iOS's own dark widget material, so
+      // it must not be dropped in the dark palette.
+      const palette = Home.WIDGET_TILE_PALETTE[Home._widgetScheme()]
+        || Home.WIDGET_TILE_PALETTE.light;
+      ctx.fillStyle = palette.face;
       ctx.fill();
-      ctx.strokeStyle = '#e4e4e7'; // --border-light
+      ctx.strokeStyle = palette.hairline;
       ctx.lineWidth = stroke;
       ctx.stroke();
       const text = app.icon_emoji
@@ -1627,7 +1718,7 @@ const Home = {
         : 'bold 64px system-ui, sans-serif';
       // Letters only — emoji keep their own colour glyphs. The faint
       // grey matches .app-icon-tile[data-icon="letter"] (--text-faint).
-      const color = app.icon_emoji ? null : '#a1a1aa'; // --text-faint
+      const color = app.icon_emoji ? null : palette.letter;
       // Pixel-centering first: textAlign/textBaseline metrics misplace
       // emoji glyphs in iOS WebKit (tiles came out anchored bottom-left),
       // and measured glyph bounds are just as unreliable across engines.
