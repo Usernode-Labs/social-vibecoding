@@ -446,53 +446,73 @@
        under kit sheets/modals) so the anonymous shell never has to
        coordinate header/tab visibility with the authed shell. -->
 
-  <!-- Landing screen -->
-  <main id="auth-landing-screen" class="hidden fixed inset-0 z-40 bg-white dark:bg-zinc-950">
-    <!-- In-page app viewer: public apps open in an iframe overlay with a
-         corner Back instead of a target=_blank (which strands mobile
-         webview users on the app subdomain with no way back). Kept OUTSIDE
-         the scroll wrapper: the kit PTR transform on the scroller would
-         otherwise become the containing block for this fixed overlay. -->
-    <div id="app-viewer" class="hidden fixed inset-0 z-50 bg-white dark:bg-zinc-950 flex flex-col">
-      <div class="flex items-center gap-3 px-4 pb-2 border-b border-zinc-200 dark:border-zinc-800"
-           style="padding-top: calc(env(safe-area-inset-top, 0px) + 0.75rem)">
-        <button id="app-viewer-back" type="button"
-          class="text-sm text-zinc-500 dark:text-zinc-400 hover:text-violet-400 shrink-0">&larr; Back</button>
-        <div id="app-viewer-title" class="font-medium text-sm truncate"></div>
-      </div>
-      <iframe id="app-viewer-frame" class="flex-1 w-full border-0" title="App"></iframe>
-    </div>
+  <!-- Landing screen.
 
-    <!-- Inner scroller: the kit pull-to-refresh rubber-band translates the
-         element it is attached to. Attaching to the fixed overlay itself
-         would slide the WHOLE screen down and expose the authed shell
-         behind it (z-lower in the same document) — so the overlay stays
-         put as an opaque backstop and this wrapper takes the gesture. -->
-    <div id="auth-landing-scroll" class="h-full overflow-y-auto">
-    <div class="max-w-3xl mx-auto px-6 py-12">
-      <header class="text-center mb-10">
-        <h1 class="text-3xl font-bold mb-2">Usernode Social Vibecoding</h1>
-        <p class="text-sm text-zinc-500 dark:text-zinc-400 italic mb-6">A place where users own and build apps together</p>
+       Column layout: a PERSISTENT header (Back + title + Sign in / Join
+       waitlist) over a content region that holds either the directory
+       scroller or the in-page app viewer. The header stays put while an
+       app is open, so a visitor who likes what they just used can sign
+       up without backing out first. -->
+  <main id="auth-landing-screen" class="hidden fixed inset-0 z-40 bg-white dark:bg-zinc-950 flex flex-col">
+    <!-- Mirrors #platform-header's shape (height, padding, hairline,
+         safe-area) so both shells read identically. The 20px back-button
+         wrapper is fixed-width on purpose: toggling the button's `hidden`
+         must not shift the title. -->
+    <header id="landing-header" class="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
+      <div class="w-5 shrink-0">
+        <button id="landing-back-btn" type="button" class="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-100 hidden" aria-label="Back to apps">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+        </button>
+      </div>
+
+      <h1 id="landing-header-title" class="flex-1 min-w-0 text-lg font-bold pointer-events-none truncate text-left">Usernode Social Vibecoding</h1>
+
+      <div class="ml-auto shrink-0 flex items-center">
         <!-- Two entry points only (issue: landing simplification). Account
              creation is deferred: it happens at the end of the waitlist
              journey, or when a gated app below routes to #signup. -->
-        <div id="landing-ctas" class="flex items-center justify-center gap-3">
-          <a href="#login" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 font-medium transition-colors text-white text-sm">Sign in</a>
-          <button type="button" id="landing-waitlist-cta" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-5 py-2 font-medium text-sm text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</button>
+        <div id="landing-header-ctas" class="flex items-center gap-2">
+          <a href="#login" id="landing-signin-cta" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs sm:px-5 sm:py-2 sm:text-sm font-medium transition-colors text-white">Sign in</a>
+          <button type="button" id="landing-waitlist-cta" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs sm:px-5 sm:py-2 sm:text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</button>
         </div>
         <!-- Shown instead of the CTAs when a (waiting-room) session exists. -->
         <div id="landing-back-to-waiting" class="hidden">
-          <a href="#waiting" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-5 py-2 font-medium transition-colors text-white text-sm">Back to your queue status</a>
+          <a href="#waiting" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs sm:px-5 sm:py-2 sm:text-sm font-medium transition-colors text-white">Your queue status</a>
         </div>
-      </header>
+      </div>
+    </header>
 
-      <!-- Collapsed by default so "Join waitlist" appears once (the header
-           CTA); clicking the CTA reveals this form and focuses the email. -->
-      <section id="landing-waitlist" class="hidden rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10">
-        <h2 class="text-lg font-semibold mb-1">Join the waitlist</h2>
+    <!-- Inner scroller: the kit pull-to-refresh rubber-band translates the
+         element it is attached to. Attaching to the overlay itself would
+         slide the WHOLE screen down (header included) and expose the
+         authed shell behind it (z-lower in the same document) — so the
+         overlay stays put as an opaque backstop and this wrapper takes
+         the gesture. flex-1/min-h-0, not h-full: it's a flex child under
+         the header now, and h-full would overflow by the header's height. -->
+    <div id="auth-landing-scroll" class="flex-1 min-h-0 overflow-y-auto">
+    <div class="max-w-3xl mx-auto px-6 py-12">
+      <div class="text-center mb-10">
+        <h1 class="text-3xl font-bold mb-2">Usernode Social Vibecoding</h1>
+        <p class="text-sm text-zinc-500 dark:text-zinc-400 italic">A place where users own and build apps together</p>
+      </div>
+
+      <!-- The CTA block sits where the Sign in / Join waitlist buttons used
+           to be: it explains what the platform is and carries the waitlist
+           form, always visible (the header's "Join waitlist" scrolls here
+           and focuses the email rather than un-hiding anything). -->
+      <section id="landing-waitlist" class="rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/60 p-5 mb-10">
+        <h2 class="text-lg font-semibold mb-1">Build apps together, own them together</h2>
+        <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-3">
+          Usernode Social Vibecoding is a place where users describe the app
+          they want in chat, an AI builds it, and the community votes the
+          changes in. Every app below was built here by the people who use
+          it — they run on the Usernode chain, and contributors own a share
+          of what they build.
+        </p>
         <p class="text-sm text-zinc-500 dark:text-zinc-400 mb-4">
-          Platform access opens in batches. Leave your email and we'll let you
-          in when your turn comes — the apps below are open to everyone right now.
+          Platform access opens in batches. Join the waitlist and we'll email
+          you when your spot opens — the apps below are open to everyone
+          right now.
         </p>
         <form id="waitlist-form" class="flex flex-col sm:flex-row gap-2">
           <input id="waitlist-email" type="email" required maxlength="255" placeholder="you@example.com"
@@ -500,10 +520,16 @@
             class="flex-1 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent">
           <button type="submit" id="waitlist-submit"
             class="rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 px-5 py-2 text-sm font-medium text-white transition-colors">
-            Join waitlist
+            Join the waitlist
           </button>
         </form>
         <p id="waitlist-msg" class="hidden text-sm mt-3"></p>
+        <!-- Swapped in for the form when a (waiting-room) session exists —
+             they're already on the list, so asking for the email again is
+             noise. -->
+        <p id="landing-cta-queued" class="hidden text-sm text-zinc-500 dark:text-zinc-400">
+          You're already on the waitlist — we'll email you when your spot opens.
+        </p>
       </section>
 
       <section>
@@ -518,6 +544,18 @@
         </div>
       </section>
     </div>
+    </div>
+
+    <!-- In-page app viewer: public apps open in an iframe here instead of
+         a target=_blank (which strands mobile webview users on the app
+         subdomain with no way back). It is an IN-FLOW sibling of the
+         scroller — not a fixed overlay — so the header above stays put and
+         owns Back + the app name. Opening zooms it out of the tapped tile
+         (kit 'zoom-in', mirroring App.navigateToApp); the background must
+         stay opaque because the kit pins this LIVE element as a fixed
+         overlay for the duration of the zoom. -->
+    <div id="app-viewer" class="hidden flex-1 min-h-0 flex flex-col bg-white dark:bg-zinc-950">
+      <iframe id="app-viewer-frame" class="flex-1 w-full border-0" title="App"></iframe>
     </div>
   </main>
 
