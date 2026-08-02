@@ -893,6 +893,159 @@ function dashboardRoutes(config) {
     }
   });
 
+  // ── Progress estimator accuracy (#891) ─────────────────────
+  //
+  // Answers "is the experimental AI progress estimate good enough to leave
+  // experimental?" from `progress_estimates`, which has been recording every
+  // guess and its backfilled ground truth all along with nothing reading it
+  // back. Per-tick prediction is `predicted_remaining_seconds`; ground truth
+  // is `actual_remaining_ms` (= the turn's total wall clock minus that tick's
+  // elapsed_ms), filled in at the coding run's terminal choke point.
+  //
+  // DELIBERATELY IGNORES the includeAdmins filter every sibling endpoint
+  // applies. The estimator is opt-in and default-OFF, so the population that
+  // has it switched on is tiny and admin-heavy — excluding admins would leave
+  // this card permanently empty. Surfaced in the card's (?) definition.
+  router.get('/api/admin/analytics/estimator', async (req, res) => {
+    // A tick is SCORABLE when the turn resolved, the model actually gave a
+    // number, and there was real time left to predict. `actual_remaining_ms
+    // <= 0` (the run outlived its own estimate window) is excluded from the
+    // ratio-based band metric — division by ~zero — but counted separately
+    // as `ran_past` so it can't hide.
+    const SCORED = `actual_total_ms IS NOT NULL
+                    AND predicted_remaining_seconds IS NOT NULL
+                    AND actual_remaining_ms > 0`;
+    // Signed error: positive = predicted MORE time remaining than there was
+    // (pessimistic), negative = optimistic. Median of this is the bias.
+    const ERR = `(predicted_remaining_seconds - actual_remaining_ms / 1000.0)`;
+    const metricsSql = (windowed) => `
+      SELECT
+        COUNT(*)::int                                              AS ticks,
+        COUNT(*) FILTER (WHERE actual_total_ms IS NOT NULL)::int    AS resolved,
+        COUNT(*) FILTER (WHERE actual_total_ms IS NULL)::int        AS unresolved,
+        COUNT(DISTINCT progress_message_id)::int                    AS runs,
+        COUNT(DISTINCT user_id)::int                                AS users,
+        COUNT(*) FILTER (WHERE ${SCORED})::int                      AS scored,
+        COUNT(*) FILTER (WHERE actual_total_ms IS NOT NULL
+                           AND actual_remaining_ms <= 0)::int       AS ran_past,
+        COUNT(*) FILTER (WHERE actual_total_ms IS NOT NULL
+                           AND predicted_remaining_seconds IS NOT NULL)::int
+                                                                    AS resolved_with_prediction,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(${ERR}))
+          FILTER (WHERE ${SCORED})                                  AS median_abs_err_s,
+        percentile_cont(0.5) WITHIN GROUP (ORDER BY ${ERR})
+          FILTER (WHERE ${SCORED})                                  AS median_bias_s,
+        AVG((abs(${ERR}) <= 60)::int) FILTER (WHERE ${SCORED})      AS within_60s,
+        AVG((predicted_remaining_seconds
+               BETWEEN actual_remaining_ms / 2000.0
+                   AND actual_remaining_ms / 500.0)::int)
+          FILTER (WHERE ${SCORED})                                  AS within_band
+      FROM progress_estimates
+      ${windowed ? `WHERE created_at >= NOW() - INTERVAL '30 days'` : ''}`;
+
+    // Nulls (no scorable rows) must reach the client as null, not 0 — "no
+    // data yet" and "perfectly accurate" are very different answers.
+    const num = (v) => (v == null ? null : Number(v));
+    const shapeMetrics = (r) => ({
+      ticks: r.ticks,
+      resolved: r.resolved,
+      unresolved: r.unresolved,
+      unresolvedRate: r.ticks ? r.unresolved / r.ticks : null,
+      runs: r.runs,
+      users: r.users,
+      scored: r.scored,
+      ranPast: r.ran_past,
+      // Share of resolved ticks where the model committed to a number at all.
+      coverage: r.resolved ? r.resolved_with_prediction / r.resolved : null,
+      medianAbsErrS: num(r.median_abs_err_s),
+      medianBiasS: num(r.median_bias_s),
+      within60s: num(r.within_60s),
+      withinBand: num(r.within_band),
+    });
+
+    try {
+      const [d30, all, enabled, byElapsed, byOutcome, daily] = await Promise.all([
+        pool.query(metricsSql(true)),
+        pool.query(metricsSql(false)),
+        pool.query(`SELECT COUNT(*)::int AS n FROM users WHERE ai_progress_estimate`),
+        // How far into the run the guess was made. A model that is only
+        // wrong in the first two minutes is a very different problem from
+        // one that is wrong throughout.
+        pool.query(
+          `SELECT
+             CASE WHEN elapsed_ms < 120000 THEN '<2m'
+                  WHEN elapsed_ms < 300000 THEN '2-5m'
+                  WHEN elapsed_ms < 600000 THEN '5-10m'
+                  ELSE '10m+' END                                   AS bucket,
+             COUNT(*)::int                                          AS scored,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(${ERR})) AS median_abs_err_s,
+             AVG((predicted_remaining_seconds
+                    BETWEEN actual_remaining_ms / 2000.0
+                        AND actual_remaining_ms / 500.0)::int)      AS within_band
+           FROM progress_estimates
+           WHERE ${SCORED}
+           GROUP BY 1
+           ORDER BY MIN(elapsed_ms)`
+        ),
+        pool.query(
+          `SELECT
+             COALESCE(outcome, 'unknown')                           AS outcome,
+             COUNT(*)::int                                          AS scored,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(${ERR})) AS median_abs_err_s,
+             AVG((predicted_remaining_seconds
+                    BETWEEN actual_remaining_ms / 2000.0
+                        AND actual_remaining_ms / 500.0)::int)      AS within_band
+           FROM progress_estimates
+           WHERE ${SCORED}
+           GROUP BY 1
+           ORDER BY 2 DESC`
+        ),
+        pool.query(
+          `SELECT
+             created_at::date::text                                 AS day,
+             COUNT(*)::int                                          AS scored,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(${ERR})) AS median_abs_err_s
+           FROM progress_estimates
+           WHERE ${SCORED} AND created_at >= NOW() - INTERVAL '30 days'
+           GROUP BY 1
+           ORDER BY 1`
+        ),
+      ]);
+
+      const payload = {
+        last30d: shapeMetrics(d30.rows[0]),
+        allTime: shapeMetrics(all.rows[0]),
+        usersEnabled: enabled.rows[0].n,
+        byElapsed: byElapsed.rows.map((r) => ({
+          bucket: r.bucket,
+          scored: r.scored,
+          medianAbsErrS: num(r.median_abs_err_s),
+          withinBand: num(r.within_band),
+        })),
+        byOutcome: byOutcome.rows.map((r) => ({
+          outcome: r.outcome,
+          scored: r.scored,
+          medianAbsErrS: num(r.median_abs_err_s),
+          withinBand: num(r.within_band),
+        })),
+        daily: daily.rows.map((r) => ({
+          day: r.day, scored: r.scored, medianAbsErrS: num(r.median_abs_err_s),
+        })),
+      };
+
+      // Staging demo: progress_estimates is `staging:private`, so a
+      // prod-cloned staging DB has it schema-only — the card would be a wall
+      // of dashes in every PR preview. Substituted only when genuinely empty.
+      if (wantsDemo(req) && !payload.allTime.ticks) {
+        return res.json(analyticsDemo.estimatorAccuracy());
+      }
+      res.json(payload);
+    } catch (err) {
+      log.error('dashboard', 'estimator failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   return router;
 }
 

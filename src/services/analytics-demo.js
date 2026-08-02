@@ -276,6 +276,79 @@ function kudos() {
   return { weeks };
 }
 
+// Progress estimator accuracy (#891). `progress_estimates` is
+// `staging:private`, so a prod-cloned staging DB has it schema-only and the
+// card renders as a wall of dashes in every PR preview — this is the
+// substituted read-path payload (same shape as the real endpoint's).
+//
+// Numbers are chosen to CLEAR the sample-size gate (231 scored / 55 runs /
+// 6 users) but MISS one accuracy threshold — the in-band share is 0.58
+// against a 0.60 bar — so the card renders its "Stays experimental … misses
+// in-band share" verdict. Deliberate: a staging preview showing a green
+// "Ready to leave experimental" off mock data invites it being read as the
+// real answer, and it would leave the amber path unexercised in review.
+// The unresolved rate is ~1%, the post-fix expectation.
+function estimatorAccuracy() {
+  const window30 = {
+    ticks: 243,
+    resolved: 240,
+    unresolved: 3,
+    unresolvedRate: 3 / 243,
+    runs: 55,
+    users: 6,
+    scored: 231,
+    ranPast: 9,
+    coverage: 0.95,
+    medianAbsErrS: 78.4,
+    medianBiasS: -22.6,
+    within60s: 0.42,
+    withinBand: 0.58,
+  };
+  const daily = [];
+  for (let i = 29; i >= 0; i--) {
+    const s = 20000 + i;
+    daily.push({
+      day: isoDay(i),
+      scored: pick(s, 3, 14),
+      medianAbsErrS: pick(s + 0.5, 45, 130),
+    });
+  }
+  return {
+    last30d: window30,
+    // All-time is the same run of data plus the pre-fix tail: a much worse
+    // unresolved rate, which is exactly the story the card should tell.
+    allTime: {
+      ...window30,
+      ticks: 618,
+      resolved: 559,
+      unresolved: 59,
+      unresolvedRate: 59 / 618,
+      runs: 141,
+      users: 7,
+      scored: 534,
+      ranPast: 25,
+      medianAbsErrS: 96.2,
+      medianBiasS: -31.0,
+      within60s: 0.38,
+      withinBand: 0.56,
+    },
+    usersEnabled: 6,
+    byElapsed: [
+      { bucket: '<2m', scored: 74, medianAbsErrS: 119.5, withinBand: 0.47 },
+      { bucket: '2-5m', scored: 96, medianAbsErrS: 68.2, withinBand: 0.68 },
+      { bucket: '5-10m', scored: 44, medianAbsErrS: 61.8, withinBand: 0.71 },
+      { bucket: '10m+', scored: 17, medianAbsErrS: 142.0, withinBand: 0.41 },
+    ],
+    byOutcome: [
+      { outcome: 'committed', scored: 187, medianAbsErrS: 72.1, withinBand: 0.65 },
+      { outcome: 'noop', scored: 24, medianAbsErrS: 96.4, withinBand: 0.50 },
+      { outcome: 'error', scored: 13, medianAbsErrS: 148.9, withinBand: 0.31 },
+      { outcome: 'stopped', scored: 7, medianAbsErrS: 201.3, withinBand: 0.29 },
+    ],
+    daily,
+  };
+}
+
 module.exports = {
   IS_STAGING,
   overview,
@@ -289,4 +362,5 @@ module.exports = {
   topUsers,
   spendByBuilder,
   kudos,
+  estimatorAccuracy,
 };

@@ -137,10 +137,10 @@
 
 /* Pressed-state opt-outs: the kit gives every button an instant
    scale-press, which reads wrong on dense strip controls that sit
-   flush against siblings (bottom tabs, segmented pills, theme mode
-   pills) — the scale makes adjacent cells appear to shift. Keep the
-   brightness dim, drop the transform. */
-.app-tab:active,
+   flush against siblings (the header App/Dev switch, segmented pills,
+   theme mode pills) — the scale makes adjacent cells appear to shift.
+   Keep the brightness dim, drop the transform. */
+.app-mode-seg:active,
 .create-mode-pill:active,
 .create-vis-pill:active,
 .members-vis-pill:active,
@@ -169,11 +169,6 @@ html, body {
 #auth-landing-scroll {
   overscroll-behavior-y: contain;
 }
-
-/* ── Tabs ──────────────────────────────────────────────── */
-
-.app-tab { color: var(--text-muted); }
-.app-tab.active { color: var(--accent); border-top: 2px solid currentColor; }
 
 /* ── App cards ─────────────────────────────────────────── */
 
@@ -2166,6 +2161,22 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   display: inline-block;
 }
 
+/* Stop requested, not yet landed (#889): the click has to acknowledge
+   itself immediately, and the red square is a lie once pressed — pressing
+   it again does nothing. Muted like the wrap-up spinner state (its closest
+   sibling) with an explicit label, so the button reads as "working on it"
+   rather than "still needs pressing". */
+.dc-btn-stopping {
+  background: var(--bg-tertiary) !important;
+  cursor: not-allowed;
+  gap: 6px;
+}
+.dc-btn-stopping:hover { background: var(--bg-tertiary) !important; }
+/* A touch smaller than the button's own text-sm so the widest state of
+   this button stays close to the Send/Stop width and the composer beside
+   it barely moves. */
+.dc-btn-stopping-label { color: var(--text-secondary); font-size: 12px; }
+
 .dc-send-spinner {
   width: 16px; height: 16px;
   border: 2px solid var(--border);
@@ -3393,6 +3404,30 @@ html.in-native-webview #header-title {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
   cursor: default;
 }
+/* Header App/Dev switch (#app-mode-switch) — the segmented control that
+   replaced the full-width bottom tab bar. Deliberately the same visual
+   system as .theme-seg above (recessed track, raised active face) rather
+   than a second segmented-control idiom: the two are the platform's only
+   segmented controls and should read as one convention.
+
+   No caret rail here — the caret is the drawer control's affordance for
+   pointing down at the list it filters; this switch labels itself. And
+   no sliding thumb: the kit's fidelity rules call for no animation on
+   high-frequency controls like tabs. */
+.app-mode-seg {
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.app-mode-seg:hover {
+  color: var(--text-secondary);
+}
+.app-mode-seg.app-mode-seg-active {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  cursor: default;
+}
+
 /* Caret rail: spans the track, sits just below it. The track's parent
    row reserves the height with its pb-3 so the arrow can never collide
    with #drawer-status-pane's top border. */

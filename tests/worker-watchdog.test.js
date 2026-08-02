@@ -64,6 +64,59 @@ test('watchdog: a definite idle ends the consecutive-failure run', () => {
   assert.deepEqual(worker.recordWatchdogProbe(c, null), { abandon: false, cause: null });
 });
 
+// ── Stop-aware idle budget (#889) ───────────────────────────────────────
+//
+// The two-strike default exists to give the wrapper's final
+// `echo "__USERNODE_EXIT__ $?" >> journal` one interval to flush. On the
+// stop path that echo can never come — stopTurn's kill takes out the
+// wrapper shell along with claude — so waiting a second interval buys
+// nothing and costs the user ~10s of dead air.
+
+test('watchdog: with idleLimit 1, the first definite idle abandons', () => {
+  const c = worker.newWatchdogCounters();
+  assert.deepEqual(
+    worker.recordWatchdogProbe(c, false, { idleLimit: 1 }),
+    { abandon: true, cause: 'turn_process_gone' }
+  );
+});
+
+test('watchdog: idleLimit does NOT tighten the probe-failure budget', () => {
+  // A null still says nothing about the turn, stop requested or not —
+  // docker-daemon contention must not be read as "the agent is gone".
+  const c = worker.newWatchdogCounters();
+  for (let i = 0; i < 11; i++) {
+    assert.deepEqual(
+      worker.recordWatchdogProbe(c, null, { idleLimit: 1 }),
+      { abandon: false, cause: null }
+    );
+  }
+  assert.deepEqual(
+    worker.recordWatchdogProbe(c, null, { idleLimit: 1 }),
+    { abandon: true, cause: 'probe_unobservable' }
+  );
+});
+
+test('watchdog: a busy probe still resets under the tightened budget', () => {
+  // A stop was requested but the turn is visibly still alive (the kill
+  // hasn't landed yet) — that must not abandon on the next single idle
+  // without the strike actually accumulating.
+  const c = worker.newWatchdogCounters();
+  assert.deepEqual(
+    worker.recordWatchdogProbe(c, true, { idleLimit: 1 }),
+    { abandon: false, cause: null }
+  );
+  assert.equal(c.idleStrikes, 0);
+});
+
+test('watchdog: the default budget is unchanged for non-stopped turns', () => {
+  // Explicitly pinned: the 10s/2-strike policy is the safety net for OOM
+  // kills and vanished containers, where a fast cadence would only pile
+  // docker-exec load onto an already-contended daemon.
+  const c = worker.newWatchdogCounters();
+  assert.deepEqual(worker.recordWatchdogProbe(c, false), { abandon: false, cause: null });
+  assert.deepEqual(worker.recordWatchdogProbe(c, false), { abandon: true, cause: 'turn_process_gone' });
+});
+
 test('newWatchState initializes markerlessCause to null', () => {
   const state = worker.newWatchState();
   assert.equal(state.markerlessCause, null);
