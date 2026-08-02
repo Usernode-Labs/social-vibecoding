@@ -222,6 +222,7 @@ test('kit present: zoom opts (el, fromEl, fallback, after, outEl) forward to unN
 // ── 3. Include regressions ─────────────────────────────────────────────
 
 const INDEX = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
+const read = (p) => fs.readFileSync(path.join(__dirname, '..', p), 'utf8');
 
 test('index.html loads the hosted kit (css + js) and platform-ui.js', () => {
   assert.ok(INDEX.includes('/usernode-native/v1/native.css'), 'kit stylesheet include dropped');
@@ -242,7 +243,78 @@ test('settings toggles are kit switches (un-switch)', () => {
   }
 });
 
-test('header and tab bar carry safe-area classes', () => {
+test('header and app view carry safe-area classes', () => {
   assert.ok(/<header id="platform-header"[^>]*un-safe-top/.test(INDEX));
-  assert.ok(/<nav id="app-tabs"[^>]*un-safe-bottom/.test(INDEX));
+  // The bottom inset moved off the deleted #app-tabs bar onto #app-view
+  // itself — that bar was the only thing keeping app content clear of the
+  // iOS home indicator.
+  assert.ok(/<div id="app-view"[^>]*un-safe-bottom/.test(INDEX));
+});
+
+test('the bottom App/Dev tab bar is gone, replaced by the header switch', () => {
+  assert.ok(!INDEX.includes('id="app-tabs"'), 'the #app-tabs nav still ships');
+  assert.ok(!INDEX.includes('class="app-tab'), 'an .app-tab button still ships');
+  assert.ok(INDEX.includes('id="app-mode-switch"'), 'the header switch is missing');
+});
+
+test('#app-mode-switch lives inside the header, before the icon group', () => {
+  const header = INDEX.slice(
+    INDEX.indexOf('id="platform-header"'),
+    INDEX.indexOf('</header>')
+  );
+  // header-layout.js resolves the title's side groups as
+  // previousElementSibling / nextElementSibling, so the switch has to be
+  // INSIDE the existing right-group div — a sibling wedged between the
+  // <h1> and that div silently breaks the centering measurement.
+  assert.ok(header.includes('id="app-mode-switch"'), 'switch is outside the header');
+  assert.ok(
+    header.indexOf('id="app-mode-switch"') > header.indexOf('id="header-title"'),
+    'switch must sit after the title, in the right group'
+  );
+  assert.ok(
+    header.indexOf('id="app-mode-switch"') < header.indexOf('id="feedback-btn"'),
+    'switch must lead the icon group'
+  );
+});
+
+test('the App/Dev switch is a two-option radiogroup', () => {
+  const m = INDEX.match(/<div id="app-mode-switch"[\s\S]*?<\/div>/);
+  assert.ok(m, 'missing #app-mode-switch');
+  const el = m[0];
+  assert.ok(el.includes('role="radiogroup"'), el);
+  assert.ok(el.includes('hidden'), 'ships hidden — setAppOpen reveals it');
+  for (const tab of ['app', 'dev']) {
+    assert.ok(
+      new RegExp(`<button[^>]*role="radio"[^>]*data-tab="${tab}"[^>]*class="[^"]*app-mode-seg`).test(el)
+        || new RegExp(`<button[^>]*data-tab="${tab}"[^>]*app-mode-seg`).test(el),
+      `missing the ${tab} segment`
+    );
+  }
+});
+
+test('app.js wires the switch and guards the same-segment App tap', () => {
+  const src = read('public/js/app.js');
+  assert.ok(src.includes(".querySelectorAll('.app-mode-seg')"), 'not bound to .app-mode-seg');
+  assert.ok(src.includes("setAttribute('aria-checked'"), 'active state never reaches the a11y tree');
+  assert.ok(src.includes("app-mode-seg-active"), 'no active class applied');
+  // Re-tapping App would re-run renderAppTab() and reload the iframe.
+  assert.ok(
+    src.includes("if (btn.dataset.tab === 'app' && App.currentTab === 'app') return;"),
+    'missing the App-segment no-op guard'
+  );
+});
+
+test('setAppOpen owns the switch and hides it for self-hosted apps', () => {
+  const src = read('public/js/app.js');
+  const fn = src.slice(src.indexOf('setAppOpen(open) {'), src.indexOf('setForkVisible(visible)'));
+  assert.ok(fn.includes("getElementById('app-mode-switch')"), fn);
+  assert.ok(fn.includes('self_hosted'), 'self-hosted apps must not get a dead App segment');
+  assert.ok(fn.includes('HeaderLayout'), 'title should be remeasured when the group resizes');
+});
+
+test('app.css drops the tab-bar rules and keeps the press opt-out', () => {
+  const css = read('public/css/app.css');
+  assert.ok(!/^\.app-tab\b/m.test(css), '.app-tab rules still present');
+  assert.ok(css.includes('.app-mode-seg:active'), 'press-state opt-out lost the switch');
+  assert.ok(css.includes('.app-mode-seg.app-mode-seg-active'), 'no active-segment styling');
 });

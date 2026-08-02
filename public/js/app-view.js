@@ -354,26 +354,15 @@ const AppView = {
     const { app: appData } = await res.json();
     AppView.appData = appData;
 
-    // The App tab is an iframe of `appData.url` (the per-slug subdomain).
-    // The self-app row maps to a slug-derived hostname that doesn't exist —
-    // the platform itself lives at the root domain, not a subdomain — so
-    // the tab would render a TLS error. Hide it for self-hosted apps; the
-    // default-tab logic in App.navigateToApp/switchTab routes to Dev → Chat
-    // instead. Show it again for non-self-hosted (mounting AppView is per-
-    // app, so a previous self-app open could have left the button hidden).
-    const appTabBtn = document.querySelector('.app-tab[data-tab="app"]');
-    if (appTabBtn) {
-      appTabBtn.classList.toggle('hidden', !!appData.self_hosted);
-    }
-
-    // #621: the Dev mode (Chat / Issues / Proposals / Sessions) is now
-    // visible to EVERYONE who can see the app. Non-collaborators of an
-    // invite-only app get it read-only (AppView.readOnly below): all
-    // write controls are hidden client-side and every API behind them
-    // enforces the same gate server-side. Un-hide explicitly — a
-    // previous mount could have left the button hidden.
-    const devTabBtn = document.querySelector('.app-tab[data-tab="dev"]');
-    if (devTabBtn) devTabBtn.classList.remove('hidden');
+    // Mode visibility (App tab hidden for self-hosted apps, whose
+    // appData.url maps to a slug-derived subdomain that doesn't resolve;
+    // Dev visible to everyone who can see the app per #621, read-only for
+    // non-collaborators via AppView.readOnly) used to be two per-button
+    // `hidden` toggles on the bottom tab bar's cells. The bar is now the
+    // header's #app-mode-switch, whose whole-control visibility is owned
+    // by App.DrawerStatus.setAppOpen() — called from navigateToApp right
+    // after this fetch resolves, on the same lifecycle as the drawer's
+    // app-scoped rows. Nothing to toggle here any more.
 
     await AppView.refreshToken(slug);
     AppView.startActivityTracking(slug);
@@ -859,9 +848,17 @@ const AppView = {
 
     content.innerHTML = `
       <div class="flex flex-col h-full min-h-0">
-        <!-- Header bar: title + view-mode toggle + the "+" menu (top right). -->
+        <!-- Header bar: caption + view-mode toggle + the "+" menu (top
+             right). The "DEV" caption renders ONLY when the header's
+             #app-mode-switch is hidden — i.e. on the self-hosted platform
+             row. Everywhere else the header now says "Dev" a few pixels
+             above this row, and printing it twice reads as a bug. The
+             flex-1 spacer keeps the toggle and "+" right-aligned either
+             way. -->
         <div class="flex items-center gap-2 px-3 py-1.5 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-          <span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>
+          ${AppView.appData?.self_hosted
+            ? '<span class="text-xs uppercase font-semibold text-zinc-500 dark:text-zinc-400 tracking-wider flex-1">Dev</span>'
+            : '<span class="flex-1"></span>'}
           ${AppView._renderViewToggle()}
           <div class="relative ${AppView.readOnly && AppView.appData?.self_hosted ? 'hidden' : ''}">
             <button id="dev-plus-btn" aria-haspopup="true" aria-expanded="false"

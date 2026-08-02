@@ -1688,12 +1688,38 @@ const App = {
     // #drawer-row-github / #drawer-row-share: visible only while an app
     // is open. Called from openApp and from every navigate* that leaves
     // an app behind.
+    //
+    // The header's App/Dev switch rides the SAME lifecycle, which is why
+    // it's owned here rather than in a seventh place: this one call
+    // already covers openApp, navigateHome, AppView.close() and all six
+    // other-screen navigations (leaderboard, challenges, profile, admin,
+    // settings, topochain). It used to be free — the old #app-tabs bar
+    // was a child of #app-view and disappeared whenever that did — but a
+    // header-resident control has to be hidden explicitly.
     setAppOpen(open) {
       const row = document.getElementById('drawer-row-app-version');
       if (row) row.classList.toggle('hidden', !open);
       // Fork lineage is app-scoped too — closing an app can never leave
       // the previous app's "Forked from" line behind.
       if (!open) App.DrawerStatus.setForkVisible(false);
+      // Self-hosted apps (the platform's own row) have no App mode at
+      // all — appData.url maps to a slug-derived subdomain that doesn't
+      // resolve, so switchTab coerces them to the Dev forum. A switch
+      // with one reachable option is noise, so hide the whole control
+      // rather than shipping a dead segment. setAppOpen(true) runs after
+      // the /api/apps/:slug fetch resolves, so self_hosted is known by
+      // the time this reads it.
+      const modeSwitch = document.getElementById('app-mode-switch');
+      if (modeSwitch) {
+        const show = !!open && !window.AppView?.appData?.self_hosted;
+        modeSwitch.classList.toggle('hidden', !show);
+        // The control materially changes the header's right-group width,
+        // which is one of the two inputs to the title's centered-vs-flow
+        // decision. The group's ResizeObserver would catch this on its
+        // own a frame later; the explicit hook exists so the title
+        // doesn't visibly jump.
+        window.HeaderLayout?.refresh?.();
+      }
       App.DrawerStatus.refreshDeployDot();
     },
 
@@ -2546,8 +2572,21 @@ const App = {
     const shareCopy = document.getElementById('share-copy-btn');
     if (shareCopy) shareCopy.addEventListener('click', () => AppView.copyShareUrl());
 
-    document.querySelectorAll('.app-tab').forEach((btn) => {
-      btn.addEventListener('click', () => App.switchTab(btn.dataset.tab));
+    // Header App/Dev switch (#app-mode-switch), successor to the bottom
+    // tab bar. Tapping the ALREADY-ACTIVE App segment is a no-op: the
+    // switch now sits inches from the icons people tap constantly, and
+    // switchTab('app') re-runs renderAppTab(), which replaces
+    // #app-content's innerHTML and therefore RELOADS the embedded app —
+    // losing whatever the user had on screen inside it. The Dev segment
+    // deliberately has no such guard: re-tapping it backs out of a
+    // session / chat / topic sub-view to the card list, which is the
+    // conventional "tap the active tab to go to its root" behaviour the
+    // bottom bar already had.
+    document.querySelectorAll('.app-mode-seg').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (btn.dataset.tab === 'app' && App.currentTab === 'app') return;
+        App.switchTab(btn.dataset.tab);
+      });
     });
 
     // popstate fires on browser/device back when the new history
@@ -2873,19 +2912,28 @@ const App = {
   },
 
   // ── Chromeless full-screen mode ──────────────────────────────────────
-  // Hide/show the two chrome elements (the shared header and the bottom
-  // App/Dev tab bar) and mount/unmount the floating "Open in Usernode"
-  // pill. Idempotent; only ever driven by restoreFromHash (the mode is
-  // hash-addressed, so history back/forward keeps working) plus a
+  // Hide/show the shared header and mount/unmount the floating "Open in
+  // Usernode" pill. Idempotent; only ever driven by restoreFromHash (the
+  // mode is hash-addressed, so history back/forward keeps working) plus a
   // defensive clear in navigateHome.
+  //
+  // The App/Dev switch needs no line of its own any more — it lives
+  // INSIDE #platform-header (it used to be the separate #app-tabs bar at
+  // the foot of #app-view), so hiding the header hides it too.
+  //
+  // What does need handling is the safe-area inset that moved off that
+  // bar onto #app-view: a chromeless share link is meant to be truly
+  // edge-to-edge (its only chrome is the floating pill, which insets
+  // itself via env(safe-area-inset-bottom)), so strip the padding while
+  // the mode is on and restore it on the way out.
   setChromeless(on) {
     const enable = !!on;
     if (App.chromeless === enable) return;
     App.chromeless = enable;
     const header = document.getElementById('platform-header');
-    const tabs = document.getElementById('app-tabs');
+    const appView = document.getElementById('app-view');
     if (header) header.classList.toggle('hidden', enable);
-    if (tabs) tabs.classList.toggle('hidden', enable);
+    if (appView) appView.classList.toggle('un-safe-bottom', !enable);
     if (enable) App._mountChromelessPill();
     else App._unmountChromelessPill();
   },
@@ -3888,8 +3936,13 @@ const App = {
     // (see AppView.readOnly).
     App.currentTab = tab;
     App.currentSubTab = tab === 'dev' ? (subTab || 'forum') : null;
-    document.querySelectorAll('.app-tab').forEach((btn) => {
-      btn.classList.toggle('active', btn.dataset.tab === tab);
+    document.querySelectorAll('.app-mode-seg').forEach((btn) => {
+      const on = btn.dataset.tab === tab;
+      btn.classList.toggle('app-mode-seg-active', on);
+      // The switch is a radiogroup, so the checked state has to be in
+      // the a11y tree too — the raised face alone tells a screen reader
+      // nothing. Also what the dapp.json checks assert on.
+      btn.setAttribute('aria-checked', on ? 'true' : 'false');
     });
 
     // Tear down the cross-app active-sessions poll when leaving the
