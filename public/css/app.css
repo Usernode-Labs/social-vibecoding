@@ -190,10 +190,9 @@ html, body {
    is drawn by this class, the radius by the element's own Tailwind
    class, so the ring always follows the tile.
 
-   Emoji and the first-letter fallback inherit `color` from here, so
-   the glyph reads dark grey instead of the old violet. Image icons
-   still fill the tile: they're `w-full h-full object-cover` inside
-   the border box, so the image sits flush inside the hairline.
+   The glyph inherits `color` from here. Image icons still fill the
+   tile: they're `w-full h-full object-cover` inside the border box, so
+   the image sits flush inside the hairline.
 
    Tile call sites must NOT set their own background / text colour
    utilities — routing every tile through this one class is the point. */
@@ -206,6 +205,14 @@ html, body {
   /* --bg-primary is near-black in dark mode; one step up so the tile
      reads as a surface sitting on the page rather than a hole in it. */
   background-color: var(--bg-secondary);
+}
+/* The first-letter fallback specifically — one step fainter than the
+   base glyph colour so a name initial reads as a quiet placeholder
+   rather than as content. Tiles tag their kind with data-icon, so this
+   never touches emoji tiles (whose colour glyphs ignore `color`
+   anyway) or image tiles. Both modes step to the same faint token. */
+.app-icon-tile[data-icon="letter"] {
+  color: var(--text-faint);
 }
 /* The create-tile placeholder: same face, dashed ring + muted glyph so
    it still reads "empty slot" within the same visual family. */

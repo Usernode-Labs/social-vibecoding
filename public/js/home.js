@@ -762,12 +762,19 @@ const Home = {
     const slug = Home._widgetSlugFor(item);
     const app = slug ? (Home._apps || []).find((a) => a.slug === slug) : null;
     const name = (app && app.name) || item.name || '?';
+    // Same three kinds as the home card's iconTileFor, tagged with the
+    // same data-icon so the tile treatment (app.css) can single out the
+    // letter fallback for its fainter glyph colour.
     let iconHtml;
+    let iconKind;
     if (app && app.icon_url) {
+      iconKind = 'image';
       iconHtml = `<img src="${escapeHtml(app.icon_url)}" alt="" loading="lazy" draggable="false" class="w-full h-full rounded-lg object-cover">`;
     } else if (app && app.icon_emoji) {
+      iconKind = 'emoji';
       iconHtml = `<span class="text-xl leading-none" aria-hidden="true">${escapeHtml(app.icon_emoji)}</span>`;
     } else {
+      iconKind = 'letter';
       iconHtml = escapeHtml(String(name).charAt(0).toUpperCase());
     }
     // touch-pan-y + select-none for the same reason as app cards: keep
@@ -775,7 +782,7 @@ const Home = {
     // gesture (see _onWidgetTilePointerDown).
     return `
       <div class="widget-tile app-card-draggable touch-pan-y relative flex flex-col items-center gap-1 w-16 cursor-grab" data-wid="${escapeHtml(item.id)}"${slug ? ` data-wslug="${escapeHtml(slug)}"` : ''}>
-        <div class="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base">${iconHtml}</div>
+        <div class="app-icon-tile w-10 h-10 rounded-lg overflow-hidden flex items-center justify-center font-bold text-base" data-icon="${iconKind}">${iconHtml}</div>
         <span class="text-[0.65rem] leading-tight truncate w-full text-center">${escapeHtml(name)}</span>
         <button class="widget-remove-btn absolute -top-1.5 right-0 w-5 h-5 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-[0.6rem] text-zinc-500 dark:text-zinc-300 hover:text-red-500" data-wid="${escapeHtml(item.id)}" title="Remove from widget" aria-label="Remove ${escapeHtml(name)} from widget">✕</button>
       </div>`;
@@ -1123,7 +1130,9 @@ const Home = {
   //   gen 3: white rounded-tile face + faint grey hairline + dark-grey
   //          letter, matching the new .app-icon-tile treatment (was a
   //          flat violet-600/20 square with a violet-400 letter).
-  WIDGET_ICON_GEN: 3,
+  //   gen 4: the letter glyph steps down to the faint grey the in-app
+  //          letter tiles now use (--text-faint); emoji unchanged.
+  WIDGET_ICON_GEN: 4,
   _iconSrcKey: 'sv:widget_icon_src',
   _iconHealTried: null,
   // The icon source the widget *should* have for this app right now.
@@ -1573,7 +1582,7 @@ const Home = {
 
   // Renders the SV emoji/letter tile to a PNG data URI so the native
   // homescreen widget shows the exact tile the app shows — the same
-  // white face + faint grey hairline + dark-grey glyph as
+  // white face + faint grey hairline + faint grey letter as
   // `.app-icon-tile` (app.css). Drawn as a rounded rect (radius scaled
   // from the in-app 12px-on-56px tile) so the corners stay transparent
   // and the shape reads correctly on the widget's own surface, light or
@@ -1616,7 +1625,9 @@ const Home = {
       const font = app.icon_emoji
         ? '72px system-ui, sans-serif'
         : 'bold 64px system-ui, sans-serif';
-      const color = app.icon_emoji ? null : '#3f3f46'; // --text-secondary
+      // Letters only — emoji keep their own colour glyphs. The faint
+      // grey matches .app-icon-tile[data-icon="letter"] (--text-faint).
+      const color = app.icon_emoji ? null : '#a1a1aa'; // --text-faint
       // Pixel-centering first: textAlign/textBaseline metrics misplace
       // emoji glyphs in iOS WebKit (tiles came out anchored bottom-left),
       // and measured glyph bounds are just as unreliable across engines.
