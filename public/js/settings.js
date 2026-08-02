@@ -1,17 +1,44 @@
-// #30 — Settings modal (BYOK: bring your own Anthropic API key).
+// #30 — Settings (BYOK: bring your own Anthropic API key) — and, since the
+// settings-modal-to-screen conversion, the whole #settings SCREEN.
 //
-// The Settings row in the header drawer opens this modal (wired in
-// app.js HeaderMenu.init). Users can paste an `sk-ant-...` key; the
+// The Settings row in the header drawer is a real anchor to #settings;
+// App.restoreFromHash → App.navigateToSettings mounts #settings-screen and
+// hands rendering to this module, the same shape as the Challenges /
+// Profile / Admin console screens. Users can paste an `sk-ant-...` key; the
 // server verifies it with a cheap 1-token call and only then encrypts
 // + stores it. Once saved, a small emerald dot appears on the drawer's
 // Settings row so the user can tell at a glance that their key is
 // active — and so can any other user viewing over their shoulder
 // (no secrets leak, just the indicator).
+//
+// LAYOUT (mirrors public/js/admin-console.js — read that file's header for
+// the reasoning, this is the same shell with different data):
+//
+//   desktop (md+)          a grouped sidebar of sections + the active
+//                          section beside it, switched in place;
+//   level 1 (#settings)    below md, the grouped section menu, one tappable
+//                          row per section under the same headings;
+//   level 2 (#settings/<k>) that one section, full width, with the platform
+//                          header's back button flipped to an arrow and its
+//                          title set to the section label.
+//
+// The hash is the single source of truth for WHICH section shows; the level
+// is derived from it (bare #settings on mobile = the menu). A menu tap is a
+// REAL hash navigation, so it pushes a history entry and the device /
+// WebView back gesture pops back to the menu through exactly the same code
+// path as the on-screen arrow (see _openSection / handleBack / route).
+//
+// MOVE, DON'T REWRITE: the section markup is STATIC in index.html and every
+// control is bound by id exactly once in init(). The router only toggles
+// `hidden` on the [data-settings-section] WRAPPERS — it never rebuilds a
+// section, because that would silently detach every listener. Each
+// section's own `hidden` (the wallet / usernode / admin-preview capability
+// gates) keeps living on the INNER node, which is also how _visibleSections
+// derives menu membership without duplicating those gates.
 (function () {
   'use strict';
 
   const Settings = {
-    modal: null,
     state: { hasApiKey: false, keyLast4: null, usernodePubkey: null, walletLinkEnabled: false, aiProgressEstimate: false, locale: null },
     _walletPollTimer: null,
     _alertsTestTimer: null,
@@ -22,11 +49,75 @@
     _cliTokensLoading: false,
     _cliTokenLoadId: 0,
 
+    // ── Screen state ─────────────────────────────────────────────────────
+    _open: false,
+    // Which section is showing (or would show on a viewport crossing).
+    _section: 'api-key',
+    // Which level the phone layout is showing: 1 = the section menu,
+    // 2 = one section. Kept in sync on desktop too (it is ignored there)
+    // so a viewport crossing resolves without guessing.
+    _level: 1,
+    // True while the level-2 entry we're sitting on was PUSHED by a menu
+    // tap during this mount — the only case where history.back() is
+    // guaranteed to land on our own menu entry. A deep link (bookmark, a
+    // prose "Settings → Change password" link) leaves it false, and back
+    // replaces the entry instead of creating a forward one. Per-mount
+    // state: open() resets it.
+    _pushedFromMenu: false,
+    // #settings-screen scrollTop saved on drill-in, restored on the way back.
+    _menuScrollTop: 0,
+    _mediaBound: false,
+
+    // The single source of truth in JS for where the sidebar layout starts.
+    // Must stay in step with the `md:` classes in index.html's
+    // #settings-screen markup (Tailwind's md breakpoint IS 768px) — same
+    // discipline as AdminConsole.DESKTOP_MEDIA.
+    DESKTOP_MEDIA: '(min-width: 768px)',
+
+    // Sections. Keys are the #settings/<key> hash segments and the
+    // [data-settings-section] wrapper values in index.html; `group` is the
+    // heading they sit under — in the desktop sidebar AND in the mobile
+    // level-1 menu, which share _groupedSections(). Order here IS menu
+    // order, and the first VISIBLE entry is the default section.
+    //
+    // `gate` names the INNER node whose own `hidden` decides whether the
+    // section is offered at all — Usernode Wallet (wallet linking enabled),
+    // Usernode app (the native bridge's getSettingsState capability) and
+    // Admin preview (a real platform admin). Those gates live in
+    // _renderWalletSection / _renderUsernodeSection / _renderAdminSection
+    // and are read here, never duplicated. Sections with no `gate` are
+    // always offered.
+    SECTIONS: [
+      { key: 'api-key', label: 'Anthropic API key', group: 'AI & agents' },
+      { key: 'app-ai', label: 'App AI permissions', group: 'AI & agents' },
+      { key: 'agent-files', label: 'Agent instructions & skills', group: 'AI & agents' },
+
+      { key: 'password', label: 'Password', group: 'Account' },
+      { key: 'wallet', label: 'Usernode Wallet', group: 'Account', gate: 'wallet-section' },
+
+      { key: 'language', label: 'Language', group: 'Preferences' },
+      { key: 'alerts', label: 'Dev-chat sound & alerts', group: 'Preferences' },
+
+      { key: 'cli', label: 'CLI & coding-agent access', group: 'Developer' },
+      { key: 'dev-console', label: 'Developer console', group: 'Developer' },
+      { key: 'experimental', label: 'Experimental', group: 'Developer' },
+
+      { key: 'usernode', label: 'Usernode app', group: 'Usernode app', gate: 'settings-usernode-section' },
+
+      { key: 'admin-preview', label: 'Admin preview', group: 'Admin', gate: 'settings-admin-section' },
+    ],
+
+    // The section a bare #settings resolves to on desktop (and the one
+    // _writeHash collapses back onto bare #settings). Must be an ungated
+    // key, so it is always reachable.
+    DEFAULT_SECTION: 'api-key',
+
     init() {
-      this.modal = document.getElementById('settings-modal');
-      // The open entry point is the drawer's Settings row, wired in
-      // app.js HeaderMenu.init → Settings.open().
-      document.getElementById('settings-close').addEventListener('click', () => this.close());
+      // The entry point is the drawer's Settings row, a real anchor to
+      // #settings — restoreFromHash → App.navigateToSettings → open().
+      // Every control below is bound ONCE, here, by id: the section markup
+      // is static in index.html and only ever hidden/shown, never rebuilt
+      // (see the "MOVE, DON'T REWRITE" note on #settings-screen).
       document.getElementById('settings-save').addEventListener('click', () => this.save());
       document.getElementById('settings-remove').addEventListener('click', () => this.remove());
 
@@ -164,23 +255,9 @@
         });
       }
 
-      // Close on backdrop click. The dim area is now split between the
-      // outer scroll container (`this.modal`) and a flex wrapper that
-      // centers the panel and grows to `min-h-full`; either can be the
-      // event target depending on where the user clicked, so accept
-      // both. (Same `data-modal-backdrop` attribute is used on every
-      // modal in the app — see comment in index.html on the settings
-      // modal for the rationale.)
-      this.modal.addEventListener('click', (e) => {
-        // Ignore the trailing ghost click from the tap that opened the modal
-        // (see AppView.revealModal) so it can't close it instantly.
-        if (window.AppView && AppView.modalDismissGuarded && AppView.modalDismissGuarded(this.modal)) return;
-        if (e.target === this.modal || e.target.dataset.modalBackdrop !== undefined) this.close();
-      });
-
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && !this.modal.classList.contains('hidden')) this.close();
-      });
+      // No backdrop / Escape dismissal any more: Settings is a screen, not
+      // a modal. Leaving it is a real hash navigation (the header back
+      // button, the device back gesture) — see handleBack / _exitSettings.
 
       this.refresh();
     },
@@ -197,6 +274,11 @@
         this.state.aiProgressEstimate = !!j.user?.aiProgressEstimate;
         this.state.locale = j.user?.locale || null;
         this._renderIndicator();
+        // `walletLinkEnabled` decides whether the Usernode Wallet row is in
+        // the menu at all, and it lands here — possibly AFTER a cold-boot
+        // deep link has already painted. Re-resolve the menu.
+        this._renderWalletSection();
+        this._renderNavIfOpen();
       } catch {}
     },
 
@@ -210,7 +292,13 @@
       }
     },
 
-    open(opts = {}) {
+    isOpen() { return Settings._open; },
+
+    // Repaint every section's body. Cheap (they're all local state or a
+    // small fetch) and it keeps the ONE render path — a section is never
+    // rendered lazily on first reveal, so its controls are correct whether
+    // the viewer lands on it or switches to it later.
+    _renderAllSections() {
       this._renderBody();
       this._refreshSpend();
       this._renderLlmGrants();
@@ -224,22 +312,381 @@
       this._renderAdminSection();
       this._renderUsernodeSection();
       this._clearStatus();
-      // Reveal via the shared gesture-safe path (see AppView.revealModal) so
-      // the opening tap from the drawer row can't ghost-click the backdrop
-      // closed. Falls back to a plain reveal if AppView isn't loaded.
-      if (window.AppView && AppView.revealModal) AppView.revealModal(this.modal);
-      else this.modal.classList.remove('hidden');
-      // Intentionally do NOT auto-focus the API key field here. On mobile,
-      // focusing an input on open immediately pops the on-screen keyboard,
-      // which is jarring when the user just wanted to view settings. Let the
-      // keyboard appear only when the user taps a field that needs it.
-      // #463: the credits-exhausted banner deep-links here — scroll the
-      // API-key section into view (still no focus, per the above).
-      if (opts.focusApiKey) {
-        const keyInput = document.getElementById('settings-api-key');
-        if (keyInput && typeof keyInput.scrollIntoView === 'function') {
-          keyInput.scrollIntoView({ block: 'center' });
-        }
+    },
+
+    // `section` is the hash's optional second segment (null for bare
+    // #settings). Intentionally do NOT auto-focus the API key field: on
+    // mobile, focusing an input on open immediately pops the on-screen
+    // keyboard, which is jarring when the user just wanted to view
+    // settings. The credits-exhausted banner (#463) deep-links straight to
+    // #settings/api-key instead of asking for a scroll.
+    open(section) {
+      Settings._open = true;
+      Settings._pushedFromMenu = false;
+      Settings._menuScrollTop = 0;
+      Settings._ensureMediaListener();
+      Settings._renderAllSections();
+
+      const visible = Settings._visibleSections();
+      const valid = !!section && visible.some((s) => s.key === section);
+      const fallback = visible.some((s) => s.key === Settings._section)
+        ? Settings._section
+        : (visible[0] ? visible[0].key : 'api-key');
+
+      // On mobile, a bare #settings means the MENU — never a last-visited
+      // section resurrected from earlier in this tab. On desktop it keeps
+      // meaning the default section, exactly like the admin console.
+      if (Settings._isMobile() && !valid) {
+        Settings._level = 1;
+        Settings._section = fallback;
+        Settings._renderNav();
+        Settings._renderContent();
+        Settings._syncChrome();
+        return;
+      }
+      Settings._level = 2;
+      Settings.setSection(valid ? section : fallback, { writeHash: false });
+      // Runs after app.js's own setHeaderTitle, so on a mobile deep link the
+      // header ends up showing the section's name rather than "Settings".
+      Settings._syncChrome();
+    },
+
+    // Re-entry while the screen is ALREADY mounted (app.js routes here
+    // instead of re-running the whole screen swap — see navigateToSettings).
+    // Mirrors AdminConsole.route.
+    route(section) {
+      const visible = Settings._visibleSections();
+      const valid = !!section && visible.some((s) => s.key === section);
+      if (!Settings._isMobile()) {
+        Settings.setSection(
+          valid ? section : (visible[0] ? visible[0].key : 'api-key'),
+          { writeHash: false },
+        );
+        Settings._level = 2;
+        Settings._syncChrome();
+        return;
+      }
+      const targetLevel = valid ? 2 : 1;
+      // 1→2 push, 2→1 pop, same level (section→section deep link) instant:
+      // the kit's fidelity rule is no animation on same-level repaints.
+      const type = targetLevel === Settings._level
+        ? 'none'
+        : (targetLevel === 2 ? 'push' : 'pop');
+      if (targetLevel === 2) {
+        Settings._menuScrollTop = Settings._level === 1
+          ? Settings._scrollTop()
+          : Settings._menuScrollTop;
+        Settings._section = section;
+      } else {
+        Settings._pushedFromMenu = false;
+      }
+      Settings._level = targetLevel;
+      Settings._transition(() => {
+        Settings._renderNav();
+        Settings._renderContent();
+        Settings._syncChrome();
+        Settings._restoreScroll();
+      }, type);
+    },
+
+    // The on-screen back arrow AND the platform header's back button both
+    // land here (app.js:back-btn). Returns true when the press was consumed
+    // — i.e. mobile, inside a section — so the header falls through to
+    // navigateHome() everywhere else (all of desktop included).
+    handleBack() {
+      if (!Settings._open) return false;
+      if (!Settings._isMobile() || Settings._level !== 2) return false;
+      if (Settings._pushedFromMenu) {
+        // We pushed that entry ourselves, so the one below it IS our menu:
+        // popping routes back through popstate → restoreFromHash → route(),
+        // the same path the device back gesture takes.
+        history.back();
+        return true;
+      }
+      // Deep link (bookmark, a prose "Settings → Change password" link):
+      // nothing of ours below. REPLACE the entry with the menu rather than
+      // pushing one, so back can't bounce the viewer between the section
+      // and the menu forever.
+      try { history.replaceState(null, '', '#settings'); } catch { /* non-fatal */ }
+      Settings._level = 1;
+      Settings._transition(() => {
+        Settings._renderNav();
+        Settings._renderContent();
+        Settings._syncChrome();
+        Settings._restoreScroll();
+      }, 'pop');
+      return true;
+    },
+
+    // Below the sidebar breakpoint — i.e. the two-level layout is live.
+    // Anything that can't answer (no matchMedia) is treated as desktop, so
+    // a browser without it keeps the sidebar rather than a phone layout it
+    // never asked for.
+    _isMobile() {
+      try { return !window.matchMedia(Settings.DESKTOP_MEDIA).matches; }
+      catch { return false; }
+    },
+
+    // One-time viewport listener: crossing the breakpoint re-resolves the
+    // layout in place. Crossing UP renders the active section in the
+    // sidebar shell; crossing DOWN keeps that section as level 2 (no menu
+    // flash) and writes its explicit hash so the address matches what's on
+    // screen. Lazy-bound, like AdminConsole._ensureMediaListener.
+    _ensureMediaListener() {
+      if (Settings._mediaBound || !window.matchMedia) return;
+      try {
+        const mql = window.matchMedia(Settings.DESKTOP_MEDIA);
+        const onChange = () => {
+          if (!Settings._open) return;
+          if (!mql.matches && Settings._level !== 1) {
+            Settings._writeHash(Settings._section);
+          }
+          Settings._renderNav();
+          Settings._renderContent();
+          Settings._syncChrome();
+        };
+        if (mql.addEventListener) mql.addEventListener('change', onChange);
+        else if (mql.addListener) mql.addListener(onChange);
+        Settings._mediaBound = true;
+      } catch { /* no matchMedia — desktop path stands */ }
+    },
+
+    // The sections the current viewer may navigate to: everything whose
+    // gate node is absent or currently un-hidden. Reading the node rather
+    // than re-deriving the condition is what keeps this in step with
+    // _renderWalletSection / _renderUsernodeSection / _renderAdminSection.
+    _visibleSections() {
+      return Settings.SECTIONS.filter((s) => {
+        if (!s.gate) return true;
+        const el = document.getElementById(s.gate);
+        return !!el && !el.classList.contains('hidden');
+      });
+    },
+
+    // The visible sections bucketed by `group`, in first-appearance order.
+    // Shared by the desktop sidebar and the mobile level-1 menu so the two
+    // can never drift into different groupings.
+    _groupedSections() {
+      const groups = [];
+      for (const s of Settings._visibleSections()) {
+        const name = s.group || 'Other';
+        let g = groups.find((x) => x.name === name);
+        if (!g) { g = { name, items: [] }; groups.push(g); }
+        g.items.push(s);
+      }
+      return groups;
+    },
+
+    esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    },
+
+    // Desktop sidebar rows, grouped under headings.
+    _navItemsHtml() {
+      const active = Settings._section;
+      const itemHtml = (s) => {
+        const isActive = s.key === active;
+        const cls = 'settings-nav-item block w-full text-left rounded-lg px-3 py-2 text-sm font-medium transition-colors '
+          + (isActive
+            ? 'bg-violet-600/10 text-violet-600 dark:text-violet-400'
+            : 'text-zinc-600 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800');
+        return `<button type="button" role="tab" aria-selected="${isActive ? 'true' : 'false'}"
+          data-settings-nav="${s.key}" class="${cls}">${Settings.esc(s.label)}</button>`;
+      };
+      return Settings._groupedSections().map((g, i) => `
+        <div class="${i === 0 ? '' : 'mt-4 pt-3 border-t border-zinc-200 dark:border-zinc-800'}">
+          <div class="px-3 pb-1 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${Settings.esc(g.name)}</div>
+          ${g.items.map(itemHtml).join('')}
+        </div>`).join('');
+    },
+
+    // Mobile level 1: the section menu. A list, not a tab set — so plain
+    // buttons in a <nav>, no role="tab"/aria-selected, and the drawer-row
+    // idiom from index.html (44px minimum, hairline between rows, chevron
+    // on the right), exactly as the admin console's level-1 menu.
+    _mobileMenuHtml() {
+      const chevron = '<svg class="w-4 h-4 shrink-0 text-zinc-400 dark:text-zinc-500" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>';
+      const rowHtml = (s) => `
+        <button type="button" data-settings-nav="${s.key}"
+                class="settings-menu-row flex items-center gap-3 w-full text-left min-h-[44px] px-4 py-2
+                       border-b border-zinc-100 dark:border-zinc-800
+                       text-zinc-700 dark:text-zinc-200
+                       hover:bg-zinc-50 dark:hover:bg-zinc-800/60 transition-colors">
+          <span class="flex-1 min-w-0 text-sm font-medium truncate">${Settings.esc(s.label)}</span>
+          ${chevron}
+        </button>`;
+      return Settings._groupedSections().map((g) => `
+        <div class="mb-5">
+          <div class="px-4 pb-1.5 text-[11px] uppercase tracking-wide text-zinc-400 dark:text-zinc-500">${Settings.esc(g.name)}</div>
+          <div class="rounded-lg overflow-hidden border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900
+                      [&>button:last-child]:border-b-0">
+            ${g.items.map(rowHtml).join('')}
+          </div>
+        </div>`).join('');
+    },
+
+    // Paint BOTH nav hosts. These two elements are the only ones this
+    // module ever innerHTML-writes — the section wrappers are static
+    // markup and are only ever hidden/shown.
+    _renderNav() {
+      const side = document.getElementById('settings-nav-desktop');
+      if (side) {
+        side.innerHTML = Settings._navItemsHtml();
+        Settings._wireNavButtons(side);
+      }
+      const menu = document.getElementById('settings-mobile-menu-host');
+      if (menu) {
+        // Level 2 on a phone must not leave the menu rows above the
+        // section; desktop hides the host through its own md:hidden class.
+        const showMenu = Settings._isMobile() && Settings._level === 1;
+        menu.innerHTML = showMenu ? Settings._mobileMenuHtml() : '';
+        if (showMenu) Settings._wireNavButtons(menu);
+      }
+    },
+
+    // Every [data-settings-nav] control routes through here. On mobile a
+    // press is a DRILL-IN (a real hash navigation that pushes history); on
+    // desktop it's an in-place sidebar switch.
+    _wireNavButtons(root) {
+      if (!root) return;
+      root.querySelectorAll('[data-settings-nav]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+          const key = btn.dataset.settingsNav;
+          if (Settings._isMobile()) Settings._openSection(key);
+          else Settings.setSection(key);
+        });
+      });
+    },
+
+    // Drill-in from a level-1 menu row. A REAL hash navigation so the
+    // pushed entry makes the browser / WebView back gesture work for free;
+    // restoreFromHash routes it back into route() a tick later. Assigning
+    // location.hash preserves the query string, so ?demo=1 survives.
+    _openSection(key) {
+      Settings._menuScrollTop = Settings._scrollTop();
+      Settings._pushedFromMenu = true;
+      const target = `#settings/${key}`;
+      if (location.hash === target) {
+        // Same-value assignment fires no hashchange — route by hand.
+        Settings.route(key);
+        return;
+      }
+      location.hash = target;
+    },
+
+    setSection(key, opts) {
+      const visible = Settings._visibleSections();
+      if (!visible.some((s) => s.key === key)) {
+        key = visible[0] ? visible[0].key : 'api-key';
+      }
+      Settings._section = key;
+      if (!opts || opts.writeHash !== false) Settings._writeHash(key);
+      Settings._renderNav();
+      Settings._renderContent();
+    },
+
+    // Section switches update the address without polluting history —
+    // replaceState, and only while we're actually on the #settings route
+    // (the AdminConsole._writeHash / Leaderboard._setSub pattern).
+    // Entering/leaving the screen still gets a real history entry via
+    // normal hash navigation.
+    //
+    // Mobile writes #settings/api-key rather than bare #settings: down here
+    // a bare #settings means the MENU, so the default section needs an
+    // explicit segment to stay distinguishable (and deep-linkable) from
+    // level 1. Desktop keeps the default → bare #settings mapping.
+    _writeHash(key) {
+      const target = (key === Settings.DEFAULT_SECTION && !Settings._isMobile())
+        ? '#settings'
+        : `#settings/${key}`;
+      if (location.hash.startsWith(`${target}/`)) return;
+      if (location.hash.startsWith('#settings') && location.hash !== target) {
+        history.replaceState(null, '', target);
+      }
+    },
+
+    // The single dispatcher for what goes in the content area: the mobile
+    // level-1 menu, or exactly one section wrapper.
+    _renderContent() {
+      const host = document.getElementById('settings-section-content');
+      const footer = document.getElementById('settings-footer');
+      const menuLevel = Settings._isMobile() && Settings._level === 1;
+      if (host) {
+        host.classList.toggle('hidden', menuLevel);
+        host.querySelectorAll('[data-settings-section]').forEach((el) => {
+          el.classList.toggle('hidden', menuLevel || el.dataset.settingsSection !== Settings._section);
+        });
+      }
+      if (footer) Settings._syncFooter();
+    },
+
+    // Log out sits under the sidebar on desktop and under the level-1 menu
+    // on a phone. The phone case needs a real node MOVE: the sidebar column
+    // is `display:none` below md and would take the footer with it. Moving
+    // the node (never rebuilding it) is what keeps #settings-logout's
+    // click handler — bound once in init() — alive.
+    _syncFooter() {
+      const footer = document.getElementById('settings-footer');
+      if (!footer) return;
+      const mobile = Settings._isMobile();
+      const parent = document.getElementById(
+        mobile ? 'settings-content-col' : 'settings-sidebar-col',
+      );
+      if (parent && footer.parentElement !== parent) parent.appendChild(footer);
+      // On a phone it belongs to the MENU level only — a drilled-in section
+      // shouldn't end with a Log out button.
+      footer.classList.toggle('hidden', mobile && Settings._level === 2);
+    },
+
+    _transition(fn, type) {
+      if (window.PlatformUI && PlatformUI.transition) PlatformUI.transition(fn, { type: type || 'none' });
+      else fn();
+    },
+
+    _scrollTop() {
+      const el = document.getElementById('settings-screen');
+      return el ? el.scrollTop : 0;
+    },
+
+    // A pushed screen starts at the top; a pop restores where the menu was.
+    _restoreScroll() {
+      const el = document.getElementById('settings-screen');
+      if (!el) return;
+      el.scrollTop = (Settings._isMobile() && Settings._level === 1)
+        ? Settings._menuScrollTop
+        : 0;
+    },
+
+    // Platform-header chrome for the current level: inside a mobile section
+    // the header becomes that section's nav bar (arrow + section name),
+    // everywhere else it stays "Settings" and the home icon. setHeaderTitle
+    // mirrors into document.title, so the native shell's AppBar picks the
+    // section name up too.
+    _syncChrome() {
+      if (!window.App) return;
+      const inSection = Settings._isMobile() && Settings._level === 2;
+      if (App.setBackIcon) App.setBackIcon(inSection ? 'arrow' : 'home');
+      if (!App.setHeaderTitle) return;
+      if (inSection) {
+        const s = Settings._visibleSections().find((x) => x.key === Settings._section);
+        App.setHeaderTitle(s ? s.label : 'Settings');
+      } else {
+        App.setHeaderTitle('Settings');
+      }
+    },
+
+    // Re-resolve the menu after late-arriving state: `walletLinkEnabled`
+    // lands with refresh()'s /api/auth/me response and the Usernode-app
+    // capability with the bridge's async probe, both of which can resolve
+    // AFTER a cold-boot deep link has already painted. Without this the
+    // menu would be missing those rows until the next navigation.
+    _renderNavIfOpen() {
+      if (!Settings._open) return;
+      Settings._renderNav();
+      // A section that just became unavailable must not stay on screen.
+      if (!Settings._visibleSections().some((s) => s.key === Settings._section)) {
+        Settings.setSection(Settings._section);
       }
     },
 
@@ -275,6 +722,14 @@
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
     },
 
+    // True when the page carries ?demo=1. The server only honours it in
+    // staging (see routes/cli-auth.js), so this is safe to send always.
+    _cliTokensDemo() {
+      try {
+        return new URLSearchParams(window.location.search).get('demo') === '1';
+      } catch { return false; }
+    },
+
     async _loadCliTokens(reset) {
       const section = document.getElementById('cli-tokens-section');
       const list = document.getElementById('cli-tokens-list');
@@ -300,10 +755,15 @@
       this._cliTokensLoading = true;
       more.disabled = true;
       try {
+        // The page's ?demo=1 is passed through so the (staging:private,
+        // therefore always-empty in a staging clone) credential list has
+        // something to render — same pattern as _renderLlmGrants and
+        // _renderAgentFilesSection. Strictly a no-op in production.
         const query = this._cliTokenCursor
           ? `?limit=50&cursor=${encodeURIComponent(this._cliTokenCursor)}`
           : '?limit=50';
-        const response = await fetch(`/api/me/cli-tokens${query}`, {
+        const demoQ = this._cliTokensDemo() ? '&demo=1' : '';
+        const response = await fetch(`/api/me/cli-tokens${query}${demoQ}`, {
           credentials: 'same-origin',
           cache: 'no-store',
         });
@@ -371,7 +831,10 @@
         text.append(title, detail);
         top.appendChild(text);
 
-        if (token.status === 'valid' && typeof token.id === 'string') {
+        // Demo rows (staging ?demo=1) are fabricated server-side and have
+        // nothing to revoke — offer no button, same stance as the demo
+        // agent-files rows.
+        if (token.status === 'valid' && typeof token.id === 'string' && !token.demo) {
           const revoke = document.createElement('button');
           revoke.type = 'button';
           revoke.className = 'shrink-0 rounded border border-red-400 dark:border-red-700 px-2 py-1 text-xs font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors';
@@ -383,6 +846,10 @@
         list.appendChild(card);
       }
       more.classList.toggle('hidden', !this._cliTokenCursor);
+      if (this._cliTokensDemo() && this._cliTokens.some((t) => t.demo)) {
+        status.textContent = 'Demo data — changes are not saved.';
+        status.classList.remove('hidden', 'text-red-500', 'text-emerald-500');
+      }
     },
 
     async _revokeCliToken(id, button) {
@@ -516,9 +983,15 @@
       toggle.checked = localStorage.getItem('viewAsNonAdmin') === '1';
     },
 
+    // Called by App._exitSettings once the screen is hidden. No section
+    // polls, so there is no per-section teardown to run (the admin
+    // console's _teardownActiveSection has no analogue here) — just the two
+    // lifecycle timers and the never-persisted key field.
     close() {
-      this.modal.classList.add('hidden');
-      document.getElementById('settings-api-key').value = '';
+      Settings._open = false;
+      Settings._pushedFromMenu = false;
+      const input = document.getElementById('settings-api-key');
+      if (input) input.value = '';
       this._stopWalletPolling();
       this._clearAlertsTestCountdown();
     },
@@ -626,7 +1099,8 @@
         input.value = '';
         this._renderBody();
         this._refreshSpend();
-        setTimeout(() => this.close(), 900);
+        // Settings is a screen now, not a modal — a successful save leaves
+        // the success status visible in place instead of navigating away.
       } catch (err) {
         this._setStatus(`Network error: ${err.message}`, 'error');
       } finally {
@@ -1175,6 +1649,9 @@
       }[c]));
       const row = document.createElement('div');
       row.className = 'rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs';
+      // Stable hook for the #settings/agent-files rendered check — a row
+      // that stops rendering should fail checks, not shrink silently.
+      row.dataset.agentFile = f.kind || '';
       const kb = Math.max(1, Math.round((f.size_bytes || 0) / 1024));
       row.innerHTML = `
         <div class="flex items-center justify-between gap-2">
@@ -1419,8 +1896,15 @@
       if (!section) return;
       const gated = window.NativeChrome &&
         await NativeChrome.has('getSettingsState');
-      if (!gated) { section.classList.add('hidden'); return; }
+      // This capability probe is async, so the "Usernode app" menu row can
+      // only be resolved once it settles — re-render the nav either way.
+      if (!gated) {
+        section.classList.add('hidden');
+        this._renderNavIfOpen();
+        return;
+      }
       section.classList.remove('hidden');
+      this._renderNavIfOpen();
       if (!this._usernodeState) {
         section.textContent = '';
         section.appendChild(this._unEl('div',

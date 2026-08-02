@@ -30,6 +30,9 @@ const App = {
   // Same for the #admin screen (admin & moderation console, #818) — set
   // by navigateToAdminConsole() / _exitAdminConsole() / navigateHome().
   _inAdmin: false,
+  // Same for the #settings screen (settings-modal-to-screen conversion)
+  // — set by navigateToSettings() / _exitSettings() / navigateHome().
+  _inSettings: false,
   // Same for the #topochain/leaderboard screen (Task 14, public screens)
   // — set by navigateToTopochainLeaderboard() / _exitTopochainLeaderboard()
   // / navigateHome().
@@ -1757,11 +1760,12 @@ const App = {
           App.HeaderMenu.close();
           if (window.AppView) AppView.openShareModal();
         });
+      // Settings — the #settings screen (settings-modal-to-screen
+      // conversion). Same real-anchor idiom as Challenges / Profile above:
+      // navigation rides the anchor's hash, this handler just closes the
+      // drawer.
       document.getElementById('drawer-row-settings')
-        .addEventListener('click', () => {
-          App.HeaderMenu.close();
-          if (window.Settings) Settings.open();
-        });
+        ?.addEventListener('click', () => App.HeaderMenu.close());
       // Theme segmented control — a live control, NOT a navigation row: it
       // sets the mode and re-highlights WITHOUT closing the drawer, so the
       // user can see the recolor and switch again.
@@ -1884,12 +1888,13 @@ const App = {
     // installed in init(), which calls restoreFromHash() to rebuild
     // state from the previous URL.
     // The header back button is "home" for every screen — except inside a
-    // mobile admin section, where it is that section's back arrow and pops
-    // to the console's section menu (AdminConsole.handleBack returns true
-    // when it consumed the press). Gating on App._inAdmin means there is no
-    // override state that can go stale.
+    // mobile admin/settings section, where it is that section's back arrow
+    // and pops to that screen's section menu (handleBack returns true when
+    // it consumed the press). Gating on App._inAdmin / App._inSettings
+    // means there is no override state that can go stale.
     document.getElementById('back-btn').addEventListener('click', () => {
       if (App._inAdmin && window.AdminConsole?.handleBack?.()) return;
+      if (App._inSettings && window.Settings?.handleBack?.()) return;
       App.navigateHome();
     });
 
@@ -2528,6 +2533,7 @@ const App = {
         else if (App._inChallenges) App.navigateHome();
         else if (App._inProfile) App.navigateHome();
         else if (App._inAdmin) App.navigateHome();
+        else if (App._inSettings) App.navigateHome();
         else if (App._inTopochainLeaderboard) App.navigateHome();
         else if (App._inTopochainSeasons) App.navigateHome();
         else {
@@ -2591,6 +2597,15 @@ const App = {
         // App.user.isAdmin lives inside navigateToAdminConsole.
         App.setChromeless(false);
         App.navigateToAdminConsole(parts[1] || null);
+        return;
+      }
+      if (parts[0] === 'settings') {
+        // Settings screen (settings-modal-to-screen conversion). Optional
+        // section segment (#settings/password etc.) deep-links one section;
+        // no extra gate — the anonymous-shell branch above already bounced
+        // a signed-out visitor to login and remembered the deep link.
+        App.setChromeless(false);
+        App.navigateToSettings(parts[1] || null);
         return;
       }
       if (parts[0] === 'topochain') {
@@ -2676,6 +2691,7 @@ const App = {
         if (App._inChallenges) App._exitChallenges();
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
+        if (App._inSettings) App._exitSettings();
         if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
         if (App._inTopochainSeasons) App._exitTopochainSeasons();
         App.setChromeless(chromeless);
@@ -2710,6 +2726,7 @@ const App = {
         if (App._inChallenges) App._exitChallenges();
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
+        if (App._inSettings) App._exitSettings();
         if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
         if (App._inTopochainSeasons) App._exitTopochainSeasons();
         App.setHeaderTitle('dApps');
@@ -2818,6 +2835,7 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
     if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('leaderboard-screen');
@@ -2867,6 +2885,7 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
     if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('challenges-screen');
@@ -2907,6 +2926,7 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inChallenges) App._exitChallenges();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
     if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('profile-screen');
@@ -2985,6 +3005,7 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
+    if (App._inSettings) App._exitSettings();
     if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('admin-screen');
@@ -3020,6 +3041,69 @@ const App = {
     if (window.AdminConsole?.close) AdminConsole.close();
   },
 
+  // Show the Settings screen (settings-modal-to-screen conversion). Sibling
+  // to navigateToAdminConsole — hides home + app, reveals the dedicated
+  // #settings-screen and lets the Settings module (public/js/settings.js)
+  // render its sidebar / two-level menu into the static shell in
+  // index.html. No permission gate: Settings is every signed-in user's own
+  // account surface, and restoreFromHash's anonymous-shell branch already
+  // bounced a signed-out visitor to login (remembering the deep link).
+  navigateToSettings(section) {
+    // Already mounted: this is an in-screen navigation (a mobile drill-in,
+    // the back button, a hand-typed section hash), not a screen entry. Hand
+    // it to the module — re-running the screen swap below would re-hide
+    // every sibling screen and replay the entry push animation on what is
+    // really a level change inside one screen.
+    if (App._inSettings && window.Settings?.isOpen?.()) {
+      Settings.route(section);
+      return;
+    }
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inChallenges) App._exitChallenges();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
+    if (App._inTopochainSeasons) App._exitTopochainSeasons();
+    const screen = document.getElementById('settings-screen');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.add('hidden');
+      const lb = document.getElementById('leaderboard-screen');
+      if (lb) lb.classList.add('hidden');
+      const ch = document.getElementById('challenges-screen');
+      if (ch) ch.classList.add('hidden');
+      const pf = document.getElementById('profile-screen');
+      if (pf) pf.classList.add('hidden');
+      const ad = document.getElementById('admin-screen');
+      if (ad) ad.classList.add('hidden');
+      if (screen) screen.classList.remove('hidden');
+    }, { type: fromIframe ? 'none' : 'push' });
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    App.setHeaderTitle('Settings');
+    App._inSettings = true;
+    if (window.Settings?.open) Settings.open(section);
+  },
+
+  _exitSettings() {
+    App._inSettings = false;
+    const screen = document.getElementById('settings-screen');
+    if (screen) screen.classList.add('hidden');
+    // The mobile section view borrows the header's back button as its own
+    // back arrow — hand it back on the way out (same reason as the admin
+    // console above).
+    App.setBackIcon('home');
+    if (window.Settings?.close) Settings.close();
+  },
+
   // Show the Topochain leaderboard screen (Task 14, public screens).
   // Sibling to navigateToAdminConsole — hides home + app, reveals the
   // dedicated #topochain-leaderboard-screen, lets the
@@ -3037,6 +3121,7 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('topochain-leaderboard-screen');
     PlatformUI.transition(() => {
@@ -3083,6 +3168,7 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
     if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     const screen = document.getElementById('topochain-seasons-screen');
     PlatformUI.transition(() => {
@@ -3455,6 +3541,7 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
     if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     // Real screen navigation. From the home feed the app view expands
@@ -3546,6 +3633,7 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
     if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     // Preferred: shrink the app view back into its home tile (kit
