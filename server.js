@@ -787,6 +787,11 @@ async function start() {
   // commits, so without this a dead container 502s forever. Not gated
   // on GitHub config: the fast `docker start` path needs none.
   require('./src/services/app-heal').start(config);
+  // #892: resolve progress-estimate rows orphaned by a server restart
+  // mid-run. The live backfill only exists inside the turn, so ~10% of runs
+  // historically stayed unscored forever — which the v1-vs-v2 accuracy
+  // comparison can't afford. See services/estimate-backfill.js.
+  require('./src/services/estimate-backfill').start(config);
 
   // Adopt any worker containers left over from a previous server run —
   // either still executing or already exited but un-finalized. These

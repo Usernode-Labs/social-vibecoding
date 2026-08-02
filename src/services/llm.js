@@ -428,6 +428,161 @@ function sanitizeRemainingSeconds(v) {
   return Math.min(7200, n);
 }
 
+// Completion-claim detector (#892). The measured "nearly done" phrase family
+// fired 1,355 times in the accuracy dataset and 35% of those had MORE THAN
+// FIVE MINUTES still to run (median 174s remaining), with recorded examples
+// promising "nearly done — just wrapping up tests" 22m41s before the run
+// actually ended. So the phrase may only be shown once the platform KNOWS
+// the coding work is over — i.e. the run has emitted a commit/push/done
+// phase marker. sessions.js does the gating; this is the pure matcher, kept
+// here beside sanitizeEstimate so tests/ai-progress-estimate.test.js can
+// exercise it directly. Matches the phrase family, not generic activity
+// text ("running the test suite" is not a completion claim).
+const COMPLETION_CLAIM_RE =
+  /\b(nearly|almost|just about)\s+(done|finished|complete|there)\b|\bwrapping\s+up\b|\b(finishing|wrapping)\s+(up|off)\b|\bjust\s+finishing\b|\bfinal\s+(touches|tweaks|checks)\b|\blast\s+(few\s+)?(touches|steps)\b/i;
+
+function isCompletionClaim(text) {
+  return COMPLETION_CLAIM_RE.test(String(text == null ? '' : text));
+}
+
+// ── Empirical run-length priors for the progress estimator (#892) ──────
+//
+// WHY THIS EXISTS. The v1 prompt told the model "Typical runs take roughly
+// 2-10 minutes" and "Bias toward the 2-10 minute (120-600 second)
+// typical-run window", and the model obeyed FLATLY: six values accounted
+// for 87% of 4,737 recorded guesses, its prediction spread was 91s against
+// a 679s spread in reality, and its bias flipped from +81s in the first two
+// minutes to -299s past twenty. Its RANKING was good the whole time
+// (corr(ln pred, ln actual) = 0.40-0.56 within an elapsed bucket, versus
+// 0.01 for step count and -0.02 for line count) — only its SCALE was wrong,
+// and the scale was an echo of that instruction. So the instruction is
+// replaced with what actually happens.
+//
+// CALIBRATION LIVES HERE — IN THE MODEL'S INPUTS, NEVER ITS OUTPUTS. A
+// post-hoc multiplier on `remaining_seconds` would measure 40.7% in-band
+// today and then silently distort the estimate the moment the model or the
+// available log signal improves, because it encodes THAT model's error
+// rather than a fact about run durations. These numbers are facts; a better
+// reader simply uses them better. Nothing between the model response and
+// `predicted_remaining_seconds` may scale, blend or bucket-correct it.
+//
+// REFRESHING THIS TABLE. It is a committed constant on purpose (no query
+// latency on the estimator path, no silent mid-run change to the guidance a
+// single run is estimating against, and a reviewable audit trail for every
+// change to what the model is told). The admin analytics estimator card
+// computes the live medians beside these committed ones and flags drift;
+// when it says stale, re-run the SQL below through the read-only production
+// SQL access and open a small PR updating RUN_LENGTH_PRIORS +
+// RUN_LENGTH_PRIORS_SNAPSHOT. A numbers-only refresh must NOT bump
+// PROMPT_VERSION — that would fragment the accuracy comparison for no
+// reason. See also runCohortHint() in public/js/cc-progress-summary.js,
+// whose three thresholds share this snapshot as their refresh anchor.
+//
+// REFRESH SQL (verbatim — do not re-derive the method):
+//
+//   -- Per-bucket conditional quantiles of ACTUAL remaining time.
+//   SELECT CASE WHEN elapsed_ms < 120000  THEN '<2m'
+//               WHEN elapsed_ms < 300000  THEN '2-5m'
+//               WHEN elapsed_ms < 600000  THEN '5-10m'
+//               WHEN elapsed_ms < 1200000 THEN '10-20m'
+//               ELSE '20m+' END                                    AS bucket,
+//          COUNT(*)::int                                           AS n,
+//          round(percentile_cont(0.25) WITHIN GROUP (ORDER BY actual_remaining_ms/1000.0)::numeric, 0) AS p25,
+//          round(percentile_cont(0.50) WITHIN GROUP (ORDER BY actual_remaining_ms/1000.0)::numeric, 0) AS p50,
+//          round(percentile_cont(0.75) WITHIN GROUP (ORDER BY actual_remaining_ms/1000.0)::numeric, 0) AS p75,
+//          round(percentile_cont(0.90) WITHIN GROUP (ORDER BY actual_remaining_ms/1000.0)::numeric, 0) AS p90
+//     FROM progress_estimates
+//    WHERE actual_total_ms IS NOT NULL
+//      AND predicted_remaining_seconds IS NOT NULL
+//      AND actual_remaining_ms > 0                 -- the SCORED predicate
+//    GROUP BY 1
+//    ORDER BY MIN(elapsed_ms);
+//
+//   -- Population facts (one row per RUN, not per tick).
+//   WITH r AS (SELECT progress_message_id,
+//                     MAX(actual_total_ms)/1000.0 AS total_s
+//                FROM progress_estimates
+//               WHERE actual_total_ms IS NOT NULL
+//               GROUP BY 1)
+//   SELECT COUNT(*)::int                                              AS runs,
+//          round(percentile_cont(0.50) WITHIN GROUP (ORDER BY total_s)::numeric, 0) AS p50,
+//          round(percentile_cont(0.90) WITHIN GROUP (ORDER BY total_s)::numeric, 0) AS p90,
+//          round(percentile_cont(0.99) WITHIN GROUP (ORDER BY total_s)::numeric, 0) AS p99,
+//          round(MAX(total_s)::numeric, 0)                            AS max_s,
+//          round(AVG((total_s > 600)::int)::numeric, 2)               AS share_over_10m
+//     FROM r;
+//
+//   -- Snapshot metadata for RUN_LENGTH_PRIORS_SNAPSHOT.
+//   SELECT COUNT(*) FILTER (WHERE actual_total_ms IS NOT NULL
+//                             AND predicted_remaining_seconds IS NOT NULL
+//                             AND actual_remaining_ms > 0)::int       AS scored_ticks,
+//          COUNT(DISTINCT progress_message_id)::int                   AS runs,
+//          COUNT(DISTINCT user_id)::int                               AS users,
+//          MIN(created_at)::date                                      AS window_start
+//     FROM progress_estimates;
+//
+const RUN_LENGTH_PRIORS = {
+  // Bounds are on ELAPSED seconds at the moment of the guess; quantiles are
+  // of the ACTUAL remaining seconds observed from that point.
+  // `key` matches the bucket labels the dashboard's SQL emits, so the
+  // staleness check can line committed against live without a second
+  // mapping table that could drift out of step.
+  buckets: [
+    { key: '<2m',    label: 'under 2 minutes',  minS: 0,    maxS: 120,  n: 875,  p25: 43,  p50: 124, p75: 439,  p90: 962 },
+    { key: '2-5m',   label: '2 to 5 minutes',   minS: 120,  maxS: 300,  n: 1216, p25: 65,  p50: 207, p75: 581,  p90: 1101 },
+    { key: '5-10m',  label: '5 to 10 minutes',  minS: 300,  maxS: 600,  n: 1108, p25: 165, p50: 400, p75: 787,  p90: 1313 },
+    { key: '10-20m', label: '10 to 20 minutes', minS: 600,  maxS: 1200, n: 805,  p25: 151, p50: 369, p75: 794,  p90: 1197 },
+    { key: '20m+',   label: 'over 20 minutes',  minS: 1200, maxS: null, n: 271,  p25: 199, p50: 450, p75: 1166, p90: 2290 },
+  ],
+  // Whole-run wall clock, per run (880 resolved runs).
+  population: {
+    runs: 880,
+    p50TotalS: 190,
+    p90TotalS: 1029,
+    p99TotalS: 2233,
+    maxTotalS: 6330,
+    shareOver10m: 0.22,
+  },
+};
+
+// Provenance for the table above. The dashboard renders this beside the
+// live medians so "are the numbers we tell the model still true?" is
+// answerable without leaving the card.
+const RUN_LENGTH_PRIORS_SNAPSHOT = {
+  generatedOn: '2026-08-02',
+  windowStart: '2026-06-14',
+  scoredTicks: 4250,
+  runs: 965,
+  users: 6,
+};
+
+// Render the priors as "in case X, the usual pattern is Y" case guidance.
+// Built FROM the constant at call time rather than hand-written into the
+// prompt string, so a refresh is a one-place edit and the prompt can never
+// disagree with the table (a test mutates the constant and asserts the
+// prompt text follows).
+function renderPriorsGuidance(priors) {
+  const p = priors || RUN_LENGTH_PRIORS;
+  const rows = (p.buckets || []).map((b) => {
+    const when = b.maxS == null
+      ? `If it has been running ${b.minS / 60}+ minutes`
+      : b.minS === 0
+        ? `If it has been running less than ${b.maxS / 60} minutes`
+        : `If it has been running ${b.minS / 60}-${b.maxS / 60} minutes`;
+    return `- ${when}: usually about ${b.p50}s remain. A quarter of runs finish within ${b.p25}s, a quarter take longer than ${b.p75}s, and one in ten takes longer than ${b.p90}s. (measured over ${b.n} guesses)`;
+  }).join('\n');
+  const pop = p.population || {};
+  return `${rows}
+
+Whole-run facts: half of all runs finish within ${pop.p50TotalS}s, one in ten runs past ${pop.p90TotalS}s, one in a hundred past ${pop.p99TotalS}s, and the longest observed run was ${pop.maxTotalS}s. About ${Math.round((pop.shareOver10m || 0) * 100)}% of runs last longer than 10 minutes.`;
+}
+
+// Prompt generation. Bumped ONLY when the guidance STRUCTURE changes, never
+// on a numbers-only priors refresh — every recorded tick carries this so the
+// dashboard can score v1 against v2 instead of pooling them into one
+// average that hides the change.
+const PROMPT_VERSION = 2;
+
 // Structured-outputs schema for estimateRunProgress (#323). Constrains Haiku
 // to emit JSON matching exactly the keys the parser reads — `estimate` (the
 // vague phrase) and `remaining_seconds` (a nullable integer). Top-level object
@@ -453,17 +608,34 @@ const ESTIMATE_SCHEMA = {
 // system prompt forbids precise percentages/ETAs so the output can't be
 // mistaken for a real measurement. Throws on any failure; callers MUST
 // catch and skip the tick (the estimate is decorative, never load-bearing).
-async function estimateRunProgress({ userRequest, progressTail, elapsedMs, steps, apiKey }) {
+async function estimateRunProgress({
+  userRequest, progressTail, elapsedMs, steps, apiKey,
+  lastPhase, distinctFiles, previousGuess,
+}) {
   const activeClient = apiKey ? new Anthropic({ apiKey }) : client;
   if (!activeClient) throw new Error('LLM not initialized');
 
-  const system = `You are watching the live progress log of an autonomous coding agent working on a small web-app change. Typical runs take roughly 2-10 minutes; simple changes finish faster, sweeping ones slower. The log tail below is the agent's recent activity (file reads/edits, commands, phase markers like [commit]/[push] which come near the end of a run).
+  const system = `You are watching the live progress log of an autonomous coding agent working on a small web-app change. The log tail below is the agent's recent activity (file reads/edits, commands, phase markers like [commit]/[push] which come near the end of a run).
 
-Give ONE short, deliberately vague estimate of how far along the run feels and roughly how long is left — e.g. “maybe two-thirds done — a few minutes left” or “still early — several minutes to go”. Use hedged language (“maybe”, “roughly”, “probably”). NEVER give a precise percentage, exact time, or countdown in this phrase. Keep it under 90 characters.
+Give ONE short, deliberately vague estimate of how far along the run feels — e.g. “maybe two-thirds through the changes” or “still early, reading the codebase”. Use hedged language (“maybe”, “roughly”, “probably”). NEVER give a precise percentage, exact time, or countdown in this phrase — the numeric field below carries the time. Keep it under 90 characters.
 
-Also give your best numeric guess at how many SECONDS of work remain, as an integer. Bias toward the 2-10 minute (120-600 second) typical-run window. If you genuinely cannot tell, return null for it — don't force a number.
+Also give your best numeric guess at how many SECONDS of work remain, as an integer.
 
-Respond with ONLY a JSON object: {“estimate”: “...”, “remaining_seconds”: <integer or null>}. No prose before or after.`;
+HOW LONG RUNS ACTUALLY TAKE. These are measured from ${RUN_LENGTH_PRIORS_SNAPSHOT.scoredTicks} scored guesses across ${RUN_LENGTH_PRIORS_SNAPSHOT.runs} real runs. Use them as your baseline and adjust from the log:
+
+${renderPriorsGuidance(RUN_LENGTH_PRIORS)}
+
+WHERE ESTIMATES LIKE YOURS GO WRONG. Two systematic errors were measured, and they point in OPPOSITE directions:
+- In the first two minutes, guesses typically overshoot by about 2x — the typical guess was 4 minutes when the typical truth was 2 minutes. Early on, guess LOWER than feels right.
+- Past five minutes, guesses typically undershoot by about 2.6x — the typical guess was 2 minutes when the typical truth was 6-7 minutes. A run that has already been going ten minutes usually has another SIX minutes to go, not two. Late in a run, guess HIGHER than feels right, and do not let a long elapsed time make you assume the end must be near.
+
+DO NOT ANCHOR on the 2-5 minute range. A guess above 600 seconds is correct roughly one time in five, and the longest observed run was over 90 minutes. Large numbers are often right.
+
+PHASE MARKERS ARE DECISIVE AT THE END. A [commit] or [push] marker means the coding work is already over and only SECONDS remain — guess accordingly, not minutes. A [claude ...] or [inloop-db] marker means the agent is still working and the table above applies.
+
+ALWAYS GIVE A NUMBER. The interface always shows a time, so a number is always required. If you genuinely cannot tell, fall back to the typical value for the current elapsed bucket rather than declining.
+
+Respond with ONLY a JSON object: {“estimate”: “...”, “remaining_seconds”: <integer>}. No prose before or after.`;
 
   // Cap the prompt: last 60 lines, ~4000 chars total, request to 300 chars.
   const lines = (Array.isArray(progressTail) ? progressTail : [])
@@ -473,11 +645,21 @@ Respond with ONLY a JSON object: {“estimate”: “...”, “remaining_second
   if (tail.length > 4000) tail = tail.slice(-4000);
 
   const elapsedSec = Math.max(0, Math.round((Number(elapsedMs) || 0) / 1000));
+  // The previous guess for THIS run, so the model revises deliberately
+  // instead of restarting from scratch every minute. Omitted on the first
+  // tick (there is nothing to revise from).
+  const prevRs = previousGuess && previousGuess.remainingSeconds != null
+    ? Math.trunc(Number(previousGuess.remainingSeconds)) : null;
+  const prevLine = (prevRs != null && Number.isFinite(prevRs))
+    ? `YOUR PREVIOUS GUESS FOR THIS RUN: ${prevRs}s remaining, made at ${Math.max(0, Math.round((Number(previousGuess.elapsedMs) || 0) / 1000))}s elapsed. Only push the finish time LATER than that guess implied if the log shows a concrete reason (new scope discovered, a failing test being debugged, an error being worked through).\n`
+    : '';
   const user = `USER REQUEST: ${String(userRequest || '').slice(0, 300)}
 
 ELAPSED: ${Math.floor(elapsedSec / 60)}m ${elapsedSec % 60}s
 TOOL STEPS SO FAR: ${Number(steps) || 0}
-
+LAST PHASE MARKER: ${lastPhase ? String(lastPhase).slice(0, 40) : '(none yet)'}
+DISTINCT FILES TOUCHED: ${Number(distinctFiles) || 0}
+${prevLine}
 PROGRESS LOG (tail):
 ${tail || '(no output yet)'}`;
 
@@ -515,8 +697,17 @@ ${tail || '(no output yet)'}`;
   const parsed = JSON.parse(match[0]);
   const estimate = sanitizeEstimate(parsed.estimate);
   if (!estimate) throw new Error('Empty progress estimate from LLM');
+  // NO OUTPUT-SIDE CALIBRATION (#892). What sanitizeRemainingSeconds returns
+  // is exactly what gets recorded in predicted_remaining_seconds and exactly
+  // what the display path receives. No bucket lookup, no multiplier, no blend
+  // with the priors — the priors are an INPUT (see the system prompt above).
+  // tests/ai-progress-estimate.test.js pins this so a multiplier cannot creep
+  // back in later.
   const remainingSeconds = sanitizeRemainingSeconds(parsed.remaining_seconds);
-  return { text: estimate, remainingSeconds, usage: resp.usage, model };
+  return {
+    text: estimate, remainingSeconds, usage: resp.usage, model,
+    promptVersion: PROMPT_VERSION,
+  };
 }
 
 // Parse + sanitize the model's session-title response (#249). Accepts
@@ -655,6 +846,12 @@ module.exports = {
   generatePrMetadata, parsePrMetadataText, generateSessionTitle,
   parseSessionTitleText, estimateRunProgress, sanitizeEstimate,
   sanitizeRemainingSeconds, DEFAULT_MODEL,
+  // Progress-estimator calibration surface (#892). Exported so the admin
+  // analytics route can read the committed priors for its staleness check
+  // (a plain constant read — no init(), no API key) and so tests can pin
+  // the table, the snapshot metadata and the prompt rendering.
+  RUN_LENGTH_PRIORS, RUN_LENGTH_PRIORS_SNAPSHOT, renderPriorsGuidance,
+  PROMPT_VERSION, isCompletionClaim,
   stripLoneSurrogates, generateIssueTitle, FEEDBACK_FALLBACK_TITLE,
   // Fable 5 classifier-fallback surface (+ tests)
   detectFallback, sanitizeFallbackContent, fallbackBoundary,

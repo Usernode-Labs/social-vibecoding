@@ -58,6 +58,17 @@ const { runSyncMain, persistBehindMain } = syncMainSvc;
 // the chat handler and server.js's drain logic read.
 const { activeWorkers, getActiveWorkerCount } = require('../services/active-workers');
 const turnWatchdog = require('../services/turn-watchdog');
+const estimateGuard = require('../services/estimate-guard');
+// #892: what an unearned "nearly done" phrase is replaced with. Mirrors the
+// user-facing wording of ccPhaseLabel() in public/js/cc-progress-summary.js
+// but phrased as an ongoing activity, since it sits where the model's own
+// phrase would have. Keyed by the head word of the `[phase]` marker.
+const NEUTRAL_PHASE_TEXT = {
+  claude: 'still working through the changes',
+  sync: 'syncing with main',
+  refresh: 'syncing the branch',
+  'inloop-db': 'still working through the changes',
+};
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
 // #894: the deterministic pill sets a turn falls back to when the Mayor
 // omits suggest_replies (or the turn ends on a path with no wrap-up).
@@ -7303,6 +7314,13 @@ path: /another/changed/view
     const estimatorEnabled = !headless && !!req?.user?.aiProgressEstimate
       && (llm.isEnabled() || !!userApiKey);
     const liveProgressLines = [];
+    // Most recent `[phase]` marker seen on this run's progress stream
+    // (#892). Two consumers: the estimator prompt (a [commit]/[push] marker
+    // means seconds remain, which is the single strongest late signal in the
+    // dataset — median 1s remaining once [push] lands), and the
+    // completion-claim gate (a "nearly done" phrase is only truthful once
+    // the run has actually reached commit/push/done).
+    let lastPhase = null;
     let estimator = null;
     // Set by stopEstimator; read by the interval body AND by the in-flight
     // call's .then so a Haiku response that lands after teardown can't
@@ -7345,6 +7363,13 @@ path: /another/changed/view
       let estimateSuccesses = 0;     // counted only for the runaway backstop
       let lastEstimateAtMs = null;   // wall-clock of the last successful emit
       let ceilingLogged = false;
+      // Monotonicity-guard state (#892). `projectedFinishAt` is the finish
+      // time currently being displayed; the guard holds it steady between
+      // refreshes and only moves it later for a stated cause. It always
+      // yields a positive number of seconds — there is no overrun state.
+      let projectedFinishAt = null;
+      let previousRemainingSeconds = null;
+      let phaseAtLastEstimate = null;
       // Runaway backstop only — with the widening cadence below this is
       // reached around the ~2h mark, never by a normal long run.
       const MAX_ESTIMATES = 60;
@@ -7382,15 +7407,26 @@ path: /another/changed/view
         const sinceLastMs = lastEstimateAtMs == null ? Infinity : now - lastEstimateAtMs;
         const minSpacingMs = elapsedMs >= WIDEN_AFTER_MS ? WIDE_SPACING_MS : 0;
 
+        // #892: the displayed projection has run out while the run keeps
+        // going. The guard floors the readout at 30s so it never sticks at
+        // zero, but that floor is only honest for as long as it takes to get
+        // a fresh guess — so an expired projection overrides the widened
+        // late-run spacing (which would otherwise hold the floor for 2.5
+        // minutes). Still subject to estimateInFlight, the failure backoff
+        // and MAX_ESTIMATES, all checked above.
+        const projectionExpired = projectedFinishAt != null && now >= projectedFinishAt;
+
         // Decide whether to run this tick:
         //  - first estimate ever: always (even with zero lines — the prompt
         //    renders "(no output yet)" and answers "still early …");
+        //  - projection expired: always, ignoring the widened spacing;
         //  - too soon under the widened late-run cadence: skip;
         //  - new progress since last estimate: run;
         //  - otherwise idle-refresh once enough wall-clock passed so the
         //    remaining-time guess doesn't freeze during a quiet phase.
         let shouldRun;
         if (lastEstimateAtMs == null) shouldRun = true;
+        else if (projectionExpired) shouldRun = true;
         else if (sinceLastMs < minSpacingMs) shouldRun = false;
         else if (hasNewLines) shouldRun = true;
         else shouldRun = sinceLastMs >= IDLE_REFRESH_MS;
@@ -7398,13 +7434,28 @@ path: /another/changed/view
 
         estimateInFlight = true;
         const linesAtStart = liveProgressLines.length;
+        const phaseAtStart = lastPhase;
+        // Distinct files the run has touched so far — one of the two new
+        // prompt inputs. Derived from the same lines the caller already
+        // accumulates, so it costs nothing.
+        const distinctFiles = new Set(
+          liveProgressLines
+            .filter((l) => /^(Reading|Writing|Editing) /.test(String(l)))
+            .map((l) => String(l).split(' ')[1])
+        ).size;
         llm.estimateRunProgress({
           userRequest: userMessage,
           progressTail: liveProgressLines,
           elapsedMs,
           steps: liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
           apiKey: userApiKey || undefined,
-        }).then(async ({ text, remainingSeconds, usage, model: estModel }) => {
+          lastPhase: phaseAtStart,
+          distinctFiles,
+          previousGuess: previousRemainingSeconds == null ? null : {
+            remainingSeconds: previousRemainingSeconds,
+            elapsedMs: lastEstimateAtMs == null ? 0 : lastEstimateAtMs - turnStartedMs,
+          },
+        }).then(async ({ text, remainingSeconds, usage, model: estModel, promptVersion }) => {
           consecutiveFailures = 0;
           ticksToSkip = 0;
           estimateSuccesses++;
@@ -7419,12 +7470,50 @@ path: /another/changed/view
           // already run, so the row would be stranded unresolved forever).
           // The spend debit below still happens: those tokens were spent.
           if (!estimatorDone && !(stopHandle && stopHandle.stopped)) {
-            send('cc_estimate', {
-              text, remainingSeconds, elapsedMs: elapsedAtEstimate,
+            // #892 monotonicity guard. Chooses between the held projection
+            // and this guess, and floors the result at 30s so the countdown
+            // ALWAYS shows a positive time — no overrun flag, no bail-out.
+            // It never scales or blends: `remainingSeconds` below stays the
+            // raw model value all the way into the accuracy dataset.
+            const guard = estimateGuard.applyMonotonicityGuard({
+              projectedFinishAt,
+              previousRemainingSeconds,
+              remainingSeconds,
               estimatedAt: lastEstimateAtMs,
+              now: lastEstimateAtMs,
+              newPhaseSinceLast: phaseAtStart !== phaseAtLastEstimate,
+            });
+            projectedFinishAt = guard.projectedFinishAt;
+            previousRemainingSeconds = remainingSeconds == null
+              ? previousRemainingSeconds : remainingSeconds;
+            phaseAtLastEstimate = phaseAtStart;
+
+            // Completion-claim gate. "Nearly done" is only shown once the
+            // run has genuinely reached commit/push/done — measured, that
+            // phrase family fired with 5+ minutes still to run a third of
+            // the time. Suppression rewrites the PHRASE only; the countdown
+            // number is untouched, and the raw model text is still what
+            // lands in estimate_text.
+            const phaseHead = String(phaseAtStart || '').split(/[\s(]/)[0];
+            const claimEarned = ['commit', 'push', 'done', 'push_failed'].includes(phaseHead);
+            const suppressed = llm.isCompletionClaim(text) && !claimEarned;
+            // Fall back to the neutral stage label — the deterministic thing
+            // the platform actually knows. With no phase seen yet there is
+            // nothing honest to say, so the phrase is dropped entirely.
+            const shownText = suppressed
+              ? (NEUTRAL_PHASE_TEXT[phaseHead] || (phaseAtStart ? 'still working' : ''))
+              : text;
+
+            send('cc_estimate', {
+              text: shownText, remainingSeconds, elapsedMs: elapsedAtEstimate,
+              estimatedAt: lastEstimateAtMs,
+              displayedRemainingSeconds: guard.displayedRemainingSeconds,
+              slipReason: guard.slipReason,
             });
             workerProgress.setEstimate(session.id, {
-              text, remainingSeconds, estimatedAt: lastEstimateAtMs,
+              text: shownText, remainingSeconds, estimatedAt: lastEstimateAtMs,
+              displayedRemainingSeconds: guard.displayedRemainingSeconds,
+              slipReason: guard.slipReason,
             });
             // Persist this tick to the accuracy dataset (#50 follow-up).
             // Fire-and-forget: persistence must never fail or block a turn,
@@ -7434,14 +7523,25 @@ path: /another/changed/view
               `INSERT INTO progress_estimates
                  (session_id, progress_message_id, user_id, model,
                   elapsed_ms, step_count, progress_lines,
-                  estimate_text, predicted_remaining_seconds)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+                  estimate_text, predicted_remaining_seconds,
+                  prompt_version, displayed_remaining_seconds,
+                  clamped, slip_reason, estimate_text_shown, suppressed,
+                  last_phase, distinct_files)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                       $10, $11, $12, $13, $14, $15, $16, $17)`,
               [
                 session.id, progressMsgId, req.user.id, estModel,
                 elapsedAtEstimate,
                 liveProgressLines.filter((l) => CC_ACTION_RE.test(l)).length,
                 liveProgressLines.length,
+                // RAW model output — never the suppressed or guarded value.
                 text, remainingSeconds,
+                promptVersion || llm.PROMPT_VERSION,
+                guard.displayedRemainingSeconds,
+                guard.clamped, guard.slipReason,
+                shownText || null, suppressed,
+                phaseAtStart ? String(phaseAtStart).slice(0, 24) : null,
+                distinctFiles,
               ]
             ).catch(() => {});
           }
@@ -7478,6 +7578,15 @@ path: /another/changed/view
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
+          // #892: track the newest `[phase]` marker for the estimator prompt
+          // and the completion-claim gate. Outside the estimatorEnabled
+          // branch on purpose — it is cheap, and keeping it unconditional
+          // means the value is never subtly stale for a run whose toggle
+          // state changed.
+          {
+            const phaseMatch = String(text).trim().match(/^\[([^\]]+)\]$/);
+            if (phaseMatch) lastPhase = phaseMatch[1];
+          }
           if (estimatorEnabled) {
             liveProgressLines.push(text);
             // #891: the earliest honest "coding is finished" signal. run-cc.sh

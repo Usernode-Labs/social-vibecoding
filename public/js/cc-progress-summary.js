@@ -2,7 +2,7 @@
 // indicator for Claude Code runs. Two exports:
 //
 //   formatElapsed(ms)            → "42s", "3m 05s", "1h 12m"
-//   formatCountdown(toMs, nowMs) → " · ~3m 05s left" / " · due now"
+//   formatCountdown(toMs, nowMs) → " · ~3m 00s left" / " · under a minute left"
 //   summarizeCcProgress(log)     → { currentLabel, steps }
 //
 // The progress log lines come from src/services/worker.js (parseLine /
@@ -38,16 +38,62 @@ function formatElapsed(ms) {
   return hours + 'h ' + String(min).padStart(2, '0') + 'm';
 }
 
+// The countdown's display floor, in ms (#892). Mirrors
+// MIN_DISPLAY_REMAINING_S in src/services/estimate-guard.js — the server
+// floors the value it sends and the client floors again, so neither a stale
+// target nor a reordered delivery can ever render as zero.
+var COUNTDOWN_FLOOR_MS = 30000;
+
+// Round a remaining-time value to a granularity the estimate can actually
+// support (#892). Second-by-second precision implied an accuracy the
+// estimator does not have — the measured median error is around three
+// minutes — so the readout snaps to 30s under five minutes and to a whole
+// minute above it, and never shows a seconds digit.
+function roundCountdownMs(remainingMs) {
+  var step = remainingMs < 300000 ? 30000 : 60000;
+  return Math.round(remainingMs / step) * step;
+}
+
 // Live count-down readout for the experimental AI progress estimate
-// (#359). Mirrors the "· ~Xm Ys left" wording the old static suffix used,
-// but recomputed from an absolute target end-timestamp so the shared 1s
-// elapsed ticker can drive it second-by-second. Clamps at zero to a fixed
-// "· due now" label — never negative, never a second count-up (the elapsed
-// ticker beside it already conveys how far past the estimate a run has gone).
+// (#359, recalibrated in #892).
+//
+// ALWAYS RETURNS A NUMERIC FORM. The old behaviour clamped at zero to a
+// fixed at-zero label, which then FROZE there — sometimes for twenty
+// more minutes — because a run that outlived its estimate had nothing else
+// to show. That state is gone: the remaining time is floored at 30s, so an
+// overrunning run reads "· under a minute left" for at most one estimator
+// tick before the server's next guess extends the projection to a fresh,
+// larger number. There is no at-zero freeze, no open-ended overrun copy,
+// and no open-ended copy anywhere in this function — the interface always
+// shows a time.
+//
+// Never negative, never a count-up (the elapsed ticker beside it already
+// conveys how far a run has gone).
 function formatCountdown(targetMs, nowMs) {
   var remaining = (Number(targetMs) || 0) - (Number(nowMs) || 0);
-  if (remaining > 0) return ' · ~' + formatElapsed(remaining) + ' left';
-  return ' · due now';
+  if (!(remaining > COUNTDOWN_FLOOR_MS)) return ' · under a minute left';
+  var rounded = roundCountdownMs(remaining);
+  if (rounded < 60000) return ' · under a minute left';
+  return ' · ~' + formatElapsed(rounded) + ' left';
+}
+
+// Population context for a running turn (#892), derived from the measured
+// distribution of 880 real coding runs: p50 190s, p90 1029s, p99 2233s
+// (22% run past 10 minutes, longest observed 6330s). Deliberately a
+// statement about the POPULATION, not a prediction about this run, so it
+// can never be individually wrong — it complements the countdown rather
+// than replacing it, and it is the only time context a user without the
+// estimator toggle gets at all.
+//
+// Monotonic by construction: it depends only on elapsed, which increases.
+// These three thresholds share RUN_LENGTH_PRIORS_SNAPSHOT (in
+// src/services/llm.js) as their refresh anchor — re-check them whenever the
+// priors table is refreshed.
+function runCohortHint(elapsedMs) {
+  var ms = Number(elapsedMs) || 0;
+  if (ms < 600000) return 'most runs finish in 2–10 min';
+  if (ms < 1800000) return 'running longer than most — about 1 in 5 runs do';
+  return 'this is a long one — some runs go 30 min+';
 }
 
 // Friendly names for the __USERNODE_PHASE__ markers run-cc.sh emits.
@@ -86,10 +132,19 @@ function summarizeCcProgress(progressLog) {
   var steps = 0;
   var currentLabel = '';
   var fallback = '';
+  // #892: the deterministic stage readout. Derived from markers the run
+  // genuinely emits, so unlike the AI guess beside it, it cannot be wrong.
+  // Null until the run emits its first phase marker.
+  var phaseLabel = null;
 
   for (var i = 0; i < log.length; i++) {
     var line = log[i] == null ? '' : String(log[i]);
     if (CC_ACTION_RE.test(line)) steps++;
+  }
+
+  for (var p = log.length - 1; p >= 0; p--) {
+    var pm = (log[p] == null ? '' : String(log[p])).trim().match(/^\[([^\]]+)\]$/);
+    if (pm) { phaseLabel = ccPhaseLabel(pm[1]); break; }
   }
 
   for (var j = log.length - 1; j >= 0; j--) {
@@ -119,10 +174,14 @@ function summarizeCcProgress(progressLog) {
   return {
     currentLabel: currentLabel ? truncateCcLabel(currentLabel, 60) : '',
     steps: steps,
+    phaseLabel: phaseLabel,
   };
 }
 
 // Node (tests) — browsers just get the globals.
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { formatElapsed, formatCountdown, summarizeCcProgress, ccPhaseLabel, truncateCcLabel };
+  module.exports = {
+    formatElapsed, formatCountdown, summarizeCcProgress, ccPhaseLabel,
+    truncateCcLabel, runCohortHint, roundCountdownMs, COUNTDOWN_FLOOR_MS,
+  };
 }

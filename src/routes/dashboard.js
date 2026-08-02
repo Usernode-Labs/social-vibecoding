@@ -3,6 +3,12 @@ const { getPool } = require('../db/pool');
 const { adminMiddleware } = require('../middleware/admin');
 const log = require('../services/logger');
 const analyticsDemo = require('../services/analytics-demo');
+// #892: read-only access to the estimator's COMMITTED run-length priors so
+// the estimator card can show them beside the live numbers and say when a
+// refresh is due. This is a plain module-constant read — it does NOT call
+// llm.init() and needs no API key, so requiring it here is safe in every
+// environment including tests.
+const llm = require('../services/llm');
 
 // Admin analytics dashboard API. All endpoints sit behind adminMiddleware
 // (same gate as the rest of /api/admin) and answer the questions the
@@ -918,8 +924,24 @@ function dashboardRoutes(config) {
     // Signed error: positive = predicted MORE time remaining than there was
     // (pessimistic), negative = optimistic. Median of this is the bias.
     const ERR = `(predicted_remaining_seconds - actual_remaining_ms / 1000.0)`;
-    const metricsSql = (windowed) => `
+    // ONE definition of the elapsed buckets, shared by the by-elapsed
+    // breakdown, the oracle baseline and the priors-staleness check (#892).
+    // If the drift check and the baseline disagreed about where a bucket
+    // starts, the card could show a drift the baseline contradicts — so
+    // they read the same expression. Mirrors the bucket bounds in
+    // llm.RUN_LENGTH_PRIORS (matched by its `key` field).
+    const BUCKET_CASE = `CASE WHEN elapsed_ms < 120000  THEN '<2m'
+                              WHEN elapsed_ms < 300000  THEN '2-5m'
+                              WHEN elapsed_ms < 600000  THEN '5-10m'
+                              WHEN elapsed_ms < 1200000 THEN '10-20m'
+                              ELSE '20m+' END`;
+    // Mirrors llm.isCompletionClaim's phrase family in SQL, so a claim made
+    // BEFORE suppression shipped is still counted (historical v1 rows have
+    // suppressed=false but the phrase is right there in estimate_text).
+    const CLAIM_RE = `(nearly|almost|just about)[[:space:]]+(done|finished|complete|there)|wrapping[[:space:]]+up|finishing[[:space:]]+(up|off)|just[[:space:]]+finishing|final[[:space:]]+(touches|tweaks|checks)`;
+    const metricsSql = (windowed, groupBy) => `
       SELECT
+        ${groupBy ? `${groupBy} AS group_key,` : ''}
         COUNT(*)::int                                              AS ticks,
         COUNT(*) FILTER (WHERE actual_total_ms IS NOT NULL)::int    AS resolved,
         COUNT(*) FILTER (WHERE actual_total_ms IS NULL)::int        AS unresolved,
@@ -941,7 +963,8 @@ function dashboardRoutes(config) {
                    AND actual_remaining_ms / 500.0)::int)
           FILTER (WHERE ${SCORED})                                  AS within_band
       FROM progress_estimates
-      ${windowed ? `WHERE created_at >= NOW() - INTERVAL '30 days'` : ''}`;
+      ${windowed ? `WHERE created_at >= NOW() - INTERVAL '30 days'` : ''}
+      ${groupBy ? `GROUP BY ${groupBy} ORDER BY ${groupBy}` : ''}`;
 
     // Nulls (no scorable rows) must reach the client as null, not 0 — "no
     // data yet" and "perfectly accurate" are very different answers.
@@ -963,8 +986,89 @@ function dashboardRoutes(config) {
       withinBand: num(r.within_band),
     });
 
+    const shapeBaselines = (r) => (!r || !r.scored ? null : {
+      scored: r.scored,
+      constant: {
+        medianAbsErrS: num(r.const_abs),
+        medianBiasS: num(r.const_bias),
+        withinBand: num(r.const_band),
+      },
+      oracle: {
+        medianAbsErrS: num(r.oracle_abs),
+        medianBiasS: num(r.oracle_bias),
+        withinBand: num(r.oracle_band),
+      },
+    });
+
+    // Priors staleness (#892). The numbers the estimator prompt feeds the
+    // model are a COMMITTED constant, not a live query — that keeps the
+    // guidance stable mid-run, off the request path, and behind a reviewable
+    // change. The trade is that it can go out of date, so the card holds the
+    // committed values next to the live ones and says when a refresh is due.
+    // Two mechanical triggers: any bucket whose live median has moved more
+    // than 25% from the committed p50, or a scored-tick count that has more
+    // than doubled since the snapshot was taken.
+    const DRIFT_THRESHOLD = 0.25;
+    const shapePriors = (liveRows, allRow) => {
+      const snapshot = llm.RUN_LENGTH_PRIORS_SNAPSHOT;
+      const live = new Map(liveRows.map((r) => [r.bucket, r]));
+      const staleReasons = [];
+      const buckets = (llm.RUN_LENGTH_PRIORS.buckets || []).map((b) => {
+        const row = live.get(b.key);
+        const liveP50 = row ? num(row.live_p50) : null;
+        const driftRatio = (liveP50 == null || !b.p50)
+          ? null : Math.abs(liveP50 - b.p50) / b.p50;
+        if (driftRatio != null && driftRatio > DRIFT_THRESHOLD) {
+          staleReasons.push(`bucket ${b.key} drifted ${Math.round(driftRatio * 100)}%`);
+        }
+        return {
+          bucket: b.key,
+          committedP50: b.p50,
+          liveP50,
+          driftRatio: driftRatio == null ? null : Number(driftRatio.toFixed(2)),
+          scored: row ? row.scored : 0,
+        };
+      });
+      const liveScored = allRow ? allRow.scored : 0;
+      if (snapshot.scoredTicks && liveScored > 2 * snapshot.scoredTicks) {
+        staleReasons.push(`scored guesses more than doubled (${liveScored} vs ${snapshot.scoredTicks})`);
+      }
+      return { snapshot, buckets, stale: staleReasons.length > 0, staleReasons };
+    };
+
+    const shapeMonotonicity = (m, g) => ({
+      transitions: m ? m.transitions : 0,
+      // RAW = what the model said tick to tick. DISPLAYED = what the guard
+      // let the user see. A large gap between them is the guard working.
+      raw: {
+        laterRate: num(m && m.raw_later),
+        earlierRate: num(m && m.raw_earlier),
+        increasedRate: num(m && m.raw_increased),
+        medianShiftS: num(m && m.raw_median_shift),
+        p90ShiftS: num(m && m.raw_p90_shift),
+      },
+      displayed: {
+        transitions: m ? m.disp_transitions : 0,
+        laterRate: num(m && m.disp_later),
+        earlierRate: num(m && m.disp_earlier),
+        increasedRate: num(m && m.disp_increased),
+        medianShiftS: num(m && m.disp_median_shift),
+        p90ShiftS: num(m && m.disp_p90_shift),
+      },
+      clampRate: num(g && g.clamp_rate),
+      flooredRate: num(g && g.floored_rate),
+      slipReasons: {
+        expired: g ? g.slip_expired : 0,
+        new_phase: g ? g.slip_new_phase : 0,
+        revision: g ? g.slip_revision : 0,
+      },
+    });
+
     try {
-      const [d30, all, enabled, byElapsed, byOutcome, daily] = await Promise.all([
+      const [
+        d30, all, enabled, byElapsed, byOutcome, daily,
+        byVersion, baselines, priorsLive, mono, guardAgg, claims,
+      ] = await Promise.all([
         pool.query(metricsSql(true)),
         pool.query(metricsSql(false)),
         pool.query(`SELECT COUNT(*)::int AS n FROM users WHERE ai_progress_estimate`),
@@ -973,19 +1077,18 @@ function dashboardRoutes(config) {
         // one that is wrong throughout.
         pool.query(
           `SELECT
-             CASE WHEN elapsed_ms < 120000 THEN '<2m'
-                  WHEN elapsed_ms < 300000 THEN '2-5m'
-                  WHEN elapsed_ms < 600000 THEN '5-10m'
-                  ELSE '10m+' END                                   AS bucket,
+             ${BUCKET_CASE}                                         AS bucket,
+             prompt_version                                         AS prompt_version,
              COUNT(*)::int                                          AS scored,
              percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(${ERR})) AS median_abs_err_s,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY ${ERR})     AS median_bias_s,
              AVG((predicted_remaining_seconds
                     BETWEEN actual_remaining_ms / 2000.0
                         AND actual_remaining_ms / 500.0)::int)      AS within_band
            FROM progress_estimates
            WHERE ${SCORED}
-           GROUP BY 1
-           ORDER BY MIN(elapsed_ms)`
+           GROUP BY 1, 2
+           ORDER BY MIN(elapsed_ms), 2`
         ),
         pool.query(
           `SELECT
@@ -1010,6 +1113,128 @@ function dashboardRoutes(config) {
            GROUP BY 1
            ORDER BY 1`
         ),
+
+        // ── #892: is the recalibrated prompt actually better? ──────
+        //
+        // Pooling v1 and v2 into one average hides the answer, so every
+        // headline metric is also reported per prompt generation. v1 is the
+        // "bias toward 2-10 minutes" prompt whose flat output failed every
+        // bar; v2 feeds the measured run-length distribution in as input.
+        pool.query(`${metricsSql(false, 'prompt_version')}`),
+
+        // Baselines the estimator has to BEAT, computed over the same scored
+        // population rather than hard-coded, so they stay honest as the data
+        // grows. (a) a fixed constant equal to the population's own median
+        // actual remaining — "say the same thing every time"; (b) the
+        // elapsed-conditioned median oracle — the best any predictor that
+        // knows ONLY elapsed time could possibly do, fitted to the answers.
+        // Measured at ~39% in-band, which is why the retired 60% graduation
+        // bar was unreachable by anything.
+        pool.query(
+          `WITH s AS (
+             SELECT actual_remaining_ms / 1000.0 AS a, ${BUCKET_CASE} AS bucket
+               FROM progress_estimates WHERE ${SCORED}
+           ),
+           k AS (SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY a) AS c FROM s),
+           o AS (SELECT bucket, percentile_cont(0.5) WITHIN GROUP (ORDER BY a) AS m
+                   FROM s GROUP BY 1),
+           j AS (SELECT s.a, (SELECT c FROM k) AS cp, o.m AS op
+                   FROM s JOIN o ON o.bucket = s.bucket)
+           SELECT
+             COUNT(*)::int                                            AS scored,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(cp - a)) AS const_abs,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY cp - a)      AS const_bias,
+             AVG((cp BETWEEN a / 2 AND a * 2)::int)                   AS const_band,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY abs(op - a)) AS oracle_abs,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY op - a)      AS oracle_bias,
+             AVG((op BETWEEN a / 2 AND a * 2)::int)                   AS oracle_band
+           FROM j`
+        ),
+
+        // Live per-bucket medians for the priors-staleness check. Same
+        // BUCKET_CASE as the oracle baseline above — deliberately, so the
+        // card can never report a drift the baseline disagrees with.
+        pool.query(
+          `SELECT ${BUCKET_CASE}                                     AS bucket,
+                  COUNT(*)::int                                       AS scored,
+                  percentile_cont(0.5) WITHIN GROUP (ORDER BY actual_remaining_ms / 1000.0) AS live_p50
+             FROM progress_estimates
+            WHERE ${SCORED}
+            GROUP BY 1`
+        ),
+
+        // Monotonicity, computed twice: on the RAW model values (what the
+        // model said) and on the DISPLAYED post-guard values (what the user
+        // saw). The guard's whole purpose is to make those differ, so
+        // collapsing them into one number would hide whether it works.
+        // Partitioned by progress_message_id — a RUN — not by session: a
+        // session holds many runs and their projections are unrelated.
+        pool.query(
+          `WITH s AS (
+             SELECT progress_message_id, created_at, elapsed_ms / 1000.0 AS e,
+                    predicted_remaining_seconds AS rp,
+                    displayed_remaining_seconds AS dp
+               FROM progress_estimates
+              WHERE predicted_remaining_seconds IS NOT NULL
+                AND progress_message_id IS NOT NULL
+           ),
+           t AS (
+             SELECT
+               e + rp                                      AS raw_total,
+               LAG(e + rp) OVER w                          AS prev_raw_total,
+               rp, LAG(rp) OVER w                          AS prev_rp,
+               e + dp                                      AS disp_total,
+               LAG(e + dp) OVER w                          AS prev_disp_total,
+               dp, LAG(dp) OVER w                          AS prev_dp
+             FROM s
+             WINDOW w AS (PARTITION BY progress_message_id ORDER BY created_at)
+           )
+           SELECT
+             COUNT(*) FILTER (WHERE prev_raw_total IS NOT NULL)::int      AS transitions,
+             AVG((raw_total > prev_raw_total + 5)::int)                   AS raw_later,
+             AVG((raw_total < prev_raw_total - 5)::int)                   AS raw_earlier,
+             AVG((rp > prev_rp)::int)                                     AS raw_increased,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY raw_total - prev_raw_total)  AS raw_median_shift,
+             percentile_cont(0.9) WITHIN GROUP (ORDER BY raw_total - prev_raw_total)  AS raw_p90_shift,
+             COUNT(*) FILTER (WHERE prev_disp_total IS NOT NULL)::int     AS disp_transitions,
+             AVG((disp_total > prev_disp_total + 5)::int)                 AS disp_later,
+             AVG((disp_total < prev_disp_total - 5)::int)                 AS disp_earlier,
+             AVG((dp > prev_dp)::int)                                     AS disp_increased,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY disp_total - prev_disp_total) AS disp_median_shift,
+             percentile_cont(0.9) WITHIN GROUP (ORDER BY disp_total - prev_disp_total) AS disp_p90_shift
+           FROM t`
+        ),
+
+        // Guard telemetry. `flooredRate` — the share of ticks where the 30s
+        // display floor bound — is the direct measure of how often a run
+        // outlives its estimate, and is derived from the displayed value
+        // rather than stored as its own column.
+        pool.query(
+          `SELECT
+             COUNT(*) FILTER (WHERE displayed_remaining_seconds IS NOT NULL)::int AS guarded,
+             AVG(clamped::int) FILTER (WHERE displayed_remaining_seconds IS NOT NULL)         AS clamp_rate,
+             AVG((displayed_remaining_seconds <= 30)::int)
+               FILTER (WHERE displayed_remaining_seconds IS NOT NULL)                          AS floored_rate,
+             COUNT(*) FILTER (WHERE slip_reason = 'expired')::int   AS slip_expired,
+             COUNT(*) FILTER (WHERE slip_reason = 'new_phase')::int AS slip_new_phase,
+             COUNT(*) FILTER (WHERE slip_reason = 'revision')::int  AS slip_revision
+           FROM progress_estimates`
+        ),
+
+        // Completion-claim reliability. Measured over v1 this fired 1,355
+        // times with 5+ minutes still to run a third of the time, which is
+        // what the suppression gate exists to stop.
+        pool.query(
+          `SELECT
+             COUNT(*)::int                                          AS ticks,
+             COUNT(*) FILTER (WHERE suppressed)::int                AS suppressed,
+             AVG((actual_remaining_ms > 300000)::int)
+               FILTER (WHERE actual_total_ms IS NOT NULL AND actual_remaining_ms > 0) AS over_five_min_left_rate,
+             percentile_cont(0.5) WITHIN GROUP (ORDER BY actual_remaining_ms / 1000.0)
+               FILTER (WHERE actual_total_ms IS NOT NULL AND actual_remaining_ms > 0) AS median_actual_left_s
+           FROM progress_estimates
+           WHERE suppressed OR estimate_text ~* '${CLAIM_RE}'`
+        ),
       ]);
 
       const payload = {
@@ -1031,6 +1256,21 @@ function dashboardRoutes(config) {
         daily: daily.rows.map((r) => ({
           day: r.day, scored: r.scored, medianAbsErrS: num(r.median_abs_err_s),
         })),
+        // #892: v1 (flat-prior prompt) vs v2 (empirical priors as input),
+        // never pooled — pooling is exactly what would hide whether the
+        // recalibration worked.
+        byPromptVersion: byVersion.rows.map((r) => ({
+          promptVersion: Number(r.group_key), ...shapeMetrics(r),
+        })),
+        baselines: shapeBaselines(baselines.rows[0]),
+        priors: shapePriors(priorsLive.rows, all.rows[0]),
+        monotonicity: shapeMonotonicity(mono.rows[0], guardAgg.rows[0]),
+        completionClaims: {
+          ticks: claims.rows[0].ticks,
+          suppressed: claims.rows[0].suppressed,
+          overFiveMinLeftRate: num(claims.rows[0].over_five_min_left_rate),
+          medianActualLeftS: num(claims.rows[0].median_actual_left_s),
+        },
       };
 
       // Staging demo: progress_estimates is `staging:private`, so a

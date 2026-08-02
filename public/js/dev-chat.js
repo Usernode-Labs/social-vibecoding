@@ -991,8 +991,12 @@ const DevChat = {
             // #359/#891: anchor from the persisted `estimatedAt` when the
             // snapshot carries one; otherwise fall back to load time (reads
             // slightly high, and the next live cc_estimate corrects it).
+            // #892: prefer the persisted post-guard value when present.
             m._countdownTo = DevChat._countdownTarget(
-              m._estimateRemaining, m.metadata.estimate.estimatedAt
+              m.metadata.estimate.displayedRemainingSeconds != null
+                ? m.metadata.estimate.displayedRemainingSeconds
+                : m._estimateRemaining,
+              m.metadata.estimate.estimatedAt
             );
           }
           // Spec preview cards: scout dispatches persist these on the
@@ -1519,6 +1523,8 @@ const DevChat = {
                 // teardown telling us to blank the guess right now.
                 DevChat._applyEstimate(data.text, data.remainingSeconds, {
                   estimatedAt: data.estimatedAt, cleared: data.cleared,
+                  displayedRemainingSeconds: data.displayedRemainingSeconds,
+                  slipReason: data.slipReason,
                 });
                 break;
               case 'cc_log':
@@ -1923,6 +1929,8 @@ const DevChat = {
         // `cleared: true` (#891) blanks the guess at the coding run's end.
         DevChat._applyEstimate(data.text, data.remainingSeconds, {
           estimatedAt: data.estimatedAt, cleared: data.cleared,
+          displayedRemainingSeconds: data.displayedRemainingSeconds,
+          slipReason: data.slipReason,
         });
         break;
       case 'cc_log':
@@ -2409,7 +2417,11 @@ const DevChat = {
           DevChat._applyEstimate(
             estimate ? estimate.text : null,
             estimate ? estimate.remainingSeconds : null,
-            { estimatedAt: estimate ? estimate.estimatedAt : null }
+            {
+              estimatedAt: estimate ? estimate.estimatedAt : null,
+              displayedRemainingSeconds: estimate ? estimate.displayedRemainingSeconds : null,
+              slipReason: estimate ? estimate.slipReason : null,
+            }
           );
         }
 
@@ -2539,6 +2551,9 @@ const DevChat = {
     if (cur) cur.textContent = summ.currentLabel ? `— ${summ.currentLabel}` : '';
     const steps = details.querySelector('.dc-cc-steps');
     if (steps) steps.textContent = summ.steps ? `· ${summ.steps} steps` : '';
+    // #892: the deterministic stage label moves as phase markers land.
+    const phase = details.querySelector('.dc-cc-phase');
+    if (phase) phase.textContent = summ.phaseLabel ? `· ${summ.phaseLabel}` : '';
   },
 
   // Experimental AI progress estimate (opt-in, server-gated). Stores the
@@ -2556,9 +2571,15 @@ const DevChat = {
   // actually made) rather than "now". The same guess is delivered twice —
   // once over SSE/WS and again on every 3s /status poll — and anchoring on
   // arrival re-based the target each time, so the count-down sat frozen at
-  // a constant "~X left" and never reached "due now". `estimatedAt` falls
+  // a constant "~X left" and never ran down at all. `estimatedAt` falls
   // back to now for callers that have no stamp (legacy servers, the
   // persisted-metadata hydrate path).
+  //
+  // #892: prefers the server's POST-GUARD `displayedRemainingSeconds` when
+  // present (monotonic, floored at 30s so it can never render as zero) and
+  // falls back to the raw model value for a legacy server that doesn't send
+  // one. formatCountdown floors again on the client, so even a stale target
+  // renders a time rather than the retired at-zero freeze.
   _countdownTarget(remainingSeconds, estimatedAt) {
     if (remainingSeconds == null) return null;
     const n = Number(remainingSeconds);
@@ -2647,8 +2668,22 @@ const DevChat = {
     target._estimate = clean;
     target._estimateRemaining = remaining;
     // #359/#891: anchor the count-down on when the guess was MADE, so the
-    // shared 1s ticker walks it down to "· due now" instead of restarting.
-    target._countdownTo = DevChat._countdownTarget(remaining, estimatedAt);
+    // shared 1s ticker walks it down instead of restarting on every
+    // re-delivery.
+    let nextTarget = DevChat._countdownTarget(
+      o.displayedRemainingSeconds != null ? o.displayedRemainingSeconds : remaining,
+      estimatedAt
+    );
+    // #892 belt-and-braces mirror of the server-side monotonicity guard: a
+    // target LATER than the one currently rendered is ignored unless the
+    // server said why it moved (slipReason). Without this a reordered
+    // SSE/poll delivery could visibly push the finish out — the exact
+    // treadmill the guard exists to stop. Moving earlier is always accepted.
+    if (nextTarget != null && target._countdownTo != null
+        && nextTarget > target._countdownTo && !o.slipReason) {
+      nextTarget = target._countdownTo;
+    }
+    target._countdownTo = nextTarget;
     // Patch in place within THIS run's own DOM node (keyed by persist-id)
     // rather than the last estimate span on the page, so a prior collapsed
     // run's span can't be mis-targeted (#323). There is deliberately NO
@@ -2682,7 +2717,7 @@ const DevChat = {
   _syncElapsedTicker() {
     // #359: the same 1s heartbeat now also drives the AI-estimate
     // count-down span, so the predicate matches either kind of ticking span.
-    const any = document.querySelector('#dc-messages [data-elapsed-since], #dc-messages [data-countdown-to]');
+    const any = document.querySelector('#dc-messages [data-elapsed-since], #dc-messages [data-countdown-to], #dc-messages [data-cohort-since]');
     if (any && !DevChat._elapsedTimer) {
       DevChat._elapsedTimer = setInterval(() => DevChat._tickElapsed(), 1000);
     } else if (!any && DevChat._elapsedTimer) {
@@ -2696,10 +2731,13 @@ const DevChat = {
   _tickElapsed() {
     const els = document.querySelectorAll('#dc-messages [data-elapsed-since]');
     // #359: count-down spans share this loop — anchored to an absolute
-    // target end-timestamp and clamped at "due now" (formatCountdown), so a
+    // target end-timestamp and floored at 30s (formatCountdown), so a
     // late-firing tick under tab throttling still shows the right value.
     const downs = document.querySelectorAll('#dc-messages [data-countdown-to]');
-    if (!els.length && !downs.length) {
+    // #892: the population-context line crosses its 10 min / 30 min
+    // thresholds mid-run, so it ticks on the same heartbeat.
+    const cohorts = document.querySelectorAll('#dc-messages [data-cohort-since]');
+    if (!els.length && !downs.length && !cohorts.length) {
       if (DevChat._elapsedTimer) {
         clearInterval(DevChat._elapsedTimer);
         DevChat._elapsedTimer = null;
@@ -2719,6 +2757,21 @@ const DevChat = {
         const to = parseInt(el.dataset.countdownTo, 10);
         if (!Number.isFinite(to)) return;
         el.textContent = formatCountdown(to, now);
+      });
+    }
+    if (typeof runCohortHint === 'function') {
+      cohorts.forEach((el) => {
+        const since = parseInt(el.dataset.cohortSince, 10);
+        if (!Number.isFinite(since)) return;
+        const elapsed = Math.max(0, now - since);
+        // Visibility rule: with the estimator ON (data-cohort-gated=1) the
+        // hint only appears past 10 min, where it adds context the countdown
+        // alone cannot — before that the countdown is the time statement and
+        // a second one would just compete with it. With the estimator OFF it
+        // shows throughout: it is the only time context that user gets.
+        const gated = el.dataset.cohortGated === '1';
+        el.textContent = (gated && elapsed < 600000)
+          ? '' : ' \u00b7 ' + runCohortHint(elapsed);
       });
     }
   },
@@ -3334,6 +3387,24 @@ const DevChat = {
             : { currentLabel: '', steps: 0 };
           const currentSpan = `<span class="dc-cc-current">${summ.currentLabel ? `— ${escapeHtml(summ.currentLabel)}` : ''}</span>`;
           const stepsSpan = `<span class="dc-cc-steps">${summ.steps ? `· ${summ.steps} steps` : ''}</span>`;
+          // #892: the DETERMINISTIC stage readout, derived from the phase
+          // markers the run genuinely emits (Syncing with main / Claude is
+          // working / Committing / Pushing / Finished). Unlike the AI guess
+          // beside it, this cannot be wrong — it is what the user has to
+          // look at when the estimate is uncertain.
+          const phaseSpan = `<span class="dc-cc-phase">${summ.phaseLabel ? `· ${escapeHtml(summ.phaseLabel)}` : ''}</span>`;
+          // #892: population context ("most runs finish in 2–10 min"). A
+          // statement about the measured distribution of 880 real runs, not
+          // a prediction about this one, so it can never be individually
+          // wrong. `data-cohort-gated` carries the visibility rule: with an
+          // AI guess present (estimator ON) it stays hidden until 10 min so
+          // it complements rather than competes with the countdown; with the
+          // estimator OFF it shows throughout as the only time context.
+          const cohortSince = msg._active && msg.created_at
+            ? new Date(msg.created_at).getTime() : NaN;
+          const cohortSpan = Number.isFinite(cohortSince)
+            ? `<span class="dc-cc-cohort" data-cohort-since="${Math.min(cohortSince, Date.now())}" data-cohort-gated="${msg._estimate ? '1' : '0'}"></span>`
+            : '';
           // Experimental AI progress estimate: rendered unconditionally
           // (even empty) so _applyEstimate can patch it in place; only
           // populated while the server emits cc_estimate for this run.
@@ -3345,7 +3416,7 @@ const DevChat = {
           // supplies the ccrun persist-id), not the attached progress row.
           // After the clone marker both carry the flag; keying off `msg`
           // keeps the default aligned with the persisted state's key.
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${estimateSpan}${elapsedHtml}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${phaseSpan}${elapsedHtml}${estimateSpan}${cohortSpan}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
 
         // Post-turn ccOutput (the markdown summary that the worker

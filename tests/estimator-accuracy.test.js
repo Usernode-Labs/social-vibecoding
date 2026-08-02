@@ -82,9 +82,90 @@ test('#891: /estimator reports both windows plus the breakdowns', () => {
   assert.match(fn, /byElapsed:/, 'the elapsed-bucket breakdown must be reported');
   assert.match(fn, /byOutcome:/, 'the outcome breakdown must be reported');
   assert.match(fn, /daily:/, 'the daily error series must be reported');
-  // Elapsed buckets from the spec.
-  for (const b of ["'<2m'", "'2-5m'", "'5-10m'", "'10m\\+'"]) {
+  // Elapsed buckets from the spec. #892 split the old '10m+' into 10-20m
+  // and 20m+, matching the buckets llm.RUN_LENGTH_PRIORS feeds the model.
+  for (const b of ["'<2m'", "'2-5m'", "'5-10m'", "'10-20m'", "'20m\\+'"]) {
     assert.match(fn, new RegExp(b), `elapsed bucket ${b} must exist`);
+  }
+});
+
+// ── #892: recalibration payload ─────────────────────────────────────────
+
+test('#892: /estimator reports the version split, baselines, priors, guard and claims', () => {
+  const fn = estimatorHandler();
+  assert.match(fn, /byPromptVersion:/, 'v1-vs-v2 must be reported, not pooled');
+  assert.match(fn, /baselines: shapeBaselines/, 'the baselines to beat must be reported');
+  assert.match(fn, /priors: shapePriors/, 'the priors-staleness check must be reported');
+  assert.match(fn, /monotonicity: shapeMonotonicity/, 'the treadmill metrics must be reported');
+  assert.match(fn, /completionClaims:/, 'completion-claim reliability must be reported');
+});
+
+test('#892: the version split groups by prompt_version and is not pooled', () => {
+  const fn = estimatorHandler();
+  assert.match(fn, /metricsSql\(false, 'prompt_version'\)/,
+    'the per-version metrics must reuse the same shape as the headline windows');
+  assert.match(fn, /promptVersion: Number\(r\.group_key\)/,
+    'each row must carry which prompt generation it describes');
+});
+
+test('#892: monotonicity is reported on BOTH raw and displayed values', () => {
+  const fn = estimatorHandler();
+  // The guard's whole purpose is to make these differ; one pooled number
+  // would hide whether it works.
+  assert.match(fn, /raw_later/, 'raw (what the model said) must be measured');
+  assert.match(fn, /disp_later/, 'displayed (what the user saw) must be measured');
+  assert.match(fn, /clamp_rate/, 'the held-projection rate must be reported');
+  assert.match(fn, /floored_rate/, 'the floor-bound rate must be reported');
+  assert.doesNotMatch(fn, /overrun/,
+    'there is no overrun state — the countdown always shows a number');
+});
+
+test('#892: monotonicity partitions by RUN, not by session', () => {
+  const fn = estimatorHandler();
+  // A session holds many runs and their projections are unrelated, so
+  // partitioning by session_id would compare across run boundaries.
+  assert.match(fn, /PARTITION BY progress_message_id ORDER BY created_at/,
+    'the LAG window must be per progress_message_id');
+  assert.doesNotMatch(fn, /PARTITION BY session_id/,
+    'partitioning by session would leak across runs');
+});
+
+test('#892: the priors drift check and the oracle baseline share one bucket expression', () => {
+  const fn = estimatorHandler();
+  // If they disagreed about where a bucket starts, the card could report a
+  // drift the baseline contradicts.
+  assert.match(fn, /const BUCKET_CASE = /, 'the bucket boundaries must be one named constant');
+  const uses = (fn.match(/\$\{BUCKET_CASE\}/g) || []).length;
+  assert.ok(uses >= 3,
+    `BUCKET_CASE must be reused by the breakdown, the oracle and the drift check (saw ${uses})`);
+  // And nothing may re-inline the bounds beside it.
+  assert.doesNotMatch(fn.replace(/const BUCKET_CASE = [\s\S]*?END`;/, ''),
+    /WHEN elapsed_ms < 120000/,
+    'no second copy of the bucket boundaries may exist in the handler');
+});
+
+test('#892: the priors staleness check reads the COMMITTED constant', () => {
+  const dashboard = read('src/routes/dashboard.js');
+  assert.match(dashboard, /require\('\.\.\/services\/llm'\)/,
+    'the route must read the committed priors from the llm service');
+  const fn = estimatorHandler();
+  assert.match(fn, /llm\.RUN_LENGTH_PRIORS_SNAPSHOT/, 'the snapshot metadata must be surfaced');
+  assert.match(fn, /llm\.RUN_LENGTH_PRIORS\.buckets/, 'the committed p50s must be compared live');
+  assert.match(fn, /DRIFT_THRESHOLD/, 'the drift trigger must be a named threshold');
+});
+
+test('#892: requiring the llm service from the route does not initialise a client', () => {
+  // The route only reads module constants. If requiring it needed an API key
+  // or called init(), every test and every keyless environment would break.
+  delete require.cache[require.resolve('../src/services/llm')];
+  const saved = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  try {
+    const llm = require('../src/services/llm');
+    assert.equal(llm.isEnabled(), false, 'no client may exist without an explicit init()');
+    assert.ok(Array.isArray(llm.RUN_LENGTH_PRIORS.buckets), 'the constants must still be readable');
+  } finally {
+    if (saved !== undefined) process.env.ANTHROPIC_API_KEY = saved;
   }
 });
 
@@ -215,17 +296,49 @@ test('#898: dapp.json checks the new section renders', () => {
 test('#891: the card states the leave-experimental bar', () => {
   const js = read('public/js/admin-estimator.js');
   // The thresholds live in one constant driving both the tiles and the verdict.
-  assert.match(js, /const ESTIMATOR_BAR = \{ scored: 200, runs: 50, users: 5, medianAbsErrS: 90, withinBand: 0\.6, biasS: 60 \}/,
+  assert.match(js, /const ESTIMATOR_BAR = \{/,
     'the decision thresholds must be a single named constant');
-  assert.match(js, /function estimatorVerdict\(w\)/, 'the card must compute a verdict');
+  // #892 restated the bar. The old 0.60 in-band threshold was above the 0.39
+  // measured oracle ceiling, so nothing could ever have cleared it; 0.45 sits
+  // above both that oracle and the 0.41 scale-corrected benchmark.
+  assert.match(js, /withinBand: 0\.45/, 'the in-band bar must be the reachable 0.45');
+  assert.doesNotMatch(js, /withinBand: 0\.6\b/, 'the unreachable 0.60 bar must be gone');
+  assert.doesNotMatch(js, /medianAbsErrS: 90\b/,
+    'median error is now judged against the live oracle baseline, not a fixed 90s');
+  assert.match(js, /laterRate: 0\.25/, 'the treadmill gate must be part of the bar');
+  assert.match(js, /increasedRate: 0\.05/, 'the backwards-countdown gate must be part of the bar');
+  assert.match(js, /CANDIDATE_PROMPT_VERSION = 2/,
+    'the verdict must be judged on the candidate prompt generation');
+  assert.match(js, /function estimatorVerdict\(w, ctx\)/, 'the card must compute a verdict');
   assert.match(js, /Ready to leave experimental/, 'the verdict must have a ready state');
   assert.match(js, /Stays experimental/, 'the verdict must have a not-ready state');
   // "Not enough data yet" must be distinguishable from "failed the bar".
-  assert.match(js, /not enough data yet/, 'insufficient data must read differently from a miss');
+  assert.match(js, /not enough v\$\{CANDIDATE_PROMPT_VERSION\} data yet/,
+    'insufficient data must read differently from a miss');
   // The (?) definition repeats the bar so it is visible in the UI.
   assert.match(js, /estimator: 'Predicted-vs-actual/, 'the info map must define the card');
   assert.match(js, /Leaves experimental when/, 'the info copy must state the bar');
   assert.match(js, /always includes admins/, 'the info copy must flag the admin-inclusion caveat');
+  // #892: the info copy must say the calibration is input-side only — that
+  // is the invariant a future change is most likely to quietly break.
+  assert.match(js, /no multiplier is applied/i,
+    'the info copy must state that nothing scales the model output');
+});
+
+test('#892: the card renders the version split, baselines and priors freshness', () => {
+  const js = read('public/js/admin-estimator.js');
+  assert.match(js, /const versionHtml = /, 'the v1-vs-v2 comparison must render');
+  assert.match(js, /const baselineHtml = /, 'the baselines-to-beat row must render');
+  assert.match(js, /const priorsHtml = /, 'the priors freshness strip must render');
+  assert.match(js, /Priors stale/, 'the stale state must be nameable on sight');
+  assert.match(js, /Priors current/, 'the fresh state must be distinguishable');
+  // All three must actually be spliced into the card body, not just built —
+  // a block that is assembled and never rendered is the easy mistake here.
+  const bodyAt = js.indexOf('${versionHtml}');
+  assert.ok(bodyAt > 0, 'versionHtml must lead the estimator card body');
+  const body = js.slice(bodyAt, bodyAt + 400);
+  assert.ok(body.includes('${baselineHtml}'), 'baselineHtml must be rendered');
+  assert.ok(body.includes('${priorsHtml}'), 'priorsHtml must be rendered');
 });
 
 test('#891: withAdmins carries the page ?demo=1 through to the Analytics endpoints', () => {

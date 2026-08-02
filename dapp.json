@@ -486,6 +486,21 @@
       "expectSelector": "#admin-estimator-root #admin-estimator-card"
     },
     {
+      "name": "Estimator card compares prompt generations rather than pooling them (#892)",
+      "path": "/?demo=1#admin/estimator",
+      "expectText": "Prompt generation"
+    },
+    {
+      "name": "Estimator card states the baselines the estimate has to beat (#892)",
+      "path": "/?demo=1#admin/estimator",
+      "expectText": "Elapsed-only oracle"
+    },
+    {
+      "name": "Estimator card flags when the run-length figures given to the model are stale (#892)",
+      "path": "/?demo=1#admin/estimator",
+      "expectText": "Run-length figures given to the model"
+    },
+    {
       "name": "Estimator accuracy states the leave-experimental verdict",
       "path": "/?demo=1#admin/estimator",
       "expectText": "Stays experimental"
