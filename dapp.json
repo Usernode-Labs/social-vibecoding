@@ -810,6 +810,61 @@
       "expectText": "gunzip -c"
     },
     {
+      "name": "Settings renders as its own screen at #settings",
+      "path": "/#settings",
+      "expectSelector": "#settings-screen:not(.hidden) #settings-section-content"
+    },
+    {
+      "name": "Settings groups its section menu under headings",
+      "path": "/#settings",
+      "expectText": "AI & agents"
+    },
+    {
+      "name": "Bare #settings lands on the Anthropic API key section",
+      "path": "/#settings",
+      "expectSelector": "#settings-section-content [data-settings-section=\"api-key\"]:not(.hidden) #settings-api-key"
+    },
+    {
+      "name": "Settings offers Log out outside the section list",
+      "path": "/#settings",
+      "expectSelector": "#settings-footer #settings-logout"
+    },
+    {
+      "name": "Settings deep-links the Password section",
+      "path": "/#settings/password",
+      "expectSelector": "[data-settings-section=\"password\"]:not(.hidden) #cp-save"
+    },
+    {
+      "name": "Settings deep-links App AI permissions with the seeded demo grants",
+      "path": "/?demo=1#settings/app-ai",
+      "expectText": "Staging demo app A"
+    },
+    {
+      "name": "Settings deep-links Agent instructions & skills with the seeded demo files",
+      "path": "/?demo=1#settings/agent-files",
+      "expectSelector": "[data-settings-section=\"agent-files\"]:not(.hidden) #agent-files-instructions-list [data-agent-file]"
+    },
+    {
+      "name": "Settings deep-links CLI & coding-agent access with the seeded demo credentials",
+      "path": "/?demo=1#settings/cli",
+      "expectText": "svc_staging-demo"
+    },
+    {
+      "name": "Settings deep-links the Language section",
+      "path": "/#settings/language",
+      "expectSelector": "[data-settings-section=\"language\"]:not(.hidden) #settings-locale"
+    },
+    {
+      "name": "Settings shows Admin preview to a real admin",
+      "path": "/#settings/admin-preview",
+      "expectSelector": "[data-settings-section=\"admin-preview\"]:not(.hidden) #view-as-non-admin"
+    },
+    {
+      "name": "An unavailable Settings section falls back to the default, not an empty page",
+      "path": "/#settings/wallet",
+      "expectSelector": "#settings-section-content [data-settings-section]:not(.hidden)"
+    },
+    {
       "name": "Home 'Your apps' section renders for the seeded admin",
       "path": "/",
       "expectSelector": ".app-card[data-yours='true']"

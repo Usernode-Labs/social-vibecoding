@@ -457,7 +457,10 @@ const DevChat = {
     const btn = document.getElementById('dc-credits-add-key');
     if (!btn) return;
     btn.addEventListener('click', () => {
-      if (window.Settings) Settings.open({ focusApiKey: true });
+      // #463: deep-link straight at the API-key section of the Settings
+      // screen. A real hash navigation, so the browser / device back
+      // gesture returns the user to this chat.
+      location.hash = '#settings/api-key';
     });
   },
 

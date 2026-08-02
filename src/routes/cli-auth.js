@@ -648,6 +648,44 @@ function encodeCursor(config, row) {
   return `${payload}.${sig}`;
 }
 
+// Fabricated credential rows for the Settings screen's "CLI & coding-agent
+// access" section in staging. cli_access_tokens is `staging:private`, so a
+// staging clone copies the schema and none of the rows — without these the
+// section reviews as an empty panel and its dapp.json test has nothing to
+// assert on. Obviously-fake hints, no real ids (the client suppresses Revoke
+// on `demo` rows), never reachable outside USERNODE_ENV=staging.
+function demoCliTokens() {
+  const day = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const iso = (ms) => new Date(ms).toISOString();
+  return [
+    {
+      id: 'staging-demo-cli-1',
+      token_hint: 'svc_staging-demo…a1b2',
+      client_id: 'social-vibecoding-cli',
+      scopes: ['api'],
+      created_at: iso(now - 3 * day),
+      last_used_at: iso(now - 2 * 60 * 60 * 1000),
+      expires_at: iso(now + 27 * day),
+      revoked_at: null,
+      status: 'valid',
+      demo: true,
+    },
+    {
+      id: 'staging-demo-cli-2',
+      token_hint: 'svc_staging-demo…c3d4',
+      client_id: 'claude-code',
+      scopes: ['api'],
+      created_at: iso(now - 21 * day),
+      last_used_at: iso(now - 14 * day),
+      expires_at: iso(now + 9 * day),
+      revoked_at: iso(now - 10 * day),
+      status: 'revoked',
+      demo: true,
+    },
+  ];
+}
+
 function decodeCursor(config, value) {
   if (typeof value !== 'string' || value.length > 512) return null;
   const parts = value.split('.');
@@ -810,12 +848,22 @@ function cliBrowserRoutes(config) {
   });
 
   router.get('/api/me/cli-tokens', userRate, async (req, res) => {
-    const allowed = new Set(['limit', 'cursor']);
+    const allowed = new Set(['limit', 'cursor', 'demo']);
     const keys = Object.keys(req.query || {});
     if (keys.some((key) => !allowed.has(key))
         || keys.some((key) => Array.isArray(req.query[key]))) {
       return res.status(400).json({ error: 'invalid_request' });
     }
+
+    // Staging mock data: cli_access_tokens is `staging:private` (schema.sql),
+    // so a staging clone always has an empty list and the Settings section
+    // would review as a blank panel. ?demo=1 fabricates two rows without
+    // touching the DB — same pattern as GET /api/me/llm-grants and
+    // GET /api/me/agent-files, and a strict no-op in production.
+    if (req.query.demo === '1' && process.env.USERNODE_ENV === 'staging') {
+      return res.json({ tokens: demoCliTokens(), next_cursor: null, demo: true });
+    }
+
     const limitText = req.query.limit == null ? '50' : req.query.limit;
     if (!/^[1-9][0-9]*$/.test(limitText)) {
       return res.status(400).json({ error: 'invalid_request' });

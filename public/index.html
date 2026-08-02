@@ -243,13 +243,16 @@
     <!-- Members & visibility used to be a drawer row here; #645 moved it
          into the Dev tab's "+" menu (see AppView._wirePlusMenu). -->
     <!-- Settings — always shown; green dot is the BYOK "key configured"
-         indicator, toggled directly by settings.js _renderIndicator(). -->
-    <button id="drawer-row-settings"
-            class="flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+         indicator, toggled directly by settings.js _renderIndicator().
+         Real anchor (like Challenges / Profile) since Settings became the
+         #settings screen: navigation rides the anchor's hash and the click
+         handler in App.HeaderMenu.init just closes the drawer. -->
+    <a id="drawer-row-settings" href="#settings"
+       class="flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
       <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
       <span class="text-sm font-medium">Settings</span>
       <span id="drawer-byok-dot" class="hidden ml-auto w-2 h-2 rounded-full bg-emerald-500 shrink-0" aria-hidden="true"></span>
-    </button>
+    </a>
     <!-- Challenges — hash route handled by App.navigateToChallenges
          (app-as-SV-chrome migration). Real anchor (like the header
          leaderboard entry) so hash navigation drives the screen; the
@@ -425,6 +428,402 @@
   <main id="admin-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
     <div id="admin-root" class="max-w-7xl mx-auto p-4 w-full"></div>
   </main>
+
+  <!-- Settings screen (#settings hash route). Was a modal overlay
+       (#settings-modal) until it was converted into a real screen laid
+       out like the Admin & moderation console: a grouped sidebar on md+,
+       a two-level menu -> section hierarchy below it. Rendered by
+       public/js/settings.js; mounted by App.navigateToSettings. Ships
+       hidden like its sibling screens.
+
+       MOVE, DON'T REWRITE: every section below is the modal markup
+       verbatim, only re-parented into a [data-settings-section] wrapper
+       (and with the stacked-column divider classes dropped, since each
+       section now renders alone). settings.js binds every control by id
+       ONCE at DOMContentLoaded, so the nodes must stay in the document
+       and must never be innerHTML-rebuilt — the router only toggles
+       `hidden` on the WRAPPERS, leaving each section's own `hidden`
+       (wallet / usernode / admin-preview capability gates) untouched.
+       Only #settings-nav-desktop and #settings-mobile-menu-host are ever
+       innerHTML-rendered.
+
+       max-w-5xl (not the admin console's 7xl): every section here is a
+       form column, none is a wide chart grid. -->
+  <main id="settings-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+    <div id="settings-root" class="max-w-5xl mx-auto p-4 w-full">
+      <div class="md:flex md:items-start md:gap-6">
+        <!-- Desktop sidebar menu. Below md there is no nav here at all:
+             phones get the two-level hierarchy instead (the level-1 menu
+             renders into #settings-mobile-menu-host). -->
+        <div id="settings-sidebar-col" class="hidden md:block md:w-56 shrink-0">
+          <nav id="settings-nav-desktop" aria-label="Settings sections" class="space-y-1"></nav>
+          <!-- Log out is pinned below the section list rather than buried
+               inside a section. On mobile it moves under the level-1 menu
+               (see Settings._renderMobileMenu). -->
+          <div id="settings-footer" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
+            <button id="settings-logout"
+              class="w-full rounded-lg border border-red-400 dark:border-red-700 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">
+              Log out
+            </button>
+          </div>
+        </div>
+        <div id="settings-content-col" class="flex-1 min-w-0">
+          <!-- Mobile level 1: the grouped section menu. Empty (and
+               md:hidden) on desktop. -->
+          <div id="settings-mobile-menu-host" class="md:hidden"></div>
+          <!-- Every section lives here permanently; the router unhides
+               exactly one wrapper (or hides the host entirely on mobile
+               level 1). max-w-xl keeps form controls from stretching the
+               full width of the wide shell. -->
+          <div id="settings-section-content" class="pb-8 max-w-xl">
+            <div data-settings-section="api-key" class="hidden">
+              <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Anthropic API key</h3>
+              <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">Bring your own Anthropic API key to keep working past the daily limit. Your platform daily allowance is used first; once it runs out, your key takes over automatically &mdash; even in the middle of a running turn &mdash; and usage bills directly to your Anthropic account.</p>
+
+              <label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="settings-api-key">Anthropic API key</label>
+              <div id="settings-key-display" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
+                sk-ant-…<span id="settings-key-last4"></span>
+              </div>
+              <!-- #119 — daily spend breakdown for BYOK users. Filled by
+                   Settings._refreshSpend() on modal open; hidden while loading,
+                   on fetch failure, or when no key is saved. Rows are ordered
+                   limit-first to match the billing order (#212). -->
+              <div id="settings-spend" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2">
+                <div class="font-medium text-zinc-700 dark:text-zinc-300 mb-1">Today's spend</div>
+                <div class="flex justify-between text-zinc-600 dark:text-zinc-400"><span>Platform daily limit</span><span id="settings-spend-platform" class="font-mono"></span></div>
+                <div class="flex justify-between text-zinc-600 dark:text-zinc-400"><span>Your key</span><span id="settings-spend-byok" class="font-mono"></span></div>
+                <div class="text-zinc-500 dark:text-zinc-500 mt-1">Resets at midnight UTC.</div>
+              </div>
+              <div class="flex gap-2">
+                <input id="settings-api-key" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"
+                  class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
+                <button id="settings-save" class="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>
+                <button id="settings-remove" class="hidden shrink-0 rounded-lg border border-red-400 dark:border-red-700 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Remove</button>
+              </div>
+              <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+                Encrypted at rest, verified against Anthropic before saving, never shown in full after save.
+                The server decrypts it in memory to call Anthropic on your behalf &mdash; don't paste keys into services you don't trust with that level of access.
+                <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" class="text-violet-500 hover:text-violet-400 underline">Set tight spend limits</a> on the key itself for defense in depth.
+              </p>
+
+              <div id="settings-status" class="text-sm mt-3 hidden"></div>
+            </div>
+
+            <div data-settings-section="app-ai" class="hidden">
+              <!-- App AI permissions (issue #34). Lists every app the user has
+                   granted access to their daily AI budget: today's spend vs the
+                   per-app cap, a cap editor, the BYOK spillover toggle, and
+                   Revoke. Rendered by Settings._renderLlmGrants() on modal open
+                   from GET /api/me/llm-grants (?demo=1 passthrough in staging). -->
+              <div id="llm-grants-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">App AI permissions</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Apps you've allowed to use AI on your behalf. Their spend counts against your normal daily budget, plus the per-app cap you set. Revoking takes effect immediately.
+                </p>
+                <div id="llm-grants-list" class="space-y-2"></div>
+                <div id="llm-grants-status" class="text-sm mt-2 hidden"></div>
+              </div>
+            </div>
+
+            <div data-settings-section="agent-files" class="hidden">
+              <!-- Agent instructions & skills (issue #460). Per-user global files
+                   the coding agent loads on every build/scout run this user
+                   dispatches, in any app: instruction files are assembled into the
+                   worker's ~/.claude/CLAUDE.md, skills land in ~/.claude/skills/.
+                   Rendered by Settings._renderAgentFilesSection() on modal open
+                   from GET /api/me/agent-files (?demo=1 passthrough in staging,
+                   since user_agent_files is staging:private). -->
+              <div id="agent-files-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Agent instructions &amp; skills</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Personal files the coding agent follows on every build or spec run you start, in any app. Markdown or plain text only, up to 10 of each kind, 48&nbsp;KB per file. Changes apply from your next run.
+                </p>
+
+                <div class="mb-4">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Instructions</h4>
+                    <button data-agent-files-upload="instruction" class="rounded border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Upload</button>
+                  </div>
+                  <div id="agent-files-instructions-list" class="space-y-1.5"></div>
+                </div>
+
+                <div class="mb-2">
+                  <div class="flex items-center justify-between mb-1.5">
+                    <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Skills</h4>
+                    <button data-agent-files-upload="skill" class="rounded border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Upload</button>
+                  </div>
+                  <div id="agent-files-skills-list" class="space-y-1.5"></div>
+                </div>
+
+                <input id="agent-files-input" type="file" accept=".md,.txt,text/markdown,text/plain" class="hidden" />
+
+                <!-- Pending-upload form: revealed after a file is picked so the
+                     user can adjust the (slugified) name and, for skills, the
+                     one-line description before saving. -->
+                <div id="agent-files-form" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 mt-2 text-xs">
+                  <div id="agent-files-form-title" class="font-medium text-zinc-700 dark:text-zinc-300 mb-2"></div>
+                  <label class="block text-zinc-600 dark:text-zinc-400 mb-2">Name
+                    <input id="agent-files-name" type="text" maxlength="64"
+                      class="mt-1 w-full rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 font-mono text-zinc-900 dark:text-zinc-100" />
+                  </label>
+                  <label id="agent-files-desc-wrap" class="block text-zinc-600 dark:text-zinc-400 mb-2 hidden">Description
+                    <input id="agent-files-desc" type="text" maxlength="200" placeholder="One line: what this skill does"
+                      class="mt-1 w-full rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-zinc-900 dark:text-zinc-100" />
+                  </label>
+                  <div class="flex gap-2">
+                    <button id="agent-files-save" class="rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 font-medium text-white transition-colors">Save</button>
+                    <button id="agent-files-cancel" class="rounded border border-zinc-300 dark:border-zinc-700 px-3 py-1 font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
+                  </div>
+                </div>
+
+                <div id="agent-files-status" class="text-sm mt-2 hidden"></div>
+              </div>
+            </div>
+
+            <div data-settings-section="password" class="hidden">
+              <!-- Change password (issue #282). Default form calls POST
+                   /api/me/password (current password required). In the Usernode
+                   native app with a linked wallet, a "Use your wallet instead"
+                   link switches to wallet mode (cp-wallet-mode shown, current
+                   password hidden) which signs a wallet-check challenge and calls
+                   POST /api/me/wallet-change-password — the way back for a
+                   logged-in user who's forgotten the password they'd need to type.
+                   settings.js wires the mode switch and both submit paths. -->
+              <div id="change-password-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Change password</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here.
+                </p>
+                <div class="space-y-2">
+                  <div id="cp-current-row">
+                    <input id="cp-current" type="password" autocomplete="current-password" placeholder="Current password"
+                      class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                  </div>
+                  <input id="cp-new" type="password" autocomplete="new-password" placeholder="New password (at least 8 characters)"
+                    class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                  <input id="cp-confirm" type="password" autocomplete="new-password" placeholder="Confirm new password"
+                    class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
+                </div>
+                <!-- Default (password) submit -->
+                <button id="cp-save" class="mt-2 w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Change password</button>
+                <!-- Wallet (signature) submit — shown only in wallet mode -->
+                <button id="cp-wallet-save" class="hidden mt-2 w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Sign &amp; change password</button>
+                <!-- Mode switches. cp-wallet-mode is itself hidden unless the user
+                     is in the native app with a linked wallet (settings.js). -->
+                <p id="cp-wallet-mode" class="hidden text-xs text-center mt-2">
+                  <a id="cp-use-wallet" href="#" class="text-violet-500 hover:text-violet-400">Forgot it? Use your wallet instead</a>
+                </p>
+                <p id="cp-password-mode" class="hidden text-xs text-center mt-2">
+                  <a id="cp-use-password" href="#" class="text-violet-500 hover:text-violet-400">Use current password instead</a>
+                </p>
+                <div id="cp-status" class="text-sm mt-2 hidden"></div>
+              </div>
+            </div>
+
+            <div data-settings-section="wallet" class="hidden">
+              <!-- Wallet linking section -->
+              <div id="wallet-section" class="hidden">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Usernode Wallet</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">Link your on-chain identity. Scan the QR code with the Usernode mobile app.</p>
+
+                <!-- Unlinked: show link button -->
+                <div id="wallet-unlinked" class="hidden">
+                  <button id="wallet-link-btn" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Link Usernode Wallet</button>
+                </div>
+
+                <!-- Linking: show QR -->
+                <div id="wallet-linking" class="hidden text-center">
+                  <div id="wallet-qr-canvas" class="inline-block rounded-lg bg-white p-2"></div>
+                  <p id="wallet-link-timer" class="text-xs text-zinc-500 mt-2"></p>
+                  <button id="wallet-link-cancel" class="mt-2 text-xs text-zinc-500 hover:text-zinc-300 underline">Cancel</button>
+                </div>
+
+                <!-- Linked: show pubkey + unlink -->
+                <div id="wallet-linked" class="hidden">
+                  <div class="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
+                    <span class="text-xs text-emerald-500 font-bold">&#x2713;</span>
+                    <span id="wallet-pubkey-display" class="text-sm font-mono text-zinc-700 dark:text-zinc-300 truncate flex-1"></span>
+                  </div>
+                  <!-- Unlink intentionally hidden for now: unlinking only clears the
+                       server-side pubkey (no on-chain unlink), and wallet is the
+                       primary native sign-in path, so an accidental unlink is more
+                       footgun than feature. The DELETE /api/me/wallet-link endpoint
+                       and its (null-guarded) handler remain, so re-adding this button
+                       is all that's needed to restore the option. -->
+                </div>
+
+                <div id="wallet-status" class="text-sm mt-2 hidden"></div>
+              </div>
+            </div>
+
+            <div data-settings-section="language" class="hidden">
+              <!-- Platform-level user language preference (issue #757). A single
+                   per-user BCP-47 locale apps read as their default language —
+                   via the iframe JWT `locale` claim and the bridge's
+                   usernode.getUserLocale(). "" (Auto) = unset (NULL in the DB).
+                   Saves on change; settings.js wires the handler to
+                   POST /api/me/locale and pushes a live `usernode:locale-changed`
+                   notification into any open app iframe. -->
+              <div id="settings-language-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Language</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Apps on Usernode use this as their default language. Apps may offer their own override.
+                </p>
+                <select id="settings-locale"
+                  class="w-full rounded-lg bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200">
+                  <option value="">Auto — use device language</option>
+                  <option value="en">English</option>
+                  <option value="es">Español</option>
+                  <option value="fr">Français</option>
+                  <option value="de">Deutsch</option>
+                  <option value="id">Bahasa Indonesia</option>
+                  <option value="pt-BR">Português (Brasil)</option>
+                  <option value="it">Italiano</option>
+                  <option value="nl">Nederlands</option>
+                  <option value="pl">Polski</option>
+                  <option value="tr">Türkçe</option>
+                  <option value="ru">Русский</option>
+                  <option value="uk">Українська</option>
+                  <option value="ar">العربية</option>
+                  <option value="hi">हिन्दी</option>
+                  <option value="vi">Tiếng Việt</option>
+                  <option value="th">ไทย</option>
+                  <option value="ja">日本語</option>
+                  <option value="ko">한국어</option>
+                  <option value="zh-CN">中文（简体）</option>
+                  <option value="zh-TW">中文（繁體）</option>
+                </select>
+                <div id="settings-locale-status" class="text-xs mt-2 hidden"></div>
+              </div>
+            </div>
+
+            <div data-settings-section="alerts" class="hidden">
+              <!-- #138: Dev-chat sound & alerts (default ON). Client-only
+                   preference (localStorage key devchat_alerts_enabled); wired in
+                   settings.js. Plays a chime when an AI dev-chat turn finishes
+                   while you're in the app, or a system notification when it's in
+                   the background. -->
+              <div id="settings-alerts-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Dev-chat sound &amp; alerts</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Get a heads-up when a dev-chat AI agent finishes and is waiting for your reply.
+                </p>
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <input id="devchat-alerts-toggle" type="checkbox" class="un-switch" />
+                  <span class="text-sm text-zinc-800 dark:text-zinc-200">Play a sound, and notify me when the app is in the background</span>
+                </label>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+                  When you're in the app a soft chime plays; when the app is backgrounded or closed you get a system notification instead. Your browser or device may ask permission to show notifications the first time.
+                </p>
+                <button id="devchat-alerts-test" type="button"
+                  class="mt-3 rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                  Send a test alert
+                </button>
+                <p id="devchat-alerts-test-status" class="text-xs mt-2 hidden text-zinc-500 dark:text-zinc-400"></p>
+              </div>
+            </div>
+
+            <div data-settings-section="cli" class="hidden">
+              <!-- Global CLI/coding-agent credentials. The server returns only a short token
+                   hint and non-secret metadata; raw bearer values never enter the
+                   browser Settings surface. -->
+              <div id="cli-tokens-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">CLI &amp; coding-agent access</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Credentials approved for the Social Vibecoding CLI, Codex, or Claude Code. Revoking an active credential takes effect immediately.
+                </p>
+                <div id="cli-tokens-list" class="space-y-2"></div>
+                <button id="cli-tokens-more" type="button"
+                  class="hidden mt-3 rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
+                  Load more
+                </button>
+                <div id="cli-tokens-status" class="text-xs mt-2 hidden"></div>
+              </div>
+            </div>
+
+            <div data-settings-section="dev-console" class="hidden">
+              <!-- Developer console visibility. The bug-icon in the header opens
+                   a slide-up log of forwarded console output and errors from
+                   the running app's iframe. By default the icon stays hidden
+                   until the app actually logs an error so the header doesn't
+                   get cluttered for users who never need it. This toggle pins
+                   it to always-visible whenever an iframe is on screen. -->
+              <div id="settings-devconsole-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Developer console</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  The bug icon in the header opens a slide-up log of console output and errors forwarded from the running app.
+                </p>
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <input id="dev-console-always-show" type="checkbox" class="un-switch" />
+                  <span class="text-sm text-zinc-800 dark:text-zinc-200">Always show the icon</span>
+                </label>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+                  When unchecked (the default), the icon only appears once the current app has logged at least one error.
+                </p>
+              </div>
+            </div>
+
+            <div data-settings-section="experimental" class="hidden">
+              <!-- Experimental: AI progress estimate (default OFF). When enabled,
+                   a small Haiku call skims the in-flight Claude Code progress log
+                   about once a minute and shows a vague "AI guess" next to the
+                   timer on the running line in dev-chat. Server-gated per user;
+                   settings.js wires the change handler to
+                   POST /api/me/ai-progress-estimate. -->
+              <div id="settings-experimental-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Experimental</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Early features we're still testing. They may change or disappear.
+                </p>
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <input id="ai-progress-estimate" type="checkbox" class="un-switch" />
+                  <span class="text-sm text-zinc-800 dark:text-zinc-200">AI progress estimate</span>
+                </label>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+                  While the coding agent works, a small AI model skims its progress log about once a minute and shows a rough guess of how far along it is. It's clearly labeled a guess and can be wrong. Adds a tiny per-run cost (billed to your own API key if you've saved one above).
+                </p>
+                <div id="ai-progress-estimate-status" class="text-xs mt-2 hidden"></div>
+              </div>
+            </div>
+
+            <div data-settings-section="usernode" class="hidden">
+              <!-- "Usernode app" sections (profile-and-settings-to-web migration):
+                   the mobile app's native App Settings absorbed into this modal.
+                   Hidden unless the Usernode bridge reports the getSettingsState
+                   capability; fully rendered by settings.js
+                   _renderUsernodeSection() from the bridge's settings snapshot.
+                   Covers device permissions, node sleep, privacy & identity,
+                   diagnostics, about & legal (FAQ), and the app account. -->
+              <div id="settings-usernode-section" class="hidden"></div>
+            </div>
+
+            <div data-settings-section="admin-preview" class="hidden">
+              <!-- Admin-only: "view as non-admin" preview. Visible only when the
+                   server reports the user as a real admin (settings.js gates the
+                   visibility based on App._realIsAdmin). Toggling reloads the
+                   page so all admin-gated UI (home retry/delete/lock buttons,
+                   app-secrets editor, etc.) re-renders against the masked
+                   App.user.isAdmin. -->
+              <div id="settings-admin-section" class="hidden">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Admin preview</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Hide admin-only UI so the app looks the way it does for a regular user. Useful for spotting UX issues that only affect non-admins.
+                </p>
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <input id="view-as-non-admin" type="checkbox" class="un-switch" />
+                  <span class="text-sm text-zinc-800 dark:text-zinc-200">View as non-admin</span>
+                </label>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
+                  Purely a client-side display toggle &mdash; your server-side admin privileges are unaffected. The page will reload so the rest of the UI picks up the change.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
 
   <!-- Topochain leaderboard screen (Task 14, public screens): the
        testnet-competition standings, rendered by
@@ -729,7 +1128,7 @@
               Accounts here have no email on file, so a password can't be reset automatically from the web.
             </p>
             <p class="text-sm text-zinc-500 dark:text-zinc-400">
-              Ask a Usernode platform admin to issue you a <span class="font-medium text-zinc-700 dark:text-zinc-300">temporary password</span>. Once you're back in, set a password you choose from Settings → Change password.
+              Ask a Usernode platform admin to issue you a <span class="font-medium text-zinc-700 dark:text-zinc-300">temporary password</span>. Once you're back in, set a password you choose from <a href="#settings/password" class="text-violet-500 hover:text-violet-400 underline">Settings → Change password</a>.
             </p>
           </div>
 
@@ -1659,367 +2058,6 @@
           Open in new tab
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
         </a>
-      </div>
-    </div>
-    </div>
-  </div>
-
-  <!-- #30: Settings modal (BYOK — user Anthropic API key).
-
-       Modal scroll pattern — used by every full-screen modal in this
-       file. `html, body { overflow: hidden }` (see app.css) blocks
-       page-level scroll, so each modal must own its own scroll layer
-       or its content disappears off the bottom on mobile.
-
-       Structure:
-         <div #the-modal class="fixed inset-0 z-50
-                                 overflow-y-auto overscroll-contain
-                                 bg-black/60">
-           <div data-modal-backdrop
-                class="flex min-h-full items-center justify-center p-4">
-             <div class="…panel…">…</div>
-           </div>
-         </div>
-
-       - The outer fixed div is the scroll layer.
-       - `min-h-full` on the flex wrapper makes it expand to viewport
-         height when content is short (so the panel still centers) AND
-         grow past viewport when content is tall (so the outer can
-         scroll).
-       - `data-modal-backdrop` lets the JS click handler treat the
-         wrapper as backdrop too — clicks on the dim area outside the
-         panel still dismiss. -->
-  <div id="settings-modal" class="hidden fixed inset-0 z-50 overflow-y-auto overscroll-contain bg-black/60">
-    <div data-modal-backdrop class="flex min-h-full items-center justify-center p-4">
-    <div class="bg-white dark:bg-zinc-900 rounded-xl p-6 w-full max-w-md shadow-xl relative">
-      <button id="settings-close" class="absolute top-4 right-4 text-zinc-400 hover:text-zinc-200 transition-colors" aria-label="Close settings">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-      </button>
-
-      <h2 class="text-lg font-bold mb-1 text-zinc-900 dark:text-zinc-100">Settings</h2>
-      <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-4">Bring your own Anthropic API key to keep working past the daily limit. Your platform daily allowance is used first; once it runs out, your key takes over automatically &mdash; even in the middle of a running turn &mdash; and usage bills directly to your Anthropic account.</p>
-
-      <label class="block text-xs font-medium text-zinc-700 dark:text-zinc-300 mb-1" for="settings-api-key">Anthropic API key</label>
-      <div id="settings-key-display" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm font-mono text-zinc-700 dark:text-zinc-300 mb-2">
-        sk-ant-…<span id="settings-key-last4"></span>
-      </div>
-      <!-- #119 — daily spend breakdown for BYOK users. Filled by
-           Settings._refreshSpend() on modal open; hidden while loading,
-           on fetch failure, or when no key is saved. Rows are ordered
-           limit-first to match the billing order (#212). -->
-      <div id="settings-spend" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-xs mb-2">
-        <div class="font-medium text-zinc-700 dark:text-zinc-300 mb-1">Today's spend</div>
-        <div class="flex justify-between text-zinc-600 dark:text-zinc-400"><span>Platform daily limit</span><span id="settings-spend-platform" class="font-mono"></span></div>
-        <div class="flex justify-between text-zinc-600 dark:text-zinc-400"><span>Your key</span><span id="settings-spend-byok" class="font-mono"></span></div>
-        <div class="text-zinc-500 dark:text-zinc-500 mt-1">Resets at midnight UTC.</div>
-      </div>
-      <div class="flex gap-2">
-        <input id="settings-api-key" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false"
-          class="flex-1 min-w-0 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500 font-mono" />
-        <button id="settings-save" class="shrink-0 rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>
-        <button id="settings-remove" class="hidden shrink-0 rounded-lg border border-red-400 dark:border-red-700 px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">Remove</button>
-      </div>
-      <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-        Encrypted at rest, verified against Anthropic before saving, never shown in full after save.
-        The server decrypts it in memory to call Anthropic on your behalf &mdash; don't paste keys into services you don't trust with that level of access.
-        <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" class="text-violet-500 hover:text-violet-400 underline">Set tight spend limits</a> on the key itself for defense in depth.
-      </p>
-
-      <div id="settings-status" class="text-sm mt-3 hidden"></div>
-
-      <!-- Change password (issue #282). Default form calls POST
-           /api/me/password (current password required). In the Usernode
-           native app with a linked wallet, a "Use your wallet instead"
-           link switches to wallet mode (cp-wallet-mode shown, current
-           password hidden) which signs a wallet-check challenge and calls
-           POST /api/me/wallet-change-password — the way back for a
-           logged-in user who's forgotten the password they'd need to type.
-           settings.js wires the mode switch and both submit paths. -->
-      <div id="change-password-section" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Change password</h3>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-          Set a new password for web login. If an admin gave you a temporary password, enter it as your current password here.
-        </p>
-        <div class="space-y-2">
-          <div id="cp-current-row">
-            <input id="cp-current" type="password" autocomplete="current-password" placeholder="Current password"
-              class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
-          </div>
-          <input id="cp-new" type="password" autocomplete="new-password" placeholder="New password (at least 8 characters)"
-            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
-          <input id="cp-confirm" type="password" autocomplete="new-password" placeholder="Confirm new password"
-            class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-900 dark:text-zinc-100 focus:outline-none focus:ring-2 focus:ring-violet-500" />
-        </div>
-        <!-- Default (password) submit -->
-        <button id="cp-save" class="mt-2 w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Change password</button>
-        <!-- Wallet (signature) submit — shown only in wallet mode -->
-        <button id="cp-wallet-save" class="hidden mt-2 w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Sign &amp; change password</button>
-        <!-- Mode switches. cp-wallet-mode is itself hidden unless the user
-             is in the native app with a linked wallet (settings.js). -->
-        <p id="cp-wallet-mode" class="hidden text-xs text-center mt-2">
-          <a id="cp-use-wallet" href="#" class="text-violet-500 hover:text-violet-400">Forgot it? Use your wallet instead</a>
-        </p>
-        <p id="cp-password-mode" class="hidden text-xs text-center mt-2">
-          <a id="cp-use-password" href="#" class="text-violet-500 hover:text-violet-400">Use current password instead</a>
-        </p>
-        <div id="cp-status" class="text-sm mt-2 hidden"></div>
-      </div>
-
-      <!-- App AI permissions (issue #34). Lists every app the user has
-           granted access to their daily AI budget: today's spend vs the
-           per-app cap, a cap editor, the BYOK spillover toggle, and
-           Revoke. Rendered by Settings._renderLlmGrants() on modal open
-           from GET /api/me/llm-grants (?demo=1 passthrough in staging). -->
-      <div id="llm-grants-section" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">App AI permissions</h3>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-          Apps you've allowed to use AI on your behalf. Their spend counts against your normal daily budget, plus the per-app cap you set. Revoking takes effect immediately.
-        </p>
-        <div id="llm-grants-list" class="space-y-2"></div>
-        <div id="llm-grants-status" class="text-sm mt-2 hidden"></div>
-      </div>
-
-      <!-- Global CLI/coding-agent credentials. The server returns only a short token
-           hint and non-secret metadata; raw bearer values never enter the
-           browser Settings surface. -->
-      <div id="cli-tokens-section" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">CLI &amp; coding-agent access</h3>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-          Credentials approved for the Social Vibecoding CLI, Codex, or Claude Code. Revoking an active credential takes effect immediately.
-        </p>
-        <div id="cli-tokens-list" class="space-y-2"></div>
-        <button id="cli-tokens-more" type="button"
-          class="hidden mt-3 rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
-          Load more
-        </button>
-        <div id="cli-tokens-status" class="text-xs mt-2 hidden"></div>
-      </div>
-
-      <!-- Agent instructions & skills (issue #460). Per-user global files
-           the coding agent loads on every build/scout run this user
-           dispatches, in any app: instruction files are assembled into the
-           worker's ~/.claude/CLAUDE.md, skills land in ~/.claude/skills/.
-           Rendered by Settings._renderAgentFilesSection() on modal open
-           from GET /api/me/agent-files (?demo=1 passthrough in staging,
-           since user_agent_files is staging:private). -->
-      <div id="agent-files-section" class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Agent instructions &amp; skills</h3>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-          Personal files the coding agent follows on every build or spec run you start, in any app. Markdown or plain text only, up to 10 of each kind, 48&nbsp;KB per file. Changes apply from your next run.
-        </p>
-
-        <div class="mb-4">
-          <div class="flex items-center justify-between mb-1.5">
-            <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Instructions</h4>
-            <button data-agent-files-upload="instruction" class="rounded border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Upload</button>
-          </div>
-          <div id="agent-files-instructions-list" class="space-y-1.5"></div>
-        </div>
-
-        <div class="mb-2">
-          <div class="flex items-center justify-between mb-1.5">
-            <h4 class="text-xs font-semibold text-zinc-700 dark:text-zinc-300">Skills</h4>
-            <button data-agent-files-upload="skill" class="rounded border border-zinc-300 dark:border-zinc-700 px-2 py-0.5 text-xs font-medium text-zinc-700 dark:text-zinc-300 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Upload</button>
-          </div>
-          <div id="agent-files-skills-list" class="space-y-1.5"></div>
-        </div>
-
-        <input id="agent-files-input" type="file" accept=".md,.txt,text/markdown,text/plain" class="hidden" />
-
-        <!-- Pending-upload form: revealed after a file is picked so the
-             user can adjust the (slugified) name and, for skills, the
-             one-line description before saving. -->
-        <div id="agent-files-form" class="hidden rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 mt-2 text-xs">
-          <div id="agent-files-form-title" class="font-medium text-zinc-700 dark:text-zinc-300 mb-2"></div>
-          <label class="block text-zinc-600 dark:text-zinc-400 mb-2">Name
-            <input id="agent-files-name" type="text" maxlength="64"
-              class="mt-1 w-full rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 font-mono text-zinc-900 dark:text-zinc-100" />
-          </label>
-          <label id="agent-files-desc-wrap" class="block text-zinc-600 dark:text-zinc-400 mb-2 hidden">Description
-            <input id="agent-files-desc" type="text" maxlength="200" placeholder="One line: what this skill does"
-              class="mt-1 w-full rounded bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-2 py-1 text-zinc-900 dark:text-zinc-100" />
-          </label>
-          <div class="flex gap-2">
-            <button id="agent-files-save" class="rounded bg-violet-600 hover:bg-violet-500 px-3 py-1 font-medium text-white transition-colors">Save</button>
-            <button id="agent-files-cancel" class="rounded border border-zinc-300 dark:border-zinc-700 px-3 py-1 font-medium text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">Cancel</button>
-          </div>
-        </div>
-
-        <div id="agent-files-status" class="text-sm mt-2 hidden"></div>
-      </div>
-
-      <!-- Wallet linking section -->
-      <div id="wallet-section" class="hidden mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Usernode Wallet</h3>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">Link your on-chain identity. Scan the QR code with the Usernode mobile app.</p>
-
-        <!-- Unlinked: show link button -->
-        <div id="wallet-unlinked" class="hidden">
-          <button id="wallet-link-btn" class="w-full rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Link Usernode Wallet</button>
-        </div>
-
-        <!-- Linking: show QR -->
-        <div id="wallet-linking" class="hidden text-center">
-          <div id="wallet-qr-canvas" class="inline-block rounded-lg bg-white p-2"></div>
-          <p id="wallet-link-timer" class="text-xs text-zinc-500 mt-2"></p>
-          <button id="wallet-link-cancel" class="mt-2 text-xs text-zinc-500 hover:text-zinc-300 underline">Cancel</button>
-        </div>
-
-        <!-- Linked: show pubkey + unlink -->
-        <div id="wallet-linked" class="hidden">
-          <div class="flex items-center gap-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2">
-            <span class="text-xs text-emerald-500 font-bold">&#x2713;</span>
-            <span id="wallet-pubkey-display" class="text-sm font-mono text-zinc-700 dark:text-zinc-300 truncate flex-1"></span>
-          </div>
-          <!-- Unlink intentionally hidden for now: unlinking only clears the
-               server-side pubkey (no on-chain unlink), and wallet is the
-               primary native sign-in path, so an accidental unlink is more
-               footgun than feature. The DELETE /api/me/wallet-link endpoint
-               and its (null-guarded) handler remain, so re-adding this button
-               is all that's needed to restore the option. -->
-        </div>
-
-        <div id="wallet-status" class="text-sm mt-2 hidden"></div>
-      </div>
-
-      <!-- Admin-only: "view as non-admin" preview. Visible only when the
-           server reports the user as a real admin (settings.js gates the
-           visibility based on App._realIsAdmin). Toggling reloads the
-           page so all admin-gated UI (home retry/delete/lock buttons,
-           app-secrets editor, etc.) re-renders against the masked
-           App.user.isAdmin. -->
-      <div id="settings-admin-section" class="hidden mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Admin preview</h3>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-          Hide admin-only UI so the app looks the way it does for a regular user. Useful for spotting UX issues that only affect non-admins.
-        </p>
-        <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input id="view-as-non-admin" type="checkbox" class="un-switch" />
-          <span class="text-sm text-zinc-800 dark:text-zinc-200">View as non-admin</span>
-        </label>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          Purely a client-side display toggle &mdash; your server-side admin privileges are unaffected. The page will reload so the rest of the UI picks up the change.
-        </p>
-      </div>
-
-      <!-- Developer console visibility. The bug-icon in the header opens
-           a slide-up log of forwarded console output and errors from
-           the running app's iframe. By default the icon stays hidden
-           until the app actually logs an error so the header doesn't
-           get cluttered for users who never need it. This toggle pins
-           it to always-visible whenever an iframe is on screen. -->
-      <div class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Developer console</h3>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-          The bug icon in the header opens a slide-up log of console output and errors forwarded from the running app.
-        </p>
-        <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input id="dev-console-always-show" type="checkbox" class="un-switch" />
-          <span class="text-sm text-zinc-800 dark:text-zinc-200">Always show the icon</span>
-        </label>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          When unchecked (the default), the icon only appears once the current app has logged at least one error.
-        </p>
-      </div>
-
-      <!-- #138: Dev-chat sound & alerts (default ON). Client-only
-           preference (localStorage key devchat_alerts_enabled); wired in
-           settings.js. Plays a chime when an AI dev-chat turn finishes
-           while you're in the app, or a system notification when it's in
-           the background. -->
-      <div class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Dev-chat sound &amp; alerts</h3>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-          Get a heads-up when a dev-chat AI agent finishes and is waiting for your reply.
-        </p>
-        <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input id="devchat-alerts-toggle" type="checkbox" class="un-switch" />
-          <span class="text-sm text-zinc-800 dark:text-zinc-200">Play a sound, and notify me when the app is in the background</span>
-        </label>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          When you're in the app a soft chime plays; when the app is backgrounded or closed you get a system notification instead. Your browser or device may ask permission to show notifications the first time.
-        </p>
-        <button id="devchat-alerts-test" type="button"
-          class="mt-3 rounded-md border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors">
-          Send a test alert
-        </button>
-        <p id="devchat-alerts-test-status" class="text-xs mt-2 hidden text-zinc-500 dark:text-zinc-400"></p>
-      </div>
-
-      <!-- Platform-level user language preference (issue #757). A single
-           per-user BCP-47 locale apps read as their default language —
-           via the iframe JWT `locale` claim and the bridge's
-           usernode.getUserLocale(). "" (Auto) = unset (NULL in the DB).
-           Saves on change; settings.js wires the handler to
-           POST /api/me/locale and pushes a live `usernode:locale-changed`
-           notification into any open app iframe. -->
-      <div class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Language</h3>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-          Apps on Usernode use this as their default language. Apps may offer their own override.
-        </p>
-        <select id="settings-locale"
-          class="w-full rounded-lg bg-white dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm text-zinc-800 dark:text-zinc-200">
-          <option value="">Auto — use device language</option>
-          <option value="en">English</option>
-          <option value="es">Español</option>
-          <option value="fr">Français</option>
-          <option value="de">Deutsch</option>
-          <option value="id">Bahasa Indonesia</option>
-          <option value="pt-BR">Português (Brasil)</option>
-          <option value="it">Italiano</option>
-          <option value="nl">Nederlands</option>
-          <option value="pl">Polski</option>
-          <option value="tr">Türkçe</option>
-          <option value="ru">Русский</option>
-          <option value="uk">Українська</option>
-          <option value="ar">العربية</option>
-          <option value="hi">हिन्दी</option>
-          <option value="vi">Tiếng Việt</option>
-          <option value="th">ไทย</option>
-          <option value="ja">日本語</option>
-          <option value="ko">한국어</option>
-          <option value="zh-CN">中文（简体）</option>
-          <option value="zh-TW">中文（繁體）</option>
-        </select>
-        <div id="settings-locale-status" class="text-xs mt-2 hidden"></div>
-      </div>
-
-      <!-- Experimental: AI progress estimate (default OFF). When enabled,
-           a small Haiku call skims the in-flight Claude Code progress log
-           about once a minute and shows a vague "AI guess" next to the
-           timer on the running line in dev-chat. Server-gated per user;
-           settings.js wires the change handler to
-           POST /api/me/ai-progress-estimate. -->
-      <div class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Experimental</h3>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
-          Early features we're still testing. They may change or disappear.
-        </p>
-        <label class="flex items-center gap-2 cursor-pointer select-none">
-          <input id="ai-progress-estimate" type="checkbox" class="un-switch" />
-          <span class="text-sm text-zinc-800 dark:text-zinc-200">AI progress estimate</span>
-        </label>
-        <p class="text-xs text-zinc-500 dark:text-zinc-500 mt-2 leading-relaxed">
-          While the coding agent works, a small AI model skims its progress log about once a minute and shows a rough guess of how far along it is. It's clearly labeled a guess and can be wrong. Adds a tiny per-run cost (billed to your own API key if you've saved one above).
-        </p>
-        <div id="ai-progress-estimate-status" class="text-xs mt-2 hidden"></div>
-      </div>
-
-      <!-- "Usernode app" sections (profile-and-settings-to-web migration):
-           the mobile app's native App Settings absorbed into this modal.
-           Hidden unless the Usernode bridge reports the getSettingsState
-           capability; fully rendered by settings.js
-           _renderUsernodeSection() from the bridge's settings snapshot.
-           Covers device permissions, node sleep, privacy & identity,
-           diagnostics, about & legal (FAQ), and the app account. -->
-      <div id="settings-usernode-section" class="hidden"></div>
-
-      <div class="mt-6 pt-5 border-t border-zinc-200 dark:border-zinc-700">
-        <button id="settings-logout"
-          class="w-full rounded-lg border border-red-400 dark:border-red-700 px-4 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-950 transition-colors">
-          Log out
-        </button>
       </div>
     </div>
     </div>

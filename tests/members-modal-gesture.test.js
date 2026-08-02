@@ -20,8 +20,10 @@
 //
 // We load the real app-view.js into a vm context (so the tests can't drift
 // from shipped code), drive a controllable clock, and assert behaviour. We
-// also source-grep app.js / settings.js so the backdrop handlers can't
-// silently stop calling the guard.
+// also source-grep app.js so the backdrop handlers can't silently stop
+// calling the guard — and settings.js, which must NOT: the
+// settings-modal-to-screen conversion made Settings the #settings screen,
+// so it has no backdrop and no modal reveal any more.
 //
 // Run with: node --test tests/members-modal-gesture.test.js
 
@@ -246,14 +248,20 @@ test('openMembersModal is a hard no-op only when the modal element is absent', (
 test('every header-modal backdrop handler consults modalDismissGuarded', () => {
   const appGuards = APP_SRC.match(/modalDismissGuarded\(/g) || [];
   assert.ok(appGuards.length >= 2, 'members + share backdrop handlers guarded in app.js');
-  assert.match(SETTINGS_SRC, /modalDismissGuarded\(/, 'settings backdrop handler guarded');
+  // Settings is NOT in this set any more: the settings-modal-to-screen
+  // conversion turned it into the #settings screen, so it has no backdrop
+  // to guard. tests/settings-screen.test.js pins that it stays that way.
+  assert.doesNotMatch(SETTINGS_SRC, /modalDismissGuarded\(/,
+    'settings is a screen now — no backdrop dismissal to guard');
 });
 
 test('every header modal reveals via the shared synchronous helper', () => {
-  // members + share reveal inside app-view.js; settings reveals in settings.js.
+  // members + share reveal inside app-view.js; settings is a screen now and
+  // is revealed by App.navigateToSettings, not by the modal helper.
   const viewReveals = VIEW_SRC.match(/revealModal\(/g) || [];
   assert.ok(viewReveals.length >= 3, 'helper defined + used by members & share');
-  assert.match(SETTINGS_SRC, /AppView\.revealModal\(/, 'settings reveals via the helper');
+  assert.doesNotMatch(SETTINGS_SRC, /AppView\.revealModal\(/,
+    'settings no longer reveals as a modal');
   // The reveal must NOT depend on requestAnimationFrame (the WebView dropped
   // that frame and left the panel closed). Scope the check to revealModal's
   // own body — rAF is used elsewhere in the file for unrelated layout work.

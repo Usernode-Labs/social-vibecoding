@@ -317,7 +317,7 @@
   const STATIC_MODAL_IDS = [
     'create-modal', 'rename-modal', 'close-issue-modal', 'fork-modal',
     'import-pr-modal', 'members-modal', 'feedback-modal', 'share-modal',
-    'settings-modal', 'app-secrets-modal',
+    'app-secrets-modal',
   ];
 
   function adoptAll() {
