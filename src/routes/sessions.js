@@ -59,6 +59,9 @@ const { runSyncMain, persistBehindMain } = syncMainSvc;
 const { activeWorkers, getActiveWorkerCount } = require('../services/active-workers');
 const turnWatchdog = require('../services/turn-watchdog');
 const { isCliCredentialManagementSession } = require('../services/cli-api-policy');
+// #894: the deterministic pill sets a turn falls back to when the Mayor
+// omits suggest_replies (or the turn ends on a path with no wrap-up).
+const { turnFallbackQuickReplies } = require('../services/recovery-pills');
 
 const CLI_CREDENTIAL_MANAGEMENT_ERROR = 'credential_management_not_available_via_cli';
 
@@ -563,8 +566,14 @@ function sessionRoutes(config) {
       if (!app) return res.status(404).json({ error: 'App not found' });
       const appRows = [app];
 
+      // has_spec (#894): a boolean, never the spec body — the dev chat's
+      // quick-reply fallback picks between the post-build and post-spec
+      // pill sets from it, and this list is where DevChat.currentSession
+      // comes from. Shipping spec_md itself would put every session's full
+      // markdown in a list payload for one bit of information.
       const { rows } = await pool.query(
-        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at
+        `SELECT id, branch_name, pr_number, pr_url, pr_title, session_title, staging_url, status, linked_issues, behind_main, shared_at, transcript_shared_at, created_at,
+                (spec_md IS NOT NULL AND spec_md <> '') AS has_spec
          FROM chat_sessions
          WHERE app_id = $1 AND user_id = $2 AND is_headless = FALSE
          ORDER BY created_at DESC`,
@@ -587,7 +596,7 @@ function sessionRoutes(config) {
           pr_url: null, pr_title: null,
           session_title: '[Mock] Archived session',
           staging_url: null, status: 'archived', linked_issues: [],
-          behind_main: false, shared_at: null,
+          behind_main: false, shared_at: null, has_spec: false,
           created_at: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
           warm: false,
         });
@@ -2493,6 +2502,12 @@ function sessionRoutes(config) {
         phase: 'mayor1',
         stopped: false,
         stoppedBy: null,
+        // #889: POST /stop lives in another request and has no access to
+        // this turn's `send` closure, but it needs to announce the stop on
+        // every channel the moment the click lands (rather than ~20s later
+        // when the turn actually unwinds). Handing it the closure keeps the
+        // _seq numbering consistent with the rest of the turn's events.
+        send,
       };
       const prior = stopRegistry.get(session.id);
       if (prior && prior !== stopHandle) {
@@ -2518,6 +2533,25 @@ function sessionRoutes(config) {
           [session.id, text, JSON.stringify(metadata || {})]
         ).catch(() => {});
       };
+
+      // #894: guaranteed quick-reply pills. The Mayor's suggest_replies
+      // tool is optional and it frequently skips it, and several turn-end
+      // paths (worker-busy, stop-during-run, refusal, provider error) never
+      // reach a model wrap-up at all — either way the pill bar goes empty
+      // and stays empty until the user types something themselves. Every
+      // such path now falls back to a deterministic, state-derived set.
+      //
+      // Declared out here (not beside currentSpec inside the try) so the
+      // catch-block's turn-error status can use it too. `hasSpec` is
+      // refreshed whenever the spec is (re)loaded; `session.pr_number` is
+      // mutated in place by applyPrMetadata, so reading it at CALL time is
+      // what makes a just-opened PR count.
+      let turnHasSpec = false;
+      const turnPills = (outcome) => turnFallbackQuickReplies({
+        outcome,
+        hasPr: session.pr_number != null,
+        hasSpec: turnHasSpec,
+      });
 
       // #249: first-message naming — a brand-new session (no title yet,
       // no PR) gets a readable display name from its opening ask, long
@@ -2633,6 +2667,7 @@ function sessionRoutes(config) {
         // regenerating from scratch. Re-read before phase-2 below in
         // case the tool we're about to run mutated it.
         let currentSpec = await loadSessionSpec(pool, session.id);
+        turnHasSpec = !!(currentSpec || '').trim();
         const prContext = session.pr_number
           ? { prNumber: session.pr_number, prTitle: session.pr_title, status: session.status }
           : null;
@@ -2848,7 +2883,9 @@ function sessionRoutes(config) {
             // tears down the streaming UI, and persist a system message
             // so the timeline reflects the stop on refresh.
             const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-            await sendStatus(`Stopped${byStr}.`);
+            // #894: a stop during the Mayor turn ends everything here —
+            // this status row is the only place pills can live.
+            await sendStatus(`Stopped${byStr}.`, { quickReplies: turnPills('stopped') });
             send('stopped', { phase: 'mayor1', by: stopHandle.stoppedBy });
             send('done', {});
             res.end();
@@ -2883,6 +2920,9 @@ function sessionRoutes(config) {
           });
           await sendStatus(modelFallback.refusalText(selectedModel, refusalCategory), {
             modelRefusal: { requested: selectedModel, category: refusalCategory },
+            // #894: a refused turn ends here with no assistant row, so this
+            // status line is the only thing left to hang pills off.
+            quickReplies: turnPills('failed'),
           });
           mayor1.toolUses = [];
         }
@@ -2990,7 +3030,8 @@ function sessionRoutes(config) {
           } catch (err) {
             if (stopHandle.stopped) {
               const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-              await sendStatus(`Stopped${byStr}.`);
+              // #894: same as the phase-1 stop above.
+              await sendStatus(`Stopped${byStr}.`, { quickReplies: turnPills('stopped') });
               send('stopped', { phase: 'mayor1', by: stopHandle.stoppedBy });
               send('done', {});
               res.end();
@@ -3057,16 +3098,21 @@ function sessionRoutes(config) {
         // persisted, and displayed as the model that actually answered.
         const servedModel1 = mayor1.servedModel || selectedModel;
         const costCents1 = mayor1.usage ? llm.estimateCostCents(mayor1.usage, servedModel1) : 0;
+        // #894: guarantee pills on a plain chat reply — see
+        // shouldFallbackQuickReplies for which turns opt out and why.
+        const quickReplies1 = shouldFallbackQuickReplies(quickReplies, suggestions, mayor1.toolUses)
+          ? turnPills('chat')
+          : quickReplies;
         if (mayorText1.trim()) {
           send('mayor_reasoning', { text: mayorText1 });
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
              VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
             [session.id, mayorText1, servedModel1, mayor1.usage.input_tokens + mayor1.usage.output_tokens, costCents1,
-             JSON.stringify({ ...(suggestions ? { suggestions } : {}), ...(quickReplies ? { quickReplies } : {}) })]
+             JSON.stringify({ ...(suggestions ? { suggestions } : {}), ...(quickReplies1 ? { quickReplies: quickReplies1 } : {}) })]
           );
           if (suggestions) send('suggestions', { suggestions });
-          if (quickReplies) send('quick_replies', { replies: quickReplies });
+          if (quickReplies1) send('quick_replies', { replies: quickReplies1 });
         }
         // BYOK users pay Anthropic directly, so their spend lands in
         // the display-only byok_cost_cents bucket (#119) — only
@@ -3107,7 +3153,11 @@ function sessionRoutes(config) {
         // for ~10 min after the first dispatch finishes (warm idle is
         // not busy).
         if (activeWorkers.has(session.id) || worker.isInFlight(session.id)) {
-          await sendStatus('Claude Code is already running for this session. Please wait for it to finish.');
+          // #894: this status line IS the turn — no assistant row follows,
+          // so it carries the pills (the run in flight is the only useful
+          // thing to ask about next).
+          await sendStatus('Claude Code is already running for this session. Please wait for it to finish.',
+            { quickReplies: turnPills('worker_busy') });
           send('done', {});
           res.end();
           return;
@@ -3354,6 +3404,7 @@ function sessionRoutes(config) {
         // have just mutated it, and the wrap-up turn should describe
         // the doc as it is now (not as it was at the start of phase-1).
         currentSpec = await loadSessionSpec(pool, session.id);
+        turnHasSpec = !!(currentSpec || '').trim();
         // Recompute PR context: a dispatch this turn may have just opened
         // a PR (applyPrMetadata mutates session.pr_number in place).
         const prContext2 = session.pr_number
@@ -3382,6 +3433,14 @@ function sessionRoutes(config) {
         // state, so this is where dispatch turns get their pills. The
         // tool_use is terminal (end of turn) — no tool_result round-trip.
         const quickReplies2 = resolveQuickReplies(mayor2.toolUses);
+        // #894: the wrap-up is a dispatch turn's ONLY pill source (phase-1
+        // deliberately dropped its own), so a wrap-up that skipped the tool
+        // — a plain `end_turn`, which production logs show is common — used
+        // to leave the bar empty right after a build. Fall back to the
+        // outcome the dispatch actually had.
+        const wrapUpPills = quickReplies2 || turnPills(
+          toolResult.isError ? 'failed' : (toolKind === 'scout' ? 'spec_done' : 'build_done')
+        );
 
         let mayorText2 = stripFakeCompletionMarker(mayor2.text, { sessionId: session.id });
         log.info('sessions', 'Mayor phase-2 response', {
@@ -3429,9 +3488,9 @@ function sessionRoutes(config) {
           `INSERT INTO chat_session_messages (session_id, role, content, model, token_count, cost_cents, metadata)
            VALUES ($1, 'assistant', $2, $3, $4, $5, $6)`,
           [session.id, mayorText2, servedModel2, mayor2.usage.input_tokens + mayor2.usage.output_tokens, costCents2,
-           JSON.stringify(quickReplies2 ? { quickReplies: quickReplies2 } : {})]
+           JSON.stringify(wrapUpPills ? { quickReplies: wrapUpPills } : {})]
         );
-        if (quickReplies2) send('quick_replies', { replies: quickReplies2 });
+        if (wrapUpPills) send('quick_replies', { replies: wrapUpPills });
         await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
         send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
       } catch (err) {
@@ -3449,7 +3508,9 @@ function sessionRoutes(config) {
           const friendly = describeTurnError(err);
           await sendStatus(
             `This turn failed: ${friendly}${/[.!?]$/.test(friendly) ? '' : '.'} Send your message again to retry.`,
-            { turnError: true }
+            // #894: a failed turn is exactly when the user most wants a
+            // one-tap retry, and it never reaches a pill-bearing persist.
+            { turnError: true, quickReplies: turnPills('failed') }
           );
         }
       } finally {
@@ -3807,9 +3868,20 @@ function sessionRoutes(config) {
     // without guessing from container status alone.
     const phase = stopRegistry.get(sessionId)?.phase || null;
 
+    // #889: a stop has been requested for this turn but it hasn't unwound
+    // yet. Lets a reloading client (and the 3s poll fallback) repaint the
+    // "Stopping…" button instead of a live red Stop for a turn that is
+    // already being killed.
+    const stopping = !!stopRegistry.get(sessionId)?.stopped;
+
     // Experimental AI progress estimate: latest in-memory Haiku guess for
     // the run, so the 3s polling fallback carries it when SSE/WS drop.
-    // Null whenever the per-user toggle is off or no estimate exists yet.
+    // Null whenever the per-user toggle is off or no estimate exists yet —
+    // and, since #891, from the coding run's terminal marker onward
+    // (workerProgress.clearEstimate), so the poll stops re-serving a stale
+    // guess through PR creation, the staging build and the Mayor wrap-up.
+    // Carries `estimatedAt` so the client anchors its count-down absolutely
+    // instead of restarting it on every 3s poll.
     const estimate = workerProgress.get(sessionId)?.estimate || null;
 
     // #239: whether the auto-conflict-resolver currently has a resolve
@@ -3822,10 +3894,11 @@ function sessionRoutes(config) {
     // null) — the dev-chat sync banner's reload recovery and poll
     // fallback read this the same way the resolving banner reads
     // `resolving`.
-    // Keys: busy, progress, phase, estimate (+ resolving, sync). `estimate`
-    // is { text, remainingSeconds } | null — see workerProgress.setEstimate.
+    // Keys: busy, progress, phase, stopping, estimate (+ resolving, sync).
+    // `estimate` is { text, remainingSeconds, estimatedAt } | null — see
+    // workerProgress.setEstimate / clearEstimate.
     res.json({
-      busy, progress, phase, estimate,
+      busy, progress, phase, stopping, estimate,
       resolving: isResolving(sessionId),
       sync: syncMainSvc.getSyncState(sessionId),
     });
@@ -3864,13 +3937,6 @@ function sessionRoutes(config) {
 
     handle.stopped = true;
     handle.stoppedBy = req.user.username;
-    // #161: clicking stop proves presence — disarm notify_on_done BEFORE
-    // aborting so the turn's resulting send('done') doesn't create a
-    // spurious "your session finished" notification.
-    await pool.query(
-      `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
-      [sessionId]
-    ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
     log.info('sessions', 'Stop requested', {
       sessionId,
       phase: handle.phase,
@@ -3879,13 +3945,34 @@ function sessionRoutes(config) {
       hasWorker: !!handle.workerName,
     });
 
+    // #889: announce the stop on every channel BEFORE any of the work
+    // below. The turn's own `send` fans this out to the live POST SSE, the
+    // global WS broadcast and the session bus, so every tab watching this
+    // session (not just the one that clicked) flips to the "stopping…"
+    // state immediately instead of waiting for the turn to unwind. It's a
+    // synchronous write + broadcast, so nothing here waits on it.
+    try { handle.send?.('stopping', { by: req.user.username, phase: handle.phase }); } catch {}
+
+    // #161: clicking stop proves presence — disarm notify_on_done BEFORE
+    // aborting so the turn's resulting send('done') doesn't create a
+    // spurious "your session finished" notification. This stays awaited and
+    // stays ahead of the abort: the abort can unwind the Mayor stream into
+    // send('done') within milliseconds, and notifySessionDone re-reads this
+    // column. It is a single indexed UPDATE (~1ms) and was never where the
+    // stop latency lived — see the journal-marker fix in worker.stopTurn.
+    await pool.query(
+      `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
+      [sessionId]
+    ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
+
     if (handle.phase === 'cc') {
       // Detached-turn path: the CC turn runs as a detached exec with no
       // host-side child to signal, so kill run-cc.sh + claude inside
       // the container directly. The warm wrapper (sleep infinity)
-      // survives, keeping the next dispatch fast. The journal consumer
-      // notices the process is gone via its liveness watchdog and
-      // resolves, letting runClaudeCodeTool's early-return branch fire.
+      // survives, keeping the next dispatch fast. stopTurn also appends
+      // the journal's exit marker (#889), so the consumer resolves right
+      // away and runClaudeCodeTool's early-return branch fires in ~1s
+      // rather than on the liveness watchdog's 10s cadence.
       worker.stopTurn(sessionId)
         .catch((err) => log.warn('sessions', 'stopTurn failed', { err: err.message }));
     } else if (handle.workerName) {
@@ -6091,6 +6178,31 @@ function resolveQuickReplies(toolUses) {
   return sanitizeQuickReplies(repliesCall.input);
 }
 
+// Should a phase-1 turn get the deterministic fallback pills (#894)?
+//
+// suggest_replies is an optional tool and the Mayor skips it often, which
+// left the pill bar empty after an ordinary chat reply. The fallback fills
+// that gap — but only where pills actually belong, so three cases opt out:
+//
+//   - the model produced its own set: always wins, it's tailored;
+//   - suggest_answers came back: the inline answer chips are that turn's
+//     affordance and the above-box row stays empty (the same precedence
+//     resolveQuickReplies and classifyMissingPills already enforce);
+//   - a dispatch is about to run: the phase-2 wrap-up owns that turn's
+//     pills because it reflects the FINAL state. Substituting here would
+//     show a set that goes stale the moment the build lands.
+//
+// Pure over the turn's resolved values so the rule is unit-testable.
+// Exported for tests.
+function shouldFallbackQuickReplies(quickReplies, suggestions, toolUses) {
+  if (Array.isArray(quickReplies) && quickReplies.length) return false;
+  if (Array.isArray(suggestions) && suggestions.length) return false;
+  const calls = Array.isArray(toolUses) ? toolUses : [];
+  const hasDispatch = calls.some((t) =>
+    t && (t.name === 'dispatch_claude_code' || t.name === 'dispatch_scout'));
+  return !hasDispatch;
+}
+
 // Silent-turn salvage (session 2383): when the Mayor's reply is a lone
 // suggest_answers/suggest_replies tool_use with NO text block, the
 // content used to be dropped entirely (the persist path is text-gated)
@@ -6683,7 +6795,14 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
     if (stopHandle && stopHandle.stopped) {
       isError = true;
       const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-      await sendStatus(`Scout stopped${byStr}.`, { durationMs: Date.now() - turnStartedMs });
+      // #894: the caller skips the phase-2 wrap-up after a stop (nothing
+      // coherent to summarize) and phase-1's pills were already dropped
+      // because a dispatch co-occurred — so this row carries them. The
+      // 'stopped' outcome is state-independent, hence no hasPr/hasSpec.
+      await sendStatus(`Scout stopped${byStr}.`, {
+        durationMs: Date.now() - turnStartedMs,
+        quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
+      });
       summaryParts.push(`The scout was stopped${byStr} before it finished. The spec doc was not updated.`);
       return { toolResultText: summaryParts.join('\n\n') || 'Stopped.', isError: true };
     }
@@ -7177,10 +7296,39 @@ path: /another/changed/view
     // first guess fires even before any progress line lands, and the
     // remaining-time countdown is re-asked on a wall-clock cadence so it
     // never freezes during a long quiet phase (one slow command/edit).
+    //
+    // Terminal-state teardown (#891): the estimator MUST stop the moment
+    // the coding run reaches a terminal phase marker, not when the whole
+    // turn (PR + staging + Mayor wrap-up) is done. See stopEstimator below.
     const estimatorEnabled = !headless && !!req?.user?.aiProgressEstimate
       && (llm.isEnabled() || !!userApiKey);
     const liveProgressLines = [];
     let estimator = null;
+    // Set by stopEstimator; read by the interval body AND by the in-flight
+    // call's .then so a Haiku response that lands after teardown can't
+    // re-emit a guess (or INSERT an accuracy row the backfill already
+    // ran past, which would strand it with actual_total_ms IS NULL).
+    let estimatorDone = false;
+    // Idempotent teardown for the experimental estimator (#891). Every
+    // exit path funnels through here so there is exactly one place that
+    // knows how to make the guess go away:
+    //   - clear the interval (no further ticks),
+    //   - drop the in-memory estimate so GET /api/sessions/:id/status
+    //     stops serving it to the 3s poll for the rest of the turn,
+    //   - emit a cleared cc_estimate so live clients blank the span
+    //     immediately instead of waiting for the next full re-render.
+    const stopEstimator = (reason) => {
+      if (estimatorDone) return;
+      estimatorDone = true;
+      if (estimator) {
+        clearInterval(estimator);
+        estimator = null;
+      }
+      if (!estimatorEnabled) return;
+      workerProgress.clearEstimate(session.id);
+      send('cc_estimate', { text: null, remainingSeconds: null, cleared: true });
+      log.info('chat', 'AI progress estimator stopped', { sessionId: session.id, reason });
+    };
     // Diagnose the silent-disable case: toggle ON + live turn but no LLM
     // key path means the user sees nothing with no obvious reason (#323).
     if (!headless && !!req?.user?.aiProgressEstimate && !estimatorEnabled) {
@@ -7207,6 +7355,8 @@ path: /another/changed/view
       const IDLE_REFRESH_MS = 180_000;   // re-ask even with no new lines so ~X left moves
       const CC_ACTION_RE = /^(Reading |Writing |Editing |\$ |Using )/;
       estimator = setInterval(() => {
+        // Torn down (terminal marker / turn end / stop) — never tick again.
+        if (estimatorDone) return;
         // One call in flight at a time.
         if (estimateInFlight) return;
         // Runaway backstop: stop for good only on a pathological multi-hour
@@ -7218,7 +7368,7 @@ path: /another/changed/view
               sessionId: session.id, estimates: estimateSuccesses,
             });
           }
-          clearInterval(estimator);
+          stopEstimator('emit_ceiling');
           return;
         }
         // Backoff after failures: wait out the skip window, then retry. The
@@ -7261,11 +7411,21 @@ path: /another/changed/view
           linesAtLastEstimate = linesAtStart;
           lastEstimateAtMs = Date.now();
           const elapsedAtEstimate = lastEstimateAtMs - turnStartedMs;
-          // A call resolving after the user hit stop is dropped — the
-          // running line is already deactivated client-side.
-          if (!(stopHandle && stopHandle.stopped)) {
-            send('cc_estimate', { text, remainingSeconds, elapsedMs: elapsedAtEstimate });
-            workerProgress.setEstimate(session.id, { text, remainingSeconds });
+          // A call resolving after the user hit stop — or after the coding
+          // run reached its terminal marker (#891) — is dropped entirely:
+          // no emit (the run is over, so the guess would land on the
+          // wrap-up), no in-memory stash (the /status poll would re-serve
+          // it for minutes), and no accuracy row (the backfill UPDATE has
+          // already run, so the row would be stranded unresolved forever).
+          // The spend debit below still happens: those tokens were spent.
+          if (!estimatorDone && !(stopHandle && stopHandle.stopped)) {
+            send('cc_estimate', {
+              text, remainingSeconds, elapsedMs: elapsedAtEstimate,
+              estimatedAt: lastEstimateAtMs,
+            });
+            workerProgress.setEstimate(session.id, {
+              text, remainingSeconds, estimatedAt: lastEstimateAtMs,
+            });
             // Persist this tick to the accuracy dataset (#50 follow-up).
             // Fire-and-forget: persistence must never fail or block a turn,
             // matching the progressLog UPDATE posture below. The turn's
@@ -7318,7 +7478,18 @@ path: /another/changed/view
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
-          if (estimatorEnabled) liveProgressLines.push(text);
+          if (estimatorEnabled) {
+            liveProgressLines.push(text);
+            // #891: the earliest honest "coding is finished" signal. run-cc.sh
+            // emits [done] / [push_failed] as its last line and the recovery
+            // paths append [interrupted], so this fires while the worker is
+            // still flushing — ahead of PR creation, the staging build and the
+            // Mayor wrap-up, which is exactly the window where the stale
+            // "nearly done, just wrapping up" guess used to live on.
+            if (turnWatchdog.TERMINAL_PROGRESS_LINES.includes(String(text).trim())) {
+              stopEstimator('terminal_marker');
+            }
+          }
           pool.query(
             `UPDATE chat_session_messages SET metadata = jsonb_set(
               metadata, '{progressLog}',
@@ -7339,7 +7510,12 @@ path: /another/changed/view
       }
     } finally {
       clearInterval(heartbeat);
-      if (estimator) clearInterval(estimator);
+      // Belt-and-braces (#891): a markerless turn (fatal error, container
+      // death, a journal that never emitted [done]) never hit the
+      // terminal-marker teardown above, so guarantee it here. Idempotent,
+      // and it runs BEFORE the backfill so no late tick can slip a row in
+      // behind the UPDATE.
+      stopEstimator('turn_end');
       // Backfill the actual outcome onto this turn's estimate rows (#50
       // follow-up). Single choke point: the turn's wall clock is known
       // here and the interval is being torn down. Per-tick ground-truth
@@ -7382,8 +7558,18 @@ path: /another/changed/view
     // tears down the worker + clears activeWorkers.
     if (stopHandle && stopHandle.stopped) {
       isError = true;
+      // #891: explicit on the stop path too. The dispatch `finally` above
+      // has already run it, but a stopped run must never leave a guess
+      // hanging next to "Claude Code stopped." — idempotent, so this is
+      // a no-op when teardown already happened.
+      stopEstimator('stopped');
       const byStr = stopHandle.stoppedBy ? ` by @${stopHandle.stoppedBy}` : '';
-      await sendStatus(`Claude Code stopped${byStr}.`, { durationMs: Date.now() - turnStartedMs });
+      // #894: same as the scout stop path — no phase-2 wrap-up follows a
+      // stop, so this status row is the turn's only pill carrier.
+      await sendStatus(`Claude Code stopped${byStr}.`, {
+        durationMs: Date.now() - turnStartedMs,
+        quickReplies: turnFallbackQuickReplies({ outcome: 'stopped' }),
+      });
       summaryParts.push(`Claude Code was stopped${byStr} before it finished. No commit was pushed.`);
       return {
         toolResultText: summaryParts.join('\n\n') || 'Stopped.',
@@ -8023,15 +8209,16 @@ GENERAL RULES (apply to all tools):
   * asking for something that looks like a brand-new, standalone app unrelated to "${appName}" (e.g. they're chatting here but describe building a totally different product). In that case, DO NOT dispatch — instead, gently point them to the home page to create a new app, e.g. "That sounds like a separate app from ${appName}. You can head back to the home screen and spin up a new app for it." Only dispatch if they confirm they want it added to this app.
 - If the request fails the CLARITY GATE above, ask clarifying questions (per its rules) INSTEAD of calling any dispatch tool — the one tool that belongs WITH questions is suggest_answers. Never dispatch while also asking for clarification.
 - At most ONE tool call per user message (suggest_answers accompanying your clarifying questions does not count toward this limit).
+- ALWAYS call suggest_replies alongside your reply unless this is a clarifying-question turn (see SUGGESTED QUICK REPLIES below). It does not count toward the one-tool limit either.
 - Never call dispatch_scout and dispatch_claude_code in the same turn. The user dispatches the build themselves.
 
-SUGGESTED QUICK REPLIES (suggest_replies):
-On a normal reply and on the post-build/post-spec wrap-up, ALSO call the suggest_replies tool with 2-3 short, first-person messages the user is likely to want to send next — they render as tappable pills above the message box and PREFILL the box when tapped (the user can edit before sending), so each must read as a complete message the user could send verbatim. Tailor them to the current state:
+SUGGESTED QUICK REPLIES (suggest_replies) — REQUIRED on every reply that isn't a clarifying-question turn:
+Every message you send MUST call the suggest_replies tool, with the single exception of a clarifying-question turn (which uses suggest_answers instead) — that includes normal chat replies, dispatch preambles, and post-build/post-spec wrap-ups. Call it with 2-3 short, first-person messages the user is likely to want to send next — they render as tappable pills above the message box and PREFILL the box when tapped (the user can edit before sending), so each must read as a complete message the user could send verbatim. Tailor them to the current state:
 - After a build (dispatch_claude_code): e.g. "Preview the change", "Propose it to the group", "Make another tweak".
 - After a spec (dispatch_scout): e.g. "Build it", "Revise the spec", "What will this change?".
 - A build is still running: e.g. "How's it going?", "Stop this build".
 - A normal chat reply: the couple of likeliest next things to ask for.
-suggest_replies is for NEXT-STEP shortcuts only — it is NOT for clarifying questions (those use suggest_answers). Never emit suggest_answers and suggest_replies in the same turn. Like suggest_answers, it does NOT count against the one-tool-per-message limit and may accompany a normal reply or wrap-up.
+suggest_replies is for NEXT-STEP shortcuts only — it is NOT for clarifying questions (those use suggest_answers). Never emit suggest_answers and suggest_replies in the same turn. Like suggest_answers, it does NOT count against the one-tool-per-message limit and may accompany a normal reply or wrap-up. Omitting it leaves the user with a bare text box, so treat it as part of writing the reply, not an optional extra.
 
 AFTER A TOOL RETURNS:
 You'll get a short summary of what happened. Write a 1-3 sentence reply to the user in plain English, referencing the spec doc / staging URL / PR if present. For dispatch_scout: tell them the spec was drafted (or revised) and is available in the spec viewer. For dispatch_claude_code: summarize what was built. If anything failed, explain briefly and suggest next steps.
@@ -8197,4 +8384,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };

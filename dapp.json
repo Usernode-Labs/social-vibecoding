@@ -340,6 +340,24 @@
       "expectText": "Staging demo: pills after an interrupted reply"
     },
     {
+      "name": "A pill-less reply still shows quick-reply pills (#894 fallback)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900803",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "What issues are open right now?"
+    },
+    {
+      "name": "A post-build reply with no pills falls back to the build set (#894)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900801",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Propose it to the group"
+    },
+    {
+      "name": "A post-spec reply with no pills falls back to the spec set (#894)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900802",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Revise the spec"
+    },
+    {
       "name": "Visible own session card offers the \"Share chat\" opt-in",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "[data-transcript-chip]"
@@ -539,6 +557,22 @@
       "name": "Seeded admin roster app renders its Dev tab",
       "path": "/app/staging-demo-admins/dev",
       "expectText": "Staging demo admin roster"
+    },
+    {
+      "name": "Header App/Dev switch marks App active on an app's App view",
+      "path": "/app/staging-demo-admins",
+      "expectSelector": "#app-mode-switch [data-tab='app'][aria-checked='true']",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Header App/Dev switch marks Dev active on an app's Dev view",
+      "path": "/app/staging-demo-admins/dev",
+      "expectSelector": "#app-mode-switch [data-tab='dev'][aria-checked='true']"
+    },
+    {
+      "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-btn"
     },
     {
       "name": "Kanban filter bar renders above the board",

@@ -671,11 +671,22 @@ async function start() {
 
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables
-  // added by this deploy's migrations are covered. Non-blocking: on
-  // failure the prod-debug endpoints return 503 and dev sessions run
-  // without the capability — boot proceeds normally.
+  // added by this deploy's migrations are covered. On failure the
+  // prod-debug endpoints return 503 and dev sessions run without the
+  // capability — boot proceeds normally.
+  //
+  // #891: these two role bootstraps MUST run in sequence, not concurrently.
+  // Both sweep `REVOKE ALL PRIVILEGES ON ALL TABLES IN SCHEMA public` plus a
+  // per-table GRANT loop over the SAME catalog rows, so firing them together
+  // (as they were, both un-awaited) made Postgres raise `tuple concurrently
+  // updated` on whichever lost. In production prod-debug lost every time —
+  // observed 42ms apart across consecutive deploys — and because nothing
+  // re-invokes ensureRole, `usernode-debug sql` stayed dead for the entire
+  // process lifetime, then the next deploy re-ran the same race. Awaiting
+  // them costs a few hundred ms of boot; each still swallows its own
+  // failures, so neither can block startup.
   const debugAccess = require('./src/services/debug-access');
-  debugAccess.ensureRole(config).catch((err) => {
+  await debugAccess.ensureRole(config).catch((err) => {
     log.warn('server', 'prod-debug role bootstrap failed (capability disabled)', {
       err: err.message,
     });
@@ -685,14 +696,14 @@ async function start() {
   // for the topochain admin SQL console's dedicated read-only, column-
   // scoped Postgres role (src/services/topochain/db-console-role.js) —
   // it, not the regex validation in sql-console.js, is the actual
-  // security boundary for POST /api/v4/admin/sql-query/execute. Non-
-  // blocking and self-contained (ensureConsoleRole never rejects; it
-  // catches its own failures and leaves the capability unavailable), so
-  // this `.catch()` is defense-in-depth, matching the debugAccess call
-  // above line for line. On failure, execute degrades to a 503 rather
-  // than ever running a console query unscoped — boot proceeds normally.
+  // security boundary for POST /api/v4/admin/sql-query/execute. Self-
+  // contained (ensureConsoleRole never rejects; it catches its own
+  // failures and leaves the capability unavailable), so this `.catch()`
+  // is defense-in-depth, matching the debugAccess call above line for
+  // line. On failure, execute degrades to a 503 rather than ever running
+  // a console query unscoped — boot proceeds normally.
   const topochainConsoleRole = require('./src/services/topochain/db-console-role');
-  topochainConsoleRole.ensureConsoleRole(config).catch((err) => {
+  await topochainConsoleRole.ensureConsoleRole(config).catch((err) => {
     log.warn('server', 'topochain SQL console role bootstrap failed (capability disabled)', {
       err: err.message,
     });
