@@ -309,6 +309,64 @@ test('native.css: .un-sheet does not clip its overscroll filler', () => {
     'overflow:hidden on .un-sheet would clip the overscroll filler away (issue #789)');
 });
 
+// ── Pull-to-refresh puck sits BELOW the app header ─────────────────────
+// The puck used to be anchored to the top of the scroller's PARENT — i.e.
+// the top of the whole shell, header included — at z-index 2, so it was
+// painted on top of the fixed header on the way down. It now lives in
+// .un-ptr-layer, an overflow-clipped box anchored at the header's bottom
+// edge and stacked underneath it. Both halves are load-bearing (the clip
+// covers a translucent header, the stacking covers an opaque one), so
+// guard both in the shipped stylesheet.
+
+test('native.css: .un-ptr-layer clips the puck to below its anchor line', () => {
+  const block = cssBlock('.un-ptr-layer');
+  assert.match(block, /overflow:\s*hidden/,
+    'without the clip the retracted puck (parked at -40px) rides up over the header');
+  assert.match(block, /pointer-events:\s*none/,
+    'the layer spans content — it must never swallow taps');
+  assert.match(block, /z-index:\s*0/,
+    'stack level 0 + first-in-tree-order keeps the layer under the header and the scroller');
+  assert.match(block, /position:\s*absolute/);
+});
+
+test('native.css: window-mode puck layer stacks under .un-navbar', () => {
+  const layer = cssBlock('.un-ptr-layer.un-ptr-layer-fixed');
+  assert.match(layer, /position:\s*fixed/);
+  assert.match(layer, /top:\s*env\(safe-area-inset-top/,
+    'with no anchor element the puck emerges from under the status bar, not the viewport top');
+  const layerZ = Number(/z-index:\s*(\d+)/.exec(layer)[1]);
+  const navZ = Number(/z-index:\s*(\d+)/.exec(cssBlock('.un-navbar'))[1]);
+  assert.ok(layerZ < navZ,
+    `puck layer z-index ${layerZ} must stay under .un-navbar's ${navZ} — a fixed nav bar is never overlapped`);
+});
+
+test('native.css: the puck itself carries no stacking of its own', () => {
+  const block = cssBlock('.un-ptr-puck');
+  assert.ok(!/z-index/.test(block),
+    'the old z-index:2 on the puck is what lifted it over the header — layering belongs to .un-ptr-layer now');
+  assert.match(block, /position:\s*absolute/,
+    'the puck positions inside the layer, even in window mode (the LAYER is the fixed one)');
+});
+
+const NATIVE_JS = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'),
+  'utf8'
+);
+
+test('native.js: the spinner lingers after onRefresh settles before retracting', () => {
+  const hold = Number(/PTR_SETTLE_HOLD_MS\s*=\s*(\d+)/.exec(NATIVE_JS)[1]);
+  assert.ok(hold >= 400 && hold <= 600,
+    `post-refresh linger ${hold}ms is outside the 400-600ms band — the spinner must not vanish the instant the fetch resolves`);
+  // The linger runs AFTER the work/min-hold race, not alongside it.
+  assert.match(
+    NATIVE_JS,
+    /Promise\.all\(\[work, minHold\]\)\.then\([\s\S]{0,600}?setTimeout\([\s\S]{0,400}?PTR_SETTLE_HOLD_MS\)/,
+    'the linger must be chained off the settled refresh, not raced against it'
+  );
+  assert.match(NATIVE_JS, /clearTimeout\(settleTimer\)/,
+    'detach() during the linger must not retract a removed puck');
+});
+
 // ── Keyboard occlusion (issue #719) ────────────────────────────────────
 
 test('keyboardInset: iOS overlay keyboard returns the occluded height', () => {

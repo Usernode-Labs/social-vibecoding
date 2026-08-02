@@ -18,7 +18,11 @@
  *   unNative.attachSwipeActions(row, {actions}) — swipe-to-act list rows
  *   unNative.attachPullToRefresh(scrollEl, onRefresh, opts?) — pull-to-refresh
  *                                        (element container OR the window
- *                                        scroller; never throws on bad input)
+ *                                        scroller; the puck hangs BELOW the
+ *                                        app header — opts.topEl / opts.top
+ *                                        anchor it under a fixed one — and
+ *                                        lingers briefly once onRefresh
+ *                                        settles; never throws on bad input)
  *   unNative.attachReorder(listEl, opts) — drag-to-reorder lists (long-press
  *                                        lift on touch, handle/pointer drag on
  *                                        desktop, overlay drop indicator,
@@ -1004,6 +1008,17 @@
   var PTR_LIMIT = 150; // rubber-band asymptote
   var PTR_COEFF = 0.8; // initial resistance slope (~dy/1.25)
   var PTR_MIN_HOLD_MS = 500; // spinner floor so instant refreshes still read
+  var PTR_SETTLE_HOLD_MS = 500; // linger AFTER onRefresh settles, then retract
+  var PTR_LAYER_H = 240; // clip window the puck travels inside
+
+  // First element child that is the app's own, skipping kit chrome.
+  function firstContentChild(parent) {
+    var el = parent.firstElementChild;
+    while (el && el.classList && el.classList.contains('un-ptr-layer')) {
+      el = el.nextElementSibling;
+    }
+    return el;
+  }
 
   // attachPullToRefresh(scrollEl, onRefresh, opts?) — scrollEl is either a
   // scrollable list container (needs `overscroll-behavior-y: contain`; the
@@ -1011,9 +1026,24 @@
   // (window / document / document.scrollingElement / <html> / <body>). In
   // window mode the rubberband translate is applied to opts.content
   // (default: document.body.firstElementChild — the #app-style root — or
-  // document.body) and the puck is fixed-positioned. onRefresh() returns a
-  // Promise; the spinner holds until it settles. No-op on desktop. Invalid
-  // input NEVER throws: it warns once and returns a no-op { detach() }.
+  // document.body) and the puck's clip layer is fixed-positioned.
+  // onRefresh() returns a Promise; the spinner holds until it settles, then
+  // lingers PTR_SETTLE_HOLD_MS before retracting so a fast refresh still
+  // reads as one. No-op on desktop. Invalid input NEVER throws: it warns
+  // once and returns a no-op { detach() }.
+  //
+  // The puck NEVER paints over the app's header. It lives in a clip layer
+  // whose top edge is the anchor, and it is stacked BENEATH the header:
+  //
+  //   opts.topEl  — an Element (typically the fixed/sticky app header)
+  //                 whose bottom edge the puck hangs from. Re-measured on
+  //                 resize and at the start of every pull, so a collapsing
+  //                 or conditionally-rendered header stays correct.
+  //   opts.top    — a fixed anchor offset in px, when there is no element
+  //                 to measure.
+  //   (default)   — element mode: the scroller's own top edge within its
+  //                 parent (i.e. below whatever chrome sits above it);
+  //                 window mode: the safe-area top inset.
   function attachPullToRefresh(scrollEl, onRefresh, opts) {
     var noop = { detach: function () {} };
     if (platform === 'desktop') return noop;
@@ -1027,7 +1057,11 @@
     var puckHome; // where the puck is inserted
 
     if (windowMode) {
-      content = (opts && opts.content) || document.body.firstElementChild || document.body;
+      // The default content root is the first REAL top-level element:
+      // an element-mode PTR on a body-level scroller parks its clip layer
+      // at body.firstChild, and translating that instead of the app root
+      // would move the puck with the pull.
+      content = (opts && opts.content) || firstContentChild(document.body) || document.body;
       if (!content || content.nodeType !== 1) {
         console.warn('[unNative] attachPullToRefresh: opts.content must be an Element — pull-to-refresh disabled.');
         return noop;
@@ -1050,18 +1084,67 @@
       scrollEl.style.overscrollBehaviorY = 'contain';
     }
 
+    var anchorEl = opts && opts.topEl && opts.topEl.nodeType === 1 ? opts.topEl : null;
+    var anchorPx = opts && typeof opts.top === 'number' && isFinite(opts.top)
+      ? opts.top : null;
+
+    // The clip layer: an inert box hanging off the anchor. Its overflow
+    // clip is what keeps the retracted puck (which sits at -40px) from
+    // showing above the anchor line at all — belt to the stacking-order
+    // braces below, and the part that holds even when the header above is
+    // translucent or has no background of its own.
+    var layer = document.createElement('div');
+    layer.className = 'un-ptr-layer' + (windowMode ? ' un-ptr-layer-fixed' : '');
+    layer.style.height = PTR_LAYER_H + 'px';
+
     var puck = document.createElement('div');
-    puck.className = 'un-ptr-puck' + (windowMode ? ' un-ptr-puck-fixed' : '');
+    puck.className = 'un-ptr-puck';
     puck.innerHTML =
       '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" ' +
       'stroke-linecap="round"><path d="M12 3a9 9 0 1 0 9 9" /></svg>';
-    if (windowMode) puckHome.appendChild(puck);
-    else puckHome.insertBefore(puck, scrollEl);
+    layer.appendChild(puck);
+    // FIRST child in element mode: with the layer on stack level 0, tree
+    // order puts every later positioned sibling — the header, the
+    // scroller — above it. The puck is revealed by the content sliding
+    // away, exactly as it is on iOS, and can never overlap the header.
+    if (windowMode) puckHome.appendChild(layer);
+    else puckHome.insertBefore(layer, puckHome.firstChild);
+
+    // Anchor the layer's top edge. Cheap enough to redo per pull, so a
+    // header that collapses / appears mid-session never strands the puck.
+    function measureAnchor() {
+      var top = null;
+      // A header INSIDE the translated content rides down with the pull,
+      // so the strip it uncovers is at the very top of the viewport, not
+      // below the header's resting line — anchoring under it would park
+      // the puck on top of the descending bar. Only a header outside the
+      // content (a truly fixed one) is a real anchor.
+      var el = anchorEl && !(windowMode && content.contains(anchorEl)) ? anchorEl : null;
+      if (anchorPx != null) {
+        top = anchorPx;
+      } else if (el) {
+        var r = el.getBoundingClientRect();
+        top = windowMode ? r.bottom : r.bottom - puckHome.getBoundingClientRect().top;
+      } else if (!windowMode) {
+        var sr = scrollEl.getBoundingClientRect();
+        // A hidden scroller measures 0 — keep the last good anchor rather
+        // than snapping the puck to the top of the shell. Re-measured at
+        // touchstart, so the first pull after a screen shows is correct.
+        if (sr.height || sr.width) top = sr.top - puckHome.getBoundingClientRect().top;
+      }
+      // Window mode with no anchor keeps the stylesheet's safe-area top;
+      // the layer's z-index (90) already tucks the puck under .un-navbar.
+      if (top != null) layer.style.top = Math.max(0, Math.round(top)) + 'px';
+    }
+    measureAnchor();
+    window.addEventListener('resize', measureAnchor);
+    window.addEventListener('orientationchange', measureAnchor);
 
     var ptrToken = { ptr: true }; // arbiter owner token for this instance
     var display = 0; // current displayed pull (px)
     var refreshing = false;
     var activeSpring = null;
+    var settleTimer = null; // post-refresh linger before the puck retracts
     var drag = null; // { startY, startX, baseRaw, locked, samples }
     var armed = false;
 
@@ -1107,14 +1190,23 @@
         .then(function () { return onRefresh(); })
         .catch(function () { /* refresh failures still settle the UI */ });
       Promise.all([work, minHold]).then(function () {
-        refreshing = false;
-        puck.classList.remove('un-refreshing');
-        springTo(0, 0);
+        // Linger at the hold position after the work settles before
+        // retracting. Without it the puck vanishes on the same frame the
+        // list repaints, which reads as a glitch rather than a finished
+        // refresh — the spinner needs a beat at rest to be seen as one.
+        if (settleTimer) clearTimeout(settleTimer);
+        settleTimer = setTimeout(function () {
+          settleTimer = null;
+          refreshing = false;
+          puck.classList.remove('un-refreshing');
+          springTo(0, 0);
+        }, PTR_SETTLE_HOLD_MS);
       });
     }
 
     function onTouchStart(e) {
       if (refreshing || e.touches.length !== 1) return;
+      measureAnchor();
       if (scrollTop() > 0 && !activeSpring && display === 0) return;
       var baseRaw = 0;
       if (activeSpring) {
@@ -1189,8 +1281,11 @@
         listenEl.removeEventListener('touchmove', onTouchMove);
         listenEl.removeEventListener('touchend', onTouchEnd);
         listenEl.removeEventListener('touchcancel', onTouchEnd);
+        window.removeEventListener('resize', measureAnchor);
+        window.removeEventListener('orientationchange', measureAnchor);
+        if (settleTimer) { clearTimeout(settleTimer); settleTimer = null; }
         if (activeSpring) activeSpring.stop();
-        if (puck.parentNode) puck.parentNode.removeChild(puck);
+        if (layer.parentNode) layer.parentNode.removeChild(layer);
         content.style.transform = '';
       },
     };

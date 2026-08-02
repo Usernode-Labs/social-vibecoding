@@ -17,7 +17,7 @@
 
   <!-- Screen A (the demo itself) -->
   <div id="screen-a">
-    <header class="un-safe-top-extend sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800">
+    <header id="demo-header" class="un-safe-top-extend sticky top-0 z-10 flex items-center gap-3 px-4 py-3 bg-white/90 dark:bg-zinc-950/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800">
       <h1 class="text-base font-semibold flex-1">usernode-native v1</h1>
       <span id="platform-pill" class="text-xs px-2 py-0.5 rounded-full bg-violet-100 dark:bg-violet-950 text-violet-700 dark:text-violet-300"></span>
       <button id="theme-toggle" class="un-touch-target text-sm text-zinc-500" aria-label="Toggle dark mode">◐</button>
@@ -639,6 +639,11 @@
       });
 
       // Window-scroller PTR: pull the whole page down from the very top.
+      // No topEl here on purpose — #demo-header is sticky INSIDE the
+      // translated content, so it rides down with the pull and the puck
+      // belongs in the strip it uncovers (the safe-area default). Pass
+      // topEl only for a header that stays put, i.e. one outside the
+      // translated content.
       unNative.attachPullToRefresh(window, function () {
         return new Promise(function (resolve) {
           setTimeout(function () { addPtrRow('Page refresh ✨'); resolve(); }, 1000);
