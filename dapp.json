@@ -780,6 +780,11 @@
       "expectSelector": ".app-card [data-icon='emoji']"
     },
     {
+      "name": "Icon tiles use the white/hairline .app-icon-tile treatment (not the violet tint)",
+      "path": "/?demo=1",
+      "expectSelector": ".app-card .app-icon-tile[data-icon='letter']"
+    },
+    {
       "name": "Home fork-lineage tag renders on forked tiles",
       "path": "/",
       "expectSelector": ".fork-tag"

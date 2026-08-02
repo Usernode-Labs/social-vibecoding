@@ -99,6 +99,42 @@ test('image icon renders an <img> and wins over emoji', () => {
   assert.match(html, /object-cover/);
 });
 
+// The tile treatment itself (app.css `.app-icon-tile`): a white face
+// with a faint grey hairline and a dark-grey glyph. Every tile call
+// site routes its colours through that one class, so no tile may carry
+// its own violet bg-*/text-* classes any more.
+test('every icon tile carries .app-icon-tile and no violet colouring', () => {
+  const Home = makeHome();
+  const variants = [
+    Home.renderAppCard(baseApp()),
+    Home.renderAppCard(baseApp({ icon_emoji: '🎮' })),
+    Home.renderAppCard(baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })),
+    Home.renderCreateTile(),
+    Home.renderWidgetTile({ id: 'w1', name: 'Demo App', slug: 'demo' }),
+  ];
+  for (const html of variants) {
+    const tile = html.match(/class="app-icon-tile[^"]*"/);
+    assert.ok(tile, 'tile uses the shared class');
+    // Scoped to the tile's own class list: the surrounding create-tile
+    // chrome (dashed violet card outline, violet "Create new app" pill)
+    // is deliberately untouched.
+    assert.doesNotMatch(tile[0], /bg-violet/, 'no violet tile background');
+    assert.doesNotMatch(tile[0], /text-violet/, 'no violet glyph colour');
+  }
+  // The create-tile placeholder keeps its "empty slot" variant.
+  assert.match(Home.renderCreateTile(), /app-icon-tile app-icon-tile--empty/);
+});
+
+test('image icons fill the tile inside its hairline (w-full/h-full)', () => {
+  const Home = makeHome();
+  const html = Home.renderAppCard(
+    baseApp({ icon_url: '/app-icons/' + 'a'.repeat(32) })
+  );
+  assert.match(html, /<img[^>]*class="w-full h-full rounded-xl object-cover"/);
+  assert.doesNotMatch(html, /<img[^>]*w-14 h-14/,
+    'a fixed 56px image would be cropped by the 1px border box');
+});
+
 test('icon_url is HTML-escaped', () => {
   const html = makeHome().renderAppCard(
     baseApp({ icon_url: '/x"><script>alert(1)</script>' })

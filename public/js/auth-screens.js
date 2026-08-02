@@ -917,14 +917,14 @@
       // Icon tile: same priority order as home.js iconTileFor.
       const iconWrap = el('div', 'relative w-14 h-14 shrink-0');
       const iconBox = el('div',
-        'w-14 h-14 rounded-xl bg-violet-600/20 overflow-hidden flex items-center justify-center text-violet-400 font-bold text-xl');
+        'app-icon-tile w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center font-bold text-xl');
       if (app.icon_url) {
         const img = document.createElement('img');
         img.src = app.icon_url;
         img.alt = '';
         img.loading = 'lazy';
         img.draggable = false;
-        img.className = 'w-14 h-14 rounded-xl object-cover';
+        img.className = 'w-full h-full rounded-xl object-cover';
         iconBox.setAttribute('data-icon', 'image');
         iconBox.appendChild(img);
       } else if (app.icon_emoji) {

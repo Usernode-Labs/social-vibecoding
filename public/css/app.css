@@ -180,6 +180,40 @@ html, body {
 .app-card { transition: background-color 150ms; }
 .app-card:hover { background-color: var(--bg-card); }
 
+/* ── App icon tiles ────────────────────────────────────────
+   The single treatment for every homescreen-style app icon tile:
+   home cards, the widget strip, the landing (unauthed) grid, and
+   the "Your app here" placeholder. A plain white face (an elevated
+   zinc surface in dark mode) with a faint light-grey hairline
+   tracing whatever rounded shape the call site picks (rounded-xl on
+   the 56px tiles, rounded-lg on the 40px widget tiles) — the border
+   is drawn by this class, the radius by the element's own Tailwind
+   class, so the ring always follows the tile.
+
+   Emoji and the first-letter fallback inherit `color` from here, so
+   the glyph reads dark grey instead of the old violet. Image icons
+   still fill the tile: they're `w-full h-full object-cover` inside
+   the border box, so the image sits flush inside the hairline.
+
+   Tile call sites must NOT set their own background / text colour
+   utilities — routing every tile through this one class is the point. */
+.app-icon-tile {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+}
+.dark .app-icon-tile {
+  /* --bg-primary is near-black in dark mode; one step up so the tile
+     reads as a surface sitting on the page rather than a hole in it. */
+  background-color: var(--bg-secondary);
+}
+/* The create-tile placeholder: same face, dashed ring + muted glyph so
+   it still reads "empty slot" within the same visual family. */
+.app-icon-tile--empty {
+  border-style: dashed;
+  color: var(--text-faint);
+}
+
 /* "Your app here" placeholder tile. Native `border-style: dashed`
    has no way to set dash length — at 1px border-width browsers
    draw very short dashes that read like a row of dots. We paint
