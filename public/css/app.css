@@ -184,11 +184,19 @@ html, body {
    The single treatment for every homescreen-style app icon tile:
    home cards, the widget strip, the landing (unauthed) grid, and
    the "Your app here" placeholder. A plain white face (an elevated
-   zinc surface in dark mode) with a faint light-grey hairline
-   tracing whatever rounded shape the call site picks (rounded-xl on
-   the 56px tiles, rounded-lg on the 40px widget tiles) — the border
-   is drawn by this class, the radius by the element's own Tailwind
-   class, so the ring always follows the tile.
+   zinc surface in dark mode) with a faint hairline tracing whatever
+   rounded shape the call site picks (rounded-xl on the 56px tiles,
+   rounded-lg on the 40px widget tiles) — the border is drawn by this
+   class, the radius by the element's own Tailwind class, so the ring
+   always follows the tile.
+
+   The hairline uses a DIFFERENT token per mode. --border-light is
+   inverted between the two palettes: in light mode it is fainter than
+   --border (#e4e4e7 vs #d4d4d8), but in dark mode it is stronger
+   (#484870 vs #2e2e50). Using it in both would make the tile ring the
+   most contrasty border on a dark page, wrapped around every icon —
+   so dark mode steps down to --border instead (see below). The token
+   itself is left alone; 17 other rules depend on its current value.
 
    The glyph inherits `color` from here. Image icons still fill the
    tile: they're `w-full h-full object-cover` inside the border box, so
@@ -205,6 +213,10 @@ html, body {
   /* --bg-primary is near-black in dark mode; one step up so the tile
      reads as a surface sitting on the page rather than a hole in it. */
   background-color: var(--bg-secondary);
+  /* …and back DOWN one step for the ring: --border-light is the
+     brighter of the two hairline tokens in dark mode (see above), so
+     the faint-hairline intent needs --border here. */
+  border-color: var(--border);
 }
 /* The first-letter fallback specifically — one step fainter than the
    base glyph colour so a name initial reads as a quiet placeholder
