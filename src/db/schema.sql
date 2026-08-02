@@ -2117,6 +2117,51 @@ CREATE INDEX IF NOT EXISTS idx_progress_estimates_session ON progress_estimates(
 -- no value in a staging clone, so it ships schema-only + empty there.
 COMMENT ON TABLE progress_estimates IS 'staging:private';
 
+-- #892 recalibration columns. The v1 estimator's numeric guess failed every
+-- graduation bar (median error 181s vs a 90s bar, 31% within half-to-double
+-- vs 60%, -110s bias vs +/-60s), but the failure was a SCALE error inherited
+-- from its own prompt, not an absence of signal — within an elapsed bucket
+-- its ranking correlated 0.40-0.56 with the truth. v2 feeds the measured
+-- run-length distribution in as prompt INPUT (llm.js RUN_LENGTH_PRIORS) and
+-- adds a display-side monotonicity guard. These columns are what make the
+-- before/after judgeable and the guard auditable.
+--
+-- `prompt_version` is the important one: without it v1 and v2 pool into a
+-- single average that hides whether the change worked. Existing rows are v1
+-- by definition, hence the DEFAULT 1.
+--
+-- `predicted_remaining_seconds` remains the RAW model output in every path
+-- (clamped, floored and suppressed alike) — the accuracy metrics score the
+-- model, never the guard. `displayed_remaining_seconds` is the post-guard,
+-- post-floor value the user actually saw; on v2 rows it is always positive
+-- (a fixed 30s floor, so the countdown can never stick at zero). The share
+-- of ticks where that floor bound is derived as
+-- `displayed_remaining_seconds <= 30` rather than stored separately.
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS prompt_version SMALLINT NOT NULL DEFAULT 1;
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS displayed_remaining_seconds INTEGER;
+-- Guard telemetry. `clamped` = the guard held the previous projection
+-- because an extension had no cause. `slip_reason` names the cause when one
+-- WAS accepted: 'expired' (the projection ran out and the run continues),
+-- 'new_phase' (a new stage marker landed), 'revision' (the model at least
+-- doubled its own previous guess). NULL when no extension happened.
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS clamped BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS slip_reason VARCHAR(24);
+-- Completion-claim suppression telemetry. `estimate_text` keeps the
+-- UNMODIFIED model phrase (so the dataset still measures the model);
+-- `estimate_text_shown` is what was actually rendered, and `suppressed`
+-- marks the ticks where a "nearly done" claim was replaced because the run
+-- had not yet reached a commit/push/done marker.
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS estimate_text_shown VARCHAR(120);
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS suppressed BOOLEAN NOT NULL DEFAULT FALSE;
+-- The two new prompt inputs, recorded so a future offline analysis has them
+-- without re-deriving from chat_session_messages.metadata->'progressLog'.
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS last_phase VARCHAR(24);
+ALTER TABLE progress_estimates ADD COLUMN IF NOT EXISTS distinct_files INTEGER;
+-- Outcome vocabulary: 'committed' | 'noop' | 'stopped' | 'error' set by the
+-- live backfill at the turn's choke point, plus 'unknown' set by the
+-- estimate-backfill sweeper for rows orphaned by a server restart mid-run
+-- (services/estimate-backfill.js).
+
 -- #297: per-user, read-only "Ask AI" advisor conversations scoped to a
 -- single proposal — the "Mayor in advisor mode" surface. Each row is one
 -- turn the conversation OWNER (user_id) sent or the advisor replied with,

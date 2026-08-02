@@ -463,6 +463,26 @@
       "expectSelector": "#pu-l4"
     },
     {
+      "name": "Estimator accuracy card renders (#892)",
+      "path": "/#admin/analytics",
+      "expectSelector": "#estimator"
+    },
+    {
+      "name": "Estimator card compares prompt generations rather than pooling them (#892)",
+      "path": "/#admin/analytics",
+      "expectText": "Prompt generation"
+    },
+    {
+      "name": "Estimator card states the baselines the estimate has to beat (#892)",
+      "path": "/#admin/analytics",
+      "expectText": "Elapsed-only oracle"
+    },
+    {
+      "name": "Estimator card flags when the run-length figures given to the model are stale (#892)",
+      "path": "/#admin/analytics",
+      "expectText": "Run-length figures given to the model"
+    },
+    {
       "name": "Merge debug section renders",
       "path": "/?demo=1#admin/merges",
       "expectText": "Merge debug"

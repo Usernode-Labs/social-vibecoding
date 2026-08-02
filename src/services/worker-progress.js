@@ -35,10 +35,23 @@ function normalizeEstimate(value) {
   }
   const rs = value.remainingSeconds;
   const at = value.estimatedAt;
+  // #892: `displayedRemainingSeconds` is the post-guard, post-floor value —
+  // what the countdown actually counts down from. It is ALWAYS a positive
+  // number when present (the guard floors at 30s so the readout can never
+  // stick at zero). `remainingSeconds` stays the raw model guess beside it;
+  // the client prefers the displayed value and falls back to the raw one for
+  // a legacy server that doesn't send it. `slipReason` names why an
+  // extension was accepted, and is what lets the client's belt-and-braces
+  // mirror of the guard tell a legitimate extension from a reordered
+  // delivery.
+  const ds = value.displayedRemainingSeconds;
   return {
     text: (value.text || '').toString().substring(0, 200),
     remainingSeconds: (typeof rs === 'number' && Number.isFinite(rs)) ? rs : null,
     estimatedAt: (typeof at === 'number' && Number.isFinite(at)) ? at : Date.now(),
+    displayedRemainingSeconds:
+      (typeof ds === 'number' && Number.isFinite(ds) && ds > 0) ? ds : null,
+    slipReason: value.slipReason ? String(value.slipReason).substring(0, 24) : null,
   };
 }
 

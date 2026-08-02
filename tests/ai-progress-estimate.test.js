@@ -238,12 +238,19 @@ test('dev-chat clears the count-down anchor when a step finishes (#359)', () => 
 
 test('cc_estimate SSE payload carries remainingSeconds', () => {
   const sessions = read('src/routes/sessions.js');
-  // #891 broke the payload across lines to add estimatedAt; the
-  // remainingSeconds field this guard exists for is unchanged.
+  // #891 broke the payload across lines to add estimatedAt; #892 renamed the
+  // phrase to `shownText` (the completion-claim gate may rewrite it) and
+  // added the post-guard displayed value beside it. The invariant this guard
+  // exists for is unchanged: the RAW model number ships on the payload.
   assert.match(
     sessions,
-    /send\('cc_estimate', \{\s*\n?\s*text, remainingSeconds/,
-    'SSE payload must include remainingSeconds'
+    /send\('cc_estimate', \{\s*\n?\s*text: shownText, remainingSeconds/,
+    'SSE payload must include the raw remainingSeconds'
+  );
+  assert.match(
+    sessions,
+    /displayedRemainingSeconds: guard\.displayedRemainingSeconds/,
+    'SSE payload must also carry the post-guard displayed value'
   );
 });
 
@@ -539,7 +546,9 @@ test('#891: a tick resolving after teardown emits nothing and records nothing', 
     'the .then must drop everything when the estimator is torn down');
   const guardAt = sessions.indexOf('if (!estimatorDone && !(stopHandle && stopHandle.stopped)) {');
   assert.ok(guardAt !== -1);
-  const guarded = sessions.slice(guardAt, guardAt + 1400);
+  // #892 grew this block (the monotonicity guard and the completion-claim
+  // gate now live inside it), so the window has to grow with it.
+  const guarded = sessions.slice(guardAt, guardAt + 4000);
   assert.match(guarded, /send\('cc_estimate'/, 'the emit must sit inside the guard');
   assert.match(guarded, /workerProgress\.setEstimate/, 'the in-memory stash must sit inside the guard');
   assert.match(guarded, /INSERT INTO progress_estimates/,
@@ -558,7 +567,7 @@ test('#891: the estimator emit and /status carry estimatedAt', () => {
   const sessions = read('src/routes/sessions.js');
   assert.match(sessions, /estimatedAt: lastEstimateAtMs/,
     'the SSE payload must carry when the guess was made');
-  assert.match(sessions, /workerProgress\.setEstimate\(session\.id, \{\s*\n?\s*text, remainingSeconds, estimatedAt: lastEstimateAtMs/,
+  assert.match(sessions, /workerProgress\.setEstimate\(session\.id, \{\s*\n?\s*text: shownText, remainingSeconds, estimatedAt: lastEstimateAtMs/,
     'the in-memory stash must carry estimatedAt for the /status poll');
 });
 
@@ -633,4 +642,479 @@ test('#891: a stale guess cannot survive the turn or reach the next one', () => 
   // The pending drain targets a live CC run, not any active row.
   assert.match(devChat, /if \(DevChat\._isLiveCcRun\(m\)\) \{\n\s*m\._estimate = DevChat\._pendingEstimate\.text;/,
     'renderMessages must drain a pending estimate onto a live CC run only');
+});
+
+// ── 3. #892: empirical priors, the prompt, and the monotonicity guard ────
+//
+// The v1 estimator's numeric guess failed every graduation bar, but the
+// failure was a SCALE error inherited from its own prompt ("bias toward the
+// 2-10 minute window"), not an absence of signal — within an elapsed bucket
+// its ranking correlated 0.40-0.56 with the truth while step counts managed
+// 0.01. v2 replaces that instruction with the measured distribution, fed in
+// as prompt INPUT. These tests pin the three things most likely to be
+// quietly broken later: that the priors stay refreshable, that no
+// output-side multiplier creeps in, and that the guard always yields a
+// positive number of seconds.
+
+const estimateGuard = require('../src/services/estimate-guard.js');
+
+test('#892: RUN_LENGTH_PRIORS covers every elapsed bucket with sane quantiles', () => {
+  const priors = llm.RUN_LENGTH_PRIORS;
+  assert.ok(priors && Array.isArray(priors.buckets), 'the priors table must be exported');
+  assert.equal(priors.buckets.length, 5, 'all five measured elapsed buckets must be present');
+  assert.deepEqual(
+    priors.buckets.map((b) => b.key),
+    ['<2m', '2-5m', '5-10m', '10-20m', '20m+'],
+    'bucket keys must match the labels the dashboard SQL emits'
+  );
+  for (const b of priors.buckets) {
+    assert.ok(b.p25 <= b.p50, `${b.key}: p25 must not exceed p50`);
+    assert.ok(b.p50 <= b.p75, `${b.key}: p50 must not exceed p75`);
+    assert.ok(b.p75 <= b.p90, `${b.key}: p75 must not exceed p90`);
+    assert.ok(b.n > 0, `${b.key}: must record how many guesses it was measured over`);
+  }
+  // Bucket bounds must tile the line with no gap and no overlap.
+  let prevMax = 0;
+  for (const b of priors.buckets) {
+    assert.equal(b.minS, prevMax, `${b.key}: bucket bounds must be contiguous`);
+    prevMax = b.maxS == null ? Infinity : b.maxS;
+  }
+  assert.equal(prevMax, Infinity, 'the last bucket must be open-ended');
+
+  const pop = priors.population;
+  assert.ok(pop.p50TotalS < pop.p90TotalS && pop.p90TotalS < pop.p99TotalS,
+    'population quantiles must be ordered');
+  assert.ok(pop.maxTotalS >= pop.p99TotalS, 'the observed max must not be below p99');
+});
+
+test('#892: RUN_LENGTH_PRIORS_SNAPSHOT records where the numbers came from', () => {
+  const snap = llm.RUN_LENGTH_PRIORS_SNAPSHOT;
+  for (const k of ['generatedOn', 'windowStart', 'scoredTicks', 'runs', 'users']) {
+    assert.ok(snap[k] != null, `the snapshot must record ${k}`);
+  }
+  assert.match(snap.generatedOn, /^\d{4}-\d{2}-\d{2}$/, 'generatedOn must be an absolute date');
+  assert.match(snap.windowStart, /^\d{4}-\d{2}-\d{2}$/, 'windowStart must be an absolute date');
+});
+
+test('#892: the refresh SQL is committed beside the priors', () => {
+  // The priors are a committed constant precisely SO a refresh is a
+  // reviewable act — but that only works if the query is right there. A
+  // silent deletion would make them unrefreshable in practice, which is how
+  // a "temporary" snapshot becomes permanent.
+  const src = read('src/services/llm.js');
+  assert.match(src, /REFRESH SQL \(verbatim/, 'the refresh procedure must be committed');
+  assert.match(src, /percentile_cont\(0\.25\)/, 'the per-bucket quantile query must be present');
+  assert.match(src, /percentile_cont\(0\.90\)/, 'the p90 the prompt quotes must be derivable');
+  assert.match(src, /the SCORED predicate/, 'the refresh query must use the same scored predicate');
+  assert.match(src, /Population facts \(one row per RUN/,
+    'the population-quantile query must be present too');
+});
+
+test('#892: the prompt is RENDERED from the priors, not hand-copied', () => {
+  // If the numbers were duplicated as literals in the prompt string, a
+  // refresh would update the table and leave the model reading stale values.
+  const base = llm.renderPriorsGuidance(llm.RUN_LENGTH_PRIORS);
+  assert.match(base, /usually about 124s remain/, 'the committed p50 must reach the guidance');
+  const mutated = llm.renderPriorsGuidance({
+    buckets: [{ key: '<2m', minS: 0, maxS: 120, n: 10, p25: 1, p50: 999, p75: 1000, p90: 1001 }],
+    population: llm.RUN_LENGTH_PRIORS.population,
+  });
+  assert.match(mutated, /usually about 999s remain/, 'the guidance must follow the constant');
+  assert.doesNotMatch(mutated, /usually about 124s remain/, 'no literal may survive the mutation');
+});
+
+test('#892: the system prompt drops the flattening instruction and states the corrections', () => {
+  const src = read('src/services/llm.js');
+  const promptAt = src.indexOf('const system = `You are watching the live progress log');
+  assert.ok(promptAt > 0, 'the estimator system prompt must exist');
+  const prompt = src.slice(promptAt, src.indexOf('`;', promptAt));
+  // The two strings that flattened v1's output into six values.
+  assert.doesNotMatch(prompt, /2-10 minute/, 'the "typical 2-10 minutes" framing must be gone');
+  assert.doesNotMatch(prompt, /120-600/, 'the "bias toward 120-600 seconds" instruction must be gone');
+  // The measured guidance that replaces it.
+  assert.match(prompt, /renderPriorsGuidance\(RUN_LENGTH_PRIORS\)/,
+    'the per-bucket case guidance must be interpolated from the constant');
+  assert.match(prompt, /overshoot by about 2x/, 'the early-overshoot correction must be stated');
+  assert.match(prompt, /undershoot by about 2\.6x/, 'the late-undershoot correction must be stated');
+  assert.match(prompt, /another SIX minutes to go, not two/,
+    'the concrete ten-minutes-in case must be spelled out');
+  assert.match(prompt, /DO NOT ANCHOR/, 'the anti-anchoring instruction must be present');
+  assert.match(prompt, /ALWAYS GIVE A NUMBER/,
+    'the always-answer instruction must be present — the UI always shows a time');
+  assert.match(prompt, /\[commit\] or \[push\] marker/,
+    'the decisive late phase signal must be surfaced');
+});
+
+test('#892: the user message carries the new inputs, and the previous guess only when it exists', () => {
+  const src = read('src/services/llm.js');
+  assert.match(src, /LAST PHASE MARKER: /, 'the phase marker must reach the model');
+  assert.match(src, /DISTINCT FILES TOUCHED: /, 'the file count must reach the model');
+  assert.match(src, /YOUR PREVIOUS GUESS FOR THIS RUN: /, 'the previous guess must reach the model');
+  // The previous-guess line is built conditionally and interpolated as a
+  // single `prevLine`, so the first tick omits it entirely.
+  assert.match(src, /const prevLine = \(prevRs != null && Number\.isFinite\(prevRs\)\)/,
+    'the previous-guess line must be conditional');
+  assert.match(src, /: '';/, 'with no previous guess the line must collapse to nothing');
+});
+
+test('#892: estimateRunProgress reports its prompt generation', () => {
+  assert.equal(llm.PROMPT_VERSION, 2, 'the recalibrated prompt is generation 2');
+  const src = read('src/services/llm.js');
+  assert.match(src, /promptVersion: PROMPT_VERSION,/,
+    'every call must report which prompt produced it, so v1 and v2 can be scored apart');
+});
+
+test('#892: NO output-side calibration between the model and what is recorded', () => {
+  // This is the invariant the whole design rests on. A multiplier fitted to
+  // one model silently distorts the estimate as soon as the model or its
+  // inputs improve — and the distortion would be invisible on the dashboard,
+  // which would blame the model. Calibration lives in the prompt, full stop.
+  const src = read('src/services/llm.js');
+  const fnAt = src.indexOf('async function estimateRunProgress(');
+  const fn = src.slice(fnAt, src.indexOf('\n// Parse + sanitize the model', fnAt));
+  assert.ok(fn.length > 500, 'the function body must be located');
+  assert.match(fn, /const remainingSeconds = sanitizeRemainingSeconds\(parsed\.remaining_seconds\);/,
+    'the returned value must be the sanitized raw model output, nothing else');
+  // Nothing may sit between the sanitize and the return.
+  const declAt = fn.indexOf('const remainingSeconds = sanitizeRemainingSeconds');
+  const after = fn.slice(fn.indexOf(';', declAt));
+  assert.doesNotMatch(after, /remainingSeconds\s*[*/]/, 'no scaling of the model value');
+  assert.doesNotMatch(after, /remainingSeconds\s*=/, 'no reassignment of the model value');
+  assert.doesNotMatch(fn, /RUN_LENGTH_PRIORS\.buckets\.find/,
+    'the priors must not be used as an output-side lookup');
+
+  // sanitizeRemainingSeconds itself must stay a pure clamp across the whole
+  // range the priors describe — no bucket-dependent behaviour.
+  for (const v of [0, 30, 45, 124, 207, 400, 600, 1200, 2290, 7200, 99999]) {
+    assert.equal(llm.sanitizeRemainingSeconds(v), Math.min(7200, v),
+      `sanitizeRemainingSeconds must clamp only, at ${v}`);
+  }
+});
+
+test('#892: the estimator passes the new inputs and the previous guess through', () => {
+  const sessions = read('src/routes/sessions.js');
+  assert.match(sessions, /lastPhase: phaseAtStart,/, 'the tracked phase must be passed to the model');
+  assert.match(sessions, /distinctFiles,/, 'the distinct-file count must be passed to the model');
+  assert.match(sessions, /previousGuess: previousRemainingSeconds == null \? null : \{/,
+    'the previous guess must be passed, and omitted on the first tick');
+  // The phase tracker must read every progress line, not just the estimator's.
+  assert.match(sessions, /const phaseMatch = String\(text\)\.trim\(\)\.match\(\/\^\\\[\(\[\^\\\]\]\+\)\\\]\$\/\);/,
+    'onProgress must extract the phase marker');
+});
+
+test('#892: an expired projection overrides the widened late-run cadence', () => {
+  // The 30s floor is only honest for as long as it takes to get a fresh
+  // guess. Without this override the widened 150s spacing would hold the
+  // floored readout for two and a half minutes.
+  const sessions = read('src/routes/sessions.js');
+  assert.match(sessions, /const projectionExpired = projectedFinishAt != null && now >= projectedFinishAt;/,
+    'the expiry condition must be computed');
+  assert.match(sessions, /else if \(projectionExpired\) shouldRun = true;/,
+    'an expired projection must run the tick');
+  const decisionAt = sessions.indexOf('let shouldRun;');
+  const decision = sessions.slice(decisionAt, decisionAt + 400);
+  assert.ok(
+    decision.indexOf('projectionExpired') < decision.indexOf('sinceLastMs < minSpacingMs'),
+    'the expiry override must be checked BEFORE the widened-spacing skip'
+  );
+  // The other guards still front it — this is a cadence override, not a
+  // licence to spam the model.
+  assert.match(sessions, /if \(estimateInFlight\) return;/, 'one call in flight at a time still holds');
+  assert.match(sessions, /if \(ticksToSkip > 0\) \{ ticksToSkip--; return; \}/,
+    'the failure backoff still holds');
+});
+
+// ── 3b. The monotonicity guard ──────────────────────────────────────────
+
+const GUARD_BASE = { now: 1_000_000, estimatedAt: 1_000_000 };
+
+test('#892 guard: an earlier candidate is always accepted', () => {
+  const r = estimateGuard.applyMonotonicityGuard({
+    ...GUARD_BASE,
+    projectedFinishAt: 1_000_000 + 600_000,   // 10 min out
+    previousRemainingSeconds: 600,
+    remainingSeconds: 120,                    // now says 2 min
+  });
+  assert.equal(r.displayedRemainingSeconds, 120);
+  assert.equal(r.clamped, false);
+  assert.equal(r.slipReason, null);
+});
+
+test('#892 guard: a later candidate with no cause holds the previous projection', () => {
+  const r = estimateGuard.applyMonotonicityGuard({
+    ...GUARD_BASE,
+    projectedFinishAt: 1_000_000 + 240_000,   // 4 min out, not yet expired
+    previousRemainingSeconds: 240,
+    remainingSeconds: 300,                    // the treadmill: +1 min again
+  });
+  assert.equal(r.clamped, true, 'an uncaused extension must be held');
+  assert.equal(r.displayedRemainingSeconds, 240, 'the held projection is what is shown');
+  assert.equal(r.slipReason, null);
+});
+
+test('#892 guard: a trivial wobble is accepted rather than counted as an extension', () => {
+  const r = estimateGuard.applyMonotonicityGuard({
+    ...GUARD_BASE,
+    projectedFinishAt: 1_000_000 + 240_000,
+    previousRemainingSeconds: 240,
+    remainingSeconds: 260,                    // +20s, inside the 30s grace
+  });
+  assert.equal(r.clamped, false);
+  assert.equal(r.slipReason, null);
+  assert.equal(r.displayedRemainingSeconds, 260);
+});
+
+test('#892 guard: each of the three causes accepts the candidate and names itself', () => {
+  // (a) the projection already ran out and the run continues
+  const expired = estimateGuard.applyMonotonicityGuard({
+    now: 1_500_000, estimatedAt: 1_500_000,
+    projectedFinishAt: 1_400_000,             // already in the past
+    previousRemainingSeconds: 60,
+    remainingSeconds: 300,
+  });
+  assert.equal(expired.slipReason, 'expired');
+  assert.equal(expired.displayedRemainingSeconds, 300);
+
+  // (b) a new stage marker landed
+  const newPhase = estimateGuard.applyMonotonicityGuard({
+    ...GUARD_BASE,
+    projectedFinishAt: 1_000_000 + 120_000,
+    previousRemainingSeconds: 120,
+    remainingSeconds: 400,
+    newPhaseSinceLast: true,
+  });
+  assert.equal(newPhase.slipReason, 'new_phase');
+  assert.equal(newPhase.displayedRemainingSeconds, 400);
+
+  // (c) the model at least doubled its own previous guess
+  const revision = estimateGuard.applyMonotonicityGuard({
+    ...GUARD_BASE,
+    projectedFinishAt: 1_000_000 + 120_000,
+    previousRemainingSeconds: 120,
+    remainingSeconds: 300,                    // >= 2x 120
+  });
+  assert.equal(revision.slipReason, 'revision');
+  assert.equal(revision.displayedRemainingSeconds, 300);
+});
+
+test('#892 guard: ALWAYS yields a positive number of seconds', () => {
+  // The core invariant. Property-checked over the awkward inputs: a zero
+  // candidate, a null candidate, an already-expired projection, and a long
+  // run of consecutive extensions.
+  const cases = [];
+  for (const remainingSeconds of [null, undefined, 0, 1, 30, 120, 7200, -5, NaN]) {
+    for (const projectedFinishAt of [null, 900_000, 1_000_000, 1_000_500, 2_000_000]) {
+      for (const previousRemainingSeconds of [null, 0, 60, 600]) {
+        for (const newPhaseSinceLast of [false, true]) {
+          cases.push({
+            ...GUARD_BASE, remainingSeconds, projectedFinishAt,
+            previousRemainingSeconds, newPhaseSinceLast,
+          });
+        }
+      }
+    }
+  }
+  for (const c of cases) {
+    const r = estimateGuard.applyMonotonicityGuard(c);
+    assert.ok(Number.isFinite(r.displayedRemainingSeconds),
+      `non-finite output for ${JSON.stringify(c)}`);
+    assert.ok(r.displayedRemainingSeconds >= estimateGuard.MIN_DISPLAY_REMAINING_S,
+      `output below the floor for ${JSON.stringify(c)}: ${r.displayedRemainingSeconds}`);
+    assert.ok(r.projectedFinishAt > c.now,
+      `projection must be in the future for ${JSON.stringify(c)}`);
+    assert.equal(typeof r.clamped, 'boolean');
+    assert.ok(r.slipReason === null || typeof r.slipReason === 'string');
+  }
+});
+
+test('#892 guard: the floor binds and re-anchors the projection', () => {
+  const r = estimateGuard.applyMonotonicityGuard({
+    now: 1_000_000, estimatedAt: 1_000_000,
+    projectedFinishAt: 990_000,               // ran out 10s ago
+    previousRemainingSeconds: 60,
+    remainingSeconds: null,                   // and the model declined a number
+  });
+  assert.equal(r.displayedRemainingSeconds, estimateGuard.MIN_DISPLAY_REMAINING_S);
+  assert.equal(r.floored, true);
+  // Re-anchored, so the client counts down from the floor rather than from
+  // a target already in the past.
+  assert.equal(r.projectedFinishAt, 1_000_000 + 30_000);
+});
+
+test('#892 guard: no bail-out — twenty consecutive extensions each yield a number', () => {
+  // A run that keeps outliving its estimate keeps getting extended. There is
+  // deliberately no counter that gives up and switches to an open-ended
+  // state; the extension rate is observable on the dashboard instead.
+  let projectedFinishAt = null;
+  let previousRemainingSeconds = null;
+  let now = 1_000_000;
+  for (let i = 0; i < 20; i++) {
+    const r = estimateGuard.applyMonotonicityGuard({
+      projectedFinishAt, previousRemainingSeconds,
+      remainingSeconds: 120,
+      estimatedAt: now, now,
+    });
+    assert.ok(r.displayedRemainingSeconds > 0, `tick ${i} produced no number`);
+    projectedFinishAt = r.projectedFinishAt;
+    previousRemainingSeconds = 120;
+    now += 180_000;   // each tick arrives after the projection expired
+  }
+});
+
+test('#892 guard: only ever the candidate, the held projection, or the floor', () => {
+  // It must never derive a THIRD number — no scaling, no blending. That
+  // would be output-side calibration wearing a display-rule costume.
+  for (let raw = 0; raw <= 900; raw += 7) {
+    for (const held of [null, 1_000_000 + 60_000, 1_000_000 + 600_000, 999_000]) {
+      const r = estimateGuard.applyMonotonicityGuard({
+        ...GUARD_BASE, remainingSeconds: raw, projectedFinishAt: held,
+        previousRemainingSeconds: 100,
+      });
+      const heldRemaining = held == null ? null : Math.round((held - GUARD_BASE.now) / 1000);
+      const allowed = [raw, heldRemaining, estimateGuard.MIN_DISPLAY_REMAINING_S]
+        .filter((v) => v != null);
+      assert.ok(allowed.includes(r.displayedRemainingSeconds),
+        `derived a third value (raw=${raw}, held=${heldRemaining}) -> ${r.displayedRemainingSeconds}`);
+    }
+  }
+});
+
+test('#892: the RAW model value is what gets recorded, never the guarded one', () => {
+  const sessions = read('src/routes/sessions.js');
+  const insertAt = sessions.indexOf('INSERT INTO progress_estimates');
+  const insert = sessions.slice(insertAt, insertAt + 1600);
+  // predicted_remaining_seconds is bound to the raw `remainingSeconds`;
+  // the post-guard value goes to its own column.
+  assert.match(insert, /text, remainingSeconds,/,
+    'the raw phrase and raw number must be the values bound to the model columns');
+  assert.match(insert, /guard\.displayedRemainingSeconds,/,
+    'the post-guard value must go to displayed_remaining_seconds');
+  assert.match(insert, /predicted_remaining_seconds,/);
+  assert.match(insert, /displayed_remaining_seconds,/);
+  assert.match(insert, /prompt_version,/, 'the prompt generation must be recorded');
+});
+
+test('#892: no overrun flag anywhere in the estimate path', () => {
+  // The countdown always shows a number, so there is no open-ended state to
+  // signal. A reintroduced flag would mean the copy came back with it.
+  // Matched as a FIELD, not as a word — the comments explaining why there is
+  // no overrun state legitimately use the term.
+  const asField = /(^|[^A-Za-z])overrun\s*[:=]|\.overrun\b|['"`]overrun['"`]/im;
+  for (const rel of [
+    'src/services/estimate-guard.js',
+    'src/routes/sessions.js',
+    'public/js/dev-chat.js',
+    'public/js/cc-progress-summary.js',
+    'src/services/worker-progress.js',
+    'src/services/analytics-demo.js',
+  ]) {
+    assert.doesNotMatch(read(rel), asField, `${rel} must carry no overrun field`);
+  }
+});
+
+test('#892: the countdown copy never says "due now" or "taking longer"', () => {
+  // Matched as RENDERED copy (a quoted string), not as prose — the comments
+  // describing what was retired legitimately name it.
+  const asCopy = (phrase) => new RegExp(`['"\`][^'"\`\\n]*${phrase}[^'"\`\\n]*['"\`]`, 'i');
+  for (const rel of ['public/js/cc-progress-summary.js', 'public/js/dev-chat.js']) {
+    const src = read(rel);
+    assert.doesNotMatch(src, asCopy('due now'),
+      `${rel} must not render the retired "due now" freeze`);
+    // Specifically the overrun copy the countdown would have used. An
+    // unrelated "(taking longer than usual)" row suffix elsewhere in
+    // dev-chat is a different feature and stays.
+    assert.doesNotMatch(src, asCopy('taking longer than expected'),
+      `${rel} must not render an open-ended overrun message`);
+  }
+  // And the helper that owns the copy must produce the numeric form instead.
+  const summary = require('../public/js/cc-progress-summary.js');
+  assert.equal(summary.formatCountdown(0, 1_000_000), ' · under a minute left');
+});
+
+// ── 3c. Completion-claim suppression ────────────────────────────────────
+
+test('#892: isCompletionClaim matches the measured phrase family', () => {
+  // Real recorded v1 output that fired with 20+ minutes still to run.
+  const claims = [
+    'nearly done — just wrapping up tests',
+    'nearly done — wrapping up final tuning validation',
+    'almost done, final checks',
+    'just finishing the last edits',
+    'wrapping up',
+    'nearly finished',
+    'NEARLY DONE',
+    'final touches on the styling',
+  ];
+  for (const c of claims) {
+    assert.ok(llm.isCompletionClaim(c), `should match: ${c}`);
+  }
+});
+
+test('#892: isCompletionClaim does not fire on neutral activity text', () => {
+  const neutral = [
+    'still working through file updates',
+    'running the test suite',
+    'maybe halfway through — several minutes left',
+    'still early, reading the codebase',
+    'reading the auth middleware',
+    'probably past halfway — substantial work remaining',
+    '',
+    null,
+    undefined,
+  ];
+  for (const n of neutral) {
+    assert.ok(!llm.isCompletionClaim(n), `should NOT match: ${JSON.stringify(n)}`);
+  }
+});
+
+test('#892: suppression is gated on the phase and leaves the recorded text raw', () => {
+  const sessions = read('src/routes/sessions.js');
+  assert.match(sessions, /const claimEarned = \['commit', 'push', 'done', 'push_failed'\]\.includes\(phaseHead\);/,
+    'a completion claim is only earned once the run actually reached those stages');
+  assert.match(sessions, /const suppressed = llm\.isCompletionClaim\(text\) && !claimEarned;/,
+    'suppression must combine the phrase match with the phase gate');
+  // The phrase is rewritten; the NUMBER is untouched.
+  assert.match(sessions, /const shownText = suppressed/, 'only the phrase is rewritten');
+  assert.doesNotMatch(sessions, /suppressed \? null : remainingSeconds/,
+    'suppression must never touch the countdown value');
+  // And the raw model text still reaches the dataset.
+  const insertAt = sessions.indexOf('INSERT INTO progress_estimates');
+  const insert = sessions.slice(insertAt, insertAt + 1600);
+  assert.match(insert, /estimate_text_shown, suppressed,/,
+    'the shown text and the suppression flag are recorded separately from the raw text');
+});
+
+test('#892 guard: absence is distinguished from zero', () => {
+  // Number(null) is 0 and Number('') is 0, so a naive coercion turns "no
+  // projection yet" into "a projection that expired in 1970" (the first
+  // guess of every run would be logged as an `expired` extension) and "the
+  // model declined a number" into "the model said zero seconds" (the
+  // countdown would floor instead of continuing to run the projection down).
+  const first = estimateGuard.applyMonotonicityGuard({
+    projectedFinishAt: null, previousRemainingSeconds: null,
+    remainingSeconds: 240, estimatedAt: 1_000_000, now: 1_000_000,
+  });
+  assert.equal(first.slipReason, null, 'the first guess of a run is not an extension');
+  assert.equal(first.clamped, false);
+  assert.equal(first.displayedRemainingSeconds, 240);
+
+  const declined = estimateGuard.applyMonotonicityGuard({
+    projectedFinishAt: 1_000_000 + 90_000,   // 90s of projection left
+    previousRemainingSeconds: 120,
+    remainingSeconds: null,                   // the model gave no number
+    estimatedAt: 1_000_000, now: 1_000_000,
+  });
+  assert.equal(declined.displayedRemainingSeconds, 90,
+    'a declined number keeps running the existing projection down, not to the floor');
+  assert.equal(declined.floored, false);
+
+  // An explicit zero IS a real answer and must floor, not be ignored.
+  const zero = estimateGuard.applyMonotonicityGuard({
+    projectedFinishAt: 1_000_000 + 90_000,
+    previousRemainingSeconds: 120,
+    remainingSeconds: 0,
+    estimatedAt: 1_000_000, now: 1_000_000,
+  });
+  assert.equal(zero.displayedRemainingSeconds, estimateGuard.MIN_DISPLAY_REMAINING_S);
+  assert.equal(zero.floored, true);
 });

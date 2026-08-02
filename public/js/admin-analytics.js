@@ -170,7 +170,7 @@ const AdminAnalytics = (() => {
     'top-users': 'The 30 most prolific builders by lifetime dev sessions started, highest on the left. Hover a bar for the per-outcome breakdown (PRs produced, promoted, voted, merged).',
     'spend-by-builder': 'The 30 biggest LLM spenders, highest on the left. The toggle re-ranks by <b>Platform key</b> spend, <b>User key</b> (BYOK) spend, or <b>Both</b>. Hover a bar for the full breakdown.',
     kudos: 'Per ISO week, how many users gave 0–5 kudos (everyone gets a budget of 5/week). The 0 bucket is registered users who gave none that week, making this a participation view rather than a raw count.',
-    estimator: 'Predicted-vs-actual for the <b>experimental AI progress estimate</b> (Settings &rarr; Experimental). Each tick the estimator guesses how many seconds of coding remain; when the run ends the real remaining time is backfilled, and the gap between the two is the error. <b>Median error</b> is the typical gap. <b>Within &frac12;&times;&ndash;2&times;</b> is the share of guesses between half and double the real time — the honest bar for a deliberately vague estimate. <b>Median bias</b> is signed: negative = optimistic (guessed too fast). <b>Unresolved</b> is guesses that never got matched to an outcome — a data-health signal that should sit near zero. Unlike every other chart here, this one <b>always includes admins</b>: the estimator is opt-in and default-OFF, so excluding them would leave it permanently empty.<br><br><b>Leaves experimental when</b>, using post-fix data only: &ge; 200 scored guesses across 50+ runs from 5+ people, median error &le; 90s, &ge; 60% within the &frac12;&times;&ndash;2&times; band, and median bias within &plusmn;60s.',
+    estimator: 'Predicted-vs-actual for the <b>experimental AI progress estimate</b> (Settings &rarr; Experimental). Each tick the estimator guesses how many seconds of coding remain; when the run ends the real remaining time is backfilled, and the gap between the two is the error. <b>Median error</b> is the typical gap. <b>Within &frac12;&times;&ndash;2&times;</b> is the share of guesses between half and double the real time. <b>Median bias</b> is signed: negative = optimistic (guessed too fast). <b>Unresolved</b> is guesses that never got matched to an outcome &mdash; a background sweep now resolves the ones orphaned by a mid-run restart, so this should sit near zero. Unlike every other chart here, this one <b>always includes admins</b>: the estimator is opt-in and default-OFF, so excluding them would leave it permanently empty.<br><br><b>v1 vs v2.</b> v1 was the original prompt, which told the model to &ldquo;bias toward the 2-10 minute window&rdquo; &mdash; it obeyed flatly, and six values accounted for 87% of its guesses. v2 feeds it the <i>measured</i> run-length distribution instead. Calibration is delivered entirely through the prompt: <b>no multiplier is applied to the model&rsquo;s output</b>, because a correction factor fitted to one model silently distorts the estimate as soon as the model or its inputs improve.<br><br><b>Baselines.</b> A candidate has to beat two things, not nothing: a fixed constant, and the elapsed-only <i>oracle</i> &mdash; the best any predictor knowing only elapsed time could do, fitted to the answers. The oracle measures about 39% in band, which is why the retired 60% bar was unreachable by anything at all.<br><br><b>The guard.</b> Raw = what the model said tick to tick; displayed = what the user saw after the monotonicity guard. v1&rsquo;s raw projections slipped LATER on 65% of transitions (a treadmill: the finish moved a minute further away every minute). <b>Clamped</b> = the guard held the previous projection because an extension had no cause. <b>Floored</b> = the run outlived its estimate and the readout sat at the 30s floor for a tick before the next guess extended it; the countdown always shows a number.<br><br><b>Leaves experimental when</b>, on <b>v2 data only</b>: &ge; 200 scored guesses across 50+ runs from 5+ people, in-band share &ge; 45% (above both the 39% oracle and the 41% scale-corrected benchmark), median bias within &plusmn;60s, median error at or below the oracle baseline, projected finish pushed later on &le; 25% of consecutive readings with outright backwards jumps under 5%, and completion claims firing with 5+ minutes remaining under 10% of the time.',
     'spend-distribution': 'Per day, how many users\' platform-key AI spend (what the daily caps track) fell into each dollar bucket. The <b>$0</b> bucket is every registered user (as of that day) with no platform spend — it usually dwarfs the paid buckets, so it is hidden by default; use the <b>Show $0</b> toggle to include it. The top tier splits <b>$20+ capped</b> (heavy spenders with no usable own key — blocked at the cap) from <b>$20+ own key</b> (heavy spenders who had a personal Anthropic key configured, or spent on it that day, so could keep going). The "has own key" signal is a current snapshot corrected by that day\'s own-key spend, so past-day attribution is approximate.',
   };
 
@@ -823,7 +823,23 @@ const AdminAnalytics = (() => {
 
   // The bar the card states up front, so the decision is mechanical. Also
   // reproduced in the (?) definition.
-  const ESTIMATOR_BAR = { scored: 200, runs: 50, users: 5, medianAbsErrS: 90, withinBand: 0.6, biasS: 60 };
+  //
+  // #892 restated it. The old bar was 90s median error and a 0.60 in-band
+  // share; production measured the best POSSIBLE elapsed-only predictor at
+  // 0.39 in band, so 0.60 was unreachable by anything and the card could
+  // never have said yes. The new in-band bar of 0.45 sits above both that
+  // 0.39 oracle and the 0.41 scale-corrected benchmark, so clearing it
+  // proves the prompt work added something rather than just reproducing a
+  // lookup table. Median error is judged against the live oracle baseline
+  // rather than a fixed number, so it stays honest as the data grows.
+  const ESTIMATOR_BAR = {
+    scored: 200, runs: 50, users: 5,
+    withinBand: 0.45, biasS: 60,
+    laterRate: 0.25, increasedRate: 0.05, unearnedClaimRate: 0.10,
+  };
+  // The prompt generation the bar is judged on — v1 is the superseded
+  // flat-prior prompt and must never be pooled into the verdict.
+  const CANDIDATE_PROMPT_VERSION = 2;
 
   // Round to whole seconds FIRST, then split into m/s — rounding the
   // remainder independently renders 119.5s as "1m 60s".
@@ -838,18 +854,34 @@ const AdminAnalytics = (() => {
   };
   const fmtPct = (v) => (v == null || !Number.isFinite(Number(v)) ? '—' : `${(Number(v) * 100).toFixed(0)}%`);
 
-  // Does the given window clear every threshold? Returns null when there is
+  // Does the candidate clear every threshold? Returns null when there is
   // simply not enough data yet — "not proven" is not the same as "failed".
-  function estimatorVerdict(w) {
+  //
+  // #892: judged on the CANDIDATE prompt version alone (pooling v1 in would
+  // drag the answer toward the prompt this change replaced), against the
+  // live oracle baseline rather than a fixed error number, and including the
+  // two display-quality gates — a countdown that walks backwards is a
+  // failure even if its numbers are good.
+  function estimatorVerdict(w, ctx) {
     if (!w || !w.scored) return null;
+    const c = ctx || {};
     const enough = w.scored >= ESTIMATOR_BAR.scored
       && w.runs >= ESTIMATOR_BAR.runs && w.users >= ESTIMATOR_BAR.users;
-    if (!enough) return { ready: false, reason: 'not enough data yet' };
+    if (!enough) return { ready: false, reason: `not enough v${CANDIDATE_PROMPT_VERSION} data yet` };
     const fails = [];
-    if (!(w.medianAbsErrS != null && w.medianAbsErrS <= ESTIMATOR_BAR.medianAbsErrS)) fails.push('median error');
+    const oracleErr = c.baselines && c.baselines.oracle ? c.baselines.oracle.medianAbsErrS : null;
+    if (oracleErr != null && !(w.medianAbsErrS != null && w.medianAbsErrS <= oracleErr)) fails.push('median error vs oracle');
     if (!(w.withinBand != null && w.withinBand >= ESTIMATOR_BAR.withinBand)) fails.push('in-band share');
     if (!(w.medianBiasS != null && Math.abs(w.medianBiasS) <= ESTIMATOR_BAR.biasS)) fails.push('bias');
-    return fails.length ? { ready: false, reason: `misses ${fails.join(', ')}` } : { ready: true, reason: 'meets every threshold' };
+    const disp = c.monotonicity && c.monotonicity.displayed;
+    if (disp && disp.laterRate != null && disp.laterRate > ESTIMATOR_BAR.laterRate) fails.push('finish pushed later too often');
+    if (disp && disp.increasedRate != null && disp.increasedRate > ESTIMATOR_BAR.increasedRate) fails.push('countdown runs backwards');
+    const claims = c.completionClaims;
+    if (claims && claims.overFiveMinLeftRate != null
+        && claims.overFiveMinLeftRate > ESTIMATOR_BAR.unearnedClaimRate) fails.push('unearned completion claims');
+    return fails.length
+      ? { ready: false, reason: `misses ${fails.join(', ')}` }
+      : { ready: true, reason: 'meets every threshold' };
   }
 
   function renderEstimator(e) {
@@ -873,34 +905,181 @@ const AdminAnalytics = (() => {
         ${sub ? `<div class="text-[11px] text-zinc-500 mt-0.5">${esc(sub)}</div>` : ''}
       </div>`;
 
-    const errOk = w.medianAbsErrS == null ? null : w.medianAbsErrS <= ESTIMATOR_BAR.medianAbsErrS;
-    const bandOk = w.withinBand == null ? null : w.withinBand >= ESTIMATOR_BAR.withinBand;
-    const biasOk = w.medianBiasS == null ? null : Math.abs(w.medianBiasS) <= ESTIMATOR_BAR.biasS;
-    const sampleOk = w.scored >= ESTIMATOR_BAR.scored
-      && w.runs >= ESTIMATOR_BAR.runs && w.users >= ESTIMATOR_BAR.users;
+    // #892: the headline tiles describe the CANDIDATE prompt version when
+    // there is any of it, falling back to the 30-day window before v2 has
+    // produced data. Judging the recalibration against a v1-dominated pool
+    // would answer the wrong question.
+    const versions = e.byPromptVersion || [];
+    const cand = versions.find((v) => v.promptVersion === CANDIDATE_PROMPT_VERSION) || null;
+    const prev = versions.find((v) => v.promptVersion < CANDIDATE_PROMPT_VERSION) || null;
+    const head = (cand && cand.scored) ? cand : w;
+    const headLabel = (cand && cand.scored) ? `v${CANDIDATE_PROMPT_VERSION}` : '30d';
+    const baselines = e.baselines || null;
+    const oracleErr = baselines && baselines.oracle ? baselines.oracle.medianAbsErrS : null;
+
+    const errOk = (head.medianAbsErrS == null || oracleErr == null)
+      ? null : head.medianAbsErrS <= oracleErr;
+    const bandOk = head.withinBand == null ? null : head.withinBand >= ESTIMATOR_BAR.withinBand;
+    const biasOk = head.medianBiasS == null ? null : Math.abs(head.medianBiasS) <= ESTIMATOR_BAR.biasS;
+    const sampleOk = head.scored >= ESTIMATOR_BAR.scored
+      && head.runs >= ESTIMATOR_BAR.runs && head.users >= ESTIMATOR_BAR.users;
+
+    const mono = e.monotonicity || null;
+    const disp = (mono && mono.displayed) || null;
+    const claims = e.completionClaims || null;
+    const laterOk = !disp || disp.laterRate == null ? null : disp.laterRate <= ESTIMATOR_BAR.laterRate;
+    const backOk = !disp || disp.increasedRate == null ? null : disp.increasedRate <= ESTIMATOR_BAR.increasedRate;
+    const claimOk = !claims || claims.overFiveMinLeftRate == null
+      ? null : claims.overFiveMinLeftRate <= ESTIMATOR_BAR.unearnedClaimRate;
 
     const tiles = [
-      tile('Scored guesses (30d)', fmtInt(w.scored), sampleOk ? '' : 'text-zinc-500',
-        `${fmtInt(w.runs)} runs · ${fmtInt(w.users)} users · need ${ESTIMATOR_BAR.scored}/${ESTIMATOR_BAR.runs}/${ESTIMATOR_BAR.users}`),
-      tile('Median error', fmtSecs(w.medianAbsErrS), tone(errOk), `bar: ≤ ${ESTIMATOR_BAR.medianAbsErrS}s`),
-      tile('Within ½×–2×', fmtPct(w.withinBand), tone(bandOk), `bar: ≥ ${fmtPct(ESTIMATOR_BAR.withinBand)}`),
-      tile('Median bias', fmtSecs(w.medianBiasS), tone(biasOk),
-        w.medianBiasS == null ? 'bar: ±60s'
-          : `${w.medianBiasS < 0 ? 'optimistic' : 'pessimistic'} · bar: ±${ESTIMATOR_BAR.biasS}s`),
-      tile('Within 60s', fmtPct(w.within60s), '', 'share of guesses inside a minute'),
+      tile(`Scored guesses (${headLabel})`, fmtInt(head.scored), sampleOk ? '' : 'text-zinc-500',
+        `${fmtInt(head.runs)} runs · ${fmtInt(head.users)} users · need ${ESTIMATOR_BAR.scored}/${ESTIMATOR_BAR.runs}/${ESTIMATOR_BAR.users}`),
+      tile('Median error', fmtSecs(head.medianAbsErrS), tone(errOk),
+        oracleErr == null ? 'bar: ≤ the oracle baseline' : `bar: ≤ ${fmtSecs(oracleErr)} (oracle)`),
+      tile('Within ½×–2×', fmtPct(head.withinBand), tone(bandOk), `bar: ≥ ${fmtPct(ESTIMATOR_BAR.withinBand)}`),
+      tile('Median bias', fmtSecs(head.medianBiasS), tone(biasOk),
+        head.medianBiasS == null ? `bar: ±${ESTIMATOR_BAR.biasS}s`
+          : `${head.medianBiasS < 0 ? 'optimistic' : 'pessimistic'} · bar: ±${ESTIMATOR_BAR.biasS}s`),
+      // Treadmill: the share of consecutive readings that pushed the finish
+      // LATER. Computed on what the user SAW, so it measures the guard.
+      tile('Finish pushed later', fmtPct(disp && disp.laterRate), tone(laterOk),
+        `shown · bar: ≤ ${fmtPct(ESTIMATOR_BAR.laterRate)}`),
+      tile('Countdown went backwards', fmtPct(disp && disp.increasedRate), tone(backOk),
+        `shown · bar: < ${fmtPct(ESTIMATOR_BAR.increasedRate)}`),
+      tile('Held / floored', `${fmtPct(mono && mono.clampRate)} / ${fmtPct(mono && mono.flooredRate)}`, '',
+        'guard held the projection · run outlived it'),
+      tile('Unearned "nearly done"', fmtPct(claims && claims.overFiveMinLeftRate), tone(claimOk),
+        claims ? `${fmtInt(claims.ticks)} claims · ${fmtInt(claims.suppressed)} suppressed` : 'no claims yet'),
+      tile('Within 60s', fmtPct(head.within60s), '', 'share of guesses inside a minute'),
       tile('Unresolved', fmtPct(w.unresolvedRate), '',
         `${fmtInt(w.unresolved)} of ${fmtInt(w.ticks)} never matched`),
       tile('Toggle ON', fmtInt(e.usersEnabled), '', 'users opted in today'),
       tile('Ran past estimate', fmtInt(w.ranPast), '', 'run outlived the guess'),
     ].join('');
 
-    const verdict = estimatorVerdict(w);
+    const verdict = estimatorVerdict(head, {
+      baselines, monotonicity: mono, completionClaims: claims,
+    });
     const verdictHtml = verdict
       ? `<div class="mt-3 text-sm ${verdict.ready ? 'text-green-600 dark:text-green-400' : 'text-amber-600 dark:text-amber-400'}">
            <b>${verdict.ready ? 'Ready to leave experimental' : 'Stays experimental'}</b> — ${esc(verdict.reason)}
            <span class="text-zinc-500">(last 30 days)</span>
          </div>`
       : '<div class="mt-3 text-sm text-zinc-500">No scored guesses in the last 30 days yet.</div>';
+
+    // ── v1 vs v2, the card's lead (#892) ──────────────────────────
+    //
+    // The whole point of the recalibration is "did feeding the model the
+    // measured distribution help?", and a pooled average cannot answer it.
+    // Rendered first, before the tiles, so that comparison is the first
+    // thing read.
+    const cmpRow = (v) => {
+      if (!v) return '';
+      const isCand = v.promptVersion === CANDIDATE_PROMPT_VERSION;
+      return `<tr class="border-t border-zinc-200 dark:border-zinc-800">
+        <td class="py-1 text-zinc-600 dark:text-zinc-300">
+          v${fmtInt(v.promptVersion)}${isCand ? ' <span class="text-[10px] uppercase tracking-wide text-violet-500">candidate</span>' : ''}
+        </td>
+        <td class="py-1 text-right">${fmtInt(v.scored)}</td>
+        <td class="py-1 text-right">${esc(fmtSecs(v.medianAbsErrS))}</td>
+        <td class="py-1 text-right">${esc(fmtPct(v.withinBand))}</td>
+        <td class="py-1 text-right">${esc(fmtSecs(v.medianBiasS))}</td>
+      </tr>`;
+    };
+    const versionHtml = versions.length ? `
+      <div class="mb-4">
+        <h4 class="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mb-1">Prompt generation</h4>
+        <p class="text-[11px] text-zinc-500 mb-2">
+          v1 told the model to bias toward a 2&ndash;10 minute window and it obeyed flatly.
+          v2 gives it the measured run-length distribution instead &mdash; calibration through the
+          prompt, with no multiplier on the model&rsquo;s output.
+        </p>
+        <table class="text-xs w-full">
+          <thead><tr class="text-zinc-400">
+            <th class="text-left font-medium py-1">Prompt</th>
+            <th class="text-right font-medium py-1">Scored</th>
+            <th class="text-right font-medium py-1">Median err</th>
+            <th class="text-right font-medium py-1">In band</th>
+            <th class="text-right font-medium py-1">Bias</th>
+          </tr></thead>
+          <tbody>${versions.map(cmpRow).join('')}</tbody>
+        </table>
+      </div>` : '';
+
+    // Baselines: what the estimator has to BEAT. Without these the card can
+    // only say "is it good?", never "is it better than doing no thinking at
+    // all?" — and the oracle row is what makes the restated in-band bar
+    // legible as achievable rather than arbitrary.
+    const baseRow = (label, b, note) => (!b ? '' : `<tr class="border-t border-zinc-200 dark:border-zinc-800">
+      <td class="py-1 text-zinc-600 dark:text-zinc-300">${esc(label)}<div class="text-[10px] text-zinc-500">${esc(note)}</div></td>
+      <td class="py-1 text-right">${esc(fmtSecs(b.medianAbsErrS))}</td>
+      <td class="py-1 text-right">${esc(fmtPct(b.withinBand))}</td>
+      <td class="py-1 text-right">${esc(fmtSecs(b.medianBiasS))}</td>
+    </tr>`);
+    const baselineHtml = baselines ? `
+      <div class="mt-4">
+        <h4 class="text-sm font-semibold text-zinc-500 dark:text-zinc-400 mb-2">Baselines to beat</h4>
+        <table class="text-xs w-full">
+          <thead><tr class="text-zinc-400">
+            <th class="text-left font-medium py-1">Predictor</th>
+            <th class="text-right font-medium py-1">Median err</th>
+            <th class="text-right font-medium py-1">In band</th>
+            <th class="text-right font-medium py-1">Bias</th>
+          </tr></thead>
+          <tbody>
+            ${baseRow('Estimator', {
+              medianAbsErrS: head.medianAbsErrS,
+              withinBand: head.withinBand,
+              medianBiasS: head.medianBiasS,
+            }, `prompt ${headLabel}`)}
+            ${baseRow('Fixed constant', baselines.constant, 'say the same thing every time')}
+            ${baseRow('Elapsed-only oracle', baselines.oracle, 'best possible knowing only elapsed time')}
+          </tbody>
+        </table>
+      </div>` : '';
+
+    // Priors freshness. The numbers the prompt feeds the model are a
+    // committed constant, so they can go stale; this strip is the loop that
+    // closes. When it says stale, re-run the refresh SQL committed beside
+    // RUN_LENGTH_PRIORS in src/services/llm.js and open a small PR.
+    const priors = e.priors || null;
+    const priorsHtml = priors ? `
+      <div class="mt-4 rounded-lg border ${priors.stale
+        ? 'border-amber-400/50 bg-amber-50 dark:bg-amber-900/10'
+        : 'border-zinc-200 dark:border-zinc-800'} p-3">
+        <div class="flex items-baseline justify-between flex-wrap gap-2">
+          <h4 class="text-sm font-semibold text-zinc-600 dark:text-zinc-300">
+            Run-length figures given to the model
+          </h4>
+          <span class="text-xs ${priors.stale ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}">
+            ${priors.stale ? 'Priors stale — re-run the committed refresh query and update the constant' : 'Priors current'}
+          </span>
+        </div>
+        <p class="text-[11px] text-zinc-500 mt-0.5 mb-2">
+          Snapshot ${esc(priors.snapshot.generatedOn)} from ${fmtInt(priors.snapshot.scoredTicks)} scored guesses
+          across ${fmtInt(priors.snapshot.runs)} runs since ${esc(priors.snapshot.windowStart)}.
+          They change only when someone approves a change, never on their own.
+          ${priors.staleReasons && priors.staleReasons.length
+            ? `<br><b>${esc(priors.staleReasons.join('; '))}</b>` : ''}
+        </p>
+        <table class="text-xs w-full">
+          <thead><tr class="text-zinc-400">
+            <th class="text-left font-medium py-1">Elapsed bucket</th>
+            <th class="text-right font-medium py-1">Told the model</th>
+            <th class="text-right font-medium py-1">Actually now</th>
+            <th class="text-right font-medium py-1">Drift</th>
+          </tr></thead>
+          <tbody>${(priors.buckets || []).map((b) => `
+            <tr class="border-t border-zinc-200 dark:border-zinc-800">
+              <td class="py-1 text-zinc-600 dark:text-zinc-300">${esc(b.bucket)}</td>
+              <td class="py-1 text-right">${esc(fmtSecs(b.committedP50))}</td>
+              <td class="py-1 text-right">${esc(fmtSecs(b.liveP50))}</td>
+              <td class="py-1 text-right ${b.driftRatio != null && b.driftRatio > 0.25
+                ? 'text-amber-600 dark:text-amber-400' : ''}">${esc(fmtPct(b.driftRatio))}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>` : '';
 
     // All-time line, mostly to expose the pre-fix unresolved tail next to the
     // recent window — a falling unresolved rate is the estimator-teardown fix
@@ -931,7 +1110,12 @@ const AdminAnalytics = (() => {
         </table>` : `<p class="text-xs text-zinc-500">No data yet.</p>`}
       </div>`;
 
-    const byElapsed = (e.byElapsed || []).map((r) => ({ ...r, label: r.bucket }));
+    // #892: split by prompt version. v1's bias swings from +81s early to
+    // -299s late; v2's should stay flat, and this table is where that shows.
+    const byElapsed = (e.byElapsed || []).map((r) => ({
+      ...r,
+      label: r.promptVersion == null ? r.bucket : `${r.bucket} · v${r.promptVersion}`,
+    }));
     const byOutcome = (e.byOutcome || []).map((r) => ({ ...r, label: r.outcome }));
 
     // 30-day daily median-error sparkline. Same bar idiom as the other
@@ -942,15 +1126,18 @@ const AdminAnalytics = (() => {
       const W = 640, H = 140, topPad = 12, botPad = 16;
       const plot = H - topPad - botPad;
       const bw = W / daily.length;
-      const max = Math.max(ESTIMATOR_BAR.medianAbsErrS, ...daily.map((d) => Number(d.medianAbsErrS) || 0));
-      // The threshold line makes "over the bar" readable at a glance.
-      const barY = topPad + plot - (ESTIMATOR_BAR.medianAbsErrS / max) * plot;
+      // #892: the dashed line is the ORACLE baseline (the best any
+      // elapsed-only predictor could do), not the retired fixed 90s bar —
+      // that is the number a day's error has to sit under to mean anything.
+      const errBar = oracleErr != null ? oracleErr : 200;
+      const max = Math.max(errBar, ...daily.map((d) => Number(d.medianAbsErrS) || 0));
+      const barY = topPad + plot - (errBar / max) * plot;
       const bars = daily.map((d, i) => {
         const v = Number(d.medianAbsErrS) || 0;
         const h = (v / max) * plot;
         const x = i * bw;
         const y = topPad + plot - h;
-        const over = v > ESTIMATOR_BAR.medianAbsErrS;
+        const over = v > errBar;
         const tipId = `est-day-${i}`;
         tipStore[tipId] = `<div class="font-semibold mb-1">${esc(dayLabel(d.day))}</div>
           <div>median error ${esc(fmtSecs(v))}</div>
@@ -968,15 +1155,18 @@ const AdminAnalytics = (() => {
         </svg>
         <div class="flex justify-between text-[10px] text-zinc-500 mt-1">
           <span>${esc(dayLabel(daily[0].day))}</span>
-          <span>${esc(ESTIMATOR_BAR.medianAbsErrS)}s bar (dashed)</span>
+          <span>${esc(fmtSecs(errBar))} oracle baseline (dashed)</span>
           <span>${esc(dayLabel(daily[daily.length - 1].day))}</span>
         </div>`;
     }
 
     el.innerHTML = `
+      ${versionHtml}
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">${tiles}</div>
       ${verdictHtml}
       ${allTimeHtml}
+      ${baselineHtml}
+      ${priorsHtml}
       <div class="grid sm:grid-cols-2 gap-6 mt-6">
         ${breakdown('By how far into the run', byElapsed, 'Elapsed')}
         ${breakdown('By how the run ended', byOutcome, 'Outcome')}

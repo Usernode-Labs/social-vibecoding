@@ -281,13 +281,15 @@ function kudos() {
 // card renders as a wall of dashes in every PR preview — this is the
 // substituted read-path payload (same shape as the real endpoint's).
 //
-// Numbers are chosen to CLEAR the sample-size gate (231 scored / 55 runs /
-// 6 users) but MISS one accuracy threshold — the in-band share is 0.58
-// against a 0.60 bar — so the card renders its "Stays experimental … misses
-// in-band share" verdict. Deliberate: a staging preview showing a green
-// "Ready to leave experimental" off mock data invites it being read as the
-// real answer, and it would leave the amber path unexercised in review.
-// The unresolved rate is ~1%, the post-fix expectation.
+// Numbers mirror what production actually measured (#892) rather than a
+// flattering invention: a v1 prompt that fails every bar (181s median error,
+// 31% in band, -110s bias) beside a v2 that clears the bias bar and lands
+// just UNDER the 45% in-band bar. Deliberate on both counts — a staging
+// preview showing a green "Ready to leave experimental" off mock data
+// invites being read as the real answer, and the amber "not yet" path is
+// the one a reviewer most needs to see rendered. The priors block is seeded
+// STALE (one bucket over the 25% drift threshold) for the same reason: the
+// stale state is the one worth recognising on sight.
 function estimatorAccuracy() {
   const window30 = {
     ticks: 243,
@@ -299,10 +301,11 @@ function estimatorAccuracy() {
     scored: 231,
     ranPast: 9,
     coverage: 0.95,
-    medianAbsErrS: 78.4,
-    medianBiasS: -22.6,
-    within60s: 0.42,
-    withinBand: 0.58,
+    // Pooled v1+v2, so it sits between the two versions below.
+    medianAbsErrS: 178,
+    medianBiasS: -48,
+    within60s: 0.24,
+    withinBand: 0.36,
   };
   const daily = [];
   for (let i = 29; i >= 0; i--) {
@@ -327,18 +330,94 @@ function estimatorAccuracy() {
       users: 7,
       scored: 534,
       ranPast: 25,
-      medianAbsErrS: 96.2,
-      medianBiasS: -31.0,
-      within60s: 0.38,
-      withinBand: 0.56,
+      medianAbsErrS: 179,
+      medianBiasS: -84,
+      within60s: 0.22,
+      withinBand: 0.33,
     },
     usersEnabled: 6,
+    // The clearest visual before/after: v1's bias swings from +81s early to
+    // -299s late (it collapses to a flat two-minute guess as runs drag on),
+    // v2's stays near zero throughout.
     byElapsed: [
-      { bucket: '<2m', scored: 74, medianAbsErrS: 119.5, withinBand: 0.47 },
-      { bucket: '2-5m', scored: 96, medianAbsErrS: 68.2, withinBand: 0.68 },
-      { bucket: '5-10m', scored: 44, medianAbsErrS: 61.8, withinBand: 0.71 },
-      { bucket: '10m+', scored: 17, medianAbsErrS: 142.0, withinBand: 0.41 },
+      { bucket: '<2m', promptVersion: 1, scored: 871, medianAbsErrS: 161, medianBiasS: 81, withinBand: 0.32 },
+      { bucket: '<2m', promptVersion: 2, scored: 58, medianAbsErrS: 132, medianBiasS: 12, withinBand: 0.44 },
+      { bucket: '2-5m', promptVersion: 1, scored: 1212, medianAbsErrS: 149, medianBiasS: -14, withinBand: 0.34 },
+      { bucket: '2-5m', promptVersion: 2, scored: 81, medianAbsErrS: 138, medianBiasS: 9, withinBand: 0.46 },
+      { bucket: '5-10m', promptVersion: 1, scored: 1102, medianAbsErrS: 243, medianBiasS: -243, withinBand: 0.29 },
+      { bucket: '5-10m', promptVersion: 2, scored: 74, medianAbsErrS: 186, medianBiasS: -31, withinBand: 0.43 },
+      { bucket: '10-20m', promptVersion: 1, scored: 800, medianAbsErrS: 246, medianBiasS: -246, withinBand: 0.28 },
+      { bucket: '10-20m', promptVersion: 2, scored: 41, medianAbsErrS: 201, medianBiasS: -44, withinBand: 0.41 },
+      { bucket: '20m+', promptVersion: 1, scored: 265, medianAbsErrS: 299, medianBiasS: -299, withinBand: 0.25 },
+      { bucket: '20m+', promptVersion: 2, scored: 14, medianAbsErrS: 228, medianBiasS: -58, withinBand: 0.36 },
     ],
+    // v1 = the "bias toward 2-10 minutes" prompt whose flat output failed
+    // every bar. v2 = the same model given the measured run-length
+    // distribution as prompt input. No output-side multiplier is involved in
+    // either, which is the point of splitting them.
+    byPromptVersion: [
+      {
+        promptVersion: 1, ticks: 4737, resolved: 4275, unresolved: 462,
+        unresolvedRate: 462 / 4737, runs: 965, users: 6, scored: 4250,
+        ranPast: 0, coverage: 0.99,
+        medianAbsErrS: 181, medianBiasS: -110, within60s: 0.21, withinBand: 0.31,
+      },
+      {
+        promptVersion: 2, ticks: 274, resolved: 271, unresolved: 3,
+        unresolvedRate: 3 / 274, runs: 62, users: 6, scored: 268,
+        ranPast: 0, coverage: 1,
+        medianAbsErrS: 171, medianBiasS: 14, within60s: 0.27, withinBand: 0.43,
+      },
+    ],
+    // What the estimator has to BEAT. The oracle is the best any
+    // elapsed-only predictor could do — 39% in band, which is why the
+    // retired 60% graduation bar was unreachable by anything at all.
+    baselines: {
+      scored: 4518,
+      constant: { medianAbsErrS: 166, medianBiasS: 0, withinBand: 0.32 },
+      oracle: { medianAbsErrS: 202, medianBiasS: -5, withinBand: 0.39 },
+    },
+    // Seeded STALE on the 5-10m bucket so the preview exercises the
+    // "refresh is due" rendering rather than the quiet happy path.
+    priors: {
+      snapshot: {
+        generatedOn: '2026-08-02', windowStart: '2026-06-14',
+        scoredTicks: 4250, runs: 965, users: 6,
+      },
+      buckets: [
+        { bucket: '<2m', committedP50: 124, liveP50: 131, driftRatio: 0.06, scored: 901 },
+        { bucket: '2-5m', committedP50: 207, liveP50: 214, driftRatio: 0.03, scored: 1244 },
+        { bucket: '5-10m', committedP50: 400, liveP50: 512, driftRatio: 0.28, scored: 1130 },
+        { bucket: '10-20m', committedP50: 369, liveP50: 381, driftRatio: 0.03, scored: 819 },
+        { bucket: '20m+', committedP50: 450, liveP50: 470, driftRatio: 0.04, scored: 279 },
+      ],
+      stale: true,
+      staleReasons: ['bucket 5-10m drifted 28%'],
+    },
+    // The guard's whole job is to make "raw" and "displayed" differ: the
+    // model's own projections slipped later on 65% of transitions, what the
+    // user saw slipped on 21%. "expired" dominates the slip reasons because
+    // a run that outlives its estimate now EXTENDS rather than bailing out
+    // to an open-ended state — the countdown always shows a number.
+    monotonicity: {
+      transitions: 3775,
+      raw: {
+        laterRate: 0.647, earlierRate: 0.199, increasedRate: 0.224,
+        medianShiftS: 60, p90ShiftS: 180,
+      },
+      displayed: {
+        transitions: 3775,
+        laterRate: 0.21, earlierRate: 0.42, increasedRate: 0.02,
+        medianShiftS: 0, p90ShiftS: 60,
+      },
+      clampRate: 0.31,
+      flooredRate: 0.09,
+      slipReasons: { expired: 152, new_phase: 44, revision: 27 },
+    },
+    completionClaims: {
+      ticks: 1355, suppressed: 91,
+      overFiveMinLeftRate: 0.35, medianActualLeftS: 174,
+    },
     byOutcome: [
       { outcome: 'committed', scored: 187, medianAbsErrS: 72.1, withinBand: 0.65 },
       { outcome: 'noop', scored: 24, medianAbsErrS: 96.4, withinBand: 0.50 },
