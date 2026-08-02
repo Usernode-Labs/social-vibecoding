@@ -104,8 +104,11 @@ test('the fixture titles are obviously fake and prefixed', () => {
 });
 
 test('the seed is idempotent via its branch-name existence checks', () => {
-  for (const branch of ['staging-fixture/restart-recovered-pills',
-    'staging-fixture/restart-unanswered-pills']) {
+  // #896: bumped to -v2 so the reworded transcripts actually re-seed —
+  // the guard below is an existence check on the branch name, so reusing
+  // the old name would leave staging showing the pre-#896 rows forever.
+  for (const branch of ['staging-fixture/restart-recovered-pills-v2',
+    'staging-fixture/restart-unanswered-pills-v2']) {
     assert.ok(BODY.includes(branch), `seeds ${branch}`);
   }
   const checks = BODY.match(

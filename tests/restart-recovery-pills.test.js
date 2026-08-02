@@ -20,6 +20,9 @@ const {
   QR_MAX_REPLY_LEN,
   RECOVERY_PILLS,
   UNANSWERED_BREADCRUMB,
+  LEGACY_UNANSWERED_BREADCRUMBS,
+  isUnansweredBreadcrumb,
+  TURN_UNFINISHED_BREADCRUMB,
   SCOUT_NO_SPEC_BREADCRUMB,
   buildRecoveryQuickReplies,
   classifyMissingPills,
@@ -108,9 +111,34 @@ test('the unanswered set with a resend pill is also sanitizer-clean', () => {
 
 test('breadcrumb strings are non-empty and stable', () => {
   assert.equal(UNANSWERED_BREADCRUMB,
-    'The platform restarted before I could reply — send your message again.');
+    "I didn't get to reply to that — send your message again.");
   assert.equal(SCOUT_NO_SPEC_BREADCRUMB,
-    'Scout finished after restart but produced no spec — please retry your request.');
+    "The scout didn't produce a spec — please send your request again.");
+  assert.equal(TURN_UNFINISHED_BREADCRUMB,
+    "That coding turn didn't finish — please send your request again.");
+});
+
+// #896: the user-facing breadcrumbs name the situation and the action —
+// never the platform restart behind them. A restart is plumbing the user
+// can do nothing about; metadata.recovered carries it for operators.
+test('no breadcrumb names the restart or the recovery machinery', () => {
+  for (const text of [UNANSWERED_BREADCRUMB, SCOUT_NO_SPEC_BREADCRUMB, TURN_UNFINISHED_BREADCRUMB]) {
+    assert.doesNotMatch(text, /restart|recover/i, `"${text}" leaks platform plumbing`);
+    assert.ok(/again/.test(text), `"${text}" must tell the user what to do next`);
+  }
+});
+
+// The backfill sweep detects its own prior row by exact string match, so
+// renaming the breadcrumb without keeping the old wording around would
+// post a duplicate on top of every pre-rename one at the next boot.
+test('the unanswered breadcrumb matcher covers earlier wordings', () => {
+  assert.ok(isUnansweredBreadcrumb(UNANSWERED_BREADCRUMB));
+  assert.ok(LEGACY_UNANSWERED_BREADCRUMBS.length >= 1, 'the pre-#896 wording is remembered');
+  for (const legacy of LEGACY_UNANSWERED_BREADCRUMBS) {
+    assert.ok(isUnansweredBreadcrumb(legacy), `"${legacy}" must still be recognised`);
+  }
+  assert.ok(!isUnansweredBreadcrumb('Some unrelated system row'));
+  assert.ok(!isUnansweredBreadcrumb(null));
 });
 
 // ── classifyMissingPills — the boot backfill decision ─────────────────

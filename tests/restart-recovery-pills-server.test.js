@@ -128,9 +128,13 @@ test('mid-exec-killed breadcrumb carries the unrecoverable pills', async () => {
 
   const rows = insertedRows(pool.calls);
   assert.equal(rows.length, 1, 'one breadcrumb posted');
-  assert.match(rows[0].content, /Lost connection mid-turn after restart/);
+  assert.equal(rows[0].content, recoveryPills.TURN_UNFINISHED_BREADCRUMB);
   assert.deepEqual(rows[0].metadata.quickReplies,
     recoveryPills.buildRecoveryQuickReplies('unrecoverable'));
+  // #896: same user-facing text for every unresumable shape; the shape
+  // itself is preserved in metadata for operators.
+  assert.equal(rows[0].metadata.recoveredReason, 'mid_exec_killed');
+  assert.equal(rows[0].metadata.recovered, true);
 
   const status = broadcasts.find((b) => b.event === 'status');
   assert.ok(status, 'a status event was broadcast');
@@ -153,8 +157,9 @@ test('worker-gone breadcrumb carries the unrecoverable pills', async () => {
   );
 
   const rows = insertedRows(pool.calls);
-  const gone = rows.find((r) => /its worker is gone/.test(String(r.content)));
+  const gone = rows.find((r) => r.metadata.recoveredReason === 'worker_gone');
   assert.ok(gone, 'the worker-gone breadcrumb was posted');
+  assert.equal(gone.content, recoveryPills.TURN_UNFINISHED_BREADCRUMB);
   assert.deepEqual(gone.metadata.quickReplies,
     recoveryPills.buildRecoveryQuickReplies('unrecoverable'));
 });
@@ -165,16 +170,54 @@ test('worker-gone breadcrumb carries the unrecoverable pills', async () => {
 // transport and the notification stack stubbed to drive end-to-end; assert
 // the wiring at the source level instead, which is what would regress.
 
-test('the recovered-turn success tail picks its pill kind from the outcome', () => {
+// #896 replaced the generic recovery breadcrumb with a real Mayor wrap-up
+// (runRecoveredWrapUp). The pill kind it falls back to is still chosen from
+// the finalize outcome — that fallback is what keeps the pill bar populated
+// when the model call can't be made.
+test('the recovered-turn success tail picks its wrap-up pill kind from the outcome', () => {
   assert.match(SERVER_SRC,
-    /breadcrumbPillKind = finalizeOutcome === 'push_failed' \? 'push_failed' : 'code_done'/,
-    'a recovered build breadcrumb must carry code_done pills, or push_failed when the push failed');
+    /wrapUpPillKind = finalizeOutcome === 'push_failed' \? 'push_failed' : 'code_done'/,
+    'a recovered build wrap-up must fall back to code_done pills, or push_failed when the push failed');
+  assert.match(SERVER_SRC, /const \{ runRecoveredWrapUp \} = require\('\.\/src\/routes\/sessions'\)/,
+    'the build/scout branches end by re-issuing the Mayor wrap-up');
   assert.match(SERVER_SRC,
-    /'Coding turn recovered after a platform restart\.',\s*\n\s*JSON\.stringify\(breadcrumbPills \? \{ quickReplies: breadcrumbPills \} : \{\}\)/,
-    'the generic recovery breadcrumb persists its pills');
-  assert.match(SERVER_SRC,
-    /text: 'Coding turn recovered after a platform restart\.',\s*\n\s*quickReplies: breadcrumbPills \|\| undefined/,
-    "the generic recovery breadcrumb's status event carries its pills");
+    /fallbackPillKind: wrapUpPillKind/,
+    'the wrap-up receives the fallback pill kind so the bar is never left empty');
+});
+
+// #896: a sync turn is system work with no Mayor reply on the live path
+// either — recovering one must not manufacture a chat message.
+test('a recovered sync turn gets no Mayor wrap-up', () => {
+  assert.match(SERVER_SRC, /activeTurn\.mode === 'sync'/,
+    'sync mode is branched explicitly, not lumped in with build');
+  assert.match(SERVER_SRC, /Recovered sync turn — no Mayor wrap-up/,
+    'the sync branch is logged rather than surfaced in chat');
+  assert.match(SERVER_SRC, /if \(wrapUpOutcome\) \{/,
+    'the wrap-up only runs for a branch that set an outcome');
+});
+
+// The whole point of #896: the restart stops being something the user
+// reads about. It survives in logs and in metadata.recovered instead.
+test('no user-facing recovery string names the restart', () => {
+  const stripComments = (src) => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .split('\n')
+    .map((line) => line.replace(/^\s*\/\/.*$/, ''))
+    .join('\n');
+  const files = {
+    'server.js': SERVER_SRC,
+    'src/services/recovery-pills.js': fs.readFileSync(
+      path.join(__dirname, '..', 'src', 'services', 'recovery-pills.js'), 'utf8'),
+    'src/services/staging-recovery.js': fs.readFileSync(
+      path.join(__dirname, '..', 'src', 'services', 'staging-recovery.js'), 'utf8'),
+  };
+  for (const [name, src] of Object.entries(files)) {
+    const code = stripComments(src);
+    for (const banned of [/recovered after/i, /after a platform restart/i, /after restart/i]) {
+      assert.doesNotMatch(code, banned,
+        `${name} still ships the pre-#896 restart wording — chat rows must not mention it`);
+    }
+  }
 });
 
 test('the recovered scout tails carry spec_done / unrecoverable pills', () => {
