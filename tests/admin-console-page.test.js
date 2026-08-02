@@ -124,7 +124,8 @@ test('the menu carries every section, grouped, with no external tools left', () 
     assert.ok(!consoleJs.includes(`href: '${href}'`),
       `${href} must be a section, not an external link`);
   }
-  // Every section declares a sidebar group so fifteen rows stay scannable.
+  // Every section declares a group — load-bearing for BOTH navs now: the
+  // desktop sidebar's headings and the phone menu's grouped rows.
   const sectionBlock = consoleJs.slice(
     consoleJs.indexOf('SECTIONS: ['),
     consoleJs.indexOf('isOpen()')
@@ -132,10 +133,25 @@ test('the menu carries every section, grouped, with no external tools left', () 
   const keyCount = (sectionBlock.match(/key: '/g) || []).length;
   const groupCount = (sectionBlock.match(/group: '/g) || []).length;
   assert.equal(keyCount, groupCount, 'every SECTIONS entry carries a group');
-  // Responsive split: sidebar on md+, tab strip below md.
+  // Responsive split: sidebar on md+, two-level hierarchy below md.
   assert.ok(consoleJs.includes('id="admin-nav-desktop"'), 'desktop sidebar renders');
-  assert.ok(consoleJs.includes('id="admin-nav-mobile"'), 'mobile tab strip renders');
-  assert.match(consoleJs, /overflow-x-auto/, 'the mobile strip scrolls sideways, not the page');
+  assert.ok(consoleJs.includes('id="admin-mobile-menu"'), 'the mobile level-1 menu renders');
+  // The horizontally scrolling tab strip it replaced is GONE, not merely
+  // hidden — its id and its sideways scroll are what made fifteen
+  // ungrouped sections a thumb-swipe scavenger hunt on a phone.
+  assert.ok(!consoleJs.includes('admin-nav-mobile'),
+    'the mobile tab strip is gone, replaced by the two-level menu');
+  assert.ok(!/overflow-x-auto/.test(consoleJs),
+    'nothing in the console scrolls sideways any more');
+  // Both navs read their grouping from one helper so they cannot drift.
+  assert.match(consoleJs, /_groupedSections\(\)\s*\{/,
+    'one shared grouping helper feeds the sidebar and the mobile menu');
+  const menuHtml = consoleJs.slice(consoleJs.indexOf('_mobileMenuHtml()'));
+  assert.match(menuHtml.slice(0, 1600), /_groupedSections\(\)/,
+    'the mobile menu groups via the shared helper');
+  const sideHtml = consoleJs.slice(consoleJs.indexOf('  _navItemsHtml()'));
+  assert.match(sideHtml.slice(0, 1200), /_groupedSections\(\)/,
+    'the sidebar groups via the shared helper');
 });
 
 // #860: the six folded-in sections each live in their own module, loaded by
