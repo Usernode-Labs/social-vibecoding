@@ -33,6 +33,9 @@ function formatSignup(row) {
     linked_user_id: row.linked_user_id != null ? Number(row.linked_user_id) : null,
     linked_username: row.linked_username ?? null,
     has_platform_access: row.has_platform_access ?? null,
+    // Two-stage survey payload (versioned JSON — stage 1 at join, stage 2
+    // merged in via the "Want in sooner?" form). Null for plain-email rows.
+    answers: row.answers && typeof row.answers === 'object' ? row.answers : null,
   };
 }
 
@@ -71,6 +74,7 @@ function waitlistAdminRoutes(config) {
 
       const { rows } = await pool.query(
         `SELECT w.id, w.email, w.submitted_at, w.released_at, w.linked_user_id,
+                w.answers,
                 u.username AS linked_username, u.has_platform_access
            FROM waitlist_signups w
            LEFT JOIN users u ON u.id = w.linked_user_id

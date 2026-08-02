@@ -1173,7 +1173,14 @@ const AdminTopochain = {
                  class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1 text-xs font-medium text-white">Release</button>`
             : ''}
         </td>
-      </tr>`).join('');
+      </tr>
+      ${w.answers ? `
+      <tr><td colspan="5" class="px-3 pb-2 pt-0">
+        <details class="text-xs">
+          <summary class="cursor-pointer text-zinc-500 select-none py-0.5">Survey answers</summary>
+          <div class="mt-1 space-y-0.5 text-zinc-600 dark:text-zinc-300">${AdminTopochain._wlAnswersHtml(w.answers)}</div>
+        </details>
+      </td></tr>` : ''}`).join('');
     table.innerHTML = `
       <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
         <table class="w-full">
@@ -1188,6 +1195,52 @@ const AdminTopochain = {
     table.querySelectorAll('[data-release-wl]').forEach((b) => b.addEventListener('click', () =>
       AdminTopochain._releaseWaitlist(parseInt(b.dataset.releaseWl, 10), b.dataset.email)));
     if (s.meta) AdminTopochain._wirePager(s.meta, 'admin-topo-wl-pg', (page) => { s.page = page; AdminTopochain._loadWaitlist(); });
+  },
+
+  // Human-readable rendering of a signup's two-stage survey answers
+  // (waitlist_signups.answers — stage 1 at join, stage 2 merged in
+  // later). Only known keys are surfaced; everything is escaped.
+  _wlAnswersHtml(a) {
+    const esc = AdminTopochain.esc;
+    const lines = [];
+    const line = (label, value) => {
+      if (value) lines.push(`<div><span class="text-zinc-400">${esc(label)}:</span> ${value}</div>`);
+    };
+    if (a.made_url) {
+      // Escaped text, not an anchor — this module never renders
+      // API-supplied URLs as clickable hrefs (esc() alone wouldn't stop a
+      // javascript: scheme). Admins can copy the URL out.
+      line('Made', `<span class="select-all break-all">${esc(a.made_url)}</span>${a.made_note ? ` — ${esc(a.made_note)}` : ''}`);
+    }
+    if (a.country || a.city) line('Where', esc([a.city, a.country].filter(Boolean).join(', ')));
+    if (a.discovery && a.discovery.source) {
+      line('Found us', esc(a.discovery.source) + (a.discovery.detail ? ` — ${esc(a.discovery.detail)}` : ''));
+    }
+    if (a.referrer_handle) line('Referred by', esc(a.referrer_handle));
+    if (a.group && Object.keys(a.group).length) {
+      const g = a.group;
+      line('Group', esc([g.name, g.size, g.role, (g.tools || []).join('/')].filter(Boolean).join(' · ')));
+      if (g.need) line('Group need', esc(g.need));
+    }
+    if (a.loss && Object.keys(a.loss).length) {
+      const l = a.loss;
+      line('Lost a tool', esc([l.had, l.product, (l.kind || []).join('/')].filter(Boolean).join(' · ')));
+      if (l.story) line('Loss story', esc(l.story));
+    }
+    if (a.verified && Object.keys(a.verified).length) {
+      line('Verified', Object.entries(a.verified)
+        .map(([p, h]) => `<span class="text-emerald-600 dark:text-emerald-400">✓ ${esc(p)} · ${esc(h)}</span>`)
+        .join('  '));
+    }
+    if (a.handles && Object.keys(a.handles).length) {
+      line('Handles', esc(Object.entries(a.handles).map(([p, h]) => `${p}: ${h}`).join(' · ')));
+    }
+    if (Array.isArray(a.invites) && a.invites.length) {
+      line('Invites', esc(a.invites.join(', ')) + (a.admit_together ? ' <span class="text-zinc-400">(only together)</span>' : ''));
+    } else if (a.admit_together) {
+      line('Invites', '<span class="text-zinc-400">only together</span>');
+    }
+    return lines.join('') || '<div class="text-zinc-400">No survey answers.</div>';
   },
 
   async _releaseWaitlist(id, email) {

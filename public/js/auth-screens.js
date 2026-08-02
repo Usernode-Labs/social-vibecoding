@@ -27,10 +27,13 @@
     signup: 'auth-login-screen', // sub-view of the login screen
     register: 'auth-register-screen',
     waiting: 'auth-waiting-screen',
+    // Stage-2 waitlist survey ("Want in sooner?"), #more/<token> — the
+    // token is the signup's capability from the join response / email.
+    more: 'auth-more-screen',
   };
 
   // Drives push (deeper) vs pop (back toward landing) transition types.
-  const DEPTH = { landing: 0, login: 1, signup: 1, register: 1, waiting: 1 };
+  const DEPTH = { landing: 0, login: 1, signup: 1, register: 1, waiting: 1, more: 1 };
 
   const ROUTES = Object.keys(SCREEN_IDS);
 
@@ -125,6 +128,7 @@
       if (route === 'signup') AuthScreens._loginOnShow(true);
       if (route === 'register') AuthScreens._registerOnShow(seg);
       if (route === 'waiting') AuthScreens._waitingOnShow();
+      if (route === 'more') AuthScreens._moreOnShow(seg);
       if (prev === 'waiting' && route !== 'waiting') AuthScreens._stopWaitingPoll();
       // Leaving the landing screen with an app still open: stop the
       // iframe and put the directory back, un-animated.
@@ -167,6 +171,7 @@
       if (id === 'auth-login-screen') AuthScreens._wireLogin();
       if (id === 'auth-register-screen') AuthScreens._wireRegister();
       if (id === 'auth-waiting-screen') AuthScreens._wireWaiting();
+      if (id === 'auth-more-screen') AuthScreens._wireMore();
     },
 
     // ── Reload-free login completion ─────────────────────────────────
@@ -339,40 +344,10 @@
         AuthScreens._resetLandingViewer();
       });
 
-      // Waitlist join form → POST /api/public/waitlist.
-      const form = byId('waitlist-form');
-      const emailEl = byId('waitlist-email');
-      const btn = byId('waitlist-submit');
-      const msg = byId('waitlist-msg');
-
-      const showMsg = (text, isError) => {
-        msg.textContent = text;
-        msg.className = 'text-sm mt-3 ' + (isError
-          ? 'text-red-500 dark:text-red-400'
-          : 'text-emerald-600 dark:text-emerald-400');
-      };
-
-      if (form) form.addEventListener('submit', async (e) => {
-        e.preventDefault();
-        btn.disabled = true;
-        try {
-          const res = await fetch('/api/public/waitlist', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: emailEl.value.trim() }),
-          });
-          const data = await res.json().catch(() => null);
-          if (res.ok) {
-            showMsg((data && data.message) || "You're on the waitlist.", false);
-            form.reset();
-          } else {
-            showMsg((data && data.error) || 'Something went wrong — try again.', true);
-          }
-        } catch (_) {
-          showMsg('Connection issue — try again.', true);
-        }
-        btn.disabled = false;
-      });
+      // Stage-1 waitlist survey form → POST /api/public/waitlist (two-
+      // stage waitlist). Chips + the country list render from the shared
+      // options endpoint the moment the landing screen first shows.
+      AuthScreens._wireStage1Form();
 
       // In-page app viewer: public apps open in an iframe here instead of
       // target=_blank (which strands mobile webview users on the app
@@ -447,6 +422,387 @@
         else closeViewer();
       });
       window.addEventListener('popstate', closeViewer);
+    },
+
+    // ── Waitlist survey (two-stage, ported from topochain) ───────────
+
+    // The survey option definitions (chips, selects, countries) come
+    // from the server so the form and its validation share one source.
+    _optionsPromise: null,
+    _waitlistOptions() {
+      if (!AuthScreens._optionsPromise) {
+        AuthScreens._optionsPromise = fetch('/api/public/waitlist/options')
+          .then((r) => (r.ok ? r.json() : null))
+          .catch(() => null);
+      }
+      return AuthScreens._optionsPromise;
+    },
+
+    // Renders a row of selectable chips into `host`. Returns { get, set }
+    // for the current selection (a string for single-select, an array
+    // for multi). Chip markup is built with createElement — labels come
+    // from our own options endpoint but stay out of innerHTML anyway.
+    _chipRow(host, options, { multi = false, onChange = null } = {}) {
+      const ON = 'border-violet-500 bg-violet-50 dark:bg-violet-500/10 text-zinc-900 dark:text-white';
+      const OFF = 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500';
+      const BASE = 'rounded-full border px-3 py-1.5 text-xs cursor-pointer transition-colors ';
+      let selected = multi ? [] : null;
+      const buttons = new Map();
+      const paint = () => {
+        for (const [key, btn] of buttons) {
+          const on = multi ? selected.includes(key) : selected === key;
+          btn.className = BASE + (on ? ON : OFF);
+        }
+      };
+      host.textContent = '';
+      for (const [key, label] of Object.entries(options)) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = label;
+        btn.addEventListener('click', () => {
+          if (multi) {
+            selected = selected.includes(key)
+              ? selected.filter((k) => k !== key)
+              : [...selected, key];
+          } else {
+            selected = key;
+          }
+          paint();
+          if (onChange) onChange(selected);
+        });
+        buttons.set(key, btn);
+        host.appendChild(btn);
+      }
+      paint();
+      return {
+        get: () => selected,
+        set: (value) => {
+          selected = multi ? (Array.isArray(value) ? value : []) : (value || null);
+          paint();
+          if (onChange) onChange(selected);
+        },
+      };
+    },
+
+    _fillSelect(select, options) {
+      for (const [key, label] of Object.entries(options)) {
+        const opt = document.createElement('option');
+        opt.value = key;
+        opt.textContent = label;
+        select.appendChild(opt);
+      }
+    },
+
+    // Stage 1: the landing form's four questions. Submits to the join
+    // endpoint; on a first join the response carries the stage-2
+    // capability token, which turns into the "Want in sooner?" offer.
+    _stage1Discovery: null,
+    async _wireStage1Form() {
+      const form = byId('waitlist-form');
+      if (!form) return;
+      const btn = byId('waitlist-submit');
+      const msg = byId('waitlist-msg');
+
+      const showMsg = (text, isError) => {
+        msg.textContent = text;
+        msg.className = 'text-sm mt-3 ' + (isError
+          ? 'text-red-500 dark:text-red-400'
+          : 'text-emerald-600 dark:text-emerald-400');
+      };
+
+      const opts = await AuthScreens._waitlistOptions();
+      if (opts) {
+        // Country select, grouped by region.
+        const country = byId('waitlist-country');
+        for (const [region, codes] of Object.entries(opts.countries || {})) {
+          const group = document.createElement('optgroup');
+          group.label = region;
+          for (const [code, name] of Object.entries(codes)) {
+            const opt = document.createElement('option');
+            opt.value = code;
+            opt.textContent = name;
+            group.appendChild(opt);
+          }
+          country.appendChild(group);
+        }
+        // Discovery chips + the source-specific detail placeholder.
+        const detail = byId('waitlist-discovery-detail');
+        AuthScreens._stage1Discovery = AuthScreens._chipRow(
+          byId('waitlist-discovery-chips'), opts.discovery_sources || {}, {
+            onChange: (source) => {
+              const labels = opts.discovery_detail_labels || {};
+              detail.placeholder =
+                (labels[source] || 'Which one?') + ' — optional';
+            },
+          });
+      }
+
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const emailVal = byId('waitlist-email').value.trim();
+        const madeUrl = byId('waitlist-made-url').value.trim();
+        const source = AuthScreens._stage1Discovery
+          ? AuthScreens._stage1Discovery.get() : null;
+        // Client preflight mirroring the server's stage-1 rules, so the
+        // common misses get a message without a round trip.
+        if (!emailVal) return showMsg('Please enter your email.', true);
+        if (!madeUrl) return showMsg('Please link something you have made.', true);
+        if (!source) return showMsg('Please tell us how you found us.', true);
+
+        btn.disabled = true;
+        try {
+          const res = await fetch('/api/public/waitlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              email: emailVal,
+              made_url: madeUrl,
+              made_note: byId('waitlist-made-note').value.trim() || undefined,
+              country: byId('waitlist-country').value || undefined,
+              city: byId('waitlist-city').value.trim() || undefined,
+              discovery_source: source,
+              discovery_detail: byId('waitlist-discovery-detail').value.trim() || undefined,
+              referrer_handle: byId('waitlist-referrer').value.trim() || undefined,
+            }),
+          });
+          const data = await res.json().catch(() => null);
+          if (res.ok) {
+            // Joined: swap the form for the success state, and offer
+            // stage 2 right away when this was a first join (the email
+            // carries the same link for anyone who stops here).
+            msg.classList.add('hidden');
+            form.classList.add('hidden');
+            const joined = byId('waitlist-joined');
+            if (joined) joined.classList.remove('hidden');
+            const token = data && data.more_token;
+            if (token) {
+              const link = byId('waitlist-more-link');
+              if (link) link.href = '#more/' + token;
+              const offer = byId('waitlist-more-offer');
+              if (offer) offer.classList.remove('hidden');
+            }
+          } else {
+            showMsg((data && data.error) || 'Something went wrong — try again.', true);
+          }
+        } catch (_) {
+          showMsg('Connection issue — try again.', true);
+        }
+        btn.disabled = false;
+      });
+    },
+
+    // ── Stage 2: "Want in sooner?" (#more/<token>) ────────────────────
+
+    _moreToken: null,
+    _moreChips: null,   // { tools, lossHad, lossKinds } chip controllers
+    _moreWiredForm: false,
+
+    _wireMore() { /* one-shot marker only; real wiring is per-show */ },
+
+    _moreOnShow(token) {
+      AuthScreens._moreToken = token || null;
+      AuthScreens._loadMore();
+    },
+
+    async _loadMore() {
+      const token = AuthScreens._moreToken;
+      const form = byId('more-form');
+      const invalid = byId('more-invalid');
+      if (!form || !invalid) return;
+
+      const fail = () => {
+        form.classList.add('hidden');
+        invalid.classList.remove('hidden');
+      };
+      if (!token) return fail();
+
+      const [opts, res] = await Promise.all([
+        AuthScreens._waitlistOptions(),
+        fetch('/api/public/waitlist/more/' + encodeURIComponent(token))
+          .catch(() => null),
+      ]);
+      if (!opts || !res || !res.ok) return fail();
+      const data = await res.json().catch(() => null);
+      if (!data || !data.ok) return fail();
+
+      invalid.classList.add('hidden');
+      form.classList.remove('hidden');
+      AuthScreens._renderMore(opts, data);
+    },
+
+    _renderMore(opts, data) {
+      const a = data.answers || {};
+      const group = a.group || {};
+      const loss = a.loss || {};
+      const handles = a.handles || {};
+      const verified = a.verified || {};
+
+      // One-shot structural wiring (selects, chip rows, invites list,
+      // submit). Values are (re)applied on every show below it.
+      if (!AuthScreens._moreWiredForm) {
+        AuthScreens._moreWiredForm = true;
+        AuthScreens._fillSelect(byId('more-group-size'), opts.group_sizes || {});
+        AuthScreens._fillSelect(byId('more-group-role'), opts.group_roles || {});
+        AuthScreens._moreChips = {
+          tools: AuthScreens._chipRow(byId('more-group-tools'),
+            opts.group_tools || {}, { multi: true }),
+          lossHad: AuthScreens._chipRow(byId('more-loss-had'),
+            opts.loss_answers || {}, {
+              onChange: (had) => {
+                byId('more-loss-detail').classList
+                  .toggle('hidden', !had || had === 'no');
+              },
+            }),
+          lossKinds: AuthScreens._chipRow(byId('more-loss-kinds'),
+            opts.loss_kinds || {}, { multi: true }),
+        };
+        byId('more-invite-add').addEventListener('click', () =>
+          AuthScreens._addInviteRow(''));
+        byId('more-form').addEventListener('submit', (e) => {
+          e.preventDefault();
+          AuthScreens._saveMore();
+        });
+      }
+
+      byId('more-group-name').value = group.name || '';
+      byId('more-group-size').value = group.size || '';
+      byId('more-group-role').value = group.role || '';
+      AuthScreens._moreChips.tools.set(group.tools || []);
+      byId('more-group-need').value = group.need || '';
+
+      AuthScreens._moreChips.lossHad.set(loss.had || null);
+      byId('more-loss-product').value = loss.product || '';
+      AuthScreens._moreChips.lossKinds.set(loss.kind || []);
+      byId('more-loss-story').value = loss.story || '';
+
+      byId('more-handle-farcaster').value = handles.farcaster || '';
+      byId('more-handle-discord').value = handles.discord || '';
+      byId('more-handle-telegram').value = handles.telegram || '';
+      byId('more-handle-other').value = handles.other || '';
+
+      // GitHub / X: a verified pill when connected, a connect link when
+      // the platform has OAuth creds for the provider, nothing otherwise
+      // (the text handles above still work).
+      const row = byId('more-connect-row');
+      row.textContent = '';
+      for (const [provider, label] of [['github', 'GitHub'], ['x', 'X']]) {
+        if (verified[provider]) {
+          const pill = document.createElement('span');
+          pill.className = 'inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 dark:border-emerald-500/40 bg-emerald-50 dark:bg-emerald-500/10 px-3 py-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300';
+          pill.textContent = '✓ ' + label + ' · ' + verified[provider];
+          row.appendChild(pill);
+        } else if (data.oauth && data.oauth[provider]) {
+          const link = document.createElement('a');
+          link.className = 'inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-700 dark:text-zinc-200 hover:border-zinc-400 dark:hover:border-zinc-500';
+          link.href = '/waitlist/connect/' + provider + '?token=' +
+            encodeURIComponent(AuthScreens._moreToken);
+          link.textContent = 'Connect ' + label;
+          row.appendChild(link);
+        }
+      }
+
+      // Invites: at least two empty rows, capped at max_invites.
+      const invites = Array.isArray(a.invites) ? a.invites.slice() : [];
+      while (invites.length < 2) invites.push('');
+      const host = byId('more-invites');
+      host.textContent = '';
+      for (const value of invites.slice(0, opts.max_invites || 5)) {
+        AuthScreens._addInviteRow(value);
+      }
+      byId('more-admit-together').checked = !!a.admit_together;
+      byId('more-referrer').value = a.referrer_handle || '';
+
+      // Surface the OAuth round-trip's outcome (?connect=… inside the
+      // hash, so it never reaches a server log).
+      const msg = byId('more-msg');
+      msg.classList.add('hidden');
+      const q = (location.hash.split('?')[1] || '');
+      const connect = new URLSearchParams(q).get('connect');
+      if (connect === 'ok') {
+        msg.textContent = 'Account verified — thanks.';
+        msg.className = 'text-sm mt-3 text-emerald-600 dark:text-emerald-400';
+      } else if (connect === 'failed' || connect === 'denied' || connect === 'unavailable') {
+        msg.textContent = connect === 'unavailable'
+          ? 'That sign-in is not available yet.'
+          : 'Could not verify that account. Please try again.';
+        msg.className = 'text-sm mt-3 text-amber-600 dark:text-amber-400';
+      }
+    },
+
+    _addInviteRow(value) {
+      const host = byId('more-invites');
+      const maxRows = 5;
+      if (host.children.length >= maxRows) return;
+      const wrap = document.createElement('div');
+      wrap.className = 'flex items-center gap-2';
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.maxLength = 255;
+      input.placeholder = '@handle or email';
+      input.value = value || '';
+      input.className = 'flex-1 rounded-lg bg-white dark:bg-zinc-900 border border-zinc-300 dark:border-zinc-700 px-3 py-2 text-sm placeholder-zinc-400 dark:placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-violet-500 focus:border-transparent';
+      input.dataset.invite = '1';
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.setAttribute('aria-label', 'Remove');
+      remove.className = 'shrink-0 rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white';
+      remove.addEventListener('click', () => {
+        if (host.children.length > 1) wrap.remove();
+        else input.value = '';
+      });
+      wrap.appendChild(input);
+      wrap.appendChild(remove);
+      host.appendChild(wrap);
+    },
+
+    async _saveMore() {
+      const btn = byId('more-save');
+      const msg = byId('more-msg');
+      const showMsg = (text, isError) => {
+        msg.textContent = text;
+        msg.className = 'text-sm mt-3 ' + (isError
+          ? 'text-red-500 dark:text-red-400'
+          : 'text-emerald-600 dark:text-emerald-400');
+      };
+      const chips = AuthScreens._moreChips || {};
+      const invites = [...document.querySelectorAll('#more-invites [data-invite]')]
+        .map((el) => el.value.trim()).filter(Boolean);
+      btn.disabled = true;
+      try {
+        const res = await fetch(
+          '/api/public/waitlist/more/' + encodeURIComponent(AuthScreens._moreToken), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              group_name: byId('more-group-name').value.trim() || undefined,
+              group_size: byId('more-group-size').value || undefined,
+              group_role: byId('more-group-role').value || undefined,
+              group_tools: chips.tools ? chips.tools.get() : [],
+              group_need: byId('more-group-need').value.trim() || undefined,
+              had_loss: chips.lossHad ? chips.lossHad.get() || undefined : undefined,
+              loss_product: byId('more-loss-product').value.trim() || undefined,
+              loss_kind: chips.lossKinds ? chips.lossKinds.get() : [],
+              loss_story: byId('more-loss-story').value.trim() || undefined,
+              farcaster: byId('more-handle-farcaster').value.trim() || undefined,
+              discord: byId('more-handle-discord').value.trim() || undefined,
+              telegram: byId('more-handle-telegram').value.trim() || undefined,
+              other_handle: byId('more-handle-other').value.trim() || undefined,
+              invites,
+              admit_together: byId('more-admit-together').checked,
+              referrer_handle: byId('more-referrer').value.trim() || undefined,
+            }),
+          });
+        const data = await res.json().catch(() => null);
+        if (res.ok) {
+          showMsg((data && data.message) || 'Saved — thanks.', false);
+        } else {
+          showMsg((data && data.error) || 'Something went wrong — try again.', true);
+        }
+      } catch (_) {
+        showMsg('Connection issue — try again.', true);
+      }
+      btn.disabled = false;
     },
 
     async _loadLandingApps() {

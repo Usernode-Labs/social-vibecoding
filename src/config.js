@@ -205,6 +205,18 @@ function load() {
     githubAppId: process.env.GITHUB_APP_ID || '',
     githubPrivateKey: (process.env.GITHUB_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+    // Waitlist social-connect OAuth apps (two-stage waitlist survey).
+    // Plain OAuth apps — unrelated to the GitHub App above (which is the
+    // repo-hosting integration). Optional: without credentials the
+    // connect buttons for that provider degrade to plain text inputs on
+    // the stage-2 form (src/routes/waitlist-connect.js).
+    waitlistGithubClientId: process.env.WAITLIST_GITHUB_CLIENT_ID || '',
+    waitlistGithubClientSecret: process.env.WAITLIST_GITHUB_CLIENT_SECRET || '',
+    waitlistXClientId: process.env.WAITLIST_X_CLIENT_ID || '',
+    waitlistXClientSecret: process.env.WAITLIST_X_CLIENT_SECRET || '',
+    // Overrides the OAuth redirect_uri origin (staging); defaults to the
+    // production origin in production, localhost in dev.
+    waitlistOauthOrigin: process.env.WAITLIST_OAUTH_ORIGIN || '',
     logLevel: process.env.LOG_LEVEL || 'INFO',
     // Hard cap on non-errored apps per server. Protects against runaway
     // container / DB creation chewing through host resources. Admins bypass

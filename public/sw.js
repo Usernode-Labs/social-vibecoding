@@ -16,7 +16,7 @@
 // .test.js loads this file in Node (module.exports branch at the bottom)
 // and pins the bypass list without a browser.
 
-const SW_VERSION = 'v3';
+const SW_VERSION = 'v4';
 const SHELL_CACHE = `usernode-shell-${SW_VERSION}`;
 const API_CACHE = `usernode-api-${SW_VERSION}`;
 const IMMUTABLE_CACHE = `usernode-immutable-${SW_VERSION}`;

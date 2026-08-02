@@ -25,6 +25,7 @@ const log = require('../services/logger');
 const { clientIp } = require('../services/client-ip');
 const { waitlistJoinLimiter } = require('../middleware/rate-limits');
 const waitlist = require('../services/waitlist');
+const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail } = require('../services/topochain/mailer');
 const { productionHostname } = require('../services/caddy');
 
@@ -193,28 +194,92 @@ function publicApiRoutes(config) {
     }
   });
 
-  // POST /api/public/waitlist — email-only platform waitlist join
-  // (onboarding flow alignment). No account required. Idempotent and
-  // non-enumerating: an email that's already on the list gets the same
-  // 200 as a fresh one. Confirmation mail is best-effort (the mailer
-  // degrades silently when no transport is configured).
+  // GET /api/public/waitlist/options — the survey question definitions
+  // (option keys + labels, countries, limits). The SPA renders both
+  // waitlist forms from this so client and server validation can't
+  // drift; the payload is static per process.
+  router.get('/api/public/waitlist/options', (_req, res) => {
+    res.json(questions.publicOptions());
+  });
+
+  // POST /api/public/waitlist — platform waitlist join (onboarding flow
+  // alignment), now carrying the stage-1 survey (mirrors the original
+  // topochain waitlist: made_url + discovery required, location
+  // optional). No account required. Idempotent and non-enumerating: an
+  // email that's already on the list gets the same 200 as a fresh one —
+  // but only the FIRST join gets a stage-2 `more` link back (re-joins
+  // must not hand a stranger the capability to edit someone's answers).
+  // Confirmation mail is best-effort (the mailer degrades silently when
+  // no transport is configured).
   router.post('/api/public/waitlist', waitlistJoinLimiter, async (req, res) => {
     const email = waitlist.normalizeEmail(req.body?.email);
     if (!email) {
       return res.status(422).json({ error: 'A valid email address is required.' });
     }
+    const stage1 = questions.validateStage1(req.body || {});
+    if (!stage1.ok) {
+      return res.status(422).json({ error: stage1.error });
+    }
     try {
-      const { created } = await waitlist.joinWaitlist(pool, {
+      const { created, moreToken } = await waitlist.joinWaitlist(pool, {
         email,
         ip: clientIp(req),
+        answers: stage1.value,
       });
       if (created) {
         log.info('public-api', 'Waitlist join', {});
-        sendWaitlistJoinMail(config, email); // fire-and-forget, never throws
+        sendWaitlistJoinMail(config, email, { moreToken }); // fire-and-forget, never throws
       }
-      res.json({ ok: true, message: "You're on the waitlist. We'll email you when access opens up." });
+      res.json({
+        ok: true,
+        message: "You're on the waitlist. We'll email you when access opens up.",
+        // Stage-2 capability — present only on the first join.
+        more_token: moreToken || null,
+      });
     } catch (err) {
       log.error('public-api', 'waitlist join failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/public/waitlist/more/:token — stage-2 state for the "Want
+  // in sooner?" form: previously saved answers (so the form is
+  // re-openable and prefills) plus which OAuth connects are available /
+  // already verified. The token is an unguessable capability from the
+  // join response / email; an invalid token 404s.
+  router.get('/api/public/waitlist/more/:token', waitlistJoinLimiter, async (req, res) => {
+    try {
+      const row = await waitlist.getSignupByMoreToken(pool, req.params.token);
+      if (!row) return res.status(404).json({ error: 'Unknown or expired link.' });
+      const answers = row.answers && typeof row.answers === 'object' ? row.answers : {};
+      res.json({
+        ok: true,
+        answers,
+        oauth: {
+          github: !!(config.waitlistGithubClientId && config.waitlistGithubClientSecret),
+          x: !!(config.waitlistXClientId && config.waitlistXClientSecret),
+        },
+      });
+    } catch (err) {
+      log.error('public-api', 'waitlist more fetch failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // POST /api/public/waitlist/more/:token — merge stage-2 answers.
+  // Everything optional; sections merge (a later visit can fill in what
+  // an earlier one skipped). Mirrors topochain's storeMore.
+  router.post('/api/public/waitlist/more/:token', waitlistJoinLimiter, async (req, res) => {
+    const stage2 = questions.validateStage2(req.body || {});
+    if (!stage2.ok) {
+      return res.status(422).json({ error: stage2.error });
+    }
+    try {
+      const merged = await waitlist.mergeMoreAnswers(pool, req.params.token, stage2.value);
+      if (!merged) return res.status(404).json({ error: 'Unknown or expired link.' });
+      res.json({ ok: true, message: 'Saved — thanks. You can come back and add to this any time.' });
+    } catch (err) {
+      log.error('public-api', 'waitlist more save failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
