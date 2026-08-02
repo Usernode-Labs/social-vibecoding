@@ -98,10 +98,23 @@ test('selfAppHashPath moves SPA hash routes into the fragment', () => {
 test('selfAppHashPath leaves bare /, already-fragment, and server pages alone', () => {
   assert.equal(visuals.selfAppHashPath('/'), '/');
   assert.equal(visuals.selfAppHashPath('/#app/social/dev'), '/#app/social/dev');
+  // /cli/authorize is the one genuinely standalone server page left after
+  // #860; the retired admin pathnames still resolve (they serve redirect
+  // stubs) so they are left alone too rather than being rewritten.
+  assert.equal(visuals.selfAppHashPath('/cli/authorize'), '/cli/authorize');
   assert.equal(visuals.selfAppHashPath('/dashboard'), '/dashboard');
-  assert.equal(visuals.selfAppHashPath('/admin'), '/admin');
   assert.equal(visuals.selfAppHashPath('/status'), '/status');
   assert.equal(visuals.selfAppHashPath('/node-status'), '/node-status');
+});
+
+// #860: the admin console is an in-SPA hash route, so a testing path written
+// against a console section must be moved into the fragment — otherwise the
+// capture lands on the home feed.
+test('selfAppHashPath moves #admin console sections into the fragment', () => {
+  assert.equal(visuals.selfAppHashPath('/admin'), '/#admin');
+  assert.equal(visuals.selfAppHashPath('/admin/analytics'), '/#admin/analytics');
+  assert.equal(visuals.selfAppHashPath('/admin/status'), '/#admin/status');
+  assert.equal(visuals.selfAppHashPath('/admin/merges?demo=1'), '/#admin/merges?demo=1');
 });
 
 // ── beforeContainerName ("before" target resolution) ───────────────────

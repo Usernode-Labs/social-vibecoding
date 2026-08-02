@@ -3,6 +3,7 @@
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const log = require('../services/logger');
+const galleryDemo = require('../services/gallery-demo');
 
 // Public artifact serving for before/after visuals (#195).
 //
@@ -22,6 +23,18 @@ function visualsRoutes(config) {
   router.get('/visuals/:id', async (req, res) => {
     const id = String(req.params.id || '');
     if (!/^[a-f0-9]{32}$/.test(id)) return res.status(404).end();
+    // Staging mock data (#860): the #admin/gallery section's ?demo=1 rows
+    // reference reserved artifact ids that exist in no table — the tile
+    // renderer always builds /visuals/<id>, so a data-URI can't be threaded
+    // through it. Serve the tiny inline placeholder PNGs for exactly those
+    // ids. Gated on USERNODE_ENV === 'staging' inside isDemoVisualId, so
+    // this is a strict no-op in production.
+    const demoBytes = galleryDemo.demoVisualBytes(id);
+    if (demoBytes) {
+      res.set('Content-Type', demoBytes.contentType);
+      res.set('Cache-Control', 'no-store');
+      return res.send(demoBytes.data);
+    }
     try {
       const { rows } = await pool.query(
         `SELECT content_type, data FROM session_visuals WHERE id = $1`,

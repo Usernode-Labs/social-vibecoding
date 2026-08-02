@@ -11,7 +11,10 @@
 //   2. Source guards — pin the bucketing boundaries, the $20+ BYOK split
 //      predicate, and the $0-derivation on src/routes/dashboard.js, the
 //      staging seed contract on src/db/migrate.js, the dapp.json proposal
-//      check, and the client renderer/INFO wiring on public/js/dashboard.js.
+//      check, and the client renderer/INFO wiring on
+//      public/js/admin-analytics.js (was public/js/dashboard.js +
+//      public/dashboard.html before #860 folded the page into the
+//      #admin/analytics console section).
 //
 // Run with: node --test tests/dashboard-spend-distribution.test.js
 
@@ -149,14 +152,17 @@ test('seed: both $20+ sub-buckets are represented (own-key and no-key users)', (
 
 // ── 4. Proposal check + client wiring ────────────────────────────────────
 
-test('dapp.json: a proposal check targets /dashboard with #spend-distribution', () => {
+test('dapp.json: a proposal check targets #admin/analytics with #spend-distribution', () => {
+  // #860: the chart lives in the #admin/analytics console section now, and
+  // the self-app is hash-routed — a plain /dashboard pathname would only
+  // hit the redirect stub.
   const manifest = JSON.parse(read('dapp.json'));
-  const t = (manifest.tests || []).find((x) => x.path === '/dashboard' && x.expectSelector === '#spend-distribution');
-  assert.ok(t, 'a /dashboard test asserting #spend-distribution must be declared');
+  const t = (manifest.tests || []).find((x) => x.path === '/#admin/analytics' && x.expectSelector === '#spend-distribution');
+  assert.ok(t, 'a /#admin/analytics test asserting #spend-distribution must be declared');
 });
 
-test('client: dashboard.js renders the chart, registers its INFO, and loads the endpoint', () => {
-  const js = read('public/js/dashboard.js');
+test('client: admin-analytics.js renders the chart, registers its INFO, and loads the endpoint', () => {
+  const js = read('public/js/admin-analytics.js');
   assert.match(js, /function renderSpendDistribution\(\)/, 'renderer must exist');
   assert.match(js, /'spend-distribution':/, 'INFO entry must exist');
   assert.match(js, /analytics\/spend-distribution/, 'loadAll must fetch the endpoint');
@@ -168,8 +174,8 @@ test('client: dashboard.js renders the chart, registers its INFO, and loads the 
   assert.match(js, /\$20\+ own key/, 'own-key label must be present');
 });
 
-test('html: dashboard.html mounts the #spend-distribution container', () => {
-  const html = read('public/dashboard.html');
+test('markup: admin-analytics.js mounts the #spend-distribution container', () => {
+  const html = read('public/js/admin-analytics.js');
   assert.match(html, /id="spend-distribution"/, 'mount point must exist');
   assert.match(html, /data-info="spend-distribution"/, 'info icon must be wired');
 });
@@ -177,7 +183,7 @@ test('html: dashboard.html mounts the #spend-distribution container', () => {
 // ── 5. "Hide $0 / Show $0" toggle ────────────────────────────────────────
 
 test('html: the chart header carries a Hide/Show $0 toggle', () => {
-  const html = read('public/dashboard.html');
+  const html = read('public/js/admin-analytics.js');
   assert.match(html, /data-zero-toggle="spend-distribution"/, 'toggle group must exist');
   assert.match(html, /data-zero="hide"[^>]*>Hide \$0/, 'a "Hide $0" button must exist');
   assert.match(html, /data-zero="show"[^>]*>Show \$0/, 'a "Show $0" button must exist');
@@ -190,7 +196,7 @@ test('html: the chart header carries a Hide/Show $0 toggle', () => {
 });
 
 test('client: the renderer filters the $0 bucket unless the toggle is on', () => {
-  const js = read('public/js/dashboard.js');
+  const js = read('public/js/admin-analytics.js');
   // State var + persistence key, defaulting OFF (Hide $0).
   assert.match(js, /SPEND_DIST_ZERO_KEY\s*=\s*'dashSpendDistIncludeZero'/, 'localStorage key must be defined');
   assert.match(
@@ -207,7 +213,7 @@ test('client: the renderer filters the $0 bucket unless the toggle is on', () =>
 });
 
 test('client: the toggle persists and re-renders without refetching', () => {
-  const js = read('public/js/dashboard.js');
+  const js = read('public/js/admin-analytics.js');
   assert.match(js, /function wireZeroToggle\(\)/, 'the toggle wiring fn must exist');
   assert.match(js, /wireZeroToggle\(\)/, 'the toggle must be wired in init()');
   // On click it persists the choice and re-renders from the cached payload.

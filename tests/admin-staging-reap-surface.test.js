@@ -122,7 +122,7 @@ test('the shell routes the aggregate event into the console', () => {
 });
 
 test('the console section exists, is admin-visible, and its button is write-gated', () => {
-  assert.match(consoleJs, /\{ key: 'staging-reap', label: 'Stale previews' \}/,
+  assert.match(consoleJs, /\{ key: 'staging-reap', label: 'Stale previews', group: '[^']+' \}/,
     'a real section in the admin console nav');
   assert.match(
     consoleJs,

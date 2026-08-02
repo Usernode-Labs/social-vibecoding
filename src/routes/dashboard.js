@@ -2,11 +2,14 @@ const { Router } = require('express');
 const { getPool } = require('../db/pool');
 const { adminMiddleware } = require('../middleware/admin');
 const log = require('../services/logger');
+const analyticsDemo = require('../services/analytics-demo');
 
 // Admin analytics dashboard API. All endpoints sit behind adminMiddleware
 // (same gate as the rest of /api/admin) and answer the questions the
-// /dashboard page asks: how many users, how the dapp-usage and
-// PR-promotion funnels convert, and how growth + retention are trending.
+// #admin/analytics console section asks (the standalone /dashboard page it
+// used to back is a redirect stub since #860): how many users, how the
+// dapp-usage and PR-promotion funnels convert, and how growth + retention
+// are trending.
 //
 // Source-of-truth note: the append-only `events` table (schema.sql) is
 // the long-term canonical analytics log and is now both backfilled and
@@ -32,6 +35,30 @@ const log = require('../services/logger');
 function adminFilter(col, includeAdmins, keyword = 'AND') {
   if (includeAdmins) return '';
   return `${keyword} ${col} NOT IN (SELECT id FROM users WHERE is_admin)`;
+}
+
+// ── Staging mock data (#860) ─────────────────────────────────────────────
+//
+// Every chart here derives from `events` and `llm_usage`, both
+// `staging:private` — so a prod-cloned staging DB renders the whole
+// #admin/analytics section as blank axes, and no reviewer can tell a broken
+// chart from an empty one. Under IS_STAGING + ?demo=1 we SUBSTITUTE the
+// deterministic synthetic series in services/analytics-demo.js.
+//
+// Substitute, not add: `wantsDemo` only opens the door, and each call site
+// additionally requires the real result to be genuinely empty. Spend and
+// spend-distribution build a date "spine", so they always return ~30 rows —
+// emptiness there means all-zero VALUES, which is what `allZero` tests.
+// Strictly a no-op in production (analyticsDemo.IS_STAGING is false).
+function wantsDemo(req) {
+  return analyticsDemo.IS_STAGING && req.query.demo === '1';
+}
+
+// True when every row is zero/null across the given numeric columns (or
+// there are no rows at all).
+function allZero(rows, keys) {
+  if (!Array.isArray(rows) || !rows.length) return true;
+  return rows.every((r) => keys.every((k) => !Number(r[k])));
 }
 
 // Read the ?includeAdmins= query param. Anything but the literal 'true'
@@ -140,7 +167,7 @@ function dashboardRoutes(config) {
         ),
       ]);
 
-      res.json({
+      const overview = {
         users: users.rows[0],
         appsTotal: apps.rows[0].total,
         prs: prs.rows[0],
@@ -148,7 +175,13 @@ function dashboardRoutes(config) {
         mau: active.rows[0].mau,
         llmSpendTodayCents: llm.rows[0].cents,
         kudosTotal: kudos.rows[0].total,
-      });
+      };
+      // Staging demo: only when the counters are genuinely empty — a staging
+      // clone that does carry users should show its own numbers.
+      if (wantsDemo(req) && !Number(overview.users?.total)) {
+        return res.json(analyticsDemo.overview());
+      }
+      res.json(overview);
     } catch (err) {
       log.error('dashboard', 'overview failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -253,6 +286,10 @@ function dashboardRoutes(config) {
          WHERE ${sessUserCohort} ${adminFilter('usr.id', includeAdmins)}`
       );
 
+      // Staging demo: substituted when the first funnel stage is empty.
+      if (wantsDemo(req) && !Number(dapp.rows[0]?.signed_up)) {
+        return res.json({ cohort: req.query.cohort || 'all', ...analyticsDemo.funnels() });
+      }
       res.json({
         cohort: req.query.cohort || 'all',
         dappUsage: dapp.rows[0],
@@ -331,6 +368,10 @@ function dashboardRoutes(config) {
          LEFT JOIN mg ON mg.wk = s.wk
          ORDER BY s.wk`
       );
+      // Staging demo: growth reads events, which is staging:private.
+      if (wantsDemo(req) && allZero(rows, ['new_users', 'new_apps', 'promoted_prs', 'merged_prs'])) {
+        return res.json(analyticsDemo.growth());
+      }
       res.json({ weeks: rows });
     } catch (err) {
       log.error('dashboard', 'growth failed', { message: err.message });
@@ -401,9 +442,14 @@ function dashboardRoutes(config) {
         }
       }
 
-      res.json({
-        cohorts: Array.from(byCohort.values()),
-      });
+      // (`cohorts` above is the query result; this is the reshaped payload.)
+      const cohortRows = Array.from(byCohort.values());
+      // Staging demo: retention reads the activity surfaces, all empty in a
+      // prod-cloned staging DB.
+      if (wantsDemo(req) && !cohortRows.length) {
+        return res.json(analyticsDemo.retention());
+      }
+      res.json({ cohorts: cohortRows });
     } catch (err) {
       log.error('dashboard', 'retention failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
@@ -448,6 +494,10 @@ function dashboardRoutes(config) {
          GROUP BY d.d
          ORDER BY d.d`
       );
+      // Staging demo: DAU/WAU/MAU all derive from events.
+      if (wantsDemo(req) && allZero(rows, ['dau', 'wau', 'mau'])) {
+        return res.json(analyticsDemo.generalUsers());
+      }
       res.json({ daily: rows });
     } catch (err) {
       log.error('dashboard', 'general-users failed', { message: err.message });
@@ -545,6 +595,12 @@ function dashboardRoutes(config) {
          ORDER BY d.d`
       );
 
+      // Staging demo: both series derive from events.
+      if (wantsDemo(req)
+        && allZero(wau.rows, ['count'])
+        && allZero(l4.rows, ['b1', 'b2', 'b3', 'b4'])) {
+        return res.json(analyticsDemo.powerUsers());
+      }
       res.json({ wau: wau.rows, l4: l4.rows });
     } catch (err) {
       log.error('dashboard', 'power-users failed', { message: err.message });
@@ -639,6 +695,10 @@ function dashboardRoutes(config) {
          JOIN pop p ON p.wk = b.wk
          ORDER BY b.wk`
       );
+      // Staging demo: pr_kudos is staging:private.
+      if (wantsDemo(req) && allZero(rows, ['g0', 'g1', 'g2', 'g3', 'g4', 'g5'])) {
+        return res.json(analyticsDemo.kudos());
+      }
       res.json({ weeks: rows });
     } catch (err) {
       log.error('dashboard', 'kudos failed', { message: err.message });
@@ -708,6 +768,11 @@ function dashboardRoutes(config) {
          LEFT JOIN sys sy ON sy.day = s.day
          ORDER BY s.day`
       );
+      // Staging demo: llm_usage is staging:private. The date spine always
+      // returns ~30 rows, so emptiness here means all-zero VALUES.
+      if (wantsDemo(req) && allZero(rows, ['platform_cents', 'user_key_cents', 'system_cents'])) {
+        return res.json(analyticsDemo.spend());
+      }
       res.json({ days: rows });
     } catch (err) {
       log.error('dashboard', 'spend failed', { message: err.message });
@@ -735,6 +800,10 @@ function dashboardRoutes(config) {
           ORDER BY (SUM(lu.total_cost_cents) + SUM(lu.byok_cost_cents)) DESC, u.username
           LIMIT 30`
       );
+      // Staging demo: llm_usage is staging:private.
+      if (wantsDemo(req) && allZero(rows, ['platform_cents', 'user_key_cents'])) {
+        return res.json(analyticsDemo.spendByBuilder());
+      }
       res.json({ builders: rows });
     } catch (err) {
       log.error('dashboard', 'spend-by-builder failed', { message: err.message });
@@ -812,6 +881,11 @@ function dashboardRoutes(config) {
            LEFT JOIN agg a ON a.day = s.day
           ORDER BY s.day`
       );
+      // Staging demo: same spine caveat as /spend — all-zero buckets, not
+      // zero rows, is what "empty" looks like here.
+      if (wantsDemo(req) && allZero(rows, ['b0', 'b1', 'b2', 'b3', 'b4', 'b5', 'b6'])) {
+        return res.json(analyticsDemo.spendDistribution());
+      }
       res.json({ days: rows });
     } catch (err) {
       log.error('dashboard', 'spend-distribution failed', { message: err.message });

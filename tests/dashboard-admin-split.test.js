@@ -11,7 +11,9 @@
 //   2. Source guards — pin the SQL companions on src/routes/dashboard.js and
 //      the staging seed contract on src/db/migrate.js (string-assertion
 //      style, matching tests/ai-progress-estimate.test.js).
-//   3. Client — dashboard.js registers a per-card tooltip definition for each
+//   3. Client — admin-analytics.js (was public/js/dashboard.js before #860
+//      folded the page into the #admin/analytics section) registers a
+//      per-card tooltip definition for each
 //      of the ten Overview cards and threads the amber admin colour through.
 //
 // Run with: node --test tests/dashboard-admin-split.test.js
@@ -273,8 +275,8 @@ const CARD_IDS = [
   'promoted-open', 'promoted-all', 'merged-all', 'kudos', 'llm-today',
 ];
 
-test('dashboard.js: a per-card tooltip definition exists for each of the ten cards', () => {
-  const src = read('public/js/dashboard.js');
+test('admin-analytics.js: a per-card tooltip definition exists for each of the ten cards', () => {
+  const src = read('public/js/admin-analytics.js');
   const mapStart = src.indexOf('const CARD_INFO');
   assert.ok(mapStart !== -1, 'CARD_INFO map must be defined');
   const mapBody = src.slice(mapStart, src.indexOf('};', mapStart));
@@ -286,15 +288,19 @@ test('dashboard.js: a per-card tooltip definition exists for each of the ten car
   assert.match(mapBody, /MAU/);
 });
 
-test('dashboard.js: renderCounters renders + wires a (?) icon per card', () => {
-  const src = read('public/js/dashboard.js');
+test('admin-analytics.js: renderCounters renders + wires a (?) icon per card', () => {
+  const src = read('public/js/admin-analytics.js');
   assert.match(src, /data-card-info="\$\{c\.id\}"/, 'each card must render a (?) icon');
-  assert.match(src, /wireInfoIcon\(el, `card-\$\{c\.id\}`, CARD_INFO\[c\.id\]\)/,
+  // The local holding the icon element is named freely (#860 renamed it to
+  // `icon` when the counters container took over the name `el`) — what
+  // matters is that each card's icon is registered under its own tip-store
+  // key with its CARD_INFO copy.
+  assert.match(src, /wireInfoIcon\(\w+, `card-\$\{c\.id\}`, CARD_INFO\[c\.id\]\)/,
     'each card icon must be registered in the tip store with focus wiring');
 });
 
-test('dashboard.js: the amber admin colour + Non-admin/Admin legend are wired', () => {
-  const src = read('public/js/dashboard.js');
+test('admin-analytics.js: the amber admin colour + Non-admin/Admin legend are wired', () => {
+  const src = read('public/js/admin-analytics.js');
   assert.match(src, /const ADMIN_COLOR = '#f59e0b'/, 'amber admin colour constant must exist');
   assert.match(src, /function adminLegend/, 'a reusable Non-admin/Admin legend helper must exist');
   // barChart stacks admin sub-rects; funnel splits a second amber segment;
@@ -303,8 +309,8 @@ test('dashboard.js: the amber admin colour + Non-admin/Admin legend are wired', 
   assert.match(src, /stroke="\$\{ADMIN_COLOR\}"/, 'spend-by-builder must outline admin bars in amber');
 });
 
-test('dashboard.js: renderSpend stacks an amber admin segment on Daily spend', () => {
-  const src = read('public/js/dashboard.js');
+test('admin-analytics.js: renderSpend stacks an amber admin segment on Daily spend', () => {
+  const src = read('public/js/admin-analytics.js');
   const start = src.indexOf('function renderSpend');
   const end = src.indexOf('function renderSpendByBuilder');
   const body = src.slice(start, end);

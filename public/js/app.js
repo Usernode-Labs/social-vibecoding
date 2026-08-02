@@ -2884,8 +2884,16 @@ const App = {
     if (window.Profile?.close) Profile.close();
   },
 
-  // Show the admin & moderation console (#818). Sibling to
-  // navigateToProfile — hides home + app, reveals the dedicated
+  // Sections of the admin console that were PUBLIC pages before #860
+  // folded them in (/status and /node-status). A signed-in non-admin who
+  // follows one of those old links still gets them — everything else in
+  // the console, including bare #admin, still bounces a non-admin home.
+  // Must stay in sync with the `public: true` flags in
+  // AdminConsole.SECTIONS (public/js/admin-console.js).
+  ADMIN_PUBLIC_SECTIONS: ['status', 'node'],
+
+  // Show the admin & moderation console (#818, extended by #860). Sibling
+  // to navigateToProfile — hides home + app, reveals the dedicated
   // #admin-screen, lets the AdminConsole module render itself into
   // #admin-root. Gate: App.user.isAdmin, which covers BOTH full and
   // view-only admins (see renderAdminButton above) — a hand-typed #admin
@@ -2893,8 +2901,17 @@ const App = {
   // App.user.isAdmin at boot, so preview mode is covered by the same
   // check. Every /api/admin/* endpoint the page calls is independently
   // enforced server-side.
+  //
+  // The one exception is PUBLIC MODE: a non-admin asking for #admin/status
+  // or #admin/node gets the console mounted with only those two sections
+  // in the menu and the header reading "Platform status". The data they
+  // see is the same sanitized /api/status payload the old public /status
+  // page served them (src/services/status.js redact()), so this widens no
+  // boundary — it only keeps the old public URLs working.
   navigateToAdminConsole(section) {
-    if (!App.user?.isAdmin) {
+    const isAdmin = !!App.user?.isAdmin;
+    const publicMode = !isAdmin && App.ADMIN_PUBLIC_SECTIONS.includes(section);
+    if (!isAdmin && !publicMode) {
       App.navigateHome();
       return;
     }
@@ -2925,9 +2942,9 @@ const App = {
     const _drs = document.getElementById('drawer-row-share');
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
-    App.setHeaderTitle('Admin & moderation');
+    App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
     App._inAdmin = true;
-    if (window.AdminConsole?.open) AdminConsole.open(section);
+    if (window.AdminConsole?.open) AdminConsole.open(section, { public: publicMode });
   },
 
   _exitAdminConsole() {

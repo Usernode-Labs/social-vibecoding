@@ -285,12 +285,16 @@ app.get('/claude.md', (_req, res) => {
 //
 // Three surfaces:
 //   - /api/node-status        : compact node snapshot (powers the summary
-//                                card on the main /status page)
+//                                card in the #admin/status section)
 //   - /api/node-status/full   : full snapshot (server + node + explorer +
 //                                chain-dependent services). Powers the
-//                                /node-status viewer page.
-//   - /node-status            : the standalone HTML viewer (modeled on
-//                                dapp-server.js's /status page)
+//                                #admin/node section.
+//   - /node-status            : redirect stub into #admin/node (#860)
+//
+// The two JSON endpoints stay mounted here, BEFORE authMiddleware, and must
+// not move: since #860 folded the viewer pages into the signed-in console,
+// these are the anonymous surface — external monitoring and embedded
+// child-app reads depend on them being open.
 app.get('/api/node-status', (_req, res) => {
   res.set('Cache-Control', 'no-store');
   res.json(nodeStatus.get());
@@ -597,40 +601,38 @@ app.use(express.static(path.join(__dirname, 'public'), {
   },
 }));
 
+// ── Retired standalone admin pages → #admin console sections (#860) ──────
+//
+// /admin, /admin-features, /dashboard, /debug and /gallery used to be
+// full-browser pages of their own. They are now SECTIONS of the in-app
+// admin console, and each of these routes serves a tiny client-side
+// redirect stub (public/<name>.html) that rewrites the URL into the
+// matching #admin/<section>. The static handler above already serves the
+// `.html` forms of the same stubs, so both /admin and /admin.html forward.
+//
+// The stubs are client-side rather than a server 302 on purpose: a 302's
+// own Location fragment wins over the request's, so /admin#campaign-3
+// would silently lose the campaign id. Only a stub sees both halves.
+//
+// Access control is unchanged and lives where it always did — the console
+// gates navigation on App.user.isAdmin and every /api/admin/*, /api/debug/*
+// and /api/gallery/* endpoint is independently enforced server-side.
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
-// Cross-app "submitted features" admin view (#562). Like /admin, the static
-// shell is served to anyone; admin-features.js checks /api/auth/me and gates
-// non-admins, while the GET /api/admin/submitted-features data endpoint it
-// calls is independently enforced by adminMiddleware. Must be registered
-// before the app.get('*') SPA fallback below.
 app.get('/admin-features', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'admin-features.html'));
 });
 
-// Admin analytics dashboard. Like /admin, the static shell is served to
-// anyone; the page bootstraps by checking /api/auth/me and redirects
-// non-admins, while the /api/admin/analytics/* data endpoints it calls
-// are independently enforced by adminMiddleware.
 app.get('/dashboard', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
-// Admin merge-debug view. Like /admin and /dashboard the static shell is
-// served to anyone; debug.js checks /api/auth/me and redirects non-admins,
-// while the /api/debug/* endpoints it calls are enforced by adminMiddleware.
-// Must be registered before the app.get('*') SPA fallback below.
 app.get('/debug', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'debug.html'));
 });
 
-// Admin before/after screenshot gallery. Like /admin, /dashboard and /debug
-// the static shell is served to anyone; gallery.js checks /api/auth/me and
-// shows an "Admins only" message, while the /api/gallery/* endpoints it
-// calls are independently enforced in src/routes/gallery.js. Must be
-// registered before the app.get('*') SPA fallback below.
 app.get('/gallery', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'gallery.html'));
 });

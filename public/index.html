@@ -406,15 +406,24 @@
     <div id="profile-root" class="max-w-3xl mx-auto p-4"></div>
   </main>
 
-  <!-- Admin & moderation console screen (#818): the full-page console
-       behind the header shield icon (#588 shipped the icon), rendered by
-       public/js/admin-console.js. Hash route #admin[/section]; mounted by
-       App.navigateToAdminConsole, which gates on App.user.isAdmin (both
-       full and view-only admins) — every /api/admin/* endpoint the page
-       calls is independently enforced server-side. Ships hidden like its
-       sibling screens. -->
+  <!-- Admin & moderation console screen (#818, extended by #860): the
+       full-page console behind the header shield icon (#588 shipped the
+       icon), rendered by public/js/admin-console.js plus one module per
+       heavy section (admin-status / admin-node / admin-analytics /
+       admin-merges / admin-gallery / admin-campaigns / admin-topochain).
+       Hash route #admin[/section]; mounted by App.navigateToAdminConsole,
+       which gates on App.user.isAdmin (both full and view-only admins) —
+       every /api/admin/* endpoint the page calls is independently enforced
+       server-side. The two `public` sections (#admin/status, #admin/node)
+       also mount for a signed-in non-admin; see the PUBLIC MODE note in
+       admin-console.js. Ships hidden like its sibling screens.
+
+       max-w-7xl (not 5xl like the other screens): the folded-in Health &
+       status and Analytics sections were built for a wide column — the
+       status summary is a 6-across tile grid and the analytics charts are
+       640px-wide SVGs. -->
   <main id="admin-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
-    <div id="admin-root" class="max-w-5xl mx-auto p-4 w-full"></div>
+    <div id="admin-root" class="max-w-7xl mx-auto p-4 w-full"></div>
   </main>
 
   <!-- Topochain leaderboard screen (Task 14, public screens): the
@@ -2131,10 +2140,24 @@
   <script src="/js/topochain-leaderboard.js"></script>
   <script src="/js/topochain-seasons.js"></script>
   <!-- Topochain admin console screens (Task 15): the 'topochain' entry
-       in AdminConsole.SECTIONS delegates to AdminTopochain.render(),
+       in AdminConsole.SECTION_MODULES delegates to AdminTopochain.render(),
        which owns its own sub-nav under #admin/topochain/<sub>. Loaded
        after admin-console.js (which it extends) and before app.js. -->
   <script src="/js/admin-topochain.js"></script>
+  <!-- Folded-in admin console sections (#860): the seven standalone pages
+       (/status, /node-status, /dashboard, /debug, /gallery, /admin,
+       /admin-features) are now sections here, one module each. Same
+       contract as admin-topochain.js — AdminConsole.SECTION_MODULES maps a
+       section key to the global these define, and calls render(host) /
+       destroy(host) on it. Load order is unconstrained: the console
+       resolves each module by name at section-render time (AdminGallery
+       likewise looks up AppView, loaded below, only when it renders). -->
+  <script src="/js/admin-status.js"></script>
+  <script src="/js/admin-node.js"></script>
+  <script src="/js/admin-analytics.js"></script>
+  <script src="/js/admin-merges.js"></script>
+  <script src="/js/admin-gallery.js"></script>
+  <script src="/js/admin-campaigns.js"></script>
   <!-- Build-failure log panel (#416). Loaded before app-view.js/home.js
        so both surfaces can reference window.BuildLog. -->
   <script src="/js/build-log.js"></script>

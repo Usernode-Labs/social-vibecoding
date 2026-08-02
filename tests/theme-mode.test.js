@@ -17,11 +17,13 @@ const read = (...p) => fs.readFileSync(path.join(PUBLIC, ...p), 'utf8');
 // login.html / register.html dropped: they're redirect stubs into the
 // SPA's hash routes now (fold-auth-pages-into-SPA) — the in-SPA auth
 // screens live inside index.html, which stays themed.
+//
+// admin.html / dashboard.html / status.html dropped for the same reason by
+// #860: the seven standalone admin pages are #admin console sections now,
+// and those files are redirect stubs with no theme bootstrap of their own.
+// index.html is the one document left that needs one.
 const THEMED_PAGES = [
   'index.html',
-  'admin.html',
-  'dashboard.html',
-  'status.html',
 ];
 
 // ── theme.js module contract ─────────────────────────────────────────────
