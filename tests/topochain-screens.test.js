@@ -43,20 +43,33 @@ test('both screen scripts are registered in index.html, before app.js', () => {
   assert.ok(appTagIdx > html.indexOf(seTag), 'seasons script loads before app.js');
 });
 
-test('both screens ship hidden in the shell like their siblings', () => {
-  const lbMain = html.match(/<main id="topochain-leaderboard-screen"[^>]*>/);
+// The leaderboard is no longer a screen of its own: the header
+// slim-down made it the second TAB of the Standings screen, so its root
+// lives INSIDE #leaderboard-screen. Seasons is still a screen.
+test('the leaderboard pane lives inside the Standings screen; seasons keeps its own', () => {
+  assert.ok(!/<main id="topochain-leaderboard-screen"/.test(html),
+    'the standalone #topochain-leaderboard-screen <main> is retired');
+  const lbScreen = html.indexOf('<main id="leaderboard-screen"');
+  const lbRoot = html.indexOf('id="topochain-leaderboard-root"');
+  const lbScreenEnd = html.indexOf('</main>', lbScreen);
+  assert.ok(lbScreen > -1, 'index.html carries #leaderboard-screen (the Standings host)');
+  assert.ok(lbRoot > lbScreen && lbRoot < lbScreenEnd,
+    'the leaderboard module renders into #topochain-leaderboard-root inside the Standings screen');
+  assert.ok(html.includes('id="standings-tabs"'), 'the Standings screen carries the section tab strip');
+
   const seMain = html.match(/<main id="topochain-seasons-screen"[^>]*>/);
-  assert.ok(lbMain, 'index.html carries #topochain-leaderboard-screen');
   assert.ok(seMain, 'index.html carries #topochain-seasons-screen');
-  assert.match(lbMain[0], /class="hidden /, 'leaderboard screen ships hidden');
   assert.match(seMain[0], /class="hidden /, 'seasons screen ships hidden');
-  assert.ok(html.includes('id="topochain-leaderboard-root"'), 'the leaderboard module renders into #topochain-leaderboard-root');
   assert.ok(html.includes('id="topochain-seasons-root"'), 'the seasons module renders into #topochain-seasons-root');
 });
 
-test('navigation entries reach both screens from the header drawer', () => {
-  assert.match(html, /<a id="drawer-row-topochain-leaderboard" href="#topochain\/leaderboard"/,
-    'a real anchor links to #topochain/leaderboard, like the Challenges/Profile drawer rows');
+test('navigation entries reach both surfaces from the header drawer', () => {
+  // The Topochain leaderboard row is gone: Standings is the single entry
+  // point for both leaderboards now.
+  assert.ok(!/id="drawer-row-topochain-leaderboard"/.test(html),
+    'the separate Topochain leaderboard drawer row is retired');
+  assert.match(html, /<a id="drawer-row-standings" href="#leaderboard"/,
+    'a real anchor links to #leaderboard (Standings), like the Challenges/Profile drawer rows');
   assert.match(html, /<a id="drawer-row-topochain-seasons" href="#topochain\/seasons"/,
     'a real anchor links to #topochain/seasons');
 });
@@ -66,44 +79,62 @@ test('navigation entries reach both screens from the header drawer', () => {
 test('the hash router handles #topochain/leaderboard and #topochain/seasons', () => {
   assert.match(appJs, /parts\[0\] === 'topochain'/, 'restoreFromHash has a topochain branch');
   assert.match(appJs, /App\.navigateToTopochainSeasons\(\)/, 'the seasons sub-route dispatches to navigateToTopochainSeasons');
-  assert.match(appJs, /App\.navigateToTopochainLeaderboard\(\)/, 'the default sub-route dispatches to navigateToTopochainLeaderboard');
+  // The leaderboard sub-route is an ALIAS now: rewrite the address so a
+  // bookmark self-heals, then hand off to the Standings screen.
+  const branch = appJs.slice(
+    appJs.indexOf("if (parts[0] === 'topochain')"),
+    appJs.indexOf("if (parts[0] === 'app' && parts[1])")
+  );
+  assert.ok(branch.length > 0, 'the topochain router branch is located');
+  assert.match(branch, /history\.replaceState\(null, '', '#leaderboard\/topochain'\)/,
+    'the legacy hash is rewritten to the canonical #leaderboard/topochain');
+  assert.match(branch, /App\.navigateToLeaderboard\('topochain', null\)/,
+    'then dispatches to the Standings screen on its Topochain section');
+  assert.ok(branch.indexOf('replaceState') < branch.indexOf('navigateToLeaderboard'),
+    'the rewrite happens BEFORE the navigate, so Leaderboard._syncHash sees a #leaderboard hash');
 });
 
-test('navigateToTopochainLeaderboard and navigateToTopochainSeasons carry no isAdmin gate', () => {
+test('the Standings screen and navigateToTopochainSeasons carry no isAdmin gate', () => {
   const lbFn = appJs.slice(
-    appJs.indexOf('  navigateToTopochainLeaderboard()'),
-    appJs.indexOf('  _exitTopochainLeaderboard()')
+    appJs.indexOf('  navigateToLeaderboard(sub, profileUser)'),
+    appJs.indexOf('  _exitLeaderboard()')
   );
   const seFn = appJs.slice(
     appJs.indexOf('  navigateToTopochainSeasons()'),
     appJs.indexOf('  _exitTopochainSeasons()')
   );
-  assert.ok(lbFn.length > 0, 'navigateToTopochainLeaderboard exists in app.js');
+  assert.ok(lbFn.length > 0, 'navigateToLeaderboard exists in app.js');
   assert.ok(seFn.length > 0, 'navigateToTopochainSeasons exists in app.js');
-  assert.ok(!/isAdmin/.test(lbFn), 'the leaderboard screen is a public read — no isAdmin check');
+  assert.ok(!/isAdmin/.test(lbFn), 'the Standings screen is a public read — no isAdmin check');
   assert.ok(!/isAdmin/.test(seFn), 'the seasons screen is a public read — no isAdmin check');
 });
 
-test('every full-screen exit path also exits both new screens', () => {
-  const lbExits = appJs.match(/if \(App\._inTopochainLeaderboard\) App\._exitTopochainLeaderboard\(\);/g) || [];
+test('every full-screen exit path also exits the Standings and seasons screens', () => {
+  const lbExits = appJs.match(/if \(App\._inLeaderboard\) App\._exitLeaderboard\(\);/g) || [];
   const seExits = appJs.match(/if \(App\._inTopochainSeasons\) App\._exitTopochainSeasons\(\);/g) || [];
   // Sibling sites: the app/else branches of restoreFromHash,
-  // navigateToLeaderboard, navigateToChallenges, navigateToProfile,
-  // navigateToAdminConsole, navigateToApp, navigateHome, plus each new
-  // screen exiting the OTHER one — mirrors the >= 6 admin-console bar.
+  // navigateToChallenges, navigateToProfile, navigateToAdminConsole,
+  // navigateToSettings, navigateToApp, navigateHome — mirrors the >= 6
+  // admin-console bar.
   assert.ok(lbExits.length >= 6,
-    `_exitTopochainLeaderboard is called from the sibling navigate/exit sites (found ${lbExits.length}, expect >= 6)`);
+    `_exitLeaderboard is called from the sibling navigate/exit sites (found ${lbExits.length}, expect >= 6)`);
   assert.ok(seExits.length >= 6,
     `_exitTopochainSeasons is called from the sibling navigate/exit sites (found ${seExits.length}, expect >= 6)`);
-  assert.match(appJs, /else if \(App\._inTopochainLeaderboard\) App\.navigateHome\(\);/,
-    'the empty-hash branch sends an open leaderboard screen home');
+  assert.match(appJs, /else if \(App\._inLeaderboard\) App\.navigateHome\(\);/,
+    'the empty-hash branch sends an open Standings screen home');
   assert.match(appJs, /else if \(App\._inTopochainSeasons\) App\.navigateHome\(\);/,
     'the empty-hash branch sends an open seasons screen home');
 });
 
-test('_inTopochainLeaderboard / _inTopochainSeasons state flags are declared', () => {
-  assert.match(appJs, /_inTopochainLeaderboard: false,/, 'flag declared alongside its siblings');
+test('the Topochain leaderboard has no screen state of its own any more', () => {
+  assert.match(appJs, /_inLeaderboard: false,/, 'the Standings flag is declared alongside its siblings');
   assert.match(appJs, /_inTopochainSeasons: false,/, 'flag declared alongside its siblings');
+  // One flag covers both panes. A reintroduced _inTopochainLeaderboard
+  // would mean the tab had drifted back into being a screen.
+  assert.ok(!/_inTopochainLeaderboard: false,/.test(appJs),
+    'no separate _inTopochainLeaderboard flag — the pane is a tab, not a screen');
+  assert.ok(!/_exitTopochainLeaderboard\(\)\s*\{/.test(appJs),
+    'no _exitTopochainLeaderboard — _exitLeaderboard tears down both panes');
 });
 
 // ─── Screen objects: methods + esc() usage ───────────────────────────────
@@ -207,10 +238,19 @@ test('the challenge CTA link is scheme-guarded before it ever reaches an href', 
 
 test('dapp.json locks both rendered pages in with checks', () => {
   const tests = manifest.tests || [];
+  // The legacy hash is still checked — it's the alias path, and a check
+  // on it is what proves the redirect keeps working for old bookmarks.
   const lb = tests.find((t) => t.path === '/#topochain/leaderboard');
-  assert.ok(lb, 'a dapp.json test renders /#topochain/leaderboard');
-  assert.match(lb.expectSelector, /#topochain-leaderboard-screen:not\(\.hidden\)/,
-    'asserts the leaderboard screen is actually revealed, not just present');
+  assert.ok(lb, 'a dapp.json test renders the legacy /#topochain/leaderboard alias');
+  assert.match(lb.expectSelector, /#leaderboard-screen:not\(\.hidden\)/,
+    'asserts the Standings screen is actually revealed, not just present');
+  assert.match(lb.expectSelector, /#topochain-leaderboard-root:not\(\.hidden\)/,
+    'and that the alias lands on the Topochain pane, not the Kudos one');
+
+  const standings = tests.find((t) => t.path === '/#leaderboard');
+  assert.ok(standings, 'a dapp.json test renders the canonical /#leaderboard');
+  assert.match(standings.expectSelector, /\[data-standings-tab="topochain"\]/,
+    'asserts both section tabs render');
 
   const se = tests.find((t) => t.path === '/#topochain/seasons');
   assert.ok(se, 'a dapp.json test renders /#topochain/seasons');

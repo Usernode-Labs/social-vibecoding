@@ -16,10 +16,17 @@ const App = {
   // open full-screen), or 'sessions' (a dev session open full-screen).
   // Only meaningful while currentTab === 'dev'.
   currentSubTab: 'forum',
-  // Tracks whether the dedicated #leaderboard-screen is visible.
-  // Sibling state to `currentApp`: home / app / leaderboard are the
-  // three top-level screens, and they're mutually exclusive. Flipped
-  // by navigateToLeaderboard() / _exitLeaderboard() / navigateHome().
+  // Tracks whether the dedicated #leaderboard-screen (the Standings
+  // screen: Kudos + Topochain tabs) is visible. Sibling state to
+  // `currentApp`: home / app / standings are the three top-level
+  // screens, and they're mutually exclusive. Flipped by
+  // navigateToLeaderboard() / _exitLeaderboard() / navigateHome().
+  //
+  // There is deliberately no separate _inTopochainLeaderboard any more:
+  // the Topochain leaderboard is a TAB of this screen (see
+  // Leaderboard.section), not a screen of its own, so one flag covers
+  // both and the sibling navigate* functions have one fewer exit to
+  // remember.
   _inLeaderboard: false,
   // Same for the #challenges screen (app-as-SV-chrome migration) — set
   // by navigateToChallenges() / _exitChallenges() / navigateHome().
@@ -33,10 +40,6 @@ const App = {
   // Same for the #settings screen (settings-modal-to-screen conversion)
   // — set by navigateToSettings() / _exitSettings() / navigateHome().
   _inSettings: false,
-  // Same for the #topochain/leaderboard screen (Task 14, public screens)
-  // — set by navigateToTopochainLeaderboard() / _exitTopochainLeaderboard()
-  // / navigateHome().
-  _inTopochainLeaderboard: false,
   // Same for the #topochain/seasons screen (Task 14, public screens) —
   // set by navigateToTopochainSeasons() / _exitTopochainSeasons() /
   // navigateHome().
@@ -232,10 +235,10 @@ const App = {
     setInterval(App.loadVersion, 10_000);
   },
 
-  // Admin / moderation console (#588). First slice ships the header
-  // entry point only — the icon after the bell plus a "Coming soon"
-  // placeholder — so the affordance and its permission gate land before
-  // any dashboard content does.
+  // Admin / moderation console entry point (#588). Was a header shield
+  // icon until the header slim-down moved it into the slide-out drawer as
+  // #drawer-row-admin (below Settings). The function keeps its name and
+  // its gate — only the element it reveals changed.
   //
   // Gate: `App.user.isAdmin`, which is true for BOTH full platform
   // admins and view-only admins (`admin_readonly`); see
@@ -243,14 +246,14 @@ const App = {
   // `canAdminWrite` is the narrower full-admin mutation gate. A
   // moderation console is a *viewing* surface, so `isAdmin` is the right
   // flag and `canAdminWrite` would wrongly exclude view-only admins.
-  // Regular users never see the icon. Nothing here consults
-  // USERNODE_ENV — the button exists identically in staging and prod.
+  // Regular users never see the row. Nothing here consults
+  // USERNODE_ENV — the row exists identically in staging and prod.
   //
   // The "View as non-admin" preview reloads the page after masking
   // `App.user.isAdmin` (see settings.js), so this boot-time read is all
-  // that's needed to make the icon disappear in preview mode too.
+  // that's needed to make the row disappear in preview mode too.
   renderAdminButton() {
-    const btn = document.getElementById('admin-dashboard-btn');
+    const btn = document.getElementById('drawer-row-admin');
     if (!btn) return;
     btn.classList.toggle('hidden', !App.user?.isAdmin);
   },
@@ -259,7 +262,11 @@ const App = {
   // drives everything — restoreFromHash lands on navigateToAdminConsole,
   // which mounts #admin-screen and hands rendering to AdminConsole
   // (public/js/admin-console.js). The isAdmin re-check keeps a
-  // programmatic click on the (hidden) button from navigating.
+  // programmatic call from navigating. The drawer row is a real anchor
+  // (its href IS the navigation, matching Settings/Challenges/Profile),
+  // so this stays the *programmatic* entry point rather than a click
+  // handler; the route's own gate inside navigateToAdminConsole is the
+  // client-side boundary, and every /api/admin/* is enforced server-side.
   openAdminConsole() {
     if (!App.user?.isAdmin) return;
     location.hash = '#admin';
@@ -329,10 +336,21 @@ const App = {
   // couple of modifier classes (see public/css/app.css) for the deploying
   // and stale variants. Always leads with the project name (e.g.
   // "usernode") so it reads symmetrically with the per-app pill that
-  // sits next to it ("myapp · 1a2b3c4 · #42").
+  // sits below it in the drawer's status pane ("myapp · 1a2b3c4 · #42").
+  //
+  // The slot moved out of the header and into #drawer-status-pane in the
+  // header slim-down, but kept its id — so this renderer is unchanged
+  // apart from the trailing refreshDeployDot(), which mirrors the
+  // deploying state onto the hamburger (the only place a deploy is
+  // visible now without opening the menu).
   renderPlatformVersionPill(info) {
     const slot = document.getElementById('platform-version-pill-slot');
     if (!slot) return;
+    // Every path below ends by painting `slot` and syncing the dot.
+    const paint = (html) => {
+      slot.innerHTML = html;
+      App.DrawerStatus.refreshDeployDot();
+    };
 
     const runningSha = info.sha;
     const repoUrl = info.repoUrl || '#';
@@ -352,11 +370,11 @@ const App = {
     if (!runningSha || runningSha === 'dev') {
       // Local dev / no GIT_SHA — render a low-key "dev" chip so the slot
       // isn't empty (which can look like a layout bug).
-      slot.innerHTML = `
+      paint(`
         <span class="app-version-pill" title="Running outside of a deploy (no GIT_SHA set)">
           <span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>
           <span class="app-version-pill-label">${namePart}dev</span>
-        </span>`;
+        </span>`);
       return;
     }
 
@@ -370,35 +388,35 @@ const App = {
       if (oldShort) tipParts.push(`from ${oldShort}`);
       if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
       const shaLabel = newShort ? `→ ${newShort}` : 'deploying';
-      slot.innerHTML = `
+      paint(`
         <span class="app-version-pill app-version-pill--deploying" title="${tipParts.join(' · ')}">
           <span class="app-version-pill-spinner" aria-hidden="true"></span>
           <span class="app-version-pill-label">${namePart}${shaLabel}</span>
-        </span>`;
+        </span>`);
       return;
     }
 
     if (isStale) {
       const oldShort = App.loadedPlatformSha.slice(0, 7);
       const newShort = runningSha.slice(0, 7);
-      slot.innerHTML = `
+      paint(`
         <button type="button"
                 class="app-version-pill app-version-pill--stale"
                 title="Platform updated from ${oldShort} to ${newShort}. Click to reload."
                 onclick="location.reload()">
           <span class="app-version-pill-dot"></span>
           <span class="app-version-pill-label">${namePart}${newShort} · reload</span>
-        </button>`;
+        </button>`);
       return;
     }
 
     const shortSha = runningSha.slice(0, 7);
     const href = `${repoUrl.replace(/\/$/, '')}/commit/${runningSha}`;
-    slot.innerHTML = `
+    paint(`
       <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="Platform commit ${shortSha}">
         <span class="app-version-pill-dot"></span>
         <span class="app-version-pill-label">${namePart}${shortSha}</span>
-      </a>`;
+      </a>`);
   },
 
   // Tiny local HTML-escaper so the project name (sourced from an env
@@ -1652,9 +1670,57 @@ const App = {
     }
   },
 
+  // Drawer status pane (header slim-down): the platform/app build pills,
+  // the fork lineage label and the kudos budget badge all render into
+  // #drawer-status-pane now instead of the header. Their RENDERERS are
+  // untouched — the slots kept their ids — so all this owns is the two
+  // app-scoped rows' visibility plus the hamburger's amber deploy dot.
+  DrawerStatus: {
+    // The "App" build row follows the same lifecycle as
+    // #drawer-row-github / #drawer-row-share: visible only while an app
+    // is open. Called from openApp and from every navigate* that leaves
+    // an app behind.
+    setAppOpen(open) {
+      const row = document.getElementById('drawer-row-app-version');
+      if (row) row.classList.toggle('hidden', !open);
+      // Fork lineage is app-scoped too — closing an app can never leave
+      // the previous app's "Forked from" line behind.
+      if (!open) App.DrawerStatus.setForkVisible(false);
+      App.DrawerStatus.refreshDeployDot();
+    },
+
+    // Driven by AppView.renderForkBadge(): shown only when it actually
+    // wrote a badge (i.e. the open app is a fork). `flex`, not the row
+    // default, because the row ships `hidden` and Tailwind's `hidden`
+    // would otherwise fight an inline display.
+    setForkVisible(visible) {
+      const row = document.getElementById('drawer-row-app-fork');
+      if (!row) return;
+      row.classList.toggle('hidden', !visible);
+      row.classList.toggle('flex', !!visible);
+    },
+
+    // Mirror "a deploy is in flight" onto the hamburger. Read straight
+    // off the rendered pills rather than threading state: the pill
+    // markup is already the single source of truth for the deploying
+    // state (renderAppVersionPillHTML / renderPlatformVersionPill both
+    // stamp .app-version-pill--deploying), and both may change
+    // independently.
+    refreshDeployDot() {
+      const dot = document.getElementById('header-menu-deploy-dot');
+      if (!dot) return;
+      const deploying = !!document.querySelector(
+        '#drawer-status-pane .app-version-pill--deploying');
+      dot.classList.toggle('hidden', !deploying);
+    },
+  },
+
   // Slide-out navigation drawer — available at every viewport width
-  // (#122). Holds the secondary header actions: GitHub, Share,
-  // Settings. (Members & visibility moved to the Dev "+" menu — #645.)
+  // (#122). Since the header slim-down it also carries the theme
+  // selector (first), the build/kudos status pane, Standings and the
+  // admin console row, on top of the secondary actions it already held
+  // (GitHub, Share, Settings). (Members & visibility moved to the Dev
+  // "+" menu — #645.)
   HeaderMenu: {
     _sheet: null,
     open() {
@@ -1697,18 +1763,36 @@ const App = {
       const closeBtn = document.getElementById('header-menu-close');
       if (closeBtn) closeBtn.focus();
     },
-    // Sync the active highlight on the Light/Dark/System segmented control
-    // from Theme.get(). Safe to call before Theme/DOM exist (guards both).
+    // Order of the three segments in the DOM — also the caret's stop
+    // index, so the two can never disagree.
+    THEME_MODES: ['light', 'dark', 'system'],
+
+    // Sync the Light/Dark/System segmented control from Theme.get(): the
+    // raised active segment, its aria-checked state, and the position of
+    // the caret underneath it. Safe to call before Theme/DOM exist
+    // (guards both).
+    //
+    // The caret is moved by writing --theme-caret-index (0|1|2) on the
+    // track and letting CSS translate a thirds-width element by
+    // index * 100%. Deliberately NOT an offsetLeft measurement: this runs
+    // once from open() BEFORE PlatformUI.sheet resizes the panel from
+    // w-60 to the sheet's full width, so a pixel read here would be stale
+    // the moment the sheet presents. Percentages are correct at both
+    // widths with no re-measure, and the transition in CSS is what makes
+    // the caret slide between segments.
     _renderThemeButtons() {
       if (!window.Theme) return;
       const current = Theme.get();
-      document.querySelectorAll('#drawer-row-theme [data-theme-mode]').forEach((b) => {
+      document.querySelectorAll('#drawer-theme-track [data-theme-mode]').forEach((b) => {
         const active = b.dataset.themeMode === current;
-        b.classList.toggle('bg-violet-600', active);
-        b.classList.toggle('text-white', active);
-        b.classList.toggle('bg-zinc-200', !active);
-        b.classList.toggle('dark:bg-zinc-800', !active);
+        b.classList.toggle('theme-seg-active', active);
+        b.setAttribute('aria-checked', active ? 'true' : 'false');
       });
+      const track = document.getElementById('drawer-theme-track');
+      if (track) {
+        const idx = Math.max(0, App.HeaderMenu.THEME_MODES.indexOf(current));
+        track.style.setProperty('--theme-caret-index', String(idx));
+      }
     },
     close() {
       if (App.HeaderMenu._sheet) {
@@ -1748,10 +1832,11 @@ const App = {
         // Navigation itself rides the anchor's #challenges hash.
         drawerChallenges.addEventListener('click', () => App.HeaderMenu.close());
       }
-      // Topochain public screens (Task 14) — same real-anchor idiom as
-      // Challenges/Profile above: navigation rides the anchor's hash,
-      // the click handler here just closes the drawer.
-      document.getElementById('drawer-row-topochain-leaderboard')
+      // Standings (the merged Kudos + Topochain screen) and Topochain
+      // seasons — same real-anchor idiom as Challenges/Profile above:
+      // navigation rides the anchor's hash, the click handler here just
+      // closes the drawer.
+      document.getElementById('drawer-row-standings')
         ?.addEventListener('click', () => App.HeaderMenu.close());
       document.getElementById('drawer-row-topochain-seasons')
         ?.addEventListener('click', () => App.HeaderMenu.close());
@@ -1766,11 +1851,16 @@ const App = {
       // drawer.
       document.getElementById('drawer-row-settings')
         ?.addEventListener('click', () => App.HeaderMenu.close());
+      // Admin & moderation — visibility is App.renderAdminButton()'s job
+      // (isAdmin gate); navigation rides the anchor's #admin hash, which
+      // navigateToAdminConsole re-gates. Same idiom as Settings above.
+      document.getElementById('drawer-row-admin')
+        ?.addEventListener('click', () => App.HeaderMenu.close());
       // Theme segmented control — a live control, NOT a navigation row: it
       // sets the mode and re-highlights WITHOUT closing the drawer, so the
       // user can see the recolor and switch again.
       if (window.Theme) {
-        document.querySelectorAll('#drawer-row-theme [data-theme-mode]').forEach((b) => {
+        document.querySelectorAll('#drawer-theme-track [data-theme-mode]').forEach((b) => {
           b.addEventListener('click', () => {
             Theme.set(b.dataset.themeMode);
             App.HeaderMenu._renderThemeButtons();
@@ -1793,10 +1883,17 @@ const App = {
       PlatformUI.pullToRefresh(home,
         () => App._refreshOrReload(() => Home.load()));
     }
+    // The Standings screen hosts two panes; refresh whichever is active.
+    // The Topochain pane keeps its own event/page state and its own
+    // fetches, so it must NOT be routed through Leaderboard._cache.
     const lb = document.getElementById('leaderboard-screen');
     if (lb) {
       PlatformUI.pullToRefresh(lb, () => {
         if (!window.Leaderboard) return Promise.resolve();
+        if (Leaderboard.section === 'topochain') {
+          if (!window.TopochainLeaderboard) return Promise.resolve();
+          return TopochainLeaderboard.loadLeaderboard();
+        }
         Leaderboard._cache.clear();
         return Leaderboard._load();
       });
@@ -2383,11 +2480,12 @@ const App = {
       feedbackText.focus();
     };
     document.getElementById('feedback-btn').addEventListener('click', () => App.openFeedbackModal());
-    // Admin/moderation console (#588). The button is hidden for
-    // non-admins (see renderAdminButton), and openAdminConsole re-checks
-    // the flag so a stray programmatic click can't open it either.
-    document.getElementById('admin-dashboard-btn')
-      ?.addEventListener('click', () => App.openAdminConsole());
+    // Admin/moderation console (#588) is a drawer row now, not a header
+    // button — its click handler is wired in HeaderMenu.init() (close the
+    // drawer; the anchor's #admin href does the navigating). The row is
+    // hidden for non-admins (see renderAdminButton) and
+    // navigateToAdminConsole re-checks the flag, so a stray programmatic
+    // hash change can't open it either.
     document.getElementById('feedback-cancel').addEventListener('click', () => {
       document.getElementById('feedback-modal').classList.add('hidden');
       feedbackText.value = '';
@@ -2534,7 +2632,6 @@ const App = {
         else if (App._inProfile) App.navigateHome();
         else if (App._inAdmin) App.navigateHome();
         else if (App._inSettings) App.navigateHome();
-        else if (App._inTopochainLeaderboard) App.navigateHome();
         else if (App._inTopochainSeasons) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
@@ -2574,7 +2671,8 @@ const App = {
         // #leaderboard keeps whatever tab was last active (Top PRs on
         // first visit). A third segment on the users tab
         // (#leaderboard/users/<username>) deep-links a user profile
-        // (#60).
+        // (#60). #leaderboard/topochain selects the Standings screen's
+        // second section instead of a Kudos sub-tab.
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
@@ -2611,12 +2709,24 @@ const App = {
       if (parts[0] === 'topochain') {
         // Topochain public screens (Task 14): #topochain/leaderboard and
         // #topochain/seasons. Both are public reads under /api/v4 — no
-        // auth gate, unlike #admin above. Anything other than a literal
-        // 'seasons' second segment (including none at all) lands on the
-        // leaderboard, the more commonly linked of the two.
+        // auth gate, unlike #admin above.
+        //
+        // Seasons is still its own screen. The leaderboard is now the
+        // Standings screen's second tab, so #topochain/leaderboard (and
+        // anything else that isn't 'seasons', including a bare
+        // #topochain) is an ALIAS: rewrite the address in place so a
+        // bookmark self-heals to the canonical form, then hand off. The
+        // replaceState fires before the navigate so Leaderboard._syncHash
+        // sees a #leaderboard hash and doesn't skip its own sync.
         App.setChromeless(false);
-        if (parts[1] === 'seasons') App.navigateToTopochainSeasons();
-        else App.navigateToTopochainLeaderboard();
+        if (parts[1] === 'seasons') {
+          App.navigateToTopochainSeasons();
+        } else {
+          try {
+            history.replaceState(null, '', '#leaderboard/topochain');
+          } catch (err) { /* non-fatal: navigation below still works */ }
+          App.navigateToLeaderboard('topochain', null);
+        }
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
@@ -2692,7 +2802,6 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
-        if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
         if (App._inTopochainSeasons) App._exitTopochainSeasons();
         App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
@@ -2727,7 +2836,6 @@ const App = {
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
-        if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
         if (App._inTopochainSeasons) App._exitTopochainSeasons();
         App.setHeaderTitle('dApps');
         Home.load();
@@ -2819,11 +2927,16 @@ const App = {
     if (link && link.parentNode) link.parentNode.removeChild(link);
   },
 
-  // Show the leaderboard screen. Sibling to navigateToApp/navigateHome —
+  // Show the Standings screen. Sibling to navigateToApp/navigateHome —
   // hides home + app, reveals the dedicated #leaderboard-screen, lets
-  // the Leaderboard module render itself into #leaderboard-root.
-  // `profileUser` (#60) opens the per-user PR profile drill-in instead
-  // of a plain tab.
+  // the Leaderboard module render the tab strip + the Kudos pane into
+  // #leaderboard-root (and hand the Topochain pane to
+  // TopochainLeaderboard).
+  //
+  // `sub` is the hash's second segment: 'prs' | 'users' | 'history'
+  // select a Kudos sub-tab, and the special value 'topochain' selects
+  // the screen's second SECTION instead. `profileUser` (#60) opens the
+  // per-user PR profile drill-in instead of a plain tab.
   navigateToLeaderboard(sub, profileUser) {
     // Same iframe caveat as navigateHome: no animated snapshot over a
     // live App-tab iframe.
@@ -2836,7 +2949,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('leaderboard-screen');
     PlatformUI.transition(() => {
@@ -2849,16 +2961,19 @@ const App = {
     const _drs = document.getElementById('drawer-row-share');
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
-    App.setHeaderTitle('Kudos leaderboard');
+    App.DrawerStatus.setAppOpen(false);
+    App.setHeaderTitle('Standings');
     App._inLeaderboard = true;
-    // Apply the deep-linked sub-view (prs|users|history) or user
-    // profile before open() renders — _setSub validates the value and
-    // no-ops on garbage. openProfile must run INSTEAD of _setSub (not
+    // Apply the deep-linked section / sub-view / user profile before
+    // open() renders — _setSection and _setSub both validate their value
+    // and no-op on garbage. openProfile must run INSTEAD of _setSub (not
     // after): _setSub clears profile state and would replaceState the
     // profile hash away. When the screen is already open they
     // re-render in place; open() below dedupes the in-flight load.
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
+    } else if (sub === 'topochain' && window.Leaderboard?._setSection) {
+      Leaderboard._setSection('topochain');
     } else if (sub && window.Leaderboard?._setSub) {
       Leaderboard._setSub(sub);
     }
@@ -2886,7 +3001,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('challenges-screen');
     PlatformUI.transition(() => {
@@ -2901,6 +3015,7 @@ const App = {
     const _drs = document.getElementById('drawer-row-share');
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
+    App.DrawerStatus.setAppOpen(false);
     App.setHeaderTitle('Challenges');
     App._inChallenges = true;
     if (window.Challenges?.open) Challenges.open();
@@ -2927,7 +3042,6 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
@@ -2944,6 +3058,7 @@ const App = {
     const _drs = document.getElementById('drawer-row-share');
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
+    App.DrawerStatus.setAppOpen(false);
     App.setHeaderTitle('Profile');
     App._inProfile = true;
     if (window.Profile?.open) Profile.open();
@@ -3006,7 +3121,6 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('admin-screen');
     PlatformUI.transition(() => {
@@ -3025,6 +3139,7 @@ const App = {
     const _drs = document.getElementById('drawer-row-share');
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
+    App.DrawerStatus.setAppOpen(false);
     App.setHeaderTitle(publicMode ? 'Platform status' : 'Admin & moderation');
     App._inAdmin = true;
     if (window.AdminConsole?.open) AdminConsole.open(section, { public: publicMode });
@@ -3067,7 +3182,6 @@ const App = {
     if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
-    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('settings-screen');
     PlatformUI.transition(() => {
@@ -3088,6 +3202,7 @@ const App = {
     const _drs = document.getElementById('drawer-row-share');
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
+    App.DrawerStatus.setAppOpen(false);
     App.setHeaderTitle('Settings');
     App._inSettings = true;
     if (window.Settings?.open) Settings.open(section);
@@ -3104,60 +3219,15 @@ const App = {
     if (window.Settings?.close) Settings.close();
   },
 
-  // Show the Topochain leaderboard screen (Task 14, public screens).
-  // Sibling to navigateToAdminConsole — hides home + app, reveals the
-  // dedicated #topochain-leaderboard-screen, lets the
-  // TopochainLeaderboard module (public/js/topochain-leaderboard.js)
-  // render itself into #topochain-leaderboard-root. Unlike the admin
-  // console, this carries NO isAdmin gate — it's a public read like the
-  // Kudos leaderboard, reachable by anyone.
-  navigateToTopochainLeaderboard() {
-    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    if (App.currentApp) {
-      AppView.close();
-      App.currentApp = null;
-    }
-    if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inChallenges) App._exitChallenges();
-    if (App._inProfile) App._exitProfile();
-    if (App._inAdmin) App._exitAdminConsole();
-    if (App._inSettings) App._exitSettings();
-    if (App._inTopochainSeasons) App._exitTopochainSeasons();
-    const screen = document.getElementById('topochain-leaderboard-screen');
-    PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.add('hidden');
-      document.getElementById('home-screen').classList.add('hidden');
-      const lb = document.getElementById('leaderboard-screen');
-      if (lb) lb.classList.add('hidden');
-      const ch = document.getElementById('challenges-screen');
-      if (ch) ch.classList.add('hidden');
-      const pf = document.getElementById('profile-screen');
-      if (pf) pf.classList.add('hidden');
-      const ad = document.getElementById('admin-screen');
-      if (ad) ad.classList.add('hidden');
-      const ts = document.getElementById('topochain-seasons-screen');
-      if (ts) ts.classList.add('hidden');
-      if (screen) screen.classList.remove('hidden');
-    }, { type: fromIframe ? 'none' : 'push' });
-    document.getElementById('back-btn').classList.remove('hidden');
-    const _drg = document.getElementById('drawer-row-github');
-    const _drs = document.getElementById('drawer-row-share');
-    if (_drg) _drg.classList.add('hidden');
-    if (_drs) _drs.classList.add('hidden');
-    App.setHeaderTitle('Topochain leaderboard');
-    App._inTopochainLeaderboard = true;
-    if (window.TopochainLeaderboard?.open) TopochainLeaderboard.open();
-  },
-
-  _exitTopochainLeaderboard() {
-    App._inTopochainLeaderboard = false;
-    const screen = document.getElementById('topochain-leaderboard-screen');
-    if (screen) screen.classList.add('hidden');
-    if (window.TopochainLeaderboard?.close) TopochainLeaderboard.close();
-  },
+  // navigateToTopochainLeaderboard / _exitTopochainLeaderboard used to
+  // live here (Task 14, public screens). The Topochain leaderboard is a
+  // TAB of the Standings screen now, so it has no navigate/exit pair of
+  // its own: #topochain/leaderboard aliases onto
+  // navigateToLeaderboard('topochain') in restoreFromHash, and
+  // _exitLeaderboard tears down both panes.
 
   // Show the Topochain seasons/events screen (Task 14, public screens).
-  // Sibling to navigateToTopochainLeaderboard — same shape, no auth gate.
+  // Sibling to navigateToLeaderboard — same shape, no auth gate.
   navigateToTopochainSeasons() {
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
     if (App.currentApp) {
@@ -3169,7 +3239,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     const screen = document.getElementById('topochain-seasons-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -3182,8 +3251,6 @@ const App = {
       if (pf) pf.classList.add('hidden');
       const ad = document.getElementById('admin-screen');
       if (ad) ad.classList.add('hidden');
-      const tl = document.getElementById('topochain-leaderboard-screen');
-      if (tl) tl.classList.add('hidden');
       if (screen) screen.classList.remove('hidden');
     }, { type: fromIframe ? 'none' : 'push' });
     document.getElementById('back-btn').classList.remove('hidden');
@@ -3191,6 +3258,7 @@ const App = {
     const _drs = document.getElementById('drawer-row-share');
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
+    App.DrawerStatus.setAppOpen(false);
     App.setHeaderTitle('Topochain seasons');
     App._inTopochainSeasons = true;
     if (window.TopochainSeasons?.open) TopochainSeasons.open();
@@ -3542,7 +3610,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     // Real screen navigation. From the home feed the app view expands
     // out of the clicked tile (kit 'zoom-in'); from anywhere else (deep
@@ -3608,6 +3675,10 @@ const App = {
     if (drs && AppView.appData?.status === 'running' && AppView.appData?.url) {
       drs.classList.remove('hidden');
     }
+    // Reveal the drawer status pane's "App" build row on the same
+    // lifecycle. AppView.refreshVersionPill() fills the slot; the fork
+    // line is revealed separately by AppView.renderForkBadge().
+    App.DrawerStatus.setAppOpen(true);
     // Members & visibility moved from the drawer into the Dev tab's "+"
     // menu (#645) — AppView._plusMenuShowsMembers() is the single gate.
     // The App tab iframes appData.url, which doesn't resolve for the self-
@@ -3634,7 +3705,6 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainLeaderboard) App._exitTopochainLeaderboard();
     if (App._inTopochainSeasons) App._exitTopochainSeasons();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
@@ -3660,6 +3730,7 @@ const App = {
     const _drsH = document.getElementById('drawer-row-share');
     if (_drgH) _drgH.classList.add('hidden');
     if (_drsH) _drsH.classList.add('hidden');
+    App.DrawerStatus.setAppOpen(false);
     App.setHeaderTitle('dApps');
     App.updateHash();
     Home.load();
