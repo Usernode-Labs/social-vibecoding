@@ -134,7 +134,8 @@ test("sends throttled general typing and presents remote general typing", async 
     }).__groupChatSockets[0]
     socket?.emit({ type: "typing", userId: 8, username: "sam" })
   })
-  await expect(page.getByText("sam is typing…")).toBeVisible()
+  await expect(page.getByText("sam is typing…")).toHaveCSS("font-size", "12px")
+  await expect(page.getByText("0/4 files · 5/8000", { exact: true })).toHaveCSS("font-size", "12px")
 })
 
 test("uploads and sends an attachments-only general message", async ({ page }) => {
@@ -185,7 +186,10 @@ test("stages, cancels, and sends a server-validated reply reference", async ({ p
   await page.getByRole("button", { name: "Reply to mira" }).click()
   const preview = page.getByTestId("discussion-reply-preview")
   await expect(preview).toContainText("Replying to @mira")
-  await expect(preview).toContainText("Could dietary filters be easier to find?")
+  await expect(preview.getByText("Could dietary filters be easier to find?", { exact: true })).toHaveCSS(
+    "font-size",
+    (page.viewportSize()?.width || 0) < 640 ? "14px" : "12px",
+  )
   await page.getByRole("button", { name: "Cancel reply" }).click()
   await expect(preview).toHaveCount(0)
 

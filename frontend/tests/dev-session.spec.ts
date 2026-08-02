@@ -114,6 +114,7 @@ test("renders an existing Dev session without a legacy action handoff", async ({
   await expect(route.locator('[data-slot="dev-conversation"]')).not.toHaveClass(/(?:rounded|border|bg-card)/)
   await expect(route.locator('[data-slot="dev-composer"]')).toHaveCSS("position", "sticky")
   await expect(route.getByRole("combobox", { name: "Model for this turn" })).toBeVisible()
+  await expect(route.getByText("Up to 4 files", { exact: true })).toHaveCSS("font-size", "12px")
   await expect(page.getByRole("link", { name: /legacy Dev/i })).toHaveCount(0)
   await chrome.getByRole("button", { name: "Back" }).click()
   await expect(page).toHaveURL(/\/react\/apps\/recipebot\/dev$/)
@@ -185,6 +186,10 @@ test("keeps the composer writable during a live turn and parks text as a local d
   await expect(composer).toHaveValue("")
   await expect(page.getByText("Also simplify the empty state.", { exact: true })).toBeVisible()
   await expect(page.getByRole("button", { name: "Send saved draft: Also simplify the empty state." })).toBeDisabled()
+  await expect(page.getByText("Sending unlocks when Builder finishes", { exact: true })).toHaveCSS(
+    "font-size",
+    (page.viewportSize()?.width || 0) < 640 ? "14px" : "12px",
+  )
   await expect.poll(() => page.evaluate(() => {
     const drafts = JSON.parse(localStorage.getItem("usernode:dc-saved-drafts:9") || "[]") as Array<{ text?: string }>
     return drafts[0]?.text
@@ -226,6 +231,10 @@ test("sends a single structured assistant answer immediately through the current
   })
   await page.goto("/react/apps/recipebot/dev/sessions/9")
 
+  await expect(page.getByText("Choose an answer or keep typing your own response.", { exact: true })).toHaveCSS(
+    "font-size",
+    (page.viewportSize()?.width || 0) < 640 ? "14px" : "12px",
+  )
   await page.getByRole("button", { name: /Use cards/ }).click()
   await expect.poll(() => requestBody).toEqual({ message: "Use cards", model: "claude-opus-5" })
 })

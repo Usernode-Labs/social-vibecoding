@@ -407,7 +407,7 @@ export function GroupDiscussionComposer({ disabled, label = "Post a discussion m
             <p className="text-sm font-medium">
               Replying to {replyTarget.author ? `@${replyTarget.author}` : "discussion update"}
             </p>
-            <p className="line-clamp-2 text-xs text-muted-foreground">{replyTarget.snippet}</p>
+            <p className="line-clamp-2 text-sm text-muted-foreground sm:text-xs">{replyTarget.snippet}</p>
           </div>
           <Button aria-label="Cancel reply" onClick={onCancelReply} size="icon-xs" type="button" variant="ghost">
             <PlatformIcon data-icon icon={X} />

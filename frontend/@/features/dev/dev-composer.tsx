@@ -342,7 +342,7 @@ export function DevComposer({
       {suggestions.length ? <section aria-labelledby="builder-questions-heading" className="flex flex-col gap-3 rounded-xl border bg-card p-3">
         <div>
           <h3 className="text-sm font-medium" id="builder-questions-heading">Builder needs your input</h3>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground sm:text-xs">
             {suggestionsDisabled && !busy ? "Send or clear the current draft and attachments before using a suggested answer." : "Choose an answer or keep typing your own response."}
           </p>
         </div>

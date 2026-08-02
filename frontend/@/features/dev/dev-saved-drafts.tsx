@@ -32,7 +32,7 @@ export function DevSavedDraftsView({
           <h3 className="text-sm font-medium" id="saved-dev-drafts-heading">Saved drafts</h3>
           <Badge variant="secondary">{drafts.length}</Badge>
         </div>
-        {streaming ? <span className="text-xs text-muted-foreground">Sending unlocks when Builder finishes</span> : null}
+        {streaming ? <span className="text-sm text-muted-foreground sm:text-xs">Sending unlocks when Builder finishes</span> : null}
       </header>
       <ul className="divide-y">
         {drafts.map((draft) => (
