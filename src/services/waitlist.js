@@ -79,13 +79,19 @@ async function linkUserByEmail(pool, { userId, email }) {
 // Admin release of a waitlist row. Sets released_at (idempotent) and, if
 // an account is already linked (or one exists with the same email),
 // grants it platform access immediately. Returns the updated row or
-// null when the id doesn't exist.
+// null when the id doesn't exist. `newly_released` distinguishes the
+// first release from an idempotent re-release so the caller can send
+// the "you're in" notification exactly once.
 async function releaseWaitlistSignup(pool, signupId) {
   const { rows } = await pool.query(
-    `UPDATE waitlist_signups
-        SET released_at = COALESCE(released_at, NOW())
-      WHERE id = $1
-      RETURNING id, email, released_at, linked_user_id`,
+    `WITH prev AS (
+        SELECT released_at FROM waitlist_signups WHERE id = $1
+     )
+     UPDATE waitlist_signups w
+        SET released_at = COALESCE(w.released_at, NOW())
+      WHERE w.id = $1
+      RETURNING w.id, w.email, w.released_at, w.linked_user_id,
+                (SELECT prev.released_at FROM prev) IS NULL AS newly_released`,
     [signupId]
   );
   const row = rows[0];

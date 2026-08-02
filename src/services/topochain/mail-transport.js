@@ -45,6 +45,15 @@ function buildMessage(kind, payload) {
         text: 'Thanks for joining the Usernode waitlist.\n\n' +
           "We'll email you at this address as soon as your access is ready.",
       };
+    case 'waitlist_released':
+      return {
+        subject: 'Your Usernode access is ready',
+        text: payload.hasAccount
+          ? "Good news — you're off the Usernode waitlist and your account now has platform access.\n\n" +
+            `Sign in to get started: ${payload.url}`
+          : "Good news — you're off the Usernode waitlist.\n\n" +
+            `Create your account with this email address to get started: ${payload.url}`,
+      };
     default:
       throw new Error(`unknown mail kind: ${kind}`);
   }
@@ -86,8 +95,8 @@ function create(env) {
   }
 
   return {
-    async send({ to, kind, code }) {
-      const message = buildMessage(kind || 'otp', { code });
+    async send({ to, kind, code, url, hasAccount }) {
+      const message = buildMessage(kind || 'otp', { code, url, hasAccount });
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
       try {
@@ -132,6 +141,7 @@ function describe(env) {
     affectedFlows: [
       'Mobile email login (one-time codes)',
       'Onboarding waitlist confirmations',
+      'Waitlist release notifications',
     ],
   };
 }

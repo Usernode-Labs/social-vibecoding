@@ -51,14 +51,31 @@ test('public apps list is sorted by usage (active users first)', () => {
 
 test('landing scroller has kit pull-to-refresh with overscroll containment', () => {
   const js = read('public/js/auth-screens.js');
-  assert.match(js, /PlatformUI\.pullToRefresh\(byId\('auth-landing-screen'\)/);
+  // PTR must attach to the INNER scroller, never the fixed overlay: the
+  // kit's rubber-band translateY on the overlay itself slides the whole
+  // opaque screen down and exposes the authed shell's header behind it.
+  assert.match(js, /PlatformUI\.pullToRefresh\(byId\('auth-landing-scroll'\)/);
+  assert.doesNotMatch(js, /pullToRefresh\(byId\('auth-landing-screen'\)/);
   assert.match(js, /_loadLandingApps\(\)\)/);
   // Containment keeps the browser's native pull-refresh from competing
   // with the kit gesture — same treatment as #home-screen.
   const css = read('public/css/app.css');
-  const block = css.match(/#home-screen,\s*#auth-landing-screen \{[^}]*\}/);
+  const block = css.match(/#home-screen,\s*#auth-landing-scroll \{[^}]*\}/);
   assert.ok(block, 'shared containment block exists');
   assert.match(block[0], /overscroll-behavior-y: contain/);
+});
+
+test('the landing overlay keeps its own scroll wrapper (pull-down backstop)', () => {
+  const html = read('public/index.html');
+  // The overlay itself must NOT be the scroller...
+  const overlay = html.match(/id="auth-landing-screen"[^>]*class="([^"]*)"/);
+  assert.ok(overlay, 'landing overlay exists');
+  assert.doesNotMatch(overlay[1], /overflow-y-auto/);
+  // ...the inner wrapper is, filling the overlay's height.
+  const scroller = html.match(/id="auth-landing-scroll"[^>]*class="([^"]*)"/);
+  assert.ok(scroller, 'inner landing scroller exists');
+  assert.match(scroller[1], /overflow-y-auto/);
+  assert.match(scroller[1], /h-full/);
 });
 
 // ─── index.html: directory grid ───────────────────────────────────

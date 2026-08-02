@@ -17,6 +17,7 @@
 'use strict';
 
 const log = require('../logger');
+const { PRODUCTION_ORIGIN } = require('../cli-auth-constants');
 
 async function sendOtpMail(config, email, code) {
   const transport = config && config.topochainMailTransport;
@@ -75,4 +76,31 @@ async function sendWaitlistJoinMail(config, email) {
   log.info('topochain-mailer', 'Waitlist join confirmation (no mail transport configured)', { email });
 }
 
-module.exports = { sendOtpMail, sendWaitlistJoinMail };
+// Waitlist-release notification (the "you're in" mail). Sent by the
+// admin release route exactly once per signup (releaseWaitlistSignup's
+// newly_released flag). The link branches on whether the email already
+// has an account: sign in vs create one. Same degrade-silently contract
+// as the other senders: never throws, never makes the release fail.
+async function sendWaitlistReleaseMail(config, email, { hasAccount = false } = {}) {
+  const transport = config && config.topochainMailTransport;
+  const url = `${PRODUCTION_ORIGIN}/#${hasAccount ? 'login' : 'signup'}`;
+
+  if (transport) {
+    try {
+      await transport.send({ to: email, kind: 'waitlist_released', url, hasAccount });
+      return;
+    } catch (err) {
+      log.error('topochain-mailer', 'Waitlist release mail transport failed to send', { email, message: err.message });
+      return;
+    }
+  }
+
+  if (config && config.env === 'production') {
+    log.error('topochain-mailer', 'No mail transport configured — waitlist release notification NOT delivered', { email });
+    return;
+  }
+
+  log.info('topochain-mailer', 'Waitlist release notification (no mail transport configured)', { email, url });
+}
+
+module.exports = { sendOtpMail, sendWaitlistJoinMail, sendWaitlistReleaseMail };

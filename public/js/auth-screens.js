@@ -225,8 +225,11 @@
       // wiring as the authed screens (app.js _wirePullToRefresh). The
       // kit no-ops this on desktop; the refresh re-pulls the app
       // directory (probe results, active-user counts, new deploys).
+      // Attached to the INNER scroller, never the fixed overlay: the
+      // rubber-band translate on the overlay itself would expose the
+      // authed shell's header behind it during the pull.
       if (window.PlatformUI) {
-        PlatformUI.pullToRefresh(byId('auth-landing-screen'),
+        PlatformUI.pullToRefresh(byId('auth-landing-scroll'),
           () => AuthScreens._loadLandingApps());
       }
 

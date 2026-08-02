@@ -19,6 +19,7 @@ const { Router } = require('express');
 const { getPool } = require('../../../db/pool');
 const log = require('../../../services/logger');
 const waitlist = require('../../../services/waitlist');
+const { sendWaitlistReleaseMail } = require('../../../services/topochain/mailer');
 const { adminWriteGate } = require('./auth');
 const { toIntId } = require('./util');
 const { ok, fail, iso, paginate, meta } = require('../helpers');
@@ -98,6 +99,14 @@ function waitlistAdminRoutes(config) {
       log.info('topochain-admin', 'Waitlist entry released', {
         signupId: id, linkedUserId: released.linked_user_id, adminId: req.user?.id,
       });
+      // "You're in" notification — first release only (re-releases are
+      // idempotent no-ops and must not re-email). Degrades silently when
+      // no mail transport is configured; never fails the release.
+      if (released.newly_released) {
+        await sendWaitlistReleaseMail(config, released.email, {
+          hasAccount: released.linked_user_id != null,
+        });
+      }
       return ok(res, {
         data: {
           id: Number(released.id),
