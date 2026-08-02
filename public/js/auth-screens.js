@@ -42,6 +42,18 @@
     else fn();
   }
 
+  // Same seam, but forwarding the full zoom opts (el / fromEl / outEl /
+  // fallback / after). Zoom callers split their mutation into fn (reveal
+  // the incoming screen) + after (conceal the outgoing one), so the
+  // no-kit path has to run BOTH halves.
+  function zoomFx(fn, opts) {
+    if (window.PlatformUI) window.PlatformUI.transition(fn, opts);
+    else {
+      fn();
+      if (opts && typeof opts.after === 'function') opts.after();
+    }
+  }
+
   function byId(id) { return document.getElementById(id); }
 
   function showError(el, msg) {
@@ -114,6 +126,9 @@
       if (route === 'register') AuthScreens._registerOnShow(seg);
       if (route === 'waiting') AuthScreens._waitingOnShow();
       if (prev === 'waiting' && route !== 'waiting') AuthScreens._stopWaitingPoll();
+      // Leaving the landing screen with an app still open: stop the
+      // iframe and put the directory back, un-animated.
+      if (prev === 'landing' && route !== 'landing') AuthScreens._resetLandingViewer();
 
       if (sameScreen || prev === route) {
         AuthScreens._current = route;
@@ -136,6 +151,7 @@
 
     hideAll() {
       AuthScreens._stopWaitingPoll();
+      AuthScreens._resetLandingViewer();
       for (const r of Object.keys(SCREEN_IDS)) {
         const el = byId(SCREEN_IDS[r]);
         if (el) el.classList.add('hidden');
@@ -206,18 +222,87 @@
 
     _landingAppsLoaded: false,
 
+    // Slug/name of the app currently open in the in-page viewer, or null.
+    // The slug resolves the tile the zoom-out shrinks back into; the name
+    // is what the persistent header shows while the app is up.
+    _openAppSlug: null,
+    _openAppName: null,
+
+    // Assigned real implementations by _wireLanding (they close over the
+    // viewer elements). No-ops until then, so header CTAs wired on other
+    // screens can call them unconditionally.
+    _openLandingApp() {},
+    _closeLandingApp() {},
+
+    // Instant, un-animated teardown of the in-page viewer. Used on the
+    // paths that LEAVE the landing screen (Sign in, hash routing, the
+    // authed boot): animating a zoom-out into a tile on a screen that's
+    // being replaced in the same frame just fights the screen transition,
+    // and the live iframe must stop either way — #app-viewer sits inside
+    // the z-40 landing overlay now, so a later screen doesn't cover it.
+    _resetLandingViewer() {
+      const viewer = byId('app-viewer');
+      if (!viewer || viewer.classList.contains('hidden')) return;
+      AuthScreens._openAppSlug = null;
+      AuthScreens._openAppName = null;
+      viewer.classList.add('hidden');
+      const frame = byId('app-viewer-frame');
+      if (frame) frame.src = 'about:blank';
+      const scroller = byId('auth-landing-scroll');
+      if (scroller) scroller.classList.remove('hidden');
+      AuthScreens._renderLandingHeader();
+    },
+
     _landingOnShow() {
-      // CTA row flips when a (waiting-room) session exists — signing in
-      // again makes no sense there.
-      const hasSession = !!(window.App && App.user);
-      const ctas = byId('landing-ctas');
-      const back = byId('landing-back-to-waiting');
-      if (ctas) ctas.classList.toggle('hidden', hasSession);
-      if (back) back.classList.toggle('hidden', !hasSession);
+      AuthScreens._renderLandingHeader();
       if (!AuthScreens._landingAppsLoaded) {
         AuthScreens._landingAppsLoaded = true;
         AuthScreens._loadLandingApps();
       }
+    },
+
+    // Single writer for the persistent landing header + the CTA block's
+    // form-vs-queued line. Three states:
+    //   anonymous, directory  → no back button, platform title, both CTAs
+    //   anonymous, app open   → back button, app name, both CTAs (a
+    //                           visitor can sign up without backing out)
+    //   waiting-room session  → "Your queue status" instead of the CTAs,
+    //                           and the CTA block says they're on the list
+    _renderLandingHeader() {
+      const hasSession = !!(window.App && App.user);
+      const ctas = byId('landing-header-ctas');
+      const back = byId('landing-back-to-waiting');
+      if (ctas) ctas.classList.toggle('hidden', hasSession);
+      if (back) back.classList.toggle('hidden', !hasSession);
+
+      const form = byId('waitlist-form');
+      const queued = byId('landing-cta-queued');
+      if (form) form.classList.toggle('hidden', hasSession);
+      if (queued) queued.classList.toggle('hidden', !hasSession);
+
+      const open = !!AuthScreens._openAppSlug;
+      const backBtn = byId('landing-back-btn');
+      if (backBtn) backBtn.classList.toggle('hidden', !open);
+      const title = byId('landing-header-title');
+      if (title) {
+        const text = open
+          ? (AuthScreens._openAppName || AuthScreens._openAppSlug)
+          : 'Usernode Social Vibecoding';
+        title.textContent = text;
+        // Mirror into the tab title so the Flutter WebView's AppBar
+        // follows the screen, same as App.setHeaderTitle does authed.
+        try { document.title = text; } catch (_) {}
+      }
+    },
+
+    // The landing tile for `slug`, or null. Scoped to #landing-apps: the
+    // authed home grid renders `.app-card[data-slug]` too, and both live
+    // in this one document after a reload-free login.
+    _landingTileFor(slug) {
+      try {
+        return document.querySelector(
+          `#landing-apps .app-card[data-slug="${CSS.escape(String(slug || ''))}"]`);
+      } catch (_) { return null; }
     },
 
     _wireLanding() {
@@ -233,18 +318,25 @@
           () => AuthScreens._loadLandingApps());
       }
 
-      // "Join waitlist" CTA reveals the collapsed email form (hidden by
-      // default so the label appears exactly once on the page), scrolls
-      // to it, and focuses the input.
+      // "Join waitlist" CTA scrolls to the always-visible email form and
+      // focuses the input. When an app is open the viewer covers the
+      // scroller, so close it first — scrollIntoView on a hidden element
+      // is a no-op.
       const waitlistCta = byId('landing-waitlist-cta');
       if (waitlistCta) waitlistCta.addEventListener('click', () => {
+        AuthScreens._closeLandingApp();
         const section = byId('landing-waitlist');
-        if (section) {
-          section.classList.remove('hidden');
-          section.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }
+        if (section) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
         const email = byId('waitlist-email');
         if (email) email.focus({ preventScroll: true });
+      });
+
+      // Sign in leaves the landing screen entirely; close the viewer first
+      // so the login screen never paints over a still-running iframe (the
+      // viewer lives INSIDE this z-40 overlay now, not above it).
+      const signinCta = byId('landing-signin-cta');
+      if (signinCta) signinCta.addEventListener('click', () => {
+        AuthScreens._resetLandingViewer();
       });
 
       // Waitlist join form → POST /api/public/waitlist.
@@ -282,31 +374,75 @@
         btn.disabled = false;
       });
 
-      // In-page app viewer: public apps open in an iframe overlay with a
-      // corner Back instead of target=_blank (which strands mobile
-      // webview users on the app subdomain with no way back). Uses a
-      // history state marker (not a hash) so the browser/OS back gesture
-      // closes the viewer without disturbing the hash router.
+      // In-page app viewer: public apps open in an iframe here instead of
+      // target=_blank (which strands mobile webview users on the app
+      // subdomain with no way back). Uses a history state marker (not a
+      // hash) so the browser/OS back gesture closes the viewer without
+      // disturbing the hash router.
+      //
+      // Open/close mirror App.navigateToApp / App.navigateHome exactly:
+      // the app expands out of the tapped tile (kit 'zoom-in') and shrinks
+      // back into it on Back ('zoom-out'), with the persistent header
+      // above it throughout.
+      //
+      // The flex-sibling pitfall applies here too (#764): #app-viewer and
+      // #auth-landing-scroll are flex:1 siblings, so while BOTH are
+      // visible (fn reveals the viewer, the scroller stays beneath the
+      // zoom) they split the height 50/50 and the kit would measure the
+      // viewer's destination as the bottom half — the zoom would land
+      // there and snap to full size when `after` hides the scroller.
+      // `outEl` lets the kit hide the scroller for its synchronous
+      // pre-paint measurement, so the zoom targets the true settled rect.
       const viewer = byId('app-viewer');
       const viewerFrame = byId('app-viewer-frame');
-      const viewerTitle = byId('app-viewer-title');
+      const scroller = byId('auth-landing-scroll');
 
       AuthScreens._openLandingApp = (app) => {
-        viewerTitle.textContent = app.name || app.slug || '';
+        const slug = app.slug || '';
+        AuthScreens._openAppSlug = slug;
+        AuthScreens._openAppName = app.name || slug;
         viewerFrame.src = app.url;
         history.pushState({ svAnonAppViewer: true }, '', location.href);
-        fx(() => viewer.classList.remove('hidden'), 'push');
+        zoomFx(() => {
+          viewer.classList.remove('hidden');
+        }, {
+          type: 'zoom-in',
+          el: viewer,
+          fromEl: () => AuthScreens._landingTileFor(slug),
+          outEl: scroller,
+          fallback: 'push',
+          after: () => scroller.classList.add('hidden'),
+        });
+        AuthScreens._renderLandingHeader();
       };
 
       const closeViewer = () => {
         if (viewer.classList.contains('hidden')) return;
-        fx(() => {
-          viewer.classList.add('hidden');
-          viewerFrame.src = 'about:blank';
-        }, 'pop');
+        const slug = AuthScreens._openAppSlug;
+        AuthScreens._openAppSlug = null;
+        AuthScreens._openAppName = null;
+        // fallback 'none': a View Transition snapshot of a LIVE app
+        // iframe can flash on iOS Safari, so the non-kit path cuts
+        // instantly — same choice App.navigateHome makes leaving the App
+        // tab. `after` runs exactly once on every path, so the shrinking
+        // overlay keeps showing the app's content until it lands.
+        zoomFx(() => {
+          scroller.classList.remove('hidden');
+        }, {
+          type: 'zoom-out',
+          el: viewer,
+          fromEl: () => (slug ? AuthScreens._landingTileFor(slug) : null),
+          fallback: 'none',
+          after: () => {
+            viewer.classList.add('hidden');
+            viewerFrame.src = 'about:blank';
+          },
+        });
+        AuthScreens._renderLandingHeader();
       };
+      AuthScreens._closeLandingApp = closeViewer;
 
-      byId('app-viewer-back').addEventListener('click', () => {
+      byId('landing-back-btn').addEventListener('click', () => {
         if (history.state && history.state.svAnonAppViewer) history.back();
         else closeViewer();
       });

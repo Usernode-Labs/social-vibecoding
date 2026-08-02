@@ -49,6 +49,7 @@ async function migrate(config) {
   await seedStagingCcEstimateRun(pool, config);
   await seedStagingPlatformIssueDrafts(pool, config);
   await seedStagingDemoAppCard(pool);
+  await seedStagingLandingDirectory(pool);
   await seedStagingFailedApp(pool);
   await seedStagingForkLineage(pool);
   await seedStagingMembersPanel(pool);
@@ -2920,6 +2921,101 @@ async function seedStagingDemoAppCard(pool) {
     log.info('db', 'Staging demo app-card fixtures seeded');
   } catch (err) {
     log.warn('db', 'Staging demo app-card seeding failed', { message: err.message });
+  }
+}
+
+// Fixtures for the anonymous landing directory (GET /api/public/apps).
+// The pre-sign-in page is the first thing a logged-out visitor sees, and a
+// fresh staging DB has no public running apps at all — so the grid renders
+// empty and neither the open-tile zoom nor the gated-tile signup detour can
+// be exercised. This seeds ONE open tile and ONE gated tile so both branches
+// of the `requires_login` mapping are visible side by side, plus a little
+// app_activity so the open tile's active-users badge is nonzero.
+//
+// The far-future anon_shell_checked_at is load-bearing: src/services/
+// shell-probe.js re-probes every running public app whose check is stale
+// (NULL, older than an hour, or predating last_deploy_at), and these
+// fixtures have no container behind them — a plain NOW() stamp would be
+// overwritten with 'unknown' (→ gated) inside one 5-minute sweep and the
+// open tile would silently flip. Stamping a year out keeps both fixtures
+// pinned to the classification seeded here.
+//
+// Ids sit in the 9001xx range so they clear cloned prod rows and the other
+// 900xxx demo fixtures; names carry the "[Mock]" prefix per the mock-data
+// convention; ON CONFLICT DO NOTHING keeps the every-boot re-run idempotent.
+// Strictly a no-op outside staging.
+async function seedStagingLandingDirectory(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  try {
+    // Owner + a couple of visitors. Non-loginable: bcrypt.compare against a
+    // plain marker string always fails, so these accounts can't be signed in.
+    const OWNER_ID = 900100;
+    const VISITOR_IDS = [900101, 900102, 900103];
+    await pool.query(
+      `INSERT INTO users (id, username, password)
+       VALUES ($1, 'staging-landing-user', 'staging-demo-not-a-login')
+       ON CONFLICT DO NOTHING`,
+      [OWNER_ID]
+    );
+    for (const id of VISITOR_IDS) {
+      await pool.query(
+        `INSERT INTO users (id, username, password)
+         VALUES ($1, $2, 'staging-demo-not-a-login')
+         ON CONFLICT DO NOTHING`,
+        [id, `staging-landing-visitor-${id}`]
+      );
+    }
+
+    const OPEN_APP_ID = 900100;
+    const GATED_APP_ID = 900101;
+    await pool.query(
+      `INSERT INTO apps
+         (id, name, slug, status, view_visibility, created_by,
+          icon_emoji, last_deploy_at, anon_shell, anon_shell_checked_at)
+       VALUES
+         ($1, '[Mock] Open demo app', 'staging-landing-open',
+          'running', 'public', $3, '🛝',
+          NOW() - INTERVAL '2 days', 'public', NOW() + INTERVAL '1 year'),
+         ($2, '[Mock] Gated demo app', 'staging-landing-gated',
+          'running', 'public', $3, '🔒',
+          NOW() - INTERVAL '3 days', 'gated', NOW() + INTERVAL '1 year')
+       ON CONFLICT DO NOTHING`,
+      [OPEN_APP_ID, GATED_APP_ID, OWNER_ID]
+    );
+
+    // Re-stamp on every boot: ON CONFLICT above skips rows that already
+    // exist, and the probe may have clobbered the classification of a
+    // fixture seeded by an earlier deploy.
+    await pool.query(
+      `UPDATE apps
+          SET anon_shell = CASE WHEN id = $1 THEN 'public' ELSE 'gated' END,
+              anon_shell_checked_at = NOW() + INTERVAL '1 year'
+        WHERE id IN ($1, $2)`,
+      [OPEN_APP_ID, GATED_APP_ID]
+    );
+
+    // Active-users badge: the public list counts distinct users with a
+    // >=60s session in the recent window, so give the open tile three and
+    // the gated tile one.
+    const activity = [
+      { appId: OPEN_APP_ID, userId: VISITOR_IDS[0], secs: 900, daysAgo: 1 },
+      { appId: OPEN_APP_ID, userId: VISITOR_IDS[1], secs: 420, daysAgo: 2 },
+      { appId: OPEN_APP_ID, userId: VISITOR_IDS[2], secs: 180, daysAgo: 4 },
+      { appId: GATED_APP_ID, userId: VISITOR_IDS[0], secs: 240, daysAgo: 3 },
+    ];
+    for (const a of activity) {
+      await pool.query(
+        `INSERT INTO app_activity (app_id, user_id, seconds_spent, date)
+         VALUES ($1, $2, $3, CURRENT_DATE - ($4::int))
+         ON CONFLICT (app_id, user_id, date) DO NOTHING`,
+        [a.appId, a.userId, a.secs, a.daysAgo]
+      );
+    }
+
+    log.info('db', 'Staging landing-directory fixtures seeded');
+  } catch (err) {
+    log.warn('db', 'Staging landing-directory seeding failed', { message: err.message });
   }
 }
 

@@ -3306,9 +3306,13 @@ const App = {
   // The home tile for `slug`, or null. A hidden home screen or
   // filtered-away tile yields no element / a 0×0 rect, which the kit
   // rejects — so the old home-visible checks live in the kit now.
+  //
+  // Scoped to #app-list: the anonymous landing directory (#landing-apps)
+  // renders `.app-card[data-slug]` tiles too, and after a reload-free
+  // login both grids live in this one document.
   _tileFor(slug) {
     try {
-      return document.querySelector(`.app-card[data-slug="${CSS.escape(slug)}"]`);
+      return document.querySelector(`#app-list .app-card[data-slug="${CSS.escape(slug)}"]`);
     } catch { return null; }
   },
 
