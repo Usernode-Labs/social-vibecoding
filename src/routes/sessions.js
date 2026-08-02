@@ -2493,6 +2493,12 @@ function sessionRoutes(config) {
         phase: 'mayor1',
         stopped: false,
         stoppedBy: null,
+        // #889: POST /stop lives in another request and has no access to
+        // this turn's `send` closure, but it needs to announce the stop on
+        // every channel the moment the click lands (rather than ~20s later
+        // when the turn actually unwinds). Handing it the closure keeps the
+        // _seq numbering consistent with the rest of the turn's events.
+        send,
       };
       const prior = stopRegistry.get(session.id);
       if (prior && prior !== stopHandle) {
@@ -3807,6 +3813,12 @@ function sessionRoutes(config) {
     // without guessing from container status alone.
     const phase = stopRegistry.get(sessionId)?.phase || null;
 
+    // #889: a stop has been requested for this turn but it hasn't unwound
+    // yet. Lets a reloading client (and the 3s poll fallback) repaint the
+    // "Stopping…" button instead of a live red Stop for a turn that is
+    // already being killed.
+    const stopping = !!stopRegistry.get(sessionId)?.stopped;
+
     // Experimental AI progress estimate: latest in-memory Haiku guess for
     // the run, so the 3s polling fallback carries it when SSE/WS drop.
     // Null whenever the per-user toggle is off or no estimate exists yet.
@@ -3822,10 +3834,11 @@ function sessionRoutes(config) {
     // null) — the dev-chat sync banner's reload recovery and poll
     // fallback read this the same way the resolving banner reads
     // `resolving`.
-    // Keys: busy, progress, phase, estimate (+ resolving, sync). `estimate`
-    // is { text, remainingSeconds } | null — see workerProgress.setEstimate.
+    // Keys: busy, progress, phase, stopping, estimate (+ resolving, sync).
+    // `estimate` is { text, remainingSeconds } | null — see
+    // workerProgress.setEstimate.
     res.json({
-      busy, progress, phase, estimate,
+      busy, progress, phase, stopping, estimate,
       resolving: isResolving(sessionId),
       sync: syncMainSvc.getSyncState(sessionId),
     });
@@ -3864,13 +3877,6 @@ function sessionRoutes(config) {
 
     handle.stopped = true;
     handle.stoppedBy = req.user.username;
-    // #161: clicking stop proves presence — disarm notify_on_done BEFORE
-    // aborting so the turn's resulting send('done') doesn't create a
-    // spurious "your session finished" notification.
-    await pool.query(
-      `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
-      [sessionId]
-    ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
     log.info('sessions', 'Stop requested', {
       sessionId,
       phase: handle.phase,
@@ -3879,13 +3885,34 @@ function sessionRoutes(config) {
       hasWorker: !!handle.workerName,
     });
 
+    // #889: announce the stop on every channel BEFORE any of the work
+    // below. The turn's own `send` fans this out to the live POST SSE, the
+    // global WS broadcast and the session bus, so every tab watching this
+    // session (not just the one that clicked) flips to the "stopping…"
+    // state immediately instead of waiting for the turn to unwind. It's a
+    // synchronous write + broadcast, so nothing here waits on it.
+    try { handle.send?.('stopping', { by: req.user.username, phase: handle.phase }); } catch {}
+
+    // #161: clicking stop proves presence — disarm notify_on_done BEFORE
+    // aborting so the turn's resulting send('done') doesn't create a
+    // spurious "your session finished" notification. This stays awaited and
+    // stays ahead of the abort: the abort can unwind the Mayor stream into
+    // send('done') within milliseconds, and notifySessionDone re-reads this
+    // column. It is a single indexed UPDATE (~1ms) and was never where the
+    // stop latency lived — see the journal-marker fix in worker.stopTurn.
+    await pool.query(
+      `UPDATE chat_sessions SET notify_on_done = FALSE WHERE id = $1`,
+      [sessionId]
+    ).catch((err) => log.warn('sessions', 'stop disarm failed', { sessionId, err: err.message }));
+
     if (handle.phase === 'cc') {
       // Detached-turn path: the CC turn runs as a detached exec with no
       // host-side child to signal, so kill run-cc.sh + claude inside
       // the container directly. The warm wrapper (sleep infinity)
-      // survives, keeping the next dispatch fast. The journal consumer
-      // notices the process is gone via its liveness watchdog and
-      // resolves, letting runClaudeCodeTool's early-return branch fire.
+      // survives, keeping the next dispatch fast. stopTurn also appends
+      // the journal's exit marker (#889), so the consumer resolves right
+      // away and runClaudeCodeTool's early-return branch fires in ~1s
+      // rather than on the liveness watchdog's 10s cadence.
       worker.stopTurn(sessionId)
         .catch((err) => log.warn('sessions', 'stopTurn failed', { err: err.message }));
     } else if (handle.workerName) {

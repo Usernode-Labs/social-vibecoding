@@ -534,6 +534,10 @@ function warmRegistrySnapshot() {
       inFlight: meta.inFlight,
       bootstrapping: !!meta.bootstrap,
       adopted: !!meta.adopted,
+      // #889: a stop has been signalled for this worker's turn but the turn
+      // hasn't unwound yet. Additive diagnostics — same spirit as inFlight —
+      // and it's what makes the flag observable without exporting internals.
+      stopRequestedAt: meta.stopRequestedAt || null,
     });
   }
   return out;
@@ -983,8 +987,12 @@ async function execInWorker(sessionId, {
   // Anthropic proxy can synchronously tell a sync turn from a build turn
   // and gate it against the system-token budget instead of the owner's.
   // #664: fresh per-turn BYOK spillover counters — see noteTurnByokSpend.
+  // `journal` is recorded so stopTurn() can append the exit marker to the
+  // turn's own journal (#889) instead of leaving the consumer to discover
+  // the kill via its 10s liveness watchdog. `stopRequestedAt: null` resets
+  // any flag a previous turn left behind.
   _registryUpsert(sessionId, {
-    inFlight: true, activeTurnMode: mode,
+    inFlight: true, activeTurnMode: mode, journal, stopRequestedAt: null,
     turnByokCents: 0, turnByokSwitched: false,
   });
   await _persistActiveTurn(sessionId, {
@@ -1026,7 +1034,10 @@ async function execInWorker(sessionId, {
     }
     return state;
   } finally {
-    _registryUpsert(sessionId, { inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null });
+    _registryUpsert(sessionId, {
+      inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
+      journal: null, stopRequestedAt: null,
+    });
     await clearActiveTurn(sessionId);
   }
 }
@@ -1107,8 +1118,20 @@ function markTurnByokSwitched(sessionId) {
 // declared unobservable. Extracted as pure helpers so the policy is
 // unit-testable without docker.
 const WATCHDOG_INTERVAL_MS = 10000;
+// #889: once a stop has been requested for this session the probe cadence
+// tightens. The normal 10s/2-strike budget exists for crashes and OOM kills,
+// where a fast cadence would only pile `docker exec` load onto a contended
+// daemon; a stop is a known-imminent death, so we can afford to look often.
+// This is the FALLBACK — stopTurn appends the exit marker itself, which
+// resolves the consumer in milliseconds. It only matters when that append
+// failed (unknown journal path, container hiccup).
+const WATCHDOG_STOP_INTERVAL_MS = 1000;
 const WATCHDOG_PROBE_TIMEOUT_MS = 15000;
 const WATCHDOG_IDLE_STRIKE_LIMIT = 2;
+// After a stop, ONE definite idle is enough: the two-strike default exists
+// to give the wrapper's final `echo >> journal` an interval to flush, and
+// on the stop path the wrapper is dead before it can ever run that echo.
+const WATCHDOG_STOP_IDLE_STRIKE_LIMIT = 1;
 const WATCHDOG_PROBE_FAILURE_LIMIT = 12;
 // After the watchdog abandons a tail, a `docker inspect` showing the
 // container still running buys the turn another tail cycle (a
@@ -1125,7 +1148,12 @@ function newWatchdogCounters() {
 // idles (the wrapper's final `echo >> journal` gets one interval to
 // flush), or with 'probe_unobservable' once the consecutive
 // probe-failure budget is exhausted.
-function recordWatchdogProbe(counters, busy) {
+//
+// `idleLimit` overrides the definite-idle strike budget — the caller passes
+// WATCHDOG_STOP_IDLE_STRIKE_LIMIT once a stop has been requested (#889).
+// The probe-failure budget is deliberately NOT tightened: a null still says
+// nothing about the turn, stop requested or not.
+function recordWatchdogProbe(counters, busy, { idleLimit = WATCHDOG_IDLE_STRIKE_LIMIT } = {}) {
   if (busy === true) {
     counters.idleStrikes = 0;
     counters.probeFailures = 0;
@@ -1135,7 +1163,7 @@ function recordWatchdogProbe(counters, busy) {
     counters.idleStrikes += 1;
     // The probe itself succeeded, so the consecutive-failure run ends.
     counters.probeFailures = 0;
-    return counters.idleStrikes >= WATCHDOG_IDLE_STRIKE_LIMIT
+    return counters.idleStrikes >= idleLimit
       ? { abandon: true, cause: 'turn_process_gone' }
       : { abandon: false, cause: null };
   }
@@ -1198,10 +1226,11 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
       let done = false;
       let buf = '';
       let skip = linesConsumed;
+      let livenessTimer = null;
       const finish = () => {
         if (done) return;
         done = true;
-        clearInterval(liveness);
+        if (livenessTimer) clearTimeout(livenessTimer);
         try { proc.kill('SIGKILL'); } catch {}
         resolve();
       };
@@ -1227,11 +1256,29 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
       // tail is the real-time channel — so the long timeout/interval is
       // harmless, and only DEFINITE idles use the cheap 2-strike
       // abandonment; probe failures get the larger budget above.
-      const liveness = setInterval(async () => {
+      //
+      // #889: self-rescheduling rather than a fixed interval so the cadence
+      // can tighten the moment a stop is requested (stopTurn stamps
+      // `stopRequestedAt` on the registry entry). Re-read per tick — a stop
+      // can land at any point during a long turn.
+      const stopRequested = () =>
+        sessionId != null && !!_registryGet(sessionId)?.stopRequestedAt;
+      const armLiveness = () => {
+        livenessTimer = setTimeout(tick, stopRequested()
+          ? WATCHDOG_STOP_INTERVAL_MS
+          : WATCHDOG_INTERVAL_MS);
+        // Never hold the process open on a safety-net probe.
+        livenessTimer.unref?.();
+      };
+      const tick = async () => {
         if (done) return;
         const busy = await isWorkerExecuting(containerName, { timeoutMs: WATCHDOG_PROBE_TIMEOUT_MS });
         if (done) return;
-        const verdict = recordWatchdogProbe(counters, busy);
+        const verdict = recordWatchdogProbe(counters, busy, {
+          idleLimit: stopRequested()
+            ? WATCHDOG_STOP_IDLE_STRIKE_LIMIT
+            : WATCHDOG_IDLE_STRIKE_LIMIT,
+        });
         if (busy === null) {
           log.warn('worker', 'Turn liveness probe failed', {
             containerName, sessionId, journal,
@@ -1240,9 +1287,11 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
         }
         if (verdict.abandon) {
           watchdogCause = verdict.cause;
-          finish();
+          return finish();
         }
-      }, WATCHDOG_INTERVAL_MS);
+        armLiveness();
+      };
+      armLiveness();
     });
 
     if (state.execExitSeen) return state;
@@ -1320,16 +1369,36 @@ async function _consumeJournal(containerName, journal, progress, state, { sessio
 
 // Stop the in-flight turn for a session by killing run-cc.sh + claude
 // inside the container. The warm wrapper (sleep infinity) survives, so
-// the container stays adoptable for the next dispatch. The journal
-// consumer notices the process is gone via its liveness watchdog and
-// resolves without an exit marker (exitCode -1).
+// the container stays adoptable for the next dispatch.
+//
+// #889: the kill also takes out the detached wrapper shell (its cmdline
+// contains `/usr/local/bin/run-cc.sh`, so it matches TURN_PROC_RE), which
+// means the wrapper can never run its own `echo "__USERNODE_EXIT__ $?"`.
+// Historically that left the journal consumer to discover the death via its
+// 10s/2-strike liveness watchdog — a measured 18.8s of dead air between the
+// click and the chat unwinding. So we write the marker ourselves: kill,
+// wait (bounded) for the processes to actually go, SIGKILL any survivor,
+// then append `__USERNODE_EXIT__ 143` to the turn journal. The consumer's
+// `tail -f` picks it up on the next read and resolves in milliseconds.
+//
+// Killing BEFORE appending is what makes the append safe: the wrapper's
+// `> "$TURN_JOURNAL"` fd is gone by then, so the marker can't interleave
+// with a half-written agent line.
+//
+// `stopRequestedAt` on the registry entry tightens the watchdog cadence as
+// a fallback for the case where this append doesn't land at all.
 async function stopTurn(sessionId) {
   const meta = _registryGet(sessionId);
   const containerName = meta?.containerName || workerContainerName(sessionId);
+  _registryUpsert(sessionId, { stopRequestedAt: Date.now() });
   await docker.execFileAsync('docker', [
-    'exec', containerName, 'sh', '-c', TURN_PROC_KILL_SCRIPT,
-  ], { timeout: 5000 }).catch(() => {});
-  log.info('worker', 'Stop signal sent (in-container turn-process kill)', { containerName, sessionId });
+    'exec', containerName, 'sh', '-c',
+    buildTurnStopScript(meta?.journal || null),
+    // Covers the ~2s SIGTERM grace plus daemon round-trip.
+  ], { timeout: 8000 }).catch(() => {});
+  log.info('worker', 'Stop signal sent (in-container kill + journal exit marker)', {
+    containerName, sessionId, journal: meta?.journal || '(discovered in-container)',
+  });
 }
 
 // #460: materialize the dispatching user's personal agent files into the
@@ -1512,12 +1581,63 @@ const TURN_PROC_PROBE_SCRIPT =
   + 'c=$(tr "\\0" " " < "$d/cmdline" 2>/dev/null) || continue; '
   + `printf "%s" "$c" | grep -qE '${TURN_PROC_RE}' && { busy=1; break; }; `
   + 'done; [ "$busy" = "1" ] && echo busy || echo idle';
-const TURN_PROC_KILL_SCRIPT =
+// Signal every turn process in the container. Same /proc walk as the probe
+// above (procps isn't in the worker image, so pgrep/pkill are unavailable).
+// Skips its own shell so the script can't signal itself.
+const turnProcSignalSnippet = (sig) =>
   'for d in /proc/[0-9]*; do '
   + '[ "$d" = "/proc/$$" ] && continue; '
   + 'c=$(tr "\\0" " " < "$d/cmdline" 2>/dev/null) || continue; '
-  + `printf "%s" "$c" | grep -qE '${TURN_PROC_RE}' && kill -TERM "\${d#/proc/}" 2>/dev/null; `
-  + 'done; exit 0';
+  + `printf "%s" "$c" | grep -qE '${TURN_PROC_RE}' && kill -${sig} "\${d#/proc/}" 2>/dev/null; `
+  + 'done';
+
+// True (`alive=1`) while any turn process is still in the container — the
+// SIGTERM grace loop polls this to find out when the last one is gone.
+const turnProcAliveSnippet =
+  'alive=0; for d in /proc/[0-9]*; do '
+  + '[ "$d" = "/proc/$$" ] && continue; '
+  + 'c=$(tr "\\0" " " < "$d/cmdline" 2>/dev/null) || continue; '
+  + `printf "%s" "$c" | grep -qE '${TURN_PROC_RE}' && { alive=1; break; }; `
+  + 'done';
+
+// #889: how long the in-container stop waits for a SIGTERMed turn process
+// to actually exit before escalating to SIGKILL. 20 × 100ms. Sized so a
+// well-behaved `claude` gets a real chance to flush and exit cleanly while
+// the whole stop still lands inside a couple of seconds.
+const TURN_STOP_GRACE_TICKS = 20;
+
+// The full in-container stop procedure, as ONE `sh -c` so a stop costs a
+// single `docker exec`: SIGTERM the turn processes → poll /proc until they
+// are gone (bounded) → SIGKILL the stragglers → append the exit marker to
+// the turn journal so the host-side consumer resolves immediately.
+//
+// `journal` is the host's recorded path for the in-flight turn. When it is
+// unknown (an adopted worker whose registry entry predates this dispatch)
+// the script discovers the newest turn journal itself — the dispatch
+// wrapper rm's stale ones first, so at most one exists. `exit 0` throughout:
+// a stop must never fail loudly, the watchdog is behind it either way.
+function buildTurnStopScript(journal) {
+  const journalExpr = journal
+    // Single-quoted: the path is platform-generated (/home/node/.claude/
+    // turn-<ms>.log), never user input, and quoting keeps it one word.
+    ? `J='${journal}'`
+    : 'J=$(ls -t /home/node/.claude/turn-*.log 2>/dev/null | head -1)';
+  return [
+    turnProcSignalSnippet('TERM'),
+    // Wait for the SIGTERMed processes to actually disappear. Breaks out on
+    // the first clean scan, so the common case costs no wall-clock at all.
+    `i=0; while [ "$i" -lt ${TURN_STOP_GRACE_TICKS} ]; do `
+      + `${turnProcAliveSnippet}; `
+      + '[ "$alive" = "0" ] && break; i=$((i+1)); sleep 0.1; done',
+    // Anything still standing ignored SIGTERM — take it out hard, so the
+    // marker below is written against a genuinely dead turn.
+    turnProcSignalSnippet('KILL'),
+    journalExpr,
+    // 143 = 128 + SIGTERM, what a docker-stop-based kill would have produced.
+    '[ -n "$J" ] && [ -f "$J" ] && echo "__USERNODE_EXIT__ 143" >> "$J" 2>/dev/null',
+    'exit 0',
+  ].join('; ');
+}
 
 // Best-effort check of whether a running warm container has an in-flight
 // per-turn exec. We look for a turn process inside the container — the
@@ -1718,6 +1838,8 @@ module.exports = {
   parseLine,
   newWatchdogCounters,
   recordWatchdogProbe,
+  // #889: in-container stop procedure (exported for tests)
+  buildTurnStopScript,
   // exposed for the routes' container-name lookups
   workerContainerName,
   // platform-side git push proxy (called from src/routes/internal.js)

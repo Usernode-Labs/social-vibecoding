@@ -2166,6 +2166,22 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   display: inline-block;
 }
 
+/* Stop requested, not yet landed (#889): the click has to acknowledge
+   itself immediately, and the red square is a lie once pressed — pressing
+   it again does nothing. Muted like the wrap-up spinner state (its closest
+   sibling) with an explicit label, so the button reads as "working on it"
+   rather than "still needs pressing". */
+.dc-btn-stopping {
+  background: var(--bg-tertiary) !important;
+  cursor: not-allowed;
+  gap: 6px;
+}
+.dc-btn-stopping:hover { background: var(--bg-tertiary) !important; }
+/* A touch smaller than the button's own text-sm so the widest state of
+   this button stays close to the Send/Stop width and the composer beside
+   it barely moves. */
+.dc-btn-stopping-label { color: var(--text-secondary); font-size: 12px; }
+
 .dc-send-spinner {
   width: 16px; height: 16px;
   border: 2px solid var(--border);
