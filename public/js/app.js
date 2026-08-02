@@ -120,6 +120,11 @@ const App = {
   _authedBooted: false,
 
   enterAnonymous() {
+    // Capture the platform SHA this document booted with. The anonymous
+    // shell has no WS "platform updating" banner, so pull-to-refresh is
+    // its only recovery path after a deploy — and platformMovedOn()
+    // needs a boot-time baseline to compare against.
+    App.loadVersion();
     if (window.AuthScreens) AuthScreens.enter();
   },
 
@@ -279,6 +284,42 @@ const App = {
       App.PlatformUpdating.observeVersion(info);
       App.renderPlatformVersionPill(info);
     } catch {}
+  },
+
+  // True when /api/version reports a different SHA than the one this
+  // document booted with — i.e. the platform redeployed and this tab is
+  // running stale client code. Fail-closed (false) on any error: a
+  // flaky network must never turn a data refresh into a reload loop.
+  async platformMovedOn() {
+    try {
+      const res = await fetch('/api/version');
+      if (!res.ok) return false;
+      const info = await res.json();
+      if (!info.sha || info.sha === 'dev') return false;
+      if (!App.loadedPlatformSha) {
+        // No boot baseline (first poll lost a race, or the boot fetch
+        // failed) — record what we see and treat this tab as current.
+        App.loadedPlatformSha = info.sha;
+        return false;
+      }
+      return info.sha !== App.loadedPlatformSha;
+    } catch { return false; }
+  },
+
+  // Pull-to-refresh wrapper: run the screen's data refresh, and when the
+  // platform has redeployed since this document loaded, upgrade it to a
+  // full reload — pull-to-refresh means "get me the latest", and data
+  // alone can't deliver new client code. The never-resolving promise
+  // keeps the kit's spinner up until the reload tears the page down.
+  _refreshOrReload(refresh) {
+    return Promise.all([
+      Promise.resolve().then(refresh).catch(() => {}),
+      App.platformMovedOn(),
+    ]).then(([, movedOn]) => {
+      if (!movedOn) return undefined;
+      location.reload();
+      return new Promise(() => {});
+    });
   },
 
   // Four rendering states. Reuses .app-version-pill base styles + a
@@ -1744,7 +1785,10 @@ const App = {
   // own PTR in AppView.renderDevView.
   _wirePullToRefresh() {
     const home = document.getElementById('home-screen');
-    if (home) PlatformUI.pullToRefresh(home, () => Home.load());
+    if (home) {
+      PlatformUI.pullToRefresh(home,
+        () => App._refreshOrReload(() => Home.load()));
+    }
     const lb = document.getElementById('leaderboard-screen');
     if (lb) {
       PlatformUI.pullToRefresh(lb, () => {
