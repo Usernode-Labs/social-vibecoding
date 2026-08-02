@@ -88,6 +88,11 @@ export function SpecSharingControls({
       .filter((candidate) => !query || candidate.toLocaleLowerCase().startsWith(query))
       .slice(0, 6)
   }, [mentionSuggestions, username])
+  const suggestionStatus = matchingSuggestions.length === 0
+    ? "No suggested recipients available."
+    : matchingSuggestions.length === 1
+      ? "1 suggested recipient available."
+      : `${matchingSuggestions.length} suggested recipients available.`
 
   async function shareGroup() {
     setBusy("group")
@@ -177,14 +182,17 @@ export function SpecSharingControls({
                 value={username}
               />
               <FieldDescription>Enter an exact username or choose a collaborator below.</FieldDescription>
+              <p aria-atomic="true" aria-live="polite" className="sr-only">{suggestionStatus}</p>
               {matchingSuggestions.length ? (
-                <div aria-label="Suggested recipients" className="flex flex-wrap gap-2">
+                <ul aria-label="Suggested recipients" className="flex flex-wrap gap-2">
                   {matchingSuggestions.map((candidate) => (
-                    <Button key={candidate} onClick={() => setUsername(candidate)} size="xs" type="button" variant="secondary">
-                      @{candidate}
-                    </Button>
+                    <li key={candidate}>
+                      <Button className="pointer-coarse:min-h-12" onClick={() => setUsername(candidate)} size="xs" type="button" variant="secondary">
+                        @{candidate}
+                      </Button>
+                    </li>
                   ))}
-                </div>
+                </ul>
               ) : null}
               {error ? <FieldError>{error}</FieldError> : null}
             </Field>

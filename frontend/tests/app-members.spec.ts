@@ -75,8 +75,9 @@ test("links App Detail to the collaboration manager and renders member/pending-i
 test("uses the canonical typeahead and invite endpoints, then reloads the canonical roster", async ({ page }) => {
   let rows = roster().collaborators
   let inviteRequest: { method: string; body: unknown } | null = null
+  let searchRequests = 0
   await page.route("**/api/apps/recipebot/collaborators", (route) => route.fulfill({ json: roster(rows) }))
-  await page.route("**/api/users/search?*", (route) => route.fulfill({ json: { users: [{ id: 22, username: "mira" }] } }))
+  await page.route("**/api/users/search?*", (route) => { searchRequests += 1; return route.fulfill({ json: { users: [{ id: 22, username: "mira" }] } }) })
   await page.route("**/api/apps/recipebot/invites", async (route) => {
     inviteRequest = { method: route.request().method(), body: route.request().postDataJSON() }
     rows = [...rows, { userId: 22, username: "mira", status: "invited", invitedBy: "ava", createdAt: "2026-07-28T10:00:00Z", acceptedAt: null }]
@@ -84,14 +85,40 @@ test("uses the canonical typeahead and invite endpoints, then reloads the canoni
   })
 
   await page.goto("/react/apps/recipebot/members")
-  await page.getByLabel("Username").fill("mi")
-  await expect(page.getByRole("list", { name: "Invite suggestions" }).getByRole("button", { name: "@mira" })).toBeVisible()
-  await page.getByRole("button", { name: "@mira" }).click()
+  const username = page.getByLabel("Username")
+  await username.fill("mi")
+  const suggestion = page.getByRole("list", { name: "Invite suggestions" }).getByRole("button", { name: "@mira" })
+  await expect(suggestion).toBeVisible()
+  if (await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)) {
+    await expect.poll(async () => Math.round((await suggestion.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(48)
+  }
+  await expect(page.locator('[aria-live="polite"]').filter({ hasText: "1 invite suggestion available." })).toHaveText("1 invite suggestion available.")
+  await suggestion.click()
+  await expect(username).toBeFocused()
+  await expect(page.getByRole("list", { name: "Invite suggestions" })).toHaveCount(0)
+  await expect.poll(() => searchRequests, { intervals: [300, 300], timeout: 700 }).toBe(1)
   await page.getByRole("button", { name: "Send invite" }).click()
 
   await expect.poll(() => inviteRequest).toEqual({ method: "POST", body: { username: "mira" } })
   await expect(page.getByText("Invited @mira.")).toBeVisible()
   await expect(page.getByRole("list", { name: "RecipeBot pending invitations" })).toContainText("@mira")
+})
+
+test("keeps exact free-form usernames available when typeahead has no match", async ({ page }) => {
+  let inviteBody: unknown = null
+  await page.route("**/api/apps/recipebot/collaborators", (route) => route.fulfill({ json: roster() }))
+  await page.route("**/api/users/search?*", (route) => route.fulfill({ json: { users: [] } }))
+  await page.route("**/api/apps/recipebot/invites", async (route) => {
+    inviteBody = route.request().postDataJSON()
+    await route.fulfill({ status: 201, json: { ok: true, username: "outside-list" } })
+  })
+
+  await page.goto("/react/apps/recipebot/members")
+  await page.getByLabel("Username").fill("outside-list")
+  await expect(page.locator('[aria-live="polite"]').filter({ hasText: "No invite suggestions available." })).toHaveText("No invite suggestions available.")
+  await page.getByRole("button", { name: "Send invite" }).click()
+
+  await expect.poll(() => inviteBody).toEqual({ username: "outside-list" })
 })
 
 test("confirms the exact remove endpoint and refreshes the roster", async ({ page }) => {

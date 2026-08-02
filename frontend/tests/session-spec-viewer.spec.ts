@@ -102,7 +102,14 @@ test("privately shares the selected version with a suggested collaborator", asyn
 
   await page.goto("/react/apps/recipebot/dev/sessions/41/spec")
   await page.getByRole("button", { name: "Share privately" }).click()
-  await page.getByRole("button", { name: "@Mira" }).click()
+  const recipients = page.getByRole("list", { name: "Suggested recipients" })
+  await expect(recipients).toBeVisible()
+  await expect(page.locator('[aria-live="polite"]').filter({ hasText: "2 suggested recipients available." })).toHaveText("2 suggested recipients available.")
+  const suggestedRecipient = recipients.getByRole("button", { name: "@Mira" })
+  if (await page.evaluate(() => window.matchMedia("(pointer: coarse)").matches)) {
+    await expect.poll(async () => Math.round((await suggestedRecipient.boundingBox())?.height ?? 0)).toBeGreaterThanOrEqual(48)
+  }
+  await suggestedRecipient.click()
   await page.getByRole("button", { name: "Share privately" }).last().click()
 
   await expect.poll(() => body).toEqual({ username: "Mira" })

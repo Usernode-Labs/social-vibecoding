@@ -70,7 +70,9 @@ export const Suggestions: Story = {
     const canvas = within(canvasElement)
     await userEvent.click(canvas.getByRole("button", { name: "@ava" }))
     await expect(canvas.getByLabelText("Username")).toHaveValue("ava")
+    await expect(canvas.getByLabelText("Username")).toHaveFocus()
     await expect(canvas.queryByRole("list", { name: "Invite suggestions" })).toBeNull()
+    await expect(canvas.getByText("No invite suggestions available.")).toBeInTheDocument()
   },
 }
 

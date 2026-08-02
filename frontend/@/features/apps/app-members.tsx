@@ -1,5 +1,5 @@
 import { ChevronDown, LoaderCircle, ShieldAlert, UsersRound } from "lucide-react"
-import { useEffect, useState, type FormEvent } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 
 import { ActionLink } from "@/components/action-link"
@@ -84,6 +84,7 @@ export function AppMembers() {
   const [state, setState] = useState<MembersState>({ kind: "loading" })
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null)
   const [inviteQuery, setInviteQuery] = useState("")
+  const [selectedInviteUsername, setSelectedInviteUsername] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<UserSearchResult[]>([])
   const [searchError, setSearchError] = useState<string | null>(null)
   const [inviting, setInviting] = useState(false)
@@ -133,7 +134,7 @@ export function AppMembers() {
   useEffect(() => {
     const query = inviteQuery.trim().replace(/^@/, "")
     setSearchError(null)
-    if (query.length < 2 || isProductionReadOnlyReview || rosterVisibility !== "private") {
+    if (query.length < 2 || query.toLocaleLowerCase() === selectedInviteUsername || isProductionReadOnlyReview || rosterVisibility !== "private") {
       setSuggestions([])
       return
     }
@@ -148,7 +149,7 @@ export function AppMembers() {
       })
     }, 250)
     return () => { window.clearTimeout(timer); controller.abort() }
-  }, [inviteQuery, slug, rosterVisibility])
+  }, [inviteQuery, selectedInviteUsername, slug, rosterVisibility])
 
   const ready = state.kind === "ready" ? state : null
   const collaborators = ready?.roster.collaborators.filter((member) => member.status !== "invited") ?? []
@@ -171,6 +172,7 @@ export function AppMembers() {
     try {
       const result = await inviteCollaborator(slug, username)
       setInviteQuery("")
+      setSelectedInviteUsername(null)
       setSuggestions([])
       setInviteSuccess(`Invited @${result.username}.`)
       await refreshRoster()
@@ -279,7 +281,7 @@ export function AppMembers() {
               <h3 className="font-heading text-sm font-medium">Invite a collaborator</h3>
               <p className="mt-1 text-sm text-muted-foreground">Search by username. Existing collaborators and pending invites are excluded.</p>
               <div className="mt-4">
-                <AppMemberInviteForm canInvite={canInvite} error={inviteError} inviting={inviting} onQueryChange={setInviteQuery} onSelectSuggestion={(username) => { setInviteQuery(username); setSuggestions([]) }} onSubmit={submitInvite} query={inviteQuery} searchError={searchError} suggestions={suggestions} />
+                <AppMemberInviteForm canInvite={canInvite} error={inviteError} inviting={inviting} onQueryChange={(query) => { setSelectedInviteUsername(null); setInviteQuery(query) }} onSelectSuggestion={(username) => { setSelectedInviteUsername(username.toLocaleLowerCase()); setInviteQuery(username); setSuggestions([]) }} onSubmit={submitInvite} query={inviteQuery} searchError={searchError} suggestions={suggestions} />
               </div>
               {!canInvite && !isProductionReadOnlyReview ? <p className="mt-3 text-sm text-muted-foreground">This app does not use collaborator invitations.</p> : null}
               {inviteSuccess ? <Alert className="mt-4" role="status" tone="positive"><AlertTitle>Invitation sent</AlertTitle><AlertDescription>{inviteSuccess}</AlertDescription></Alert> : null}
@@ -337,5 +339,15 @@ export function AppMemberInviteForm({
   searchError: string | null
   suggestions: UserSearchResult[]
 }) {
-  return <form aria-label="Invite a collaborator" onSubmit={onSubmit}><FieldGroup><Field data-invalid={!!error}><FieldLabel htmlFor="invite-username">Username</FieldLabel><Input autoComplete="off" disabled={!canInvite || inviting} id="invite-username" onChange={(event) => onQueryChange(event.target.value)} placeholder="Start typing a username" value={query} />{searchError ? <FieldError>{searchError}</FieldError> : null}{error ? <FieldError>{error}</FieldError> : null}<FieldDescription>Type at least two characters to search eligible users.</FieldDescription></Field>{suggestions.length ? <ul aria-label="Invite suggestions" className="flex flex-col gap-1 rounded-lg border p-1">{suggestions.map((user) => <li key={user.id}><Button className="w-full justify-start" disabled={!canInvite || inviting} onClick={() => onSelectSuggestion(user.username)} size="sm" type="button" variant="ghost">@{user.username}</Button></li>)}</ul> : null}<Button disabled={!canInvite || inviting || !query.trim()} type="submit" variant="outline">{inviting ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}{inviting ? "Inviting…" : "Send invite"}</Button></FieldGroup></form>
+  const inputRef = useRef<HTMLInputElement>(null)
+  const normalizedQuery = query.trim().replace(/^@/, "")
+  const suggestionStatus = normalizedQuery.length < 2
+    ? ""
+    : suggestions.length === 1
+      ? "1 invite suggestion available."
+      : suggestions.length > 1
+        ? `${suggestions.length} invite suggestions available.`
+        : "No invite suggestions available."
+
+  return <form aria-label="Invite a collaborator" onSubmit={onSubmit}><FieldGroup><Field data-invalid={!!error}><FieldLabel htmlFor="invite-username">Username</FieldLabel><Input autoComplete="off" disabled={!canInvite || inviting} id="invite-username" onChange={(event) => onQueryChange(event.target.value)} placeholder="Start typing a username" ref={inputRef} value={query} />{searchError ? <FieldError>{searchError}</FieldError> : null}{error ? <FieldError>{error}</FieldError> : null}<FieldDescription>Type at least two characters to search eligible users.</FieldDescription><p aria-atomic="true" aria-live="polite" className="sr-only">{suggestionStatus}</p></Field>{suggestions.length ? <ul aria-label="Invite suggestions" className="flex flex-col gap-1 rounded-lg border p-1">{suggestions.map((user) => <li key={user.id}><Button className="w-full justify-start pointer-coarse:min-h-12" disabled={!canInvite || inviting} onClick={() => { onSelectSuggestion(user.username); inputRef.current?.focus() }} size="sm" type="button" variant="ghost">@{user.username}</Button></li>)}</ul> : null}<Button disabled={!canInvite || inviting || !query.trim()} type="submit" variant="outline">{inviting ? <PlatformIcon className="animate-spin" data-icon="inline-start" icon={LoaderCircle} /> : null}{inviting ? "Inviting…" : "Send invite"}</Button></FieldGroup></form>
 }
