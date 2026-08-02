@@ -111,10 +111,58 @@ test('both failure paths route through noteFailure (no stray warns left)', () =>
     src.indexOf('function start('));
   assert.match(poll, /noteFailure\('chain ID discovery failed'/);
   assert.match(poll, /noteFailure\('poll failed'/);
+  // A 200 with no chain_id is an outage too: `if (!chainId) return;` left
+  // the streak at 0, so the poller stayed pinned at the healthy 4s
+  // interval and /status reported the explorer as fine while nothing was
+  // being polled at all.
+  assert.match(poll, /noteFailure\('chain ID missing'/,
+    'a successful response without a chain_id must be counted as a failure');
+  assert.doesNotMatch(poll, /if \(!chainId\) return;/,
+    'the bare early return is the hole this closes');
   // The DB-update failure is a different subsystem and stays at its own
   // level, but neither explorer path may warn directly any more.
   assert.doesNotMatch(poll, /log\.warn\('chain-poller', 'chain ID discovery failed'/);
   assert.doesNotMatch(poll, /log\.warn\('chain-poller', 'poll failed'/);
+});
+
+test('the boot-time discovery probe is counted in the streak', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'src/services/chain-poller.js'), 'utf8');
+  const fn = src.slice(src.indexOf('function start('), src.indexOf('function stop('));
+  // start() fires one discovery immediately, before the first scheduled
+  // tick. It hits the same upstream as every poll, so when it fails the
+  // explorer is already down — swallowing it reported the opening seconds
+  // of an outage as healthy, and a 200 with no chain_id as healthy for as
+  // long as the explorer kept answering that way.
+  assert.doesNotMatch(fn, /discoverChainId\(\)\.catch\(\(\) => \{\}\)/,
+    'the boot probe must not swallow its own failure');
+  assert.match(fn, /noteFailure\('chain ID discovery failed'/);
+  assert.match(fn, /noteFailure\('chain ID missing'/);
+});
+
+test('a failing boot probe opens the streak instead of reporting healthy', async () => {
+  // Point the poller at a closed local port so the boot probe fails
+  // immediately and offline — EXPLORER_UPSTREAM is read at module load, so
+  // it has to be set before the poller is required.
+  const original = process.env.EXPLORER_UPSTREAM;
+  process.env.EXPLORER_UPSTREAM = '127.0.0.1:1';
+  let poller, lines;
+  try {
+    ({ poller, lines } = loadPollerWithFakeLog());
+    poller.start({ usernodeAppPubkey: 'utpk1testfakepubkey', databaseUrl: 'postgres://fake/fake' });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  } finally {
+    if (poller) poller.stop();
+    if (original === undefined) delete process.env.EXPLORER_UPSTREAM;
+    else process.env.EXPLORER_UPSTREAM = original;
+  }
+
+  const s = poller.getStatus();
+  assert.equal(s.consecutiveFailures, 1,
+    'the boot probe used to be swallowed, leaving the streak at 0 and the poller pinned at 4s');
+  assert.ok(s.downSince, 'the streak start must be stamped for the status pages');
+  assert.ok(s.lastError, 'and the reason surfaced');
+  const warns = lines.filter((l) => l.level === 'warn');
+  assert.equal(warns.length, 1, 'exactly one warn for the transition into the outage');
 });
 
 test('the scheduler reschedules itself so the delay can change', () => {

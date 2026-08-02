@@ -313,3 +313,122 @@ test('token_allocation for 3 users', () => {
   const ids = block.match(/^\s*\(9005\d\d,/gm) || [];
   assert.equal(ids.length, 3);
 });
+
+// ─── 3. The signed-in viewer's own rows ─────────────────────────────────
+//
+// Everything above belongs to six fixture users nobody logs in as. The
+// #profile screen renders the SIGNED-IN user, so a tester who opens it in
+// a preview saw an empty screen — indistinguishable from a broken one.
+//
+// Three identities look at that screen and all three need rows: the
+// interactive admin login, plus `usernode-capture` (screenshots) and
+// `usernode-capture-admin` (declared dapp.json checks). Seeding only one
+// of them is exactly the regression these tests exist to catch.
+
+const VIEWERS = ['staging-admin', 'usernode-capture', 'usernode-capture-admin'];
+
+// mockPool() answers every statement with zero rows, so the viewer loop
+// never runs under it. This variant resolves the username lookup, and can
+// resolve it in any order / with any subset.
+function viewerPool(usernames) {
+  const calls = [];
+  return {
+    calls,
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      if (/FROM users WHERE username = ANY/.test(sql)) {
+        return { rows: usernames.map((username, i) => ({ id: 700 + i, username })) };
+      }
+      return { rows: [] };
+    },
+  };
+}
+
+// The viewer INSERTs, keyed by table, from one seeder run.
+async function viewerInserts(usernames) {
+  process.env.USERNODE_ENV = 'staging';
+  const pool = viewerPool(usernames);
+  await seedStagingTopochain(pool, { adminUsername: VIEWERS[0] });
+  // The viewers own the 900520+ id blocks; every fixture row above them
+  // stops at 900516.
+  return pool.calls.filter((c) => /INSERT INTO/.test(c.sql) && /\(9005[2-9]\d,/.test(c.sql));
+}
+
+test('the viewer lookup asks for all three tester identities', async () => {
+  process.env.USERNODE_ENV = 'staging';
+  const pool = viewerPool(VIEWERS);
+  await seedStagingTopochain(pool, { adminUsername: VIEWERS[0] });
+  const lookup = pool.calls.find((c) => /FROM users WHERE username = ANY/.test(c.sql));
+  assert.ok(lookup, 'the seeder must resolve its viewers by username');
+  assert.deepEqual(lookup.params[0].slice().sort(), VIEWERS.slice().sort(),
+    'screenshots sign as usernode-capture and dapp.json checks as usernode-capture-admin');
+});
+
+test('every resolved viewer gets its own profile fixture block', async () => {
+  const inserts = await viewerInserts(VIEWERS);
+  const perTable = {};
+  for (const call of inserts) {
+    const table = call.sql.match(/INSERT INTO (\w+)/)[1];
+    (perTable[table] ||= []).push(call);
+  }
+  // The six tables the #profile screen reads.
+  for (const table of ['onchain_accounts', 'user_enrollments', 'user_activities',
+    'leaderboard_snapshots', 'token_allocation', 'epoch_stats']) {
+    assert.equal(perTable[table]?.length, 3,
+      `${table} must be seeded once per viewer, not once in total`);
+  }
+  // Three distinct users, three distinct wallets.
+  const userIds = new Set(perTable.onchain_accounts.map((c) => c.params[0]));
+  const wallets = new Set(perTable.onchain_accounts.map((c) => c.params[1]));
+  assert.equal(userIds.size, 3);
+  assert.equal(wallets.size, 3, 'a shared address would collide on the unique index');
+});
+
+test('no two viewers share a row id (ON CONFLICT would silently drop the second)', async () => {
+  const inserts = await viewerInserts(VIEWERS);
+  const seen = new Map();
+  for (const call of inserts) {
+    const table = call.sql.match(/INSERT INTO (\w+)/)[1];
+    for (const [, id] of call.sql.matchAll(/\((9\d{5}),/g)) {
+      const key = `${table}#${id}`;
+      assert.ok(!seen.has(key), `id ${id} reused in ${table} across viewers`);
+      seen.set(key, true);
+    }
+  }
+  assert.ok(seen.size >= 18, `expected ≥18 viewer rows, got ${seen.size}`);
+});
+
+test("a viewer's id block is keyed off its username, not the result order", async () => {
+  // Staging containers rebuild on every push, and the capture identities
+  // are created by a separate bootstrap — so the set of existing viewers,
+  // and the order Postgres returns them in, both vary between boots. If
+  // the ids moved with the result order, the reseed would insert the same
+  // rows again under fresh ids and ON CONFLICT (id) would never fire.
+  const idsFor = (calls) => calls
+    .filter((c) => /INSERT INTO onchain_accounts/.test(c.sql))
+    .map((c) => c.sql.match(/VALUES \((9\d{5}),/)[1]);
+
+  const all = idsFor(await viewerInserts(VIEWERS));
+  const reversed = idsFor(await viewerInserts(VIEWERS.slice().reverse()));
+  assert.deepEqual(reversed.slice().reverse(), all, 'result order must not move any id');
+
+  // And with the admin login absent entirely, the capture identities keep
+  // the ids they had.
+  const captureOnly = idsFor(await viewerInserts(VIEWERS.slice(1)));
+  assert.deepEqual(captureOnly, all.slice(1),
+    'a missing identity must not shift the remaining viewers onto new ids');
+});
+
+test('an unknown username is skipped rather than seeded into slot -1', async () => {
+  const inserts = await viewerInserts(['someone-else']);
+  assert.equal(inserts.length, 0,
+    'indexOf() === -1 must be guarded — 900520 + -10 is another block');
+});
+
+test("the viewer's leaderboard row does not claim a contradictory rank 1", () => {
+  const block = body.slice(body.indexOf('const VIEWER_USERNAMES'));
+  const snapshot = block.slice(block.indexOf('INSERT INTO leaderboard_snapshots'));
+  // Three viewers all seeded as #1 with different totals reads as a bug in
+  // the screen. Rank 2 on 350 points ties an existing fixture user.
+  assert.match(snapshot.slice(0, snapshot.indexOf('ON CONFLICT')), /\$1, 2, 350,/);
+});

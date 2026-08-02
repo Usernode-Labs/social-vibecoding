@@ -138,7 +138,14 @@ async function poll(appPubkey, pool) {
       noteFailure('chain ID discovery failed', e.message);
       return;
     }
-    if (!chainId) return;
+    // Discovery succeeded but the explorer answered without a chain_id.
+    // This is an outage too — without recording it the streak stays at 0,
+    // the poller is pinned at the healthy 4s interval forever, and the
+    // status pages report the explorer as fine while nothing is polled.
+    if (!chainId) {
+      noteFailure('chain ID missing', 'Explorer returned no chain_id');
+      return;
+    }
   }
 
   const txUrl = `${baseUrl()}/${chainId}/transactions`;
@@ -220,7 +227,15 @@ function start(config) {
   log.info('chain-poller', 'Starting', { appPubkey: appPubkey.slice(0, 10) + '...' });
 
   running = true;
-  discoverChainId().catch(() => {});
+  // The boot-time discovery is a real probe of the same upstream, so its
+  // failure belongs in the streak: swallowing it left the first ~4s of an
+  // outage reported as healthy, and a successful-but-empty response
+  // uncounted entirely.
+  discoverChainId()
+    .then(() => {
+      if (!chainId) noteFailure('chain ID missing', 'Explorer returned no chain_id');
+    })
+    .catch((e) => noteFailure('chain ID discovery failed', e.message));
 
   // Self-rescheduling timer rather than setInterval: the delay has to
   // change as the failure streak grows, and a fixed interval would also

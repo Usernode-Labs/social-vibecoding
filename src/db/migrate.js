@@ -7479,18 +7479,43 @@ async function seedStagingTopochain(pool, config) {
     // these rows a tester who opens Profile in a preview sees an empty
     // screen and cannot tell it apart from the screen being broken.
     //
-    // Resolved by username (config.adminUsername) rather than a fixed id,
-    // because the admin row is created by seedAdmin() with a serial id.
+    // Grant them to every identity a tester's eyes look through: the
+    // interactive admin login (config.adminUsername), plus the two capture
+    // identities — screenshots sign as usernode-capture and the declared
+    // dapp.json tests sign as usernode-capture-admin (see
+    // services/visuals.js) — so the /#profile check and the before/after
+    // shots render the POPULATED screen rather than the empty state. Same
+    // convention as the app-discovery fixtures earlier in this file.
+    //
+    // Resolved by username rather than by fixed id, because these rows are
+    // created by seedAdmin() / the capture bootstrap with serial ids. The
+    // id block is keyed off each name's position in VIEWER_USERNAMES, NOT
+    // off the query result order, so a viewer's ids never shift when
+    // another identity appears or disappears between boots — that would
+    // re-insert its rows under fresh ids and defeat ON CONFLICT (id).
+    // 900500-900516 is fully used above, so the viewers start at 900520
+    // with a 10-wide block each.
+    const VIEWER_USERNAMES = [
+      config.adminUsername, 'usernode-capture', 'usernode-capture-admin',
+    ];
     const { rows: viewerRows } = await pool.query(
-      'SELECT id FROM users WHERE username = $1', [config.adminUsername]
+      'SELECT id, username FROM users WHERE username = ANY($1::text[])',
+      // Filtered for the lookup only — the slot arithmetic below still
+      // indexes into the unfiltered list, so an unset adminUsername shifts
+      // nobody's id block.
+      [VIEWER_USERNAMES.filter(Boolean)]
     );
-    const viewerId = viewerRows[0] && viewerRows[0].id;
-    if (viewerId) {
+    for (const viewer of viewerRows) {
+      const viewerId = viewer.id;
+      const slot = VIEWER_USERNAMES.indexOf(viewer.username);
+      if (slot < 0) continue;
+      const base = 900520 + slot * 10;
       // Two forms of the same identity, mirroring the fixture accounts
       // above: `address` is the bech32m form the UI shows, `public_key` the
-      // VRF-side key. epoch_stats keys off the address form.
-      const VIEWER_WALLET = 'ut1stagingdemotopochainviewer0001';
-      const VIEWER_PUBKEY = 'utpk1stagingdemotopochainviewer01';
+      // VRF-side key. epoch_stats keys off the address form. Both are
+      // per-viewer, so the unique indexes hold with three seeded at once.
+      const VIEWER_WALLET = `ut1stagingdemotopochainviewer000${slot + 1}`;
+      const VIEWER_PUBKEY = `utpk1stagingdemotopochainviewer0${slot + 1}`;
 
       // A linked wallet is what the leaderboard drill-down matches on.
       await pool.query(
@@ -7503,9 +7528,9 @@ async function seedStagingTopochain(pool, config) {
            (id, amount, identity_uid, address, public_key, secret_key, tier,
             registration_code, season_event_id, season_id, user_id, is_used,
             used_at, created_at, updated_at)
-         VALUES (900510, 1000, 'staging-demo-identity-viewer', $2, $3,
-                 'sk_staging_demo_fake_00000000viewer', 'premium',
-                 'STAGING-DEMO-TOPOCHAIN-VIEWER', NULL, $4, $1, TRUE,
+         VALUES (${base}, 1000, 'staging-demo-identity-viewer-${slot + 1}', $2, $3,
+                 'sk_staging_demo_fake_0000000viewer${slot + 1}', 'premium',
+                 'STAGING-DEMO-TOPOCHAIN-VIEWER-${slot + 1}', NULL, $4, $1, TRUE,
                  NOW() - INTERVAL '6 days', NOW(), NOW())
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, VIEWER_WALLET, VIEWER_PUBKEY, SEASON_ID]
@@ -7514,8 +7539,8 @@ async function seedStagingTopochain(pool, config) {
         `INSERT INTO user_enrollments
            (id, user_id, season_id, season_event_id, created_at, updated_at)
          VALUES
-           (900510, $1, $2, NULL, NOW(), NOW()),
-           (900511, $1, $2, $3,   NOW(), NOW())
+           (${base},     $1, $2, NULL, NOW(), NOW()),
+           (${base + 1}, $1, $2, $3,   NOW(), NOW())
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, SEASON_ID, EVENT_REGULAR_ID]
       );
@@ -7526,19 +7551,21 @@ async function seedStagingTopochain(pool, config) {
            (id, user_id, season_event_id, activity_type, points, description,
             metadata, activity_at, challenge_id)
          VALUES
-           (900510, $1, $2, 'challenge_completion', 250, 'Reported a reproducible bug.',
+           (${base},     $1, $2, 'challenge_completion', 250, 'Reported a reproducible bug.',
             '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '4 days', 900500),
-           (900511, $1, $2, 'challenge_completion', 100, 'Sent a testnet transaction.',
+           (${base + 1}, $1, $2, 'challenge_completion', 100, 'Sent a testnet transaction.',
             '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '3 days', 900501)
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, EVENT_REGULAR_ID]
       );
-      // A rank the profile header can show.
+      // A rank the profile header can show. Rank 2 on 350 points ties the
+      // fixture user holding exactly those points, so seeding several
+      // viewers reads as a tie rather than as three contradictory #1s.
       await pool.query(
         `INSERT INTO leaderboard_snapshots
            (id, season_event_id, user_id, rank, total_points, extra_points,
             snapshot_at, season_id, created_at, updated_at)
-         VALUES (900516, $2, $1, 1, 350, 0, NOW(), $3, NOW(), NOW())
+         VALUES (${base}, $2, $1, 2, 350, 0, NOW(), $3, NOW(), NOW())
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, EVENT_REGULAR_ID, SEASON_ID]
       );
@@ -7548,7 +7575,7 @@ async function seedStagingTopochain(pool, config) {
         `INSERT INTO token_allocation
            (id, user_id, season_id, total_points, total_season_tokens,
             allocated_tokens, description, created_at, updated_at)
-         VALUES (900510, $1, $2, 350, 3500, 35.00000000,
+         VALUES (${base}, $1, $2, 350, 3500, 35.00000000,
                  'Staging demo allocation (viewer)', NOW(), NOW())
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, SEASON_ID]
@@ -7560,8 +7587,8 @@ async function seedStagingTopochain(pool, config) {
             epoch_produced_blocks, epoch_canonical_blocks, epoch_orphaned_blocks,
             epoch_failed_blocks, created_at, updated_at)
          VALUES
-           (900510, 'staging-demo-chain-1', $2, $1, 100, 3, 2, 2, 0, 0, NOW(), NOW()),
-           (900511, 'staging-demo-chain-1', $2, $1, 101, 4, 4, 3, 1, 0, NOW(), NOW())
+           (${base},     'staging-demo-chain-1', $2, $1, 100, 3, 2, 2, 0, 0, NOW(), NOW()),
+           (${base + 1}, 'staging-demo-chain-1', $2, $1, 101, 4, 4, 3, 1, 0, NOW(), NOW())
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, VIEWER_WALLET]
       );

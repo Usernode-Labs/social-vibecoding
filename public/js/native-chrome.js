@@ -67,7 +67,6 @@
       // this handler only wires the drawer-close behaviour.
       const row = document.getElementById('drawer-row-profile');
       if (!row) return;
-      row.classList.remove('hidden');
       row.addEventListener('click', () => {
         if (window.App && App.HeaderMenu) App.HeaderMenu.close();
       });
