@@ -88,14 +88,21 @@ function makePool(state) {
       return { rowCount: 1, rows: [{ released_at: s.released_at }] };
     }
 
-    if (sql.includes('SET released_at = COALESCE(released_at, NOW()) WHERE id = $1')) {
+    if (sql.includes('SET released_at = COALESCE(w.released_at, NOW()) WHERE w.id = $1')) {
       const [id] = params;
       const s = [...state.signups.values()].find((r) => r.id === id);
       if (!s) return { rowCount: 0, rows: [] };
+      const newlyReleased = s.released_at == null;
       s.released_at = s.released_at || new Date();
       return {
         rowCount: 1,
-        rows: [{ id: s.id, email: s.email, released_at: s.released_at, linked_user_id: s.linked_user_id }],
+        rows: [{
+          id: s.id,
+          email: s.email,
+          released_at: s.released_at,
+          linked_user_id: s.linked_user_id,
+          newly_released: newlyReleased,
+        }],
       };
     }
 
@@ -252,6 +259,18 @@ test('release is idempotent — the first released_at wins', async () => {
   const first = await releaseWaitlistSignup(pool, id);
   const second = await releaseWaitlistSignup(pool, id);
   assert.equal(first.released_at.getTime(), second.released_at.getTime());
+});
+
+test('newly_released is true on the first release only — the "you\'re in" mail sends once', async () => {
+  const state = makeState();
+  const pool = makePool(state);
+  await joinWaitlist(pool, { email: 'once@example.com' });
+  const id = state.signups.get('once@example.com').id;
+
+  const first = await releaseWaitlistSignup(pool, id);
+  const second = await releaseWaitlistSignup(pool, id);
+  assert.equal(first.newly_released, true);
+  assert.equal(second.newly_released, false);
 });
 
 // ─── 5. grantPlatformAccess idempotence ───────────────────────────────

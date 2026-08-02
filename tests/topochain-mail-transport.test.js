@@ -22,7 +22,7 @@ const path = require('node:path');
 
 const ROOT = path.join(__dirname, '..');
 const transport = require(path.join(ROOT, 'src/services/topochain/mail-transport.js'));
-const { sendOtpMail, sendWaitlistJoinMail } =
+const { sendOtpMail, sendWaitlistJoinMail, sendWaitlistReleaseMail } =
   require(path.join(ROOT, 'src/services/topochain/mailer.js'));
 
 const FULL_ENV = {
@@ -95,6 +95,27 @@ test('a waitlist send uses its own subject and carries no code', async () => {
     'a missing code must not leak into the body as the string "undefined"');
 });
 
+test('a release send branches its copy on hasAccount and carries the link', async () => {
+  const bodies = [];
+  await withFetch(async (_url, opts) => {
+    bodies.push(JSON.parse(opts.body));
+    return { ok: true, status: 200, text: async () => '' };
+  }, async () => {
+    const t = transport.create(FULL_ENV);
+    await t.send({ to: 'a@b.invalid', kind: 'waitlist_released', url: 'https://x.invalid/#signup', hasAccount: false });
+    await t.send({ to: 'a@b.invalid', kind: 'waitlist_released', url: 'https://x.invalid/#login', hasAccount: true });
+  });
+  assert.match(bodies[0].subject, /access is ready/i);
+  assert.match(bodies[0].text, /create your account/i);
+  assert.match(bodies[0].text, /https:\/\/x\.invalid\/#signup/);
+  assert.match(bodies[1].text, /sign in/i);
+  assert.match(bodies[1].text, /https:\/\/x\.invalid\/#login/);
+  for (const b of bodies) {
+    assert.doesNotMatch(b.text, /undefined/,
+      'missing payload fields must not leak into the body as "undefined"');
+  }
+});
+
 test('an unknown kind throws rather than sending a blank email', async () => {
   await withFetch(async () => ({ ok: true, status: 200, text: async () => '' }), async () => {
     await assert.rejects(
@@ -136,20 +157,32 @@ test('sendWaitlistJoinMail passes kind:"waitlist_joined"', async () => {
   assert.equal(seen[0].kind, 'waitlist_joined');
 });
 
+test('sendWaitlistReleaseMail passes kind:"waitlist_released" and a signup/login link', async () => {
+  const seen = [];
+  const cfg = { topochainMailTransport: { send: async (m) => { seen.push(m); } } };
+  await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: false });
+  await sendWaitlistReleaseMail(cfg, 'a@b.invalid', { hasAccount: true });
+  assert.equal(seen[0].kind, 'waitlist_released');
+  assert.match(seen[0].url, /#signup$/, 'no account yet → the link lands on account creation');
+  assert.match(seen[1].url, /#login$/, 'existing account → the link lands on sign-in');
+});
+
 // ─── the always-success contract survives a broken transport ────────────
 
-test('both senders swallow a throwing transport and resolve', async () => {
+test('all senders swallow a throwing transport and resolve', async () => {
   const boom = { topochainMailTransport: { send: async () => { throw new Error('nope'); } } };
   // No rejection, no return value the caller must check — the endpoints
   // above these must be unable to tell delivery apart from non-delivery.
   assert.equal(await sendOtpMail(boom, 'a@b.invalid', '1'), undefined);
   assert.equal(await sendWaitlistJoinMail(boom, 'a@b.invalid'), undefined);
+  assert.equal(await sendWaitlistReleaseMail(boom, 'a@b.invalid', { hasAccount: false }), undefined);
 });
 
-test('both senders resolve with no transport at all, in production', async () => {
+test('all senders resolve with no transport at all, in production', async () => {
   const prod = { env: 'production' };
   assert.equal(await sendOtpMail(prod, 'a@b.invalid', '1'), undefined);
   assert.equal(await sendWaitlistJoinMail(prod, 'a@b.invalid'), undefined);
+  assert.equal(await sendWaitlistReleaseMail(prod, 'a@b.invalid', { hasAccount: true }), undefined);
 });
 
 test('production never logs the raw OTP code', () => {
@@ -180,10 +213,11 @@ test('describe() names the missing keys and the flows that break', () => {
   assert.deepEqual(d.missing.sort(), [
     'TOPOCHAIN_MAIL_API_KEY', 'TOPOCHAIN_MAIL_API_URL', 'TOPOCHAIN_MAIL_FROM',
   ]);
-  assert.equal(d.affectedFlows.length, 2,
-    'both silently-broken flows must be named for the admin');
+  assert.equal(d.affectedFlows.length, 3,
+    'every silently-broken flow must be named for the admin');
   assert.match(d.affectedFlows.join(' '), /login/i);
   assert.match(d.affectedFlows.join(' '), /waitlist/i);
+  assert.match(d.affectedFlows.join(' '), /release/i);
 });
 
 test('the admin mail-status route is registered ahead of GET /:key', () => {

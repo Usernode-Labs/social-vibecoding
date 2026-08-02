@@ -1194,7 +1194,7 @@ const AdminTopochain = {
     if (!AdminTopochain.canWrite()) return;
     const okd = await AdminTopochain._confirm({
       title: 'Release off the waitlist?',
-      message: `${email} gets platform access — immediately if they already have an account, otherwise the moment they create one.`,
+      message: `${email} gets platform access — immediately if they already have an account, otherwise the moment they create one. They'll be emailed a link to sign in or create their account.`,
       confirmLabel: 'Release',
     });
     if (!okd) return;
