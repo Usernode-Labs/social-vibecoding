@@ -204,10 +204,18 @@ test('app.js screenIdOf treats ?path= as the same screen and re-dispatches on a 
     'a chromeless hash with a different inner path forces a re-render');
 });
 
-test('app.js setChromeless toggles the header, tab bar and pill', () => {
+test('app.js setChromeless toggles the header, the bottom inset and the pill', () => {
   const src = read('public/js/app.js');
   assert.ok(src.includes("document.getElementById('platform-header')"));
-  assert.ok(src.includes("document.getElementById('app-tabs')"));
+  // The App/Dev switch needs no line of its own: it lives inside
+  // #platform-header now (it used to be the separate #app-tabs bar), so
+  // hiding the header hides it too.
+  assert.ok(!src.includes("document.getElementById('app-tabs')"),
+    'setChromeless still reaches for the deleted tab bar');
+  // What DOES need handling is the safe-area inset that moved onto
+  // #app-view — chromeless must render edge-to-edge.
+  assert.ok(src.includes("classList.toggle('un-safe-bottom', !enable)"),
+    'chromeless must strip the bottom inset from #app-view');
   assert.ok(src.includes('_mountChromelessPill'));
   assert.ok(src.includes('_unmountChromelessPill'));
   // The pill's exit target is the regular App-tab view, which clears the
@@ -218,7 +226,7 @@ test('app.js setChromeless toggles the header, tab bar and pill', () => {
 test('index.html carries the ids setChromeless toggles', () => {
   const html = read('public/index.html');
   assert.ok(html.includes('id="platform-header"'));
-  assert.ok(html.includes('id="app-tabs"'));
+  assert.ok(html.includes('id="app-view"'));
 });
 
 test('an expired session boots the anonymous shell in place — no login.html redirect', () => {

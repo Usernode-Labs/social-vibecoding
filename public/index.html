@@ -115,6 +115,23 @@
          #drawer-row-wallet, populated by public/js/node-pill.js /
          wallet-sheet.js when the Usernode bridge reports the matching
          capability. -->
+    <!-- App/Dev mode switch — replaced the full-width bottom tab bar
+         that used to sit at the foot of #app-view. It MUST
+         stay inside this right-group div: public/js/header-layout.js
+         resolves the title's side groups as previousElementSibling /
+         nextElementSibling, so a sibling wedged between the <h1> and
+         this div would silently break the centering measurement.
+
+         Visibility is owned by App.DrawerStatus.setAppOpen() — shown
+         only while an app is open, and never for the self-hosted
+         platform row (whose App mode has no iframe target). Kept at
+         28px tall so the header's height — and the `top-14` anchoring
+         of #notifications-panel / #work-drawer-panel — is unchanged. -->
+    <div id="app-mode-switch" role="radiogroup" aria-label="App mode"
+         class="hidden relative flex items-center p-0.5 mr-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium">
+      <button type="button" role="radio" aria-checked="false" data-tab="app" class="app-mode-seg rounded-md px-2.5 py-1 transition-colors">App</button>
+      <button type="button" role="radio" aria-checked="false" data-tab="dev" class="app-mode-seg rounded-md px-2.5 py-1 transition-colors">Dev</button>
+    </div>
     <button id="dev-console-btn" class="hidden relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open developer console">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
       <span id="dev-console-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
@@ -1503,21 +1520,23 @@
     </div>
   </main>
 
-  <!-- App view (hidden by default) -->
-  <div id="app-view" class="hidden flex flex-col" style="flex:1;min-height:0;height:0">
+  <!-- App view (hidden by default).
+
+       The two modes (#194) — App (the running iframe) and Dev (the card
+       list, rendered by AppView.renderDevView with full-screen chat /
+       session / topic sub-views) — are switched from #app-mode-switch in
+       the platform header. The full-width tab-bar nav that used to live
+       here at the foot of this column is gone.
+
+       `un-safe-bottom` moved onto this element from that nav: the bar was
+       the only thing keeping app content clear of the iOS home indicator,
+       and every surface inside #app-content now reaches the true bottom
+       of the viewport. App.setChromeless() strips the class so a
+       chromeless share link still renders edge-to-edge. -->
+  <div id="app-view" class="hidden flex flex-col un-safe-bottom" style="flex:1;min-height:0;height:0">
     <div id="app-content" class="flex-1" style="min-height:0;overflow:hidden">
       <!-- Tab content renders here -->
     </div>
-
-    <!-- Bottom tabs — two modes (#194): App (the running iframe) and
-         Dev (the card list — general chat card, your in-progress
-         sessions, and the intermixed issues & proposals feed — rendered
-         by AppView.renderDevView, with full-screen chat / session /
-         settings sub-views). -->
-    <nav id="app-tabs" class="un-safe-bottom flex border-t border-zinc-200 dark:border-zinc-800 shrink-0">
-      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="app">App</button>
-      <button class="app-tab flex-1 py-3 text-center text-sm font-medium transition-colors" data-tab="dev">Dev</button>
-    </nav>
   </div>
 
   <!-- Notifications dropdown (top-right anchored). -->

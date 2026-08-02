@@ -541,6 +541,22 @@
       "expectText": "Staging demo admin roster"
     },
     {
+      "name": "Header App/Dev switch marks App active on an app's App view",
+      "path": "/app/staging-demo-admins",
+      "expectSelector": "#app-mode-switch [data-tab='app'][aria-checked='true']",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Header App/Dev switch marks Dev active on an app's Dev view",
+      "path": "/app/staging-demo-admins/dev",
+      "expectSelector": "#app-mode-switch [data-tab='dev'][aria-checked='true']"
+    },
+    {
+      "name": "The self-hosted platform row keeps its DEV caption (no header switch)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-btn"
+    },
+    {
       "name": "Kanban filter bar renders above the board",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "#dev-kanban-search"
