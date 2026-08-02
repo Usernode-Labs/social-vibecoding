@@ -171,9 +171,16 @@ test('server.js recovery flow registers in activeWorkers and bumps last_activity
 test('server.js has the stale active_turn watchdog pass', () => {
   assert.ok(/Reaping orphaned active_turn/.test(serverSrc), 'watchdog reap log line missing');
   assert.ok(/classifyStaleTurn/.test(serverSrc), 'watchdog must use the pure policy helper');
+  // #896: the reaped-turn message is the shared TURN_UNFINISHED_BREADCRUMB
+  // now — one wording for every unresumable shape, with the shape kept in
+  // metadata.recoveredReason instead of in the text the user reads.
   assert.ok(
-    /This coding turn was interrupted and could not be recovered/.test(serverSrc),
+    /const msg = recoveryPills\.TURN_UNFINISHED_BREADCRUMB/.test(serverSrc),
     'watchdog must post the retry system message'
+  );
+  assert.ok(
+    /recoveredReason: 'watchdog_reap'/.test(serverSrc),
+    'the reap is still distinguishable from other recoveries in SQL'
   );
 });
 

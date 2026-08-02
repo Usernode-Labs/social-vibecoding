@@ -268,9 +268,11 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
       : `PR #${session.pr_number}`;
     await sendSystemMessage(
       pool, session.app_id,
-      reason === 'startup'
-        ? `The staging preview for ${label} was rebuilt after a platform restart — the Preview button works again.`
-        : `The staging preview for ${label} was rebuilt — the Preview button works again.`,
+      // #896: one wording for every rebuild reason. Why the preview went
+      // away (a restart, the idle GC, a lost container) is operator
+      // detail; the reader only needs to know the button works again.
+      // `reason` still rides the log line at the end of this function.
+      `The staging preview for ${label} was rebuilt — the Preview button works again.`,
       'system',
       { stagingBuild: 'ready', prNumber: session.pr_number || null, stagingUrl: stagingResult.stagingUrl },
       { type: 'session', ref: session.id }
@@ -283,7 +285,8 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
        VALUES ($1, 'system', $2, $3)`,
       [
         session.id,
-        reason === 'startup' ? 'Staging recovered after restart' : 'Staging preview rebuilt',
+        // #896: same single wording as the imported-proposal note above.
+        'Staging preview rebuilt',
         JSON.stringify({ stagingUrl: stagingResult.stagingUrl }),
       ]
     );

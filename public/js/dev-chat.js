@@ -3633,6 +3633,43 @@ const DevChat = {
     'Fix something that\'s broken',
   ],
 
+  // #894: last-resort defaults for a session whose newest reply carries no
+  // pills. The server now guarantees pills on every turn-end path, so this
+  // only fires for rows that PREDATE that guarantee (an old chat reopened)
+  // or any path it somehow misses — but it's what makes "there is always
+  // something to tap" true rather than nearly true.
+  //
+  // The strings mirror RECOVERY_PILLS in src/services/recovery-pills.js
+  // (code_done / spec_done / chat_generic). The client can't require that
+  // module, so tests/quick-reply-fallback.test.js asserts the two copies
+  // stay identical.
+  FALLBACK_QUICK_REPLIES: {
+    code_done: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
+    spec_done: ['Build it', 'Revise the spec', 'What will this change?'],
+    chat_generic: ['Make a change', 'What issues are open right now?', "What's the current state?"],
+  },
+
+  // Same state-derived choice the server's fallbackKindForTurn makes for a
+  // 'chat' outcome: a PR means a build landed, else a spec means scout work
+  // landed, else nothing has happened yet.
+  //
+  // hasSpec reads session.has_spec — a boolean the session list computes
+  // from the same spec_md column the server's turnPills reads, so it's
+  // right on first paint. draftContent only exists once the spec viewer
+  // has been opened, and specVersion only appears on a scout turn's own
+  // status row, so both are fallbacks behind it rather than the primary
+  // signal (a session whose spec was written in an earlier turn, or one
+  // reopened from the list, has neither).
+  _fallbackQuickReplies() {
+    const session = DevChat.currentSession;
+    if (session && session.pr_number != null) return DevChat.FALLBACK_QUICK_REPLIES.code_done;
+    const hasSpec = !!(session && (session.has_spec || (session.spec_md || '').trim()))
+      || !!(DevChat.draftContent || '').trim()
+      || DevChat.messages.some((m) => m && m.specVersion != null);
+    if (hasSpec) return DevChat.FALLBACK_QUICK_REPLIES.spec_done;
+    return DevChat.FALLBACK_QUICK_REPLIES.chat_generic;
+  },
+
   // Resolve the pills to show: the newest message carrying quickReplies,
   // the starter set on a fresh session, or null (hide the bar) otherwise.
   // Hidden entirely while a turn is streaming so the user never taps a
@@ -3646,6 +3683,20 @@ const DevChat = {
   // first user/assistant row) while letting a restart-recovery breadcrumb
   // — which is a `system` row, since no Mayor wrap-up runs after a
   // recovery — be the pill source.
+  //
+  // #894: an ASSISTANT reply that carries no pills no longer means an empty
+  // bar — it falls back to a state-derived default set, so a reply that
+  // predates the server-side guarantee (or slips past it) still leaves the
+  // user something to tap. Two cases deliberately keep returning null:
+  //
+  //   - the newest row is the user's own message: pills clear the moment
+  //     you send, exactly as before (#786). A turn that then dies without
+  //     replying is healed server-side by the recovery breadcrumb, which
+  //     carries its own pills.
+  //   - the newest reply carries #32 answer chips: those are that turn's
+  //     affordance and the above-box row stays empty on purpose (the same
+  //     precedence resolveQuickReplies and classifyMissingPills enforce
+  //     server-side).
   _currentQuickReplies() {
     const session = DevChat.currentSession;
     if (!session) return null;
@@ -3653,15 +3704,18 @@ const DevChat = {
     const interactive = session.status === 'active' || session.status === 'promoted';
     if (!interactive) return null;
     let sawNonSystem = false;
+    let lastConvoRow = null;
     for (let i = DevChat.messages.length - 1; i >= 0; i--) {
       const m = DevChat.messages[i];
       if (Array.isArray(m.quickReplies) && m.quickReplies.length) return m.quickReplies;
-      if (m.role === 'user' || m.role === 'assistant') { sawNonSystem = true; break; }
+      if (m.role === 'user' || m.role === 'assistant') { sawNonSystem = true; lastConvoRow = m; break; }
     }
     // A brand-new session (nothing but status rows, if anything) keeps the
     // generic starters so the affordance is present from the first screen.
     if (!sawNonSystem) return DevChat.STARTER_QUICK_REPLIES;
-    return null;
+    if (!lastConvoRow || lastConvoRow.role !== 'assistant') return null;
+    if (Array.isArray(lastConvoRow.suggestions) && lastConvoRow.suggestions.length) return null;
+    return DevChat._fallbackQuickReplies();
   },
 
   _renderQuickReplies() {

@@ -15,7 +15,7 @@
 //
 // MOBILE HIERARCHY: below md the sidebar has no room, and the horizontally
 // scrolling tab strip that used to stand in for it (the Dev board's
-// kanban-tabs pattern, #814) made fifteen ungrouped sections a thumb-swipe
+// kanban-tabs pattern, #814) made sixteen ungrouped sections a thumb-swipe
 // scavenger hunt. Phones now get a real two-level nav instead:
 //
 //   level 1 (#admin)        the grouped section menu, one tappable row per
@@ -110,6 +110,9 @@ const AdminConsole = {
     { key: 'limits', label: 'Spend limits', group: 'People' },
 
     { key: 'analytics', label: 'Analytics', group: 'Insights' },
+    // Estimator accuracy (#898): platform analytics, split out of the
+    // Analytics section, which is otherwise entirely USER analytics.
+    { key: 'estimator', label: 'Estimator accuracy', group: 'Insights' },
     { key: 'gallery', label: 'Screenshot gallery', group: 'Insights' },
     { key: 'features', label: 'Submitted features', group: 'Insights' },
 
@@ -428,7 +431,7 @@ const AdminConsole = {
     return groups;
   },
 
-  // Desktop sidebar rows, grouped under headings. Fifteen flat rows is a
+  // Desktop sidebar rows, grouped under headings. Sixteen flat rows is a
   // lot to scan; the headings are the mitigation (and stay cheap — no
   // second level of nav state).
   _navItemsHtml() {
@@ -584,6 +587,7 @@ const AdminConsole = {
     status: 'AdminStatus',
     node: 'AdminNode',
     analytics: 'AdminAnalytics',
+    estimator: 'AdminEstimator',
     merges: 'AdminMerges',
     gallery: 'AdminGallery',
     campaigns: 'AdminCampaigns',
@@ -659,7 +663,8 @@ const AdminConsole = {
   // ── Delegated sections ──────────────────────────────────────────────
   //
   // Topochain (Task 15), Health & status / Node & chain / Analytics /
-  // Merge debug / Screenshot gallery / Maintenance campaigns (#860) all
+  // Merge debug / Screenshot gallery / Maintenance campaigns (#860) and
+  // Estimator accuracy (#898) all
   // live in their own modules, dispatched by SECTION_MODULES above rather
   // than by a render*Section method here. Two of them own a second hash
   // level entirely on their own — AdminTopochain under

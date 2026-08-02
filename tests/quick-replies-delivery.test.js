@@ -160,25 +160,48 @@ function loadCurrentQuickReplies() {
     isStreaming: !!opts.isStreaming,
     messages,
     STARTER_QUICK_REPLIES: ['Change the colors', 'Add a new feature', "Fix something that's broken"],
+    // #894: an assistant reply with no pills now falls back to a
+    // state-derived default instead of an empty bar. Stubbed with a
+    // recognisable sentinel so these tests assert the RESOLUTION rule
+    // (which row wins, when the bar clears) — the real sets and the
+    // state derivation are covered in tests/quick-reply-fallback.test.js.
+    _fallbackQuickReplies: () => FALLBACK_SENTINEL,
   });
 }
+
+const FALLBACK_SENTINEL = ['<fallback>'];
 
 const currentQuickReplies = loadCurrentQuickReplies();
 
 test('#786 pills resolve from a system recovery breadcrumb', () => {
-  const pills = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
+  const pills = ['Try that again', "What's the current state?"];
   const out = currentQuickReplies([
     { role: 'user', content: 'Sort by score' },
-    // The dispatch preamble has no pills (resolveQuickReplies drops a
-    // phase-1 call when a dispatch co-occurs).
     { role: 'assistant', content: "I'll have the agent do that." },
     { role: 'system', content: 'Claude Code is running...' },
-    { role: 'system', content: 'PR #12 created' },
-    { role: 'system', content: 'Staging deployed (recovered after restart)' },
-    { role: 'system', content: 'Coding turn recovered after a platform restart.', quickReplies: pills },
+    // A turn that couldn't be resumed has no Mayor reply to hang pills on,
+    // so its breadcrumb is still the pill source (#786).
+    { role: 'system', content: "That coding turn didn't finish — please send your request again.", quickReplies: pills },
   ]);
   assert.deepEqual(out, pills,
     'a recovery breadcrumb must be able to supply the pill bar — otherwise a restart leaves it empty forever');
+});
+
+// #896: a recovered BUILD turn now ends on a real Mayor wrap-up, so its
+// pills ride an ordinary assistant row — the same source a live turn uses
+// — with the ordinary card labels above it.
+test('#896 a recovered build turn resolves its pills from the wrap-up assistant row', () => {
+  const pills = ['Propose it to the group', 'Make a tweak', 'What did it change?'];
+  const out = currentQuickReplies([
+    { role: 'user', content: 'Sort by score' },
+    { role: 'assistant', content: "I'll have the agent do that." },
+    { role: 'system', content: 'Claude Code is running...' },
+    { role: 'system', content: 'Claude Code finished' },
+    { role: 'system', content: 'PR #12 created' },
+    { role: 'system', content: 'Staging deployed!' },
+    { role: 'assistant', content: 'Sorted the leaderboard by score.', quickReplies: pills },
+  ]);
+  assert.deepEqual(out, pills);
 });
 
 test('#786 pill-less system rows are skipped, not treated as a stop', () => {
@@ -186,16 +209,16 @@ test('#786 pill-less system rows are skipped, not treated as a stop', () => {
   const out = currentQuickReplies([
     { role: 'user', content: 'Plan it' },
     { role: 'assistant', content: 'Scouting.' },
-    { role: 'system', content: 'Scout finished after restart — drafted a 40-line spec.', quickReplies: pills },
+    { role: 'system', content: 'Scout drafted a 40-line spec from the codebase.', quickReplies: pills },
     // A later staging heal lands ABOVE the pill-carrying breadcrumb.
-    { role: 'system', content: 'Staging recovered after restart' },
+    { role: 'system', content: 'Staging preview rebuilt' },
   ]);
   assert.deepEqual(out, pills);
 });
 
 test('#786 a sent user row still clears the bar', () => {
   const out = currentQuickReplies([
-    { role: 'system', content: 'Coding turn recovered after a platform restart.', quickReplies: ['Make a tweak'] },
+    { role: 'assistant', content: 'Sorted the leaderboard by score.', quickReplies: ['Make a tweak'] },
     { role: 'user', content: 'Actually, change the header' },
   ]);
   assert.equal(out, null, 'pills must clear the moment the user sends');
@@ -217,10 +240,38 @@ test('#786 stale pills from an earlier turn are never resurrected', () => {
     { role: 'assistant', content: 'Built it.', quickReplies: ['Propose it to the group'] },
     { role: 'user', content: 'And a dark mode?' },
     { role: 'system', content: 'Thinking about your request...' },
-    // Newest assistant reply carries no pills → empty bar, NOT the older set.
+    // Newest assistant reply carries no pills. #894 changed the outcome
+    // here from an empty bar to the fallback set — but the invariant this
+    // test exists for is unchanged: the OLDER turn's pills must never come
+    // back, because the scan stops at the first user/assistant row.
     { role: 'assistant', content: 'Here is what I found.' },
   ]);
-  assert.equal(out, null);
+  assert.deepEqual(out, FALLBACK_SENTINEL);
+  assert.ok(!out.includes('Propose it to the group'),
+    "the previous turn's pills must not be resurrected");
+});
+
+test('#894 an assistant reply with no pills falls back instead of emptying the bar', () => {
+  // The reported symptom: the Mayor replies, skips suggest_replies, and
+  // the bar goes dark.
+  const out = currentQuickReplies([
+    { role: 'user', content: 'What do you think of these two options?' },
+    { role: 'assistant', content: 'Both work; the second is simpler.' },
+  ]);
+  assert.deepEqual(out, FALLBACK_SENTINEL);
+});
+
+test('#894 answer chips keep the bar empty (inline chips own that turn)', () => {
+  const out = currentQuickReplies([
+    { role: 'user', content: 'Make the header better.' },
+    {
+      role: 'assistant',
+      content: '1. Which header?',
+      suggestions: [{ question: 'Which header?', answers: ['The app shell', 'The dev chat'] }],
+    },
+  ]);
+  assert.equal(out, null,
+    'the #32 chips are that turn s affordance — the above-box row stays empty');
 });
 
 test('#786 an assistant reply with pills still wins (unchanged behaviour)', () => {

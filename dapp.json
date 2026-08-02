@@ -340,6 +340,24 @@
       "expectText": "Staging demo: pills after an interrupted reply"
     },
     {
+      "name": "A pill-less reply still shows quick-reply pills (#894 fallback)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900803",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "What issues are open right now?"
+    },
+    {
+      "name": "A post-build reply with no pills falls back to the build set (#894)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900801",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Propose it to the group"
+    },
+    {
+      "name": "A post-spec reply with no pills falls back to the spec set (#894)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900802",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Revise the spec"
+    },
+    {
       "name": "Visible own session card offers the \"Share chat\" opt-in",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "[data-transcript-chip]"
@@ -463,24 +481,29 @@
       "expectSelector": "#pu-l4"
     },
     {
-      "name": "Estimator accuracy card renders (#892)",
-      "path": "/#admin/analytics",
-      "expectSelector": "#estimator"
+      "name": "Estimator accuracy section renders",
+      "path": "/?demo=1#admin/estimator",
+      "expectSelector": "#admin-estimator-root #admin-estimator-card"
     },
     {
       "name": "Estimator card compares prompt generations rather than pooling them (#892)",
-      "path": "/#admin/analytics",
+      "path": "/?demo=1#admin/estimator",
       "expectText": "Prompt generation"
     },
     {
       "name": "Estimator card states the baselines the estimate has to beat (#892)",
-      "path": "/#admin/analytics",
+      "path": "/?demo=1#admin/estimator",
       "expectText": "Elapsed-only oracle"
     },
     {
       "name": "Estimator card flags when the run-length figures given to the model are stale (#892)",
-      "path": "/#admin/analytics",
+      "path": "/?demo=1#admin/estimator",
       "expectText": "Run-length figures given to the model"
+    },
+    {
+      "name": "Estimator accuracy states the leave-experimental verdict",
+      "path": "/?demo=1#admin/estimator",
+      "expectText": "Stays experimental"
     },
     {
       "name": "Merge debug section renders",

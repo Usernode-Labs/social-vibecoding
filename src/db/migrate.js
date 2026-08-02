@@ -67,6 +67,7 @@ async function migrate(config) {
   await seedStagingCloneQuestionSuggestions(pool, config);
   await seedStagingCloneSpecPills(pool, config);
   await seedStagingRestartRecoveredPills(pool, config);
+  await seedStagingQuickReplyFallback(pool, config);
   await seedStagingChatAttachments(pool, config);
   await seedStagingGroupChatAttachments(pool, config);
   await seedStagingAppFiles(pool);
@@ -4957,6 +4958,161 @@ async function seedStagingCloneSpecPills(pool, config) {
   });
 }
 
+// #894: the four shapes the per-turn pill fallback has to get right. Every
+// one of these sessions ends on an assistant row with NO metadata.quickReplies
+// — exactly what a Mayor turn that skipped suggest_replies leaves behind — so
+// what renders above the composer is the CLIENT fallback
+// (DevChat._fallbackQuickReplies), not seeded pills. That makes them a live
+// check of the fallback itself rather than of the seed.
+//
+// Two seeding details exist to keep that true, both learned the hard way:
+//
+//   Dated ~30 DAYS old — restoreMissingQuickReplies (server.js) sweeps
+//   sessions active within the last 7 days on every boot and would
+//   otherwise write derived pills onto these very rows, leaving the
+//   fixtures testing the sweep instead of the fallback. Ageing them out is
+//   also the honest shape: an old chat reopened is exactly the population
+//   whose rows predate the per-turn guarantee.
+//
+//   Seeded 'promoted', not 'active' — the session sweeper auto-pauses any
+//   'active' session idle for SESSION_AUTOPAUSE_IDLE_MS (5 min by default)
+//   and a paused session is non-interactive, so its pill bar is hidden
+//   entirely. 'promoted' is exempt from auto-pause (pauseSession only
+//   demotes 'active') while still counting as interactive client-side, so
+//   these stay inspectable for the life of the container. Same status the
+//   notifications / my-open-pr / behind-main fixtures already use.
+//
+// chat_sessions / chat_session_messages are staging:private (schema-only in
+// staging), hence the seed. Sibling of seedStagingCloneSpecPills /
+// seedStagingRestartRecoveredPills; idempotent via the branch-name checks.
+async function seedStagingQuickReplyFallback(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging quick-reply-fallback fixtures skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging quick-reply-fallback fixtures skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const specMd = '## User-facing changes\n\nStaging demo spec for the pill-fallback fixture.\n\n'
+    + '## Technical implementation\n\nStaging demo: no real change — fixture for the pill bar.';
+
+  // Each fixture: a FIXED id (the 9000xx convention other seeds use — the
+  // dev-chat route embeds the session id, so a stable id is what lets the
+  // dapp.json tests and the TESTING block point at these screens across
+  // staging rebuilds), the session columns that drive the fallback choice,
+  // and the conversation. The LAST row is always an assistant reply with
+  // empty metadata (or, for the chips case, suggestions-only metadata).
+  const fixtures = [
+    {
+      id: 900801,
+      branch: 'staging-fixture/fallback-after-build',
+      title: '[staging fixture] Staging demo: pills fall back after a build',
+      prNumber: 4242,
+      specMd,
+      // Expect: 'Propose it to the group' / 'Make a tweak' / 'What did it change?'
+      rows: [
+        ['user', 'Sort the leaderboard by score.', {}, 12],
+        ['system', 'PR #4242 created', { prNumber: 4242 }, 11],
+        ['assistant', 'Done — the change is on the branch and the staging preview is rebuilt.', {}, 10],
+      ],
+    },
+    {
+      id: 900802,
+      branch: 'staging-fixture/fallback-after-spec',
+      title: '[staging fixture] Staging demo: pills fall back after a spec',
+      prNumber: null,
+      specMd,
+      // Expect: 'Build it' / 'Revise the spec' / 'What will this change?'
+      rows: [
+        ['user', 'Plan out a dark mode toggle before we build anything.', {}, 12],
+        ['assistant', 'The scout drafted the spec — it\'s in the spec viewer.', {}, 10],
+      ],
+    },
+    {
+      id: 900803,
+      branch: 'staging-fixture/fallback-plain-chat',
+      title: '[staging fixture] Staging demo: pills fall back on a plain chat reply',
+      prNumber: null,
+      // chat_sessions.spec_md is NOT NULL — '' is how "no spec yet" is
+      // spelled, and it's what the fallback's hasSpec check reads.
+      specMd: '',
+      // Expect: 'Make a change' / 'What issues are open right now?' / "What's the current state?"
+      rows: [
+        ['user', 'How does the voting threshold work?', {}, 12],
+        ['assistant', 'A proposal merges once it clears the app\'s approval threshold — '
+          + 'either enough yes votes, or the merge countdown running out with no opposition.', {}, 10],
+      ],
+    },
+    {
+      id: 900804,
+      branch: 'staging-fixture/fallback-suppressed-by-chips',
+      title: '[staging fixture] Staging demo: answer chips keep the pill bar empty',
+      prNumber: null,
+      specMd: '',
+      // Expect: NO pills above the box — the inline answer chips own this turn.
+      rows: [
+        ['user', 'Make the header better.', {}, 12],
+        ['assistant', '1. Which header — the app shell or the dev chat?', {
+          suggestions: [{
+            question: 'Which header?',
+            answers: ['The app shell header', 'The dev chat header', 'Both'],
+          }],
+        }, 10],
+      ],
+    },
+  ];
+
+  for (const fixture of fixtures) {
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, fixture.branch]
+    );
+    if (existing.length) continue;
+
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, spec_md, is_headless,
+          created_at, last_activity_at, promoted_at)
+       VALUES
+         ($1, $2, $3, $4, $5, $6, 'promoted', $7, FALSE,
+          NOW() - INTERVAL '30 days', NOW() - INTERVAL '30 days', NOW() - INTERVAL '30 days')`,
+      [fixture.id, appId, owner.id, fixture.branch, fixture.prNumber, fixture.title, fixture.specMd]
+    );
+    const sessionId = fixture.id;
+
+    for (const [role, content, metadata, agoMinutes] of fixture.rows) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - INTERVAL '30 days' - make_interval(mins => $5::int))`,
+        [sessionId, role, content, JSON.stringify(metadata), agoMinutes]
+      );
+    }
+
+    log.info('db', 'Staging quick-reply-fallback fixture seeded', {
+      appId, owner: owner.username, sessionId, branch: fixture.branch,
+    });
+  }
+}
+
 
 // #786: the two restart-recovery shapes whose pill bar used to come back
 // empty. Both fixtures end on a `system` breadcrumb carrying
@@ -4967,9 +5123,11 @@ async function seedStagingCloneSpecPills(pool, config) {
 // seedStagingCloneSpecPills; idempotent via the branch-name checks.
 //
 //   1. restart-recovered-pills  — a build turn recovered after a restart:
-//      commit pushed, PR opened, staging rebuilt, but no Mayor wrap-up
-//      (it can't be resumed), so the breadcrumb carries the 'code_done'
-//      pills.
+//      commit pushed, PR opened, staging rebuilt. #896: the transcript is
+//      now indistinguishable from a normal turn's — ordinary card labels
+//      and a real Mayor wrap-up carrying the pills on an assistant row
+//      (the recovery re-issues phase 2 rather than dropping a breadcrumb),
+//      so the fixture exercises the ASSISTANT-row pill source.
 //   2. restart-unanswered-pills — a Mayor turn killed mid-stream before it
 //      persisted any reply: the boot-time backfill sweep posts the
 //      missed-reply breadcrumb, whose first pill is the user's own message
@@ -5016,7 +5174,10 @@ async function seedStagingRestartRecoveredPills(pool, config) {
   const userAsk = 'Make the leaderboard sort by score';
 
   // ── Fixture 1: recovered build turn ─────────────────────────────────
-  const recoveredBranch = 'staging-fixture/restart-recovered-pills';
+  // #896: -v2 because the seed is idempotent on its branch name — without
+  // a new name, staging rows seeded under the old (restart-worded)
+  // transcript would never be refreshed to the new shape.
+  const recoveredBranch = 'staging-fixture/restart-recovered-pills-v2';
   const { rows: existingRecovered } = await pool.query(
     'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
     [appId, recoveredBranch]
@@ -5054,11 +5215,28 @@ async function seedStagingRestartRecoveredPills(pool, config) {
           '[done]',
         ],
       }, '23 minutes'],
-      ['system', 'PR #12 created', { prNumber: 12 }, '22 minutes'],
-      ['system', 'Staging deployed (recovered after restart)', {}, '21 minutes'],
-      // The breadcrumb the recovery path writes — and the pill source.
-      ['system', 'Coding turn recovered after a platform restart.', {
+      // The agent's own summary card, exactly as a live turn writes it.
+      ['system', 'Claude Code finished', {
+        ccOutput: 'Sorted the leaderboard rows by score descending, with a name tiebreak, '
+          + 'and kept the existing rank badges in sync.',
+        ccOutcome: 'success',
+        durationMs: 214000,
+        recovered: true,
+      }, '23 minutes'],
+      ['system', 'PR #12 created', { prNumber: 12, recovered: true }, '22 minutes'],
+      ['system', 'Staging deployed!', {
+        stagingUrl: 'https://staging-demo.invalid/leaderboard',
+        changesReady: true,
+        prNumber: 12,
+        prUrl: 'https://github.invalid/staging-demo/pull/12',
+        recovered: true,
+      }, '21 minutes'],
+      // #896: the Mayor wrap-up the recovery now re-issues — a normal
+      // assistant row, and the turn's pill source.
+      ['assistant', 'Sorted the leaderboard by score — highest first, with ties broken by name. '
+        + "Preview it, or propose it to the group when you're happy with it.", {
         quickReplies: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
+        recovered: true,
       }, '20 minutes'],
     ];
     for (const [role, content, metadata, ago] of rows) {
@@ -5074,7 +5252,9 @@ async function seedStagingRestartRecoveredPills(pool, config) {
   }
 
   // ── Fixture 2: Mayor turn killed before it replied ──────────────────
-  const unansweredBranch = 'staging-fixture/restart-unanswered-pills';
+  // #896: -v2 for the same reason as fixture 1 — the breadcrumb wording
+  // changed, and the seed only runs when its branch name is absent.
+  const unansweredBranch = 'staging-fixture/restart-unanswered-pills-v2';
   const { rows: existingUnanswered } = await pool.query(
     'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
     [appId, unansweredBranch]
@@ -5098,8 +5278,10 @@ async function seedStagingRestartRecoveredPills(pool, config) {
       ['system', 'Thinking about your request...', {}, '14 minutes'],
       // What the boot-time backfill sweep posts: the honest note plus the
       // user's own message as a resend pill.
-      ['system', 'The platform restarted before I could reply — send your message again.', {
+      ["system", "I didn't get to reply to that — send your message again.", {
         quickReplies: [userAsk, "What's the current state?"],
+        recovered: true,
+        recoveredReason: 'unanswered',
       }, '13 minutes'],
     ];
     for (const [role, content, metadata, ago] of rows) {
