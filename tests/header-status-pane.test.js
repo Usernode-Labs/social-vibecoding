@@ -80,6 +80,33 @@ test('the header keeps navigation + alerting only, hamburger last', () => {
 
 // ─── The deploy dot ──────────────────────────────────────────────────────
 
+// ─── Badge geometry ──────────────────────────────────────────────────────
+
+test("the cog's green badge sits exactly where the bell's red one does", () => {
+  const cog = header.match(/<span id="notifications-badge-ai"[^>]*>/);
+  const bell = header.match(/<span id="notifications-badge"[^>]*>/);
+  assert.ok(cog, '#notifications-badge-ai is on the cog');
+  assert.ok(bell, '#notifications-badge is on the bell');
+
+  // Two badges side by side in the same header read as one convention
+  // only if their geometry matches. Colour is the ONLY intended
+  // difference (emerald = your work in flight, red = unread), so diff
+  // the class lists with the colour token dropped and require equality —
+  // that catches a corner, size or padding drift on either one.
+  const classesOf = (tag) => tag.match(/class="([^"]*)"/)[1]
+    .split(/\s+/).filter((c) => c && !/^bg-(emerald|red)-500$/.test(c)).sort();
+  assert.deepEqual(classesOf(cog[0]), classesOf(bell[0]),
+    'the two header badges must differ only in colour');
+
+  // Pin the corner explicitly so the equality check above can't be
+  // satisfied by moving BOTH badges somewhere unintended.
+  assert.match(cog[0], /-top-1 -right-1/, 'the cog badge is top-right');
+  assert.match(bell[0], /-top-1 -right-1/, 'the bell badge is top-right');
+  // …and keep the colours themselves distinct.
+  assert.match(cog[0], /bg-emerald-500/, 'the cog badge stays green');
+  assert.match(bell[0], /bg-red-500/, 'the bell badge stays red');
+});
+
 test('the hamburger carries the amber deploy dot, hidden by default', () => {
   const dot = header.match(/<span id="header-menu-deploy-dot"[^>]*>/);
   assert.ok(dot, 'the hamburger carries #header-menu-deploy-dot');
