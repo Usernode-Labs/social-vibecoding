@@ -438,7 +438,7 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Leaderboard Top-users tab renders",
+      "name": "Standings screen renders with the Kudos Top-users tab",
       "path": "/leaderboard",
       "expectText": "Top users"
     },
@@ -740,9 +740,29 @@
       "expectSelector": "#work-drawer-btn #notifications-badge-ai"
     },
     {
-      "name": "Admin/moderation icon renders right after the bell for admins (#588)",
+      "name": "Admin/moderation row renders in the drawer for admins (#588)",
       "path": "/",
-      "expectSelector": "#notifications-btn + #admin-dashboard-btn:not(.hidden)"
+      "expectSelector": "#drawer-row-admin:not(.hidden)"
+    },
+    {
+      "name": "Drawer status pane renders the platform build pill",
+      "path": "/",
+      "expectSelector": "#drawer-status-pane #platform-version-pill-slot .app-version-pill"
+    },
+    {
+      "name": "Drawer status pane renders the kudos budget badge",
+      "path": "/",
+      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard\"]"
+    },
+    {
+      "name": "Theme selector ships its 3-segment track and caret at the top of the menu",
+      "path": "/",
+      "expectSelector": "#drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
+    },
+    {
+      "name": "Standings drawer row replaces the header trophy",
+      "path": "/",
+      "expectSelector": "#drawer-row-standings[href=\"#leaderboard\"]"
     },
     {
       "name": "Admin & moderation console page renders at #admin (#818)",
@@ -885,9 +905,15 @@
       "expectSelector": ".fork-tag"
     },
     {
-      "name": "App-view header shows the Forked-from label",
+      "name": "Menu status pane shows the Forked-from label",
       "path": "/app/staging-demo-fork",
       "expectText": "Forked from",
+      "allowConsoleErrors": true
+    },
+    {
+      "name": "Menu status pane reveals the fork row for a forked app",
+      "path": "/app/staging-demo-fork",
+      "expectSelector": "#drawer-row-app-fork:not(.hidden) #app-fork-badge-slot",
       "allowConsoleErrors": true
     },
     {
@@ -976,9 +1002,14 @@
       "expectText": "closed by vote"
     },
     {
-      "name": "Topochain leaderboard screen renders at #topochain/leaderboard (Task 14)",
+      "name": "Legacy #topochain/leaderboard lands on the Standings screen's Topochain tab",
       "path": "/#topochain/leaderboard",
-      "expectSelector": "#topochain-leaderboard-screen:not(.hidden) #tc-lb-body"
+      "expectSelector": "#leaderboard-screen:not(.hidden) #topochain-leaderboard-root:not(.hidden) #tc-lb-body"
+    },
+    {
+      "name": "Standings renders both tabs at #leaderboard",
+      "path": "/#leaderboard",
+      "expectSelector": "#standings-tabs [data-standings-tab=\"topochain\"]"
     },
     {
       "name": "Topochain seasons screen renders at #topochain/seasons (Task 14)",
@@ -1012,8 +1043,8 @@
     },
     {
       "name": "Topochain leaderboard shows standings, not a red error, between events",
-      "path": "/#topochain/leaderboard",
-      "expectSelector": "#topochain-leaderboard-screen:not(.hidden) #tc-lb-body table"
+      "path": "/#leaderboard/topochain",
+      "expectSelector": "#leaderboard-screen:not(.hidden) #tc-lb-body table"
     },
     {
       "name": "Admin App version screen warns when an OS has no active rule",

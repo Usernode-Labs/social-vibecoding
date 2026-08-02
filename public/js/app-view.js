@@ -449,10 +449,14 @@ const AppView = {
     }
     if (window.Secrets) Secrets.hide();
     AppView.pendingInnerPath = null;
+    // Both slots live in the drawer's status pane now (same ids, new
+    // parent). Blank them AND hide their rows, or the previous app's
+    // build/fork lines linger in the menu on the home feed.
     const slot = document.getElementById('app-version-pill-slot');
     if (slot) slot.innerHTML = '';
     const forkSlot = document.getElementById('app-fork-badge-slot');
     if (forkSlot) forkSlot.innerHTML = '';
+    if (window.App?.DrawerStatus) App.DrawerStatus.setAppOpen(false);
   },
 
   // Iframe tokens are APP-SCOPED since the RSA cutover: each one carries
@@ -662,11 +666,14 @@ const AppView = {
         slug: AppView.appData.slug,
         version: info.sha ? info : null,
         deployProgress: info.deployProgress || null,
-        // Header pill gets the richer PR-context tooltip (title +
-        // author + merge time). The home-screen card uses the same
+        // The status-pane pill gets the richer PR-context tooltip (title
+        // + author + merge time). The home-screen card uses the same
         // helper without this and gets the plain commit-hash tip.
         includePrContext: true,
       });
+      // Mirror the deploying state onto the hamburger — the pill itself
+      // is only visible with the drawer open.
+      if (window.App?.DrawerStatus) App.DrawerStatus.refreshDeployDot();
     } catch {
       // Non-critical; if the fetch fails the pill just doesn't render.
     }
@@ -690,6 +697,7 @@ const AppView = {
       deployProgress,
       includePrContext: true,
     });
+    if (window.App?.DrawerStatus) App.DrawerStatus.refreshDeployDot();
   },
 
   // Single source of truth for the per-app version pill. Used by both
@@ -8350,16 +8358,22 @@ const AppView = {
     if (err) { err.classList.add('hidden'); err.textContent = ''; }
   },
 
-  // Amber "⑂ Forked from <name>" lineage label in the shared header's
-  // right-hand action group. `forked_from` is resolved server-side to
+  // Amber "⑂ Forked from <name>" lineage label. Lived in the header's
+  // right-hand action group until the header slim-down moved it under
+  // the "App" build row in the drawer's status pane (#drawer-row-app-fork,
+  // whose visibility this function drives — the slot id is unchanged).
+  // `forked_from` is resolved server-side to
   // { appId, slug, name, linkable }; when linkable the pill links to the
   // source app, otherwise (source deleted → name "<deleted>") it renders
   // as inert text. No-op for non-forks.
   renderForkBadge() {
     const slot = document.getElementById('app-fork-badge-slot');
     if (!slot) return;
+    const setRow = (visible) => {
+      if (window.App?.DrawerStatus) App.DrawerStatus.setForkVisible(visible);
+    };
     const ref = AppView.appData && AppView.appData.forked_from;
-    if (!ref || typeof ref !== 'object') { slot.innerHTML = ''; return; }
+    if (!ref || typeof ref !== 'object') { slot.innerHTML = ''; setRow(false); return; }
     const name = ref.name || '<deleted>';
     const cls = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium '
       + 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 '
@@ -8373,6 +8387,7 @@ const AppView = {
       slot.innerHTML = `<span class="${cls} opacity-90" `
         + `title="The original app no longer exists">${label}</span>`;
     }
+    setRow(true);
   },
 
   // Source of the fork being composed: { slug, name }. Set by promptFork

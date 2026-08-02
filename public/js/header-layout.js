@@ -3,11 +3,16 @@
 //
 // The page header is a flex row of [back-btn wrapper][title][right group].
 // In flex flow, the title's flex-1 cell sits between the back-btn wrapper
-// (~20px) and the right group (variable width: 2 commit pills, the kudos
-// badge, and ~3-5 icon buttons depending on app state — most secondary
-// actions live in the drawer since #122). Centering the title within its
-// own cell yields a position that's offset from viewport center because
-// the side groups have very different widths.
+// (~20px) and the right group (4-5 icon buttons depending on app state —
+// most secondary actions live in the drawer since #122, and the header
+// slim-down moved the two commit pills, the fork label and the kudos
+// badge in there too). Centering the title within its own cell yields a
+// position that's offset from viewport center because the side groups
+// have very different widths.
+//
+// The right group is nearly fixed-width now, so the centred mode wins far
+// more often than it used to — but it still VARIES (the dev-console icon
+// only appears once an app logs an error), so the measurement stays.
 //
 // This script restores true viewport-centering when there's enough room
 // for it, by switching the title to absolute positioning at left:50%.
@@ -96,16 +101,16 @@
 
   // Re-evaluate on header size changes (viewport resize, devtools
   // open/close, sidebar toggle, etc.) and on right-group size changes
-  // (deploy state pill flip, platform-version chip changes, app
-  // navigation that swaps the per-app pill content, kudos budget
-  // badge appearing).
+  // (the dev-console icon appearing when an app first logs an error, a
+  // badge growing from 9 to 10+).
   new ResizeObserver(schedule).observe(header);
   new ResizeObserver(schedule).observe(rightGroup);
 
   // Expose a manual recompute hook for components that mutate the
   // right group via innerHTML and want an instant remeasure rather
-  // than waiting on the next ResizeObserver tick. Kudos.Budget._render
-  // calls this after re-rendering the badge.
+  // than waiting on the next ResizeObserver tick. (Kudos.Budget._render
+  // used to call this; its badge lives in the drawer now, so nothing in
+  // tree does today — the hook stays for the next such component.)
   window.HeaderLayout = { refresh: schedule };
 
   // Title text changes (Home → AppView navigation, app rename, etc.)
