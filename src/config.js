@@ -381,6 +381,19 @@ function load() {
     // error table row for this exact condition) until an operator sets
     // TOPOCHAIN_ZK_BRIDGE_URL. See src/services/topochain/zk-bridge.js.
     topochainZkBridgeUrl: process.env.TOPOCHAIN_ZK_BRIDGE_URL || '',
+    // Topochain outbound mail. `mailer.js` has always had a transport hook
+    // (`config.topochainMailTransport`) and nothing ever filled it, so BOTH
+    // its callers — the shell's email login codes and the onboarding
+    // waitlist confirmation — generated a message and dropped it while
+    // still reporting success to the user. This wires the one transport
+    // (src/services/topochain/mail-transport.js) behind that same hook.
+    //
+    // Null when unconfigured, which preserves mailer.js's existing
+    // "no transport configured" branch (loud error in production, code
+    // printed to the log in dev/staging). OPTIONAL and NOT in REQUIRED,
+    // like the three keys above: unset must not block boot.
+    topochainMailTransport: require('./services/topochain/mail-transport')
+      .create(process.env),
   };
 
   console.log('[config] Loaded:');
@@ -454,6 +467,9 @@ function load() {
   console.log(`  TOPOCHAIN_PARTNER_API_KEY=${config.topochainPartnerApiKey ? mask(config.topochainPartnerApiKey) : '(not set — partner API returns 500)'}`);
   console.log(`  TOPOCHAIN_INGEST_API_KEY=${config.topochainIngestApiKey ? mask(config.topochainIngestApiKey) : '(not set — ingest writes return 500)'}`);
   console.log(`  TOPOCHAIN_ZK_BRIDGE_URL=${config.topochainZkBridgeUrl || '(not set — zkpassport/complete returns 500)'}`);
+  console.log(`  TOPOCHAIN_MAIL=${config.topochainMailTransport
+    ? 'configured'
+    : '(not set — OTP login codes and waitlist confirmations are NOT delivered)'}`);
 
   return config;
 }

@@ -1173,6 +1173,76 @@ Operational notes for self-hosting:
 - MinIO is AGPLv3, run unmodified as a separate service — the normal,
   compliant deployment shape for a self-hosted stack.
 
+## Topochain (`/api/v4`) operations
+
+The topochain surface — public standings, seasons/events, challenges,
+participant profiles, the mobile shell's login + data endpoints, the
+partner and telemetry-ingest endpoints, and the Admin console's
+**Topochain** section — is served **in-process by this platform**. There
+is no topochain container, no sidecar, and no external leaderboard
+service: the deployment that used to host it is retired and write-frozen.
+`GET /health` reports `{ "status": "ok", "topochain": true }` — a static
+presence flag confirming the build carries the surface, not a subsystem
+probe (there is no separate process that could be unhealthy).
+
+### Route groups and their auth
+
+Five groups, each with its own auth story. They are deliberately
+different and must not be collapsed:
+
+| Group | Paths | Auth |
+|---|---|---|
+| Public | `/api/v4/leaderboard*`, `/api/v4/season-events*`, `/api/v4/users/:id/profile`, `/api/v4/app-version/check` | Session-**optional**. A signed-in session can enrich a response (only `/leaderboard/global` branches on admin), but no session is required and these never 401. |
+| Partner | `/api/v4/partner/*` | `X-API-Key` vs `TOPOCHAIN_PARTNER_API_KEY`. |
+| Ingest | `POST /api/v4/slot-outcomes`, `POST /api/v4/epoch-stats` | `X-Ingest-Key` vs `TOPOCHAIN_INGEST_API_KEY`. The group's reads (`GET /api/v4/onchain-accounts`) stay public. |
+| Mobile | `/api/v4/mobile/*` | Bearer token. The shell obtains one from its web session via `POST /api/v4/mobile/auth/from-session`. |
+| Admin | `/api/v4/admin/*` | The platform's own admin gate (`adminMiddleware` / `requireAdminWrite`), not a topochain-specific credential. |
+
+Separately, **`/challenges-api/*`** is the SV web shell's own read
+surface (`src/routes/topochain/mobile.js`). It serves the same data as
+the mobile group but is gated on the **platform session cookie**
+(`webSessionAuth` + `requireSessionUser`), because a browser has a cookie
+and not a bearer token. It used to be a proxy to the external leaderboard
+deployment; it is in-process now, and everything under the prefix that
+isn't explicitly registered returns 404.
+
+### Configuration
+
+Four optional settings, none of which block boot — each disables exactly
+one capability. In production set them in the platform's **Platform
+variables** panel (they are declared in `dapp.json`'s `platform_env`, not
+in a child app's `secrets` block); `.env.example` documents the same keys
+for local dev and standalone deploys.
+
+- `TOPOCHAIN_PARTNER_API_KEY` — unset: every partner request 500s.
+- `TOPOCHAIN_INGEST_API_KEY` — unset: every ingest **write** 500s.
+- `TOPOCHAIN_ZK_BRIDGE_URL` — unset: `POST /api/v4/mobile/zkpassport/complete` 500s.
+- `TOPOCHAIN_MAIL_API_URL` / `TOPOCHAIN_MAIL_API_KEY` / `TOPOCHAIN_MAIL_FROM`
+  — all three or nothing.
+
+**Mail deserves particular attention**, because it is the one setting
+whose absence is invisible from the outside. Both senders are
+always-success by contract (the OTP endpoint is specified that way so it
+can't be used to enumerate accounts), so an unconfigured transport means
+mobile email-login codes and onboarding waitlist confirmations are
+generated and dropped while every response still says OK. In dev/staging
+the code is printed to the log so the flow stays completable by hand; in
+production it is an error-level log line and nothing else. **Admin
+console → Topochain → Settings** shows the configured/unconfigured state
+and names the affected flows — check it there rather than inferring from
+logs.
+
+### Data load
+
+`scripts/topochain-load.js` is a **one-shot import**, not a sync. It
+requires `TOPOCHAIN_SOURCE_DATABASE_URL` pointing at a restored dump plus
+an explicit `--i-have-restored-a-dump` flag, and refuses to start
+without both. `scripts/topochain-validate.js` gates the result against
+the source (row counts per table, plus merge-aware checks). Neither runs
+on deploy; both are operator-invoked. There is no continuous
+topochain→platform replication — writes arrive through the ingest and
+mobile groups above.
+
 ## Cross-references
 
 - [EXTRACT-PLAN.md](./EXTRACT-PLAN.md) — the standalone-deploy

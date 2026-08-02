@@ -7072,6 +7072,11 @@ async function seedStagingTopochain(pool, config) {
     const SEASON_ID = 900500;
     const EVENT_REGULAR_ID = 900500; // season_events — type 'regular'
     const EVENT_SEASON_ID = 900501;  // season_events — type 'season'
+    // Fully-past event. The two above both span "now", so without this one
+    // the between-events fallback (public/js/topochain-events.js) can never
+    // fire in a preview — pick it from the leaderboard's event picker to
+    // see the "Nothing is running right now" state.
+    const EVENT_ENDED_ID = 900502;
 
     const USERS = {
       seasonWide1: 900500, // exclude_podium = TRUE
@@ -7140,9 +7145,15 @@ async function seedStagingTopochain(pool, config) {
           'type=''season'' event fixture (season-level wrap-up, not epoch-scored).',
           NOW() + INTERVAL '15 days', NOW() + INTERVAL '30 days', TRUE,
           '{"metrics": [], "offchain_weight": 1}'::jsonb, NULL, NULL, FALSE, TRUE,
-          NULL, NULL, FALSE, NULL, FALSE, 'season', NOW(), NOW())
+          NULL, NULL, FALSE, NULL, FALSE, 'season', NOW(), NOW()),
+         ($4, $3, 'Staging Demo Event — Finished Sprint',
+          'Fully-past event fixture. Selecting it exercises the between-events fallback: the leaderboard shows standings with a "nothing is running right now" caption instead of an error.',
+          NOW() - INTERVAL '120 days', NOW() - INTERVAL '90 days', TRUE,
+          '{"metrics": [], "offchain_weight": 1}'::jsonb, 60, 90, FALSE, TRUE,
+          NOW() - INTERVAL '120 days', NOW() - INTERVAL '90 days', FALSE,
+          'staging-demo-chain-1', TRUE, 'regular', NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
-      [EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID]
+      [EVENT_REGULAR_ID, EVENT_SEASON_ID, SEASON_ID, EVENT_ENDED_ID]
     );
 
     // ─── Challenge kinds (4) ────────────────────────────────────────────
@@ -7229,9 +7240,17 @@ async function seedStagingTopochain(pool, config) {
          (900507, $2, 900502, 'Share the season announcement',
           'Share the season announcement post on social media.',
           '50 points', 'Social-share challenge (season event).', 'SOCIAL_SHARE_CHALLENGE',
-          TRUE, 3, FALSE, FALSE, NULL, NOW(), NOW())
+          TRUE, 3, FALSE, FALSE, NULL, NOW(), NOW()),
+         (900508, $3, 900500, 'Report a reproducible bug',
+          'Find and file a reproducible bug report against the testnet client.',
+          '250 points', 'Bug-report challenge (finished event).', 'REPORT_BUG_CHALLENGE',
+          TRUE, 1, TRUE, FALSE, NULL, NOW(), NOW()),
+         (900509, $3, 900504, 'Produce your first block',
+          'Produce at least one block during the event window.',
+          '250 points', 'Block-production challenge (finished event).',
+          'SEND_TRANSACTION_CHALLENGE', TRUE, 2, TRUE, TRUE, 1, NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
-      [EVENT_REGULAR_ID, EVENT_SEASON_ID]
+      [EVENT_REGULAR_ID, EVENT_SEASON_ID, EVENT_ENDED_ID]
     );
 
     // ─── User enrollments (mix of season-wide and event-scoped; the
@@ -7348,10 +7367,17 @@ async function seedStagingTopochain(pool, config) {
          (900508, $7, $6, 3, 200, 0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
          (900509, $7, $1, 4, 0,   0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
          (900510, $7, $2, 5, 0,   0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
-         (900511, $7, $5, 6, 0,   0, ${LATER_SNAPSHOT}, $8, NOW(), NOW())
+         (900511, $7, $5, 6, 0,   0, ${LATER_SNAPSHOT}, $8, NOW(), NOW()),
+         -- Standings for the fully-past event, so selecting it renders a
+         -- populated table under the "nothing is running" caption rather
+         -- than an empty one (which would read as the bug being fixed).
+         (900512, $9, $4, 1, 800, 0, NOW() - INTERVAL '90 days', $8, NOW(), NOW()),
+         (900513, $9, $3, 2, 450, 0, NOW() - INTERVAL '90 days', $8, NOW(), NOW()),
+         (900514, $9, $6, 3, 300, 0, NOW() - INTERVAL '90 days', $8, NOW(), NOW()),
+         (900515, $9, $5, 4, 125, 0, NOW() - INTERVAL '90 days', $8, NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
       [USERS.seasonWide1, USERS.seasonWide2, USERS.eventA1, USERS.eventA2,
-       USERS.eventB1, USERS.mixed, EVENT_REGULAR_ID, SEASON_ID]
+       USERS.eventB1, USERS.mixed, EVENT_REGULAR_ID, SEASON_ID, EVENT_ENDED_ID]
     );
 
     // ─── Epoch stats (3 epochs x 3 wallets = 9 rows) — one wallet per
@@ -7412,7 +7438,11 @@ async function seedStagingTopochain(pool, config) {
          (900500, 'ios', 100, 110, '1.4.0', TRUE,
           'A new version is available.', 'https://staging-demo.example.invalid/ios',
           NOW(), NOW()),
-         (900501, 'android', 90, 95, '1.4.0', TRUE,
+         -- Deliberately INACTIVE: with no active row for an OS the version
+         -- gate is off for it (every build is told it is up to date), and
+         -- the admin screen's "No active version rule for Android" warning
+         -- is only reviewable in a preview if one OS is left in that state.
+         (900501, 'android', 90, 95, '1.4.0', FALSE,
           'A new version is available.', 'https://staging-demo.example.invalid/android',
           NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`
@@ -7440,6 +7470,129 @@ async function seedStagingTopochain(pool, config) {
        ON CONFLICT (id) DO NOTHING`,
       [USERS.eventA1, USERS.eventA2, USERS.mixed, SEASON_ID]
     );
+
+    // ─── The staging VIEWER's own topochain rows ───────────────────────
+    // Everything above belongs to six fixture users nobody logs in as. The
+    // #profile screen renders the SIGNED-IN user (the /challenges-api/me/*
+    // routes scope to the session), and the leaderboard's "View my full
+    // profile" card keys off the viewer's own usernode_pubkey — so without
+    // these rows a tester who opens Profile in a preview sees an empty
+    // screen and cannot tell it apart from the screen being broken.
+    //
+    // Grant them to every identity a tester's eyes look through: the
+    // interactive admin login (config.adminUsername), plus the two capture
+    // identities — screenshots sign as usernode-capture and the declared
+    // dapp.json tests sign as usernode-capture-admin (see
+    // services/visuals.js) — so the /#profile check and the before/after
+    // shots render the POPULATED screen rather than the empty state. Same
+    // convention as the app-discovery fixtures earlier in this file.
+    //
+    // Resolved by username rather than by fixed id, because these rows are
+    // created by seedAdmin() / the capture bootstrap with serial ids. The
+    // id block is keyed off each name's position in VIEWER_USERNAMES, NOT
+    // off the query result order, so a viewer's ids never shift when
+    // another identity appears or disappears between boots — that would
+    // re-insert its rows under fresh ids and defeat ON CONFLICT (id).
+    // 900500-900516 is fully used above, so the viewers start at 900520
+    // with a 10-wide block each.
+    const VIEWER_USERNAMES = [
+      config.adminUsername, 'usernode-capture', 'usernode-capture-admin',
+    ];
+    const { rows: viewerRows } = await pool.query(
+      'SELECT id, username FROM users WHERE username = ANY($1::text[])',
+      // Filtered for the lookup only — the slot arithmetic below still
+      // indexes into the unfiltered list, so an unset adminUsername shifts
+      // nobody's id block.
+      [VIEWER_USERNAMES.filter(Boolean)]
+    );
+    for (const viewer of viewerRows) {
+      const viewerId = viewer.id;
+      const slot = VIEWER_USERNAMES.indexOf(viewer.username);
+      if (slot < 0) continue;
+      const base = 900520 + slot * 10;
+      // Two forms of the same identity, mirroring the fixture accounts
+      // above: `address` is the bech32m form the UI shows, `public_key` the
+      // VRF-side key. epoch_stats keys off the address form. Both are
+      // per-viewer, so the unique indexes hold with three seeded at once.
+      const VIEWER_WALLET = `ut1stagingdemotopochainviewer000${slot + 1}`;
+      const VIEWER_PUBKEY = `utpk1stagingdemotopochainviewer0${slot + 1}`;
+
+      // A linked wallet is what the leaderboard drill-down matches on.
+      await pool.query(
+        `UPDATE users SET usernode_pubkey = COALESCE(usernode_pubkey, $2)
+          WHERE id = $1`,
+        [viewerId, VIEWER_WALLET]
+      );
+      await pool.query(
+        `INSERT INTO onchain_accounts
+           (id, amount, identity_uid, address, public_key, secret_key, tier,
+            registration_code, season_event_id, season_id, user_id, is_used,
+            used_at, created_at, updated_at)
+         VALUES (${base}, 1000, 'staging-demo-identity-viewer-${slot + 1}', $2, $3,
+                 'sk_staging_demo_fake_0000000viewer${slot + 1}', 'premium',
+                 'STAGING-DEMO-TOPOCHAIN-VIEWER-${slot + 1}', NULL, $4, $1, TRUE,
+                 NOW() - INTERVAL '6 days', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [viewerId, VIEWER_WALLET, VIEWER_PUBKEY, SEASON_ID]
+      );
+      await pool.query(
+        `INSERT INTO user_enrollments
+           (id, user_id, season_id, season_event_id, created_at, updated_at)
+         VALUES
+           (${base},     $1, $2, NULL, NOW(), NOW()),
+           (${base + 1}, $1, $2, $3,   NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [viewerId, SEASON_ID, EVENT_REGULAR_ID]
+      );
+      // Two completed challenges → the profile's "completed" list and its
+      // points header both have content.
+      await pool.query(
+        `INSERT INTO user_activities
+           (id, user_id, season_event_id, activity_type, points, description,
+            metadata, activity_at, challenge_id)
+         VALUES
+           (${base},     $1, $2, 'challenge_completion', 250, 'Reported a reproducible bug.',
+            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '4 days', 900500),
+           (${base + 1}, $1, $2, 'challenge_completion', 100, 'Sent a testnet transaction.',
+            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '3 days', 900501)
+         ON CONFLICT (id) DO NOTHING`,
+        [viewerId, EVENT_REGULAR_ID]
+      );
+      // A rank the profile header can show. Rank 2 on 350 points ties the
+      // fixture user holding exactly those points, so seeding several
+      // viewers reads as a tie rather than as three contradictory #1s.
+      await pool.query(
+        `INSERT INTO leaderboard_snapshots
+           (id, season_event_id, user_id, rank, total_points, extra_points,
+            snapshot_at, season_id, created_at, updated_at)
+         VALUES (${base}, $2, $1, 2, 350, 0, NOW(), $3, NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [viewerId, EVENT_REGULAR_ID, SEASON_ID]
+      );
+      // Gives the profile's blurred "Reveal" token figure something to
+      // reveal — otherwise that control renders against a null allocation.
+      await pool.query(
+        `INSERT INTO token_allocation
+           (id, user_id, season_id, total_points, total_season_tokens,
+            allocated_tokens, description, created_at, updated_at)
+         VALUES (${base}, $1, $2, 350, 3500, 35.00000000,
+                 'Staging demo allocation (viewer)', NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [viewerId, SEASON_ID]
+      );
+      // Block-production numbers for the profile's epoch breakdown.
+      await pool.query(
+        `INSERT INTO epoch_stats
+           (id, chain_id, wallet_address, user_id, epoch, epoch_won_slots,
+            epoch_produced_blocks, epoch_canonical_blocks, epoch_orphaned_blocks,
+            epoch_failed_blocks, created_at, updated_at)
+         VALUES
+           (${base},     'staging-demo-chain-1', $2, $1, 100, 3, 2, 2, 0, 0, NOW(), NOW()),
+           (${base + 1}, 'staging-demo-chain-1', $2, $1, 101, 4, 4, 3, 1, 0, NOW(), NOW())
+         ON CONFLICT (id) DO NOTHING`,
+        [viewerId, VIEWER_WALLET]
+      );
+    }
 
     log.info('db', 'Topochain staging fixtures seeded', { seasonId: SEASON_ID });
   } catch (err) {

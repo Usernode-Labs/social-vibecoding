@@ -1886,11 +1886,52 @@ const AdminTopochain = {
           ${canWrite ? '<button id="admin-topo-set-reset" class="rounded-lg border border-amber-400 dark:border-amber-700 text-amber-700 dark:text-amber-300 px-3 py-1.5 text-sm font-medium">Reset to defaults&hellip;</button>' : ''}
         </div>
       </div>
+      <div id="admin-topo-mail-status" class="mb-4"></div>
       <div id="admin-topo-set-form"></div>
       <div id="admin-topo-set-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
     document.getElementById('admin-topo-set-new')?.addEventListener('click', () => AdminTopochain._openSettingForm(null));
     document.getElementById('admin-topo-set-reset')?.addEventListener('click', () => AdminTopochain._resetSettings());
     AdminTopochain._loadSettings();
+    AdminTopochain._loadMailStatus();
+  },
+
+  // Outbound-mail readiness. Read-only and deliberately value-free: the
+  // endpoint returns presence only, never the provider URL or credential.
+  // This row exists because both mail flows are always-200 by contract, so
+  // "no transport configured" is otherwise completely invisible.
+  async _loadMailStatus() {
+    const { ok, data } = await AdminTopochain.fetchJson('/api/v4/admin/settings/mail-status');
+    if (AdminTopochain._sub !== 'settings') return;
+    const host = document.getElementById('admin-topo-mail-status');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    if (!ok || !data?.success) { host.innerHTML = ''; return; }
+
+    const m = data.data || {};
+    const flows = (m.affectedFlows || []).map((f) => `<li>${esc(f)}</li>`).join('');
+
+    if (m.configured) {
+      host.innerHTML = `
+        <div class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900 px-4 py-3 text-sm">
+          <span class="font-semibold text-emerald-600 dark:text-emerald-400">Email is configured</span>
+          <span class="text-zinc-500"> — login codes and waitlist confirmations are being sent.</span>
+        </div>`;
+      return;
+    }
+    host.innerHTML = `
+      <div class="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm">
+        <div class="font-semibold text-amber-800 dark:text-amber-300">
+          Email is not deliverable — no mail sender configured
+        </div>
+        <p class="text-amber-800/80 dark:text-amber-300/80 mt-1">
+          These flows still report success to the user but deliver nothing:
+        </p>
+        <ul class="list-disc ml-5 mt-1 text-amber-800/80 dark:text-amber-300/80">${flows}</ul>
+        <p class="text-amber-800/80 dark:text-amber-300/80 mt-2">
+          Set ${(m.missing || []).map((k) => `<code class="font-mono text-xs">${esc(k)}</code>`).join(', ')}
+          in the platform&rsquo;s Platform variables panel, then redeploy.
+        </p>
+      </div>`;
   },
 
   async _loadSettings() {
@@ -2019,10 +2060,13 @@ const AdminTopochain = {
         <h2 class="text-lg font-semibold">App version</h2>
         ${canWrite ? '<button id="admin-topo-av-new" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-sm font-medium text-white">New config</button>' : ''}
       </div>
+      <div id="admin-topo-av-gate"></div>
       <div id="admin-topo-av-form"></div>
-      <div id="admin-topo-av-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>`;
+      <div id="admin-topo-av-table"><p class="text-sm text-zinc-500">Loading&hellip;</p></div>
+      <div id="admin-topo-av-activity"></div>`;
     document.getElementById('admin-topo-av-new')?.addEventListener('click', () => AdminTopochain._openAppVersionForm(null));
     AdminTopochain._loadAppVersions();
+    AdminTopochain._loadAppVersionActivity();
   },
 
   async _loadAppVersions() {
@@ -2030,6 +2074,83 @@ const AdminTopochain = {
     if (AdminTopochain._sub !== 'app-version') return;
     AdminTopochain._appver.items = (ok && data?.success) ? data.data : [];
     AdminTopochain._renderAppVersionsTable();
+    AdminTopochain._renderAppVersionGate();
+  },
+
+  // Per-OS "no rule configured" warning. Without a row (or with the row
+  // inactive) POST /app-version/check answers `upgrade: 0` to EVERY build,
+  // including ones that should be forced to update — the gate is off, and
+  // nothing else on this screen says so.
+  _renderAppVersionGate() {
+    const host = document.getElementById('admin-topo-av-gate');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    const items = AdminTopochain._appver.items || [];
+    const missing = ['ios', 'android'].filter(
+      (os) => !items.some((c) => c.os === os && c.is_active)
+    );
+    if (!missing.length) { host.innerHTML = ''; return; }
+    const label = { ios: 'iOS', android: 'Android' };
+    host.innerHTML = missing.map((os) => `
+      <div class="mb-3 rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/40 px-4 py-3 text-sm">
+        <span class="font-semibold text-amber-800 dark:text-amber-300">
+          No active version rule for ${esc(label[os])}
+        </span>
+        <span class="text-amber-800/80 dark:text-amber-300/80">
+          — every ${esc(label[os])} build is told it is up to date, including
+          old ones. Add an active config for ${esc(os)} to turn the update
+          gate on.
+        </span>
+      </div>`).join('');
+  },
+
+  // Last 7 days of version checks. Answers "is the gate doing anything?" —
+  // an all-zero table with traffic means the rule is permissive; no traffic
+  // at all means no shell is calling.
+  async _loadAppVersionActivity() {
+    const { ok, data } = await AdminTopochain.fetchJson(
+      '/api/v4/admin/app-version-configs/check-activity');
+    if (AdminTopochain._sub !== 'app-version') return;
+    const host = document.getElementById('admin-topo-av-activity');
+    if (!host) return;
+    const esc = AdminTopochain.esc;
+    if (!ok || !data?.success) { host.innerHTML = ''; return; }
+
+    const a = data.data || {};
+    const UPGRADE_LABEL = {
+      0: 'up to date',
+      1: 'suggested update',
+      2: 'forced update',
+    };
+    if (!a.total) {
+      host.innerHTML = `
+        <p class="text-xs text-zinc-500 mt-4">
+          No version checks in the last ${esc(a.window_days ?? 7)} days — no app
+          build has asked this platform whether it needs to update.
+        </p>`;
+      return;
+    }
+    const rows = (a.by_os || []).map((r) => `
+      <tr class="border-t border-zinc-200 dark:border-zinc-800">
+        <td class="px-3 py-1.5 text-sm">${esc(r.os || '—')}</td>
+        <td class="px-3 py-1.5 text-sm">${esc(UPGRADE_LABEL[r.upgrade] || r.upgrade)}</td>
+        <td class="px-3 py-1.5 text-sm font-mono text-right">${esc(r.count)}</td>
+      </tr>`).join('');
+    host.innerHTML = `
+      <h3 class="text-sm font-semibold mt-6 mb-2">
+        Version checks &middot; last ${esc(a.window_days ?? 7)} days
+        <span class="font-normal text-zinc-500">(${esc(a.total)} total)</span>
+      </h3>
+      <div class="overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-800">
+        <table class="w-full">
+          <thead class="bg-zinc-50 dark:bg-zinc-900 text-xs uppercase tracking-wide text-zinc-500">
+            <tr><th class="px-3 py-2 text-left">OS</th>
+              <th class="px-3 py-2 text-left">Told</th>
+              <th class="px-3 py-2 text-right">Checks</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>`;
   },
 
   _renderAppVersionsTable() {
@@ -2089,10 +2210,14 @@ const AdminTopochain = {
         <h3 class="text-sm font-semibold mb-3">${id == null ? 'New app version config' : `Edit ${AdminTopochain.esc(existing?.os)}`}</h3>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           ${field('OS *', sel('admin-topo-av-f-os', ['ios', 'android'], existing?.os || 'ios', { disabled: id != null }))}
-          ${field('Min build number *', f('admin-topo-av-f-min_build_number', { type: 'number', min: 1, value: existing?.min_build_number }))}
-          ${field('Recommended build number', f('admin-topo-av-f-recommended_build_number', { type: 'number', min: 1, value: existing?.recommended_build_number }))}
-          ${field('Current version', f('admin-topo-av-f-current_version', { value: existing?.current_version }))}
-          ${field('Update URL', f('admin-topo-av-f-update_url', { value: existing?.update_url }), 'Must be http(s) — validated before saving.')}
+          ${field('Min build number *', f('admin-topo-av-f-min_build_number', { type: 'number', min: 1, value: existing?.min_build_number }),
+            'FORCED update: builds below this are blocked until the user updates.')}
+          ${field('Recommended build number', f('admin-topo-av-f-recommended_build_number', { type: 'number', min: 1, value: existing?.recommended_build_number }),
+            'SUGGESTED update: builds below this get a dismissible prompt. Leave blank for none.')}
+          ${field('Current version', f('admin-topo-av-f-current_version', { value: existing?.current_version }),
+            'Display only — the gate compares build numbers, not this string.')}
+          ${field('Update URL', f('admin-topo-av-f-update_url', { value: existing?.update_url }),
+            'Must be http(s). Only sent when an update is required or suggested — leave it blank and a forced update gives the user nowhere to go.')}
         </div>
         <label class="flex items-center gap-2 text-sm mt-2">${f('admin-topo-av-f-is_active', { type: 'checkbox', value: existing ? existing.is_active : true })} Active</label>
         <div class="grid grid-cols-1 gap-3 mt-2">

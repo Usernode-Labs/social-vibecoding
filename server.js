@@ -308,10 +308,11 @@ app.get('/api/node-status/full', (_req, res) => {
     mode: process.env.USERNODE_LOCAL_DEV ? 'local-dev' : 'production',
     services: () => ({
       chainPoller: chainPollerSvc.getStatus(),
-      genesisAccounts: {
-        loaded: genesisAccountsSvc.isLoaded(),
-        count: genesisAccountsSvc.count(),
-      },
+      // getStatus() carries the same outage shape as chainPoller's
+      // (consecutiveFailures / downSince / lastError) on top of the
+      // loaded/count pair, so the viewer can say how long the genesis
+      // fetch has been failing rather than just "not loaded".
+      genesisAccounts: genesisAccountsSvc.getStatus(),
     }),
   }));
 });

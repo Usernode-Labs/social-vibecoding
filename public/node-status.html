@@ -250,7 +250,25 @@
         (ex.hasBeenOk ? '<span class="badge ok">yes</span>' : '<span class="badge warn">not yet</span>') + '</div>');
       rows.push('<div class="label">Last refresh</div><div class="val">' + fmtTime(ex.at) +
         ' <span class="small">(' + fmtAge(Date.now() - (ex.at || Date.now())) + ' ago)</span></div>');
+      // Outage shape — how long, and how many probes have failed in a row.
+      // Without these a blip and a multi-hour outage look identical here.
+      if (ex.downSince) {
+        rows.push('<div class="label">Down since</div><div class="val">' + fmtTime(ex.downSince) +
+          ' <span class="small">(' + fmtAge(Date.now() - ex.downSince) + ')</span></div>');
+      }
+      if (ex.consecutiveFailures) {
+        rows.push('<div class="label">Failed probes</div><div class="val">' +
+          fmtNum(ex.consecutiveFailures) + ' in a row</div>');
+      }
       rows.push('</div>');
+      // The consequence an operator can't infer from the fields above.
+      if (ex.status && ex.status !== 'ok' && ex.status !== 'mock') {
+        rows.push('<p class="err-text" style="margin-top:10px">' +
+          'Wallet linking is paused while the explorer is unreachable — the ' +
+          'chain poller reads incoming link transactions from here, so ' +
+          '&ldquo;Link wallet&rdquo; will not complete. Retries are backing off.' +
+          '</p>');
+      }
       body.innerHTML = rows.join('');
     }
 
@@ -277,6 +295,22 @@
           (cp.lastPolledAt
             ? fmtTime(cp.lastPolledAt) + ' <span class="small">(' + fmtAge(Date.now() - cp.lastPolledAt) + ' ago)</span>'
             : '—') + '</div>');
+        // Retry cadence + failure streak: the poller now backs off from 4s
+        // to 60s while the explorer is down, so "last polled 40s ago" is
+        // expected during an outage rather than a sign of a wedged loop.
+        if (cp.pollIntervalMs != null) {
+          rows.push('<div class="label">Retry interval</div><div class="val">' +
+            fmtNum(Math.round(cp.pollIntervalMs / 1000)) + 's' +
+            (cp.consecutiveFailures ? ' <span class="small">(backing off)</span>' : '') + '</div>');
+        }
+        if (cp.consecutiveFailures) {
+          rows.push('<div class="label">Consecutive failures</div><div class="val">' +
+            fmtNum(cp.consecutiveFailures) + '</div>');
+        }
+        if (cp.downSince) {
+          rows.push('<div class="label">Failing since</div><div class="val">' + fmtTime(cp.downSince) +
+            ' <span class="small">(' + fmtAge(Date.now() - cp.downSince) + ')</span></div>');
+        }
         if (cp.lastError) {
           rows.push('<div class="label">Last error</div><div class="val"><span class="err-text">' + esc(cp.lastError) + '</span></div>');
         }
@@ -294,6 +328,17 @@
         rows.push('<div class="label">Loaded?</div><div class="val">' +
           (ga.loaded ? '<span class="badge ok">yes</span>' : '<span class="badge warn">not yet</span>') + '</div>');
         rows.push('<div class="label">Account count</div><div class="val">' + fmtNum(ga.count) + '</div>');
+        if (ga.consecutiveFailures) {
+          rows.push('<div class="label">Consecutive failures</div><div class="val">' +
+            fmtNum(ga.consecutiveFailures) + '</div>');
+        }
+        if (ga.downSince) {
+          rows.push('<div class="label">Failing since</div><div class="val">' + fmtTime(ga.downSince) +
+            ' <span class="small">(' + fmtAge(Date.now() - ga.downSince) + ')</span></div>');
+        }
+        if (ga.lastError) {
+          rows.push('<div class="label">Last error</div><div class="val"><span class="err-text">' + esc(ga.lastError) + '</span></div>');
+        }
         rows.push('</div></details>');
       }
 

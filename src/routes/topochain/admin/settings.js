@@ -101,6 +101,25 @@ function settingsAdminRoutes(config) {
     }
   });
 
+  // ── GET /api/v4/admin/settings/mail-status ───────────────────────────
+  //
+  // NOT a platform_settings row — outbound mail is configured through
+  // platform_env (dapp.json → "Topochain mail"), not this table. It is
+  // surfaced here because Topochain → Settings is where an admin looks
+  // when asking "is this subsystem actually working?", and mail is the
+  // one part that can be entirely broken while every endpoint reports
+  // success: both senders are always-200 by contract (SPEC 1667), so an
+  // unconfigured transport is invisible from the outside.
+  //
+  // MUST stay registered ahead of GET /:key below, or `mail-status` is
+  // swallowed as a settings key.
+  //
+  // Returns presence only — never the endpoint, never the credential.
+  router.get('/api/v4/admin/settings/mail-status', (_req, res) => {
+    const mailTransport = require('../../../services/topochain/mail-transport');
+    return ok(res, { data: mailTransport.describe(process.env) });
+  });
+
   // ── POST /api/v4/admin/settings/reset (SPEC 2825-2840) ──────────────
   //
   // Registered BEFORE POST /:key-shaped routes below is moot here (this

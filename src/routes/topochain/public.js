@@ -53,6 +53,21 @@ const {
   ok, fail, iso, num, paginate, meta, ValidationError,
 } = require('./helpers');
 const { TEMPLATE_JOIN_COLUMNS_SQL, buildChallengeListItem } = require('./challenge-view');
+const events = require('../../services/events');
+
+// Fire-and-forget tally behind POST /app-version/check, so the admin screen
+// can report whether the release gate is being exercised. `events.record`
+// already swallows every failure and always resolves, but this endpoint is
+// FULLY PUBLIC and must not grow a failure mode, so the call is additionally
+// not awaited and wrapped — nothing here can affect the response.
+function recordVersionCheck(pool, os, upgrade) {
+  try {
+    events.record(pool, {
+      type: events.EVENT_TYPES.APP_VERSION_CHECKED,
+      metadata: { os, upgrade },
+    });
+  } catch { /* never let telemetry break a public read */ }
+}
 
 // ─── Small shared formatters ─────────────────────────────────────────────
 
@@ -596,7 +611,7 @@ function topochainPublicRoutes(config) {
       const where = includePast ? 'internal = FALSE' : 'internal = FALSE AND is_active = TRUE';
       const { rows } = await pool.query(
         `SELECT id, name, description, starts_at, ends_at, start_epoch, end_epoch,
-                is_active, display_activities
+                is_active, display_activities, display_leaderboard
            FROM season_events WHERE ${where} ORDER BY starts_at DESC`
       );
 
@@ -612,6 +627,11 @@ function topochainPublicRoutes(config) {
         is_active: r.is_active,
         is_current: new Date(r.starts_at) <= now && now <= new Date(r.ends_at),
         display_activities: r.display_activities,
+        // Additive (not in the v1 shape): lets a client pick a default
+        // event that will actually render standings instead of landing on
+        // one whose leaderboard is switched off and looks empty. See
+        // public/js/topochain-events.js#pickDefault.
+        display_leaderboard: r.display_leaderboard,
       }));
 
       return ok(res, { data });
@@ -1006,7 +1026,10 @@ function topochainPublicRoutes(config) {
       const versionConfig = rows[0];
 
       // SPEC 1318: v4 always returns all three keys, even with no config row.
-      if (!versionConfig) return ok(res, { data: { upgrade: 0, details: null, update_url: null } });
+      if (!versionConfig) {
+        recordVersionCheck(pool, os, 0);
+        return ok(res, { data: { upgrade: 0, details: null, update_url: null } });
+      }
 
       let upgrade = 0;
       if (buildNumber < versionConfig.min_build_number) upgrade = 2;
@@ -1023,6 +1046,7 @@ function topochainPublicRoutes(config) {
 
       const updateUrl = upgrade === 0 ? null : (versionConfig.update_url || null);
 
+      recordVersionCheck(pool, os, upgrade);
       return ok(res, { data: { upgrade, details: upgradeDetails, update_url: updateUrl } });
     } catch (err) {
       log.error('topochain-public', 'POST /app-version/check failed', { message: err.message });

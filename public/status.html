@@ -94,6 +94,18 @@
     <div id="node" class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-4 text-sm"></div>
   </section>
 
+  <!-- Block-explorer reachability. Separate card from the node above: it's a
+       different host with a different failure mode, and when it's down the
+       consequence (wallet linking stops completing) is invisible anywhere
+       else — the poller just retries in the background forever. Populated
+       by renderExplorer() from the same cached snapshot. -->
+  <section class="mb-6">
+    <div class="flex items-baseline justify-between mb-2">
+      <h2 class="text-sm font-semibold text-zinc-600 dark:text-zinc-400 uppercase tracking-wide">Block explorer</h2>
+    </div>
+    <div id="explorer" class="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-zinc-50 dark:bg-zinc-900/40 p-4 text-sm"></div>
+  </section>
+
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
     <!-- Left: Apps tree -->
     <div class="space-y-3">
@@ -340,6 +352,64 @@ function nodeStatusMeta(node) {
     case 'unknown':
     default:            return { label: node.status,   pill: 'pill-stopped',  tone: 'zinc' };
   }
+}
+
+// Block-explorer card. The explorer is external infrastructure (see
+// EXPLORER_UPSTREAM) — this card reports, it does not repair. Its whole
+// reason for existing is the consequence line: when the explorer is
+// unreachable the wallet-link poller can't see incoming link transactions,
+// so "Link wallet" silently never completes and nothing else says so.
+function renderExplorer(ex) {
+  if (!ex || ex.status === 'unknown') {
+    return `<div class="text-zinc-500">Explorer not probed yet.</div>`;
+  }
+
+  const meta = {
+    ok:            { label: 'Reachable',    pill: 'pill-running', tone: 'green' },
+    unreachable:   { label: 'Unreachable',  pill: 'pill-missing', tone: 'red' },
+    bad_response:  { label: 'Bad response', pill: 'pill-missing', tone: 'red' },
+    mock:          { label: 'Mock',         pill: 'pill-stopped', tone: 'zinc' },
+  }[ex.status] || { label: ex.status, pill: 'pill-stopped', tone: 'zinc' };
+
+  const down = ex.status !== 'ok' && ex.downSince
+    ? `<span class="text-red-700 dark:text-red-300/80"> — unreachable for ${h(fmtDuration(Date.now() - ex.downSince))}${
+        ex.consecutiveFailures ? ` (${h(ex.consecutiveFailures)} failed probes)` : ''
+      }</span>`
+    : '';
+
+  // The part an operator actually needs: what BREAKS while this is down.
+  const consequence = ex.status !== 'ok' ? `
+    <div class="mt-3 rounded border border-red-300 dark:border-red-700/40 bg-red-50 dark:bg-red-900/20 p-2 text-xs">
+      <span class="font-semibold text-red-700 dark:text-red-300">Wallet linking is paused</span>
+      <span class="text-red-700 dark:text-red-300/80">— the chain poller reads incoming link transactions from this explorer, so "Link wallet" will not complete until it is reachable again. Retries are backing off; no action is needed here beyond restoring the upstream.</span>
+    </div>` : '';
+
+  const errorLine = ex.error ? `
+    <div class="mt-2 text-xs text-red-600 dark:text-red-400 mono break-all">${h(ex.error)}</div>` : '';
+
+  return `
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span class="pill ${meta.pill}">${h(meta.label)}</span>
+      <span class="mono text-xs text-zinc-500 break-all">${h(ex.host || '—')}</span>
+      ${ex.chainId ? `<span class="text-xs text-zinc-500">chain <span class="mono">${h(ex.chainId)}</span></span>` : ''}
+      ${ex.latencyMs != null ? `<span class="text-xs text-zinc-500">${h(ex.latencyMs)}ms</span>` : ''}
+      ${down}
+    </div>
+    ${consequence}
+    ${errorLine}`;
+}
+
+// "2h 5m" / "45s" — compact enough for an inline status line.
+function fmtDuration(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m`;
+  const hrs = Math.floor(m / 60);
+  const remM = m % 60;
+  if (hrs < 24) return remM ? `${hrs}h ${remM}m` : `${hrs}h`;
+  const d = Math.floor(hrs / 24);
+  return `${d}d ${hrs % 24}h`;
 }
 
 function renderNode(node) {
@@ -619,6 +689,7 @@ async function refresh() {
     renderDeployBanner(data.deployProgress);
     document.getElementById('summary').innerHTML = renderSummary(data.summary, data.node);
     document.getElementById('node').innerHTML = renderNode(data.node);
+    document.getElementById('explorer').innerHTML = renderExplorer(data.explorer);
     document.getElementById('apps').innerHTML = renderApps(data.apps);
     document.getElementById('workers').innerHTML = renderWorkers(data.workers);
     document.getElementById('stuck').innerHTML = renderStuck(data.stuckSessions);

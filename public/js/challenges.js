@@ -48,9 +48,19 @@ const Challenges = {
       const seasons = Array.isArray(seasonsRaw)
         ? seasonsRaw
         : (seasonsRaw && seasonsRaw.seasons) || [];
-      const active = seasons.find((s) => s.is_active) ||
-        seasons[seasons.length - 1] || null;
+      // Prefer the season running right now; between seasons fall back to
+      // the most recent one that has already started. Shared rule with the
+      // leaderboard and seasons screens (public/js/topochain-events.js) so
+      // all three describe the same period — `is_active` alone is an admin
+      // on/off switch that says nothing about timing, and the old
+      // `seasons[length - 1]` tail-pick took the OLDEST season (the list
+      // is starts_at DESC), not the newest.
+      const active = window.TopochainEvents
+        ? TopochainEvents.pickDefault(seasons)
+        : (seasons.find((s) => s.is_active) || seasons[0] || null);
       const seasonId = active ? (active.season_id ?? active.id) : null;
+      const seasonEnded = window.TopochainEvents
+        ? TopochainEvents.hasEnded(active) : false;
 
       let [challenges, leaderboard] = await Promise.all([
         seasonId != null
@@ -79,6 +89,7 @@ const Challenges = {
         season: active,
         challenges: Array.isArray(challenges) ? challenges : [],
         allSeason,
+        seasonEnded,
         leaderboard,
       };
     } catch (err) {
@@ -126,6 +137,13 @@ const Challenges = {
       if (range) {
         head.appendChild(Challenges._el('div',
           'text-xs text-zinc-500 dark:text-zinc-400', range));
+      }
+      // Between seasons we open on the last one — say so, so the challenge
+      // list doesn't read as something the user can still act on.
+      if (d.seasonEnded) {
+        head.appendChild(Challenges._el('div',
+          'text-xs text-zinc-500 dark:text-zinc-400 mt-1',
+          'Nothing is running right now — showing the most recent season.'));
       }
       root.appendChild(head);
     }

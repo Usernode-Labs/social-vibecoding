@@ -4,8 +4,9 @@ The Usernode Flutter app injects a `Usernode` JavaScript channel into every
 page loaded in its dapp webview. `public/usernode-bridge.js` (canonical copy:
 `public/usernode-bridge/v1/bridge.js`) wraps that channel in promise-returning
 methods on `window.usernode`. This document is the versioned contract between
-the app (producer, `flutter-mobile-app/lib/features/dapps/dapp_webview_screen.dart`)
-and SV chrome (consumer) for the methods SV's own shell depends on.
+the app (producer — the Flutter shell, which lives in its **own repository**,
+`lib/features/dapps/dapp_webview_screen.dart` there) and SV chrome (consumer,
+this repo) for the methods SV's own shell depends on.
 
 Wire format: the page posts `{ id, method, args }` as JSON to the channel;
 the app resolves via `window.__usernodeResolve(id, value, error)`. Unknown
@@ -20,6 +21,13 @@ detect with `getBridgeInfo`.
   appear in `capabilities`.
 - Feature-detect with `capabilities.includes('<method>')`, not `version`.
 - Current version: **4**.
+- **The two sides of this contract live in different repositories** — the
+  producer in the Flutter shell repo, the consumer here. Adding or changing
+  a bridge method is therefore a coordinated two-repo change, and the two
+  halves ship independently: assume for a while that some installed builds
+  have the old surface and some have the new one. That is exactly what
+  `capabilities` is for — never assume a method exists because this document
+  lists it.
 
 ## Methods
 
@@ -129,15 +137,25 @@ All v3 methods are trusted-SV-origin gated like `openNativeScreen`. They
 power SV's `#profile` screen (`public/js/profile.js`) and the "Usernode
 app" sections in SV's Settings modal (`public/js/settings.js`).
 
-#### `getProfileInfo()` → `{ participantId }`
+#### `getProfileInfo()` → `{ participantId }` (legacy)
+
+**Legacy — like `openNativeScreen`'s `settings` / `profile` screens, kept
+only so older shell builds keep working. Nothing in SV calls it any more;
+do not add new callers.**
 
 `participantId` is the leaderboard participant id (number), or `null` when
 the user hasn't registered. Since the topochain merge, participant ids ARE
 platform user ids and SV's `#profile` screen no longer consults this
 method for data — the in-process `/challenges-api` routes
 (`src/routes/topochain/mobile.js`) scope `/me/*` to the platform session
-server-side. The method remains for capability detection (the drawer's
-profile row shows only inside the app webview) and forward compatibility.
+server-side.
+
+Its last remaining use was capability detection: the drawer's Profile row
+was revealed only when the bridge reported this method, which meant the
+screen was unreachable in an ordinary browser even though it worked
+perfectly there. That gate is gone — the row now ships visible to
+everyone, and the screen renders a "Sign in to see your profile" prompt
+when there is no session.
 
 #### `getSettingsState()` → settings snapshot
 

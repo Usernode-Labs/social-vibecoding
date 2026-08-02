@@ -40,9 +40,15 @@ const TopochainLeaderboard = {
 
   // Full events list (GET /season-events?include_past=1), for the picker.
   _events: [],
-  // Selected season_event_id. null until the first /leaderboard fetch
-  // resolves "current" and we learn which event that was.
+  // Selected season_event_id. null until loadEvents() resolves a default
+  // (or, failing that, the first /leaderboard fetch resolves "current"
+  // and we learn which event that was).
   _eventId: null,
+  // True when the default we picked is an event that has already ENDED —
+  // i.e. nothing is running right now. Drives the explanatory caption and
+  // the picker's placeholder label. Cleared as soon as the user chooses an
+  // event themselves: from then on the selection is theirs, not a fallback.
+  _endedFallback: false,
   _page: 1,
   _perPage: 25,
 
@@ -51,6 +57,9 @@ const TopochainLeaderboard = {
   _meta: null,
   _loading: false,
   _error: null,
+  // Neutral "there is nothing here" copy, distinct from _error (which
+  // paints red). Set when the server has no public events at all.
+  _empty: null,
 
   // Drill-down panel state. `_drillRow` is the clicked row (or null); the
   // three sections load independently so one failing/being unavailable
@@ -129,6 +138,8 @@ const TopochainLeaderboard = {
     document.getElementById('tc-lb-event-select').addEventListener('change', (e) => {
       const id = parseInt(e.target.value, 10);
       TopochainLeaderboard._eventId = Number.isInteger(id) ? id : null;
+      // An explicit choice is not a fallback — drop the caption.
+      TopochainLeaderboard._endedFallback = false;
       TopochainLeaderboard._page = 1;
       TopochainLeaderboard._drillRow = null;
       TopochainLeaderboard.loadLeaderboard();
@@ -144,6 +155,21 @@ const TopochainLeaderboard = {
     if (!TopochainLeaderboard._open) return;
     if (ok && data?.success && Array.isArray(data.data)) {
       TopochainLeaderboard._events = data.data;
+      // Between events nothing satisfies the server's "current" rule and
+      // GET /leaderboard 404s, which used to paint a red error banner on
+      // the default landing state. Resolve a default here instead: the
+      // running event when there is one, else the most recent ended one
+      // (TopochainEvents.pickDefault). Only when the list itself is empty
+      // do we fall through to the server default and its 404.
+      if (TopochainLeaderboard._eventId == null &&
+          window.TopochainEvents) {
+        const pick = TopochainEvents.pickDefault(data.data,
+          { requireLeaderboard: true });
+        if (pick) {
+          TopochainLeaderboard._eventId = pick.id;
+          TopochainLeaderboard._endedFallback = TopochainEvents.hasEnded(pick);
+        }
+      }
       TopochainLeaderboard._renderEventOptions();
     }
     // The picker is a nice-to-have; the leaderboard fetch below still
@@ -157,7 +183,11 @@ const TopochainLeaderboard = {
     if (!sel) return;
     const esc = TopochainLeaderboard.esc;
     const current = TopochainLeaderboard._eventId;
-    const options = ['<option value="">Current event</option>']
+    // Placeholder label tracks reality: "Current event" is a lie between
+    // events, where the screen deliberately opens on the last one.
+    const placeholder = TopochainLeaderboard._endedFallback
+      ? 'Most recent event' : 'Current event';
+    const options = [`<option value="">${esc(placeholder)}</option>`]
       .concat(TopochainLeaderboard._events.map((ev) => {
         const selected = current === ev.id ? ' selected' : '';
         const tag = ev.is_current ? ' (current)' : (ev.is_active ? '' : ' (past)');
@@ -172,6 +202,7 @@ const TopochainLeaderboard = {
   async loadLeaderboard() {
     TopochainLeaderboard._loading = true;
     TopochainLeaderboard._error = null;
+    TopochainLeaderboard._empty = null;
     TopochainLeaderboard._renderBody();
 
     const params = new URLSearchParams();
@@ -200,8 +231,17 @@ const TopochainLeaderboard = {
     } else {
       TopochainLeaderboard._data = null;
       TopochainLeaderboard._meta = null;
-      TopochainLeaderboard._error = (data && data.error)
-        || (status === 404 ? 'No event found.' : 'Failed to load the leaderboard.');
+      if (status === 404) {
+        // Only reachable now when there are no public events at all (the
+        // fallback in loadEvents() covers "none is currently running").
+        // That's an empty world, not a failure — render it neutrally.
+        TopochainLeaderboard._error = null;
+        TopochainLeaderboard._empty = 'No events have been published yet.';
+      } else {
+        TopochainLeaderboard._empty = null;
+        TopochainLeaderboard._error = (data && data.error)
+          || 'Failed to load the leaderboard.';
+      }
     }
     TopochainLeaderboard._renderBody();
   },
@@ -224,6 +264,13 @@ const TopochainLeaderboard = {
         </div>`;
       return;
     }
+    if (TopochainLeaderboard._empty) {
+      host.innerHTML = `
+        <p class="text-sm text-zinc-500 py-8 text-center">
+          ${esc(TopochainLeaderboard._empty)}
+        </p>`;
+      return;
+    }
     const payload = TopochainLeaderboard._data;
     if (!payload) {
       host.innerHTML = '<p class="text-sm text-zinc-500">No data.</p>';
@@ -237,6 +284,14 @@ const TopochainLeaderboard = {
       ended: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400',
     }[event.status] || 'bg-zinc-500/20 text-zinc-500';
 
+    // Between events we deliberately open on the last one — say so, so the
+    // standings don't read as live. Only when the fallback actually fired.
+    const fallbackNote = (TopochainLeaderboard._endedFallback && event.has_ended)
+      ? `<p id="tc-lb-fallback-note" class="text-xs text-zinc-500 mt-2">
+           Nothing is running right now — showing the most recent event.
+         </p>`
+      : '';
+
     const hero = `
       <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 p-4 mb-4">
         <div class="flex flex-wrap items-center gap-2">
@@ -244,6 +299,7 @@ const TopochainLeaderboard = {
           <span class="text-xs px-2 py-0.5 rounded-full font-medium ${statusBadge}">${esc(event.status)}</span>
         </div>
         ${event.disclaimer ? `<p class="text-xs text-zinc-500 mt-1">${esc(event.disclaimer)}</p>` : ''}
+        ${fallbackNote}
       </div>`;
 
     if (!event.display_leaderboard) {

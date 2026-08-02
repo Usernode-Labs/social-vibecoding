@@ -37,7 +37,17 @@ const Profile = {
 
   async _fetchJson(path) {
     const res = await fetch(path);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    if (!res.ok) {
+      // Carry the status on the Error so _load() can tell "you are not
+      // signed in" (401 from requireSessionUser) apart from a genuine
+      // failure. The /challenges-api/me/* routes are session-scoped
+      // (src/routes/topochain/mobile.js), so an anonymous visitor hits
+      // 401 on every one of them — that is a state to render, not an
+      // error to apologise for.
+      const err = new Error(`HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
     const body = await res.json();
     // The leaderboard API wraps every response in { success, data }.
     if (body && typeof body === 'object' && 'success' in body) {
@@ -51,6 +61,14 @@ const Profile = {
     if (Profile._loading) return;
     Profile._loading = true;
     try {
+      // Cheap pre-check: the SPA boots anonymously now (auth-screens.js),
+      // so skip the round-trip entirely when there is no session at all.
+      // The 401 branch below still covers a session that expired while
+      // the screen was open.
+      if (window.App && !App.user) {
+        Profile._data = { signedOut: true };
+        return;
+      }
       // Scope everything to the active season, like the challenges screen.
       const seasonsRaw = await Profile._fetchJson('/challenges-api/seasons');
       const seasons = Array.isArray(seasonsRaw)
@@ -81,8 +99,15 @@ const Profile = {
         challenges: Array.isArray(challenges) ? challenges : [],
       };
     } catch (err) {
-      console.warn('[profile] load failed:', err);
-      if (!Profile._data) Profile._data = { error: true };
+      if (err && err.status === 401) {
+        // Not signed in (or the session lapsed) — a normal state, not a
+        // fault. Replace any stale data so we never show one user's
+        // profile after their session ends.
+        Profile._data = { signedOut: true };
+      } else {
+        console.warn('[profile] load failed:', err);
+        if (!Profile._data) Profile._data = { error: true };
+      }
     } finally {
       Profile._loading = false;
     }
@@ -107,6 +132,20 @@ const Profile = {
     if (!d) {
       root.appendChild(Profile._el('div',
         'text-sm text-zinc-400 py-8 text-center', 'Loading profile…'));
+      return;
+    }
+    if (d.signedOut) {
+      const wrap = Profile._el('div', 'py-12 text-center');
+      wrap.appendChild(Profile._el('div',
+        'text-sm text-zinc-500 dark:text-zinc-400 mb-4',
+        'Sign in to see your profile.'));
+      const link = Profile._el('a',
+        'inline-flex items-center justify-center px-4 min-h-[44px] rounded-lg ' +
+        'bg-violet-600 hover:bg-violet-700 text-white text-sm font-medium',
+        'Sign in');
+      link.href = '#login';
+      wrap.appendChild(link);
+      root.appendChild(wrap);
       return;
     }
     if (d.error) {

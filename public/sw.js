@@ -58,6 +58,7 @@ const SHELL_ASSETS = [
   '/js/app.js',
   '/js/build-log.js',
   '/js/cc-progress-summary.js',
+  '/js/topochain-events.js',
   '/js/challenges.js',
   '/js/confirm-modal.js',
   '/js/dev-alerts.js',

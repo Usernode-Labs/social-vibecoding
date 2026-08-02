@@ -12,18 +12,71 @@ const EXPLORER_UPSTREAM = process.env.EXPLORER_UPSTREAM || 'testnet-explorer.use
 const EXPLORER_UPSTREAM_BASE = process.env.EXPLORER_UPSTREAM_BASE || '/api';
 
 const POLL_INTERVAL_MS = 4000;
+// Ceiling for the failure backoff. When the explorer is down (it answers
+// `HTTP 503: no available server` for hours at a time), a flat 4s retry
+// produced ~900 warn lines an hour and buried every other log line in the
+// platform's output. Backing off to a minute keeps the recovery latency
+// acceptable while making the log readable again.
+const MAX_POLL_INTERVAL_MS = 60000;
 const MAX_PAGES = 5;
 const MAX_SEEN = 5000;
 
 let chainId = null;
 let seenTxIds = new Set();
 let lastBlockHeight = 0;
-let intervalHandle = null;
+let timerHandle = null;
+let running = false;
 // Surfaced on /node-status (the dapp-server-style full viewer) so operators
 // can confirm the wallet-linker is actually keeping up with the chain.
 let lastPolledAt = null;
 let lastError = null;
 let walletLinkCount = 0;
+// Failure-streak state. `consecutiveFailures` drives the backoff and the
+// log level; `downSince` is what the status pages render as "unreachable
+// for 14 minutes" so an operator can tell a blip from an outage.
+let consecutiveFailures = 0;
+let downSince = null;
+let currentIntervalMs = POLL_INTERVAL_MS;
+
+// Current retry delay: 4s while healthy, doubling per consecutive failure
+// up to the ceiling.
+function backoffMs() {
+  if (consecutiveFailures <= 0) return POLL_INTERVAL_MS;
+  const grown = POLL_INTERVAL_MS * Math.pow(2, consecutiveFailures - 1);
+  return Math.min(grown, MAX_POLL_INTERVAL_MS);
+}
+
+// One place to record a failed poll. The FIRST failure of a streak logs at
+// warn (an operator should see the transition); every repeat drops to debug
+// so a long outage costs one line, not one per retry.
+function noteFailure(what, message) {
+  lastError = message;
+  consecutiveFailures += 1;
+  if (consecutiveFailures === 1) {
+    downSince = Date.now();
+    log.warn('chain-poller', `${what} — retrying with backoff`, { err: message });
+  } else {
+    log.debug('chain-poller', `${what} (failure #${consecutiveFailures})`, {
+      err: message,
+      nextRetryMs: backoffMs(),
+    });
+  }
+}
+
+// Closing the streak is worth exactly one warn line: it is the event an
+// operator scanning the log actually wants to find.
+function noteSuccess() {
+  if (consecutiveFailures > 0) {
+    const downMs = downSince ? Date.now() - downSince : 0;
+    log.warn('chain-poller', 'explorer recovered', {
+      afterFailures: consecutiveFailures,
+      downSeconds: Math.round(downMs / 1000),
+    });
+  }
+  consecutiveFailures = 0;
+  downSince = null;
+  lastError = null;
+}
 
 function httpJson(method, urlStr, body) {
   return new Promise((resolve, reject) => {
@@ -82,11 +135,17 @@ async function poll(appPubkey, pool) {
   lastPolledAt = Date.now();
   if (!chainId) {
     try { await discoverChainId(); } catch (e) {
-      lastError = e.message;
-      log.warn('chain-poller', 'chain ID discovery failed', { err: e.message });
+      noteFailure('chain ID discovery failed', e.message);
       return;
     }
-    if (!chainId) return;
+    // Discovery succeeded but the explorer answered without a chain_id.
+    // This is an outage too — without recording it the streak stays at 0,
+    // the poller is pinned at the healthy 4s interval forever, and the
+    // status pages report the explorer as fine while nothing is polled.
+    if (!chainId) {
+      noteFailure('chain ID missing', 'Explorer returned no chain_id');
+      return;
+    }
   }
 
   const txUrl = `${baseUrl()}/${chainId}/transactions`;
@@ -100,11 +159,10 @@ async function poll(appPubkey, pool) {
     let data;
     try { data = await httpJson('POST', txUrl, body); }
     catch (e) {
-      lastError = e.message;
-      log.warn('chain-poller', 'poll failed', { err: e.message });
+      noteFailure('poll failed', e.message);
       return;
     }
-    lastError = null;
+    noteSuccess();
 
     const items = data.items || [];
     if (!items.length) break;
@@ -168,14 +226,38 @@ function start(config) {
 
   log.info('chain-poller', 'Starting', { appPubkey: appPubkey.slice(0, 10) + '...' });
 
-  discoverChainId().catch(() => {});
-  intervalHandle = setInterval(() => poll(appPubkey, pool), POLL_INTERVAL_MS);
+  running = true;
+  // The boot-time discovery is a real probe of the same upstream, so its
+  // failure belongs in the streak: swallowing it left the first ~4s of an
+  // outage reported as healthy, and a successful-but-empty response
+  // uncounted entirely.
+  discoverChainId()
+    .then(() => {
+      if (!chainId) noteFailure('chain ID missing', 'Explorer returned no chain_id');
+    })
+    .catch((e) => noteFailure('chain ID discovery failed', e.message));
+
+  // Self-rescheduling timer rather than setInterval: the delay has to
+  // change as the failure streak grows, and a fixed interval would also
+  // stack overlapping polls once the upstream starts timing out.
+  const tick = async () => {
+    if (!running) return;
+    try { await poll(appPubkey, pool); }
+    catch (e) { log.debug('chain-poller', 'unexpected poll error', { err: e.message }); }
+    if (!running) return;
+    currentIntervalMs = backoffMs();
+    timerHandle = setTimeout(tick, currentIntervalMs);
+    timerHandle.unref?.();
+  };
+  timerHandle = setTimeout(tick, POLL_INTERVAL_MS);
+  timerHandle.unref?.();
 }
 
 function stop() {
-  if (intervalHandle) {
-    clearInterval(intervalHandle);
-    intervalHandle = null;
+  running = false;
+  if (timerHandle) {
+    clearTimeout(timerHandle);
+    timerHandle = null;
   }
 }
 
@@ -187,7 +269,12 @@ function getStatus() {
     walletLinkCount,
     lastPolledAt,
     lastError,
-    enabled: intervalHandle != null,
+    // Outage shape for the status pages: how many retries have failed in a
+    // row, when the streak began, and how long we are currently waiting.
+    consecutiveFailures,
+    downSince,
+    pollIntervalMs: currentIntervalMs,
+    enabled: running,
   };
 }
 

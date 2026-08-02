@@ -5,11 +5,14 @@
 //   - a single cached `getBridgeInfo()` probe (NativeChrome.getInfo()) so
 //     node-pill.js / wallet-sheet.js / settings.js don't each round-trip
 //     the channel;
-//   - the drawer's Profile row (#profile hash route, profile.js), shown
-//     when the bridge reports getProfileInfo. The old native-push
-//     Profile / App Settings rows are gone (profile-and-settings-to-web
-//     migration): App Settings is now capability-gated sections inside
-//     the Settings modal (settings.js);
+//   - the drawer's Profile row (#profile hash route, profile.js) — its
+//     click-to-close wiring only. The row is visible to everyone, web
+//     included: it is no longer gated on the bridge's getProfileInfo
+//     capability, because /challenges-api/me/* scopes to the platform
+//     session server-side and the screen works in any browser. The old
+//     native-push Profile / App Settings rows are gone
+//     (profile-and-settings-to-web migration): App Settings is now
+//     capability-gated sections inside the Settings modal (settings.js);
 //   - the platform-login handoff + node lifecycle orchestration (bridge
 //     v4, thin-shell migration): on every shell boot with a live web
 //     session, exchange the session cookie for a mobile bearer
@@ -53,10 +56,17 @@
       // The Profile row is a plain #profile anchor; hash navigation
       // drives the screen (App.navigateToProfile), the click handler
       // only closes the drawer — same wiring as the Challenges row.
-      if (!(await NativeChrome.has('getProfileInfo'))) return;
+      //
+      // NO capability gate: the row used to be revealed only when the
+      // bridge reported getProfileInfo, which kept the screen
+      // unreachable in an ordinary browser. Since the topochain merge
+      // the /challenges-api/me/* routes scope to the platform session
+      // server-side (src/routes/topochain/mobile.js), so the screen
+      // works identically on the web — the probe was the only thing
+      // still hiding it. The anchor now ships visible in index.html;
+      // this handler only wires the drawer-close behaviour.
       const row = document.getElementById('drawer-row-profile');
       if (!row) return;
-      row.classList.remove('hidden');
       row.addEventListener('click', () => {
         if (window.App && App.HeaderMenu) App.HeaderMenu.close();
       });

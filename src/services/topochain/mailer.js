@@ -23,7 +23,9 @@ async function sendOtpMail(config, email, code) {
 
   if (transport) {
     try {
-      await transport.send({ to: email, code });
+      // `kind` is explicit so a transport branches on one field rather than
+      // inferring the message type from the presence of `code`.
+      await transport.send({ to: email, kind: 'otp', code });
       return;
     } catch (err) {
       log.error('topochain-mailer', 'OTP mail transport failed to send', { email, message: err.message });

@@ -235,6 +235,22 @@
       "description": "Base URL of the external zkPassport bridge service that verifies proofs for POST /api/v4/mobile/zkpassport/complete (src/services/topochain/zk-bridge.js). Unset doesn't block boot — every zkpassport/complete call returns 500 'The zkPassport bridge is not configured.' until it is set. Not secret, so it stays visible in the console for is-it-pointed-at-the-right-host checks."
     },
     {
+      "key": "TOPOCHAIN_MAIL_API_URL",
+      "group": "Topochain mail",
+      "description": "HTTPS send endpoint of the mail provider (Resend: https://api.resend.com/emails). POSTed as JSON with a bearer token; body shape lives in src/services/topochain/mail-transport.js. All three TOPOCHAIN_MAIL_* keys must be set together — a partial config sends nothing. Unset never blocks boot: both mail flows still report success while delivering nothing. See Admin → Topochain → Settings."
+    },
+    {
+      "key": "TOPOCHAIN_MAIL_API_KEY",
+      "group": "Topochain mail",
+      "private": true,
+      "description": "Bearer credential for TOPOCHAIN_MAIL_API_URL. Private: it can send mail as your domain, so it is encrypted at rest and never returned by any API. Unset means mobile email-login codes and onboarding waitlist confirmations are generated and dropped."
+    },
+    {
+      "key": "TOPOCHAIN_MAIL_FROM",
+      "group": "Topochain mail",
+      "description": "Envelope From address for platform mail, e.g. 'Usernode <no-reply@usernodelabs.org>'. Must be a sender the provider has verified for your domain or every send is rejected upstream. Not secret."
+    },
+    {
       "key": "USERNODE_DOMAIN",
       "group": "Managed by the deploy",
       "description": "Apex domain the platform and every app subdomain live under. Set from a GitHub repo variable by the deploy and listed here for documentation only — changing it needs the DNS and certificate change to land in the same breath, so it is deliberately not editable in the console."
@@ -865,6 +881,31 @@
       "name": "A failed imported preview offers Retry preview (#866)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Retry preview"
+    },
+    {
+      "name": "Profile screen is reachable on the web (no bridge gate) and renders",
+      "path": "/#profile",
+      "expectSelector": "#profile-screen:not(.hidden) #profile-root"
+    },
+    {
+      "name": "Profile drawer row is visible without the native bridge",
+      "path": "/",
+      "expectSelector": "#drawer-row-profile:not(.hidden)"
+    },
+    {
+      "name": "Topochain leaderboard shows standings, not a red error, between events",
+      "path": "/#topochain/leaderboard",
+      "expectSelector": "#topochain-leaderboard-screen:not(.hidden) #tc-lb-body table"
+    },
+    {
+      "name": "Admin App version screen warns when an OS has no active rule",
+      "path": "/#admin/topochain/app-version",
+      "expectText": "No active version rule"
+    },
+    {
+      "name": "Admin Topochain settings reports the outbound-mail state",
+      "path": "/#admin/topochain/settings",
+      "expectSelector": "#admin-topo-mail-status"
     }
   ],
   "governance": {

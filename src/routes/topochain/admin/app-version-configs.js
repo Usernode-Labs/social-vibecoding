@@ -123,6 +123,48 @@ function appVersionConfigsAdminRoutes(config) {
     }
   });
 
+  // ── GET /api/v4/admin/app-version-configs/check-activity ────────────
+  //
+  // Last 7 days of POST /api/v4/app-version/check calls, grouped by OS and
+  // outcome (0 = up to date, 1 = suggested update, 2 = forced update).
+  //
+  // Why this exists: with no active config row the endpoint answers
+  // `upgrade: 0` to every caller, which looks exactly like "no app is
+  // calling". An operator cannot otherwise tell a switched-off gate from an
+  // unused one. Rows come from the `app_version_checked` events the public
+  // handler now emits (src/services/events.js).
+  //
+  // MUST stay ahead of GET /:id or `check-activity` is parsed as an id.
+  router.get('/api/v4/admin/app-version-configs/check-activity', async (_req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT metadata->>'os' AS os,
+                metadata->>'upgrade' AS upgrade,
+                COUNT(*)::int AS count
+           FROM events
+          WHERE event_type = 'app_version_checked'
+            AND created_at >= NOW() - INTERVAL '7 days'
+          GROUP BY 1, 2
+          ORDER BY 1, 2`
+      );
+      const total = rows.reduce((n, r) => n + r.count, 0);
+      return ok(res, {
+        data: {
+          window_days: 7,
+          total,
+          by_os: rows.map((r) => ({
+            os: r.os,
+            upgrade: r.upgrade != null ? Number(r.upgrade) : null,
+            count: r.count,
+          })),
+        },
+      });
+    } catch (err) {
+      log.error('topochain-admin', 'GET /admin/app-version-configs/check-activity failed', { message: err.message });
+      return fail(res, 500, 'Internal server error.');
+    }
+  });
+
   // ── POST /api/v4/admin/app-version-configs (SPEC 2753-2769) ─────────
   router.post('/api/v4/admin/app-version-configs', adminWriteGate, async (req, res) => {
     try {
