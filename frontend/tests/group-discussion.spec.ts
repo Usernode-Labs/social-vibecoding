@@ -74,6 +74,10 @@ test("renders the complete view-authorized general discussion without a legacy h
   expect(transcriptBox).not.toBeNull()
   expect(transcriptBox!.y).toBeGreaterThanOrEqual(chromeBox!.y + chromeBox!.height)
   await expect(route).toContainText("Could dietary filters be easier to find?")
+  await expect(route.locator("blockquote").filter({ hasText: "↩ mira" })).toHaveCSS(
+    "font-size",
+    (page.viewportSize()?.width || 0) < 640 ? "14px" : "12px",
+  )
   await expect(page.getByLabel("App discussion messages")).toContainText("A proposal was promoted for review.")
   const messageAvatar = route.locator('[data-slot="message-avatar"]').first()
   await expect(messageAvatar).toHaveCSS("width", "32px")
@@ -134,7 +138,9 @@ test("sends throttled general typing and presents remote general typing", async 
     }).__groupChatSockets[0]
     socket?.emit({ type: "typing", userId: 8, username: "sam" })
   })
-  await expect(page.getByText("sam is typing…")).toHaveCSS("font-size", "12px")
+  const typingPresence = page.getByText("sam is typing…")
+  await expect(typingPresence).toBeVisible()
+  await expect(typingPresence).toHaveCSS("font-size", "12px")
   await expect(page.getByText("0/4 files · 5/8000", { exact: true })).toHaveCSS("font-size", "12px")
 })
 

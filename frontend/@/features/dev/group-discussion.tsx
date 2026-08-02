@@ -44,7 +44,7 @@ function quoteLabel(message: GroupChatMessage) {
   const quote = message.metadata?.quote
   if (!quote) return null
   const source = quote.source === "pr" ? `PR #${quote.prNumber || ""}`.trim() : quote.author || "Discussion"
-  return <blockquote className="rounded-lg border-s-2 bg-muted/40 px-3 py-2 text-xs text-muted-foreground"><span className="block font-medium text-foreground">↩ {source}</span>{quote.snippet ? <span className="mt-1 block line-clamp-2 whitespace-pre-wrap">{quote.snippet}</span> : null}</blockquote>
+  return <blockquote className="rounded-lg border-s-2 bg-muted/40 px-3 py-2 text-sm text-muted-foreground sm:text-xs"><span className="block font-medium text-foreground">↩ {source}</span>{quote.snippet ? <span className="mt-1 block line-clamp-2 whitespace-pre-wrap">{quote.snippet}</span> : null}</blockquote>
 }
 
 function collapseSnippet(value: string) {
