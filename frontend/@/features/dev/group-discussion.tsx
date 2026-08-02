@@ -556,7 +556,7 @@ export function GroupDiscussion() {
   }), [loadMessages])
 
   return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="group-discussion">
-    <AppTopBar app={app} backTo={appDevPath(slug)} fallbackTitle="Discussion" label="Discussion" mode="nested" />
+    <AppTopBar app={app} backTo={appDevPath(slug)} fallbackTitle="Discussion" label="Discussion" mode="nested" showClose={false} />
     {isProductionReadOnlyReview ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>Read-only</AlertTitle><AlertDescription>Posting and reactions are unavailable.</AlertDescription></Alert> : null}
     {!isProductionReadOnlyReview && app && !app.can_collaborate ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>View-only discussion</AlertTitle><AlertDescription>You can read this app’s discussion, but collaboration access is required to post a message.</AlertDescription></Alert> : null}
     {writable && connectionState !== "connected" ? <Alert><PlatformIcon icon={Paperclip} /><AlertTitle>{connectionState === "unavailable" ? "Discussion unavailable" : connectionState === "reconnecting" ? "Reconnecting to discussion" : "Connecting to discussion"}</AlertTitle>{connectionState === "unavailable" ? <AlertDescription>Refresh the page to reconnect.</AlertDescription> : null}</Alert> : null}

@@ -284,7 +284,7 @@ export function SessionSpecViewer() {
 
   return (
     <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="session-spec">
-      <AppTopBar app={app} backTo={back} fallbackTitle="Session spec" label="Session spec" mode="nested" />
+      <AppTopBar app={app} backTo={back} fallbackTitle="Session spec" label="Session spec" mode="nested" showClose={false} />
       {error ? <Alert variant="destructive"><AlertTitle>Spec unavailable</AlertTitle><AlertDescription>{error}</AlertDescription></Alert> : null}
       {spec === null && !error ? <><Skeleton className="h-10 w-48" /><Skeleton className="h-96 w-full" /></> : null}
       {spec !== null ? (

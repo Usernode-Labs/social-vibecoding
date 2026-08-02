@@ -37,7 +37,7 @@ test("renders the owner-authorized latest spec with accessible content tabs", as
   await expect(spec.getByRole("heading", { name: /RecipeBot.*Session spec/, level: 1 })).toBeVisible()
   await expect(spec.locator("h1")).toHaveCount(1)
   await expect(chrome.getByRole("button", { name: "Back" })).toBeVisible()
-  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toHaveCount(0)
   expect(await spec.getAttribute("class")).not.toMatch(/\b(?:mx-auto|max-w-)/)
   const chromeBox = await chrome.boundingBox()
   const contentBox = await spec.locator(":scope > :not([data-slot='top-bar'])").first().boundingBox()

@@ -66,7 +66,7 @@ export function DevGovernanceDetail() {
   }
 
   return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="governance-detail">
-    <AppTopBar app={app} backTo={back} label={item.title} mode="nested" />
+    <AppTopBar app={app} backTo={back} label={item.title} mode="nested" showClose={false} />
     <Card>
       <CardHeader><CardTitle className="flex flex-wrap items-center gap-2"><span className="text-balance">{item.title}</span><Badge variant="outline">{item.kind.replaceAll("_", " ")}</Badge></CardTitle><CardDescription>Governance item #{item.id}{item.created_by_username ? ` · proposed by ${item.created_by_username}` : ""}</CardDescription></CardHeader>
       <CardContent className="flex flex-col gap-5"><p className="whitespace-pre-wrap text-base leading-6 text-foreground sm:text-sm">{item.description || "No additional context was provided."}</p><div className="flex flex-wrap gap-2"><DevVoteControls disabled={!canVote || isProductionReadOnlyReview} kind="governance" noCount={item.down_count} onVote={(vote) => void castVote(vote as "up" | "down")} pending={voting} required={item.votes_required} selectedVote={item.my_vote} yesCount={item.up_count} /><Badge variant="secondary">{item.status}</Badge></div>{isProductionReadOnlyReview && canVote ? <p className="text-base text-muted-foreground sm:text-sm">Voting is disabled while this local React workspace reviews production data.</p> : null}{voteError ? <Alert variant="destructive"><AlertTitle>Vote not recorded</AlertTitle><AlertDescription>{voteError}</AlertDescription></Alert> : null}</CardContent>

@@ -52,7 +52,7 @@ export function AppRecovery() {
   }
 
   return <div className="isolate flex w-full flex-1 flex-col" data-testid="app-recovery">
-    <AppTopBar app={app} backTo={app ? appDetailsPath(app.slug) : "/"} fallbackTitle="Repair app setup" label="Repair app setup" mode="nested" />
+    <AppTopBar app={app} backTo={app ? appDetailsPath(app.slug) : "/"} fallbackTitle="Repair app setup" label="Repair app setup" mode="nested" showClose={false} />
     <div className="flex w-full flex-1 flex-col gap-6 px-4 py-4 antialiased sm:px-6">
     {state.kind === "loading" ? <><Skeleton className="h-40 w-full" /><Skeleton className="h-10 w-36" /></> : null}
     {state.kind === "error" ? <Alert variant="destructive"><AlertTitle>App unavailable</AlertTitle><AlertDescription>{state.message}</AlertDescription></Alert> : null}

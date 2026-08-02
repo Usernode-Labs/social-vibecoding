@@ -36,7 +36,10 @@ test("starts the existing failed-app retry and returns to the app detail route",
 
 test("returns from setup repair through the explicit nested app context", async ({ page }) => {
   await page.goto("/react/apps/pantry-pal/recovery")
-  await page.locator('[data-slot="top-bar"]').getByRole("button", { name: "Back" }).click()
+  const chrome = page.locator('[data-slot="top-bar"]')
+  await expect(chrome.getByRole("button", { name: "Back" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Close Pantry Pal" })).toHaveCount(0)
+  await chrome.getByRole("button", { name: "Back" }).click()
   await expect(page).toHaveURL("/react/apps/pantry-pal")
 })
 

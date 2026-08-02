@@ -530,7 +530,7 @@ test("renders the issue and comments without a legacy action handoff", async ({ 
   await expect(detail).toContainText(comments[0].body)
   await expect(detail).toContainText("Only the newest GitHub comments are shown here.")
   await expect(detail.locator('[data-slot="top-bar"]').getByRole("button", { name: "Back" })).toBeVisible()
-  await expect(detail.locator('[data-slot="top-bar"]').getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
+  await expect(detail.locator('[data-slot="top-bar"]').getByRole("button", { name: "Close RecipeBot" })).toHaveCount(0)
   await expect(detail.getByRole("heading", { level: 1 })).toHaveText(`RecipeBot · ${issue.title}`)
   await expect(detail.getByRole("heading", { level: 1 })).toHaveCount(1)
   await expect(detail).toHaveCSS("max-width", "none")

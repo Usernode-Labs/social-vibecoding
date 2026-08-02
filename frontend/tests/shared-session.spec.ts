@@ -82,7 +82,7 @@ test("renders view-authorized shared metadata and its public session discussion"
   await expect(detail.getByRole("heading", { name: /RecipeBot.*Shared Dev session/, level: 1 })).toBeVisible()
   await expect(detail.locator("h1")).toHaveCount(1)
   await expect(chrome.getByRole("button", { name: "Back" })).toBeVisible()
-  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toHaveCount(0)
   expect(await detail.getAttribute("class")).not.toMatch(/\b(?:mx-auto|max-w-)/)
   const chromeBox = await chrome.boundingBox()
   const contentBox = await detail.locator(":scope > :not([data-slot='top-bar'])").first().boundingBox()

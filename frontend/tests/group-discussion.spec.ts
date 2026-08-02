@@ -66,7 +66,7 @@ test("renders the complete view-authorized general discussion without a legacy h
   await expect(route.getByRole("heading", { name: /RecipeBot.*Discussion/, level: 1 })).toBeVisible()
   await expect(route.locator("h1")).toHaveCount(1)
   await expect(chrome.getByRole("button", { name: "Back" })).toBeVisible()
-  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toBeVisible()
+  await expect(chrome.getByRole("button", { name: "Close RecipeBot" })).toHaveCount(0)
   expect(await route.getAttribute("class")).not.toMatch(/\b(?:mx-auto|max-w-)/)
   const chromeBox = await chrome.boundingBox()
   const transcriptBox = await page.getByLabel("App discussion messages").boundingBox()

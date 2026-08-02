@@ -122,7 +122,7 @@ export function GitHubIssueDetailContent({ app, attributeError, attributes = EMP
   }
 
   return <div className="isolate flex w-full flex-1 flex-col gap-6 px-4 py-8 antialiased sm:px-6" data-testid="github-issue-detail">
-    <AppTopBar app={app} backTo={back} label={issue.title} mode="nested" />
+    <AppTopBar app={app} backTo={back} label={issue.title} mode="nested" showClose={false} />
     <Card>
       <CardHeader className="gap-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
