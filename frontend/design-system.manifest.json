@@ -223,6 +223,26 @@
       }
     },
     {
+      "id": "hosted-app-stage",
+      "name": "HostedAppStage",
+      "tier": "block",
+      "module": "@/features/apps/hosted-app-stage.tsx",
+      "export": "HostedAppStage",
+      "story": {
+        "module": "@/features/apps/hosted-app-stage.stories.tsx",
+        "states": [
+          "ReadyDesktop",
+          "LoadingDesktop",
+          "ErrorDesktop",
+          "StagedDesktop",
+          "ReadyMobile",
+          "LoadingMobile",
+          "ErrorMobile",
+          "StagedMobile"
+        ]
+      }
+    },
+    {
       "id": "native-device-summary",
       "name": "NativeDeviceSummary",
       "tier": "block",

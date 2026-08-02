@@ -40,6 +40,12 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/auth/me", (route) => route.fulfill({
     json: { user: { id: 7, username: "ava", canAdminWrite: false } },
   }))
+  await page.route("**/api/notifications?*", (route) => route.fulfill({
+    json: { notifications: [], unread: 0, hasMore: false, nextBefore: null },
+  }))
+  await page.route("**/api/node-status/full", (route) => route.fulfill({
+    json: { node: { status: "synced" } },
+  }))
   await page.route("**/api/apps/recipebot", (route) => {
     appRequests += 1
     return route.fulfill({ json: { app } })
@@ -116,6 +122,11 @@ test("keeps one offline recovery action and reloads the focused route", async ({
   })
 
   await expect(page.locator('[data-slot="focused-app-surface"][data-state="offline"]')).toBeVisible()
+  const card = page.locator('[data-slot="app-stage-card"]')
+  await expect.poll(() => card.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { bottom: style.paddingBottom, left: style.paddingLeft, right: style.paddingRight, top: style.paddingTop }
+  })).toEqual({ bottom: "24px", left: "24px", right: "24px", top: "24px" })
   await expect(page.getByTestId("focused-app-frame")).toHaveCount(0)
   await expect(page.getByRole("button", { name: "Retry" })).toHaveCount(1)
   await page.getByRole("button", { name: "Retry" }).click()
@@ -157,12 +168,13 @@ test("routes Improve and Close with their accepted focused-app meanings", async 
   await expect(page).toHaveURL(/\/react\/?$/)
 })
 
-test("keeps ready child-app content and overlay chrome inside one web-owned safe area", async ({ page }) => {
+test("keeps the flow header and app card inside one web-owned safe area", async ({ page }, testInfo) => {
   await page.goto("/react/apps/recipebot/open")
   const routeViewport = page.locator('[data-slot="route-viewport"]')
-  const host = page.locator('[data-slot="hosted-app-surface"][data-state="ready"]')
+  const host = page.locator('[data-slot="hosted-app-stage"][data-state="ready"]')
+  const card = page.locator('[data-slot="app-stage-card"][data-state="ready"]')
   const focused = page.locator('[data-slot="focused-app-surface"][data-state="ready"]')
-  const chrome = page.locator('[data-slot="top-bar"][data-placement="overlay"]')
+  const chrome = page.locator('[data-slot="top-bar"][data-placement="flow"]')
   await expect(focused).toBeVisible()
   await page.evaluate(() => {
     const root = document.documentElement
@@ -180,32 +192,54 @@ test("keeps ready child-app content and overlay chrome inside one web-owned safe
     const style = getComputedStyle(node)
     return { bottom: style.paddingBottom, left: style.paddingLeft, right: style.paddingRight, top: style.paddingTop }
   })).toEqual({ bottom: "0px", left: "0px", right: "0px", top: "0px" })
-  await expect.poll(() => focused.evaluate((node) => {
+  await expect.poll(() => card.evaluate((node) => {
     const style = getComputedStyle(node)
     return { bottom: style.paddingBottom, left: style.paddingLeft, right: style.paddingRight }
   })).toEqual({ bottom: "19px", left: "21px", right: "25px" })
-  await expect.poll(async () => {
-    const hostBox = await host.boundingBox()
-    const chromeBox = await chrome.boundingBox()
-    if (!hostBox || !chromeBox) return null
+  await expect.poll(() => chrome.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { borderBottom: style.borderBottomWidth, left: style.paddingLeft, right: style.paddingRight }
+  })).toEqual({ borderBottom: "0px", left: "21px", right: "25px" })
+  const cardRadius = await card.evaluate((node) => {
+    const style = getComputedStyle(node)
     return {
-      left: Math.round(chromeBox.x - hostBox.x),
-      right: Math.round(hostBox.x + hostBox.width - chromeBox.x - chromeBox.width),
+      bottomLeft: Number.parseFloat(style.borderBottomLeftRadius),
+      bottomRight: Number.parseFloat(style.borderBottomRightRadius),
+      topLeft: Number.parseFloat(style.borderTopLeftRadius),
+      topRight: Number.parseFloat(style.borderTopRightRadius),
     }
-  }).toEqual({ left: 21, right: 25 })
-  // Overlay chrome floats above the app rather than consuming viewport: the
-  // child app owns the whole page and starts at its top edge.
+  })
+  expect(cardRadius.topLeft).toBeGreaterThan(0)
+  expect(cardRadius.topRight).toBeGreaterThan(0)
+  if (testInfo.project.name === "mobile") {
+    expect(cardRadius.bottomLeft).toBe(0)
+    expect(cardRadius.bottomRight).toBe(0)
+  } else {
+    expect(cardRadius.bottomLeft).toBeGreaterThan(0)
+    expect(cardRadius.bottomRight).toBeGreaterThan(0)
+  }
+  for (const dark of [false, true]) {
+    await page.evaluate((nextDark) => document.documentElement.classList.toggle("dark", nextDark), dark)
+    await expect.poll(async () => {
+      const cardBackground = await card.evaluate((node) => getComputedStyle(node).backgroundColor)
+      const pageBackground = await host.evaluate((node) => getComputedStyle(node).backgroundColor)
+      return Boolean(cardBackground) && cardBackground !== pageBackground
+    }).toBe(true)
+  }
+  await page.evaluate(() => document.documentElement.classList.remove("dark"))
+
+  // Flow chrome consumes its own row before the child-app card.
   await expect.poll(async () => {
     const chromeBox = await chrome.boundingBox()
     const focusedBox = await focused.boundingBox()
     if (!chromeBox || !focusedBox) return null
-    return focusedBox.y <= chromeBox.y + 1
+    return focusedBox.y >= chromeBox.y + chromeBox.height - 1
   }).toBe(true)
 
   await page.evaluate(() => {
     document.documentElement.dataset.keyboardVisible = "true"
   })
-  await expect.poll(() => focused.evaluate((node) =>
+  await expect.poll(() => card.evaluate((node) =>
     getComputedStyle(node).paddingBottom
   )).toBe("0px")
 })
@@ -214,7 +248,7 @@ test("preserves the loading gutter while allowing a larger device inset", async 
   await page.unroute("**/api/apps/recipebot")
   await page.route("**/api/apps/recipebot", () => new Promise(() => {}))
   await page.goto("/react/apps/recipebot/open")
-  const loading = page.locator('[data-slot="hosted-app-surface"][data-state="loading"]')
+  const loading = page.locator('[data-slot="app-stage-card"][data-state="loading"]')
   await expect(loading).toBeVisible()
   await page.evaluate(() => {
     const root = document.documentElement
@@ -234,6 +268,36 @@ test("preserves the loading gutter while allowing a larger device inset", async 
   })).toEqual({ top: "16px", bottom: "16px", left: "27px", right: "16px" })
 })
 
+test("restores the focused-frame preparing gutter inside the ready host card", async ({ page }) => {
+  await page.unroute("**/api/iframe-token*")
+  await page.route("**/api/iframe-token*", () => new Promise(() => {}))
+  await page.goto("/react/apps/recipebot/open")
+
+  const loading = page.locator('[data-slot="focused-app-surface"][data-state="loading"]')
+  const card = page.locator('[data-slot="app-stage-card"][data-state="ready"]')
+  await expect(loading).toBeVisible()
+  await expect.poll(() => card.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { bottom: style.paddingBottom, left: style.paddingLeft, right: style.paddingRight, top: style.paddingTop }
+  })).toEqual({ bottom: "16px", left: "16px", right: "16px", top: "16px" })
+})
+
+test("restores the focused-frame unavailable gutter inside the ready host card", async ({ page }) => {
+  await page.unroute("**/api/apps/recipebot")
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({
+    json: { app: { ...app, status: "stopped" } },
+  }))
+  await page.goto("/react/apps/recipebot/open")
+
+  const unavailable = page.locator('[data-slot="focused-app-surface"][data-state="unavailable"]')
+  const card = page.locator('[data-slot="app-stage-card"][data-state="ready"]')
+  await expect(unavailable).toBeVisible()
+  await expect.poll(() => card.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { bottom: style.paddingBottom, left: style.paddingLeft, right: style.paddingRight, top: style.paddingTop }
+  })).toEqual({ bottom: "24px", left: "24px", right: "24px", top: "24px" })
+})
+
 test("preserves the error gutter while allowing a larger device inset", async ({ page }) => {
   await page.unroute("**/api/apps/recipebot")
   await page.route("**/api/apps/recipebot", (route) => route.fulfill({
@@ -241,7 +305,7 @@ test("preserves the error gutter while allowing a larger device inset", async ({
     json: { error: "App unavailable" },
   }))
   await page.goto("/react/apps/recipebot/open")
-  const error = page.locator('[data-slot="hosted-app-surface"][data-state="error"]')
+  const error = page.locator('[data-slot="app-stage-card"][data-state="error"]')
   await expect(error).toBeVisible()
   await page.evaluate(() => {
     const root = document.documentElement

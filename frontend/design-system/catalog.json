@@ -2240,6 +2240,82 @@
       }
     },
     {
+      "id": "hosted-app-stage",
+      "name": "HostedAppStage",
+      "tier": "block",
+      "module": "@/features/apps/hosted-app-stage.tsx",
+      "export": "HostedAppStage",
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "ReadyDesktop",
+        "LoadingDesktop",
+        "ErrorDesktop",
+        "StagedDesktop",
+        "ReadyMobile",
+        "LoadingMobile",
+        "ErrorMobile",
+        "StagedMobile"
+      ],
+      "tokens": [
+        "foundation.radius.base",
+        "semantic.light.stage",
+        "semantic.light.stage-foreground",
+        "semantic.dark.stage",
+        "semantic.dark.stage-foreground"
+      ],
+      "accessibility": {
+        "contract": [
+          "The hosted-app wrapper preserves its caller-owned single level-one heading and keyboard order.",
+          "The persistent card contains loading, error and ready content without moving route chrome.",
+          "Staged review keeps its status label and information surface legible in both themes.",
+          "The wrapper does not repaint platform navigation, add interactive controls or duplicate labels owned by route chrome."
+        ],
+        "evidence": "Eight HostedAppStage Storybook matrix states render paired light and dark fixtures, plus focused-host and staging-preview browser contracts."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "HostedAppStage receives platform chrome, one route-owned state, optional staged-review treatment and child content. It owns no fetching, iframe permissions, routing, history, console registration or native bridge behavior."
+      },
+      "responsive": [
+        "narrow-full-bleed-top-rounded-card",
+        "wide-inset-rounded-card"
+      ],
+      "deprecation": null,
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": [
+          "Staged",
+          "Review environment"
+        ],
+        "requiredStates": [
+          "ready",
+          "loading",
+          "error",
+          "staged"
+        ],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": [
+          "context-restatement",
+          "mechanism-as-content"
+        ]
+      },
+      "evidence": {
+        "story": "@/features/apps/hosted-app-stage.stories.tsx",
+        "states": [
+          "ReadyDesktop",
+          "LoadingDesktop",
+          "ErrorDesktop",
+          "StagedDesktop",
+          "ReadyMobile",
+          "LoadingMobile",
+          "ErrorMobile",
+          "StagedMobile"
+        ]
+      }
+    },
+    {
       "id": "native-device-summary",
       "name": "NativeDeviceSummary",
       "tier": "block",

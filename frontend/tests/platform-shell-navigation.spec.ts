@@ -1,4 +1,4 @@
-import { expect, test, type Locator } from "@playwright/test"
+import { expect, test, type Locator, type Page } from "@playwright/test"
 
 async function probeHitTarget(target: Locator) {
   return target.evaluate((element) => {
@@ -54,6 +54,38 @@ function hitTargetOverlap(
 
 const apps = { apps: [] }
 
+const stageApp = {
+  id: "recipebot",
+  slug: "recipebot",
+  name: "RecipeBot",
+  status: "running",
+  tagline: "Find a recipe for what you have at home",
+  description: null,
+  active_users: 24,
+  is_favorited: true,
+  is_collaborator: true,
+  your_apps_hidden: false,
+  favorite_order: 0,
+  open_prs: 0,
+  active_sessions: 0,
+  open_issues: 0,
+  icon_url: null,
+  can_collaborate: true,
+  url: "https://recipebot.example.test",
+}
+
+async function visibleNavigationSurface(page: Page) {
+  const navigation = page.getByRole("navigation", { name: "Platform navigation" })
+  if (!await navigation.isVisible()) {
+    await page.getByRole("button", { name: "Toggle navigation" }).click()
+    await expect(navigation).toBeVisible()
+  }
+  const mobileSurface = navigation.locator("xpath=ancestor::*[@data-slot='sidebar'][@data-mobile='true'][1]")
+  return await mobileSurface.count()
+    ? mobileSurface
+    : navigation.locator("xpath=ancestor::*[@data-slot='sidebar-inner'][1]")
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/apps", (route) => route.fulfill({ json: apps }))
   await page.route("**/api/auth/me", (route) => route.fulfill({
@@ -100,6 +132,34 @@ test("keeps the inset page-card spatial model", async ({ page }, testInfo) => {
     const style = getComputedStyle(node)
     return Number.parseFloat(style.borderTopLeftRadius) > 0 && Number.parseFloat(style.marginTop) > 0
   })).toBe(true)
+})
+
+test("keeps ordinary shell paint around a distinct hosted app card in both themes", async ({ page }) => {
+  const shellReadyTimeout = 15_000
+  await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: stageApp } }))
+  await page.route("**/api/iframe-token*", (route) => route.fulfill({ json: { token: "stage.header.signature" } }))
+  await page.route("https://recipebot.example.test/**", (route) => route.fulfill({ contentType: "text/html", body: "<main>RecipeBot child app</main>" }))
+
+  for (const dark of [false, true]) {
+    await page.goto("/react/")
+    await page.locator("html").evaluate((node, nextDark) => node.classList.toggle("dark", nextDark), dark)
+    const ordinaryNavigation = await visibleNavigationSurface(page)
+    const ordinaryNavigationBackground = await ordinaryNavigation.evaluate((node) => getComputedStyle(node).backgroundColor)
+    const ordinaryPageBackground = await page.locator('[data-slot="sidebar-inset"]').evaluate((node) => getComputedStyle(node).backgroundColor)
+
+    await page.goto("/react/apps/recipebot/open")
+    await page.locator("html").evaluate((node, nextDark) => node.classList.toggle("dark", nextDark), dark)
+    await expect(page.getByTestId("hosted-app")).toBeVisible({ timeout: shellReadyTimeout })
+    expect(await page.locator('[data-slot="route-viewport"]').getAttribute("data-surface")).toBeNull()
+    const hostedNavigation = await visibleNavigationSurface(page)
+    const hostedNavigationBackground = await hostedNavigation.evaluate((node) => getComputedStyle(node).backgroundColor)
+    const hostedPageBackground = await page.locator('[data-slot="sidebar-inset"]').evaluate((node) => getComputedStyle(node).backgroundColor)
+    const hostedCardBackground = await page.locator('[data-slot="app-stage-card"]').evaluate((node) => getComputedStyle(node).backgroundColor)
+
+    expect(hostedNavigationBackground).toBe(ordinaryNavigationBackground)
+    expect(hostedPageBackground).toBe(ordinaryPageBackground)
+    expect(hostedCardBackground).not.toBe(hostedPageBackground)
+  }
 })
 
 test("keeps the menu trigger compact and the header title visible", async ({ page }) => {

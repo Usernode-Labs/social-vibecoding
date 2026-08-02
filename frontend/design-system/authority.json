@@ -463,6 +463,50 @@
         "evidence": "TokenUnavailable, OfflineRetry, UnsafeDestination, SelfHosted and NotRunning Storybook states plus the required Wave 6 browser host-contract matrix."
       }
     },
+    "hosted-app-stage": {
+      "tokens": [
+        "foundation.radius.base",
+        "semantic.light.stage",
+        "semantic.light.stage-foreground",
+        "semantic.dark.stage",
+        "semantic.dark.stage-foreground"
+      ],
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "HostedAppStage receives platform chrome, one route-owned state, optional staged-review treatment and child content. It owns no fetching, iframe permissions, routing, history, console registration or native bridge behavior."
+      },
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": [
+          "Staged",
+          "Review environment"
+        ],
+        "requiredStates": [
+          "ready",
+          "loading",
+          "error",
+          "staged"
+        ],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": [
+          "context-restatement",
+          "mechanism-as-content"
+        ]
+      },
+      "responsive": [
+        "narrow-full-bleed-top-rounded-card",
+        "wide-inset-rounded-card"
+      ],
+      "accessibility": {
+        "contract": [
+          "The hosted-app wrapper preserves its caller-owned single level-one heading and keyboard order.",
+          "The persistent card contains loading, error and ready content without moving route chrome.",
+          "Staged review keeps its status label and information surface legible in both themes.",
+          "The wrapper does not repaint platform navigation, add interactive controls or duplicate labels owned by route chrome."
+        ],
+        "evidence": "Eight HostedAppStage Storybook matrix states render paired light and dark fixtures, plus focused-host and staging-preview browser contracts."
+      }
+    },
     "dev-conversation": {
       "dataBoundary": {
         "kind": "props-only",

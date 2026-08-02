@@ -696,6 +696,18 @@ locally with `403`. Do not combine it with `SV_PRODUCTION_READONLY=true`.
   suppress that label. Filters, empty/error states, mobile layout, direct
   immutable-byte requests, and the legacy escape are fixture-tested; legacy
   `/gallery` remains reachable until production parity is reviewed.
+- **In progress:** Hosted Use and staged-preview routes now share the
+  platform-owned `HostedAppStage`: route identity and actions render in a
+  stable flow header on the ordinary platform surface, without its bottom
+  divider, while loading, error, ready, and staged content remain inside one
+  responsive application card with a distinct semantic surface. Platform
+  navigation and the surrounding shell keep their ordinary route colors.
+  The child iframe keeps its complete reviewed source element,
+  sandbox, permissions, token cadence, deep-link validation, native title,
+  offline recovery, console registration, and mount-continuity contracts.
+  Phone geometry is full bleed with top-rounded application corners; desktop
+  keeps an inset card rounded on all corners. Staged preview preserves its
+  information surface and persistent Staged label between shell and card.
 
 ## Existing harness caveat
 

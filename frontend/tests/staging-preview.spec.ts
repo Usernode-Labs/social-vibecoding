@@ -2,6 +2,15 @@ import { expect, test } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
 
 test.beforeEach(async ({ page }) => {
+  await page.route("**/api/auth/me", (route) => route.fulfill({
+    json: { user: { id: 7, username: "ava", canAdminWrite: false } },
+  }))
+  await page.route("**/api/notifications?*", (route) => route.fulfill({
+    json: { notifications: [], unread: 0, hasMore: false, nextBefore: null },
+  }))
+  await page.route("**/api/node-status/full", (route) => route.fulfill({
+    json: { node: { status: "synced" } },
+  }))
   await page.route("**/api/sessions/9", (route) => route.fulfill({ json: {
     session: { id: 9, app_slug: "recipebot", app_name: "RecipeBot", branch_name: "feature/pantry", session_title: "Improve pantry search", pr_title: null, status: "active", staging_url: "https://preview.example.test", testing_path: "/pantry", testing_md: "Search for a pantry staple and confirm its filter.", created_at: "2026-07-28T12:00:00.000Z" },
     messages: [],
@@ -26,7 +35,7 @@ test("opens a server-authorized preview only after its secure host is reachable"
   await expect(externalPreview).toHaveAttribute("href", "https://preview.example.test/pantry?token=preview-token")
   await expect(externalPreview).toHaveAttribute("target", "_blank")
   await expect(externalPreview).toHaveAttribute("rel", "noreferrer")
-  const staged = page.locator('[data-slot="staged-content-boundary"]')
+  const staged = page.locator('[data-slot="app-stage-boundary"]')
   await expect(staged).toHaveAttribute("data-status-tone", "info")
   await expect(staged.getByText("Staged", { exact: true })).toBeVisible()
   await page.getByRole("button", { name: "How to test this change" }).click()
@@ -52,7 +61,8 @@ test("exposes the developer console only from the active preview chrome", async 
 
 test("keeps preview chrome and its iframe inside web-owned safe-area slots", async ({ page }) => {
   await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
-  const preview = page.locator('[data-slot="staging-preview-surface"][data-state="ready"]')
+  const preview = page.locator('[data-slot="hosted-app-stage"][data-state="ready"]')
+  const card = page.locator('[data-slot="app-stage-card"][data-state="ready"]')
   const header = page.locator('[data-slot="top-bar"]')
   const frame = page.locator('[data-slot="staging-preview-frame"]')
   await expect(preview).toBeVisible()
@@ -63,26 +73,40 @@ test("keeps preview chrome and its iframe inside web-owned safe-area slots", asy
     root.style.setProperty("--safe-area-right", "25px")
   })
 
-  await expect.poll(() => preview.evaluate((node) => getComputedStyle(node).paddingBottom)).toBe("17px")
+  await expect.poll(() => preview.evaluate((node) => getComputedStyle(node).paddingBottom)).toBe("0px")
+  await expect.poll(() => card.evaluate((node) => {
+    const style = getComputedStyle(node)
+    return { bottom: style.paddingBottom, left: style.paddingLeft, right: style.paddingRight }
+  })).toEqual({ bottom: "17px", left: "21px", right: "25px" })
   await expect.poll(() => header.evaluate((node) => {
     const style = getComputedStyle(node)
-    return { left: style.paddingLeft, right: style.paddingRight }
-  })).toEqual({ left: "21px", right: "25px" })
+    return { borderBottom: style.borderBottomWidth, left: style.paddingLeft, right: style.paddingRight }
+  })).toEqual({ borderBottom: "0px", left: "21px", right: "25px" })
   await expect.poll(() => frame.evaluate((node) => {
     const style = getComputedStyle(node)
     return { left: style.marginLeft, right: style.marginRight }
-  })).toEqual({ left: "21px", right: "25px" })
+  })).toEqual({ left: "0px", right: "0px" })
+
+  for (const dark of [false, true]) {
+    await page.locator("html").evaluate((node, nextDark) => node.classList.toggle("dark", nextDark), dark)
+    await expect.poll(async () => {
+      const cardBackground = await card.evaluate((node) => getComputedStyle(node).backgroundColor)
+      const pageBackground = await preview.evaluate((node) => getComputedStyle(node).backgroundColor)
+      return Boolean(cardBackground) && cardBackground !== pageBackground
+    }).toBe(true)
+  }
 })
 
 test("preserves the preview loading gutter while allowing a larger device inset", async ({ page }) => {
   await page.unroute("**/api/sessions/9")
   await page.route("**/api/sessions/9", () => new Promise(() => {}))
   await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
-  const loading = page.locator('[data-slot="staging-preview-surface"][data-state="loading"]')
-  await expect(loading).toBeVisible()
-  await expect(loading.locator('[data-slot="card-title"] > [data-slot="platform-icon"]')).toHaveCSS("width", "16px")
-  await expect(loading.locator('[data-slot="card-title"] > [data-slot="platform-icon"]')).toHaveCSS("height", "16px")
-  const loadingRecoveryLink = loading.getByRole("link", { name: "Return to session" })
+  const loading = page.locator('[data-slot="hosted-app-stage"][data-state="loading"]')
+  const loadingCard = loading.locator('[data-slot="app-stage-card"][data-state="loading"]')
+  await expect(loadingCard).toBeVisible()
+  await expect(loadingCard.locator('[data-slot="card-title"] > [data-slot="platform-icon"]')).toHaveCSS("width", "16px")
+  await expect(loadingCard.locator('[data-slot="card-title"] > [data-slot="platform-icon"]')).toHaveCSS("height", "16px")
+  const loadingRecoveryLink = loadingCard.getByRole("link", { name: "Return to session" })
   await expect(loadingRecoveryLink).toHaveAttribute("data-slot", "action-link")
   await expect(loadingRecoveryLink).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/9")
   await page.evaluate(() => {
@@ -92,7 +116,7 @@ test("preserves the preview loading gutter while allowing a larger device inset"
     root.style.setProperty("--safe-area-right", "7px")
   })
 
-  await expect.poll(() => loading.evaluate((node) => {
+  await expect.poll(() => loadingCard.evaluate((node) => {
     const style = getComputedStyle(node)
     return {
       top: style.paddingTop,
@@ -110,9 +134,10 @@ test("preserves the preview error gutter while allowing a larger device inset", 
     json: { error: "Preview unavailable" },
   }))
   await page.goto("/react/apps/recipebot/dev/sessions/9/preview")
-  const error = page.locator('[data-slot="staging-preview-surface"][data-state="error"]')
-  await expect(error).toBeVisible()
-  const errorRecoveryLink = error.getByRole("link", { name: "Return to session" })
+  const error = page.locator('[data-slot="hosted-app-stage"][data-state="error"]')
+  const errorCard = error.locator('[data-slot="app-stage-card"][data-state="error"]')
+  await expect(errorCard).toBeVisible()
+  const errorRecoveryLink = errorCard.getByRole("link", { name: "Return to session" })
   await expect(errorRecoveryLink).toHaveAttribute("data-slot", "action-link")
   await expect(errorRecoveryLink).toHaveAttribute("href", "/react/apps/recipebot/dev/sessions/9")
   await page.evaluate(() => {
@@ -122,7 +147,7 @@ test("preserves the preview error gutter while allowing a larger device inset", 
     root.style.setProperty("--safe-area-right", "27px")
   })
 
-  await expect.poll(() => error.evaluate((node) => {
+  await expect.poll(() => errorCard.evaluate((node) => {
     const style = getComputedStyle(node)
     return {
       top: style.paddingTop,

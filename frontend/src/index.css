@@ -41,6 +41,8 @@
     --color-card: var(--card);
     --color-foreground: var(--foreground);
     --color-background: var(--background);
+    --color-stage-foreground: var(--stage-foreground);
+    --color-stage: var(--stage);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -106,12 +108,18 @@
   flex: 1 1 auto;
   flex-direction: column;
 }
-/* A screen is full-bleed exactly when its bar overlays a hosted surface; that
- * surface owns its own insets, so the viewport adds none. */
-[data-slot="route-viewport"]:not(:has([data-slot="top-bar"][data-placement="overlay"])) {
+/* Ordinary flow routes inherit the shell's safe-area correction. A hosted
+ * app is full bleed and transfers side and bottom inset ownership to its
+ * persistent app card. */
+[data-slot="route-viewport"]:not(:has([data-slot="top-bar"][data-placement="overlay"])):not(:has(> [data-slot="hosted-app-stage"])) {
   padding-bottom: var(--safe-area-bottom-active);
   padding-inline-start: max(0px, calc(var(--safe-area-left) - var(--route-content-gutter)));
   padding-inline-end: max(0px, calc(var(--safe-area-right) - var(--route-content-gutter)));
+}
+[data-slot="hosted-app-stage"] > [data-slot="top-bar"] {
+  border-bottom-width: 0;
+  padding-inline-start: max(0.75rem, var(--safe-area-left));
+  padding-inline-end: max(0.75rem, var(--safe-area-right));
 }
 @media (min-width: 40rem) {
   [data-slot="route-viewport"] {
@@ -157,44 +165,38 @@
     width: 24rem;
   }
 }
-[data-slot="hosted-app-surface"],
-[data-slot="focused-app-surface"],
-[data-slot="staging-preview-surface"] {
-  --surface-gutter: 0px;
+[data-slot="app-stage-card"] {
+  --background: var(--stage);
+  --foreground: var(--stage-foreground);
+  --accent: color-mix(in oklab, var(--stage-foreground) 10%, var(--stage));
+  --accent-foreground: var(--stage-foreground);
+  --muted: color-mix(in oklab, var(--stage-foreground) 10%, var(--stage));
+  --muted-foreground: color-mix(in oklab, var(--stage-foreground) 62%, var(--stage));
+  --border: color-mix(in oklab, var(--stage-foreground) 14%, var(--stage));
+  --ring: color-mix(in oklab, var(--stage-foreground) 50%, var(--stage));
+  --app-card-gutter: 0px;
+  padding-top: var(--app-card-gutter);
+  padding-bottom: max(var(--app-card-gutter), var(--safe-area-bottom-active));
+  padding-inline-start: max(var(--app-card-gutter), var(--safe-area-left));
+  padding-inline-end: max(var(--app-card-gutter), var(--safe-area-right));
 }
-[data-slot="hosted-app-surface"][data-state="loading"] {
-  --surface-gutter: 1rem;
+
+[data-slot="app-stage-card"][data-state="loading"] {
+  --app-card-gutter: 1rem;
 }
-[data-slot="hosted-app-surface"][data-state="error"],
-[data-slot="focused-app-surface"]:not([data-state="ready"]),
-[data-slot="staging-preview-surface"]:not([data-state="ready"]) {
-  --surface-gutter: 1.5rem;
+
+[data-slot="app-stage-card"][data-state="loading"][data-loading-gutter="roomy"] {
+  --app-card-gutter: 1.5rem;
 }
-[data-slot="hosted-app-surface"]:not([data-state="ready"]),
-[data-slot="focused-app-surface"],
-[data-slot="staging-preview-surface"]:not([data-state="ready"]) {
-  padding-top: var(--surface-gutter);
-  padding-bottom: max(var(--surface-gutter), var(--safe-area-bottom-active));
-  padding-inline-start: max(var(--surface-gutter), var(--safe-area-left));
-  padding-inline-end: max(var(--surface-gutter), var(--safe-area-right));
+
+[data-slot="app-stage-card"][data-state="error"] {
+  --app-card-gutter: 1.5rem;
 }
-[data-slot="focused-app-surface"][data-state="loading"] {
-  --surface-gutter: 1rem;
+
+[data-slot="app-stage-card"]:has([data-slot="focused-app-surface"][data-state="loading"]) {
+  --app-card-gutter: 1rem;
 }
-[data-slot="focused-app-surface"][data-state="ready"] {
-  padding-bottom: var(--safe-area-bottom-active);
-  padding-inline-start: var(--safe-area-left);
-  padding-inline-end: var(--safe-area-right);
-}
-[data-slot="staging-preview-surface"][data-state="ready"] {
-  padding-bottom: var(--safe-area-bottom-active);
-}
-[data-slot="staging-preview-surface"] > [data-slot="top-bar"],
-[data-slot="staging-preview-instructions"] {
-  padding-inline-start: max(1rem, var(--safe-area-left));
-  padding-inline-end: max(1rem, var(--safe-area-right));
-}
-[data-slot="staging-preview-frame"] {
-  margin-inline-start: var(--safe-area-left);
-  margin-inline-end: var(--safe-area-right);
+
+[data-slot="app-stage-card"]:has([data-slot="focused-app-surface"]:not([data-state="ready"]):not([data-state="loading"])) {
+  --app-card-gutter: 1.5rem;
 }

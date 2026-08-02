@@ -9,9 +9,9 @@ import { PlatformIcon } from "@/components/platform-icon"
 import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
-import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { HostedAppStage } from "@/features/apps/hosted-app-stage"
 import { getIframeToken, waitForHostedTls } from "@/lib/apps-api"
 import { resolveDevHost } from "@/lib/dev-host"
 import { ensureDevStaging, getDevSession, type DevSession } from "@/lib/dev-chat-api"
@@ -106,20 +106,21 @@ export function StagingPreview() {
   const testingInstructions = session?.testing_md?.trim() || null
   const back = `/apps/${encodeURIComponent(slug)}/dev/sessions/${encodeURIComponent(sessionId)}`
   const topBar = { onBack: () => navigate(back), title: "Staging preview" }
-  if (error) return <><TopBar {...topBar} /><div className="flex flex-1 items-center justify-center" data-slot="staging-preview-surface" data-state="error"><Alert className="max-w-md" variant="destructive"><PlatformIcon icon={TriangleAlert} /><AlertTitle>Preview unavailable</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{error}<ActionLink to={back}><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</ActionLink></AlertDescription></Alert></div></>
-  if (state !== "ready" || !source) return <><TopBar {...topBar} /><div className="flex flex-1 items-center justify-center" data-slot="staging-preview-surface" data-state={state}><Card className="w-full max-w-md"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={state === "rebuilding" ? RefreshCw : FlaskConical} />{state === "rebuilding" ? "Spinning the preview back up…" : "Provisioning secure preview…"}</CardTitle></CardHeader><CardContent className="flex flex-col gap-4 text-muted-foreground"><p>{state === "rebuilding" ? "Rebuilding from this session’s latest changes. This usually takes 20–60 seconds." : "Preparing preview."}</p><Skeleton className="h-8 w-full" /><ActionLink className="w-fit" to={back}><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</ActionLink></CardContent></Card></div></>
-  return <div className="isolate flex w-full flex-1 flex-col" data-slot="staging-preview-surface" data-state="ready" data-testid="staging-preview">
-    <TopBar
+  if (error) return <HostedAppStage header={<TopBar {...topBar} />} staged state="error" testId="staging-preview"><div className="flex min-h-0 flex-1 items-center justify-center"><Alert className="max-w-md" variant="destructive"><PlatformIcon icon={TriangleAlert} /><AlertTitle>Preview unavailable</AlertTitle><AlertDescription className="flex flex-wrap items-center gap-3">{error}<ActionLink to={back}><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</ActionLink></AlertDescription></Alert></div></HostedAppStage>
+  if (state !== "ready" || !source) return <HostedAppStage header={<TopBar {...topBar} />} loadingGutter="roomy" staged state={state} testId="staging-preview"><div className="flex min-h-0 flex-1 items-center justify-center"><Card className="w-full max-w-md"><CardHeader><CardTitle className="flex items-center gap-2"><PlatformIcon icon={state === "rebuilding" ? RefreshCw : FlaskConical} />{state === "rebuilding" ? "Spinning the preview back up…" : "Provisioning secure preview…"}</CardTitle></CardHeader><CardContent className="flex flex-col gap-4 text-muted-foreground"><p>{state === "rebuilding" ? "Rebuilding from this session’s latest changes. This usually takes 20–60 seconds." : "Preparing preview."}</p><Skeleton className="h-8 w-full" /><ActionLink className="w-fit" to={back}><PlatformIcon data-icon="inline-start" icon={ArrowLeft} />Return to session</ActionLink></CardContent></Card></div></HostedAppStage>
+  return <HostedAppStage
+    header={<TopBar
       {...topBar}
       action={<>
         <div className="status-surface rounded-full border" data-slot="staged-console-control" data-status-tone="info"><DevConsoleTrigger /></div>
         <ActionAnchor href={source} rel="noreferrer" size="sm" target="_blank"><PlatformIcon data-icon="inline-start" icon={ExternalLink} />Open externally</ActionAnchor>
       </>}
-    /><div className="status-surface flex min-h-0 flex-1 flex-col border bg-[var(--status-surface)] p-1 sm:p-2" data-slot="staged-content-boundary" data-status-tone="info">
-      <div className="flex min-h-8 shrink-0 items-center gap-2 px-2"><Badge variant="outline">Staged</Badge><span className="text-xs text-current/80">Review environment</span></div>
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-background">
-        {testingInstructions ? <div className="shrink-0 border-b px-4" data-slot="staging-preview-instructions"><Accordion><AccordionItem value="testing"><AccordionTrigger>How to test this change</AccordionTrigger><AccordionContent><pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground">{testingInstructions}</pre></AccordionContent></AccordionItem></Accordion></div> : null}
-        <iframe allow="clipboard-write; pointer-lock" className="min-h-0 flex-1 border-0" data-slot="staging-preview-frame" onLoad={() => setFrameRevision((revision) => revision + 1)} ref={iframe} sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock" src={source} title="Staging preview" />
-      </div>
-    </div></div>
+    />}
+    staged
+    state="ready"
+    testId="staging-preview"
+  >
+    {testingInstructions ? <div className="shrink-0 border-b px-4" data-slot="staging-preview-instructions"><Accordion><AccordionItem value="testing"><AccordionTrigger>How to test this change</AccordionTrigger><AccordionContent><pre className="whitespace-pre-wrap font-sans text-sm text-muted-foreground">{testingInstructions}</pre></AccordionContent></AccordionItem></Accordion></div> : null}
+    <iframe allow="clipboard-write; pointer-lock" className="min-h-0 flex-1 border-0" data-slot="staging-preview-frame" onLoad={() => setFrameRevision((revision) => revision + 1)} ref={iframe} sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock" src={source} title="Staging preview" />
+  </HostedAppStage>
 }

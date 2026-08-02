@@ -5,6 +5,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import { AppTopBar } from "@/features/apps/app-top-bar"
 import { FocusedAppFrame } from "@/features/apps/focused-app-frame"
+import { HostedAppStage } from "@/features/apps/hosted-app-stage"
 import { getApp, getIframeToken, type AppDetail } from "@/lib/apps-api"
 import { useDevConsoleContext } from "@/lib/dev-console-context"
 import { syncNativeTitle } from "@/lib/native-bridge"
@@ -98,35 +99,41 @@ export function HostedApp() {
 
   if (loadError) {
     return (
-      <>
-        <AppTopBar app={currentApp} consoleError={devConsole.unseenErrors > 0} fallbackTitle={loadError ? "App unavailable" : "Loading app"} mode="use" onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined} />
-        <div className="flex flex-1 items-center justify-center" data-slot="hosted-app-surface" data-state="error">
+      <HostedAppStage
+        header={<AppTopBar app={currentApp} consoleError={devConsole.unseenErrors > 0} fallbackTitle="App unavailable" mode="use" onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined} />}
+        state="error"
+        testId="hosted-app"
+      >
+        <div className="flex min-h-0 flex-1 items-center justify-center">
           <Alert className="max-w-md" variant="destructive">
             <AlertTitle>App unavailable</AlertTitle>
             <AlertDescription>{loadError}</AlertDescription>
           </Alert>
         </div>
-      </>
+      </HostedAppStage>
     )
   }
 
   if (!currentApp) {
     return (
-      <>
-        <AppTopBar app={currentApp} consoleError={devConsole.unseenErrors > 0} fallbackTitle={loadError ? "App unavailable" : "Loading app"} mode="use" onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined} />
-        <div className="flex flex-1" data-slot="hosted-app-surface" data-state="loading">
+      <HostedAppStage
+        header={<AppTopBar app={currentApp} consoleError={devConsole.unseenErrors > 0} fallbackTitle="Loading app" mode="use" onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined} />}
+        state="loading"
+        testId="hosted-app"
+      >
+        <div className="flex min-h-0 flex-1">
           <Skeleton className="h-full w-full" />
         </div>
-      </>
+      </HostedAppStage>
     )
   }
 
   return (
-    <div className="isolate flex min-h-0 flex-1 flex-col bg-background" data-slot="hosted-app-surface" data-state="ready" data-testid="hosted-app">
-      {/* The app owns the whole page; the bar floats over it so no viewport
-          estate is spent on chrome. */}
-      <AppTopBar app={currentApp} consoleError={devConsole.unseenErrors > 0} fallbackTitle={loadError ? "App unavailable" : "Loading app"} mode="use" onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined} placement="overlay" />
-
+    <HostedAppStage
+      header={<AppTopBar app={currentApp} consoleError={devConsole.unseenErrors > 0} fallbackTitle="Loading app" mode="use" onOpenOverflow={devConsole.visible ? () => devConsole.setOpen(true) : undefined} />}
+      state={tokenError ? "error" : "ready"}
+      testId="hosted-app"
+    >
       {tokenError ? (
         <div className="flex flex-1 items-center justify-center" data-slot="focused-app-surface" data-state="error">
           <Alert className="max-w-md" variant="destructive">
@@ -143,6 +150,6 @@ export function HostedApp() {
           onRetry={retryHostedApp}
         />
       )}
-    </div>
+    </HostedAppStage>
   )
 }

@@ -29,6 +29,19 @@ const reactServiceWorker = frontendSource("public/react-sw.js")
 const nativeBridgeFixture = frontendSource("tests/native-bridge-contract.spec.ts")
 const nativeBridgeFixtureData = frontendSource("tests/fixtures/native-bridge.ts")
 
+const focusedAppIframeElement = `      <iframe
+        allow={frameAllow}
+        className="size-full border-0"
+        data-testid="focused-app-frame"
+        onLoad={() => setFrameRevision((revision) => revision + 1)}
+        ref={frame}
+        sandbox={frameSandbox}
+        src={source}
+        title={app.name}
+      />`
+
+const focusedAppIframeBlocks = focusedAppFrame.match(/ {6}<iframe\n[\s\S]*?\n {6}\/>/g) ?? []
+
 const checks = [
   {
     id: "react-history-fallback",
@@ -68,6 +81,12 @@ const checks = [
     detail: "Hosted child apps retain the legacy iframe sandbox allowances.",
     ok: /sandbox=\{frameSandbox\}/.test(focusedAppFrame)
       && /allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock/.test(focusedAppFrame),
+  },
+  {
+    id: "hosted-iframe-element-snapshot",
+    detail: "Hosted child apps preserve the complete reviewed iframe element while its platform surround changes.",
+    ok: focusedAppIframeBlocks.length === 1
+      && focusedAppIframeBlocks[0] === focusedAppIframeElement,
   },
   {
     id: "hosted-iframe-token-refresh",

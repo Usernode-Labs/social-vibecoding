@@ -67,6 +67,7 @@
       "decision": "keep-distinct",
       "components": [
         "top-bar",
+        "hosted-app-stage",
         "focused-app-frame"
       ],
       "jobs": [
@@ -75,12 +76,16 @@
           "job": "Identify the focused dApp and offer its reciprocal mode, overflow and Close controls."
         },
         {
+          "component": "hosted-app-stage",
+          "job": "Give one hosted dApp state a distinct, responsive card without repainting the surrounding platform shell."
+        },
+        {
           "component": "focused-app-frame",
           "job": "Host the dApp and explain its lifecycle state — loading, offline with retry, unavailable or self-hosted — in the content area."
         }
       ],
-      "rationale": "A focused dApp screen is one overlay bar above a full-bleed frame. Chrome states and host states were previously duplicated: the removed AppChrome restated the frame's status as a compact dot beside the app name. The frame already presents every host state where the person is looking, so the bar carries only identity and actions.",
-      "substitutionBoundary": "Do not present hosted-app status, retry affordances or iframe lifecycle messaging in the TopBar, and do not put mode switching, Close or platform navigation inside FocusedAppFrame."
+      "rationale": "The bar owns route identity and actions, the hosted-app wrapper owns the responsive platform-to-app boundary, and the frame owns child-host lifecycle and permissions. The three compose without duplicating status, repainting navigation or moving application behavior into shell chrome.",
+      "substitutionBoundary": "Do not present hosted-app status, retry affordances or iframe lifecycle messaging in the TopBar. Do not fetch, route or host the iframe in HostedAppStage. Do not put mode switching, Close, card geometry or platform navigation inside FocusedAppFrame."
     },
     {
       "id": "button-and-action-link",
