@@ -1,4 +1,13 @@
-// Kudos leaderboard screen.
+// Standings screen — the Kudos leaderboard plus, as a second top-level
+// section, the Topochain leaderboard.
+//
+// Two levels of tabs:
+//   1. SECTION (Kudos | Topochain), rendered into #standings-tabs by this
+//      module. 'topochain' just reveals #topochain-leaderboard-root and
+//      hands off to the TopochainLeaderboard module — everything below
+//      this point is the Kudos pane and is unchanged by the merge.
+//   2. Within Kudos: three sub-views (Top PRs, Top Users, My history)
+//      and — for the two leaderboard tabs — two window tabs.
 //
 // Three sub-views (Top PRs, Top Users, My history) and — for the two
 // leaderboard tabs — two window tabs (All-time, This week). Each
@@ -18,6 +27,15 @@
 
 const Leaderboard = {
   _open: false,
+  // Top-level section of the Standings screen. 'kudos' is everything
+  // this module renders itself; 'topochain' defers to the
+  // TopochainLeaderboard module in the sibling pane. Remembered for the
+  // session (the object outlives close()), so re-opening Standings lands
+  // where you left it; a fresh page load starts on Kudos.
+  section: 'kudos',      // 'kudos' | 'topochain'
+  // Whether TopochainLeaderboard.open() has run for this screen mount —
+  // the Topochain pane loads lazily, only once its tab is first shown.
+  _topoMounted: false,
   sub: 'prs',           // 'prs' | 'users' | 'history'
   window: 'all',         // 'all' | 'week'
   // (#60) Profile drill-in from the Top-users tab. Non-null = the
@@ -39,23 +57,95 @@ const Leaderboard = {
 
   async open() {
     Leaderboard._open = true;
-    Leaderboard._render();
-    Leaderboard._load();
-    // Header budget badge tells the user how many kudos they have
-    // left; the leaderboard screen is exactly where they're most
-    // likely to want to give kudos, so refresh just before render so
-    // the badge tone is up-to-date.
+    Leaderboard._renderSectionTabs();
+    Leaderboard._applySection();
+    if (Leaderboard.section === 'kudos') {
+      Leaderboard._render();
+      Leaderboard._load();
+    }
+    // The drawer's kudos badge tells the user how many kudos they have
+    // left; the Standings screen is exactly where they're most likely to
+    // want to give kudos, so refresh on mount so the badge tone is
+    // up-to-date next time they open the menu.
     if (window.Kudos?.Budget?.refresh) Kudos.Budget.refresh();
   },
 
   close() {
     Leaderboard._open = false;
+    // The Topochain pane is a guest in this screen — tear it down with
+    // us so its `_open` guard stops in-flight fetches from painting into
+    // a hidden pane, and re-mount it on the next visit to that tab.
+    if (Leaderboard._topoMounted && window.TopochainLeaderboard?.close) {
+      TopochainLeaderboard.close();
+    }
+    Leaderboard._topoMounted = false;
+  },
+
+  // ── Section (Kudos | Topochain) ──────────────────────────────────
+
+  // Switch the screen's top-level section. Mirrors _setSub's contract:
+  // validate, record, sync the hash, and only render/load when the
+  // screen is already mounted (deep-link restore calls this before
+  // open()).
+  _setSection(section) {
+    if (section !== 'kudos' && section !== 'topochain') return;
+    if (Leaderboard.section === section && Leaderboard._open) return;
+    Leaderboard.section = section;
+    // Leaving Kudos abandons the profile drill-in — otherwise coming
+    // back would land on a stale @user view whose hash we just replaced.
+    if (section === 'topochain') Leaderboard.profileUser = null;
+    Leaderboard._syncHash();
+    if (!Leaderboard._open) return;
+    Leaderboard._renderSectionTabs();
+    Leaderboard._applySection();
+    if (section === 'kudos') {
+      Leaderboard._render();
+      Leaderboard._load();
+    }
+  },
+
+  // Show the active pane, hide the other, and mount the Topochain module
+  // the first time its tab is shown (it fetches on open, so mounting it
+  // eagerly would cost two /api/v4 round-trips for people who never
+  // leave the Kudos tab).
+  _applySection() {
+    const kudosPane = document.getElementById('leaderboard-root');
+    const topoPane = document.getElementById('topochain-leaderboard-root');
+    const onTopo = Leaderboard.section === 'topochain';
+    if (kudosPane) kudosPane.classList.toggle('hidden', onTopo);
+    if (topoPane) topoPane.classList.toggle('hidden', !onTopo);
+    if (onTopo && !Leaderboard._topoMounted && window.TopochainLeaderboard?.open) {
+      Leaderboard._topoMounted = true;
+      TopochainLeaderboard.open();
+    }
+  },
+
+  _renderSectionTabs() {
+    const host = document.getElementById('standings-tabs');
+    if (!host) return;
+    const sections = [
+      { key: 'kudos', label: 'Kudos' },
+      { key: 'topochain', label: 'Topochain' },
+    ];
+    host.innerHTML = sections.map((s) => {
+      const active = s.key === Leaderboard.section;
+      const cls = active
+        ? 'border-violet-500 text-violet-700 dark:text-violet-300'
+        : 'border-transparent text-zinc-500 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200';
+      return `<button data-standings-tab="${s.key}" aria-current="${active ? 'page' : 'false'}"
+        class="px-3 py-2 text-sm font-semibold border-b-2 -mb-px ${cls}">${s.label}</button>`;
+    }).join('');
+    host.querySelectorAll('[data-standings-tab]').forEach((btn) => {
+      btn.addEventListener('click', () => Leaderboard._setSection(btn.dataset.standingsTab));
+    });
   },
 
   // Re-fetch every cached pane (or just the active one) and re-render.
   // Called on `kudos_update` WS events while the screen is open.
   refresh() {
     if (!Leaderboard._open) return;
+    // Kudos events can't change Topochain standings.
+    if (Leaderboard.section !== 'kudos') return;
     // My history only changes from the viewer's OWN actions (see
     // invalidateHistory below) — other people's kudos can't add rows,
     // so skip the re-fetch entirely while it's the active pane.
@@ -100,12 +190,18 @@ const Leaderboard = {
   _setSub(sub) {
     if (sub !== 'prs' && sub !== 'users' && sub !== 'history') return;
     Leaderboard.sub = sub;
+    // A Kudos sub-tab implies the Kudos section — a deep link straight to
+    // #leaderboard/history must not land on a Topochain tab left over
+    // from earlier in the session.
+    Leaderboard.section = 'kudos';
     // Any plain tab navigation leaves the profile drill-in.
     Leaderboard.profileUser = null;
     Leaderboard._syncHash();
     // Called before open() during deep-link restore — just record the
     // state; open() does the first render.
     if (!Leaderboard._open) return;
+    Leaderboard._renderSectionTabs();
+    Leaderboard._applySection();
     Leaderboard._render();
     Leaderboard._load();
   },
@@ -119,19 +215,27 @@ const Leaderboard = {
     Leaderboard.profileUser = username;
     // The profile is users-tab territory — back lands on Top users.
     Leaderboard.sub = 'users';
+    Leaderboard.section = 'kudos';
     Leaderboard._syncHash();
     if (!Leaderboard._open) return;
+    Leaderboard._renderSectionTabs();
+    Leaderboard._applySection();
     Leaderboard._render();
     Leaderboard._load();
   },
 
-  // Keep the hash deep-linkable (#leaderboard/history etc.) without
-  // polluting history — replaceState, and only while we're actually on
-  // a leaderboard hash (never hijack an app route mid-navigation).
+  // Keep the hash deep-linkable (#leaderboard/history, /topochain etc.)
+  // without polluting history — replaceState, and only while we're
+  // actually on a leaderboard hash (never hijack an app route
+  // mid-navigation). #topochain/leaderboard has already been rewritten
+  // to #leaderboard/topochain by the router before we get here, so the
+  // startsWith guard holds for that entry path too.
   _syncHash() {
-    const target = Leaderboard.profileUser
-      ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
-      : `#leaderboard/${Leaderboard.sub}`;
+    const target = Leaderboard.section === 'topochain'
+      ? '#leaderboard/topochain'
+      : Leaderboard.profileUser
+        ? `#leaderboard/users/${encodeURIComponent(Leaderboard.profileUser)}`
+        : `#leaderboard/${Leaderboard.sub}`;
     if (location.hash.startsWith('#leaderboard') && location.hash !== target) {
       history.replaceState(null, '', target);
     }
@@ -276,9 +380,11 @@ const Leaderboard = {
       ? 'Everything you’ve given — kudos, bounty pledges, and votes — newest first. Only you can see this.'
       : '5 kudos per week, resets Monday 00:00 UTC. Give them to PRs you appreciate.';
 
+    // No <h2> of our own: the Standings screen shell already titles the
+    // page and the section tab above says "Kudos". The subtitle stays —
+    // it's the one line explaining the weekly kudos budget.
     root.innerHTML = `
       <header class="mb-4">
-        <h2 class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-1">Kudos leaderboard</h2>
         <p class="text-sm text-zinc-500 dark:text-zinc-400">${subtitle}</p>
       </header>
       <div class="flex items-center justify-between border-b border-zinc-200 dark:border-zinc-800 mb-3">

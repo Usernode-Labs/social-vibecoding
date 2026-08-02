@@ -99,41 +99,22 @@
                text-left">dApps</h1>
 
     <div class="ml-auto shrink-0 flex items-center">
-    <!-- Fork lineage label: amber "⑂ Forked from <name>" pill, populated
-         by AppView.renderForkBadge() when a fork is open (cleared on
-         close()). Placed first in the right-hand action group so it reads
-         adjacent to the app title; header-layout.js already re-measures
-         this group on resize, so title centering recomputes automatically
-         when the badge appears/clears. -->
-    <span id="app-fork-badge-slot" class="inline-flex mr-3"></span>
-    <!-- Platform-version pill: which SHA of usernode itself is currently
-         live. Populated by App.renderPlatformVersionPill() (polled on
-         a timer so it flips to a yellow "deploying" state when a new
-         deploy is in flight, and to a "reload" hint when the running
-         platform has rolled past the SHA this page loaded against).
-         Always visible — the platform's version is universally relevant. -->
-    <span id="platform-version-pill-slot" class="inline-flex mr-3"></span>
-    <!-- #21: deployed-version pill, populated by AppView.refreshVersionPill()
-         when an app is open. Sits next to the platform pill so the two
-         read left-to-right as "platform · app". -->
-    <span id="app-version-pill-slot" class="inline-flex mr-3"></span>
-    <!-- Kudos budget badge — populated by public/js/kudos.js after the
-         initial /api/me/kudos-budget fetch. Always visible (even at 0
-         remaining; tone changes from violet to muted in that case) so
-         users learn that the link routes to the leaderboard. -->
-    <span id="kudos-budget-slot" class="inline-flex mr-3"></span>
+    <!-- HEADER SLIM-DOWN: the fork label, the platform + app build pills
+         and the kudos-budget badge used to live here as four inline
+         slots. They are now rows of the slide-out drawer's status pane
+         (#drawer-status-pane below) — same element ids, same renderers,
+         just a new parent. The trophy (#leaderboard-btn) became
+         #drawer-row-standings and the admin shield
+         (#admin-dashboard-btn) became #drawer-row-admin.
+
+         What's left here is navigation + alerting only, in DOM order:
+         dev console, feedback, work cog, bell, hamburger (last). -->
     <!-- Node status + wallet (native app chrome absorbed into SV,
-         NATIVE-BRIDGE.md) live as rows at the top of the slide-out
-         drawer below — not here in the header. See #drawer-row-node /
+         NATIVE-BRIDGE.md) live as rows in the slide-out drawer below —
+         never here in the header. See #drawer-row-node /
          #drawer-row-wallet, populated by public/js/node-pill.js /
          wallet-sheet.js when the Usernode bridge reports the matching
          capability. -->
-    <!-- Kudos leaderboard entry point. Mirrors the bell/settings icons
-         visually; links straight to the #leaderboard hash route which
-         public/js/leaderboard.js handles. -->
-    <a id="leaderboard-btn" href="#leaderboard" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Kudos leaderboard" title="Kudos leaderboard">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6"/></svg>
-    </a>
     <button id="dev-console-btn" class="hidden relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open developer console">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
       <span id="dev-console-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
@@ -141,18 +122,8 @@
     <!-- App secrets used to live as a header icon here; it's been moved
          into the dev-chat tab's "Edit" section (see AppView.renderDevChatTab).
          The badge it used to show now lives on the in-tab button. -->
-    <!-- The GitHub / Share / Settings icons used to live here as header
-         buttons; they've been moved into the slide-out drawer
-         (#header-menu-panel below), which is now available at every
-         viewport width — see #122. Members & visibility lived in the
-         drawer too until #645 moved it into the Dev tab's "+" menu. -->
     <button id="feedback-btn" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Send feedback">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-    </button>
-    <!-- Hamburger: shown at every width; opens the slide-out drawer
-         holding the secondary actions (GitHub, Share, Settings). -->
-    <button id="header-menu-btn" class="text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open menu" aria-expanded="false">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
     </button>
     <!-- Header cog: the "your work" drawer (public/js/work-drawer.js) —
          the viewer's sessions & proposals plus their session-related
@@ -160,28 +131,33 @@
          class work-cog-spinning) while an AI turn or a merge-pipeline
          step is in flight for the viewer. Carries the green badge that
          used to sit on the bell (same #notifications-badge-ai id — it's
-         still painted by Notifications._renderBadge). -->
+         still painted by Notifications._renderBadge).
+
+         The badge is positioned IDENTICALLY to the bell's
+         #notifications-badge below — same top-right corner, same size,
+         same pill geometry — so the two read as one badge convention
+         rather than two. Only the colour differs (emerald = your work in
+         flight, red = unread notifications). It sat at -bottom-1 until
+         the header slim-down; keep the two class lists in sync. -->
     <button id="work-drawer-btn" class="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Your sessions and proposals" title="Your sessions and proposals">
       <svg id="work-drawer-icon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-      <span id="notifications-badge-ai" class="hidden absolute -bottom-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
+      <span id="notifications-badge-ai" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-emerald-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
     </button>
     <button id="notifications-btn" class="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Notifications">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/></svg>
       <span id="notifications-badge" class="hidden absolute -top-1 -right-1 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full bg-red-500 text-white text-[0.65rem] font-bold flex items-center justify-center"></span>
     </button>
-    <!-- Admin / moderation console entry point (#588, first slice: just
-         the icon + a "Coming soon" placeholder; the dashboard itself
-         lands later). Sits immediately after the bell.
+    <!-- Hamburger: LAST in the group at every width — it's the catch-all
+         menu now (build status, kudos, standings, admin, theme), so the
+         rightmost slot is the conventional home for it.
 
-         Ships `hidden` and is revealed by App.renderAdminButton() for
-         platform admins AND view-only admins — i.e. gated on
-         `App.user.isAdmin`, which BOTH roles carry, and deliberately NOT
-         on `canAdminWrite` (that's the full-admin-only mutation gate, so
-         it would hide the console from view-only admins who are exactly
-         the moderation audience). Never gated on USERNODE_ENV: the icon
-         must exist identically in staging and production. -->
-    <button id="admin-dashboard-btn" class="hidden relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Admin and moderation" title="Admin &amp; moderation">
-      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+         #header-menu-deploy-dot is the amber "something is building"
+         cue: the drawer's status-pane pills are the only place a deploy
+         state renders now, so the dot is what tells you to look in
+         there. Toggled by App.DrawerStatus.refreshDeployDot(). -->
+    <button id="header-menu-btn" class="relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open menu" aria-expanded="false">
+      <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      <span id="header-menu-deploy-dot" class="hidden absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-amber-500" aria-hidden="true"></span>
     </button>
     <!-- The "Create new app" entry point used to live here in the header
          as a "+" pill; it's been moved into the home-screen feed itself,
@@ -210,6 +186,86 @@
       <button id="header-menu-close" class="text-zinc-400 hover:text-zinc-200" aria-label="Close menu">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
+    </div>
+    <!-- Panel body — ONE scroller. The theme selector and the status pane
+         are first in DOM order rather than pinned outside it: pinning
+         two blocks above the list would leave the touch bottom sheet
+         (capped at 70vh by .platform-sheet-adopted) almost no room for
+         the ten navigation rows. Being first means they're on screen the
+         moment the drawer opens at any realistic viewport, which is what
+         "at the top" needs to mean in practice. -->
+    <div id="header-menu-rows" class="flex-1 min-h-0 overflow-y-auto">
+    <!-- Theme — Light / Dark / System, the FIRST thing in the menu.
+         Unlike every row below it this is a live control, not a
+         navigation action: a non-clickable container (no hover bg) whose
+         only interactive descendants are the three segment buttons, and
+         tapping a mode does NOT close the drawer.
+
+         Wired in App.HeaderMenu (app.js); active segment + caret position
+         are driven from Theme.get() via _renderThemeButtons(). All the
+         persistence lives in public/js/theme.js and is untouched by the
+         segmented restyle. -->
+    <div id="drawer-row-theme"
+         class="px-4 pt-3 pb-3 border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300">
+      <div class="flex items-center gap-3 mb-2">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+        <span class="text-sm font-medium">Theme</span>
+      </div>
+      <!-- Segmented track + caret. The caret is positioned purely in CSS
+           from the --theme-caret-index custom property (0|1|2) that
+           _renderThemeButtons sets on the track: a thirds-width element
+           translated by index * 100%. Deliberately NOT measured in JS —
+           _renderThemeButtons runs before PlatformUI.sheet resizes the
+           panel from w-60 to the sheet's full width, so any pixel read
+           at that moment would be wrong. Percentages are right at both. -->
+      <div id="drawer-theme-track" role="radiogroup" aria-label="Theme"
+           class="relative flex p-1 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-sm font-medium">
+        <button type="button" role="radio" aria-checked="false" data-theme-mode="light" class="theme-seg flex-1 basis-0 rounded-md px-2 py-1.5 transition-colors">Light</button>
+        <button type="button" role="radio" aria-checked="false" data-theme-mode="dark" class="theme-seg flex-1 basis-0 rounded-md px-2 py-1.5 transition-colors">Dark</button>
+        <button type="button" role="radio" aria-checked="false" data-theme-mode="system" class="theme-seg flex-1 basis-0 rounded-md px-2 py-1.5 transition-colors">System</button>
+        <span id="drawer-theme-caret-track" aria-hidden="true">
+          <span id="drawer-theme-caret"></span>
+        </span>
+      </div>
+    </div>
+    <!-- Status pane: platform build, the open app's build + fork lineage,
+         and the viewer's remaining weekly kudos. Every <span> below is the
+         SAME element (same id) that used to sit in the header, so
+         App.renderPlatformVersionPill / AppView.refreshVersionPill /
+         AppView.renderForkBadge / Kudos.Budget._render all keep resolving
+         their slot by getElementById with no change.
+
+         The rows are plain <div>s, never <a>/<button>: the pills render
+         their own anchor/button (the stale-platform state is a
+         reload button), and nesting those inside a clickable row would
+         be invalid markup. -->
+    <div id="drawer-status-pane" class="border-b border-zinc-100 dark:border-zinc-800">
+      <div id="drawer-row-platform-version" class="flex items-center gap-3 px-4 min-h-[44px] text-zinc-600 dark:text-zinc-300">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01"/></svg>
+        <span class="text-sm font-medium">Platform</span>
+        <span id="platform-version-pill-slot" class="ml-auto inline-flex min-w-0"></span>
+      </div>
+      <!-- App build — revealed by App.DrawerStatus.setAppOpen() whenever an
+           app is open, on the same lifecycle as #drawer-row-github /
+           #drawer-row-share. -->
+      <div id="drawer-row-app-version" class="hidden flex items-center gap-3 px-4 min-h-[44px] text-zinc-600 dark:text-zinc-300">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+        <span class="text-sm font-medium">App</span>
+        <span id="app-version-pill-slot" class="ml-auto inline-flex min-w-0"></span>
+      </div>
+      <!-- Fork lineage: amber "⑂ Forked from <name>" label, written by
+           AppView.renderForkBadge() and revealed by
+           App.DrawerStatus.setForkVisible(). Sits directly under the app
+           build row so the two read as one app-scoped block. -->
+      <div id="drawer-row-app-fork" class="hidden items-center gap-3 px-4 pb-2 text-zinc-600 dark:text-zinc-300">
+        <span class="w-5 shrink-0" aria-hidden="true"></span>
+        <span id="app-fork-badge-slot" class="inline-flex min-w-0"></span>
+      </div>
+      <div id="drawer-row-kudos" class="flex items-center gap-3 px-4 min-h-[44px] text-zinc-600 dark:text-zinc-300">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14 10h4.764a2 2 0 011.789 2.894l-3.5 7A2 2 0 0115.263 21h-4.017c-.163 0-.326-.02-.485-.06L7 20m7-10V5a2 2 0 00-2-2h-.095c-.5 0-.905.405-.905.905 0 .714-.211 1.412-.608 2.006L7 11v9m7-10h-2M7 20H5a2 2 0 01-2-2v-6a2 2 0 012-2h2.5"/></svg>
+        <span class="text-sm font-medium">Kudos</span>
+        <span id="kudos-budget-slot" class="ml-auto inline-flex min-w-0"></span>
+      </div>
     </div>
     <!-- Node status + Wallet: native app chrome absorbed into SV
          (app-as-SV-chrome migration, NATIVE-BRIDGE.md). Hidden unless the
@@ -242,25 +298,35 @@
     </button>
     <!-- Members & visibility used to be a drawer row here; #645 moved it
          into the Dev tab's "+" menu (see AppView._wirePlusMenu). -->
-    <!-- Settings — always shown; green dot is the BYOK "key configured"
-         indicator, toggled directly by settings.js _renderIndicator().
-         Real anchor (like Challenges / Profile) since Settings became the
-         #settings screen: navigation rides the anchor's hash and the click
-         handler in App.HeaderMenu.init just closes the drawer. -->
-    <a id="drawer-row-settings" href="#settings"
-       class="flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
-      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-      <span class="text-sm font-medium">Settings</span>
-      <span id="drawer-byok-dot" class="hidden ml-auto w-2 h-2 rounded-full bg-emerald-500 shrink-0" aria-hidden="true"></span>
+    <!-- Standings — the merged Kudos + Topochain leaderboard screen. This
+         row replaces BOTH the header trophy (#leaderboard-btn) and the
+         old #drawer-row-topochain-leaderboard: one entry point, two tabs.
+         Keeps the trophy icon the header used. Real anchor so hash
+         navigation drives the screen; the handler in HeaderMenu.init
+         just closes the drawer. -->
+    <a id="drawer-row-standings" href="#leaderboard"
+       class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6"/></svg>
+      <span class="text-sm font-medium">Standings</span>
     </a>
     <!-- Challenges — hash route handled by App.navigateToChallenges
-         (app-as-SV-chrome migration). Real anchor (like the header
-         leaderboard entry) so hash navigation drives the screen; the
-         click handler in App.HeaderMenu.init just closes the drawer. -->
+         (app-as-SV-chrome migration). Real anchor (like Standings above)
+         so hash navigation drives the screen; the click handler in
+         App.HeaderMenu.init just closes the drawer. -->
     <a id="drawer-row-challenges" href="#challenges"
        class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
       <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
       <span class="text-sm font-medium">Challenges</span>
+    </a>
+    <!-- Topochain seasons/events — hash route handled by
+         App.navigateToTopochainSeasons (Task 14, public screens). Stays a
+         screen of its own: it's an event calendar, not a standings table.
+         Sits directly under Challenges so the three competition surfaces
+         (Standings / Challenges / Seasons) read as one group. -->
+    <a id="drawer-row-topochain-seasons" href="#topochain/seasons"
+       class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+      <span class="text-sm font-medium">Topochain seasons</span>
     </a>
     <!-- Profile — web screen (#profile hash route, public/js/profile.js;
          profile-and-settings-to-web migration). Always visible: the row
@@ -276,38 +342,35 @@
       <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
       <span class="text-sm font-medium">Profile</span>
     </a>
-    <!-- Topochain leaderboard — hash route handled by
-         App.navigateToTopochainLeaderboard (Task 14, public screens).
-         Real anchor (like Challenges) so hash navigation drives the
-         screen; always visible — no bridge capability or admin gate,
-         this is a public read. -->
-    <a id="drawer-row-topochain-leaderboard" href="#topochain/leaderboard"
-       class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
-      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 19V6l12-3v13M9 19a3 3 0 11-6 0 3 3 0 016 0zm12-3a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
-      <span class="text-sm font-medium">Topochain leaderboard</span>
+    <!-- Settings — always shown; green dot is the BYOK "key configured"
+         indicator, toggled directly by settings.js _renderIndicator().
+         Real anchor (like Challenges / Profile) since Settings became the
+         #settings screen: navigation rides the anchor's hash and the click
+         handler in App.HeaderMenu.init just closes the drawer. -->
+    <a id="drawer-row-settings" href="#settings"
+       class="flex items-center gap-3 px-4 min-h-[44px] w-full text-left border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      <span class="text-sm font-medium">Settings</span>
+      <span id="drawer-byok-dot" class="hidden ml-auto w-2 h-2 rounded-full bg-emerald-500 shrink-0" aria-hidden="true"></span>
     </a>
-    <!-- Topochain seasons/events — hash route handled by
-         App.navigateToTopochainSeasons (Task 14, public screens). Same
-         idiom as the leaderboard row above. -->
-    <a id="drawer-row-topochain-seasons" href="#topochain/seasons"
-       class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
-      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-      <span class="text-sm font-medium">Topochain seasons</span>
+    <!-- Admin & moderation console entry point (#588 shipped it as a
+         header shield icon; the header slim-down moved it here). Sits
+         immediately after Settings.
+
+         Ships `hidden` and is revealed by App.renderAdminButton() for
+         platform admins AND view-only admins — i.e. gated on
+         `App.user.isAdmin`, which BOTH roles carry, and deliberately NOT
+         on `canAdminWrite` (that's the full-admin-only mutation gate, so
+         it would hide the console from view-only admins who are exactly
+         the moderation audience). Never gated on USERNODE_ENV: the row
+         must exist identically in staging and production. Navigation
+         rides the anchor's #admin hash, which navigateToAdminConsole
+         re-gates server-side-enforced. -->
+    <a id="drawer-row-admin" href="#admin"
+       class="hidden flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
+      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+      <span class="text-sm font-medium">Admin &amp; moderation</span>
     </a>
-    <!-- Theme — Light / Dark / System segmented control. Unlike the rows
-         above this is a live control, not a navigation action: it is a
-         non-clickable container (no hover bg) and tapping a mode does NOT
-         close the drawer. Wired in App.HeaderMenu (app.js); active state
-         is driven from Theme.get() via _renderThemeButtons(). -->
-    <div id="drawer-row-theme"
-         class="flex flex-wrap items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300">
-      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-      <span class="text-sm font-medium">Theme</span>
-      <div class="ml-auto flex items-center gap-1 text-xs">
-        <button data-theme-mode="light" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 whitespace-nowrap shrink-0">Light</button>
-        <button data-theme-mode="dark" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 whitespace-nowrap shrink-0">Dark</button>
-        <button data-theme-mode="system" class="px-2 py-1 rounded bg-zinc-200 dark:bg-zinc-800 whitespace-nowrap shrink-0">System</button>
-      </div>
     </div>
   </div>
 
@@ -381,12 +444,25 @@
     </div>
   </main>
 
-  <!-- Kudos leaderboard screen (hidden by default). Populated by
-       public/js/leaderboard.js. Sits alongside #home-screen and
-       #app-view so the hash-router can swap to it without touching
-       the others. -->
+  <!-- Standings screen (hidden by default): the Kudos leaderboard and the
+       Topochain leaderboard merged into one screen with a two-tab strip.
+       Hash routes #leaderboard[/prs|users|history|users/<name>] (Kudos)
+       and #leaderboard/topochain; the legacy #topochain/leaderboard hash
+       aliases onto the latter. Mounted by App.navigateToLeaderboard.
+
+       Two panes, one visible at a time, each still owned by its original
+       module: #leaderboard-root by public/js/leaderboard.js (which also
+       renders the tab strip and owns Leaderboard.section) and
+       #topochain-leaderboard-root by public/js/topochain-leaderboard.js.
+       The wrapper is max-w-5xl for the Topochain table's sake; the Kudos
+       pane keeps its narrower max-w-3xl reading column. -->
   <main id="leaderboard-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
-    <div id="leaderboard-root" class="max-w-3xl mx-auto p-4"></div>
+    <div class="max-w-5xl mx-auto p-4 w-full">
+      <h2 class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">Standings</h2>
+      <div id="standings-tabs" class="flex gap-2 border-b border-zinc-200 dark:border-zinc-800 mb-4"></div>
+      <div id="leaderboard-root" class="max-w-3xl"></div>
+      <div id="topochain-leaderboard-root" class="hidden w-full"></div>
+    </div>
   </main>
 
   <!-- Challenges screen (app-as-SV-chrome migration): the mobile app's
@@ -825,16 +901,13 @@
   </main>
 
 
-  <!-- Topochain leaderboard screen (Task 14, public screens): the
-       testnet-competition standings, rendered by
-       public/js/topochain-leaderboard.js from the public /api/v4 reads.
-       Hash route #topochain/leaderboard; mounted by
-       App.navigateToTopochainLeaderboard. No auth gate — this is a
-       public page like the existing Kudos leaderboard. Ships hidden
-       like its sibling screens. -->
-  <main id="topochain-leaderboard-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
-    <div id="topochain-leaderboard-root" class="max-w-5xl mx-auto p-4 w-full"></div>
-  </main>
+  <!-- The Topochain leaderboard used to be its own <main> screen here
+       (#topochain-leaderboard-screen, Task 14). The header slim-down
+       merged it into the Standings screen above as the second tab:
+       #topochain-leaderboard-root now lives inside #leaderboard-screen
+       and TopochainLeaderboard renders into it unchanged. The legacy
+       #topochain/leaderboard hash still works — the router replaceStates
+       it to #leaderboard/topochain. -->
 
   <!-- Topochain seasons/events screen (Task 14, public screens): the
        season/event hero + challenge grid, rendered by
