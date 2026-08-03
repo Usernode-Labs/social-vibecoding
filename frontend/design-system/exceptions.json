@@ -359,17 +359,6 @@
     },
     {
       "rule": "no-manual-dark-colors",
-      "file": "@/components/ui/card.tsx",
-      "matches": [
-        "dark:ring-foreground/10"
-      ],
-      "count": 1,
-      "owner": "frontend-platform",
-      "reason": "Frozen official shadcn Luma source uses a theme-specific ring alpha; the exact-match ratchet prevents local expansion.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-manual-dark-colors",
       "file": "@/components/ui/input-group.tsx",
       "matches": [
         "dark:bg-transparent"

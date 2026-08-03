@@ -119,19 +119,29 @@ test("renders the accepted platform IA with one current destination", async ({ p
   await expect(page.getByRole("group", { name: "Color mode" })).toHaveCount(0)
 })
 
-test("keeps the inset page-card spatial model", async ({ page }, testInfo) => {
+test("keeps one inset Paper on the shell Canvas", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "The inset card margins apply from md up.")
   await page.goto("/react/")
 
-  // The page is one contained card on the sidebar-colored plane. Dropping the
-  // variant once silently flattened the whole model while every functional
-  // gate stayed green.
+  // The page is one Paper on the Canvas. Dropping the inset variant once
+  // silently flattened the whole model while every functional gate stayed
+  // green; omitting the semantic roles later made Card impersonate Paper.
   await expect(page.locator('[data-slot="sidebar"][data-variant="inset"]')).toHaveCount(1)
+  const canvas = page.locator('[data-slot="sidebar-wrapper"]')
   const inset = page.locator('[data-slot="sidebar-inset"]')
+  await expect(canvas).toHaveAttribute("data-surface", "canvas")
+  await expect(inset).toHaveAttribute("data-surface", "paper")
+  await expect(page.locator('[data-slot="route-viewport"]')).toHaveAttribute("data-surface", "print")
+  await expect(page.locator('[data-surface="paper"]')).toHaveCount(1)
   await expect.poll(() => inset.evaluate((node) => {
     const style = getComputedStyle(node)
     return Number.parseFloat(style.borderTopLeftRadius) > 0 && Number.parseFloat(style.marginTop) > 0
   })).toBe(true)
+  await expect.poll(async () => (
+    await canvas.evaluate((node) => getComputedStyle(node).backgroundColor)
+  ) !== (
+    await inset.evaluate((node) => getComputedStyle(node).backgroundColor)
+  )).toBe(true)
 })
 
 test("keeps ordinary shell paint around a distinct hosted app card in both themes", async ({ page }) => {
@@ -150,7 +160,7 @@ test("keeps ordinary shell paint around a distinct hosted app card in both theme
     await page.goto("/react/apps/recipebot/open")
     await page.locator("html").evaluate((node, nextDark) => node.classList.toggle("dark", nextDark), dark)
     await expect(page.getByTestId("hosted-app")).toBeVisible({ timeout: shellReadyTimeout })
-    expect(await page.locator('[data-slot="route-viewport"]').getAttribute("data-surface")).toBeNull()
+    expect(await page.locator('[data-slot="route-viewport"]').getAttribute("data-surface")).toBe("print")
     const hostedNavigation = await visibleNavigationSurface(page)
     const hostedNavigationBackground = await hostedNavigation.evaluate((node) => getComputedStyle(node).backgroundColor)
     const hostedPageBackground = await page.locator('[data-slot="sidebar-inset"]').evaluate((node) => getComputedStyle(node).backgroundColor)

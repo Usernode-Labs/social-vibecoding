@@ -154,16 +154,17 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
         onNavigate={closeNavigation}
         pathname={location.pathname}
       />
-      {/* The inset card is the page. Every route renders its own TopBar as the
-          first child of the viewport, so the shell owns the drawer and the
-          card while the route owns its chrome and its single h1. min-h comes
-          from the sidebar wrapper so the inset margins never force a
-          scrollbar. */}
+      {/* The inset is the one Paper on the shell Canvas. Every route renders
+          its own TopBar as the first printed child, so the shell owns the
+          drawer and Paper while the route owns its chrome and single h1.
+          min-h comes from the sidebar wrapper so the inset margins never
+          force a scrollbar. */}
       <SidebarInset className="overflow-hidden">
         <AdminPreviewBanner />
         <div
           className="relative flex min-h-0 flex-1 flex-col"
           data-slot="route-viewport"
+          data-surface="print"
         >
           {children}
         </div>
@@ -178,7 +179,7 @@ export function PlatformShell({ children }: { children: ReactNode }) {
     <DevConsoleProvider>
       <TooltipProvider>
         <DevCompletionAlerts />
-        <SidebarProvider>
+        <SidebarProvider data-surface="canvas">
           <PlatformShellContent>{children}</PlatformShellContent>
         </SidebarProvider>
         <DevConsoleLayer />

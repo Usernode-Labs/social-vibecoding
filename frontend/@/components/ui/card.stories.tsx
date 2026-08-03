@@ -10,7 +10,7 @@ const meta = {
   title: "Elements/Primitives/Card",
   component: Card,
   parameters: { layout: "centered" },
-  decorators: [(Story) => <div className="w-screen max-w-lg px-4"><Story /></div>],
+  decorators: [(Story) => <div className="w-screen max-w-lg rounded-4xl bg-card p-4 text-card-foreground shadow-sm" data-surface="paper"><Story /></div>],
 } satisfies Meta<typeof Card>
 
 export default meta
@@ -28,6 +28,15 @@ export const Default: Story = {
       <CardFooter><Button>Use app</Button></CardFooter>
     </Card>
   ),
+  play: async ({ canvasElement }) => {
+    const card = canvasElement.querySelector<HTMLElement>('[data-slot="card"]')
+    const transparentReference = document.createElement("div")
+    canvasElement.append(transparentReference)
+    await expect(card).toHaveAttribute("data-surface", "print")
+    await expect(getComputedStyle(card!).backgroundColor).toBe(getComputedStyle(transparentReference).backgroundColor)
+    await expect(getComputedStyle(card!).boxShadow).toBe("none")
+    transparentReference.remove()
+  },
 }
 
 export const IconTitle: Story = {

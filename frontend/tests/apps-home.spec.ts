@@ -119,6 +119,31 @@ test("keeps personal launching on Home and catalog discovery in Explore", async 
   await expect(detailsLink).toHaveAttribute("href", "/react/apps/recipebot")
 })
 
+test("prints Home cards on one Paper in both themes", async ({ page }) => {
+  for (const dark of [false, true]) {
+    await page.goto("/react/")
+    await page.locator("html").evaluate((node, nextDark) => node.classList.toggle("dark", nextDark), dark)
+
+    const canvas = page.locator('[data-slot="sidebar-wrapper"]')
+    const paper = page.locator('[data-slot="sidebar-inset"]')
+    const card = page.getByTestId("home-app-shortcut-recipebot")
+
+    await expect(canvas).toHaveAttribute("data-surface", "canvas")
+    await expect(paper).toHaveAttribute("data-surface", "paper")
+    await expect(page.locator('[data-surface="paper"]')).toHaveCount(1)
+    await expect(card).toHaveAttribute("data-surface", "print")
+    await expect.poll(() => card.evaluate((node) => {
+      const style = getComputedStyle(node)
+      return { background: style.backgroundColor, shadow: style.boxShadow }
+    })).toEqual({ background: "rgba(0, 0, 0, 0)", shadow: "none" })
+    await expect.poll(async () => (
+      await canvas.evaluate((node) => getComputedStyle(node).backgroundColor)
+    ) !== (
+      await paper.evaluate((node) => getComputedStyle(node).backgroundColor)
+    )).toBe(true)
+  }
+})
+
 test("previews at most three unresolved Activity items without duplicating Work", async ({ page }) => {
   await page.unroute((url) => url.pathname === "/api/notifications")
   await page.route((url) => url.pathname === "/api/notifications", (route) => route.fulfill({

@@ -12,13 +12,13 @@ against implementation baseline
 
 ## 1. Surface role
 
-Every view has one Paper. Print content; never stack ceremonial Cards.
+Every view has one Paper. Print content; never stack Cards.
 
 | Role | Separation | Do not |
 |---|---|---|
 | Canvas | Darker page field; nothing prints on it | Treat it as content |
-| Paper | One major semantic surface | Nest Paper or spell `div` as Card |
-| Print | Type, alignment, divider, whitespace, one quiet wash | Wrap rows, metrics, or sections in Cards |
+| Paper | One lighter shell-owned sheet on Canvas | Nest Paper or spell `div` as Card |
+| Print | Card inherits Paper; group by type, dividers, space, or owned wash | Add default fill, ring, or shadow |
 | Recess | Owned well darker than Paper: input, tab-track, code, terminal | Borrow `muted` or invent inset recipes |
 | Overlay | Transient; bottom navigation is the persistent tenant | Add another persistent Overlay |
 
@@ -27,7 +27,7 @@ use `data-surface="canvas|paper|print|recess|overlay"`; absent is Print.
 Recess uses `data-recess-role="input|tab-track|code|terminal"`; only
 `data-slot="platform-bottom-navigation"` persists as Overlay.
 
-Status colour is ink, not Paper. Metric is one definition-list group, never a
+Status is ink, not Paper. Metric is one definition list, never a
 Card per value. Stream rows use dividers, whitespace, and quiet interaction.
 
 At a governed invocation, callers may remove treatment and own external layout;
