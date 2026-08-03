@@ -490,9 +490,9 @@ const AppView = {
     }
     if (window.Secrets) Secrets.hide();
     AppView.pendingInnerPath = null;
-    // Both slots live in the drawer's status pane now (same ids, new
-    // parent). Blank them AND hide their rows, or the previous app's
-    // build/fork lines linger in the menu on the home feed.
+    // Both slots live in the drawer's bottom-anchored footer now (same
+    // ids, new parent). Blank them AND hide their rows, or the previous
+    // app's build/fork lines linger in the menu on the home feed.
     const slot = document.getElementById('app-version-pill-slot');
     if (slot) slot.innerHTML = '';
     const forkSlot = document.getElementById('app-fork-badge-slot');
@@ -707,10 +707,12 @@ const AppView = {
         slug: AppView.appData.slug,
         version: info.sha ? info : null,
         deployProgress: info.deployProgress || null,
-        // The status-pane pill gets the richer PR-context tooltip (title
-        // + author + merge time). The home-screen card uses the same
-        // helper without this and gets the plain commit-hash tip.
+        // The drawer footer's line gets the richer PR-context tooltip
+        // (title + author + merge time). The home-screen card uses the
+        // same helper without this and gets the plain commit-hash tip.
         includePrContext: true,
+        // Text form, not a pill — the footer line is labelled "App".
+        plain: true,
       });
       // Mirror the deploying state onto the hamburger — the pill itself
       // is only visible with the drawer open.
@@ -737,6 +739,7 @@ const AppView = {
       version: null, // hidden during deploy; the next refresh fills it in
       deployProgress,
       includePrContext: true,
+      plain: true,
     });
     if (window.App?.DrawerStatus) App.DrawerStatus.refreshDeployDot();
   },
@@ -755,6 +758,14 @@ const AppView = {
     const version = opts && opts.version;
     const deployProgress = opts && opts.deployProgress;
     const includePrContext = !!(opts && opts.includePrContext);
+    // `plain` callers want the drawer footer's TEXT form instead of a
+    // pill: a bare mono version beside the row's own "App" label, no
+    // border, no slug, no status dot. Same states, same tooltips — only
+    // the chrome differs, so the two surfaces can't drift apart.
+    const plain = !!(opts && opts.plain);
+    const cls = plain
+      ? { base: 'drawer-ver', deploying: 'drawer-ver--deploying', dev: 'drawer-ver--dev', spinner: 'drawer-ver-spinner' }
+      : { base: 'app-version-pill', deploying: 'app-version-pill--deploying', dev: '', spinner: 'app-version-pill-spinner' };
     // `quiet` callers want a border-only chip with no state modifiers
     // even when a deploy is in flight — the home-tile pills use it so
     // the tile's status dot is the single visual signal for "this app
@@ -784,6 +795,12 @@ const AppView = {
       if (deployProgress.fromSha) tipParts.push(`from ${String(deployProgress.fromSha).slice(0, 7)}`);
       if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
       const tip = tipParts.join(' · ');
+      if (plain) {
+        return `
+          <span class="${cls.base} ${cls.deploying}" title="${escapeAttr(tip)}">
+            <span class="${cls.spinner}" aria-hidden="true"></span>deploying
+          </span>`;
+      }
       return `
         <span class="app-version-pill app-version-pill--deploying" title="${escapeAttr(tip)}">
           <span class="app-version-pill-spinner" aria-hidden="true"></span>
@@ -802,6 +819,10 @@ const AppView = {
       // that haven't been backfilled yet. The leading status dot is
       // dropped in quiet mode (home tiles) — the tile already has its
       // own status dot at the top.
+      if (plain) {
+        return `
+          <span class="${cls.base} ${cls.dev}" title="No deployed version recorded yet">dev</span>`;
+      }
       return `
         <span class="app-version-pill" title="No deployed version recorded yet">
           ${quiet ? '' : '<span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>'}
@@ -826,6 +847,10 @@ const AppView = {
     // status dot already covers "this app's lifecycle state", and the
     // user doesn't need a second tiny dot duplicating it inside the
     // commit chip.
+    if (plain) {
+      return `
+        <a href="${href}" target="_blank" rel="noopener" class="${cls.base}" title="${escapeAttr(tip)}">${escapeHtml(sha)}</a>`;
+    }
     return `
       <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="${escapeAttr(tip)}">
         ${quiet ? '' : '<span class="app-version-pill-dot"></span>'}
@@ -8409,10 +8434,10 @@ const AppView = {
 
   // Amber "⑂ Forked from <name>" lineage label. Lived in the header's
   // right-hand action group until the header slim-down moved it under
-  // the "App" build row in the drawer's status pane (#drawer-row-app-fork,
-  // whose visibility this function drives — the slot id is unchanged).
-  // `forked_from` is resolved server-side to
-  // { appId, slug, name, linkable }; when linkable the pill links to the
+  // the "App" build line, now in the drawer's footer
+  // (#drawer-row-app-fork, whose visibility this function drives — the
+  // slot id is unchanged). `forked_from` is resolved server-side to
+  // { appId, slug, name, linkable }; when linkable the label links to the
   // source app, otherwise (source deleted → name "<deleted>") it renders
   // as inert text. No-op for non-forks.
   renderForkBadge() {
@@ -8424,13 +8449,15 @@ const AppView = {
     const ref = AppView.appData && AppView.appData.forked_from;
     if (!ref || typeof ref !== 'object') { slot.innerHTML = ''; setRow(false); return; }
     const name = ref.name || '<deleted>';
-    const cls = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium '
-      + 'bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30 '
-      + 'max-w-[40vw] truncate';
+    // Text form, not a pill: this line sits in the drawer footer directly
+    // under the "App" version line, and a filled amber pill between two
+    // quiet mono version lines shouted louder than a lineage note needs
+    // to. Amber is retained as the lineage colour.
+    const cls = 'drawer-ver drawer-ver--fork max-w-full truncate';
     const label = `⑂ Forked from ${escapeHtml(name)}`;
     if (ref.linkable && ref.slug) {
       slot.innerHTML = `<a href="#app/${encodeURIComponent(ref.slug)}" `
-        + `class="${cls} hover:bg-amber-500/25 transition-colors" `
+        + `class="${cls}" `
         + `title="Forked from ${escapeAttr(name)} — open the original">${label}</a>`;
     } else {
       slot.innerHTML = `<span class="${cls} opacity-90" `

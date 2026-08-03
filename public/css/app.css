@@ -3363,10 +3363,10 @@ html.in-native-webview #header-title {
    HEADER SLIM-DOWN: this used to also collapse
    #platform-version-pill-slot / #app-version-pill-slot, because those
    two sat in the header and shoved the title around. They live in the
-   drawer's status pane now, where there is room for them at every
-   width, so they are deliberately NOT in the selector below — that
-   collapse was the reason mobile users could never see build status at
-   all. Only the home-card class slot still collapses. */
+   drawer FOOTER now (as plain .drawer-ver text), where there is room for
+   them at every width, so they are deliberately NOT in the selector
+   below — that collapse was the reason mobile users could never see
+   build status at all. Only the home-card class slot still collapses. */
 @media (max-width: 640px) {
   /* Collapse the slot itself (not just its inner pill) so the
      gap-2 on home-card rows goes away too — otherwise the app name
@@ -3394,34 +3394,167 @@ html.in-native-webview #header-title {
 }
 
 /* ── Drawer status pane ───────────────────────────────────
-   The platform/app build pills and the fork label render at full
-   fidelity here at every width (unlike the home-card slot above), but
-   the desktop panel is only 15rem wide — keep a long "usernode ·
-   1a2b3c4 · #4210" from pushing the row's label out of the panel.
+   Kudos + AI credit. The build/version lines used to live here too and
+   moved to #drawer-footer (see below); what's left is two metered
+   values that must not push their row label out of the 15rem panel.
 
-   The cap is on the SLOT, not the pill: the slot is the row's flex item,
-   so capping it lets flex give the pill everything left over after the
-   row label instead of a fixed fraction of the row (which truncated
-   even short values like "usernode · dev"). The label inside then
-   ellipsises if the value is genuinely too long. */
-#drawer-status-pane .app-version-pill {
-  max-width: 100%;
-  overflow: hidden;
-}
-#drawer-status-pane .app-version-pill-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-#drawer-status-pane #app-fork-badge-slot > * {
-  max-width: 100%;
-}
-/* The row's text label never shrinks; the value slot absorbs the
+   The row's text label never shrinks; the value slot absorbs the
    squeeze. Without min-width:0 a flex item refuses to shrink below its
    content's intrinsic width and would push the pane wider than the
    panel. */
 #drawer-status-pane .text-sm {
   flex-shrink: 0;
+}
+/* Kudos / AI-credit values: plain text, no pill (a metered figure you
+   can read at a glance shouldn't wear a badge). Mono digits so the
+   numbers don't jitter as they tick.
+
+   Wrapping is allowed on the value as a whole but forbidden INSIDE a
+   figure: each part is a .drawer-meter-part with `nowrap`, so
+   "limit $13.60/$20.00 · your key $4.50" — which cannot fit the 15rem
+   panel on one line — breaks at the "·" instead of mid-number or being
+   ellipsised into "your key $4…". The row's own `flex-wrap` drops the
+   whole value below its label first; this is the second-level fallback.
+
+   Horizontal alignment is NOT set here: it's inherited from the slot
+   (see #ai-budget-slot's `text-right` in index.html), so a value that
+   wraps stays right-aligned to the panel edge line by line instead of
+   falling flush left under the row icon. */
+.drawer-meter {
+  /* inline-block, NOT inline-flex: the value is composed of several
+     coloured <span>s and must stay ONE run of text. As flex items those
+     spans become separate boxes, which is what makes
+     `element.innerText` come back as "limit\n$13.60\n/$20.00" — a
+     hazard for anything reading the rendered text (accessibility tools,
+     the platform's own expectText checks). Inline flow keeps it a
+     single string and lays out identically here. */
+  display: inline-block;
+  font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.4;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  max-width: 100%;
+}
+.drawer-meter-part {
+  white-space: nowrap;
+}
+.drawer-meter-dim {
+  color: var(--text-muted);
+}
+a.drawer-meter:hover .drawer-meter-strong {
+  text-decoration: underline;
+}
+
+/* ── Drawer footer (bottom-anchored) ──────────────────────
+   Platform build, app build, fork lineage, then the two app link rows.
+   Version values are TEXT, not pills: the old "usernode · 1a2b3c4"
+   pill overflowed the 15rem panel, and the project name was redundant
+   next to a row already labelled "Platform version". A label + a mono
+   version, right-aligned, reads as a footer signature, not a control. */
+.drawer-ver-row {
+  min-height: 26px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+/* The label names what the value IS ("Platform version" / "App
+   version") in sentence case, not an uppercase-tracked micro-caption:
+   at 10px + 0.06em the old "PLATFORM" read as decoration and left the
+   value looking like a stray word rather than a version. */
+.drawer-ver-label {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.drawer-ver-value {
+  min-width: 0;
+}
+/* The value carries the weight here, so it must be READABLE — the
+   earlier muted 11.5px rendering of a short value like `dev` was so
+   faint on a phone that the row looked like a label with nothing after
+   it. 12px, secondary text colour, and the mono face doing the "this is
+   a version" work. */
+.drawer-ver {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: 12px;
+  font-weight: 500;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+a.drawer-ver:hover {
+  color: var(--text-primary);
+  text-decoration: underline;
+}
+/* No-SHA builds (`dev`, or `staging` on a platform staging preview).
+   Deliberately NOT muted: it's still the answer to "which version am I
+   looking at?", and dimming it is what made the row look empty. */
+.drawer-ver--dev {
+  color: var(--text-secondary);
+}
+/* "A new deploy is currently rolling out" — amber + the shared spinner
+   glyph, same signal vocabulary as .app-version-pill--deploying (which
+   still dresses the home-tile pills) minus the pill chrome. */
+.drawer-ver--deploying {
+  color: #d97706;
+}
+.dark .drawer-ver--deploying {
+  color: #facc15;
+}
+/* "Platform rolled past the SHA this tab loaded against" — a violet
+   reload button, borderless like its siblings but underlined on hover
+   so it still reads as actionable. */
+button.drawer-ver--stale {
+  color: #6d28d9;
+  cursor: pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.dark button.drawer-ver--stale {
+  color: #a78bfa;
+}
+button.drawer-ver--stale:hover {
+  text-decoration: underline;
+}
+/* Fork lineage ("⑂ Forked from <name>") — amber, and NOT monospaced:
+   it's a name, not a hash. */
+.drawer-ver--fork {
+  font-family: inherit;
+  font-size: 11px;
+  color: #b45309;
+}
+.dark .drawer-ver--fork {
+  color: #fbbf24;
+}
+a.drawer-ver--fork:hover {
+  color: #92400e;
+}
+.dark a.drawer-ver--fork:hover {
+  color: #fcd34d;
+}
+.drawer-ver-spinner {
+  flex-shrink: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(234, 179, 8, 0.3);
+  border-top-color: currentColor;
+  animation: app-version-pill-spin 0.9s linear infinite;
+}
+#drawer-footer #app-fork-badge-slot > * {
+  max-width: 100%;
 }
 
 /* Slide-out drawer panel transition. The panel starts off-screen to
@@ -3499,8 +3632,8 @@ html.in-native-webview #header-title {
 }
 
 /* Caret rail: spans the track, sits just below it. The track's parent
-   row reserves the height with its pb-3 so the arrow can never collide
-   with #drawer-status-pane's top border. */
+   row reserves the height with its pb-2.5 so the arrow can never collide
+   with the row's bottom border. */
 #drawer-theme-caret-track {
   position: absolute;
   left: 0;
@@ -3512,7 +3645,7 @@ html.in-native-webview #header-title {
 #drawer-theme-caret {
   display: block;
   width: calc(100% / 3);
-  height: 5px;
+  height: 4px;
   transform: translateX(calc(var(--theme-caret-index) * 100%));
   transition: transform 180ms ease-out;
 }
@@ -3527,9 +3660,9 @@ html.in-native-webview #header-title {
   width: 0;
   height: 0;
   margin: 0 auto;
-  border-left: 5px solid transparent;
-  border-right: 5px solid transparent;
-  border-bottom: 5px solid var(--text-muted);
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-bottom: 4px solid var(--text-muted);
 }
 @media (prefers-reduced-motion: reduce) {
   #drawer-theme-caret {

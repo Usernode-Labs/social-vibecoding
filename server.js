@@ -245,6 +245,15 @@ app.get('/api/version', (_req, res) => {
     name: process.env.USERNODE_PROJECT_NAME || 'usernode',
     repoUrl: process.env.USERNODE_REPO_URL || 'https://github.com/Usernode-Labs/social-vibecoding',
     deployProgress: deployStatus.read(),
+    // Which environment this build is: 'staging' | 'production' | null.
+    // Only used to NAME the no-SHA state in the drawer's "Platform
+    // version" row: staging previews of the platform are built without
+    // GIT_SHA, so `sha` comes back as the literal "dev" there and a row
+    // reading "Platform version  dev" tells a tester nothing. With this,
+    // the client renders "staging" instead. Purely a label — nothing
+    // gates behaviour on it, and USERNODE_ENV is platform-injected (a
+    // reserved key), so there's no new declaration to make.
+    env: process.env.USERNODE_ENV || null,
     // SELF-HOSTING.md Phase 2f / Phase 3: the platform's own slug
     // in the apps table. Clients use this to recognize self-app
     // surfaces (e.g. the "Platform updating…" banner cross-checks

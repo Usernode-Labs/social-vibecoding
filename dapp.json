@@ -822,19 +822,39 @@
       "expectSelector": "#drawer-row-admin:not(.hidden)"
     },
     {
-      "name": "Drawer status pane renders the platform build pill",
-      "path": "/",
-      "expectSelector": "#drawer-status-pane #platform-version-pill-slot .app-version-pill"
+      "name": "Drawer footer renders the platform build as plain text, not a pill",
+      "path": "/?shot=menu",
+      "expectSelector": "#drawer-footer #drawer-row-platform-version #platform-version-pill-slot .drawer-ver"
     },
     {
-      "name": "Drawer status pane renders the kudos budget badge",
+      "name": "Drawer status pane renders the kudos budget as inline text",
       "path": "/",
-      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard\"]"
+      "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard\"].drawer-meter"
     },
     {
-      "name": "Theme selector ships its 3-segment track and caret at the top of the menu",
+      "name": "Theme selector ships its 3-segment track and caret",
       "path": "/",
-      "expectSelector": "#drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
+      "expectSelector": "#drawer-row-theme #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
+    },
+    {
+      "name": "Theme selector is the first thing in the menu, above the status pane",
+      "path": "/",
+      "expectSelector": "#drawer-main-rows > #drawer-row-theme:first-child + #drawer-status-pane"
+    },
+    {
+      "name": "Footer version rows are labelled \"Platform version\" / \"App version\"",
+      "path": "/?shot=menu",
+      "expectText": "Platform version"
+    },
+    {
+      "name": "Drawer footer is bottom-anchored and holds GitHub + Share as its last two items",
+      "path": "/?shot=menu",
+      "expectSelector": "#header-menu-rows > #drawer-footer.mt-auto > #drawer-row-share:last-child"
+    },
+    {
+      "name": "Main nav order is Profile, Leaderboard, Settings, Admin & moderation",
+      "path": "/?shot=menu",
+      "expectSelector": "#drawer-row-profile + #drawer-row-leaderboard + #drawer-row-settings + #drawer-row-admin"
     },
     {
       "name": "Leaderboard drawer row replaces the header trophy",
@@ -1161,7 +1181,17 @@
     {
       "name": "Hamburger status area shows the viewer's own AI credit (#555)",
       "path": "/?shot=menu&demo=1",
-      "expectSelector": "#drawer-row-ai-budget .ai-budget-pill"
+      "expectSelector": "#drawer-row-ai-budget .ai-budget-meter"
+    },
+    {
+      "name": "AI credit reads like the dev chat: limit $spent/$limit, no pill",
+      "path": "/?shot=menu&demo=1",
+      "expectText": "limit $"
+    },
+    {
+      "name": "AI credit value is right-aligned to the panel edge, wrapped or not",
+      "path": "/?shot=menu&demo=1",
+      "expectSelector": "#drawer-row-ai-budget #ai-budget-slot.grow.text-right"
     },
     {
       "name": "The admin console's Limits section offers the Anthropic credit balance fields (#555)",
