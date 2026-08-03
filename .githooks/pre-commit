@@ -1,0 +1,5 @@
+#!/bin/sh
+
+set -eu
+
+npm --prefix frontend run check:interface-laws:staged

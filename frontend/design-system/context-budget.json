@@ -76,7 +76,7 @@
         ]
       }
     },
-    "postRoutingRatchetBytes": 21479,
+    "postRoutingRatchetBytes": 20902,
     "postRoutingEntries": [
       {
         "path": "frontend/design-system/content-guidelines.md",
@@ -92,7 +92,7 @@
       },
       {
         "path": "frontend/design-system/interface-laws.md",
-        "acceptedBytes": 7652
+        "acceptedBytes": 7075
       },
       {
         "path": "agent-skills/ui-development/references/evidence.md",

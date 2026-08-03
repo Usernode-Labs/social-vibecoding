@@ -15,6 +15,7 @@
         "type": "object",
         "properties": {
           "tier": { "enum": ["element", "block", "feature"] },
+          "exports": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
           "performance": { "$ref": "#/$defs/performance" },
           "content": { "$ref": "#/$defs/content" }
         },
@@ -24,6 +25,7 @@
           "tier",
           "module",
           "export",
+          "exports",
           "owner",
           "maturity",
           "distribution",

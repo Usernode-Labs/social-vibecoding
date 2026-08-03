@@ -23,6 +23,8 @@ test("copy-bearing component review composes content, component, and review", ()
   assert.ok(result.checks.includes("npm run check:ui"))
   assert.ok(result.discovery.includes('npm run query:design-system -- "<component name, id, variant, or job>"'))
   assert.ok(result.context.includes("frontend/design-system/interface-laws.md"))
+  assert.ok(result.checks.includes("npm run check:interface-laws"))
+  assert.ok(result.checks.includes("npm run check:context-budget"))
   for (const bulkPath of [
     "frontend/design-system/catalog.json",
     "frontend/@/components/ui",

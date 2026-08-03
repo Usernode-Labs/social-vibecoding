@@ -84,6 +84,8 @@ jobs:
       - run: npm run check:progressive-context
       - name: Enforce loaded-context budget
         run: npm run check:context-budget
+      - name: Enforce interface-law ratchets
+        run: npm run check:interface-laws
       - run: npm run check:harness
       - run: npm run test:harness
       - run: npm run test:agent-battery

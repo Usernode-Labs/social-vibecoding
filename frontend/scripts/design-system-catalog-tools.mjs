@@ -38,6 +38,20 @@ function storyStates(source) {
     .map((match) => match[1])
 }
 
+function namedExports(source) {
+  const exports = new Set()
+  for (const match of source.matchAll(/\bexport\s+(?:async\s+)?(?:const|function|class|let|var)\s+([A-Za-z_$][\w$]*)/g)) {
+    exports.add(match[1])
+  }
+  for (const match of source.matchAll(/\bexport\s*\{([^}]+)\}/g)) {
+    for (const item of match[1].split(",")) {
+      const name = item.trim().replace(/^type\s+/, "").split(/\s+as\s+/)[0]?.trim()
+      if (/^[A-Za-z_$][\w$]*$/.test(name)) exports.add(name)
+    }
+  }
+  return [...exports].sort()
+}
+
 function renderPrimitiveCatalog(manifest, authority) {
   const relativeRoot = manifest.coverage.primitiveRoot.replace(/^@\//, "")
   const primitiveRoot = path.join(frontendRoot, "@", relativeRoot)
@@ -49,6 +63,8 @@ function renderPrimitiveCatalog(manifest, authority) {
       const name = primitiveName(fileName)
       const storyFile = `${base}.stories.tsx`
       const storySource = fs.readFileSync(path.join(primitiveRoot, storyFile), "utf8")
+      const source = fs.readFileSync(path.join(primitiveRoot, fileName), "utf8")
+      const exports = namedExports(source)
       const contract = mergeContract(authority.defaults, {
         maturity: "stable",
         dataBoundary: {
@@ -65,6 +81,7 @@ function renderPrimitiveCatalog(manifest, authority) {
         tier: manifest.coverage.primitiveTier,
         module: `@/components/ui/${fileName}`,
         export: name,
+        exports,
         owner: contract.owner,
         maturity: contract.maturity,
         distribution: contract.distribution,
@@ -97,6 +114,7 @@ export function renderCatalog() {
       tier: pattern.tier,
       module: pattern.module,
       export: pattern.export,
+      exports: [pattern.export],
       owner: contract.owner,
       maturity: contract.maturity,
       distribution: contract.distribution,

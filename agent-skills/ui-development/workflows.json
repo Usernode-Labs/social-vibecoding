@@ -116,6 +116,7 @@
         "npm run check:design-system",
         "npm run check:registry",
         "npm run check:style-policy",
+        "npm run check:interface-laws",
         "npm run check:context-budget",
         "npm run check:harness-integrity",
         "npm run test:agent-battery"
@@ -272,6 +273,8 @@
       "checks": [
         "npm run check:design-system",
         "npm run check:style-policy",
+        "npm run check:interface-laws",
+        "npm run check:context-budget",
         "npm run check:harness",
         "npm run test:storybook",
         "npm run typecheck"
@@ -432,26 +435,27 @@
       { "id": "relationships", "step": 5, "units": 1, "priority": 10 },
       { "id": "registry", "step": 6, "units": 1, "priority": 10 },
       { "id": "style-policy", "step": 7, "units": 1, "priority": 10 },
-      { "id": "content", "step": 8, "units": 1, "priority": 10 },
-      { "id": "content-tests", "step": 9, "units": 1, "priority": 20 },
-      { "id": "harness-integrity", "step": 10, "units": 1, "priority": 20 },
-      { "id": "harness-fitness", "step": 11, "units": 1, "priority": 10 },
-      { "id": "progressive-context", "step": 12, "units": 1, "priority": 20 },
-      { "id": "context-budget", "step": 13, "units": 1, "priority": 20 },
-      { "id": "harness-policy", "step": 14, "units": 1, "priority": 10 },
-      { "id": "harness-tests", "step": 15, "units": 1, "priority": 20 },
-      { "id": "agent-battery", "step": 16, "units": 1, "priority": 20 },
-      { "id": "typecheck", "step": 17, "units": 1, "priority": 20 },
-      { "id": "native-bridge", "step": 18, "units": 2, "priority": 60 },
-      { "id": "build", "step": 19, "units": 2, "priority": 80 },
-      { "id": "service-worker", "step": 20, "units": 2, "priority": 70, "dependsOn": ["build"] },
-      { "id": "browser-matrix", "step": 21, "units": 9, "priority": 100 },
-      { "id": "production-guard", "step": 22, "units": 3, "priority": 75 },
-      { "id": "production-smoke", "step": 23, "units": 2, "priority": 65 },
-      { "id": "cutover-contract", "step": 24, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
-      { "id": "bundle-budget", "step": 25, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
-      { "id": "storybook-tests", "step": 26, "units": 4, "priority": 85 },
-      { "id": "storybook-build", "step": 27, "units": 2, "priority": 55 }
+      { "id": "interface-laws", "step": 8, "units": 1, "priority": 20 },
+      { "id": "content", "step": 9, "units": 1, "priority": 10 },
+      { "id": "content-tests", "step": 10, "units": 1, "priority": 20 },
+      { "id": "harness-integrity", "step": 11, "units": 1, "priority": 20 },
+      { "id": "harness-fitness", "step": 12, "units": 1, "priority": 10 },
+      { "id": "progressive-context", "step": 13, "units": 1, "priority": 20 },
+      { "id": "context-budget", "step": 14, "units": 1, "priority": 20 },
+      { "id": "harness-policy", "step": 15, "units": 1, "priority": 10 },
+      { "id": "harness-tests", "step": 16, "units": 1, "priority": 20 },
+      { "id": "agent-battery", "step": 17, "units": 1, "priority": 20 },
+      { "id": "typecheck", "step": 18, "units": 1, "priority": 20 },
+      { "id": "native-bridge", "step": 19, "units": 2, "priority": 60 },
+      { "id": "build", "step": 20, "units": 2, "priority": 80 },
+      { "id": "service-worker", "step": 21, "units": 2, "priority": 70, "dependsOn": ["build"] },
+      { "id": "browser-matrix", "step": 22, "units": 9, "priority": 100 },
+      { "id": "production-guard", "step": 23, "units": 3, "priority": 75 },
+      { "id": "production-smoke", "step": 24, "units": 2, "priority": 65 },
+      { "id": "cutover-contract", "step": 25, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
+      { "id": "bundle-budget", "step": 26, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
+      { "id": "storybook-tests", "step": 27, "units": 4, "priority": 85 },
+      { "id": "storybook-build", "step": 28, "units": 2, "priority": 55 }
     ]
   },
   "fullGate": [
@@ -490,6 +494,11 @@
       "cwd": "frontend",
       "command": "npm run check:style-policy",
       "ciEvidence": "npm run check:style-policy"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:interface-laws",
+      "ciEvidence": "npm run check:interface-laws"
     },
     {
       "cwd": "frontend",

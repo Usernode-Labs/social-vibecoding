@@ -38,6 +38,12 @@
       "tier": "element",
       "module": "@/components/ui/accordion.tsx",
       "export": "Accordion",
+      "exports": [
+        "Accordion",
+        "AccordionContent",
+        "AccordionItem",
+        "AccordionTrigger"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -82,6 +88,20 @@
       "tier": "element",
       "module": "@/components/ui/alert-dialog.tsx",
       "export": "AlertDialog",
+      "exports": [
+        "AlertDialog",
+        "AlertDialogAction",
+        "AlertDialogCancel",
+        "AlertDialogContent",
+        "AlertDialogDescription",
+        "AlertDialogFooter",
+        "AlertDialogHeader",
+        "AlertDialogMedia",
+        "AlertDialogOverlay",
+        "AlertDialogPortal",
+        "AlertDialogTitle",
+        "AlertDialogTrigger"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -128,6 +148,13 @@
       "tier": "element",
       "module": "@/components/ui/alert.tsx",
       "export": "Alert",
+      "exports": [
+        "Alert",
+        "AlertAction",
+        "AlertDescription",
+        "AlertTitle",
+        "AlertValue"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -178,6 +205,17 @@
       "tier": "element",
       "module": "@/components/ui/attachment.tsx",
       "export": "Attachment",
+      "exports": [
+        "Attachment",
+        "AttachmentAction",
+        "AttachmentActions",
+        "AttachmentContent",
+        "AttachmentDescription",
+        "AttachmentGroup",
+        "AttachmentMedia",
+        "AttachmentTitle",
+        "AttachmentTrigger"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -228,6 +266,14 @@
       "tier": "element",
       "module": "@/components/ui/avatar.tsx",
       "export": "Avatar",
+      "exports": [
+        "Avatar",
+        "AvatarBadge",
+        "AvatarFallback",
+        "AvatarGroup",
+        "AvatarGroupCount",
+        "AvatarImage"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -276,6 +322,10 @@
       "tier": "element",
       "module": "@/components/ui/badge.tsx",
       "export": "Badge",
+      "exports": [
+        "Badge",
+        "badgeVariants"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -322,6 +372,12 @@
       "tier": "element",
       "module": "@/components/ui/bubble.tsx",
       "export": "Bubble",
+      "exports": [
+        "Bubble",
+        "BubbleContent",
+        "BubbleGroup",
+        "BubbleReactions"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -370,6 +426,12 @@
       "tier": "element",
       "module": "@/components/ui/button-group.tsx",
       "export": "ButtonGroup",
+      "exports": [
+        "ButtonGroup",
+        "ButtonGroupSeparator",
+        "ButtonGroupText",
+        "buttonGroupVariants"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -416,6 +478,10 @@
       "tier": "element",
       "module": "@/components/ui/button.tsx",
       "export": "Button",
+      "exports": [
+        "Button",
+        "buttonVariants"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -470,6 +536,15 @@
       "tier": "element",
       "module": "@/components/ui/card.tsx",
       "export": "Card",
+      "exports": [
+        "Card",
+        "CardAction",
+        "CardContent",
+        "CardDescription",
+        "CardFooter",
+        "CardHeader",
+        "CardTitle"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -516,6 +591,14 @@
       "tier": "element",
       "module": "@/components/ui/empty.tsx",
       "export": "Empty",
+      "exports": [
+        "Empty",
+        "EmptyContent",
+        "EmptyDescription",
+        "EmptyHeader",
+        "EmptyMedia",
+        "EmptyTitle"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -560,6 +643,18 @@
       "tier": "element",
       "module": "@/components/ui/field.tsx",
       "export": "Field",
+      "exports": [
+        "Field",
+        "FieldContent",
+        "FieldDescription",
+        "FieldError",
+        "FieldGroup",
+        "FieldLabel",
+        "FieldLegend",
+        "FieldSeparator",
+        "FieldSet",
+        "FieldTitle"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -610,6 +705,14 @@
       "tier": "element",
       "module": "@/components/ui/input-group.tsx",
       "export": "InputGroup",
+      "exports": [
+        "InputGroup",
+        "InputGroupAddon",
+        "InputGroupButton",
+        "InputGroupInput",
+        "InputGroupText",
+        "InputGroupTextarea"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -656,6 +759,9 @@
       "tier": "element",
       "module": "@/components/ui/input.tsx",
       "export": "Input",
+      "exports": [
+        "Input"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -706,6 +812,9 @@
       "tier": "element",
       "module": "@/components/ui/label.tsx",
       "export": "Label",
+      "exports": [
+        "Label"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -750,6 +859,12 @@
       "tier": "element",
       "module": "@/components/ui/marker.tsx",
       "export": "Marker",
+      "exports": [
+        "Marker",
+        "MarkerContent",
+        "MarkerIcon",
+        "markerVariants"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -796,6 +911,17 @@
       "tier": "element",
       "module": "@/components/ui/message-scroller.tsx",
       "export": "MessageScroller",
+      "exports": [
+        "MessageScroller",
+        "MessageScrollerButton",
+        "MessageScrollerContent",
+        "MessageScrollerItem",
+        "MessageScrollerProvider",
+        "MessageScrollerViewport",
+        "useMessageScroller",
+        "useMessageScrollerScrollable",
+        "useMessageScrollerVisibility"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -840,6 +966,14 @@
       "tier": "element",
       "module": "@/components/ui/message.tsx",
       "export": "Message",
+      "exports": [
+        "Message",
+        "MessageAvatar",
+        "MessageContent",
+        "MessageFooter",
+        "MessageGroup",
+        "MessageHeader"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -888,6 +1022,18 @@
       "tier": "element",
       "module": "@/components/ui/select.tsx",
       "export": "Select",
+      "exports": [
+        "Select",
+        "SelectContent",
+        "SelectGroup",
+        "SelectItem",
+        "SelectLabel",
+        "SelectScrollDownButton",
+        "SelectScrollUpButton",
+        "SelectSeparator",
+        "SelectTrigger",
+        "SelectValue"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -934,6 +1080,9 @@
       "tier": "element",
       "module": "@/components/ui/separator.tsx",
       "export": "Separator",
+      "exports": [
+        "Separator"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -978,6 +1127,16 @@
       "tier": "element",
       "module": "@/components/ui/sheet.tsx",
       "export": "Sheet",
+      "exports": [
+        "Sheet",
+        "SheetClose",
+        "SheetContent",
+        "SheetDescription",
+        "SheetFooter",
+        "SheetHeader",
+        "SheetTitle",
+        "SheetTrigger"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -1024,6 +1183,32 @@
       "tier": "element",
       "module": "@/components/ui/sidebar.tsx",
       "export": "Sidebar",
+      "exports": [
+        "Sidebar",
+        "SidebarContent",
+        "SidebarFooter",
+        "SidebarGroup",
+        "SidebarGroupAction",
+        "SidebarGroupContent",
+        "SidebarGroupLabel",
+        "SidebarHeader",
+        "SidebarInput",
+        "SidebarInset",
+        "SidebarMenu",
+        "SidebarMenuAction",
+        "SidebarMenuBadge",
+        "SidebarMenuButton",
+        "SidebarMenuItem",
+        "SidebarMenuSkeleton",
+        "SidebarMenuSub",
+        "SidebarMenuSubButton",
+        "SidebarMenuSubItem",
+        "SidebarProvider",
+        "SidebarRail",
+        "SidebarSeparator",
+        "SidebarTrigger",
+        "useSidebar"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -1070,6 +1255,9 @@
       "tier": "element",
       "module": "@/components/ui/skeleton.tsx",
       "export": "Skeleton",
+      "exports": [
+        "Skeleton"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -1114,6 +1302,9 @@
       "tier": "element",
       "module": "@/components/ui/switch.tsx",
       "export": "Switch",
+      "exports": [
+        "Switch"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -1164,6 +1355,13 @@
       "tier": "element",
       "module": "@/components/ui/tabs.tsx",
       "export": "Tabs",
+      "exports": [
+        "Tabs",
+        "TabsContent",
+        "TabsList",
+        "TabsTrigger",
+        "tabsListVariants"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -1210,6 +1408,9 @@
       "tier": "element",
       "module": "@/components/ui/textarea.tsx",
       "export": "Textarea",
+      "exports": [
+        "Textarea"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -1258,6 +1459,10 @@
       "tier": "element",
       "module": "@/components/ui/toggle-group.tsx",
       "export": "ToggleGroup",
+      "exports": [
+        "ToggleGroup",
+        "ToggleGroupItem"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -1306,6 +1511,10 @@
       "tier": "element",
       "module": "@/components/ui/toggle.tsx",
       "export": "Toggle",
+      "exports": [
+        "Toggle",
+        "toggleVariants"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -1358,6 +1567,12 @@
       "tier": "element",
       "module": "@/components/ui/tooltip.tsx",
       "export": "Tooltip",
+      "exports": [
+        "Tooltip",
+        "TooltipContent",
+        "TooltipProvider",
+        "TooltipTrigger"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -1404,6 +1619,9 @@
       "tier": "element",
       "module": "@/components/action-link.tsx",
       "export": "ActionLink",
+      "exports": [
+        "ActionLink"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -1452,6 +1670,9 @@
       "tier": "block",
       "module": "@/components/stream-row.tsx",
       "export": "StreamRow",
+      "exports": [
+        "StreamRow"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -1518,6 +1739,9 @@
       "tier": "element",
       "module": "@/components/platform-icon.tsx",
       "export": "PlatformIcon",
+      "exports": [
+        "PlatformIcon"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "registry",
@@ -1566,6 +1790,9 @@
       "tier": "block",
       "module": "@/components/theme-switcher.tsx",
       "export": "ThemeSwitcherView",
+      "exports": [
+        "ThemeSwitcherView"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "registry",
@@ -1612,6 +1839,9 @@
       "tier": "element",
       "module": "@/features/apps/app-identity.tsx",
       "export": "AppIdentity",
+      "exports": [
+        "AppIdentity"
+      ],
       "owner": "frontend-platform",
       "maturity": "stable",
       "distribution": "shell-internal",
@@ -1688,6 +1918,9 @@
       "tier": "element",
       "module": "@/components/status-dot.tsx",
       "export": "StatusDot",
+      "exports": [
+        "StatusDot"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -1808,6 +2041,9 @@
       "tier": "block",
       "module": "@/components/top-bar.tsx",
       "export": "TopBar",
+      "exports": [
+        "TopBar"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -1898,6 +2134,9 @@
       "tier": "block",
       "module": "@/components/platform-navigation.tsx",
       "export": "PlatformNavigation",
+      "exports": [
+        "PlatformNavigation"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -1996,6 +2235,9 @@
       "tier": "block",
       "module": "@/features/apps/home-app-shortcut.tsx",
       "export": "HomeAppShortcut",
+      "exports": [
+        "HomeAppShortcut"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2081,6 +2323,9 @@
       "tier": "block",
       "module": "@/features/apps/explore-app-card.tsx",
       "export": "ExploreAppCard",
+      "exports": [
+        "ExploreAppCard"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2165,6 +2410,9 @@
       "tier": "block",
       "module": "@/features/apps/focused-app-frame.tsx",
       "export": "FocusedAppFrame",
+      "exports": [
+        "FocusedAppFrame"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2252,6 +2500,9 @@
       "tier": "block",
       "module": "@/features/apps/hosted-app-stage.tsx",
       "export": "HostedAppStage",
+      "exports": [
+        "HostedAppStage"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2328,6 +2579,9 @@
       "tier": "block",
       "module": "@/features/account/native-device-summary.tsx",
       "export": "NativeDeviceSummary",
+      "exports": [
+        "NativeDeviceSummary"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2374,6 +2628,9 @@
       "tier": "feature",
       "module": "@/features/platform/node-status.tsx",
       "export": "NodeStatusContent",
+      "exports": [
+        "NodeStatusContent"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2418,6 +2675,9 @@
       "tier": "block",
       "module": "@/features/apps/app-visibility-settings.tsx",
       "export": "AppVisibilitySettings",
+      "exports": [
+        "AppVisibilitySettings"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2468,6 +2728,9 @@
       "tier": "block",
       "module": "@/features/apps/app-share-sheet.tsx",
       "export": "AppShareSheet",
+      "exports": [
+        "AppShareSheet"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2512,6 +2775,9 @@
       "tier": "feature",
       "module": "@/features/community/challenges.tsx",
       "export": "ChallengeFeed",
+      "exports": [
+        "ChallengeFeed"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2560,6 +2826,9 @@
       "tier": "feature",
       "module": "@/features/community/challenge-detail.tsx",
       "export": "ChallengeDetailContent",
+      "exports": [
+        "ChallengeDetailContent"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2610,6 +2879,9 @@
       "tier": "block",
       "module": "@/features/dev/dev-conversation.tsx",
       "export": "DevConversation",
+      "exports": [
+        "DevConversation"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2671,6 +2943,9 @@
       "tier": "block",
       "module": "@/features/dev/dev-budget-status.tsx",
       "export": "DevBudgetStatusView",
+      "exports": [
+        "DevBudgetStatusView"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2721,6 +2996,9 @@
       "tier": "block",
       "module": "@/features/dev/dev-saved-drafts.tsx",
       "export": "DevSavedDraftsView",
+      "exports": [
+        "DevSavedDraftsView"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2765,6 +3043,9 @@
       "tier": "feature",
       "module": "@/features/dev/dev-board.tsx",
       "export": "DevBoard",
+      "exports": [
+        "DevBoard"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2830,6 +3111,9 @@
       "tier": "block",
       "module": "@/features/dev/dev-vote-controls.tsx",
       "export": "DevVoteControls",
+      "exports": [
+        "DevVoteControls"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2878,6 +3162,9 @@
       "tier": "feature",
       "module": "@/features/dev/github-issues.tsx",
       "export": "GitHubIssues",
+      "exports": [
+        "GitHubIssues"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2924,6 +3211,9 @@
       "tier": "feature",
       "module": "@/features/dev/github-issue-detail.tsx",
       "export": "GitHubIssueDetailContent",
+      "exports": [
+        "GitHubIssueDetailContent"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -2986,6 +3276,9 @@
       "tier": "block",
       "module": "@/features/dev/topic-attribute-controls.tsx",
       "export": "TopicAttributeControls",
+      "exports": [
+        "TopicAttributeControls"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3034,6 +3327,9 @@
       "tier": "feature",
       "module": "@/features/dev/shared-session.tsx",
       "export": "SharedSessionDetailContent",
+      "exports": [
+        "SharedSessionDetailContent"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3078,6 +3374,9 @@
       "tier": "block",
       "module": "@/features/dev/group-discussion.tsx",
       "export": "GroupDiscussionTranscript",
+      "exports": [
+        "GroupDiscussionTranscript"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3145,6 +3444,9 @@
       "tier": "block",
       "module": "@/features/dev/group-discussion.tsx",
       "export": "GroupDiscussionComposer",
+      "exports": [
+        "GroupDiscussionComposer"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3193,6 +3495,9 @@
       "tier": "feature",
       "module": "@/features/admin/admin-overview.tsx",
       "export": "AdminOperationsOverview",
+      "exports": [
+        "AdminOperationsOverview"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3239,6 +3544,9 @@
       "tier": "feature",
       "module": "@/features/admin/admin-users.tsx",
       "export": "AdminUsersList",
+      "exports": [
+        "AdminUsersList"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3296,6 +3604,9 @@
       "tier": "feature",
       "module": "@/features/admin/activation-codes.tsx",
       "export": "ActivationCodesList",
+      "exports": [
+        "ActivationCodesList"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3346,6 +3657,9 @@
       "tier": "feature",
       "module": "@/features/admin/spend-limits.tsx",
       "export": "SpendLimitsSummary",
+      "exports": [
+        "SpendLimitsSummary"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3388,6 +3702,9 @@
       "tier": "feature",
       "module": "@/features/admin/admin-features.tsx",
       "export": "SubmittedFeaturesList",
+      "exports": [
+        "SubmittedFeaturesList"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3432,6 +3749,9 @@
       "tier": "feature",
       "module": "@/features/admin/merge-debug.tsx",
       "export": "MergeRunList",
+      "exports": [
+        "MergeRunList"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3476,6 +3796,9 @@
       "tier": "block",
       "module": "@/features/dev/session-spec-viewer.tsx",
       "export": "SpecDocument",
+      "exports": [
+        "SpecDocument"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3520,6 +3843,9 @@
       "tier": "block",
       "module": "@/features/dev/session-spec-viewer.tsx",
       "export": "SpecSharingControls",
+      "exports": [
+        "SpecSharingControls"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3566,6 +3892,9 @@
       "tier": "block",
       "module": "@/features/dev/dev-build-timeline.tsx",
       "export": "DevBuildTimeline",
+      "exports": [
+        "DevBuildTimeline"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3608,6 +3937,9 @@
       "tier": "block",
       "module": "@/features/admin/gallery-visual-evidence.tsx",
       "export": "GalleryVisualEvidence",
+      "exports": [
+        "GalleryVisualEvidence"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3662,6 +3994,9 @@
       "tier": "block",
       "module": "@/features/dev/topic-discussion-transcript.tsx",
       "export": "TopicDiscussionContent",
+      "exports": [
+        "TopicDiscussionContent"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3722,6 +4057,9 @@
       "tier": "feature",
       "module": "@/features/notifications/notifications.tsx",
       "export": "NotificationsContent",
+      "exports": [
+        "NotificationsContent"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3815,6 +4153,9 @@
       "tier": "block",
       "module": "@/components/dev-console-panel.tsx",
       "export": "DevConsolePanel",
+      "exports": [
+        "DevConsolePanel"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3861,6 +4202,9 @@
       "tier": "block",
       "module": "@/features/account/native-app-settings.tsx",
       "export": "NativeAppSettings",
+      "exports": [
+        "NativeAppSettings"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3907,6 +4251,9 @@
       "tier": "block",
       "module": "@/features/account/wallet-link-settings.tsx",
       "export": "WalletLinkSettingsView",
+      "exports": [
+        "WalletLinkSettingsView"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -3959,6 +4306,9 @@
       "tier": "block",
       "module": "@/features/account/password-settings.tsx",
       "export": "PasswordSettings",
+      "exports": [
+        "PasswordSettings"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",
@@ -4005,6 +4355,9 @@
       "tier": "feature",
       "module": "@/features/auth/wallet-access.tsx",
       "export": "WalletAccessView",
+      "exports": [
+        "WalletAccessView"
+      ],
       "owner": "frontend-platform",
       "maturity": "candidate",
       "distribution": "shell-internal",

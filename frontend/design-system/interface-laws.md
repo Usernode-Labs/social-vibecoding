@@ -1,13 +1,9 @@
 # Usernode shell interface laws
 
-These laws govern platform-owned shell components and route compositions. They
-were ratified on 2026-07-31 by the shell design-system approver against source
+These laws govern the platform shell. They were ratified on 2026-07-31 against
 `a09473723e988cf309ac12974e45efd8eb749528` and review rubric SHA-256
 `3f972005def9e2a580373ae2f14a8836f0f92e78c661bd846107976654ac7a5c`.
-The ratification receipt is Buzz event
-`a2c93c597a7966312e4edc4798e3d6edea6b7cf66d6e4a442e6ced99fc06dffc`.
-The advising cards live in Claude Design project
-`570c265a-98ed-459d-a142-0a04ae458d58`.
+Receipt: `a2c93c597a7966312e4edc4798e3d6edea6b7cf66d6e4a442e6ced99fc06dffc`.
 
 The Quiet Money amendment was owner-locked on 2026-08-03 in Buzz event
 `9626471f2ea679b95328ba4cfa940dcee1bf59cdfbce6dfab5ffa44decabb76c`
@@ -16,37 +12,30 @@ against implementation baseline
 
 ## 1. Surface role
 
-Every view has one major sheet. Content is printed on that sheet rather than
-stacked into ceremonial Cards. Choose a surface by user job and direction.
+Every view has one Paper. Print content instead of stacking ceremonial Cards.
 
 | Role | Separation | Do not |
 |---|---|---|
-| Canvas | Darker page field; nothing prints directly on it | Treat it as a content container |
-| Sheet | One major semantic surface per view | Nest Sheets or use Card as the ceremonial spelling of `div` |
-| Print | Type, alignment, divider, whitespace, and at most one quiet wash | Wrap rows, metrics, or sections in subordinate Cards |
-| Recess | Named input, tab-track, code, or terminal well without elevation | Invent a caller-owned inset recipe or present it as another page |
-| Overlay | Transient layer; the mobile bottom navigation is the one persistent tenant | Add a second persistent overlay role |
+| Canvas | Darker page field; nothing prints on it | Treat it as content |
+| Paper | One major semantic surface | Nest Paper or spell `div` as Card |
+| Print | Type, alignment, divider, whitespace, one quiet wash | Wrap rows, metrics, or sections in Cards |
+| Recess | Named input, tab-track, code, or terminal well | Invent caller-owned inset recipes |
+| Overlay | Transient; bottom navigation is the persistent tenant | Add another persistent Overlay |
 
-Status colour is ink, not another sheet. A Metric is one registered
-definition-list group, never one Card per value. Stream rows use divider,
-whitespace, and quiet interaction tones rather than a Card per row.
+`Sheet` remains the drawer primitive; it is not a surface role. Owned wrappers
+use `data-surface="canvas|paper|print|recess|status|overlay"`; absent means Print.
+Recess also names `data-recess-role="input|tab-track|code|terminal"`. The only
+persistent Overlay is `data-slot="platform-bottom-navigation"`.
 
-The caller rule governs direction at a governed component invocation:
+Status colour is ink, not Paper. Metric is one definition-list group, never a
+Card per value. Stream rows use dividers, whitespace, and quiet interaction.
 
-- removing fill, border, ring, radius, or shadow is legal;
-- external layout remains caller-owned;
-- adding or intensifying a persistent fill, border, ring, or shadow is illegal;
-- ephemeral `hover`, `focus`, `focus-visible`, `focus-within`, and `active`
-  modifiers, including group and peer forms, are exempt; attribute and
-  accessibility states are evaluated normally;
-- a bare radius without fill, border, ring, or shadow does not paint a surface;
-- any caller surface recipe repeated more than once is promoted to a named
-  component variant.
-
-This rule applies only to caller-supplied treatment. A primitive's owned root,
-variant, anatomy, and internal state remain the component's responsibility. A
-governed component invoking another governed component is still a caller
-boundary.
+At a governed invocation, callers may remove treatment and own external layout;
+they may not add persistent fill, border, ring, or shadow. `hover`, `focus`,
+`focus-visible`, `focus-within`, `active`, and their group/peer forms are
+ephemeral exceptions; attribute states are not. Bare radius paints nothing.
+Repeated caller recipes become named variants. Primitive roots, variants,
+anatomy, and internal state stay owned; governed-to-governed calls still count.
 
 ## 2. Radius and spacing
 
