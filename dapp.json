@@ -364,6 +364,18 @@
       "expectText": "Revise the spec"
     },
     {
+      "name": "Estimator-off run under 10 min shows NO side text (#906)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900810",
+      "expectSelector": ".dc-cc-attached-summary .dc-cc-cohort",
+      "expectText": "Claude is working"
+    },
+    {
+      "name": "Estimator-off run past 10 min still shows the long-run note (#906)",
+      "path": "/#app/usernode-2d5619/dev/sessions/900811",
+      "expectSelector": ".dc-cc-attached-summary .dc-cc-cohort",
+      "expectText": "running longer than most"
+    },
+    {
       "name": "Visible own session card offers the \"Share chat\" opt-in",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectSelector": "[data-transcript-chip]"

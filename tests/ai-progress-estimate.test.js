@@ -330,6 +330,71 @@ test('mobile (#286): staging seeds an active running line with an estimate', () 
   assert.match(fnBody, /Claude Code is running/, 'fixture must seed an active running line');
 });
 
+test('#906: staging seeds estimator-OFF runs at both side-slot states', () => {
+  // The fixture above always carries metadata.estimate, so it only ever
+  // exercises the estimator-ON path. The estimator-OFF path — an empty slot
+  // below ten minutes, the long-run note above it — is what nearly every
+  // user sees, and neither state is reachable on demand without seeding.
+  const migrate = read('src/db/migrate.js');
+  assert.match(migrate, /await seedStagingCcCohortRuns\(pool, config\);/,
+    'the cohort fixture must actually be invoked from runMigrations');
+  const fnStart = migrate.indexOf('async function seedStagingCcCohortRuns');
+  assert.ok(fnStart !== -1, 'seedStagingCcCohortRuns must exist');
+  const fnBody = migrate.slice(fnStart, migrate.indexOf('async function', fnStart + 1));
+  assert.match(fnBody, /USERNODE_ENV !== 'staging'/, 'fixture must be staging-gated');
+  assert.match(fnBody, /\[staging fixture\]/, 'seeded rows must carry the staging prefix');
+  assert.match(fnBody, /Claude Code is running/, 'fixture must seed active running lines');
+  assert.match(fnBody, /SELECT id FROM chat_sessions WHERE app_id = \$1 AND branch_name = \$2/,
+    'fixture must be idempotent on its branch names');
+  assert.ok(!/estimate:\s*\{/.test(fnBody),
+    'the cohort fixture must NOT seed estimate metadata — that is the point');
+  // The two elapsed ages that straddle the ten-minute threshold.
+  assert.match(fnBody, /minutesAgo: 5\b/, 'one run must sit below ten minutes');
+  assert.match(fnBody, /minutesAgo: 12\b/, 'one run must sit above ten minutes');
+  // The dev-chat route embeds the session id, so the ids must be FIXED or the
+  // dapp.json tests below would break on every staging rebuild.
+  assert.match(fnBody, /id: 900810\b/);
+  assert.match(fnBody, /id: 900811\b/);
+  // An assistant reply is load-bearing: without one, the boot-time
+  // unanswered-turn sweep appends a breadcrumb system row that is NEWER than
+  // the running line and therefore steals the client's `_active` flag — the
+  // fixture then renders as a finished run with no side slot at all.
+  assert.match(fnBody, /role: 'assistant'/,
+    'each fixture run needs an assistant reply or the unanswered sweep breaks it');
+
+  // The fixture rows are only useful if the routes are checks-gated.
+  const tests = require('../dapp.json').tests || [];
+  for (const id of [900810, 900811]) {
+    const t = tests.find((x) => x.path.includes(`/sessions/${id}`));
+    assert.ok(t, `dapp.json must declare a test for the ${id} fixture route`);
+    assert.equal(t.expectSelector, '.dc-cc-attached-summary .dc-cc-cohort',
+      `${id}: the test must assert the side slot actually renders`);
+  }
+  assert.match(
+    tests.find((x) => x.path.includes('/sessions/900811')).expectText,
+    /running longer than most/,
+    'the past-ten-minutes route must assert the long-run note is still there'
+  );
+});
+
+test('#906: /status reports the cohort fixtures as busy in staging only', () => {
+  // `_active` — and therefore the side slot itself — is applied by the client
+  // only when /status says busy, and busy comes from in-memory worker
+  // registries a DB seed cannot reach. This is data/state gating (same code
+  // path, same payload shape, seeded rows only) and a strict no-op in
+  // production.
+  const sessions = read('src/routes/sessions.js');
+  assert.match(sessions, /if \(process\.env\.USERNODE_ENV !== 'staging'\) return null;/,
+    'the fixture-busy lookup must be staging-gated');
+  assert.match(sessions, /branch_name LIKE 'staging-fixture\/cc-cohort-%'/,
+    'it must match only the seeded cohort fixture branches');
+  assert.match(sessions, /if \(fixtures && fixtures\.has\(sessionId\)\) busy = true;/,
+    'a seeded fixture session must report busy so the row renders live');
+  // It must never be able to mask a genuinely idle non-fixture session.
+  assert.match(sessions, /let busy = activeWorkers\.has\(sessionId\) \|\| worker\.isInFlight\(sessionId\);/,
+    'the real worker registries must still be the primary source');
+});
+
 // ── 4. Reliability for long runs (#323) ─────────────────────────────────
 //
 // The estimator must keep producing guesses for the whole life of a long

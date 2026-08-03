@@ -77,21 +77,28 @@ function formatCountdown(targetMs, nowMs) {
   return ' · ~' + formatElapsed(rounded) + ' left';
 }
 
-// Population context for a running turn (#892), derived from the measured
+// Long-run context for a running turn (#892), derived from the measured
 // distribution of 880 real coding runs: p50 190s, p90 1029s, p99 2233s
 // (22% run past 10 minutes, longest observed 6330s). Deliberately a
 // statement about the POPULATION, not a prediction about this run, so it
-// can never be individually wrong — it complements the countdown rather
-// than replacing it, and it is the only time context a user without the
-// estimator toggle gets at all.
+// can never be individually wrong.
+//
+// #906: SILENT BELOW TEN MINUTES. The first bucket used to read "most runs
+// finish in 2–10 min", which is a range standing where a time should have
+// been — it said nothing about your run, never changed, and (because it
+// rendered from second zero) was the only thing most users ever saw in this
+// slot. It is removed rather than replaced: when there is no real estimate,
+// the honest readout is nothing at all. What survives is the part a
+// countdown genuinely cannot express — that this run has already outlasted
+// most of them.
 //
 // Monotonic by construction: it depends only on elapsed, which increases.
-// These three thresholds share RUN_LENGTH_PRIORS_SNAPSHOT (in
+// These two thresholds share RUN_LENGTH_PRIORS_SNAPSHOT (in
 // src/services/llm.js) as their refresh anchor — re-check them whenever the
 // priors table is refreshed.
 function runCohortHint(elapsedMs) {
   var ms = Number(elapsedMs) || 0;
-  if (ms < 600000) return 'most runs finish in 2–10 min';
+  if (ms < 600000) return '';
   if (ms < 1800000) return 'running longer than most — about 1 in 5 runs do';
   return 'this is a long one — some runs go 30 min+';
 }
