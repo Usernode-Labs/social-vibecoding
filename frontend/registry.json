@@ -34,9 +34,9 @@
       "name": "theme-switcher",
       "type": "registry:component",
       "title": "Theme Switcher",
-      "description": "Shell Light, Dark, and System preference selector using the official ToggleGroup and canonical theme persistence adapter.",
+      "description": "Shell Light, Dark, and System preference selector using the owned elevated ToggleGroup selection contract and canonical theme persistence adapter.",
       "author": "Usernode Labs",
-      "registryDependencies": ["toggle-group"],
+      "registryDependencies": ["toggle"],
       "dependencies": ["lucide-react"],
       "files": [
         {
@@ -48,6 +48,11 @@
           "path": "@/components/platform-icon.tsx",
           "type": "registry:component",
           "target": "@components/platform-icon.tsx"
+        },
+        {
+          "path": "@/components/ui/toggle-group.tsx",
+          "type": "registry:ui",
+          "target": "@components/ui/toggle-group.tsx"
         },
         {
           "path": "@/lib/theme.ts",

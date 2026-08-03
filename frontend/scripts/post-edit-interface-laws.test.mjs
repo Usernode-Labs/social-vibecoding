@@ -12,6 +12,7 @@ import {
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const repoRoot = path.resolve(frontendRoot, "..")
 const themeSwitcher = path.join(frontendRoot, "@", "components", "theme-switcher.tsx")
+const acceptedWarningFixture = path.join(frontendRoot, "@", "features", "account", "settings.tsx")
 
 test("Codex apply_patch input selects governed files and ignores stories", () => {
   const files = governedFilesFromHookInput({
@@ -44,7 +45,7 @@ test("per-edit response injects warning-first context for the editing agent", ()
   const response = reviewHookInput({
     cwd: repoRoot,
     tool_name: "Edit",
-    tool_input: { file_path: themeSwitcher },
+    tool_input: { file_path: acceptedWarningFixture },
   })
   assert.equal(response?.hookSpecificOutput?.hookEventName, "PostToolUse")
   assert.match(response?.hookSpecificOutput?.additionalContext || "", /Interface law per-edit scan checked 1 governed file/)

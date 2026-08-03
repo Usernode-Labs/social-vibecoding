@@ -78,6 +78,21 @@
         "evidence": "ActionLink internal, external, primary, outline, and disabled Storybook states plus the source-derived navigation ledger."
       }
     },
+    "metric": {
+      "maturity": "candidate",
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The definition-list Metric receives one label, one value, and optional numeric presentation from its caller. It owns no fetching, formatting, domain terminology, or collection layout."
+      },
+      "accessibility": {
+        "contract": [
+          "Metric renders exactly one semantic term and description pair for use inside a definition list.",
+          "Numeric values use tabular numerals without changing their spoken value.",
+          "The caller owns the surrounding definition list and its accessible section context."
+        ],
+        "evidence": "Metric Default, Numeric, and LongValue Storybook states plus the styled Storybook accessibility gate."
+      }
+    },
     "stream-row": {
       "maturity": "candidate",
       "dataBoundary": {

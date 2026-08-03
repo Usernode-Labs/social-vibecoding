@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
+import { expect, within } from "storybook/test"
 
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
@@ -17,6 +18,18 @@ export const Default: Story = {
 
 export const Segmented: Story = {
   render: () => <ToggleGroup aria-label="Theme" defaultValue={["system"]} spacing={0} variant="outline"><ToggleGroupItem value="light">Light</ToggleGroupItem><ToggleGroupItem value="dark">Dark</ToggleGroupItem><ToggleGroupItem value="system">System</ToggleGroupItem></ToggleGroup>,
+}
+
+export const ElevatedSelected: Story = {
+  render: () => <ToggleGroup aria-label="Theme" defaultValue={["system"]} selectionVariant="elevated" size="sm" spacing={1}><ToggleGroupItem value="light">Light</ToggleGroupItem><ToggleGroupItem value="dark">Dark</ToggleGroupItem><ToggleGroupItem value="system">System</ToggleGroupItem></ToggleGroup>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const group = canvas.getByRole("group", { name: "Theme" })
+    const selected = canvas.getByRole("button", { name: "System" })
+    await expect(group).toHaveAttribute("data-surface", "recess")
+    await expect(selected).toHaveAttribute("aria-pressed", "true")
+    await expect(selected).toHaveAttribute("data-selection-variant", "elevated")
+  },
 }
 
 export const Vertical: Story = {

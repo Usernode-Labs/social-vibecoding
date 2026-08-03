@@ -1469,6 +1469,7 @@
       "variants": [
         "Default",
         "Segmented",
+        "ElevatedSelected",
         "Vertical",
         "Disabled"
       ],
@@ -1500,6 +1501,7 @@
         "states": [
           "Default",
           "Segmented",
+          "ElevatedSelected",
           "Vertical",
           "Disabled"
         ]
@@ -1661,6 +1663,55 @@
           "InternalPrimary",
           "Disabled",
           "External"
+        ]
+      }
+    },
+    {
+      "id": "metric",
+      "name": "Metric",
+      "tier": "element",
+      "module": "@/components/metric.tsx",
+      "export": "Metric",
+      "exports": [
+        "Metric"
+      ],
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "Default",
+        "Numeric",
+        "LongValue"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Metric renders exactly one semantic term and description pair for use inside a definition list.",
+          "Numeric values use tabular numerals without changing their spoken value.",
+          "The caller owns the surrounding definition list and its accessible section context."
+        ],
+        "evidence": "Metric Default, Numeric, and LongValue Storybook states plus the styled Storybook accessibility gate."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "The definition-list Metric receives one label, one value, and optional numeric presentation from its caller. It owns no fetching, formatting, domain terminology, or collection layout."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "evidence": {
+        "story": "@/components/metric.stories.tsx",
+        "states": [
+          "Default",
+          "Numeric",
+          "LongValue"
         ]
       }
     },

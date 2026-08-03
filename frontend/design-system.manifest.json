@@ -26,6 +26,21 @@
       }
     },
     {
+      "id": "metric",
+      "name": "Metric",
+      "tier": "element",
+      "module": "@/components/metric.tsx",
+      "export": "Metric",
+      "story": {
+        "module": "@/components/metric.stories.tsx",
+        "states": [
+          "Default",
+          "Numeric",
+          "LongValue"
+        ]
+      }
+    },
+    {
       "id": "stream-row",
       "name": "StreamRow",
       "tier": "block",

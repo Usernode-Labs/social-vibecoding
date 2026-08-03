@@ -2,6 +2,7 @@ import { CircleAlert, RadioTower, Server, TriangleAlert } from "lucide-react"
 import { useEffect, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import { Metric } from "@/components/metric"
 import { TopBar } from "@/components/top-bar"
 import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -38,10 +39,6 @@ function NodeSnapshot({ node }: { node: NodeStatusSnapshot | null | undefined })
 function ExplorerSnapshot({ explorer }: { explorer: ExplorerStatusSnapshot | null | undefined }) {
   if (!explorer) return <Card><CardHeader><CardTitle>Explorer</CardTitle><CardDescription>Explorer data unavailable</CardDescription></CardHeader></Card>
   return <Card><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-2"><PlatformIcon icon={RadioTower} /><div><CardTitle>Explorer</CardTitle><CardDescription>{explorer.host || "Explorer endpoint"}</CardDescription></div></div><StatusDot subject="Explorer" {...servicePresentationStatus(explorer.status)} /></div></CardHeader><CardContent className="space-y-4"><dl className="grid gap-3 text-base sm:grid-cols-2 sm:text-sm"><Metric label="Chain" value={explorer.chainId || "Not reported"} /><Metric label="Latency" value={explorer.latencyMs == null ? "Not reported" : `${explorer.latencyMs}ms`} numeric /><Metric label="Connected once" value={explorer.hasBeenOk ? "Yes" : "Not yet"} /></dl>{explorer.error ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Explorer unavailable</AlertTitle><AlertDescription><span>The explorer did not respond.</span><span className="mt-1 block text-muted-foreground">Technical detail: {explorer.error}</span></AlertDescription></Alert> : null}</CardContent></Card>
-}
-
-function Metric({ label, value, numeric = false }: { label: string; value: string; numeric?: boolean }) {
-  return <div><dt className="text-muted-foreground">{label}</dt><dd className={numeric ? "mt-1 font-medium tabular-nums" : "mt-1 font-medium"}>{value}</dd></div>
 }
 
 function servicePresentation(value: unknown): { detail?: string; state: KnownServiceLifecycleState | string } {
