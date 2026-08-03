@@ -24,6 +24,9 @@ const {
   summarizeCcProgress,
   ccPhaseLabel,
   runCohortHint,
+  BASELINE_PRIORS,
+  baselineFinishSeconds,
+  baselineCountdownText,
 } = require('../public/js/cc-progress-summary.js');
 
 // ── 1a. formatElapsed unit tests ────────────────────────────────────────
@@ -149,17 +152,30 @@ test('formatCountdown (#891): a fixed anchor decrements as time passes', () => {
 // p99 2233s). A statement about the distribution, never a prediction about
 // this run, so it cannot be individually wrong.
 
-test('runCohortHint: the three thresholds render the three measured strings', () => {
-  assert.equal(runCohortHint(0), 'most runs finish in 2–10 min');
-  assert.equal(runCohortHint(599_999), 'most runs finish in 2–10 min');
+// #906 RETIRED THE FIRST BUCKET. "most runs finish in 2–10 min" was a range
+// standing where a time should have been, and it rendered from second zero
+// of every run — so for anyone without the experimental estimator it was the
+// ONLY time statement they ever got, which is exactly what issue #906
+// reported. The baseline countdown now owns that slot; the cohort hint is
+// reduced to genuine long-run context.
+test('runCohortHint (#906): silent under ten minutes, long-run context above', () => {
+  assert.equal(runCohortHint(0), '');
+  assert.equal(runCohortHint(599_999), '');
   assert.equal(runCohortHint(600_000), 'running longer than most — about 1 in 5 runs do');
   assert.equal(runCohortHint(1_799_999), 'running longer than most — about 1 in 5 runs do');
   assert.equal(runCohortHint(1_800_000), 'this is a long one — some runs go 30 min+');
   assert.equal(runCohortHint(9_999_999), 'this is a long one — some runs go 30 min+');
 });
 
+test('runCohortHint (#906): the retired range string is gone from the helper', () => {
+  for (let ms = 0; ms <= 7_200_000; ms += 5_000) {
+    assert.doesNotMatch(runCohortHint(ms), /most runs finish/,
+      `the retired range copy came back at ${ms}ms`);
+  }
+});
+
 test('runCohortHint: non-decreasing in severity as elapsed grows', () => {
-  const rank = (s) => (s.startsWith('most') ? 0 : s.startsWith('running') ? 1 : 2);
+  const rank = (s) => (s === '' ? 0 : s.startsWith('running') ? 1 : 2);
   let prev = -1;
   for (let ms = 0; ms <= 3_600_000; ms += 15_000) {
     const r = rank(runCohortHint(ms));
@@ -168,10 +184,124 @@ test('runCohortHint: non-decreasing in severity as elapsed grows', () => {
   }
 });
 
-test('runCohortHint: garbage input falls back to the first bucket', () => {
-  assert.equal(runCohortHint(undefined), 'most runs finish in 2–10 min');
-  assert.equal(runCohortHint(NaN), 'most runs finish in 2–10 min');
-  assert.equal(runCohortHint(-5000), 'most runs finish in 2–10 min');
+test('runCohortHint: garbage input falls back to the silent first bucket', () => {
+  assert.equal(runCohortHint(undefined), '');
+  assert.equal(runCohortHint(NaN), '');
+  assert.equal(runCohortHint(-5000), '');
+});
+
+// ── 1a-quater. The always-present baseline countdown (#906) ─────────────
+//
+// The concrete ETA used to exist only on the opt-in AI-estimator path, and
+// even there not before the estimator's first 60s tick. These tests pin the
+// contract that replaces it: for a live, non-terminal run there is ALWAYS a
+// time, it never runs backwards, and it is worded exactly like the AI
+// countdown it alternates with.
+
+test('baselineFinishSeconds: the ladder walks the measured rungs', () => {
+  // 190 (population median) → +207 (2-5m p50) → +400 (5-10m) → +369, +369
+  // (10-20m) → +450 (20m+), each extension looked up by the ANCHOR being
+  // extended rather than by raw elapsed.
+  assert.equal(baselineFinishSeconds(0), 190);
+  assert.equal(baselineFinishSeconds(159_000), 190);
+  assert.equal(baselineFinishSeconds(160_000), 397);
+  assert.equal(baselineFinishSeconds(366_000), 397);
+  assert.equal(baselineFinishSeconds(367_000), 797);
+  assert.equal(baselineFinishSeconds(767_000), 1166);
+  assert.equal(baselineFinishSeconds(1_136_000), 1535);
+  assert.equal(baselineFinishSeconds(1_505_000), 1985);
+});
+
+test('baselineFinishSeconds: strictly positive and never runs backwards', () => {
+  let prev = 0;
+  for (let ms = 0; ms <= 6 * 3_600_000; ms += 7_000) {
+    const f = baselineFinishSeconds(ms);
+    assert.ok(f > 0, `projection must be positive at ${ms}ms`);
+    assert.ok(f >= prev, `projection moved backwards at ${ms}ms`);
+    // The projection must always stay ahead of the run itself, or the
+    // countdown would be describing a finish already in the past.
+    assert.ok(f * 1000 > ms - 60_000, `projection fell behind elapsed at ${ms}ms`);
+    prev = f;
+  }
+});
+
+test('baselineFinishSeconds: terminates on an absurdly long run', () => {
+  // A ten-hour run must still return promptly — the ladder walk is capped so
+  // a corrupted priors table can never spin the UI thread.
+  const f = baselineFinishSeconds(10 * 3_600_000);
+  assert.ok(Number.isFinite(f) && f > 36_000, 'a 10h run must still project ahead of itself');
+});
+
+test('baselineFinishSeconds: non-numeric input projects nothing', () => {
+  assert.equal(baselineFinishSeconds(undefined), 0);
+  assert.equal(baselineFinishSeconds(NaN), 0);
+  assert.equal(baselineFinishSeconds('nonsense'), 0);
+  assert.equal(baselineFinishSeconds(Infinity), 0);
+  // A negative elapsed is a clock skew, not garbage — treat it as a run that
+  // has only just started rather than blanking the readout.
+  assert.equal(baselineFinishSeconds(-5000), 190);
+});
+
+test('baselineCountdownText: a live run ALWAYS shows a time (#906)', () => {
+  for (let ms = 0; ms <= 6 * 3_600_000; ms += 5_000) {
+    const t = baselineCountdownText(ms, 'claude');
+    assert.notEqual(t, '', `no estimate rendered at ${ms}ms elapsed`);
+    assert.match(t, / · (~.* left|under a minute left)$/,
+      `unexpected countdown form at ${ms}ms: ${t}`);
+    assert.doesNotMatch(t, /-/, `negative countdown at ${ms}ms: ${t}`);
+  }
+});
+
+test('baselineCountdownText: honours the 30s floor and the rounding granularity', () => {
+  for (let ms = 0; ms <= 3_600_000; ms += 1_000) {
+    const t = baselineCountdownText(ms, 'claude');
+    const m = t.match(/~(\d+)m (\d\d)s left/);
+    if (!m) continue;
+    const totalS = Number(m[1]) * 60 + Number(m[2]);
+    assert.ok(totalS >= 60, `below the display floor at ${ms}ms: ${t}`);
+    // Above five minutes the readout snaps to whole minutes; below it, to
+    // 30s. Never a raw seconds value implying accuracy we do not have.
+    if (totalS > 300) assert.equal(m[2], '00', `seconds digit above 5 min at ${ms}ms: ${t}`);
+    else assert.ok(m[2] === '00' || m[2] === '30', `off-granularity at ${ms}ms: ${t}`);
+  }
+});
+
+test('baselineCountdownText: the phase marker overrides the ladder', () => {
+  // Committing and pushing take seconds; the ladder knows only about elapsed
+  // time and cannot see that, but the phase marker can.
+  assert.equal(baselineCountdownText(240_000, 'commit'), ' · under a minute left');
+  assert.equal(baselineCountdownText(240_000, 'push'), ' · under a minute left');
+  // Terminal phases: the run is over, so there is nothing left to count down
+  // and a lingering estimate beside "Finished" would be plainly wrong.
+  assert.equal(baselineCountdownText(240_000, 'done'), '');
+  assert.equal(baselineCountdownText(240_000, 'push_failed'), '');
+  assert.equal(baselineCountdownText(240_000, 'interrupted'), '');
+  // Everything else — including no marker at all — counts down normally.
+  assert.notEqual(baselineCountdownText(240_000, null), '');
+  assert.notEqual(baselineCountdownText(240_000, ''), '');
+  assert.notEqual(baselineCountdownText(240_000, 'refresh'), '');
+  assert.notEqual(baselineCountdownText(240_000, 'sync_merge'), '');
+});
+
+test('baselineCountdownText: never renders an open-ended or at-zero state', () => {
+  for (const ms of [0, 1, 189_000, 190_000, 191_000, 1_000_000, 20_000_000]) {
+    const t = baselineCountdownText(ms, 'claude');
+    assert.doesNotMatch(t, /due now/i, `at-zero freeze at ${ms}ms`);
+    assert.doesNotMatch(t, /taking longer/i, `open-ended overrun copy at ${ms}ms`);
+    assert.doesNotMatch(t, /0m 00s/, `zero countdown at ${ms}ms`);
+  }
+});
+
+test('BASELINE_PRIORS: the client mirror tiles the elapsed line', () => {
+  assert.ok(BASELINE_PRIORS && Array.isArray(BASELINE_PRIORS.buckets));
+  let prevMax = 0;
+  for (const b of BASELINE_PRIORS.buckets) {
+    assert.equal(b.minS, prevMax, `${b.key}: bucket bounds must be contiguous`);
+    assert.ok(b.p50RemainingS > 0, `${b.key}: the rung must be a positive step`);
+    prevMax = b.maxS == null ? Infinity : b.maxS;
+  }
+  assert.equal(prevMax, Infinity, 'the last bucket must be open-ended');
+  assert.ok(BASELINE_PRIORS.p50TotalS > 0, 'the ladder needs a positive first rung');
 });
 
 // ── 1b. summarizeCcProgress unit tests ──────────────────────────────────
@@ -201,6 +331,22 @@ test('summarizeCcProgress: maps phase markers to friendly labels', () => {
   assert.equal(summarizeCcProgress(['[commit]']).currentLabel, 'Committing');
   assert.equal(summarizeCcProgress(['[push]']).currentLabel, 'Pushing');
   assert.equal(summarizeCcProgress(['[sync_merge]']).currentLabel, 'Syncing with main');
+});
+
+test('summarizeCcProgress (#906): reports the machine-readable phase key', () => {
+  // phaseLabel is display copy; phaseKey is what the baseline countdown
+  // branches on, so it must survive a copy change to the label.
+  assert.equal(summarizeCcProgress(['[claude (mode build)]']).phaseKey, 'claude');
+  assert.equal(summarizeCcProgress(['[claude (resume abc123, mode scout)]']).phaseKey, 'claude');
+  assert.equal(summarizeCcProgress(['[commit]']).phaseKey, 'commit');
+  assert.equal(summarizeCcProgress(['[push]']).phaseKey, 'push');
+  assert.equal(summarizeCcProgress(['[push_failed]']).phaseKey, 'push_failed');
+  assert.equal(summarizeCcProgress(['[done]']).phaseKey, 'done');
+  // The LAST marker wins, matching phaseLabel.
+  assert.equal(summarizeCcProgress(['[refresh]', 'Editing a.js', '[commit]']).phaseKey, 'commit');
+  // Null until the run emits a marker at all.
+  assert.equal(summarizeCcProgress(['Reading a.js']).phaseKey, null);
+  assert.equal(summarizeCcProgress([]).phaseKey, null);
 });
 
 test('ccPhaseLabel: unknown phases fall back to the raw phase text', () => {
@@ -271,7 +417,7 @@ test('summarizeCcProgress: truncates long labels on a whitespace boundary', () =
 });
 
 test('summarizeCcProgress: empty / undefined / junk logs are safe', () => {
-  const bare = { currentLabel: '', steps: 0, phaseLabel: null };
+  const bare = { currentLabel: '', steps: 0, phaseLabel: null, phaseKey: null };
   assert.deepEqual(summarizeCcProgress([]), bare);
   assert.deepEqual(summarizeCcProgress(undefined), bare);
   assert.deepEqual(summarizeCcProgress(null), bare);
@@ -381,14 +527,62 @@ test('#892: the client mirrors the server guard and never renders a later target
     'the countdown must prefer the post-guard displayed value');
 });
 
-test('#892: the cohort hint is gated on the estimator being ON', () => {
-  assert.match(devChat, /data-cohort-gated="\$\{msg\._estimate \? '1' : '0'\}"/,
-    'the gate flag must follow whether an AI guess is present');
-  assert.match(devChat, /const gated = el\.dataset\.cohortGated === '1';/,
-    'the ticker must read the gate');
-  assert.match(devChat, /\(gated && elapsed < 600000\)/,
-    'with the estimator on, the hint waits until 10 minutes');
+test('#906: the render-time cohort gate is gone', () => {
+  // `data-cohort-gated` was computed once per render from msg._estimate —
+  // always falsy on first render — and neither _applyEstimate nor
+  // _patchProgressSummary ever refreshed it, so the range blurb kept
+  // rendering beside a live AI countdown for the rest of the run. The
+  // visibility rule now lives in the pure helper instead.
+  assert.doesNotMatch(devChat, /data-cohort-gated="/,
+    'the stale render-time gate attribute must not come back');
+  assert.doesNotMatch(devChat, /dataset\.cohortGated/,
+    'the ticker must not read a frozen gate');
   assert.match(devChat, /runCohortHint\(elapsed\)/, 'the hint text must come from the pure helper');
+});
+
+test('#906: the baseline countdown renders on every live coding run', () => {
+  assert.match(devChat, /class="dc-cc-eta"/, 'the baseline countdown needs its own span');
+  assert.match(devChat, /data-eta-since="\$\{etaSince\}"/,
+    'the span must carry the run start the ticker counts from');
+  assert.match(devChat, /data-eta-phase="\$\{escapeHtml\(summ\.phaseKey \|\| ''\)\}"/,
+    'the span must carry the machine-readable phase the countdown branches on');
+  assert.match(devChat, /const eta = details\.querySelector\('\.dc-cc-eta'\);/,
+    'the phase must be refreshed as lines stream in, not frozen at render');
+  assert.match(devChat, /el\.textContent = baselineCountdownText\(Math\.max\(0, now - since\), el\.dataset\.etaPhase\);/,
+    'the ticker must recompute the countdown from the pure helper');
+});
+
+test('#906: precedence is resolved at tick time from the sibling estimate span', () => {
+  // Deliberately NOT a flag stamped at render: the AI guess lands 60s+ into
+  // a run and is patched straight into .dc-cc-estimate, so a render-time
+  // flag is permanently wrong — the exact defect the cohort gate had.
+  const tickAt = devChat.indexOf('etas.forEach');
+  assert.ok(tickAt > 0, 'the baseline countdown must tick');
+  const body = devChat.slice(tickAt, tickAt + 500);
+  assert.match(body, /querySelector\('\.dc-cc-estimate'\)/,
+    'precedence must be read from the sibling AI-estimate span');
+  assert.match(body, /ai\.textContent\.trim\(\)/,
+    'precedence must depend on what that span actually holds right now');
+  assert.match(body, /el\.textContent = '';/,
+    'the baseline must yield when a better number exists');
+});
+
+test('#906: the retired range copy appears nowhere in the shipped client', () => {
+  const dir = path.join(__dirname, '..', 'public');
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (
+    e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]
+  ));
+  // The comments explaining what was retired legitimately quote it, so
+  // strip comments before scanning — what's left is what actually ships.
+  const stripComments = (s) => s
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
+  for (const file of walk(dir)) {
+    if (!/\.(js|css|html)$/.test(file)) continue;
+    assert.doesNotMatch(stripComments(fs.readFileSync(file, 'utf8')), /most runs finish/i,
+      `${path.relative(dir, file)} still renders the retired range message`);
+  }
 });
 
 test('#892: the deterministic stage label renders and is patched in place', () => {
@@ -403,9 +597,10 @@ test('#892: the summary row renders countdown and cohort in the specified order'
   const rowAt = devChat.indexOf('${currentSpan}${stepsSpan}');
   assert.ok(rowAt > 0, 'the coding-run summary row must exist');
   const row = devChat.slice(rowAt, rowAt + 200);
-  // current action · steps · phase · elapsed · countdown (inside estimate) · cohort
+  // current action · steps · phase · elapsed · baseline ETA (#906) ·
+  // AI countdown (inside estimate) · cohort
   const order = ['${currentSpan}', '${stepsSpan}', '${phaseSpan}', '${elapsedHtml}',
-    '${estimateSpan}', '${cohortSpan}'];
+    '${etaSpan}', '${estimateSpan}', '${cohortSpan}'];
   let at = -1;
   for (const token of order) {
     const next = row.indexOf(token);

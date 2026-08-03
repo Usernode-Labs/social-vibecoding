@@ -330,6 +330,32 @@ test('mobile (#286): staging seeds an active running line with an estimate', () 
   assert.match(fnBody, /Claude Code is running/, 'fixture must seed an active running line');
 });
 
+test('#906: staging seeds baseline-countdown runs with NO estimate metadata', () => {
+  // The always-present countdown is what a user WITHOUT the experimental
+  // toggle sees, so the fixture above — which deliberately carries
+  // metadata.estimate — always exercises the AI path instead. These runs
+  // must carry none, or the baseline is never the thing on screen.
+  const migrate = read('src/db/migrate.js');
+  assert.match(migrate, /await seedStagingCcBaselineEtaRun\(pool, config\);/,
+    'the baseline fixture must actually be invoked from runMigrations');
+  const fnStart = migrate.indexOf('async function seedStagingCcBaselineEtaRun');
+  assert.ok(fnStart !== -1, 'seedStagingCcBaselineEtaRun must exist');
+  const fnBody = migrate.slice(fnStart, migrate.indexOf('async function', fnStart + 1));
+  assert.match(fnBody, /USERNODE_ENV !== 'staging'/, 'fixture must be staging-gated');
+  assert.match(fnBody, /\[staging fixture\]/, 'seeded rows must carry the staging prefix');
+  assert.match(fnBody, /Claude Code is running/, 'fixture must seed active running lines');
+  assert.ok(!/estimate:\s*\{/.test(fnBody),
+    'the baseline fixture must NOT seed estimate metadata');
+  // Idempotent on the fixture branch names, like every other seed.
+  assert.match(fnBody, /SELECT id FROM chat_sessions WHERE app_id = \$1 AND branch_name = \$2/,
+    'fixture must be idempotent on its branch names');
+  // The three ladder rungs the fixture exists to demonstrate.
+  assert.match(fnBody, /staging-fixture\/cc-baseline-eta-mid/);
+  assert.match(fnBody, /staging-fixture\/cc-baseline-eta-long/);
+  assert.match(fnBody, /staging-fixture\/cc-baseline-eta-commit/);
+  assert.match(fnBody, /\[commit\]/, 'one run must end on the wrap-up phase marker');
+});
+
 // ── 4. Reliability for long runs (#323) ─────────────────────────────────
 //
 // The estimator must keep producing guesses for the whole life of a long
@@ -687,6 +713,46 @@ test('#892: RUN_LENGTH_PRIORS covers every elapsed bucket with sane quantiles', 
   assert.ok(pop.maxTotalS >= pop.p99TotalS, 'the observed max must not be below p99');
 });
 
+// #906: the client's baseline countdown walks a ladder built from the SAME
+// measured distribution the estimator prompt is fed. Two copies of one table
+// is a desync waiting to happen — a priors refresh that touches only the
+// server would silently leave every user without the experimental toggle
+// counting down against stale numbers, and nothing would surface it. This
+// pins them together, so a refresh either updates both or fails CI.
+test('#906: the client BASELINE_PRIORS mirror matches RUN_LENGTH_PRIORS', () => {
+  const client = require('../public/js/cc-progress-summary.js').BASELINE_PRIORS;
+  const server = llm.RUN_LENGTH_PRIORS;
+  assert.ok(client, 'the client mirror must be exported');
+  assert.equal(client.buckets.length, server.buckets.length,
+    'the mirror must cover every measured elapsed bucket');
+  for (let i = 0; i < server.buckets.length; i++) {
+    const s = server.buckets[i];
+    const c = client.buckets[i];
+    assert.equal(c.key, s.key, `bucket ${i}: key drifted`);
+    assert.equal(c.minS, s.minS, `${s.key}: lower bound drifted`);
+    assert.equal(c.maxS, s.maxS, `${s.key}: upper bound drifted`);
+    assert.equal(c.p50RemainingS, s.p50,
+      `${s.key}: the ladder rung must be the measured p50 remaining`);
+  }
+  assert.equal(client.p50TotalS, server.population.p50TotalS,
+    "the ladder's first rung must be the measured population median");
+});
+
+test('#906: the baseline countdown is deterministic — no server, no model', () => {
+  // The whole point is that it works with the estimator OFF, before the
+  // estimator's first tick, and for users who never opt in. Anything that
+  // reached for a network response or a stored guess would reintroduce the
+  // coverage gap issue #906 reported.
+  const src = read('public/js/cc-progress-summary.js');
+  const fnAt = src.indexOf('function baselineFinishSeconds');
+  const end = src.indexOf('function baselineCountdownText');
+  const body = src.slice(fnAt, end);
+  for (const banned of ['fetch(', 'XMLHttpRequest', 'Date.now', 'localStorage', 'await ']) {
+    assert.ok(!body.includes(banned),
+      `the baseline projection must stay pure — found ${banned}`);
+  }
+});
+
 test('#892: RUN_LENGTH_PRIORS_SNAPSHOT records where the numbers came from', () => {
   const snap = llm.RUN_LENGTH_PRIORS_SNAPSHOT;
   for (const k of ['generatedOn', 'windowStart', 'scoredTicks', 'runs', 'users']) {
@@ -1029,6 +1095,14 @@ test('#892: the countdown copy never says "due now" or "taking longer"', () => {
   // And the helper that owns the copy must produce the numeric form instead.
   const summary = require('../public/js/cc-progress-summary.js');
   assert.equal(summary.formatCountdown(0, 1_000_000), ' · under a minute left');
+  // #906: the baseline countdown shares that vocabulary — it must never
+  // reach for an open-ended state either, at any elapsed time.
+  for (let ms = 0; ms <= 4 * 3_600_000; ms += 30_000) {
+    const t = summary.baselineCountdownText(ms, 'claude');
+    assert.notEqual(t, '', `the baseline must always yield a time (${ms}ms)`);
+    assert.doesNotMatch(t, /due now|taking longer/i,
+      `the baseline must not render an open-ended state (${ms}ms)`);
+  }
 });
 
 // ── 3c. Completion-claim suppression ────────────────────────────────────
