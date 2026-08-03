@@ -2764,14 +2764,17 @@ const DevChat = {
         const since = parseInt(el.dataset.cohortSince, 10);
         if (!Number.isFinite(since)) return;
         const elapsed = Math.max(0, now - since);
-        // Visibility rule: with the estimator ON (data-cohort-gated=1) the
-        // hint only appears past 10 min, where it adds context the countdown
-        // alone cannot — before that the countdown is the time statement and
-        // a second one would just compete with it. With the estimator OFF it
-        // shows throughout: it is the only time context that user gets.
-        const gated = el.dataset.cohortGated === '1';
-        el.textContent = (gated && elapsed < 600000)
-          ? '' : ' \u00b7 ' + runCohortHint(elapsed);
+        // #906: resolved HERE, on every tick, from live state only. The
+        // retired `data-cohort-gated` flag was the second input to this
+        // decision and the frozen one — stamped at render from msg._estimate
+        // and never refreshed — which is why the range blurb kept rendering
+        // beside a live AI countdown for the rest of the run. Elapsed is the
+        // only input left, and runCohortHint owns the whole rule: '' below
+        // ten minutes (so the slot stays empty unless a real estimate fills
+        // it), long-run context above. An empty hint writes an empty span,
+        // never a dangling separator.
+        const hint = runCohortHint(elapsed);
+        el.textContent = hint ? ' \u00b7 ' + hint : '';
       });
     }
   },
@@ -3393,17 +3396,24 @@ const DevChat = {
           // beside it, this cannot be wrong — it is what the user has to
           // look at when the estimate is uncertain.
           const phaseSpan = `<span class="dc-cc-phase">${summ.phaseLabel ? `· ${escapeHtml(summ.phaseLabel)}` : ''}</span>`;
-          // #892: population context ("most runs finish in 2–10 min"). A
-          // statement about the measured distribution of 880 real runs, not
-          // a prediction about this one, so it can never be individually
-          // wrong. `data-cohort-gated` carries the visibility rule: with an
-          // AI guess present (estimator ON) it stays hidden until 10 min so
-          // it complements rather than competes with the countdown; with the
-          // estimator OFF it shows throughout as the only time context.
+          // #892: long-run context, from the measured distribution of 880
+          // real runs — a statement about the population, not a prediction
+          // about this one, so it can never be individually wrong.
+          //
+          // #906: NO VISIBILITY FLAG. This span used to carry
+          // `data-cohort-gated`, computed once here from msg._estimate to
+          // mean "an AI countdown owns the slot, stay quiet until 10 min".
+          // msg._estimate is necessarily falsy at first render — the first
+          // guess is a full 60s estimator tick away — and neither
+          // _applyEstimate nor _patchProgressSummary ever refreshed the
+          // attribute, so every run rendered gated="0" and the range blurb
+          // sat beside the live countdown for the whole run. The rule now
+          // lives entirely in runCohortHint, evaluated fresh on every tick
+          // from the one input that is actually live: elapsed time.
           const cohortSince = msg._active && msg.created_at
             ? new Date(msg.created_at).getTime() : NaN;
           const cohortSpan = Number.isFinite(cohortSince)
-            ? `<span class="dc-cc-cohort" data-cohort-since="${Math.min(cohortSince, Date.now())}" data-cohort-gated="${msg._estimate ? '1' : '0'}"></span>`
+            ? `<span class="dc-cc-cohort" data-cohort-since="${Math.min(cohortSince, Date.now())}"></span>`
             : '';
           // Experimental AI progress estimate: rendered unconditionally
           // (even empty) so _applyEstimate can patch it in place; only

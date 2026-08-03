@@ -47,6 +47,7 @@ async function migrate(config) {
   await seedStagingForkedChat(pool, config);
   await seedStagingCcProgressRun(pool, config);
   await seedStagingCcEstimateRun(pool, config);
+  await seedStagingCcCohortRuns(pool, config);
   await seedStagingPlatformIssueDrafts(pool, config);
   await seedStagingDemoAppCard(pool);
   await seedStagingLandingDirectory(pool);
@@ -2585,6 +2586,166 @@ async function seedStagingCcEstimateRun(pool, config) {
     owner: owner.username,
     sessionId,
   });
+}
+
+// #906: estimator-OFF side-slot fixture. The progress line's muted side slot
+// only renders on an ACTIVE coding-run row paired with a progress row, and
+// its two interesting states are ten and thirty minutes in — none of which a
+// reviewer can produce on demand. seedStagingCcEstimateRun above always
+// carries metadata.estimate, so it only ever exercises the estimator-ON path.
+// These two runs carry NO estimate metadata, which is what the overwhelming
+// majority of users see:
+//
+//   short  ~5 min elapsed  → the slot is EMPTY (this is the whole point of
+//                            #906: no range, no computed guess, nothing)
+//   long   ~12 min elapsed → "· running longer than most — about 1 in 5 runs
+//                            do", the one note that survives the change
+//
+// chat_sessions is staging:private, so this is invisible without seeding.
+// Idempotent on the fixture branch names; strict no-op in production.
+async function seedStagingCcCohortRuns(pool, config) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const { rows: appRows } = await pool.query(
+    'SELECT id FROM apps WHERE slug = $1',
+    [config.selfAppSlug]
+  );
+  const appId = appRows[0]?.id;
+  if (!appId) {
+    log.warn('db', 'Staging CC-cohort fixture skipped: self-app row missing', {
+      slug: config.selfAppSlug,
+    });
+    return;
+  }
+
+  const { rows: userRows } = await pool.query(
+    `SELECT id, username, is_admin
+       FROM users
+      ORDER BY is_admin DESC, id ASC
+      LIMIT 1`
+  );
+  if (!userRows.length) {
+    log.warn('db', 'Staging CC-cohort fixture skipped: no users');
+    return;
+  }
+  const owner = userRows[0];
+
+  const baseLog = [
+    '[refresh]',
+    '[claude (mode build)]',
+    '… Working out which file owns the progress readout',
+    'Reading public/js/cc-progress-summary.js',
+    '  ⎿ Read: 187 lines',
+    'Editing public/js/cc-progress-summary.js',
+    '  ⎿ Edit: ok',
+  ];
+
+  // FIXED ids (the 9008xx convention seedStagingRestartRecoveredPills uses):
+  // the dev-chat route embeds the session id, so a stable id is what lets the
+  // dapp.json tests and the TESTING block point at these screens across
+  // staging rebuilds.
+  const runs = [
+    {
+      id: 900810,
+      branch: 'staging-fixture/cc-cohort-short',
+      title: '[staging fixture] Estimator off, 5 minutes in — empty side slot',
+      minutesAgo: 5,
+      progressLog: baseLog,
+    },
+    {
+      id: 900811,
+      branch: 'staging-fixture/cc-cohort-long',
+      title: '[staging fixture] Estimator off, 12 minutes in — long-run note',
+      minutesAgo: 12,
+      progressLog: baseLog.concat([
+        '$ npm test',
+        '  ⎿ 3168 tests, 2858 passing',
+        'Editing tests/cc-progress-summary.test.js',
+        '  ⎿ Edit: ok',
+      ]),
+    },
+  ];
+
+  for (const run of runs) {
+    const { rows: existing } = await pool.query(
+      'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+      [appId, run.branch]
+    );
+    if (existing.length) continue;
+
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_title, status, created_at, last_activity_at)
+       VALUES
+         ($1, $2, $3, $4, $5, 'active',
+          NOW() - ($6::int * INTERVAL '1 minute'),
+          NOW() - ($6::int * INTERVAL '1 minute'))`,
+      [run.id, appId, owner.id, run.branch, run.title, run.minutesAgo + 1]
+    );
+    const sessionId = run.id;
+
+    // Same ordering contract as seedStagingCcEstimateRun: the dev-chat
+    // pairing pre-pass attaches the 'Claude Code progress' row to the nearest
+    // PRECEDING active running status, so insert status → progress with
+    // ascending timestamps and NO terminal row (or the running line will not
+    // stay `_active` and the whole row renders as finished). The RUNNING
+    // ROW's created_at is what the ticker measures elapsed from — not the
+    // session's — so its minutesAgo is what selects the cohort string.
+    // Deliberately no metadata.estimate anywhere: that is the fixture.
+    const messages = [
+      {
+        role: 'user',
+        content: '[staging fixture] Please tidy up the progress readout.',
+        metadata: {},
+        minutesAgo: run.minutesAgo + 1,
+      },
+      // An assistant reply is REQUIRED, not decoration: the boot-time
+      // unanswered-turn sweep (src/services/recovery-pills.js) appends an
+      // "I didn't get to reply to that" breadcrumb to any session whose user
+      // message never got one — and because that breadcrumb is a newer
+      // non-artefact system row, it would steal the `_active` flag from the
+      // running line and the fixture would render as a finished run.
+      {
+        role: 'assistant',
+        content: 'On it — starting a build run now.',
+        metadata: {},
+        minutesAgo: run.minutesAgo + 1,
+      },
+      {
+        role: 'system',
+        content: 'Spinning up coding agent (Claude Sonnet 5)...',
+        metadata: {},
+        minutesAgo: run.minutesAgo,
+      },
+      {
+        role: 'system',
+        content: 'Claude Code is running...',
+        metadata: {},
+        minutesAgo: run.minutesAgo,
+      },
+      {
+        role: 'system',
+        content: 'Claude Code progress',
+        metadata: { progressLog: run.progressLog },
+        minutesAgo: run.minutesAgo,
+      },
+    ];
+
+    for (const m of messages) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - ($5::int * INTERVAL '1 minute'))`,
+        [sessionId, m.role, m.content, JSON.stringify(m.metadata), m.minutesAgo]
+      );
+    }
+
+    log.info('db', 'Staging CC-cohort fixture seeded', {
+      appId,
+      owner: owner.username,
+      sessionId,
+      branch: run.branch,
+    });
+  }
 }
 
 // #699: platform-issue draft-card fixture. The "Suggested platform report"
