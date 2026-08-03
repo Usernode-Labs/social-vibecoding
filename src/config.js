@@ -205,6 +205,13 @@ function load() {
     githubAppId: process.env.GITHUB_APP_ID || '',
     githubPrivateKey: (process.env.GITHUB_PRIVATE_KEY || '').replace(/\\n/g, '\n'),
     anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
+    // #555: Anthropic ADMIN API key (`sk-ant-admin…`) — a different
+    // credential from the message key above, and used for exactly one
+    // read: GET /v1/organizations/cost_report, which backs the drawer's
+    // "Anthropic credits" row. Optional; unset degrades that row to an
+    // estimate derived from the platform's own spend ledgers. Never
+    // returned by any endpoint — see services/anthropic-credits.js.
+    anthropicAdminKey: process.env.ANTHROPIC_ADMIN_KEY || '',
     // Waitlist social-connect OAuth apps (two-stage waitlist survey).
     // Plain OAuth apps — unrelated to the GitHub App above (which is the
     // repo-hosting integration). Optional: without credentials the
@@ -442,6 +449,7 @@ function load() {
   }
   console.log(`  GITHUB_APP_ID=${config.githubAppId || '(not set)'}`);
   console.log(`  ANTHROPIC_API_KEY=${mask(config.anthropicApiKey)}`);
+  console.log(`  ANTHROPIC_ADMIN_KEY=${mask(config.anthropicAdminKey)}`);
   console.log(`  LOG_LEVEL=${config.logLevel}`);
   console.log(`  CLI_AUTH=${config.cliAuthEnabled ? config.cliAuthOrigin : '(disabled in staging)'}`);
   console.log(`  MAX_APPS=${config.maxApps}`);

@@ -8,6 +8,7 @@ const { clientIp } = require('../services/client-ip');
 const { drainGuard } = require('../services/lifecycle');
 const log = require('../services/logger');
 const limits = require('../services/limits');
+const anthropicCredits = require('../services/anthropic-credits');
 const dbExport = require('../services/db-export');
 const events = require('../services/events');
 const appRollover = require('../services/app-rollover');
@@ -26,6 +27,12 @@ const {
 // and race to zero. Now shared with the platform-variable writes in
 // routes/apps.js, which is why the number lives in one module.
 const { ADMIN_MUTATION_LOCK } = require('../services/advisory-locks');
+
+// Staging mock data (#555): ANTHROPIC_ADMIN_KEY is unset in staging and
+// the credit balance is a platform_settings row nobody will have recorded
+// there, so the "Anthropic credits" row would read "Not set up" in every
+// preview. See the ?demo=1 branch on GET /api/admin/anthropic-credits.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
 function adminRoutes(config) {
   const router = Router();
@@ -650,6 +657,103 @@ function adminRoutes(config) {
       });
     } catch (err) {
       log.error('admin', 'Update limits failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Anthropic credits (#555) ───────────────────────────────
+  //
+  // The organisation's remaining Anthropic credit, for the drawer's
+  // status pane. Anthropic publishes billed spend, never a balance, so
+  // the figure is derived from a balance an admin records here minus
+  // cost_report spend since that date — see services/anthropic-credits.js
+  // for the whole story. The two settings keys are intentionally absent
+  // until someone records them; absence is the "not configured" state.
+
+  // Router-level adminMiddleware only — NO requireAdminWrite. This is a
+  // pure read, and view-only admins are squarely part of its audience
+  // (same reasoning as /overview, /users, /codes, /limits above).
+  router.get('/api/admin/anthropic-credits', async (req, res) => {
+    // Staging mock data: read-only, obviously fake, no writes, strict
+    // no-op in production. Admin-gated already by the router.
+    if (IS_STAGING && req.query.demo === '1') {
+      return res.json({
+        configured: true,
+        balanceCents: 500000,
+        asOf: '2026-07-01',
+        spentCents: 371550,
+        remainingCents: 128450,
+        source: 'anthropic',
+        fetchedAt: new Date().toISOString(),
+        partial: false,
+        demo: true,
+      });
+    }
+    try {
+      res.json(await anthropicCredits.getCredits(pool, config));
+    } catch (err) {
+      // getCredits swallows its own failures, so reaching here means
+      // something unexpected — still don't 500 a status-pane read.
+      log.error('admin', 'Read anthropic credits failed', { message: err.message });
+      res.json({ configured: true, error: 'Internal server error' });
+    }
+  });
+
+  // Record the balance + the date it was correct. Full admins only —
+  // this is a mutation, so it chains requireAdminWrite like PUT /limits.
+  router.put('/api/admin/anthropic-credits', requireAdminWrite, async (req, res) => {
+    const { balanceCents, balanceDollars, asOf } = req.body || {};
+
+    let cents;
+    if (balanceCents !== undefined) {
+      cents = Number(balanceCents);
+    } else if (balanceDollars !== undefined) {
+      const d = Number(balanceDollars);
+      cents = Number.isFinite(d) ? Math.round(d * 100) : NaN;
+    } else {
+      return res.status(400).json({ error: 'balanceCents or balanceDollars is required' });
+    }
+    if (!Number.isFinite(cents) || cents < 0) {
+      return res.status(400).json({ error: 'Credit balance must be a non-negative amount' });
+    }
+    cents = Math.round(cents);
+
+    const day = String(asOf || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) {
+      return res.status(400).json({ error: 'asOf must be a date in YYYY-MM-DD form' });
+    }
+    const parsed = new Date(`${day}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== day) {
+      return res.status(400).json({ error: 'asOf is not a real calendar date' });
+    }
+    // A future as-of date would subtract spend from a window that hasn't
+    // happened yet and read as "full balance" forever.
+    if (parsed.getTime() > Date.now()) {
+      return res.status(400).json({ error: 'asOf cannot be in the future' });
+    }
+
+    try {
+      for (const [key, value] of [
+        [anthropicCredits.KEY_BALANCE, String(cents)],
+        [anthropicCredits.KEY_AS_OF, day],
+      ]) {
+        await pool.query(
+          `INSERT INTO platform_settings (key, value, updated_at, updated_by)
+           VALUES ($1, $2, NOW(), $3)
+           ON CONFLICT (key) DO UPDATE
+             SET value = EXCLUDED.value, updated_at = NOW(), updated_by = EXCLUDED.updated_by`,
+          [key, value, req.user.id]
+        );
+      }
+      // Drop the cached arithmetic so the recomputed figure below (and
+      // every drawer that opens next) reflects the new balance at once.
+      anthropicCredits.invalidate();
+      log.info('admin', 'Anthropic credit balance recorded', {
+        by: req.user.username, balanceCents: cents, asOf: day,
+      });
+      res.json(await anthropicCredits.getCredits(pool, config));
+    } catch (err) {
+      log.error('admin', 'Update anthropic credits failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
