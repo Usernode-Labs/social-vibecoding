@@ -50,15 +50,17 @@ function StageCase({
       data-theme-case={dark ? "dark" : "light"}
     >
       <SidebarProvider className="h-full min-h-0">
-        <ShellAttentionProvider count={0}>
-          <HostedAppStage
-            header={<TopBar action={<Button size="sm" type="button" variant="outline">Improve</Button>} title="RecipeBot" />}
-            staged={state === "staged"}
-            state={state === "staged" ? "ready" : state}
-          >
-            <StageContent state={state} />
-          </HostedAppStage>
-        </ShellAttentionProvider>
+        <div className="flex min-h-0 flex-1 flex-col bg-paper text-foreground" data-surface="paper">
+          <ShellAttentionProvider count={0}>
+            <HostedAppStage
+              header={<TopBar action={<Button size="sm" type="button" variant="outline">Improve</Button>} title="RecipeBot" />}
+              staged={state === "staged"}
+              state={state === "staged" ? "ready" : state}
+            >
+              <StageContent state={state} />
+            </HostedAppStage>
+          </ShellAttentionProvider>
+        </div>
       </SidebarProvider>
     </section>
   )
@@ -77,13 +79,27 @@ async function assertStageContract(canvasElement: HTMLElement, mobile: boolean, 
   const cases = canvasElement.querySelectorAll<HTMLElement>("[data-theme-case]")
   await expect(cases).toHaveLength(2)
   for (const themeCase of cases) {
+    const paper = themeCase.querySelector<HTMLElement>('[data-surface="paper"]')
     const stage = themeCase.querySelector<HTMLElement>('[data-slot="hosted-app-stage"]')
+    const header = themeCase.querySelector<HTMLElement>('[data-slot="top-bar"]')
     const card = themeCase.querySelector<HTMLElement>('[data-slot="app-stage-card"]')
+    await expect(paper).toBeTruthy()
     await expect(stage).toBeTruthy()
+    await expect(header).toBeTruthy()
     await expect(card).toBeTruthy()
-    const pageBackground = getComputedStyle(stage!).backgroundColor
+    await expect(themeCase.querySelectorAll('[data-surface="paper"]')).toHaveLength(1)
+    await expect(stage).toHaveAttribute("data-surface", "print")
+    await expect(paper!.contains(header!)).toBe(true)
+    await expect(paper!.contains(card!)).toBe(true)
+    const paperBackground = getComputedStyle(paper!).backgroundColor
+    const unpainted = document.createElement("div")
+    themeCase.append(unpainted)
+    const unpaintedBackground = getComputedStyle(unpainted).backgroundColor
+    unpainted.remove()
+    await expect(getComputedStyle(stage!).backgroundColor).toBe(unpaintedBackground)
+    await expect(getComputedStyle(header!).backgroundColor).toBe(unpaintedBackground)
     const cardStyle = getComputedStyle(card!)
-    await expect(pageBackground).not.toBe(cardStyle.backgroundColor)
+    await expect(paperBackground).not.toBe(cardStyle.backgroundColor)
     await expect(Number.parseFloat(cardStyle.borderTopLeftRadius)).toBeGreaterThan(0)
     await expect(Number.parseFloat(cardStyle.borderTopRightRadius)).toBeGreaterThan(0)
     if (mobile) {
@@ -98,7 +114,7 @@ async function assertStageContract(canvasElement: HTMLElement, mobile: boolean, 
       const label = themeCase.querySelector<HTMLElement>('[data-slot="app-stage-status"]')
       await expect(status).toHaveAttribute("data-status-tone", "info")
       await expect(label).toBeVisible()
-      await expect(getComputedStyle(status!).backgroundColor).not.toBe(pageBackground)
+      await expect(getComputedStyle(status!).backgroundColor).not.toBe(paperBackground)
     }
   }
 }

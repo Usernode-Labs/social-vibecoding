@@ -155,7 +155,7 @@ test("keeps one inset Paper on the shell Canvas", async ({ page }, testInfo) => 
   )).toBe(true)
 })
 
-test("keeps ordinary shell paint around a distinct hosted app card in both themes", async ({ page }) => {
+test("prints hosted app chrome and its distinct card on the shell Paper in both themes", async ({ page }) => {
   const shellReadyTimeout = 15_000
   await page.route("**/api/apps/recipebot", (route) => route.fulfill({ json: { app: stageApp } }))
   await page.route("**/api/iframe-token*", (route) => route.fulfill({ json: { token: "stage.header.signature" } }))
@@ -172,13 +172,34 @@ test("keeps ordinary shell paint around a distinct hosted app card in both theme
     await page.locator("html").evaluate((node, nextDark) => node.classList.toggle("dark", nextDark), dark)
     await expect(page.getByTestId("hosted-app")).toBeVisible({ timeout: shellReadyTimeout })
     expect(await page.locator('[data-slot="route-viewport"]').getAttribute("data-surface")).toBe("print")
+    const paper = page.locator('[data-slot="sidebar-inset"]')
+    const hostedStage = page.locator('[data-slot="hosted-app-stage"]')
+    const hostedHeader = hostedStage.locator('[data-slot="top-bar"]')
+    const hostedCard = hostedStage.locator('[data-slot="app-stage-card"]')
+    await expect(page.locator('[data-surface="paper"]')).toHaveCount(1)
+    await expect(hostedStage).toHaveAttribute("data-surface", "print")
+    await expect.poll(() => paper.evaluate((node) => ({
+      containsCard: node.contains(document.querySelector('[data-slot="app-stage-card"]')),
+      containsHeader: node.contains(document.querySelector('[data-slot="top-bar"]')),
+    }))).toEqual({ containsCard: true, containsHeader: true })
     const hostedNavigation = await visibleNavigationSurface(page)
     const hostedNavigationBackground = await hostedNavigation.evaluate((node) => getComputedStyle(node).backgroundColor)
-    const hostedPageBackground = await page.locator('[data-slot="sidebar-inset"]').evaluate((node) => getComputedStyle(node).backgroundColor)
-    const hostedCardBackground = await page.locator('[data-slot="app-stage-card"]').evaluate((node) => getComputedStyle(node).backgroundColor)
+    const hostedPageBackground = await paper.evaluate((node) => getComputedStyle(node).backgroundColor)
+    const hostedStageBackground = await hostedStage.evaluate((node) => getComputedStyle(node).backgroundColor)
+    const hostedHeaderBackground = await hostedHeader.evaluate((node) => getComputedStyle(node).backgroundColor)
+    const hostedCardBackground = await hostedCard.evaluate((node) => getComputedStyle(node).backgroundColor)
+    const unpaintedBackground = await hostedStage.evaluate((node) => {
+      const probe = document.createElement("div")
+      node.append(probe)
+      const background = getComputedStyle(probe).backgroundColor
+      probe.remove()
+      return background
+    })
 
     expect(hostedNavigationBackground).toBe(ordinaryNavigationBackground)
     expect(hostedPageBackground).toBe(ordinaryPageBackground)
+    expect(hostedStageBackground).toBe(unpaintedBackground)
+    expect(hostedHeaderBackground).toBe(unpaintedBackground)
     expect(hostedCardBackground).not.toBe(hostedPageBackground)
   }
 })

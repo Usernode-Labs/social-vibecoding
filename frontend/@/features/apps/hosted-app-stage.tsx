@@ -36,9 +36,10 @@ export function HostedAppStage({
 
   return (
     <div
-      className="isolate flex min-h-0 flex-1 flex-col bg-background text-foreground"
+      className="isolate flex min-h-0 flex-1 flex-col text-foreground"
       data-slot="hosted-app-stage"
       data-state={state}
+      data-surface="print"
       data-testid={testId}
     >
       {header}
