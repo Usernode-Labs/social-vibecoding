@@ -185,9 +185,12 @@ The same owner, foreground lifetime, and exact-process stop rule apply.
 Long-running repository commands are foreground-owned unless the table says
 otherwise. The canonical interface gate inventories these process families
 before admission, blocks any process already occupying a reserved gate port,
-and blocks unregistered Vite, Storybook, Playwright, or `node --test` processes
-older than three hours. It reports elapsed time, cumulative and current
-processor cost, listener, protocol, operating-system user, and logical owner.
+and blocks Vite, Storybook, Playwright, or `node --test` processes only when
+their measured processor cost is sustained. The explicit threshold is at least
+ten minutes at an eighty-per-cent lifetime average, or at least ten cumulative
+processor minutes while current use is eighty per cent or more. Age alone is
+never a violation. It reports elapsed time, cumulative, current, and lifetime-
+average processor cost, listener, protocol, operating-system user, and logical owner.
 It never kills an ambient process merely because it found one.
 
 | Port | Protocol | Owner | Expected lifetime | Start | Stop |

@@ -10,10 +10,14 @@ const SUSPICIOUS_COMMANDS = [
 ]
 
 export function elapsedTimeMs(value) {
-  const match = String(value).trim().match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+)$/)
+  const match = String(value).trim().match(/^(?:(\d+)-)?(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)$/)
   if (!match) return null
   const [, days = "0", hours = "0", minutes, seconds] = match
   return (((Number(days) * 24 + Number(hours)) * 60 + Number(minutes)) * 60 + Number(seconds)) * 1_000
+}
+
+export function processorTimeMs(value) {
+  return elapsedTimeMs(value)
 }
 
 export function parseProcessTable(output) {
@@ -27,6 +31,7 @@ export function parseProcessTable(output) {
       parentPid: Number(parentPid),
       ageMs: elapsedTimeMs(elapsed),
       cpuTime,
+      cpuTimeMs: processorTimeMs(cpuTime),
       cpuPercent: Number(cpuPercent),
       command,
     }]
@@ -79,6 +84,22 @@ function registeredServerFor(processRecord, ports, servers) {
     && new RegExp(server.commandPattern, "i").test(processRecord.command)) || null
 }
 
+function processCost(processRecord, authority) {
+  const averageCpuPercent = processRecord.ageMs > 0 && processRecord.cpuTimeMs !== null
+    ? Number((processRecord.cpuTimeMs / processRecord.ageMs * 100).toFixed(2))
+    : null
+  const matureAverage = processRecord.ageMs >= authority.minimumAgeMs
+    && averageCpuPercent !== null
+    && averageCpuPercent >= authority.averageCpuPercent
+  const expensiveNow = processRecord.cpuTimeMs >= authority.minimumCpuTimeMs
+    && processRecord.cpuPercent >= authority.currentCpuPercent
+  return {
+    averageCpuPercent,
+    sustained: matureAverage || expensiveNow,
+    trigger: matureAverage ? "lifetime-average" : expensiveNow ? "current-and-cumulative" : null,
+  }
+}
+
 export function evaluateGateProcessInventory({
   processOutput,
   listenerOutput,
@@ -99,11 +120,13 @@ export function evaluateGateProcessInventory({
     const reserved = reservations.filter((reservation) => ports.includes(reservation.port))
     const registration = registeredServerFor(processRecord, ports, registeredServers)
     const kind = commandKind(processRecord.command)
+    const cost = processCost(processRecord, lifecycle.sustainedCost)
     const relevant = kind || reserved.length || registration
     if (!relevant) continue
 
     const observation = {
       ...processRecord,
+      ...cost,
       ports,
       kind: kind || "listener",
       logicalOwner: registration?.owner || "unregistered",
@@ -131,13 +154,19 @@ export function evaluateGateProcessInventory({
         port: registration.port,
         message: `${registration.id} is not allowed during the canonical UI gate`,
       })
-    } else if (kind && processRecord.ageMs >= lifecycle.staleAfterMs && !registration) {
+    }
+    if (kind && cost.sustained) {
       violations.push({
-        reason: "stale-unowned-process",
+        reason: "sustained-process-cost",
         pid: processRecord.pid,
         kind,
         ageMs: processRecord.ageMs,
-        message: `unregistered ${kind} process ${processRecord.pid} is older than ${lifecycle.staleAfterMs}ms`,
+        cpuTimeMs: processRecord.cpuTimeMs,
+        cpuPercent: processRecord.cpuPercent,
+        averageCpuPercent: cost.averageCpuPercent,
+        trigger: cost.trigger,
+        owner: registration?.owner || "unregistered",
+        message: `${registration?.owner || "unregistered"} ${kind} process ${processRecord.pid} has sustained processor cost (${cost.averageCpuPercent}% lifetime average, ${processRecord.cpuPercent}% current, ${processRecord.cpuTimeMs}ms cumulative)`,
       })
     }
   }
@@ -172,7 +201,7 @@ export function evaluateGateProcessInventory({
 
   return {
     status: violations.length ? "failed" : "passed",
-    staleAfterMs: lifecycle.staleAfterMs,
+    sustainedCost: lifecycle.sustainedCost,
     reservations,
     registeredServers,
     observations,

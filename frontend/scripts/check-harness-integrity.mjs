@@ -127,8 +127,16 @@ if (processLifecycle?.provenance?.triggerEvent
   && !/^[a-f0-9]{64}$/.test(processLifecycle.provenance.triggerEvent)) {
   violations.push("processLifecycle.provenance.triggerEvent must be a Buzz event id")
 }
-if (!Number.isInteger(processLifecycle?.staleAfterMs) || processLifecycle.staleAfterMs < 60_000) {
-  violations.push("processLifecycle.staleAfterMs must be at least one minute")
+const sustainedCost = processLifecycle?.sustainedCost
+for (const field of ["minimumAgeMs", "minimumCpuTimeMs"]) {
+  if (!Number.isInteger(sustainedCost?.[field]) || sustainedCost[field] < 60_000) {
+    violations.push(`processLifecycle.sustainedCost.${field} must be at least one minute`)
+  }
+}
+for (const field of ["averageCpuPercent", "currentCpuPercent"]) {
+  if (typeof sustainedCost?.[field] !== "number" || sustainedCost[field] <= 0 || sustainedCost[field] > 100) {
+    violations.push(`processLifecycle.sustainedCost.${field} must be greater than zero and at most 100`)
+  }
 }
 if (!Number.isInteger(processLifecycle?.terminationGraceMs) || processLifecycle.terminationGraceMs < 1_000) {
   violations.push("processLifecycle.terminationGraceMs must be at least one second")

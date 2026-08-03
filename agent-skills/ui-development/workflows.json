@@ -428,11 +428,16 @@
   ],
   "processLifecycle": {
     "provenance": {
-      "triggerEvent": "55913340cdd84ec5edfd1d10798d5185ec09b7a86d54bd7387cb1294013ff124",
+      "triggerEvent": "f714671cb0abbd68ca7f5759411ead60a0abc6c9872a6f23221184005139afbc",
       "proof": "npm run test:harness and one clean exact-commit npm run check:ui",
       "owner": "lead-codex"
     },
-    "staleAfterMs": 10800000,
+    "sustainedCost": {
+      "minimumAgeMs": 600000,
+      "minimumCpuTimeMs": 600000,
+      "averageCpuPercent": 80,
+      "currentCpuPercent": 80
+    },
     "terminationGraceMs": 5000,
     "registeredServers": [
       {

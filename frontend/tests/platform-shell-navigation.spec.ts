@@ -86,6 +86,40 @@ async function visibleNavigationSurface(page: Page) {
     : page.locator('[data-slot="sidebar-wrapper"]')
 }
 
+async function firstVisiblePainterOutsideCard(page: Page) {
+  return page.locator('[data-slot="app-stage-boundary"]').evaluate((boundary) => {
+    const paper = boundary.closest<HTMLElement>('[data-surface="paper"]')
+    const card = boundary.querySelector<HTMLElement>('[data-slot="app-stage-card"]')
+    if (!paper || !card) return { painterSlot: null, pointOutsideCard: false, sampled: false }
+    const boundaryStyle = getComputedStyle(boundary)
+    if (Number.parseFloat(boundaryStyle.paddingLeft) <= 0) {
+      return { painterSlot: null, pointOutsideCard: false, sampled: false }
+    }
+    const probe = document.createElement("div")
+    boundary.append(probe)
+    const unpaintedBackground = getComputedStyle(probe).backgroundColor
+    probe.remove()
+    const rectangle = boundary.getBoundingClientRect()
+    const x = Math.floor(rectangle.left + 1)
+    const y = Math.floor(rectangle.top + rectangle.height / 2)
+    const hit = document.elementFromPoint(x, y)
+    let element = hit
+    while (element instanceof HTMLElement) {
+      const style = getComputedStyle(element)
+      if (style.backgroundImage !== "none" || style.backgroundColor !== unpaintedBackground) {
+        return {
+          painterSlot: element.dataset.surface || element.dataset.slot || element.tagName.toLowerCase(),
+          pointOutsideCard: !card.contains(hit),
+          sampled: true,
+        }
+      }
+      if (element === paper) break
+      element = element.parentElement
+    }
+    return { painterSlot: null, pointOutsideCard: !card.contains(hit), sampled: true }
+  })
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route("**/api/apps", (route) => route.fulfill({ json: apps }))
   await page.route("**/api/auth/me", (route) => route.fulfill({
@@ -201,6 +235,16 @@ test("prints hosted app chrome and its distinct card on the shell Paper in both 
     expect(hostedStageBackground).toBe(unpaintedBackground)
     expect(hostedHeaderBackground).toBe(unpaintedBackground)
     expect(hostedCardBackground).not.toBe(hostedPageBackground)
+    const visiblePaper = await firstVisiblePainterOutsideCard(page)
+    if (visiblePaper.sampled) {
+      expect(visiblePaper.pointOutsideCard).toBe(true)
+      expect(visiblePaper.painterSlot).toBe("paper")
+      const boundary = page.locator('[data-slot="app-stage-boundary"]')
+      await boundary.evaluate((node, canvasPaint) => { node.style.backgroundColor = canvasPaint }, hostedNavigationBackground)
+      expect((await firstVisiblePainterOutsideCard(page)).painterSlot).toBe("app-stage-boundary")
+      await boundary.evaluate((node) => { node.style.removeProperty("background-color") })
+      expect((await firstVisiblePainterOutsideCard(page)).painterSlot).toBe("paper")
+    }
   }
 })
 

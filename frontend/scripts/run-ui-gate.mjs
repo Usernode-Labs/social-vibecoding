@@ -298,7 +298,7 @@ async function main() {
 
   for (const observation of processPreflight.observations) {
     const ports = observation.ports.length ? `; ports ${observation.ports.join(", ")}` : ""
-    console.log(`UI gate process observation: ${observation.kind} pid ${observation.pid}, owner ${observation.logicalOwner}, age ${observation.ageMs}ms, CPU ${observation.cpuPercent}% / ${observation.cpuTime}${ports}`)
+    console.log(`UI gate process observation: ${observation.kind} pid ${observation.pid}, owner ${observation.logicalOwner}, age ${observation.ageMs}ms, CPU ${observation.cpuPercent}% current / ${observation.averageCpuPercent}% lifetime / ${observation.cpuTime} cumulative${ports}`)
   }
   if (processPreflight.violations.length) {
     for (const violation of processPreflight.violations) console.error(`UI gate process violation: ${violation.message}`)

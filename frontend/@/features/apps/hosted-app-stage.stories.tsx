@@ -75,6 +75,25 @@ function StageMatrix({ mobile, state }: { mobile: boolean; state: MatrixState })
   )
 }
 
+function visiblePainterAt({
+  paper,
+  point,
+  unpaintedBackground,
+}: {
+  paper: HTMLElement
+  point: { x: number; y: number }
+  unpaintedBackground: string
+}) {
+  let element = document.elementFromPoint(point.x, point.y)
+  while (element instanceof HTMLElement) {
+    const style = getComputedStyle(element)
+    if (style.backgroundImage !== "none" || style.backgroundColor !== unpaintedBackground) return element
+    if (element === paper) break
+    element = element.parentElement
+  }
+  return null
+}
+
 async function assertStageContract(canvasElement: HTMLElement, mobile: boolean, staged: boolean) {
   const cases = canvasElement.querySelectorAll<HTMLElement>("[data-theme-case]")
   await expect(cases).toHaveLength(2)
@@ -82,10 +101,12 @@ async function assertStageContract(canvasElement: HTMLElement, mobile: boolean, 
     const paper = themeCase.querySelector<HTMLElement>('[data-surface="paper"]')
     const stage = themeCase.querySelector<HTMLElement>('[data-slot="hosted-app-stage"]')
     const header = themeCase.querySelector<HTMLElement>('[data-slot="top-bar"]')
+    const boundary = themeCase.querySelector<HTMLElement>('[data-slot="app-stage-boundary"]')
     const card = themeCase.querySelector<HTMLElement>('[data-slot="app-stage-card"]')
     await expect(paper).toBeTruthy()
     await expect(stage).toBeTruthy()
     await expect(header).toBeTruthy()
+    await expect(boundary).toBeTruthy()
     await expect(card).toBeTruthy()
     await expect(themeCase.querySelectorAll('[data-surface="paper"]')).toHaveLength(1)
     await expect(stage).toHaveAttribute("data-surface", "print")
@@ -98,6 +119,16 @@ async function assertStageContract(canvasElement: HTMLElement, mobile: boolean, 
     unpainted.remove()
     await expect(getComputedStyle(stage!).backgroundColor).toBe(unpaintedBackground)
     await expect(getComputedStyle(header!).backgroundColor).toBe(unpaintedBackground)
+    const boundaryStyle = getComputedStyle(boundary!)
+    if (!mobile && !staged && Number.parseFloat(boundaryStyle.paddingLeft) > 0) {
+      const boundaryRect = boundary!.getBoundingClientRect()
+      const point = {
+        x: Math.floor(boundaryRect.left + 1),
+        y: Math.floor(boundaryRect.top + boundaryRect.height / 2),
+      }
+      await expect(card!.contains(document.elementFromPoint(point.x, point.y))).toBe(false)
+      await expect(visiblePainterAt({ paper: paper!, point, unpaintedBackground })).toBe(paper)
+    }
     const cardStyle = getComputedStyle(card!)
     await expect(paperBackground).not.toBe(cardStyle.backgroundColor)
     await expect(Number.parseFloat(cardStyle.borderTopLeftRadius)).toBeGreaterThan(0)

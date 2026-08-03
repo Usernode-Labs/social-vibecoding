@@ -1,5 +1,9 @@
 import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
 import { EventEmitter } from "node:events"
+import { once } from "node:events"
+import path from "node:path"
+import { fileURLToPath } from "node:url"
 import test from "node:test"
 
 import {
@@ -131,4 +135,42 @@ test("a stage tracked after an interrupt is stopped immediately", () => {
   const control = supervisor.track({ pid: 81 }, { label: "late-stage", timeoutMs: 20_000 })
   assert.deepEqual(sent, [[-81, "SIGTERM"]])
   assert.deepEqual(control.finish(), { type: "signal", signal: "SIGTERM" })
+})
+
+test("a real operating-system interrupt tears down the owned process group", {
+  skip: process.platform === "win32" ? "POSIX process-group proof" : false,
+  timeout: 10_000,
+}, async () => {
+  const fixture = path.join(path.dirname(fileURLToPath(import.meta.url)), "fixtures/ui-gate-interrupt-fixture.mjs")
+  const helper = spawn(process.execPath, [fixture], {
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  let workloadPid = null
+  try {
+    const workloadLine = await new Promise((resolve, reject) => {
+      let output = ""
+      helper.stdout.setEncoding("utf8")
+      helper.stdout.on("data", (chunk) => {
+        output += chunk
+        const newline = output.indexOf("\n")
+        if (newline !== -1) resolve(output.slice(0, newline))
+      })
+      helper.once("error", reject)
+      helper.once("exit", (code) => reject(new Error(`interrupt fixture exited before readiness with ${code}`)))
+    })
+    workloadPid = Number(workloadLine)
+    assert.equal(Number.isInteger(workloadPid), true)
+    process.kill(helper.pid, "SIGINT")
+    const [exitCode, signal] = await once(helper, "exit")
+    assert.equal(exitCode, 130)
+    assert.equal(signal, null)
+    assert.throws(() => process.kill(workloadPid, 0), { code: "ESRCH" })
+  } finally {
+    if (helper.exitCode === null && helper.signalCode === null) helper.kill("SIGKILL")
+    if (Number.isInteger(workloadPid)) {
+      try { process.kill(-workloadPid, "SIGKILL") } catch (cause) {
+        if (cause?.code !== "ESRCH") throw cause
+      }
+    }
+  }
 })

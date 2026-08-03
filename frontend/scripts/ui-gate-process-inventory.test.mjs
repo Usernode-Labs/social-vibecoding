@@ -6,10 +6,16 @@ import {
   evaluateGateProcessInventory,
   parseListeningPorts,
   parseProcessTable,
+  processorTimeMs,
 } from "./ui-gate-process-inventory.mjs"
 
 const lifecycle = {
-  staleAfterMs: 10_800_000,
+  sustainedCost: {
+    minimumAgeMs: 600_000,
+    minimumCpuTimeMs: 600_000,
+    averageCpuPercent: 80,
+    currentCpuPercent: 80,
+  },
   registeredServers: [{
     id: "manual-production-review",
     port: 5175,
@@ -23,12 +29,15 @@ const lifecycle = {
 
 test("parses BSD elapsed time, process cost, and listening ports", () => {
   assert.equal(elapsedTimeMs("01-08:19:42"), 116_382_000)
+  assert.equal(processorTimeMs("3:10.15"), 190_150)
+  assert.equal(processorTimeMs("1:03:10.15"), 3_790_150)
   assert.deepEqual(parseProcessTable("lukasimrich 26713 26699 01-08:19:42 3:10.15 0.0 node node_modules/.bin/vite --port 5175\n"), [{
     user: "lukasimrich",
     pid: 26713,
     parentPid: 26699,
     ageMs: 116_382_000,
     cpuTime: "3:10.15",
+    cpuTimeMs: 190_150,
     cpuPercent: 0,
     command: "node node_modules/.bin/vite --port 5175",
   }])
@@ -51,10 +60,11 @@ test("records the old registered HTTPS review server without blocking the gate",
   assert.deepEqual(result.observations[0].ports, [5175])
   assert.equal(result.observations[0].protocol, "https")
   assert.equal(result.observations[0].logicalOwner, "implementation-lead")
+  assert.equal(result.observations[0].averageCpuPercent, 0.16)
   assert.equal(result.violations.length, 0)
 })
 
-test("blocks stale unowned test and Storybook processes", () => {
+test("blocks sustained-cost test and Storybook processes", () => {
   const result = evaluateGateProcessInventory({
     processOutput: [
       "lukasimrich 6715 1 08:42:00 521:00.00 100.0 node --test --test-timeout=0 scripts/interface-law-tools.test.mjs",
@@ -67,11 +77,44 @@ test("blocks stale unowned test and Storybook processes", () => {
   })
   assert.equal(result.status, "failed")
   assert.deepEqual(result.violations.map(({ reason }) => reason), [
-    "stale-unowned-process",
-    "stale-unowned-process",
+    "sustained-process-cost",
+    "sustained-process-cost",
   ])
   assert.equal(result.observations[0].cpuPercent, 100)
   assert.equal(result.observations[1].cpuTime, "1865:00.00")
+})
+
+test("blocks a young process burning a core and admits an old idle process", () => {
+  const result = evaluateGateProcessInventory({
+    processOutput: [
+      "lukasimrich 7100 1 00:20:00 19:58.00 100.4 node --test scripts/interface-law-tools.test.mjs",
+      "lukasimrich 7101 1 01-16:00:00 0:03.00 0.0 node node_modules/.bin/storybook dev -p 6007",
+    ].join("\n"),
+    listenerOutput: "p7101\ncnode\nn127.0.0.1:6007\n",
+    lifecycle,
+    reservations: [],
+    currentPid: 99,
+  })
+  assert.equal(result.status, "failed")
+  assert.deepEqual(result.violations.map(({ pid, reason }) => ({ pid, reason })), [{
+    pid: 7100,
+    reason: "sustained-process-cost",
+  }])
+  assert.equal(result.observations.find(({ pid }) => pid === 7100)?.averageCpuPercent, 99.83)
+  assert.equal(result.observations.find(({ pid }) => pid === 7101)?.averageCpuPercent, 0)
+})
+
+test("blocks a registered server when its measured processor cost becomes sustained", () => {
+  const result = evaluateGateProcessInventory({
+    processOutput: "lukasimrich 26713 26699 00:20:00 19:58.00 100.4 node node_modules/.bin/vite --host 127.0.0.1 --port 5175\n",
+    listenerOutput: "p26713\ncnode\nn127.0.0.1:5175\n",
+    lifecycle,
+    reservations: [],
+    currentPid: 99,
+  })
+  assert.equal(result.status, "failed")
+  assert.equal(result.violations[0].reason, "sustained-process-cost")
+  assert.equal(result.violations[0].owner, "implementation-lead")
 })
 
 test("blocks even a recent process when it occupies a reserved gate port", () => {
