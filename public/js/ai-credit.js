@@ -1,14 +1,14 @@
 // The AI-credit row in the drawer's status pane (#555).
 //
 // One renderer, modelled on Kudos.Budget in kudos.js — poll an endpoint,
-// paint a pill into a slot the shell already owns:
+// paint a value into a slot the shell already owns:
 //
 //   AiCredit.Budget → #ai-budget-slot, every signed-in user.
 //                     Their own daily LLM allowance.
 //
 // The row ships `hidden` in the shell and is revealed only once its
 // audience is confirmed — i.e. when the me-scoped fetch answers — so a
-// signed-out visitor never sees an empty row. The pill is never a link.
+// signed-out visitor never sees an empty row. The value is never a link.
 //
 // (A sibling "Anthropic credits" row for admins shipped alongside this
 // one and was removed again: on this deployment it could only ever read
@@ -54,18 +54,23 @@
     row.classList.toggle('hidden', !visible);
   }
 
-  // `whitespace-nowrap` matters here in a way it doesn't for the kudos
-  // badge: "$6.40 of $20.00 left" is wider than the 15rem drawer leaves
-  // beside a row label, and a pill that breaks mid-figure reads as two
-  // numbers. The row carries `flex-wrap` instead, so an over-wide pill
-  // drops onto its own line intact rather than splitting.
-  var PILL_BASE = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-xs font-medium whitespace-nowrap';
-
-  var TONE = {
-    ok: 'border-violet-300 dark:border-violet-700 text-violet-700 dark:text-violet-300',
-    warn: 'border-amber-300 dark:border-amber-700 text-amber-700 dark:text-amber-300',
-    off: 'border-zinc-300 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400',
+  // The figure is rendered EXACTLY as the dev chat renders its own meter
+  // (see DevChat.renderBudget) — "limit $13.60/$20.00 · your key $129.11"
+  // — so the two places a user reads their AI spend agree glyph for
+  // glyph instead of offering two different mental models of the same
+  // number. No pill: .drawer-meter is nowrap mono text, and the row's
+  // `flex-wrap` drops an over-wide value onto its own line intact rather
+  // than splitting it mid-figure.
+  //
+  // Spend colouring matches the dev chat's thresholds too: >80% of the
+  // daily limit is red, >50% amber, otherwise emerald. The BYOK figure
+  // never takes threshold colouring — no cap applies to it.
+  var SPENT_TONE = {
+    high: 'text-red-600 dark:text-red-400',
+    mid: 'text-amber-600 dark:text-amber-400',
+    low: 'text-emerald-600 dark:text-emerald-400',
   };
+  var BYOK_TONE = 'text-emerald-600 dark:text-emerald-400';
 
   var AiCredit = {
 
@@ -118,37 +123,49 @@
         var spent = Number(s.spentCents) || 0;
         var byok = Number(s.byokCents) || 0;
         var exhausted = remaining <= 0;
-        // ≤20% left is the "start thinking about it" band.
-        var low = !exhausted && limit > 0 && remaining / limit <= 0.2;
 
-        var label;
-        var tone;
+        // "limit $spent/$limit" — spend-first, exactly like the dev chat.
+        // The remaining figure is what the tooltip carries, because the
+        // number people compare against a cap is the one they've spent.
+        var pct = limit > 0 ? Math.min(100, (spent / limit) * 100) : 0;
+        var spentTone = pct > 80 ? SPENT_TONE.high : pct > 50 ? SPENT_TONE.mid : SPENT_TONE.low;
+
         var tip;
         if (exhausted && s.hasByokKey) {
-          label = 'Using your own key';
-          tone = TONE.off;
           tip = 'Your ' + money(limit) + ' daily allowance is used up — AI turns are now '
             + 'billed to the Anthropic key you saved in Settings. Resets at midnight UTC.';
         } else if (exhausted) {
-          label = 'Daily limit reached';
-          tone = TONE.off;
           tip = 'You have used all ' + money(limit) + ' of today’s AI allowance. '
             + 'Resets at midnight UTC.';
         } else {
-          label = money(remaining) + ' of ' + money(limit) + ' left';
-          tone = low ? TONE.warn : TONE.ok;
-          tip = money(spent) + ' of your ' + money(limit)
-            + ' daily AI allowance used. Resets at midnight UTC.';
+          tip = money(spent) + ' of your ' + money(limit) + ' daily AI allowance used ('
+            + money(remaining) + ' left). Resets at midnight UTC.';
         }
         if (byok > 0) {
           tip += ' A further ' + money(byok)
             + ' today was billed to your own Anthropic key and does not count against the allowance.';
         }
 
+        var html =
+          '<span class="drawer-meter-part">'
+          + '<span class="drawer-meter-dim">limit </span>'
+          + '<span class="' + spentTone + '">' + escapeHtml(money(spent)) + '</span>'
+          + '<span class="drawer-meter-dim">/' + escapeHtml(money(limit)) + '</span>'
+          + '</span>';
+        if (byok > 0) {
+          // Own .drawer-meter-part so the two figures break apart at the
+          // "·" rather than either of them splitting mid-number — and the
+          // separator travels WITH the BYOK figure, so a wrapped value
+          // reads "· your key $4.50" instead of leaving a dangling "·"
+          // at the end of the line above.
+          html += ' <span class="drawer-meter-part"><span class="drawer-meter-dim">· </span>'
+            + '<span class="' + BYOK_TONE + '">your key '
+            + escapeHtml(money(byok)) + '</span></span>';
+        }
+
         slot.innerHTML =
-          '<span class="ai-budget-pill ' + PILL_BASE + ' ' + tone + '" title="' + escapeAttr(tip) + '">'
-          + '<span aria-hidden="true">\u{1F916}</span>'
-          + '<span>' + escapeHtml(label) + '</span>'
+          '<span class="ai-budget-meter drawer-meter" title="' + escapeAttr(tip) + '">'
+          + html
           + '</span>';
         setRowVisible('drawer-row-ai-budget', true);
       },
