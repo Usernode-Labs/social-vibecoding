@@ -280,12 +280,16 @@ html, body {
 /* Width bound for the home screen's trailing sections (Featured apps,
    Create an app). Their content is a single card rather than a launcher
    grid, so letting it stretch the full width of a desktop window leaves
-   one very wide, very short box; this keeps them a readable column,
-   centred, with the heading aligned to the card it labels. */
+   one very wide, very short box; this keeps them a readable column.
+
+   Deliberately LEFT-ANCHORED, not centred: "Your apps" above is a
+   full-width launcher grid starting at the scroller's own left gutter, and
+   centring these two put their headings and card edges inboard of it — the
+   three section headings stopped lining up. A plain block with only a
+   max-width shares that left edge at every width, so all three read as one
+   stack. Do not add `margin-inline: auto` back. */
 .home-section-block {
   max-width: 48rem; /* Tailwind max-w-3xl */
-  margin-left: auto;
-  margin-right: auto;
 }
 
 /* ── Browse screen rows / boxes ─────────────────────────────

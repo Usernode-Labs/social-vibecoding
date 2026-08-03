@@ -4,6 +4,8 @@
 // All three sections share one shape: a .home-section-header, then the
 // content, inside a width-bounded .home-section-block so they read as a
 // consistent stack and don't stretch edge-to-edge on a desktop window.
+// The bound is LEFT-ANCHORED, so all three headings and their content
+// share the "Your apps" grid's left gutter at every width.
 //
 // Featured apps' content is ONE contained card: the admin-curated tiles
 // (the `featured` / `featured_order` flags GET /api/apps serializes from
@@ -249,8 +251,8 @@ test('both trailing sections share the section shape and a width bound', () => {
   for (const id of ['home-find-more', 'home-create-section']) {
     const section = main.slice(main.indexOf(`<section id="${id}"`));
     const head = section.slice(0, section.indexOf('</section>'));
-    // Width-bounded + centred, so neither card stretches the full width of
-    // a desktop window.
+    // Width-bounded, so neither card stretches the full width of a desktop
+    // window.
     assert.match(head, /home-section-block/, `${id} is width-bounded`);
     // …and the heading uses the same class as "Your apps".
     assert.match(head, /class="home-section-header"/, `${id} uses the shared heading`);
@@ -259,8 +261,16 @@ test('both trailing sections share the section shape and a width bound', () => {
   }
   // The bound itself lives in app.css (one rule, both sections).
   const css = read('public/css/app.css');
-  assert.match(css, /\.home-section-block \{[^}]*max-width/);
-  assert.match(css, /\.home-section-block \{[^}]*margin-left: auto/);
+  const rule = css.match(/\.home-section-block \{[^}]*\}/)[0];
+  assert.match(rule, /max-width/);
+  // LEFT-ANCHORED, not centred. Centring pushed these two sections' headings
+  // and card edges inboard of the full-width "Your apps" grid above, so the
+  // three headings stopped lining up. A plain block with only a max-width
+  // shares that left gutter.
+  assert.doesNotMatch(rule, /margin-left:\s*auto/);
+  assert.doesNotMatch(rule, /margin-right:\s*auto/);
+  assert.doesNotMatch(rule, /margin-inline:\s*auto/);
+  assert.doesNotMatch(rule, /margin:\s*[^;]*auto/);
 });
 
 test('the browse action is an attached footer row of that card', () => {
