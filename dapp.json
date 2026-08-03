@@ -307,6 +307,16 @@
       "expectSelector": "#home-body.home-column #home-create-section > #home-create-body .home-create-btn"
     },
     {
+      "name": "Trailing sections bottom-anchor in the full-height feed column",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-body-fill > #home-find-more.home-bottom-anchor"
+    },
+    {
+      "name": "Create-an-app rides down with the anchor (no second anchor of its own)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-body-fill > #home-create-section:not(.home-bottom-anchor)"
+    },
+    {
       "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
       "path": "/?shot=home-search",
       "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"

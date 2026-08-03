@@ -89,9 +89,13 @@ test('the bar is neither sticky nor class-hidden any more', () => {
 
 test('the content body guarantees the scroller can always scroll', () => {
   // Without this, a short "Your apps" list makes the page unscrollable
-  // and the bar is stuck on screen permanently.
+  // and the bar is stuck on screen permanently. The min-height now lives
+  // in .home-body-fill (which also makes the body the flex column that
+  // bottom-anchors the trailing sections) rather than an inline style.
   const body = INDEX.match(/<div id="home-body"[^>]*>/)[0];
-  assert.match(body, /min-height:\s*100%/);
+  assert.match(body, /class="[^"]*\bhome-body-fill\b/);
+  const rule = read('public/css/app.css').match(/\.home-body-fill \{[^}]*\}/)[0];
+  assert.match(rule, /min-height:\s*100%/);
 });
 
 // ── sync(): park the scroller past the bar ────────────────────────
