@@ -208,12 +208,10 @@ const App = {
     // Monday-UTC rollover). Refreshes opportunistically on every
     // successful give + on the leaderboard screen mount.
     if (window.Kudos?.Budget?.init) Kudos.Budget.init();
-    // AI-credit status rows (#555), same boot shape as the kudos badge:
-    // the viewer's own daily allowance for everyone, and the org's
-    // remaining Anthropic credit for admins. Both refresh again on every
-    // drawer open (App.HeaderMenu.open), throttled inside the module.
+    // AI-credit status row (#555), same boot shape as the kudos badge:
+    // the viewer's own daily allowance. Refreshes again on every drawer
+    // open (App.HeaderMenu.open), throttled inside the module.
     if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
-    if (window.AiCredit?.AnthropicCredits?.init) AiCredit.AnthropicCredits.init();
     // Session-gated boot fetches (notifications bell, work drawer)
     // defer to this event instead of firing a guaranteed 401 on an
     // anonymous document load.
@@ -275,12 +273,6 @@ const App = {
   renderAdminButton() {
     const btn = document.getElementById('drawer-row-admin');
     if (btn) btn.classList.toggle('hidden', !App.user?.isAdmin);
-    // #555: the status pane's "Anthropic credits" row has exactly the
-    // same audience as the console row above — full admins AND view-only
-    // admins — so one function owns both rather than two places drifting
-    // apart on which flag gates admin visibility.
-    const credits = document.getElementById('drawer-row-anthropic-credits');
-    if (credits) credits.classList.toggle('hidden', !App.user?.isAdmin);
   },
 
   // Navigate to the full-page admin console (#818): the #admin hash route
@@ -1790,9 +1782,9 @@ const App = {
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
       if (!panel) return;
-      // #555: the AI-credit rows only ever render in this drawer, so
-      // opening it is exactly when their numbers matter. Both refreshes
-      // are throttled inside AiCredit, so this is cheap on every open —
+      // #555: the AI-credit row only ever renders in this drawer, so
+      // opening it is exactly when its number matters. The refresh is
+      // throttled inside AiCredit, so this is cheap on every open —
       // and it must run BEFORE the touch branch below, which returns.
       if (window.AiCredit?.refreshAll) AiCredit.refreshAll();
       // Touch platforms: present the drawer's rows as a draggable
