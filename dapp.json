@@ -832,9 +832,19 @@
       "expectSelector": "#drawer-row-kudos #kudos-budget-slot a[href=\"#leaderboard\"].drawer-meter"
     },
     {
-      "name": "Theme selector sits directly below the status pane, with its 3-segment track and caret",
+      "name": "Theme selector ships its 3-segment track and caret",
       "path": "/",
-      "expectSelector": "#drawer-status-pane + #drawer-row-theme #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
+      "expectSelector": "#drawer-row-theme #drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
+    },
+    {
+      "name": "Theme selector is the first thing in the menu, above the status pane",
+      "path": "/",
+      "expectSelector": "#drawer-main-rows > #drawer-row-theme:first-child + #drawer-status-pane"
+    },
+    {
+      "name": "Footer version rows are labelled \"Platform version\" / \"App version\"",
+      "path": "/?shot=menu",
+      "expectText": "Platform version"
     },
     {
       "name": "Drawer footer is bottom-anchored and holds GitHub + Share as its last two items",

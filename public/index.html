@@ -215,13 +215,50 @@
          sits at the end of the scroll. One rule, both behaviours, no
          measurement.
 
-         The status pane and the theme selector are first in DOM order
+         The theme selector and the status pane are first in DOM order
          rather than pinned outside the scroller: pinning blocks above
          the list would leave the touch sheet almost no room for the
          navigation rows. Being first means they're on screen the moment
          the drawer opens at any realistic viewport. -->
     <div id="header-menu-rows" class="flex-1 min-h-0 overflow-y-auto flex flex-col">
     <div id="drawer-main-rows" class="shrink-0">
+    <!-- Theme — Light / Dark / System, the FIRST thing in the menu.
+         Unlike every row below it this is a live control, not a
+         navigation action: a non-clickable container (no hover bg) whose
+         only interactive descendants are the three segment buttons, and
+         tapping a mode does NOT close the drawer.
+
+         Deliberately compact — text-xs faces on a py-1 track — so the
+         control reads as a setting rather than a banner and costs the
+         rows below it as little height as possible.
+
+         Wired in App.HeaderMenu (app.js); active segment + caret position
+         are driven from Theme.get() via _renderThemeButtons(). All the
+         persistence lives in public/js/theme.js and is untouched by the
+         segmented restyle. -->
+    <div id="drawer-row-theme"
+         class="px-4 pt-2 pb-2.5 border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300">
+      <div class="flex items-center gap-3 mb-1.5">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
+        <span class="text-xs font-medium">Theme</span>
+      </div>
+      <!-- Segmented track + caret. The caret is positioned purely in CSS
+           from the --theme-caret-index custom property (0|1|2) that
+           _renderThemeButtons sets on the track: a thirds-width element
+           translated by index * 100%. Deliberately NOT measured in JS —
+           _renderThemeButtons runs before PlatformUI.sheet resizes the
+           panel from w-60 to the sheet's full width, so any pixel read
+           at that moment would be wrong. Percentages are right at both. -->
+      <div id="drawer-theme-track" role="radiogroup" aria-label="Theme"
+           class="relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium">
+        <button type="button" role="radio" aria-checked="false" data-theme-mode="light" class="theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors">Light</button>
+        <button type="button" role="radio" aria-checked="false" data-theme-mode="dark" class="theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors">Dark</button>
+        <button type="button" role="radio" aria-checked="false" data-theme-mode="system" class="theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors">System</button>
+        <span id="drawer-theme-caret-track" aria-hidden="true">
+          <span id="drawer-theme-caret"></span>
+        </span>
+      </div>
+    </div>
     <!-- Status pane: the viewer's remaining weekly kudos and their daily
          AI credit. Every <span> below is the SAME element (same id) that
          used to sit in the header, so Kudos.Budget._render /
@@ -264,43 +301,6 @@
            The balance now lives only in the admin console's Spend limits
            section (see AdminConsole.renderLimitsSection) — the
            /api/admin/anthropic-credits endpoints are unchanged. -->
-    </div>
-    <!-- Theme — Light / Dark / System, directly BELOW the status area.
-         Unlike every row around it this is a live control, not a
-         navigation action: a non-clickable container (no hover bg) whose
-         only interactive descendants are the three segment buttons, and
-         tapping a mode does NOT close the drawer.
-
-         Deliberately compact — text-xs faces on a py-1 track — so the
-         control reads as a setting rather than a banner and costs the
-         nav rows below it as little height as possible.
-
-         Wired in App.HeaderMenu (app.js); active segment + caret position
-         are driven from Theme.get() via _renderThemeButtons(). All the
-         persistence lives in public/js/theme.js and is untouched by the
-         segmented restyle. -->
-    <div id="drawer-row-theme"
-         class="px-4 pt-2 pb-2.5 border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300">
-      <div class="flex items-center gap-3 mb-1.5">
-        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-        <span class="text-xs font-medium">Theme</span>
-      </div>
-      <!-- Segmented track + caret. The caret is positioned purely in CSS
-           from the --theme-caret-index custom property (0|1|2) that
-           _renderThemeButtons sets on the track: a thirds-width element
-           translated by index * 100%. Deliberately NOT measured in JS —
-           _renderThemeButtons runs before PlatformUI.sheet resizes the
-           panel from w-60 to the sheet's full width, so any pixel read
-           at that moment would be wrong. Percentages are right at both. -->
-      <div id="drawer-theme-track" role="radiogroup" aria-label="Theme"
-           class="relative flex p-0.5 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium">
-        <button type="button" role="radio" aria-checked="false" data-theme-mode="light" class="theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors">Light</button>
-        <button type="button" role="radio" aria-checked="false" data-theme-mode="dark" class="theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors">Dark</button>
-        <button type="button" role="radio" aria-checked="false" data-theme-mode="system" class="theme-seg flex-1 basis-0 rounded-md px-1.5 py-1 transition-colors">System</button>
-        <span id="drawer-theme-caret-track" aria-hidden="true">
-          <span id="drawer-theme-caret"></span>
-        </span>
-      </div>
     </div>
     <!-- Node status + Wallet: native app chrome absorbed into SV
          (app-as-SV-chrome migration, NATIVE-BRIDGE.md). Hidden unless the
@@ -412,14 +412,14 @@
            `flex`, which it can only do reliably against another Tailwind
            utility. .drawer-ver-row carries typography + metrics only. -->
       <div id="drawer-row-platform-version" class="drawer-ver-row flex items-center gap-2 px-4">
-        <span class="drawer-ver-label">Platform</span>
+        <span class="drawer-ver-label">Platform version</span>
         <span id="platform-version-pill-slot" class="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"></span>
       </div>
       <!-- App build — revealed by App.DrawerStatus.setAppOpen() whenever an
            app is open, on the same lifecycle as #drawer-row-github /
            #drawer-row-share. -->
       <div id="drawer-row-app-version" class="hidden drawer-ver-row flex items-center gap-2 px-4">
-        <span class="drawer-ver-label">App</span>
+        <span class="drawer-ver-label">App version</span>
         <span id="app-version-pill-slot" class="drawer-ver-value ml-auto inline-flex min-w-0 justify-end"></span>
       </div>
       <!-- Fork lineage: amber "⑂ Forked from <name>" label, written by

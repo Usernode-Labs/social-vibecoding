@@ -386,10 +386,20 @@ const App = {
     // and into truncation. Bare version only. (`info.name` is still
     // served by /api/version; nothing else reads it here.)
     if (!runningSha || runningSha === 'dev') {
-      // Local dev / no GIT_SHA — render a low-key "dev" value so the slot
-      // isn't empty (which can look like a layout bug).
+      // No GIT_SHA. STAGING PREVIEWS OF THE PLATFORM ARE BUILT WITHOUT
+      // ONE, so this is the state a PR tester actually sees — and a row
+      // reading "Platform version  dev" told them nothing about which
+      // build they were looking at. Name the environment instead when the
+      // server reports one, and keep the literal "dev" for a local run
+      // (and for a production build missing its SHA, where printing
+      // "production" would imply a version we don't actually know).
+      const staging = info.env === 'staging';
+      const label = staging ? 'staging' : 'dev';
+      const tip = staging
+        ? 'Staging preview of the platform — built without a commit SHA, so there is no version to link'
+        : 'Running outside of a deploy (no GIT_SHA set)';
       paint(`
-        <span class="drawer-ver drawer-ver--dev" title="Running outside of a deploy (no GIT_SHA set)">dev</span>`);
+        <span class="drawer-ver drawer-ver--dev" title="${tip}">${label}</span>`);
       return;
     }
 
