@@ -189,10 +189,15 @@ const Home = {
     Home._searchReveal.sync();
   },
 
-  // "Find more apps": the admin-curated featured row plus the button
-  // into the #apps browse screen. The button always renders (it is the
-  // discovery path); the tile row hides itself when this viewer has
-  // nothing left to be shown.
+  // "Find more apps": one contained card holding the admin-curated
+  // featured tiles and, as its attached footer row, the way into the
+  // #apps browse screen (see the card markup in index.html).
+  //
+  // The footer always renders — it is THE discovery path, so it must not
+  // depend on curation existing. When there is nothing left to feature
+  // for this viewer the tile grid is swapped for a one-line note rather
+  // than hidden outright, so the card never collapses to a bare heading
+  // sitting on top of a button.
   renderFindMore(apps) {
     const listEl = document.getElementById('home-featured-list');
     if (!listEl) return;
@@ -201,6 +206,8 @@ const Home = {
       .map((a) => Home.renderAppCard(a, { mode: 'featured' }))
       .join('');
     listEl.classList.toggle('hidden', featured.length === 0);
+    const emptyEl = document.getElementById('home-featured-empty');
+    if (emptyEl) emptyEl.classList.toggle('hidden', featured.length > 0);
     Home._wireDiscoveryCards(listEl);
     const btn = document.getElementById('home-browse-btn');
     if (btn && !btn.dataset.wired) {
@@ -908,8 +915,9 @@ const Home = {
     `;
   },
 
-  // "Your app here" placeholder rendered as the last tile in the
-  // grid. Layout mirrors a real tile (thumbnail + title row, pill
+  // "Build your own app" placeholder, rendered in the home screen's
+  // "Create an app" section (it used to be the last tile in the grid).
+  // Layout mirrors a real tile (thumbnail + title row, pill
   // stacked on the left) but with a dashed violet outline around the
   // card and a dashed, muted thumbnail (.app-icon-tile--empty) to
   // telegraph "this slot is empty, tap to fill it".
@@ -924,7 +932,7 @@ const Home = {
         <div class="app-icon-tile app-icon-tile--empty w-14 h-14 rounded-xl flex items-center justify-center font-bold text-xl shrink-0">
           Y
         </div>
-        <div class="italic text-sm text-zinc-500 dark:text-zinc-400 truncate max-w-full">Your app here</div>
+        <div class="italic text-sm text-zinc-500 dark:text-zinc-400 truncate max-w-full">Build your own app</div>
         <button type="button" class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
           Create new app

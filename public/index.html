@@ -472,20 +472,37 @@
 
       <!-- Find more apps: admin-curated featured tiles + the way into the
            #apps browse screen. Populated by Home.renderFindMore(). -->
-      <section id="home-find-more" class="px-3 pb-2">
-        <div class="home-section-header">Find more apps</div>
-        <div id="home-featured-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2"></div>
-        <div class="pt-3">
-          <button type="button" id="home-browse-btn" class="inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-4 py-2 text-sm font-medium text-violet-600 dark:text-violet-400 bg-white dark:bg-zinc-900 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-            Browse all apps
+      <section id="home-find-more" class="px-3 pb-3">
+        <!-- ONE contained card, not a header + loose grid: the heading, the
+             featured tiles and the browse action all sit inside the same
+             rounded surface so "Find more apps" reads as a single unit
+             distinct from the user's own grid above. The browse row is the
+             card's footer — separated by a hairline rather than a gap, so
+             it stays visibly attached (and is the whole reason the footer
+             is a full-width row rather than a floating pill). -->
+        <div class="home-find-more-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden">
+          <div class="px-3 pt-3">
+            <div class="home-section-header">Find more apps</div>
+            <div id="home-featured-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 pb-3"></div>
+            <!-- Shown in place of the tiles when nothing is left to feature,
+                 so the card never collapses to a bare heading + footer. -->
+            <p id="home-featured-empty" class="hidden pb-3 text-sm text-zinc-500 dark:text-zinc-400">
+              Nothing featured right now — browse the full directory to find apps to add.
+            </p>
+          </div>
+          <button type="button" id="home-browse-btn" class="w-full flex items-center justify-between gap-2 px-3 py-3 border-t border-zinc-200 dark:border-zinc-800 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/[0.06] dark:hover:bg-violet-500/10 transition-colors">
+            <span class="flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+              Browse all apps
+            </span>
+            <svg class="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
           </button>
         </div>
       </section>
 
-      <!-- Create an app: the former in-grid "Your app here" tile, now its
-           own trailing section. Home.renderCreateSection() fills it with
-           either the create tile or the "ask an admin" hint. -->
+      <!-- Create an app: the former in-grid create tile ("Build your own
+           app"), now its own trailing section. Home.renderCreateSection()
+           fills it with either that tile or the "ask an admin" hint. -->
       <section id="home-create-section" class="px-3 pb-4">
         <div class="home-section-header">Create an app</div>
         <div id="home-create-body"></div>

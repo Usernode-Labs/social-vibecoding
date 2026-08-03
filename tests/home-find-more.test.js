@@ -1,10 +1,12 @@
 // "Find more apps" + "Create an app" — the two sections below the home
 // screen's "Your apps" grid.
 //
-// Find more apps is the admin-curated featured row (the `featured` /
-// `featured_order` flags GET /api/apps serializes from the featured_apps
-// table) plus the button into the #apps browse screen. Create an app is
-// the former in-grid "Your app here" tile, now the page's last section.
+// Find more apps is ONE contained card: the heading, the admin-curated
+// featured tiles (the `featured` / `featured_order` flags GET /api/apps
+// serializes from the featured_apps table) and — as an attached footer
+// row inside the same card — the way into the #apps browse screen.
+// Create an app is the former in-grid "Build your own app" tile, now the
+// page's last section.
 //
 // Run with: node --test tests/home-find-more.test.js
 
@@ -137,14 +139,18 @@ test('featuredApps: empty / missing input is safe', () => {
 
 // ── The row hides itself when there is nothing to show ───────────
 
-test('renderFindMore hides the tile row but keeps the browse button', () => {
+test('renderFindMore swaps the tile row for a note, never an empty card', () => {
   const src = HOME_SRC.slice(
     HOME_SRC.indexOf('renderFindMore(apps) {'),
     HOME_SRC.indexOf('renderCreateSection(canCreate) {')
   );
   assert.ok(src.length > 200, 'located renderFindMore');
   assert.match(src, /listEl\.classList\.toggle\('hidden', featured\.length === 0\)/);
-  // The button is static markup and always present — it is the discovery
+  // The two toggles are complements: exactly one of the grid and the note
+  // shows, so the card never collapses to a heading on top of a button.
+  assert.match(src, /home-featured-empty/);
+  assert.match(src, /emptyEl\.classList\.toggle\('hidden', featured\.length > 0\)/);
+  // The footer is static markup and always present — it is the discovery
   // path, so it must not depend on curation existing.
   assert.match(src, /home-browse-btn/);
   assert.match(src, /location\.hash = '#apps'/);
@@ -186,10 +192,58 @@ test('index.html carries the two new sections inside the home scroller', () => {
   assert.ok(main.includes('id="home-find-more"'));
   assert.ok(main.includes('>Find more apps<'));
   assert.ok(main.includes('id="home-featured-list"'));
+  assert.ok(main.includes('id="home-featured-empty"'));
   assert.ok(main.includes('Browse all apps'));
   assert.ok(main.includes('id="home-create-section"'));
   assert.ok(main.includes('>Create an app<'));
   assert.ok(main.includes('id="home-create-body"'));
+});
+
+test('Find more apps is ONE contained card, not a header over a loose grid', () => {
+  const section = INDEX.slice(
+    INDEX.indexOf('<section id="home-find-more"'),
+    INDEX.indexOf('<section id="home-create-section"')
+  );
+  const card = section.match(/<div class="home-find-more-card[^"]*"/);
+  assert.ok(card, 'the card wrapper exists');
+  // A rounded surface with its own border/background is what visually
+  // separates this unit from the user's own grid above it.
+  assert.match(card[0], /rounded-xl/);
+  assert.match(card[0], /border/);
+  assert.match(card[0], /bg-zinc-50\/70|bg-zinc/);
+  // Heading, tiles and footer all live INSIDE that wrapper. Sliced from
+  // the wrapper onward so the explanatory comment above it (which also
+  // says "Find more apps") can't satisfy these.
+  const inner = section.slice(section.indexOf('home-find-more-card'));
+  for (const inside of ['>Find more apps<', 'home-featured-list', 'home-featured-empty', 'home-browse-btn']) {
+    assert.ok(inner.includes(inside), `${inside} is inside the card`);
+  }
+});
+
+test('the browse action is an attached footer row of that card', () => {
+  const section = INDEX.slice(
+    INDEX.indexOf('<section id="home-find-more"'),
+    INDEX.indexOf('<section id="home-create-section"')
+  );
+  const btn = section.match(/<button type="button" id="home-browse-btn"[^>]*>/);
+  assert.ok(btn, 'the browse button exists');
+  // Full-width row divided by a hairline — the treatment that makes it read
+  // as part of the card rather than a separate pill floating below it.
+  assert.match(btn[0], /w-full/);
+  assert.match(btn[0], /border-t/);
+  assert.doesNotMatch(btn[0], /rounded-full/, 'no longer a detached pill');
+  // The card clips it so the footer's corners follow the card's radius.
+  assert.match(section, /home-find-more-card[^"]*overflow-hidden/);
+});
+
+test('the create tile invites you to build your own app', () => {
+  const Home = makeHome();
+  const tile = Home.renderCreateTile();
+  assert.match(tile, /Build your own app/);
+  assert.doesNotMatch(tile, /Your app here/, 'old placeholder copy is gone');
+  // The button itself is unchanged — wireCreateButtons keys off this class.
+  assert.match(tile, /home-create-btn/);
+  assert.match(tile, /Create new app/);
 });
 
 test('the create tile is no longer rendered inside #app-list', () => {

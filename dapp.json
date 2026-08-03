@@ -274,15 +274,16 @@
   ],
   "tests": [
     {
-      "name": "Home carries a \"Find more apps\" section below Your apps",
+      "name": "Find more apps is one contained card with the browse action inside it",
       "path": "/",
-      "expectText": "Find more apps"
+      "expectText": "Find more apps",
+      "expectSelector": "#home-find-more .home-find-more-card #home-browse-btn"
     },
     {
       "name": "Home ends with the \"Create an app\" section (create tile out of the grid)",
       "path": "/",
       "expectSelector": "#home-create-section #home-create-body .home-create-btn",
-      "expectText": "Create an app"
+      "expectText": "Build your own app"
     },
     {
       "name": "The featured row renders admin-curated tiles (staging seed + ?demo=1)",
