@@ -527,11 +527,11 @@ async function recheckSessionChecks({ config, pool, session, reason }) {
   // re-stamps idempotently (same commit sha → failure streak preserved).
   {
     const visuals = require('./visuals');
-    await visuals.setChecksPending(pool, session.id, session.checks_commit_sha || null)
+    await visuals.setChecksPending(pool, session.id, session.checks_commit_sha || null, 'building')
       .catch((err) => log.warn('staging-recovery', 'recheck setChecksPending failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
-    visuals.notifyChecksPending(session.id, session.checks_commit_sha || null);
+    visuals.notifyChecksPending(session.id, session.checks_commit_sha || null, 'building');
   }
   if (await stagingNeedsRebuild(session, { config })) {
     // rebuildSessionStaging owns the capture (see above) and the no-op

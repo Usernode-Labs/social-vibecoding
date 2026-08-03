@@ -233,7 +233,8 @@ test("setChecksPending returns a 'skipped' row to 'pending' for the next commit 
     assert.equal(pool.queries.length, 1);
     const q = pool.queries[0];
     assert.match(q.sql, /SET check_state = 'pending'/);
-    assert.deepEqual(q.params, [42, 'feed0042']);
+    // $3 is check_phase — NULL when the caller names no stage.
+    assert.deepEqual(q.params, [42, 'feed0042', null]);
   } finally { restore(); }
 });
 

@@ -319,6 +319,33 @@ function stagingMockProposals(viewer) {
       test_results: [],
       checks_checked_at: hoursAgo(0.03),
     },
+    // The two STAGE captions a 'pending' run can render. A checks run has two
+    // very differently-sized halves (build + DB clone, then the headless
+    // suite) and both used to show one opaque "Checks are still running…", so
+    // a mid-flight build was indistinguishable from a wedged one. These two
+    // rows are the only way to review both captions in a preview — a real
+    // staging clone has no in-flight run to look at. The fixture above keeps
+    // check_phase absent on purpose: it is the NULL/legacy-wording case.
+    {
+      ...mk(9000022, 900122,
+        '[Mock] Checks-phase test: preparing the staging preview (build + DB clone)',
+        0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
+      check_state: 'pending',
+      check_phase: 'building',
+      recheckable: true,
+      test_results: [],
+      checks_checked_at: hoursAgo(0.02),
+    },
+    {
+      ...mk(9000023, 900123,
+        '[Mock] Checks-phase test: running the automated tests against the preview',
+        0.06, 1, 0, 0, { required: 2, windowEndsAt: hoursAhead(70) }),
+      check_state: 'pending',
+      check_phase: 'testing',
+      recheckable: true,
+      test_results: [],
+      checks_checked_at: hoursAgo(0.02),
+    },
     // #607: a freshly promoted proposal whose first checks run hasn't even
     // stamped 'pending' yet (staging build still going) — NO verdict, NO
     // console snapshot. The grey "Checks starting…" spinner badge + the
@@ -713,11 +740,11 @@ function nativeGithubTarget(session) {
 
 async function kickNativeRevisionChecks({ config, pool, session, headSha }) {
   const visuals = require('../services/visuals');
-  await visuals.setChecksPending(pool, session.id, headSha)
+  await visuals.setChecksPending(pool, session.id, headSha, 'building')
     .catch((err) => log.warn('votes', 'Native revision setChecksPending failed (non-fatal)', {
       sessionId: session.id, headSha, err: err.message,
     }));
-  try { visuals.notifyChecksPending(session.id, headSha); } catch (_) {}
+  try { visuals.notifyChecksPending(session.id, headSha, 'building'); } catch (_) {}
 
   const prImportSync = require('../services/pr-import-sync');
   prImportSync.rerunChecksForNewHead({
@@ -1028,6 +1055,10 @@ function mergedRowSelect() {
            -- #47: checks snapshot, kept visible on merged proposals for
            -- post-hoc review (a merged proposal passed, by the gate).
            cs.check_state, cs.test_results, cs.checks_checked_at,
+           -- Which half of a 'pending' run is in flight ('building' |
+           -- 'testing'), so the checks card names the stage instead of
+           -- showing one opaque "still running". NULL = legacy wording.
+           cs.check_phase,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,
@@ -1420,11 +1451,11 @@ function voteRoutes(config) {
           {
             const visualsService = require('../services/visuals');
             await visualsService.setChecksPending(
-              pool, session.id, commitHash === 'latest' ? null : commitHash
+              pool, session.id, commitHash === 'latest' ? null : commitHash, 'building'
             ).catch((err) => log.warn('votes', 'promote setChecksPending failed (non-fatal)', {
               sessionId: session.id, err: err.message,
             }));
-            visualsService.notifyChecksPending(session.id, commitHash === 'latest' ? null : commitHash);
+            visualsService.notifyChecksPending(session.id, commitHash === 'latest' ? null : commitHash, 'building');
           }
           let result;
           try {
@@ -2091,7 +2122,7 @@ function voteRoutes(config) {
         `SELECT cs.id, cs.pr_number, cs.pr_url, cs.pr_title, cs.pr_title_fallback, cs.status,
                 cs.created_at, cs.promoted_at,
                 cs.merge_conflict_state, cs.behind_main,
-                cs.check_state, cs.check_error_detail,
+                cs.check_state, cs.check_error_detail, cs.check_phase,
                 cs.requires_explicit_approval,
                 -- #866: so the home strip can derive the same
                 -- building/unavailable preview state the proposal card
@@ -2295,6 +2326,10 @@ function voteRoutes(config) {
            -- per-test detail block. Unlike the console snapshot this GATES
            -- merge (checkAndMerge blocks a non-'passing' proposal).
            cs.check_state, cs.test_results, cs.checks_checked_at,
+           -- Which half of a 'pending' run is in flight ('building' |
+           -- 'testing'), so the checks card names the stage instead of
+           -- showing one opaque "still running". NULL = legacy wording.
+           cs.check_phase,
            -- Platform-variables pre-merge check (display mirror; the merge
            -- gate re-evaluates live).
            cs.platform_env_state, cs.platform_env_detail,

@@ -442,6 +442,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
               test_results = $2,
               checks_commit_sha = $3,
               checks_checked_at = NOW(),
+              check_phase = NULL,
               check_error_detail = COALESCE($5, check_error_detail),
               consecutive_check_failures = consecutive_check_failures + 1,
               first_check_failure_at = COALESCE(first_check_failure_at, NOW()),
@@ -459,6 +460,7 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
   await pool.query(
     `UPDATE chat_sessions
        SET check_state = $1, test_results = $2, checks_commit_sha = $3, checks_checked_at = NOW(),
+           check_phase = NULL,
            check_error_detail = NULL,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
@@ -483,6 +485,7 @@ async function storeChecksSkipped(pool, sessionId, commitSha, reason) {
     `UPDATE chat_sessions
        SET check_state = 'skipped', test_results = '[]', checks_commit_sha = $1,
            checks_checked_at = NOW(),
+           check_phase = NULL,
            check_error_detail = $2,
            consecutive_check_failures = 0,
            first_check_failure_at = NULL,
@@ -502,7 +505,13 @@ async function storeChecksSkipped(pool, sessionId, commitSha, reason) {
 // captureForSession calls setChecksPending), and zeroing the counter on those
 // would defeat the escalation + crash-loop short-circuit — so the streak is
 // preserved when checks_commit_sha is unchanged.
-async function setChecksPending(pool, sessionId, commitSha) {
+//
+// `phase` ('building' | 'testing') records WHICH half of the run is in
+// flight so the card can name it; anything else is stored as NULL, which is
+// the legacy display. It is deliberately a plain assignment rather than
+// another CASE arm — the phase describes the run happening right now, not
+// the commit, so a backoff retry of the same commit still updates it.
+async function setChecksPending(pool, sessionId, commitSha, phase = null) {
   // $2 is spliced into both an assignment to checks_commit_sha (varchar) and
   // IS DISTINCT FROM comparisons (inferred text). Without the explicit ::text
   // casts postgres refuses to prepare the statement — "inconsistent types
@@ -510,9 +519,12 @@ async function setChecksPending(pool, sessionId, commitSha) {
   // this UPDATE silently no-op (it's .catch'd non-fatal at every call site)
   // from the day the CASE clauses landed. Stale 'passing'/'error' verdicts
   // then survived into the merge gate while a rebuild was in flight.
+  // $3 needs the same explicit ::text treatment as $2 for the same reason —
+  // an uncast parameter in this statement is how it silently no-op'd before.
   await pool.query(
     `UPDATE chat_sessions
        SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
+           check_phase = $3::text,
            check_next_retry_at = NULL,
            consecutive_check_failures = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                              THEN 0 ELSE consecutive_check_failures END,
@@ -523,8 +535,16 @@ async function setChecksPending(pool, sessionId, commitSha) {
            check_error_notified_at = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                           THEN NULL ELSE check_error_notified_at END
      WHERE id = $1`,
-    [sessionId, commitSha || null]
+    [sessionId, commitSha || null, normalizeCheckPhase(phase)]
   );
+}
+
+// The two stages a 'pending' run can be in. Anything else (undefined, a
+// typo, a value from a newer writer) collapses to NULL — the card's legacy
+// wording — rather than rendering an unknown caption.
+const CHECK_PHASES = new Set(['building', 'testing']);
+function normalizeCheckPhase(phase) {
+  return CHECK_PHASES.has(phase) ? phase : null;
 }
 
 // ── Capture-outcome snapshot (screenshot-reliability spec) ──────────────
@@ -546,19 +566,36 @@ async function storeCaptureOutcome(pool, sessionId, state, detail) {
   );
 }
 
-// Expand the deduped capture-path list into the ordered capture-target
-// frames: EVERY path is shot in BOTH the desktop frame (full media —
-// png/webm/gif) and a phone-sized frame (PNG still only, to keep the
-// doubled list inside the run's 240s budget). Desktop and mobile land on
+// Expand the deduped capture-path list into the ordered capture targets:
+// EVERY path is shot in BOTH the desktop frame (full media — png/webm/gif)
+// and a phone-sized frame (PNG still only). Desktop and mobile land on
 // adjacent capture indexes (i*2 / i*2+1) so the rendered rows pair up.
 // This supersedes the per-path `@mobile` opt-in (#768): the annotation is
 // still parsed and validated, but every route now gets the phone frame
 // automatically. Pure so it's unit-testable without the pipeline.
+//
+// One entry per path, carrying the phone frame as a `companion`. It used to
+// emit TWO sibling entries per path, which the container turned into two
+// full navigations per side — a two-route proposal loaded 8 pages instead
+// of 4 and paid a cold page + networkidle2 wait for each, the single
+// biggest cost inside the capture run.
 function expandCapturePaths(paths) {
   const out = [];
   (Array.isArray(paths) ? paths : []).forEach((path, i) => {
-    out.push({ index: i * 2, path, viewport: null, still: false });
-    out.push({ index: i * 2 + 1, path, viewport: VIEWPORT_MOBILE, still: true });
+    out.push({
+      index: i * 2,
+      path,
+      viewport: null,
+      still: false,
+      // The phone frame is a COMPANION of this target, not a target of its
+      // own: the container shoots it by reloading the page it already has
+      // open (see shootCompanion in capture/capture.js) instead of opening
+      // a second one. Same capture indexes as before — i*2 desktop,
+      // i*2+1 mobile — so every renderer, the PR-body block and
+      // session_visuals.captured_viewport are untouched; only the number
+      // of page loads changes (4 per two-route proposal, not 8).
+      companion: { index: i * 2 + 1, viewport: VIEWPORT_MOBILE },
+    });
   });
   return out;
 }
@@ -875,18 +912,56 @@ async function captureForSession(config, session, app, commitHash, stagingResult
   }
   _inFlight.add(session.id);
   const pool = getPool(config);
+  // Per-run timing trace (kind='checks'). Nothing recorded how long a checks
+  // run took, so diagnosing the slowdown that motivated this meant reading a
+  // few hundred lines of container log before they rotated away. This is the
+  // one chokepoint every verdict flows through, so the run is opened here and
+  // the build half's phases are replayed from stagingResult.timings (absent
+  // when the caller reused a live preview — then the trace is capture-only).
+  // Best-effort throughout: merge-debug's helpers no-op on a null runId and
+  // never throw, so tracing can't fail a capture.
+  const runStartedAt = Date.now();
+  const mergeDebug = require('./merge-debug');
+  const debugRunId = await mergeDebug.startRun(pool, {
+    appId: app.id, sessionId: session.id, prNumber: session.pr_number || null,
+    kind: 'checks', trigger: 'capture',
+  });
+  const traceStep = (phase, message, detail) =>
+    mergeDebug.step(pool, debugRunId, { phase, message, detail });
+  // Verdict the trace closes on. A checks run ends on its suite's outcome
+  // ('passing' | 'failing' | 'skipped' | 'error') rather than a merge
+  // outcome; 'error' is the default so a run that throws before reaching a
+  // verdict is not left reading 'running' forever.
+  let traceStatus = 'error';
   try {
+    const buildTimings = (stagingResult && stagingResult.timings) || null;
+    if (buildTimings) {
+      if (buildTimings.imageBuildMs != null) {
+        traceStep('image_build', 'Staging image built', { durationMs: buildTimings.imageBuildMs });
+      }
+      if (buildTimings.cloneMs != null) {
+        // Historically the single largest phase of the whole run: a full
+        // logical dump/restore of the app's database. See
+        // db-manager.privateDataExclusions for what shrank it.
+        traceStep('clone', 'Preview database cloned', { durationMs: buildTimings.cloneMs });
+      }
+      if (buildTimings.healthMs != null) {
+        traceStep('staging_health', 'Preview answered its healthcheck', { durationMs: buildTimings.healthMs });
+      }
+    }
     const [, repoOwner, repoName] = (app.repo_url || '').match(/github\.com\/([^/]+)\/([^/]+)/) || [];
 
     // #47: mark the checks 'pending' for this commit the moment the run
     // starts, so the merge gate (votes.checkAndMerge) can't act on a stale
     // 'passing' while the fresh build is being tested. Best-effort.
-    await setChecksPending(pool, session.id, commitHash).catch((err) => {
+    // Phase 'testing': the staging preview is already up by the time capture
+    // starts, so everything from here is the suite running against it.
+    await setChecksPending(pool, session.id, commitHash, 'testing').catch((err) => {
       log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message });
     });
     // #607: flip open clients' badges to "Checks running…" right away —
     // the terminal notifyChecks below can be minutes out.
-    notifyChecksPending(session.id, commitHash);
+    notifyChecksPending(session.id, commitHash, 'testing');
 
     // Heuristic gate. If the compare call fails, default to capturing —
     // staging exists, and a wasted screenshot is cheaper than a missed one.
@@ -1040,9 +1115,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }
     }
 
-    // One desktop + one mobile capture target per path (expandCapturePaths):
-    // the desktop frame carries the full media set, the phone frame a PNG
-    // still only. The "after" (staging) target always exists; the "before"
+    // One capture target per path (expandCapturePaths), each carrying the
+    // phone frame as a companion still: the desktop frame gets the full
+    // media set, the phone frame a PNG shot from the same reloaded page.
+    // The "after" (staging) target always exists; the "before"
     // (prod) target only when prod is running. A newly-added deep page 404s
     // on prod, so each before-target falls back to '/' (capture.js retries
     // and tags the frames fellback=1) — "before" shows the prior root state
@@ -1076,6 +1152,12 @@ async function captureForSession(config, session, app, commitHash, stagingResult
         still: entry.still,
         viewport: mobile ? VIEWPORT_MOBILE : null,
         viewportPixels: mobile ? MOBILE_VIEWPORT : null,
+        // The phone-frame still shot from this target's own page. Same
+        // capture index the sibling target used to carry, so the stored
+        // artifact lands in exactly the same rendered row.
+        companion: entry.companion
+          ? { index: entry.companion.index, viewportPixels: MOBILE_VIEWPORT }
+          : null,
         beforeCookie: (beforeUrl && isSelfApp) ? beforeCookie : '',
         // Plumbed for symmetry; unused today (the after side always
         // authenticates via the query token).
@@ -1136,6 +1218,7 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     let stdout;
     let runPartial = false;
     let runPartialReason = '';
+    const captureStartedAt = Date.now();
     try {
       let res;
       ({ stdout, ...res } = await docker.runOneShot(`usernode-capture-${session.id}`, {
@@ -1160,6 +1243,13 @@ async function captureForSession(config, session, app, commitHash, stagingResult
             // capture image ignores the field and records anyway —
             // graceful rolling deploy, same stance as `viewport`.
             still: t.still || undefined,
+            // The phone-frame still this target shoots from its own page.
+            // An older capture image ignores the field, which costs the run
+            // its mobile stills for one rolling deploy but breaks nothing —
+            // same stance as `viewport` / `still` above.
+            companion: t.companion
+              ? { index: t.companion.index, viewport: t.companion.viewportPixels }
+              : undefined,
           }))),
           // Scalar single-target fallback (first target) so an older
           // capture image still works during a rolling platform deploy.
@@ -1203,6 +1293,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       }
     }
 
+    const captureMs = Date.now() - captureStartedAt;
+    traceStep('capture', 'Capture container finished', {
+      durationMs: captureMs,
+      targets: targets.length, tests: tests.length, media,
+      partial: runPartial || undefined,
+      partialReason: runPartialReason || undefined,
+    });
+
     const { shots, failures } = parseShots(stdout);
     for (const f of failures) {
       log.warn('visuals', 'Capture frame failed', { sessionId: session.id, ...f });
@@ -1215,13 +1313,24 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // The advisory console_* columns are dual-written from the same run for
     // one release so a rolling deploy's old readers stay coherent.
     const checksResult = classifyTests(parseTests(stdout), tests.length);
+    const failingCount = checksResult.results.filter((r) => r.status !== 'pass').length;
+    traceStatus = checksResult.state;
+    traceStep('tests', `Suite verdict: ${checksResult.state}`, {
+      state: checksResult.state,
+      tests: checksResult.results.length,
+      failing: failingCount,
+      // The suite runs inside the same container invocation as the shots, so
+      // this is the whole run's wall clock rather than a tests-only slice.
+      durationMs: Date.now() - runStartedAt,
+    });
     try {
       await storeChecks(pool, session.id, commitHash, checksResult);
       await storeConsoleCheck(pool, session.id, consoleSnapshotFromTests(checksResult));
       log.info('visuals', 'Checks stored', {
         sessionId: session.id, state: checksResult.state,
         tests: checksResult.results.length,
-        failing: checksResult.results.filter((r) => r.status !== 'pass').length,
+        failing: failingCount,
+        durationMs: Date.now() - runStartedAt,
       });
       notifyChecks(session.id, checksResult, commitHash, send);
     } catch (err) {
@@ -1332,8 +1441,10 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     log.info('visuals', 'Capture complete', {
       sessionId: session.id,
       artifacts: shots.map((s) => `${s.kind}.${s.media}`).join(','),
+      durationMs: Date.now() - runStartedAt,
     });
   } catch (err) {
+    traceStep('capture_error', 'Checks run threw', { error: err.message, level: 'error' });
     log.warn('visuals', 'Capture failed (non-fatal)', { sessionId: session.id, err: err.message });
     // The run broke before an outcome could be computed (container build,
     // docker timeout, DB error mid-pipeline) — record a 'failed' capture
@@ -1350,6 +1461,14 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       notifyChecks(session.id, { state: 'error', results: [] }, commitHash, send);
     } catch { /* nothing more we can do */ }
   } finally {
+    // Close the timing trace whatever happened, so a run never sits at
+    // 'running' in the admin view. The total is the figure this exists for:
+    // it is what "the checks step got slower" is measured in.
+    const totalMs = Date.now() - runStartedAt;
+    mergeDebug.endRun(pool, debugRunId, {
+      status: traceStatus,
+      summary: `checks ${traceStatus} in ${Math.round(totalMs / 1000)}s`,
+    });
     _inFlight.delete(session.id);
     // Improvement 5: drain a re-queued capture (a rebuild that arrived while
     // this run was shooting). Dispatched detached — awaiting it here would
@@ -1428,7 +1547,10 @@ function notifyVisualsReady(sessionId, visuals, send) {
 // transition matters to every open vote panel / home strip, not just the
 // focused dev chat, and app.js's existing `checks_ready` handler already
 // refreshes both on any state.
-function notifyChecksPending(sessionId, commitSha) {
+//
+// `phase` rides along so a card that re-renders from the event alone shows
+// the right stage caption without waiting for its next fetch.
+function notifyChecksPending(sessionId, commitSha, phase = null) {
   try {
     const event = {
       type: 'checks_ready',
@@ -1437,6 +1559,7 @@ function notifyChecksPending(sessionId, commitSha) {
       checkState: 'pending',
       failingCount: 0,
       commitSha: commitSha || null,
+      checkPhase: normalizeCheckPhase(phase),
     };
     sessionBus.publish(sessionId, event);
     const { broadcastGlobal } = require('./ws');
