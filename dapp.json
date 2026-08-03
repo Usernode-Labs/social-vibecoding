@@ -297,7 +297,7 @@
     },
     {
       "name": "Browse renders app-store rows with an Add button (no \"…\" menu)",
-      "path": "/apps",
+      "path": "/#apps",
       "expectSelector": "#browse-list .browse-row .browse-add-btn",
       "expectText": "All apps"
     },

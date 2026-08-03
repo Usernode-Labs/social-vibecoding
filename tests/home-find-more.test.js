@@ -4,8 +4,7 @@
 // All three sections share one shape: a .home-section-header, then the
 // content, inside a width-bounded .home-section-block so they read as a
 // consistent stack and don't stretch edge-to-edge on a desktop window.
-// The bound is LEFT-ANCHORED, so all three headings and their content
-// share the "Your apps" grid's left gutter at every width.
+// The bounded block is CENTRED in the scroller.
 //
 // Featured apps' content is ONE contained card: the admin-curated tiles
 // (the `featured` / `featured_order` flags GET /api/apps serializes from
@@ -263,14 +262,16 @@ test('both trailing sections share the section shape and a width bound', () => {
   const css = read('public/css/app.css');
   const rule = css.match(/\.home-section-block \{[^}]*\}/)[0];
   assert.match(rule, /max-width/);
-  // LEFT-ANCHORED, not centred. Centring pushed these two sections' headings
-  // and card edges inboard of the full-width "Your apps" grid above, so the
-  // three headings stopped lining up. A plain block with only a max-width
-  // shares that left gutter.
-  assert.doesNotMatch(rule, /margin-left:\s*auto/);
-  assert.doesNotMatch(rule, /margin-right:\s*auto/);
-  assert.doesNotMatch(rule, /margin-inline:\s*auto/);
-  assert.doesNotMatch(rule, /margin:\s*[^;]*auto/);
+  // CENTRED within the scroller. A max-width alone would left-anchor the
+  // block against the "Your apps" grid's gutter; the auto side margins are
+  // what centre it, and they're the requested look — so pin them rather
+  // than let a later alignment tweak quietly drop them.
+  assert.ok(
+    /margin-inline:\s*auto/.test(rule)
+      || (/margin-left:\s*auto/.test(rule) && /margin-right:\s*auto/.test(rule))
+      || /margin:\s*[^;]*auto/.test(rule),
+    'both side margins are auto, so the block stays centred'
+  );
 });
 
 test('the browse action is an attached footer row of that card', () => {

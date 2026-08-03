@@ -95,6 +95,20 @@ test('selfAppHashPath moves SPA hash routes into the fragment', () => {
   assert.equal(visuals.selfAppHashPath('/create'), '/#create');
 });
 
+// The browse screen and its per-app detail page. No server page exists at
+// this pathname, so leaving 'apps' out of the route set made `path: /apps`
+// load index.html with an empty hash and capture/assert against the HOME
+// screen — which is how the declared `#browse-list .browse-row` check came
+// back "element not found" even though the screen renders fine.
+test('selfAppHashPath normalises the plural /apps browse routes', () => {
+  assert.equal(visuals.selfAppHashPath('/apps'), '/#apps');
+  assert.equal(visuals.selfAppHashPath('/apps/staging-demo-puzzle-chain'),
+    '/#apps/staging-demo-puzzle-chain');
+  // The singular app-view route is a separate entry and still works — the
+  // match is on the exact first segment, not a prefix.
+  assert.equal(visuals.selfAppHashPath('/app/social'), '/#app/social');
+});
+
 test('selfAppHashPath leaves bare /, already-fragment, and server pages alone', () => {
   assert.equal(visuals.selfAppHashPath('/'), '/');
   assert.equal(visuals.selfAppHashPath('/#app/social/dev'), '/#app/social/dev');
