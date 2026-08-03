@@ -1,10 +1,11 @@
 // #555: the admin credit-balance endpoints.
 //
 // The permission split is the load-bearing part: the GET is a pure read
-// and view-only admins are squarely its audience (the drawer row exists
-// for them), while the PUT is a mutation and must be full-admin only. A
-// regression that chains requireAdminWrite onto the GET would silently
-// blank the row for exactly the moderation audience it was built for.
+// and view-only admins are squarely its audience (they can see the figure
+// in the console's Spend limits section), while the PUT is a mutation and
+// must be full-admin only. A regression that chains requireAdminWrite
+// onto the GET would silently blank the figure for exactly the moderation
+// audience it was built for.
 //
 // Stubbed-pool + real-express pattern, cf. tests/admin-limits-system.test.js.
 //
@@ -83,7 +84,7 @@ test('GET reports "not configured" until a balance is recorded', async () => {
   assert.deepEqual(r, { configured: false });
 });
 
-test('a view-only admin CAN read the credits (the row exists for them)', async () => {
+test('a view-only admin CAN read the credits (the figure is shown to them)', async () => {
   store.set('anthropic_credit_balance_cents', '500000');
   store.set('anthropic_credit_as_of', '2026-07-01');
   const res = await fetch(`${bases.viewonly}/api/admin/anthropic-credits`);

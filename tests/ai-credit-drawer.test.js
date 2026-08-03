@@ -1,10 +1,17 @@
-// #555: wiring for the drawer's two AI-credit rows.
+// #555: wiring for the drawer's AI-credit row.
 //
-// The renderers live in their own module but depend on four things they
-// don't own: the shell loading the script, the shell's slot ids, the
+// The renderer lives in its own module but depends on four things it
+// doesn't own: the shell loading the script, the shell's slot id, the
 // authed boot calling init(), and HeaderMenu.open() refreshing on the
-// only surface where they're visible. Each is a silent failure if it
+// only surface where it's visible. Each is a silent failure if it
 // drifts — the row just never appears — so all four are pinned here.
+//
+// A second renderer (AiCredit.AnthropicCredits → the org's remaining
+// Anthropic credit, admins only) shipped in the same module and was
+// removed again: Anthropic publishes no credit balance, so the figure had
+// to be recorded by hand and the row read "Not set up" indefinitely. Its
+// absence is asserted below so it can't drift back in unnoticed; the
+// balance lives solely in the console's Spend limits section now.
 //
 // Static-assertion style (cf. tests/header-status-pane.test.js): read the
 // shipped source files and assert the wiring is present.
@@ -26,34 +33,35 @@ test('the shell loads /js/ai-credit.js', () => {
     'ai-credit.js is script-tagged in the shell');
 });
 
-test('both renderers resolve their slot by the shell-owned id', () => {
+test('the renderer resolves its slot by the shell-owned id', () => {
   assert.match(creditJs, /getElementById\('ai-budget-slot'\)/);
-  assert.match(creditJs, /getElementById\('anthropic-credits-slot'\)/);
 });
 
-test('the authed boot initialises both renderers', () => {
+test('the authed boot initialises the renderer', () => {
   assert.match(appJs, /AiCredit\?\.Budget\?\.init\)\s*AiCredit\.Budget\.init\(\)/,
     'AiCredit.Budget.init() runs at authed boot');
-  assert.match(appJs, /AiCredit\?\.AnthropicCredits\?\.init\)\s*AiCredit\.AnthropicCredits\.init\(\)/,
-    'AiCredit.AnthropicCredits.init() runs at authed boot');
 });
 
-test('opening the drawer refreshes both rows, before the touch early-return', () => {
+test('opening the drawer refreshes the row, before the touch early-return', () => {
   const open = appJs.slice(appJs.indexOf('    open() {'));
   const body = open.slice(0, open.indexOf('PlatformUI.isTouch()'));
   assert.match(body, /AiCredit\.refreshAll\(\)/,
-    'HeaderMenu.open() refreshes the rows above the touch branch, which returns early');
+    'HeaderMenu.open() refreshes the row above the touch branch, which returns early');
 });
 
-test('the admin row is gated on isAdmin inside the renderer as well', () => {
-  // Belt and braces with renderAdminButton: the fetch itself must not
-  // fire for a non-admin (it would 403), and reading App.user.isAdmin
-  // means the "View as non-admin" preview masks the row for free.
-  const credits = creditJs.slice(creditJs.indexOf('AnthropicCredits: {'));
-  assert.match(credits, /App\.user\.isAdmin/,
-    'the credits renderer checks App.user.isAdmin');
-  assert.ok(!/canAdminWrite/.test(creditJs),
-    'never gated on canAdminWrite — view-only admins are part of the audience');
+test('the removed Anthropic-credits renderer leaves nothing behind', () => {
+  assert.ok(!/AnthropicCredits/.test(creditJs),
+    'no AnthropicCredits renderer in the module');
+  assert.ok(!/AnthropicCredits/.test(appJs),
+    'no AnthropicCredits init or visibility toggle in app.js');
+  assert.ok(!/anthropic-credits-slot|drawer-row-anthropic-credits/.test(creditJs),
+    'no credits row/slot ids left in the module');
+  // Helpers that existed only for the org figure — dead weight if kept.
+  for (const dead of ['moneyRound', 'agoText', 'timeText', 'dayText',
+    'CREDITS_THROTTLE_MS']) {
+    assert.ok(!new RegExp(dead).test(creditJs),
+      `${dead} is gone with its only caller`);
+  }
 });
 
 test('the budget row carries no global spend or cap', () => {
@@ -63,9 +71,8 @@ test('the budget row carries no global spend or cap', () => {
     'no global spend/cap fields anywhere in the user-facing renderer');
 });
 
-test('the pills carry the class hooks the dapp.json checks assert on', () => {
+test('the pill carries the class hook the dapp.json check asserts on', () => {
   assert.match(creditJs, /ai-budget-pill/, '#ai-budget-slot pill has a stable hook class');
-  assert.match(creditJs, /anthropic-credits-pill/, 'credits pill has a stable hook class');
 });
 
 test('?shot=menu opens the drawer and is not env-gated', () => {
@@ -80,9 +87,9 @@ test('?shot=menu opens the drawer and is not env-gated', () => {
 });
 
 test('tooltips are attribute-escaped', () => {
-  // Both tooltips interpolate server-provided values into a title="".
+  // The tooltip interpolates server-provided values into a title="".
   assert.match(creditJs, /function escapeAttr/, 'escapeAttr helper is present');
   const titles = creditJs.match(/title="'\s*\+\s*escapeAttr/g) || [];
-  assert.ok(titles.length >= 3,
+  assert.ok(titles.length >= 1,
     `every title="" goes through escapeAttr (found ${titles.length})`);
 });

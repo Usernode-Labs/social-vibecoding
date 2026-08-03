@@ -1339,14 +1339,17 @@ const AdminConsole = {
       </div>
 
       <!-- Anthropic credits (#555). Anthropic's API publishes billed
-           spend, never a balance, so the drawer's "Anthropic credits"
-           row is derived: the balance recorded here minus cost_report
-           spend since the as-of date. Re-record both after every
-           top-up. View-only admins see the values, disabled. -->
+           spend, never a balance, so the remaining figure is derived:
+           the balance recorded here minus cost_report spend since the
+           as-of date. Re-record both after every top-up. View-only
+           admins see the values, disabled.
+
+           This is the ONLY surface for the figure — the drawer's status
+           pane carried a matching row until it was removed for reading
+           "Not set up" indefinitely. -->
       <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800 mt-4">
         <div class="flex items-center justify-between mb-3">
           <h2 class="text-lg font-semibold">Anthropic credits</h2>
-          <span class="text-xs text-zinc-500">shown in the menu’s status area</span>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
           Anthropic doesn’t publish a remaining-credit figure, only what it has
@@ -1399,10 +1402,10 @@ const AdminConsole = {
       asOf.value = data.asOf || '';
     }
     if (!derived) return;
-    // Echo back what the drawer will show, so an admin can confirm the
-    // admin key is actually working without opening the menu.
+    // Echo the derived figure back here, so an admin can confirm the
+    // admin key is actually working. This is the only place it shows.
     if (!data.configured) {
-      derived.textContent = 'Nothing recorded yet — the status row reads “Not set up”.';
+      derived.textContent = 'Nothing recorded yet — no remaining-credit figure is being tracked.';
     } else if (typeof data.remainingCents !== 'number') {
       derived.textContent = 'Couldn’t reach Anthropic to compute the remaining credit'
         + (data.error ? ` (${data.error})` : '') + '.';
@@ -1445,12 +1448,6 @@ const AdminConsole = {
       status.textContent = 'Saved.';
       status.className = 'text-xs mt-2 text-emerald-400';
       status.classList.remove('hidden');
-      // Repaint the drawer row immediately rather than waiting out its
-      // own five-minute throttle.
-      if (window.AiCredit?.AnthropicCredits) {
-        AiCredit.AnthropicCredits.state = data;
-        AiCredit.AnthropicCredits._render();
-      }
     } catch (err) {
       status.textContent = err.message;
       status.className = 'text-xs mt-2 text-red-400';

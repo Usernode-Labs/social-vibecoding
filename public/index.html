@@ -298,24 +298,13 @@
         <span class="text-sm font-medium">AI credit</span>
         <span id="ai-budget-slot" class="ml-auto inline-flex min-w-0"></span>
       </div>
-      <!-- Anthropic credits (#555): what's left of the ORGANISATION's
-           Anthropic balance. Ships hidden and is revealed by
-           App.renderAdminButton() for platform admins AND view-only
-           admins — gated on `App.user.isAdmin`, which both roles carry,
-           and deliberately NOT on `canAdminWrite` (that's the
-           full-admin-only mutation gate, and this is a viewing surface).
-           Same rule as #drawer-row-admin below; the figures are stripped
-           from a non-admin's payload server-side either way.
-
-           Anthropic publishes no credit balance, so the number is
-           derived from a balance an admin records in the console's
-           Limits section minus billed spend since — see
-           src/services/anthropic-credits.js. -->
-      <div id="drawer-row-anthropic-credits" class="hidden flex flex-wrap items-center gap-3 px-4 py-1 min-h-[44px] text-zinc-600 dark:text-zinc-300">
-        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"/></svg>
-        <span class="text-sm font-medium">Anthropic credits</span>
-        <span id="anthropic-credits-slot" class="ml-auto inline-flex min-w-0"></span>
-      </div>
+      <!-- An "Anthropic credits" row (the ORGANISATION's remaining
+           Anthropic balance) used to sit here for admins. It was removed:
+           Anthropic publishes no credit balance, so the figure had to be
+           recorded by hand and the row read "Not set up" indefinitely.
+           The balance now lives only in the admin console's Spend limits
+           section (see AdminConsole.renderLimitsSection) — the
+           /api/admin/anthropic-credits endpoints are unchanged. -->
     </div>
     <!-- Node status + Wallet: native app chrome absorbed into SV
          (app-as-SV-chrome migration, NATIVE-BRIDGE.md). Hidden unless the

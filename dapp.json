@@ -1152,11 +1152,6 @@
       "expectSelector": "#drawer-row-ai-budget .ai-budget-pill"
     },
     {
-      "name": "Hamburger status area shows the org's remaining Anthropic credits to admins (#555)",
-      "path": "/?shot=menu&demo=1",
-      "expectSelector": "#drawer-row-anthropic-credits .anthropic-credits-pill"
-    },
-    {
       "name": "The admin console's Limits section offers the Anthropic credit balance fields (#555)",
       "path": "/#admin/limits",
       "expectSelector": "#admin-credit-balance"
