@@ -326,6 +326,69 @@ html, body {
   margin-right: auto;
 }
 
+/* ── Home-screen panels (#911) ──────────────────────────────
+   The widget area between the "Your apps" grid and "Featured apps" is a
+   STACK of separate bordered blocks, one per widget, so a second panel
+   lands as its own distinct box rather than another row inside a shared
+   card. Each block is a plain full-width child of #home-panels — the
+   column above is the only width bound (see .home-column).
+
+   HEIGHT CAP — "about two rows of app icons", derived from the app tile's
+   own tokens rather than measured at runtime. #922 deleted exactly that
+   kind of measure-on-render loop (Home.alignSections publishing
+   --home-section-indent), so this stays a constant that a reader can
+   check by hand:
+
+     .app-card  p-3        0.75rem x 2  = 1.5rem   (public/js/home.js
+     .app-card  w-14 h-14  3.5rem       = 3.5rem    renderAppCard)
+     .app-card  gap-2      0.5rem       = 0.5rem
+     .app-card  text-sm    1.25rem line = 1.25rem
+                                        ---------
+                          one app row    6.75rem  (108px)
+     #app-list  gap-2      0.5rem between rows
+                          two app rows   6.75 + 0.5 + 6.75 = 14rem (224px)
+
+   If any of those four tokens on .app-card changes, update this constant
+   — tests/home-panels-render.test.js pins both sides so a drift in one
+   without the other fails rather than silently mis-sizing the block.
+
+   The cap is enforced by flexbox, not arithmetic: the title bar is
+   flex: none and the rows list takes the remainder with min-height: 0 +
+   overflow: hidden, so content clips at the cap instead of growing the
+   block. Budget inside 14rem: 2px border + ~28px title bar + 4 rows x
+   44px = ~206px, leaving headroom for larger text settings. */
+:root {
+  --home-panel-max-h: 14rem;
+}
+
+.home-panel {
+  display: flex;
+  flex-direction: column;
+  max-height: var(--home-panel-max-h);
+}
+
+/* The rows list must be allowed to SHRINK below its content height —
+   min-height: 0 is what makes overflow: hidden clip instead of the flex
+   item refusing to compress and pushing the article past the cap. */
+.home-panel-rows {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 44px rows: the native kit's minimum touch target, and the whole row is
+   a tap target into the Challenges screen. Uniform height is what makes
+   the 4-slot budget above exact, which is why a numeric row's progress
+   bar rides the row's bottom EDGE (absolutely positioned) instead of
+   taking a second line. */
+.home-panel-row {
+  position: relative;
+  height: 2.75rem; /* 44px */
+}
+.home-panel-row + .home-panel-row {
+  border-top: 1px solid var(--border-light);
+}
+
 /* ── Browse screen rows / boxes ─────────────────────────────
    The #apps screen renders ONE row markup (icon · name+meta · Add
    button) and lets CSS pick the layout: a hairline-divided vertical

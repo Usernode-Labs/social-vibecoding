@@ -575,12 +575,19 @@
 
            Deliberately OUTSIDE #app-list, like the search bar above: the
            grid's innerHTML is replaced on every WS app event and every
-           search keystroke, which would otherwise destroy this card and
-           its listeners. The panel's own markup carries a
-           .home-section-header and then the card as a plain FULL-WIDTH
-           child, exactly like the two sections below it — .home-column on
-           #home-body is what bounds and centres the feed, so don't wrap
-           the card in a per-box width bound (see app.css .home-column).
+           search keystroke, which would otherwise destroy these blocks and
+           their listeners.
+
+           HomePanels fills this with a STACK of sibling bordered
+           <article class="home-panel"> blocks — one per widget, each
+           carrying its own title bar and ✕ — so a second widget lands as
+           its own distinct box rather than another row in a shared card.
+           The blocks are plain FULL-WIDTH children: .home-column on
+           #home-body bounds and centres the feed, so don't wrap them in a
+           per-box width bound (see app.css .home-column). Each block is
+           height-capped at two app-grid rows by --home-panel-max-h — the
+           derivation lives with that constant in app.css.
+
            NOTE "panel" ≠ the "Usernode widget" strip home.js renders
            INSIDE the grid (that's the iOS home-screen widget). -->
       <section id="home-panels" class="hidden px-3 pb-3"></section>

@@ -62,17 +62,28 @@ function makeMockPool(state) {
       }
       // The COUNT(*) totals query.
       if (sql.includes('COUNT(*)::int AS total')) {
-        const rows = state.rows || [];
+        // The totals query runs over the WHOLE open set, so the fixture
+        // may declare `allRows` (what the season really has) separately
+        // from `rows` (the capped page the row query returns). Defaults to
+        // `rows` when a test doesn't care about the difference.
+        const all = state.allRows || state.rows || [];
+        const isDone = (r) => Number(r.my_activity_count) > 0;
         return {
           rows: [{
-            total: rows.length,
-            done: rows.filter((r) => Number(r.my_activity_count) > 0).length,
+            total: state.total != null ? state.total : all.length,
+            done: all.filter(isDone).length,
+            // array_agg(COALESCE(c.reward, ct.reward)) FILTER (NOT done)
+            open_rewards: all.filter((r) => !isDone(r))
+              .map((r) => (r.reward != null ? r.reward : r.t_reward)),
           }],
         };
       }
       // The row query.
       if (sql.includes('FROM challenges c')) {
-        return { rows: (state.rows || []).slice(0, 5) };
+        // Honour the real LIMIT the route passes ($3) rather than a
+        // hardcoded page size, so the row cap is genuinely exercised.
+        const limit = Number(params[2]) || (state.rows || []).length;
+        return { rows: (state.rows || []).slice(0, limit) };
       }
       throw new Error(`unexpected query: ${sql.slice(0, 80)}`);
     },
@@ -280,8 +291,9 @@ test('GET /api/home-panels: rows are capped and totals report the real count', a
   const { app } = makeApp({ season: SEASON, rows }, { user: USER });
   const { body } = await get(app, '/api/home-panels');
   const panel = body.panels[0];
-  assert.equal(panel.challenges.length, 5, 'card shows at most five rows');
-  assert.equal(panel.total, 8, 'footer can say "See all 8"');
+  assert.equal(panel.challenges.length, 4,
+    'four 44px rows is what fits under the two-app-row height cap');
+  assert.equal(panel.total, 8, 'so the client can say "See all 8 challenges"');
 });
 
 test('GET /api/home-panels: done/earned come from the viewer\'s own ledger rows', async () => {
@@ -375,6 +387,54 @@ test('GET /api/home-panels: points_remaining totals open rewards only when all a
   const { body: body2 } = await get(app2, '/api/home-panels');
   assert.equal(body2.panels[0].points_remaining, null,
     'one bit of prose withholds the whole figure');
+});
+
+test('GET /api/home-panels: points_remaining covers ALL open rows, not just the page', async () => {
+  // Six open challenges, only four returned (the row cap). "pts left" has
+  // to count all six — summing the page would understate it the moment a
+  // fifth challenge opens, which is exactly the regression the cap invites.
+  const allRows = Array.from({ length: 6 }, (_, i) =>
+    row({ id: i + 1, reward: '100 pts', my_activity_count: 0 }));
+  const { app } = makeApp(
+    { season: SEASON, rows: allRows.slice(0, 4), allRows, total: 6 },
+    { user: USER }
+  );
+  const { body } = await get(app, '/api/home-panels');
+  const panel = body.panels[0];
+  assert.equal(panel.challenges.length, 4, 'the page is capped');
+  assert.equal(panel.total, 6);
+  assert.equal(panel.points_remaining, 600,
+    'six open rows at 100 each — not 400 from the four returned');
+});
+
+test('GET /api/home-panels: prose in an OFF-page open reward still withholds the total', async () => {
+  // The prose row is beyond the cap, so a page-scoped sum would have
+  // happily reported a number that ignores it.
+  const allRows = [
+    ...Array.from({ length: 4 }, (_, i) =>
+      row({ id: i + 1, reward: '100 pts', my_activity_count: 0 })),
+    row({ id: 5, reward: '½ of your final credits', my_activity_count: 0 }),
+  ];
+  const { app } = makeApp(
+    { season: SEASON, rows: allRows.slice(0, 4), allRows, total: 5 },
+    { user: USER }
+  );
+  const { body } = await get(app, '/api/home-panels');
+  assert.equal(body.panels[0].points_remaining, null);
+});
+
+test('the totals query asks for the open rewards, and the row query is capped at 4', async () => {
+  const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
+  await get(app, '/api/home-panels');
+  const totals = calls.find((c) => c.sql.includes('COUNT(*)::int AS total'));
+  assert.match(totals.sql, /array_agg\(COALESCE\(c\.reward, ct\.reward\)\) FILTER \(WHERE NOT \(/,
+    'open rewards come from the full-predicate query, not the page');
+  const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
+  // Four 44px rows is what fits under --home-panel-max-h; the client
+  // spends its last slot on "See all N" when total exceeds it.
+  assert.equal(rowQuery.params[2], 4);
+  const route = read('src/routes/home-panels.js');
+  assert.match(route, /const CHALLENGE_ROW_LIMIT = 4;/);
 });
 
 test('GET /api/home-panels: a hidden panel is dropped from panels but still described', async () => {

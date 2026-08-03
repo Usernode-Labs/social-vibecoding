@@ -41,12 +41,14 @@ const { TEMPLATE_JOIN_COLUMNS_SQL } = require('./topochain/challenge-view');
 
 const IS_STAGING = process.env.USERNODE_ENV === 'staging';
 
-// How many challenge rows the card shows. Real live events carry a
-// handful of open challenges at a time (production's June 2026 event had
-// four), so five rows covers the normal case while keeping the card from
-// pushing "Featured apps" off the fold. `total` tells the client how many
-// there really are so the footer can say "See all 8 challenges".
-const CHALLENGE_ROW_LIMIT = 5;
+// How many challenge rows the block can show. This is a LAYOUT constant:
+// the block is capped at two app-grid rows tall (--home-panel-max-h in
+// public/css/app.css) and that budget buys a ~28px title bar plus four
+// 44px rows. `total` is reported separately, so when more are open the
+// client spends its LAST slot on "See all N challenges" instead of a
+// fourth challenge — overflow is fewer rows, never an inner scroller.
+// Keep in step with HomePanels.ROW_SLOTS in public/js/home-panels.js.
+const CHALLENGE_ROW_LIMIT = 4;
 
 // ─── Reward parsing ──────────────────────────────────────────────────
 //
@@ -254,9 +256,19 @@ async function buildChallengesPanel(pool, user) {
     [user.id, season.id, CHALLENGE_ROW_LIMIT]
   );
 
+  // Totals over the WHOLE open set, not the page above: `total` drives the
+  // client's "See all N" slot, and `open_rewards` is what makes
+  // points_remaining honest. With the row cap at four, summing only the
+  // returned rows would understate "pts left" the moment a fifth challenge
+  // opens — so collect every open not-done row's effective reward here (a
+  // handful of short strings) and parse them below.
   const { rows: totalRows } = await pool.query(
     `SELECT COUNT(*)::int AS total,
-            COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done
+            COUNT(*) FILTER (WHERE ${DONE_EXPR})::int AS done,
+            COALESCE(
+              array_agg(COALESCE(c.reward, ct.reward)) FILTER (WHERE NOT (${DONE_EXPR})),
+              '{}'
+            ) AS open_rewards
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
        LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
@@ -269,13 +281,14 @@ async function buildChallengesPanel(pool, user) {
   // list (the FK should make it unreachable in practice).
   const challenges = rows.filter((r) => r.t_id != null).map(buildChallengeRow);
 
-  // "Points still on the table": only when EVERY not-done row's reward
-  // parses as a plain number. One "½ of your final credits" and the whole
-  // figure is withheld rather than silently under-reported.
+  // "Points still on the table": only when EVERY open row's reward parses
+  // as a plain number. One "½ of your final credits" and the whole figure
+  // is withheld rather than silently under-reported.
+  const openRewards = Array.isArray(totalRows[0]?.open_rewards)
+    ? totalRows[0].open_rewards : [];
   let pointsRemaining = 0;
-  for (const ch of challenges) {
-    if (ch.progress.done) continue;
-    const n = parseRewardPoints(ch.reward);
+  for (const reward of openRewards) {
+    const n = parseRewardPoints(reward);
     if (n == null) { pointsRemaining = null; break; }
     pointsRemaining += n;
   }
@@ -342,9 +355,16 @@ function demoChallengesPanel() {
       earned_points: 50,
     },
   ];
+  // `total` is exactly the row budget (4) on purpose, so every one of the
+  // four states — including the DONE row — is on screen for the before/
+  // after captures and the dapp.json check. Rows sort not-done-first, so a
+  // total above the budget would spend the last slot on the "See all N"
+  // link and drop the ✓ row; the OVERFLOW slot is exercised instead by the
+  // real query path, where the boot seed leaves five challenges open (see
+  // seedStagingTopochain in src/db/migrate.js).
   return {
     season: { id: 900500, name: 'Staging Demo Season — Topochain' },
-    total: 6,
+    total: 4,
     done: 1,
     points_remaining: null,
     challenges: rows,
