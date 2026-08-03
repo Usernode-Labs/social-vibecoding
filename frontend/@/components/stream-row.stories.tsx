@@ -85,6 +85,8 @@ export const ReadAndUnread: Story = {
     await expect(unread?.querySelector("a button")).toBeNull()
     await expect(within(unread as HTMLElement).getByRole("button", { name: "Mark read" })).toBeTruthy()
     await expect(read?.querySelector('[data-slot="stream-row-action"]')).toBeNull()
+    await expect(getComputedStyle(unread?.querySelector('[data-slot="stream-row-title"]') as HTMLElement).fontSize).toBe("16px")
+    await expect(getComputedStyle(unread?.querySelector('[data-slot="stream-row-metadata"]') as HTMLElement).fontSize).toBe("14px")
 
     await userEvent.tab()
     await expect(canvas.getByRole("link", { name: "Open activity: Could you review the pantry filter?" })).toHaveFocus()

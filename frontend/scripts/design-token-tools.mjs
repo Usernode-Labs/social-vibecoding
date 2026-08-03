@@ -69,6 +69,34 @@ function assertContrast(left, right, minimum, label) {
   if (ratio < minimum) throw new Error(`${label} contrast ${ratio.toFixed(2)}:1 is below ${minimum}:1`)
 }
 
+function lightness(token, label) {
+  const value = token?.$value
+  if (value?.colorSpace !== "oklch" || !Array.isArray(value.components)) {
+    throw new Error(`${label} must use an oklch DTCG color value`)
+  }
+  return value.components[0]
+}
+
+function assertLightnessStep(lower, upper, minimum, label) {
+  const step = lightness(upper.token, upper.label) - lightness(lower.token, lower.label)
+  if (step + Number.EPSILON < minimum) {
+    throw new Error(`${label} lightness step ${step.toFixed(3)} is below ${minimum.toFixed(3)}`)
+  }
+}
+
+function validateSurfaceFoundation(tokens, mode) {
+  const label = `semantic.${mode}`
+  const background = { label: `${label}.background`, token: semanticToken(tokens, "background", label) }
+  const stage = { label: `${label}.stage`, token: semanticToken(tokens, "stage", label) }
+  const card = { label: `${label}.card`, token: semanticToken(tokens, "card", label) }
+
+  assertLightnessStep(background, card, 0.02, `${label} Canvas to Paper`)
+  assertLightnessStep(background, stage, 0.02, `${label} shell Canvas to hosted Canvas`)
+  assertLightnessStep(stage, card, 0.02, `${label} hosted Canvas to Paper`)
+  assertContrast(semanticToken(tokens, "destructive", label), background.token, 4.5, `${label}.destructive text/Canvas`)
+  assertContrast(semanticToken(tokens, "destructive", label), card.token, 4.5, `${label}.destructive text/Paper`)
+}
+
 function validateSemanticFoundation(tokens, mode) {
   const label = `semantic.${mode}`
   assertContrast(
@@ -192,6 +220,8 @@ export function renderDesignTokens() {
   }
   validateSemanticFoundation(light, "light")
   validateSemanticFoundation(dark, "dark")
+  validateSurfaceFoundation(light, "light")
+  validateSurfaceFoundation(dark, "dark")
   return `${[
     "/* Generated from design-system/tokens.json. Do not edit directly. */",
     `:root {\n  --font-sans-authority: ${font.map((part) => part.includes(" ") ? `'${part}'` : part).join(", ")};\n  --radius: ${radius.value}${radius.unit};\n}`,

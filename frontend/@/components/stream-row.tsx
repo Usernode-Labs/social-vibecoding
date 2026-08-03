@@ -61,7 +61,7 @@ export function StreamRow({
           {anchor}
         </span>
         <span className="flex min-w-0 flex-1 flex-col gap-1">
-          <span className={cn("truncate text-sm text-foreground", unread && "font-medium")} data-slot="stream-row-title">
+          <span className={cn("truncate text-base text-foreground", unread && "font-medium")} data-slot="stream-row-title">
             {title}
           </span>
           <span className="truncate text-sm text-muted-foreground" data-slot="stream-row-metadata">{metadata}</span>
