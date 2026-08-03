@@ -415,7 +415,7 @@ export function DevComposer({
               onValueChange={selectModel}
               value={selectedModel}
             >
-              <SelectTrigger aria-describedby="dev-model-guidance" aria-label="Model for this turn" className="ml-auto h-7 max-w-48 bg-transparent px-2 text-xs" id="dev-model" size="sm"><SelectValue placeholder={modelError ? "Server default" : "Loading models…"} /></SelectTrigger>
+              <SelectTrigger aria-describedby="dev-model-guidance" aria-label="Model for this turn" className="ml-auto h-7 max-w-48 px-2 text-xs" id="dev-model" size="sm" surface="none"><SelectValue placeholder={modelError ? "Server default" : "Loading models…"} /></SelectTrigger>
               <SelectContent><SelectGroup>{models.map((model) => <SelectItem key={model.id} value={model.id}>{model.label}{model.changeSize?.short ? ` — ${model.changeSize.short}` : ""}</SelectItem>)}</SelectGroup></SelectContent>
             </Select>
             {streaming ? (

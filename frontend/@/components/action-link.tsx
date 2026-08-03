@@ -3,7 +3,6 @@ import { Link, type LinkProps } from "react-router-dom"
 import type { VariantProps } from "class-variance-authority"
 
 import { buttonVariants } from "@/components/ui/button"
-import { cn } from "@/lib/utils"
 
 type ActionLinkVisualProps = VariantProps<typeof buttonVariants> & {
   disabled?: boolean
@@ -40,7 +39,7 @@ export function ActionLink({
   return (
     <Link
       aria-disabled={disabled || undefined}
-      className={cn(buttonVariants({ size, variant }), className)}
+      className={buttonVariants({ className, size, variant })}
       data-slot="action-link"
       onClick={guardDisabled(disabled, onClick)}
       tabIndex={disabled ? -1 : tabIndex}
@@ -67,7 +66,7 @@ export function ActionAnchor({
   return (
     <a
       aria-disabled={disabled || undefined}
-      className={cn(buttonVariants({ size, variant }), className)}
+      className={buttonVariants({ className, size, variant })}
       data-slot="action-anchor"
       onClick={guardDisabled(disabled, onClick)}
       tabIndex={disabled ? -1 : tabIndex}

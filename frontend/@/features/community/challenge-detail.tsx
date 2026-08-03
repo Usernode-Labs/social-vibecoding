@@ -49,7 +49,7 @@ function Status({ challenge, progress }: { challenge: Challenge; progress?: Chal
   const showProgress = typeof progress?.current === "number" && typeof target === "number" && target > 0 && ["count", "sum", "percentage"].includes(challenge.metric?.kind?.toLowerCase() ?? "")
   const current = showProgress ? Math.max(0, Math.min(progress!.current!, target!)) : undefined
   const label = current === undefined ? (progress?.description || detail.copy) : `${format(current)} / ${format(target!)}${challenge.metric?.label ? ` ${challenge.metric.label}` : ""}`
-  return <Card className="bg-muted/30" data-challenge-phase={value}><CardHeader className="gap-2"><div className="flex flex-wrap items-center gap-2"><Badge variant={detail.variant}><PlatformIcon data-icon="inline-start" icon={detail.icon} />{detail.label}</Badge>{challenge.category ? <Badge variant="outline">{challenge.category}</Badge> : null}</div><CardDescription className="text-sm">{label}</CardDescription></CardHeader>{current !== undefined ? <CardContent><div aria-label="Challenge progress" aria-valuemax={target} aria-valuemin={0} aria-valuenow={current} className="h-2 overflow-hidden rounded-full bg-border" role="progressbar"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.round(current / target! * 100)}%` }} /></div></CardContent> : null}</Card>
+  return <Card data-challenge-phase={value}><CardHeader className="gap-2"><div className="flex flex-wrap items-center gap-2"><Badge variant={detail.variant}><PlatformIcon data-icon="inline-start" icon={detail.icon} />{detail.label}</Badge>{challenge.category ? <Badge variant="outline">{challenge.category}</Badge> : null}</div><CardDescription className="text-sm">{label}</CardDescription></CardHeader>{current !== undefined ? <CardContent><div aria-label="Challenge progress" aria-valuemax={target} aria-valuemin={0} aria-valuenow={current} className="h-2 overflow-hidden rounded-full bg-border" role="progressbar"><div className="h-full rounded-full bg-primary" style={{ width: `${Math.round(current / target! * 100)}%` }} /></div></CardContent> : null}</Card>
 }
 
 function earnedPoints(challenge: Challenge, progress?: ChallengeProgress) {
@@ -62,7 +62,7 @@ function CompletedStatus({ challenge, progress }: { challenge: Challenge; progre
   const points = earnedPoints(challenge, progress)
   const anchor = points === undefined ? challenge.reward || "Reward confirmed" : format(points)
   const rewardCaption = challenge.reward && challenge.reward !== anchor && !rewardRepeatsPoints(challenge.reward, points) ? challenge.reward : undefined
-  return <Card aria-labelledby="challenge-reward-earned" className="status-surface bg-linear-to-br from-[var(--status-surface)] to-background shadow-none" data-challenge-phase="completed" data-status-tone="positive" role="region">
+  return <Card aria-labelledby="challenge-reward-earned" className="status-container shadow-none" data-challenge-phase="completed" data-status-tone="positive" role="region">
     <CardContent className="flex flex-col gap-6 p-6 sm:p-8">
       <div className="flex items-center gap-2 font-medium"><PlatformIcon icon={CheckCircle2} size="sm" />Completed</div>
       <div className="flex flex-col gap-2">

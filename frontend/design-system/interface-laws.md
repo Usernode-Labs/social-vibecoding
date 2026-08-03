@@ -16,7 +16,7 @@ Every view has one Paper. Print content; never stack Cards.
 
 | Role | Separation | Do not |
 |---|---|---|
-| Canvas | Darker page field; nothing prints on it | Treat it as content |
+| Canvas | Darker page field; shell navigation prints on it | Treat it as route content |
 | Paper | One lighter shell-owned sheet on Canvas | Nest Paper or spell `div` as Card |
 | Print | Bare inherited content | Add opaque fill, ring, or shadow |
 | Container | Alpha grouping; compounds at any depth | Paint opaque Paper |
@@ -27,6 +27,11 @@ Every view has one Paper. Print content; never stack Cards.
 Canvas/Paper are opaque. Container alpha darkens light mode and lightens dark;
 stacking is intentional, never a hole or lint condition. Only
 `data-slot="platform-bottom-navigation"` persists as Overlay.
+Sidebar is shell navigation on Canvas, including when Paper moves or shrinks;
+it never creates a separate Rail surface. Popover aliases Paper. Container is
+canonical neutral ink: black at 6 percent in light mode and white at 5 percent
+in dark mode. Foreground primary, secondary, and tertiary remain neutral ink at
+80, 65, and 57 percent alpha respectively.
 
 Status is ink, not Paper. Metric is one definition list, never a
 Card per value. Stream rows use dividers, whitespace, and quiet interaction.
@@ -107,6 +112,9 @@ use `aria-disabled` with guarded activation. Styling never replaces behavior.
 Disabled and selected remain distinct. Pending actions name the active operation
 and do not collapse into unlabeled spinners. Field labels and explanatory copy
 do not fade merely because one child control is unavailable.
+Element opacity is forbidden for disabled controls and labels because it also
+fades readable text and focus affordances. Use semantic foreground and fill
+tokens for the disabled treatment while preserving native disabled behavior.
 
 ## Representative Activity stream-row contract
 

@@ -488,7 +488,7 @@ function BoardCardView({ card, draggable }: { card: BoardCard; draggable: boolea
     onPointerDown: sortable.listeners.onPointerDown as HTMLAttributes<HTMLDivElement>["onPointerDown"],
     onTouchStart: sortable.listeners.onTouchStart as HTMLAttributes<HTMLDivElement>["onTouchStart"],
   } : undefined
-  return <div ref={sortable.setNodeRef} style={style} className={cn("relative min-w-0", sortable.isDragging && "z-10 opacity-60")}><Card className={cn("min-w-0 gap-2 bg-background py-0 [--card-spacing:--spacing(3)]", draggable && "cursor-grab active:cursor-grabbing")} {...pointerListeners}>
+  return <div ref={sortable.setNodeRef} style={style} className={cn("relative min-w-0", sortable.isDragging && "z-10 opacity-60")}><Card className={cn("min-w-0 gap-2 py-0 [--card-spacing:--spacing(3)]", draggable && "cursor-grab active:cursor-grabbing")} {...pointerListeners}>
     <Link aria-label={card.kind === "session" ? `Open ${card.title}` : `View ${card.title}`} className="block rounded-xl p-3 outline-none focus-visible:ring-3 focus-visible:ring-ring/50" to={card.href}>
       <CardTitle className="min-w-0 pr-7 line-clamp-2 text-base font-medium sm:text-sm">{card.title}</CardTitle>
       <CardDescription className="mt-2 line-clamp-2 text-base leading-6 sm:text-sm sm:leading-5">{card.description}</CardDescription>

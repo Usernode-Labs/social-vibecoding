@@ -102,6 +102,11 @@ export const StatusTonesLight: Story = {
     const footer = canvas.getByText("Auto-pay enabled").closest('[data-slot="alert"]')
     await expect(footer).not.toHaveAttribute("role")
     await expect(canvasElement.querySelectorAll("[data-status-tone]")).toHaveLength(9)
+    for (const alert of canvasElement.querySelectorAll<HTMLElement>('[data-slot="alert"][data-status-tone]')) {
+      await expect(alert).toHaveAttribute("data-surface", "container")
+      await expect(renderedAlpha(getComputedStyle(alert).backgroundColor)).toBeGreaterThan(0)
+      await expect(renderedAlpha(getComputedStyle(alert).backgroundColor)).toBeLessThan(1)
+    }
   },
 }
 

@@ -106,6 +106,13 @@ function assertContrast(left, right, minimum, label) {
   if (ratio < minimum) throw new Error(`${label} contrast ${ratio.toFixed(2)}:1 is below ${minimum}:1`)
 }
 
+function assertContrastOnBackdrop(foreground, backdrop, minimum, label) {
+  const foregroundColor = compositeToken(foreground, backdrop)
+  const [high, low] = [relativeLuminance(foregroundColor), relativeLuminance(backdrop)].sort((a, b) => b - a)
+  const ratio = (high + 0.05) / (low + 0.05)
+  if (ratio < minimum) throw new Error(`${label} contrast ${ratio.toFixed(2)}:1 is below ${minimum}:1`)
+}
+
 function lightness(token, label) {
   const value = token?.$value
   if (value?.colorSpace !== "oklch" || !Array.isArray(value.components)) {
@@ -128,13 +135,29 @@ function assertAlias(tokens, name, target, mode) {
   }
 }
 
+function assertExactColor(token, expectedComponents, expectedAlpha, label) {
+  const value = token?.$value
+  if (value?.colorSpace !== "oklch" || JSON.stringify(value.components) !== JSON.stringify(expectedComponents)) {
+    throw new Error(`${label} must use canonical oklch components ${expectedComponents.join(" ")}`)
+  }
+  if (tokenAlpha(token) !== expectedAlpha) {
+    throw new Error(`${label} alpha must be ${expectedAlpha}`)
+  }
+}
+
+function assertNeutral(token, label) {
+  const value = token?.$value
+  if (value?.colorSpace !== "oklch" || value.components?.[1] !== 0) {
+    throw new Error(`${label} must remain neutral`)
+  }
+}
+
 function assertContainerSystem(tokens, mode, paper) {
   const label = `semantic.${mode}`
   const container = semanticToken(tokens, "container", label)
-  const alpha = tokenAlpha(container)
-  if (alpha < 0.04 || alpha > 0.08) {
-    throw new Error(`${label}.container alpha ${alpha.toFixed(2)} must stay between 0.04 and 0.08`)
-  }
+  const source = mode === "light" ? [0, 0, 0] : [1, 0, 0]
+  const canonicalAlpha = mode === "light" ? 0.06 : 0.05
+  assertExactColor(container, source, canonicalAlpha, `${label}.container`)
 
   const stack = [tokenSrgb(paper)]
   for (let depth = 1; depth <= 3; depth += 1) {
@@ -151,10 +174,10 @@ function assertContainerSystem(tokens, mode, paper) {
   }
 
   const foregroundRoles = ["fg-primary", "fg-secondary", "fg-tertiary"]
-  const foregroundAlphas = foregroundRoles.map((name) => tokenAlpha(semanticToken(tokens, name, label)))
-  if (!(foregroundAlphas[0] > foregroundAlphas[1] && foregroundAlphas[1] > foregroundAlphas[2])) {
-    throw new Error(`${label} foreground alpha must descend primary to secondary to tertiary`)
-  }
+  const foregroundAlphas = [0.8, 0.65, 0.57]
+  foregroundRoles.forEach((name, index) => {
+    assertExactColor(semanticToken(tokens, name, label), source, foregroundAlphas[index], `${label}.${name}`)
+  })
   for (const role of [...foregroundRoles, "destructive"]) {
     const foreground = semanticToken(tokens, role, label)
     for (let depth = 0; depth < stack.length; depth += 1) {
@@ -180,10 +203,20 @@ function validateSurfaceFoundation(tokens, mode) {
   assertAlias(tokens, "foreground", "fg-primary", mode)
   assertAlias(tokens, "muted-foreground", "fg-secondary", mode)
   assertAlias(tokens, "card", "paper", mode)
+  assertAlias(tokens, "popover", "paper", mode)
+  assertAlias(tokens, "sidebar", "background", mode)
+  assertAlias(tokens, "sidebar-foreground", "fg-primary", mode)
+  assertAlias(tokens, "sidebar-accent", "container", mode)
+  assertAlias(tokens, "sidebar-accent-foreground", "fg-primary", mode)
+  assertAlias(tokens, "sidebar-border", "border", mode)
+  assertAlias(tokens, "sidebar-ring", "ring", mode)
   assertLightnessStep(background, paper, 0.02, `${label} Canvas to Paper`)
   assertLightnessStep(background, stage, 0.02, `${label} shell Canvas to hosted Canvas`)
   assertLightnessStep(stage, paper, 0.02, `${label} hosted Canvas to Paper`)
   assertContainerSystem(tokens, mode, paper.token)
+  const muted = semanticToken(tokens, "muted", label)
+  assertNeutral(muted, `${label}.muted`)
+  assertContrast(mutedForeground, muted, 4.5, `${label}.muted-foreground/muted`)
   assertContrast(mutedForeground, background.token, 4.5, `${label}.muted-foreground/Canvas`)
   assertContrast(semanticToken(tokens, "destructive", label), background.token, 4.5, `${label}.destructive text/Canvas`)
   assertContrast(semanticToken(tokens, "destructive", label), paper.token, 4.5, `${label}.destructive text/Paper`)
@@ -191,6 +224,8 @@ function validateSurfaceFoundation(tokens, mode) {
 
 function validateSemanticFoundation(tokens, mode) {
   const label = `semantic.${mode}`
+  const paper = semanticToken(tokens, "paper", label)
+  const containerBackdrop = compositeToken(semanticToken(tokens, "container", label), tokenSrgb(paper))
   assertContrast(
     semanticToken(tokens, "destructive-foreground", label),
     semanticToken(tokens, "destructive", label),
@@ -212,6 +247,10 @@ function validateSemanticFoundation(tokens, mode) {
     assertContrast(foreground, surface, 4.5, `${label}.${role} foreground/surface`)
     assertContrast(border, semanticToken(tokens, "card", label), 3, `${label}.${role} border/card`)
     assertContrast(semanticToken(tokens, "ring", label), surface, 3, `${label}.${role} focus ring/surface`)
+    if (statusRoles.includes(role)) {
+      assertContrastOnBackdrop(foreground, containerBackdrop, 4.5, `${label}.${role} foreground/semantic Container`)
+      assertContrastOnBackdrop(border, containerBackdrop, 3, `${label}.${role} border/semantic Container`)
+    }
   }
 }
 
@@ -236,6 +275,11 @@ function renderSemanticComponentAliases() {
   --status-surface: var(--status-${role}-surface);
   --status-surface-foreground: var(--status-${role}-foreground);
   --status-surface-border: var(--status-${role}-border);
+}`).join("\n")
+  const statusContainerRules = statusRoles.map((role) => `
+.status-container[data-status-tone="${role}"] {
+  --status-container-foreground: var(--status-${role}-foreground);
+  --status-container-border: var(--status-${role}-border);
 }`).join("\n")
   const neutralRule = `
 .status-dot[data-status-role="neutral"] {
@@ -263,7 +307,14 @@ ${statusRules}${neutralRule}
   border-color: var(--status-surface-border);
   color: var(--status-surface-foreground);
 }
-${statusSurfaceRules}`
+${statusSurfaceRules}
+${statusContainerRules}
+
+.status-container {
+  background-color: var(--container);
+  border-color: var(--status-container-border);
+  color: var(--status-container-foreground);
+}`
 }
 
 function renderForcedColorsOverrides() {
@@ -282,7 +333,8 @@ function renderForcedColorsOverrides() {
     outline-offset: 1px;
   }
 
-  .status-surface {
+  .status-surface,
+  .status-container {
     background-color: Canvas;
     border-color: CanvasText;
     color: CanvasText;
@@ -290,8 +342,7 @@ function renderForcedColorsOverrides() {
 }`
 }
 
-export function renderDesignTokens() {
-  const tokens = readTokens()
+export function renderDesignTokens(tokens = readTokens()) {
   if (tokens.$schema !== "https://www.designtokens.org/schemas/2025.10/format.json") {
     throw new Error("tokens.json must use the DTCG 2025.10 schema")
   }

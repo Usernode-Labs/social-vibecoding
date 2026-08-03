@@ -78,7 +78,8 @@ function ToggleGroup({
       className={cn(
         "group/toggle-group flex w-fit flex-row items-center gap-[--spacing(var(--gap))] data-[spacing=0]:data-[variant=outline]:rounded-3xl data-vertical:flex-col data-vertical:items-stretch",
         toggleGroupSelectionVariants({ selectionVariant }),
-        className
+        className,
+        selectionVariant === "container" && "bg-container"
       )}
       {...props}
     >
@@ -115,7 +116,8 @@ function ToggleGroupItem({
           size: context.size || size,
         }),
         toggleGroupItemSelectionVariants({ selectionVariant: context.selectionVariant || selectionVariant }),
-        className
+        className,
+        (context.selectionVariant || selectionVariant) === "container" && "aria-pressed:bg-container"
       )}
       {...props}
     >

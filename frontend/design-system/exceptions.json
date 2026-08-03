@@ -347,25 +347,12 @@
       "matches": [
         "dark:aria-invalid:border-destructive/50",
         "dark:aria-invalid:ring-destructive/40",
-        "dark:bg-transparent",
         "dark:focus-visible:ring-destructive/40",
-        "dark:hover:bg-input/30",
         "dark:hover:bg-muted/50"
       ],
-      "count": 6,
+      "count": 4,
       "owner": "frontend-platform",
-      "reason": "Frozen official shadcn Luma source uses theme-specific control states; the exact-match ratchet prevents local expansion.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-manual-dark-colors",
-      "file": "@/components/ui/input-group.tsx",
-      "matches": [
-        "dark:bg-transparent"
-      ],
-      "count": 2,
-      "owner": "frontend-platform",
-      "reason": "Frozen official shadcn Luma source keeps nested controls transparent in dark mode; the exact-match ratchet prevents local expansion.",
+      "reason": "Frozen official shadcn Luma variants use theme-specific control states; the exact-match ratchet prevents local expansion.",
       "expires": "2026-09-30"
     },
     {

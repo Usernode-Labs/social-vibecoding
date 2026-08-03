@@ -5,18 +5,20 @@ import { cn } from "@/lib/utils"
 function Card({
   className,
   size = "default",
+  surface = "container",
   ...props
-}: React.ComponentProps<"div"> & { size?: "default" | "sm" }) {
+}: React.ComponentProps<"div"> & { size?: "default" | "sm"; surface?: "container" | "none" }) {
   return (
     <div
       data-slot="card"
       data-size={size}
       className={cn(
         "group/card flex flex-col gap-(--card-spacing) overflow-hidden rounded-4xl bg-container py-(--card-spacing) text-sm text-foreground [--card-spacing:--spacing(6)] has-[>img:first-child]:pt-0 data-[size=sm]:[--card-spacing:--spacing(4)] *:[img:first-child]:rounded-t-4xl *:[img:last-child]:rounded-b-4xl",
-        className
+        className,
+        surface === "container" ? "bg-container" : "bg-transparent"
       )}
       {...props}
-      data-surface="container"
+      data-surface={surface === "container" ? "container" : undefined}
     />
   )
 }

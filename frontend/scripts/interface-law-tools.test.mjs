@@ -64,6 +64,16 @@ test("status colour is ink rather than a sixth surface role", () => {
   assert.match(invalid?.remediation || "", /status colour is ink/)
 })
 
+test("primitive disabled styling cannot fade the whole element", () => {
+  const primitiveFile = path.join(frontendRoot, "@", "components", "ui", "fixture.tsx")
+  const findings = scanInterfaceSource(frontendRoot, primitiveFile, `
+    export function Fixture() {
+      return <button className="disabled:opacity-50 aria-disabled:text-fg-secondary">Save</button>
+    }
+  `)
+  assert.deepEqual(findings.filter((item) => item.rule === "no-disabled-element-opacity").map((item) => item.match), ["disabled:opacity-50"])
+})
+
 test("exact warning ratchet rejects additions and requires resolved entries to be removed", () => {
   const accepted = [{ rule: "no-caller-margin", file: "@/a.tsx", match: "mt-2" }]
   assert.deepEqual(evaluateInterfaceLawRatchet(accepted, accepted), { added: [], resolved: [] })

@@ -83,7 +83,7 @@ async function visibleNavigationSurface(page: Page) {
   const mobileSurface = navigation.locator("xpath=ancestor::*[@data-slot='sidebar'][@data-mobile='true'][1]")
   return await mobileSurface.count()
     ? mobileSurface
-    : navigation.locator("xpath=ancestor::*[@data-slot='sidebar-inner'][1]")
+    : page.locator('[data-slot="sidebar-wrapper"]')
 }
 
 test.beforeEach(async ({ page }) => {
@@ -117,6 +117,17 @@ test("renders the accepted platform IA with one current destination", async ({ p
   await expect(navigation.locator('[aria-label="3 items need attention"]')).toContainText("3")
   await expect(navigation.getByRole("img", { name: "Node, synced" })).toBeVisible()
   await expect(page.getByRole("group", { name: "Color mode" })).toHaveCount(0)
+  const canvas = await visibleNavigationSurface(page)
+  await expect(canvas).toHaveAttribute("data-surface", "canvas")
+  await expect.poll(() => canvas.evaluate((node) => {
+    const root = getComputedStyle(document.documentElement)
+    const probe = document.createElement("span")
+    probe.style.color = root.getPropertyValue("--background")
+    document.body.append(probe)
+    const expected = getComputedStyle(probe).color
+    probe.remove()
+    return getComputedStyle(node).backgroundColor === expected
+  })).toBe(true)
 })
 
 test("keeps one inset Paper on the shell Canvas", async ({ page }, testInfo) => {

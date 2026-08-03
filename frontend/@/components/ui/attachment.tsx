@@ -40,7 +40,7 @@ function Attachment({
       data-state={state}
       data-size={size}
       data-orientation={orientation}
-      className={cn(attachmentVariants({ size, orientation }), className)}
+      className={cn(attachmentVariants({ size, orientation }), className, "bg-container")}
       {...props}
       data-surface="container"
     />

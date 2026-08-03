@@ -17,7 +17,7 @@
   --card: var(--paper);
   --card-foreground: var(--fg-primary);
   --container: oklch(0 0 0 / 6%);
-  --popover: oklch(1 0 0);
+  --popover: var(--paper);
   --popover-foreground: var(--fg-primary);
   --primary: oklch(0.205 0 0);
   --primary-foreground: oklch(0.985 0 0);
@@ -37,14 +37,14 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.985 0 0);
+  --sidebar: var(--background);
   --sidebar-foreground: var(--fg-primary);
   --sidebar-primary: oklch(0.205 0 0);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
-  --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-accent: var(--container);
+  --sidebar-accent-foreground: var(--fg-primary);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
   --identity-1-surface: oklch(0.91 0.06 25);
   --identity-1-foreground: oklch(0.28 0.1 25);
   --identity-1-border: oklch(0.52 0.1 25);
@@ -98,7 +98,7 @@
   --card: var(--paper);
   --card-foreground: var(--fg-primary);
   --container: oklch(1 0 0 / 5%);
-  --popover: oklch(0.205 0 0);
+  --popover: var(--paper);
   --popover-foreground: var(--fg-primary);
   --primary: oklch(0.922 0 0);
   --primary-foreground: oklch(0.205 0 0);
@@ -118,14 +118,14 @@
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --sidebar: oklch(0.205 0 0);
+  --sidebar: var(--background);
   --sidebar-foreground: var(--fg-primary);
   --sidebar-primary: oklch(0.488 0.243 264.376);
   --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-accent: var(--container);
+  --sidebar-accent-foreground: var(--fg-primary);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--ring);
   --identity-1-surface: oklch(0.24 0.08 25);
   --identity-1-foreground: oklch(0.92 0.04 25);
   --identity-1-border: oklch(0.62 0.1 25);
@@ -293,6 +293,32 @@
   --status-surface-border: var(--status-negative-border);
 }
 
+.status-container[data-status-tone="positive"] {
+  --status-container-foreground: var(--status-positive-foreground);
+  --status-container-border: var(--status-positive-border);
+}
+
+.status-container[data-status-tone="info"] {
+  --status-container-foreground: var(--status-info-foreground);
+  --status-container-border: var(--status-info-border);
+}
+
+.status-container[data-status-tone="warning"] {
+  --status-container-foreground: var(--status-warning-foreground);
+  --status-container-border: var(--status-warning-border);
+}
+
+.status-container[data-status-tone="negative"] {
+  --status-container-foreground: var(--status-negative-foreground);
+  --status-container-border: var(--status-negative-border);
+}
+
+.status-container {
+  background-color: var(--container);
+  border-color: var(--status-container-border);
+  color: var(--status-container-foreground);
+}
+
 @media (forced-colors: active) {
   .app-identity {
     background-color: Canvas;
@@ -308,7 +334,8 @@
     outline-offset: 1px;
   }
 
-  .status-surface {
+  .status-surface,
+  .status-container {
     background-color: Canvas;
     border-color: CanvasText;
     color: CanvasText;

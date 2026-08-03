@@ -4,6 +4,31 @@ import { expect, test, type Page } from "@playwright/test"
 
 import { expectAccessibleShellStructure } from "./accessibility"
 
+async function surfacePaint(page: Page, testId: string) {
+  return page.getByTestId(testId).evaluate((node) => {
+    const sample = (value: string) => {
+      const canvas = document.createElement("canvas")
+      canvas.width = 1
+      canvas.height = 1
+      const context = canvas.getContext("2d")!
+      context.clearRect(0, 0, 1, 1)
+      context.fillStyle = value
+      context.fillRect(0, 0, 1, 1)
+      return [...context.getImageData(0, 0, 1, 1).data]
+    }
+    return {
+      actual: sample(getComputedStyle(node).backgroundColor),
+      container: sample(getComputedStyle(document.documentElement).getPropertyValue("--container")),
+    }
+  })
+}
+
+function expectContainerPaint(paint: Awaited<ReturnType<typeof surfacePaint>>) {
+  expect(paint.actual).toEqual(paint.container)
+  expect(paint.actual[3]).toBeGreaterThan(0)
+  expect(paint.actual[3]).toBeLessThan(255)
+}
+
 const apps = {
   apps: [
     {
@@ -132,12 +157,7 @@ test("prints Home and Explore Containers on one Paper in both themes", async ({ 
     await expect(paper).toHaveAttribute("data-surface", "paper")
     await expect(page.locator('[data-surface="paper"]')).toHaveCount(1)
     await expect(card).toHaveAttribute("data-surface", "container")
-    await expect.poll(() => card.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)")
-    await expect.poll(async () => (
-      await card.evaluate((node) => getComputedStyle(node).backgroundColor)
-    ) !== (
-      await paper.evaluate((node) => getComputedStyle(node).backgroundColor)
-    )).toBe(true)
+    expectContainerPaint(await surfacePaint(page, "home-app-shortcut-recipebot"))
     await expect.poll(() => card.evaluate((node) => getComputedStyle(node).boxShadow)).toBe("none")
     await expect.poll(async () => (
       await canvas.evaluate((node) => getComputedStyle(node).backgroundColor)
@@ -148,17 +168,31 @@ test("prints Home and Explore Containers on one Paper in both themes", async ({ 
     await page.goto("/react/explore")
     await page.locator("html").evaluate((node, nextDark) => node.classList.toggle("dark", nextDark), dark)
 
-    const explorePaper = page.locator('[data-slot="sidebar-inset"]')
     const exploreCard = page.getByTestId("explore-app-card-recipebot")
 
     await expect(page.locator('[data-surface="paper"]')).toHaveCount(1)
     await expect(exploreCard).toHaveAttribute("data-surface", "container")
-    await expect.poll(() => exploreCard.evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)")
-    await expect.poll(async () => (
-      await exploreCard.evaluate((node) => getComputedStyle(node).backgroundColor)
-    ) !== (
-      await explorePaper.evaluate((node) => getComputedStyle(node).backgroundColor)
-    )).toBe(true)
+    expectContainerPaint(await surfacePaint(page, "explore-app-card-recipebot"))
+    const details = page.getByRole("link", { name: "View details for RecipeBot" })
+    const outlinePaint = await details.evaluate((node) => {
+      const sample = (value: string) => {
+        const canvas = document.createElement("canvas")
+        canvas.width = 1
+        canvas.height = 1
+        const context = canvas.getContext("2d")!
+        context.clearRect(0, 0, 1, 1)
+        context.fillStyle = value
+        context.fillRect(0, 0, 1, 1)
+        return [...context.getImageData(0, 0, 1, 1).data]
+      }
+      return {
+        actual: sample(getComputedStyle(node).backgroundColor),
+        container: sample(getComputedStyle(document.documentElement).getPropertyValue("--container")),
+      }
+    })
+    expect(outlinePaint.actual).toEqual(outlinePaint.container)
+    expect(outlinePaint.actual[3]).toBeGreaterThan(0)
+    expect(outlinePaint.actual[3]).toBeLessThan(255)
     await expect.poll(() => exploreCard.evaluate((node) => getComputedStyle(node).boxShadow)).toBe("none")
   }
 })

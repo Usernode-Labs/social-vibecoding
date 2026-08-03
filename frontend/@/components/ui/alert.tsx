@@ -11,10 +11,10 @@ const alertVariants = cva(
         default: "bg-container text-foreground",
         destructive:
           "bg-container text-destructive *:data-[slot=alert-description]:text-destructive *:[svg]:text-current",
-        positive: "status-surface *:data-[slot=alert-description]:text-current/80",
-        info: "status-surface *:data-[slot=alert-description]:text-current/80",
-        warning: "status-surface *:data-[slot=alert-description]:text-current/80",
-        negative: "status-surface *:data-[slot=alert-description]:text-current/80",
+        positive: "status-container *:data-[slot=alert-description]:text-current/80",
+        info: "status-container *:data-[slot=alert-description]:text-current/80",
+        warning: "status-container *:data-[slot=alert-description]:text-current/80",
+        negative: "status-container *:data-[slot=alert-description]:text-current/80",
       },
       form: {
         default: "gap-0.5 rounded-2xl px-4 py-3 has-data-[slot=alert-action]:relative has-data-[slot=alert-action]:pr-18 has-[>svg]:grid-cols-[auto_1fr] has-[>svg]:gap-x-2.5 *:[svg]:row-span-2 *:[svg]:translate-y-0.5",
@@ -50,7 +50,7 @@ function Alert({
       data-slot="alert"
       data-status-tone={tone}
       role={role ?? (form === "footer" ? undefined : "alert")}
-      className={cn(alertVariants({ appearance, form }), className)}
+      className={cn(alertVariants({ appearance, form }), className, "bg-container")}
       {...props}
       data-surface="container"
     />

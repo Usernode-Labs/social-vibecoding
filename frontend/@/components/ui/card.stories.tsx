@@ -19,7 +19,7 @@ type Story = StoryObj<typeof meta>
 
 export const Default: Story = {
   render: () => (
-    <Card>
+    <Card className="bg-paper">
       <CardHeader>
         <CardTitle>RecipeBot</CardTitle>
         <CardDescription>A shared app for planning weekly meals.</CardDescription>
@@ -34,6 +34,7 @@ export const Default: Story = {
     const paper = card?.parentElement
     await expect(card).toHaveAttribute("data-surface", "container")
     await expect(renderedAlpha(getComputedStyle(card!).backgroundColor)).toBeGreaterThan(0)
+    await expect(renderedAlpha(getComputedStyle(card!).backgroundColor)).toBeLessThan(1)
     await expect(getComputedStyle(card!).backgroundColor).not.toBe(getComputedStyle(paper!).backgroundColor)
     await expect(getComputedStyle(card!).boxShadow).toBe("none")
   },

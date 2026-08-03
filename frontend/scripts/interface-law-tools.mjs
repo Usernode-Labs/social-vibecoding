@@ -100,6 +100,11 @@ function isArbitraryRadius(token) {
   return /^rounded(?:-[trblsexy]{1,2})?-\[/.test(splitTailwindVariant(token).utility)
 }
 
+function isDisabledOpacity(token) {
+  const { variants, utility } = splitTailwindVariant(token)
+  return utility.startsWith("opacity-") && variants.some((variant) => variant.includes("disabled"))
+}
+
 function jsxName(opening, sourceFile) {
   return opening.tagName.getText(sourceFile)
 }
@@ -184,7 +189,6 @@ export function scanInterfaceSource(frontendRoot, fileName, source) {
       for (const token of classes.filter(isArbitraryRadius)) {
         findings.push(finding(frontendRoot, fileName, sourceFile, className, "radius-ladder-only", token, "Use the radius ladder derived from foundation.radius.base."))
       }
-
       if (governedComponents.has(name)) {
         for (const token of classes.filter(isMargin)) {
           findings.push(finding(frontendRoot, fileName, sourceFile, className, "no-caller-margin", token, "Let the parent own separation through gap."))
@@ -201,6 +205,17 @@ export function scanInterfaceSource(frontendRoot, fileName, source) {
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
+  if (isPrimitiveModule) {
+    const visitDisabledOpacity = (node) => {
+      if (ts.isStringLiteralLike(node)) {
+        for (const token of node.text.split(/\s+/).filter(isDisabledOpacity)) {
+          findings.push(finding(frontendRoot, fileName, sourceFile, node, "no-disabled-element-opacity", token, "Use semantic disabled foreground and fill tokens; do not fade the whole element."))
+        }
+      }
+      ts.forEachChild(node, visitDisabledOpacity)
+    }
+    visitDisabledOpacity(sourceFile)
+  }
   return findings
 }
 

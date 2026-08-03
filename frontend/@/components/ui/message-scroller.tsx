@@ -29,7 +29,8 @@ function MessageScroller({
       className={cn(
         "group/message-scroller relative flex size-full min-h-0 flex-col overflow-hidden",
         surface === "container" && "border bg-container",
-        className
+        className,
+        surface === "container" && "bg-container"
       )}
       {...props}
       data-surface={surface}
