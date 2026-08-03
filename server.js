@@ -2154,14 +2154,15 @@ async function finalizeRecoveredTurn({
         [stagingResult.containerId, stagingResult.stagingUrl, sessionId]
       );
 
-      // Pre-warm the TLS cert now that staging_url is persisted and BEFORE
-      // staging_ready reveals the preview button, so the first click
-      // doesn't pay the ZeroSSL cold start (live-path parity). Best-effort
-      // exactly like the live path: never blocks or fails the recovery.
+      // Make the first real request through the edge now that staging_url
+      // is persisted and BEFORE staging_ready reveals the preview button,
+      // so the reviewer's click doesn't pay the container's cold first
+      // request (live-path parity). Best-effort exactly like the live path:
+      // never blocks or fails the recovery.
       try {
-        await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
+        await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl);
       } catch (err) {
-        log.warn('server', 'Recovered turn: staging cert warm failed (non-fatal)', {
+        log.warn('server', 'Recovered turn: staging edge verification failed (non-fatal)', {
           sessionId, err: err.message,
         });
       }

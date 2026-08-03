@@ -95,7 +95,7 @@ function makeStaging() {
     },
     // #896: live-path parity — the recovered tail pre-warms the preview's
     // TLS cert before revealing the button, same as runClaudeCodeTool.
-    warmStagingCert: async (...args) => { certCalls.push(args); },
+    verifyStagingEdge: async (...args) => { certCalls.push(args); },
   };
 }
 
@@ -104,7 +104,7 @@ function makeFailingStaging(err) {
   return {
     calls,
     buildAndDeployStaging: async (...args) => { calls.push(args); throw err; },
-    warmStagingCert: async (...args) => { certCalls.push(args); },
+    verifyStagingEdge: async (...args) => { certCalls.push(args); },
   };
 }
 

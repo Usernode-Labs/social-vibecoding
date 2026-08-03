@@ -1075,7 +1075,7 @@ function voteRoutes(config) {
             `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
             [result.containerId, result.stagingUrl, session.id]
           );
-          await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+          await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
           // #195: capture before/after visuals off the fresh preview so
           // headless proposals promoted from clones get media on the vote
           // card + PR body even though the auto session's own staging (and

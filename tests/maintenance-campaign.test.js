@@ -476,7 +476,7 @@ function loadFleet({ llmScript = [], files = {}, gh = {}, checkAndMerge } = {}) 
   });
   stub(ids.staging, {
     buildAndDeployStaging: async () => ({ containerId: 'c1', stagingUrl: 'https://s', hostname: 'h' }),
-    warmStagingCert: async () => {},
+    verifyStagingEdge: async () => {},
   });
   stub(ids.stagingRecovery, { recordStagingBootFailure: async () => {} });
   stub(ids.votes, {

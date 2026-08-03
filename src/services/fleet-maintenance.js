@@ -483,7 +483,7 @@ function kickChecks(config, pool, session, app) {
       `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
       [result.containerId, result.stagingUrl, session.id]
     );
-    await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+    await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
     visuals.captureForSession(config, session, app, null, result)
       .catch((err) => log.warn('fleet-maintenance', 'Campaign visuals capture failed', { sessionId: session.id, err: err.message }));
   })().catch((err) => log.warn('fleet-maintenance', 'Campaign staging build failed', { sessionId: session.id, err: err.message }));

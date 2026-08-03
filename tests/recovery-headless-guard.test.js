@@ -87,7 +87,7 @@ function makeStaging() {
       calls.push(args);
       return { containerId: 'c', stagingUrl: 'https://x.example', hostname: 'x.example' };
     },
-    warmStagingCert: async () => {},
+    verifyStagingEdge: async () => {},
   };
 }
 

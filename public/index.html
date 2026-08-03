@@ -1685,15 +1685,18 @@
         </div>
         <div id="staging-testing-content" class="px-3 py-2 text-xs text-zinc-300 leading-relaxed max-h-48 overflow-y-auto"></div>
       </div>
-      <!-- Shown while the preview's on-demand TLS cert is still being issued
-           (first load can take a minute, occasionally a few when the ACME CA
-           is slow). Without this the iframe just shows a black void during the
-           hanging TLS handshake. swapToStaging() polls the host and only
-           reveals the iframe once it answers. -->
+      <!-- Spinner shown over the iframe while a preview is being opened, so
+           the load never reads as a black void. app-view.js owns the copy:
+           a neutral "Opening preview…" while ensure-staging is asked,
+           "Loading the preview…" across the iframe's own render, the
+           rebuild estimate ONLY when a rebuild is genuinely running, and a
+           waiting state when the host hasn't answered yet. The defaults
+           below are neutral on purpose (#816) — a first paint before JS
+           sets the text must not promise a wait that isn't happening. -->
       <div id="staging-loader" class="hidden absolute inset-0 flex flex-col items-center justify-center gap-4 bg-zinc-950 text-center px-6">
         <div class="w-9 h-9 border-2 border-zinc-700 border-t-violet-400 rounded-full animate-spin"></div>
-        <div id="staging-loader-title" class="text-sm text-zinc-200 font-medium">Provisioning secure preview…</div>
-        <div id="staging-loader-sub" class="text-xs text-zinc-500 max-w-xs leading-relaxed">Issuing a TLS certificate for this preview. First load can take a minute.</div>
+        <div id="staging-loader-title" class="text-sm text-zinc-200 font-medium">Opening preview…</div>
+        <div id="staging-loader-sub" class="text-xs text-zinc-500 max-w-xs leading-relaxed"></div>
       </div>
     </div>
   </div>

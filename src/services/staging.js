@@ -372,6 +372,11 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
         ...stagingMerge.env,
       },
       port: 3000,
+      // #816: state the preview's resourcing rather than inheriting the
+      // production-app defaults by omission. See docker.STAGING_CPUS for
+      // why a preview needs more than half a core.
+      memory: docker.STAGING_MEMORY,
+      cpus: docker.STAGING_CPUS,
       labels: {
         [stagingEnv.LABEL_ENV_FP]: stagingEnv.envFingerprint(platformEnv),
       },
@@ -394,14 +399,11 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
       if (hostPort) stagingUrl = `http://localhost:${hostPort}`;
     }
 
-    // NOTE: TLS pre-warm intentionally does NOT happen here. Caddy's
-    // on-demand `ask` gate (routes/internal.js isKnownHost) only approves a
-    // staging host once chat_sessions.staging_url already equals it — and
-    // that row is persisted by the *caller*, after this function returns.
-    // Warming here would race ahead of the persist, get refused by `ask`,
-    // and fail the handshake in milliseconds (leaving the cold-start it was
-    // meant to prevent). The caller pre-warms via warmStagingCert() right
-    // after persisting staging_url and before revealing the preview button.
+    // NOTE: the edge verification intentionally does NOT happen here. The
+    // caller persists staging_url after this function returns, and that is
+    // the point at which the URL becomes referenceable at all — so the
+    // caller runs verifyStagingEdge() right after the persist and before
+    // revealing the preview button.
 
     log.info('staging', 'Staging deployed', { sessionId: session.id, url: stagingUrl });
 
@@ -424,30 +426,46 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
   }
 }
 
-// Pre-warm the on-demand TLS cert for a freshly-deployed staging host so a
-// real user never lands on a cold hostname (first hit otherwise hangs ~60-90s
-// on ZeroSSL validation, showing a blank/black page).
+// Make ONE real end-to-end request to a freshly-deployed staging host,
+// before its preview button is revealed (#816).
 //
-// CRITICAL ordering contract: call this only AFTER the session's staging_url
-// has been persisted to chat_sessions. Caddy's on-demand `ask` gate
-// (routes/internal.js isKnownHost) approves a staging host iff
-// chat_sessions.staging_url already equals it. If warmed before the persist,
-// `ask` refuses (404), Caddy aborts the TLS handshake, and warmCert fails in
-// milliseconds — leaving exactly the cold-start this is meant to prevent.
+// This used to be `warmStagingCert`, a handshake-only probe sized for the
+// on-demand-TLS era. That era is gone: every preview is served by the single
+// pre-existing wildcard cert (see Caddyfile + services/caddy.js), so there is
+// no certificate to warm and the handshake alone proves almost nothing.
 //
-// Bounded by warmCert's internal timeout and always resolves, so a slow/failed
-// warm never blocks or fails a deploy (the cert still issues lazily on first
-// hit, the old behavior). No-op for local-dev http URLs.
-async function warmStagingCert(session, hostname, stagingUrl) {
+// What DOES still cost the first visitor is everything past the handshake:
+// Caddy resolving the upstream container name, the forward_auth gate round
+// trip, and the app's own lazy first-request work. `handshakeOnly: false`
+// makes the PLATFORM pay that once, at reveal time, instead of the reviewer
+// paying it on the click — and it is the only signal that proves the edge can
+// actually route to the new container rather than merely terminate TLS.
+//
+// Ordering contract: call this only AFTER the session's staging_url has been
+// persisted to chat_sessions. That persist is what makes the hostname a
+// referenceable preview; probing before it just measures a URL nothing points
+// at yet.
+//
+// Bounded by probeEdge's internal timeout and always resolves, so a slow or
+// failed probe never blocks or fails a deploy. No-op for local-dev http URLs.
+async function verifyStagingEdge(session, hostname, stagingUrl) {
   if (!hostname || !stagingUrl || !stagingUrl.startsWith('https://')) return;
-  log.info('staging', 'Pre-warming TLS cert before exposing preview', { sessionId: session.id, hostname });
-  const warm = await caddy.warmCert(hostname);
-  if (warm.ok) {
-    log.info('staging', 'Cert pre-warmed', { sessionId: session.id, hostname, code: warm.code });
+  log.info('staging', 'Verifying edge before exposing preview', { sessionId: session.id, hostname });
+  const probe = await caddy.probeEdge(hostname, { handshakeOnly: false });
+  if (probe.ok) {
+    log.info('staging', 'Edge verified', {
+      sessionId: session.id, hostname, code: probe.code,
+      ttfbMs: probe.timings ? probe.timings.ttfbMs : null,
+    });
   } else {
-    log.warn('staging', 'Cert pre-warm did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: warm.error?.message });
+    log.warn('staging', 'Edge verification did not complete; preview may be slow on first hit', { sessionId: session.id, hostname, err: probe.error?.message });
   }
 }
+
+// Deprecated alias (#816). Kept so any caller still on the old name keeps
+// working; new code calls verifyStagingEdge. Remove once no references
+// remain.
+const warmStagingCert = verifyStagingEdge;
 
 // Tear down a session's staging preview: stop+remove the container, drop the
 // cloned staging database, and stop vouching for the hostname. The single
@@ -793,6 +811,7 @@ module.exports = {
   buildAndDeployStaging,
   hasInFlightBuild,
   previewDisplayState,
+  verifyStagingEdge,
   warmStagingCert,
   teardownStaging,
   rebuildProduction,

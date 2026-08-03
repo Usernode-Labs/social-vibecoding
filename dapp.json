@@ -1140,6 +1140,23 @@
       "name": "The admin console's Limits section offers the Anthropic credit balance fields (#555)",
       "path": "/#admin/limits",
       "expectSelector": "#admin-credit-balance"
+    },
+    {
+      "name": "Preview overlay opens on a neutral loading state, not a 20-60s rebuild promise (#816)",
+      "path": "/?shot=preview-loading#app/usernode-2d5619/dev",
+      "expectSelector": "#staging-overlay:not(.hidden) #staging-loader:not(.hidden) #staging-loader-title",
+      "expectText": "Loading the preview…"
+    },
+    {
+      "name": "A live preview's loader explains a slower first load without inventing a duration (#816)",
+      "path": "/?shot=preview-loading#app/usernode-2d5619/dev",
+      "expectText": "Automated checks are running against this preview"
+    },
+    {
+      "name": "The 20-60 second estimate is still shown when a rebuild really is running (#816)",
+      "path": "/?shot=preview-rebuilding#app/usernode-2d5619/dev",
+      "expectSelector": "#staging-overlay:not(.hidden) #staging-loader-title",
+      "expectText": "Spinning the preview back up…"
     }
   ],
   "governance": {
