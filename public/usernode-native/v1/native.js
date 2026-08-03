@@ -2697,7 +2697,11 @@
       // Same present-time height assumption as the bottom sheet (issue
       // #742). The API can't receive late content, but a re-measure (e.g.
       // a web-font reflow of labels) still retargets cleanly.
-      var unwatch = watchHeight(wrap, function (newHeight, oldHeight) {
+      // watchSize's `prop` argument is not optional — see the scope test
+      // in tests/native-kit.test.js, which exists because this call site
+      // was left on the pre-#915 `watchHeight(el, cb)` signature and
+      // threw here, wedging every touch action sheet (issue #929).
+      var unwatch = watchSize(wrap, 'offsetHeight', function (newHeight, oldHeight) {
         height = newHeight;
         var v = activeSpring ? activeSpring.current().v : 0;
         if (settled) { springTo(height, v, finishSettle); return; }

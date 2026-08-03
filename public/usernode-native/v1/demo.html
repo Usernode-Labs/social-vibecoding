@@ -134,7 +134,7 @@
           <button id="alert-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Alert</button>
           <button id="modal-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Modal</button>
         </div>
-        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. On a phone, tap the sheet's text field: the sheet (and the modal/alert) rides above the on-screen keyboard. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses.</p>
+        <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. On a phone, tap the sheet's text field: the sheet (and the modal/alert) rides above the on-screen keyboard. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses. <code>?un-demo=action-sheet</code> (and <code>?un-demo=adaptive-menu</code>) opens the touch menu idiom at load.</p>
       </section>
 
       <!-- Side panels / drawers -->
@@ -653,14 +653,21 @@
         openPanel('right', 30);
       });
 
-      // Screenshot-state deep link: ?un-demo=panel presents the right
-      // panel at load, so the surface is reachable by plain navigation
+      // Screenshot-state deep links: ?un-demo=<surface> presents one
+      // overlay at load, so the surface is reachable by plain navigation
       // (capture frames and dapp.json checks can only navigate, never
       // tap). Pure UI state — no writes, no env gate.
+      //
+      // `action-sheet` / `adaptive-menu` cover the touch menu idiom, which
+      // had no navigable route until issue #929: the kit's action sheet
+      // threw on present for two releases and nothing caught it, because
+      // every kit check here navigated to a surface that happened not to
+      // use it. Both simply click the section's own button.
       try {
-        if (new URLSearchParams(window.location.search).get('un-demo') === 'panel') {
-          openPanel('right', 5);
-        }
+        var unDemo = new URLSearchParams(window.location.search).get('un-demo');
+        if (unDemo === 'panel') openPanel('right', 5);
+        else if (unDemo === 'action-sheet') document.getElementById('action-sheet-btn').click();
+        else if (unDemo === 'adaptive-menu') document.getElementById('adaptive-menu-btn').click();
       } catch (e) { /* no URL API — nothing to open */ }
 
       // ── Toasts ─────────────────────────────────────────────────────

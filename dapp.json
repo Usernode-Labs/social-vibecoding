@@ -544,6 +544,21 @@
       "expectSelector": ".un-popover[data-surface=\"opaque\"]"
     },
     {
+      "name": "Home card actions menu opens as an action sheet on touch (#929)",
+      "path": "/?demo=1&shot=card-menu&un-platform=ios",
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
+    },
+    {
+      "name": "Dev \"+\" menu opens as an action sheet on touch (#929)",
+      "path": "/?shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
+    },
+    {
+      "name": "Dev \"+\" menu still opens the anchored dropdown on desktop (#929)",
+      "path": "/?shot=plus-menu#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"proposal\"]"
+    },
+    {
       "name": "Waitlist survey lives on its own #waitlist screen",
       "path": "/?shot=anon#waitlist",
       "expectSelector": "#auth-waitlist-screen #waitlist-form #waitlist-email",
@@ -1297,6 +1312,16 @@
       "name": "Native kit: side panel presents from the right edge with a scrollable body",
       "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=panel",
       "expectSelector": ".un-panel[data-un-side=\"right\"] > .un-panel-body"
+    },
+    {
+      "name": "Native kit: the touch action sheet actually presents (#929 regression lock)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=action-sheet",
+      "expectSelector": ".un-action-sheet > .un-action-card > .un-action-btn"
+    },
+    {
+      "name": "Native kit: unNative.menu picks the action sheet on touch (#929)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=adaptive-menu",
+      "expectSelector": ".un-action-sheet .un-action-btn.un-destructive"
     },
     {
       "name": "Hamburger menu opens as a right-side panel on touch, not a bottom sheet",
