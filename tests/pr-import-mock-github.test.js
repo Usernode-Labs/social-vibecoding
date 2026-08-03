@@ -36,7 +36,7 @@ const fakeVisuals = fakeModule('../src/services/visuals', {
 });
 fakeModule('../src/services/staging', {
   buildAndDeployStaging: async () => ({ containerId: 'c', stagingUrl: 'u', hostname: 'h' }),
-  warmStagingCert: async () => {},
+  verifyStagingEdge: async () => {},
 });
 fakeModule('../src/services/sync-main', {
   persistBehindMain: async () => {},

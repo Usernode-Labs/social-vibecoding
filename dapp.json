@@ -1119,6 +1119,23 @@
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"
+    },
+    {
+      "name": "Preview overlay opens on a neutral loading state, not a 20-60s rebuild promise (#816)",
+      "path": "/?shot=preview-loading#app/usernode-2d5619/dev",
+      "expectSelector": "#staging-overlay:not(.hidden) #staging-loader:not(.hidden) #staging-loader-title",
+      "expectText": "Loading the preview…"
+    },
+    {
+      "name": "A live preview's loader explains a slower first load without inventing a duration (#816)",
+      "path": "/?shot=preview-loading#app/usernode-2d5619/dev",
+      "expectText": "Automated checks are running against this preview"
+    },
+    {
+      "name": "The 20-60 second estimate is still shown when a rebuild really is running (#816)",
+      "path": "/?shot=preview-rebuilding#app/usernode-2d5619/dev",
+      "expectSelector": "#staging-overlay:not(.hidden) #staging-loader-title",
+      "expectText": "Spinning the preview back up…"
     }
   ],
   "governance": {

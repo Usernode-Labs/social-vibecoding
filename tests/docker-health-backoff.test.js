@@ -153,3 +153,72 @@ test('total failure still throws with the boot diagnostics attached', async () =
     restore();
   }
 });
+
+// ── #816: probeHealthOnce, the extracted single attempt ──────────────────
+//
+// waitForHealthy's loop body is now a named, exported helper so the
+// ensure-staging route can ask "is this preview answering RIGHT NOW?"
+// without a second copy of the wget invocation. The cases above already
+// prove the extraction left waitForHealthy's retry policy alone; these
+// pin the helper's own contract.
+
+test('#816 probeHealthOnce is a boolean, never a throw', async () => {
+  const healthy = loadDocker({ failFirst: 0 });
+  try {
+    assert.equal(await healthy.docker.probeHealthOnce('c', 3000, '/health'), true);
+    assert.equal(healthy.polls(), 1, 'exactly one attempt — no retrying');
+    assert.deepEqual(healthy.sleeps, [], 'and no backoff sleep');
+  } finally {
+    healthy.restore();
+  }
+
+  const dead = loadDocker({ failFirst: Infinity });
+  try {
+    // A missing container, an unreachable daemon and an app that refuses
+    // the connection all collapse to the same `false` — the ensure-staging
+    // route treats every one of them as "could not verify", not as an error.
+    assert.equal(await dead.docker.probeHealthOnce('c', 3000, '/health'), false);
+    assert.equal(dead.polls(), 1);
+  } finally {
+    dead.restore();
+  }
+});
+
+test('#816 probeHealthOnce keeps wget inside the exec budget', async () => {
+  const ids = { childProcess: require.resolve('child_process') };
+  const seen = [];
+  const { docker, restore } = loadDocker({ failFirst: 0 });
+  try {
+    // Re-stub to capture argv/opts for one call.
+    const capture = async (cmd, args, opts) => { seen.push({ cmd, args, opts }); return { stdout: 'ok', stderr: '' }; };
+    capture[require('util').promisify.custom] = capture;
+    stub(ids.childProcess, { execFile: capture, spawn: () => { throw new Error('unused'); } });
+    delete require.cache[require.resolve('../src/services/docker')];
+    const fresh = require('../src/services/docker');
+
+    await fresh.probeHealthOnce('preview', 3000, '/health', { timeoutMs: 3000 });
+    const call = seen[0];
+    assert.equal(call.opts.timeout, 3000, 'the exec is bounded by the caller`s budget');
+    // wget's own timeout must expire BEFORE the CLI kill, so a slow app
+    // surfaces as a clean false rather than an orphaned docker client.
+    assert.ok(call.args.includes('--timeout=2'), `wget timeout inside the budget: ${call.args.join(' ')}`);
+    assert.ok(call.args.includes('http://127.0.0.1:3000/health'),
+      'hits the numeric v4 loopback, not `localhost` (BusyBox resolves ::1 first)');
+    assert.equal(docker.HEALTH_BACKOFF_MAX_MS, 2000, 'waitForHealthy policy untouched');
+  } finally {
+    restore();
+  }
+});
+
+test('#816 staging previews get explicit, env-overridable resourcing', () => {
+  const { docker, restore } = loadDocker();
+  try {
+    // Previews used to inherit the production-app defaults by omission,
+    // which capped them at half a core while the post-build checks run was
+    // driving a headless browser against them.
+    assert.equal(docker.STAGING_CPUS, '1', 'a full core ceiling, not 0.5');
+    assert.equal(docker.STAGING_MEMORY, '256m', 'memory was never the constraint');
+  } finally {
+    restore();
+  }
+});

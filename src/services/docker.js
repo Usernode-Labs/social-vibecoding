@@ -36,6 +36,23 @@ async function execShellStdin(containerName, script, { timeoutMs = 20000, label 
 
 const APP_MEMORY = '256m';
 const APP_CPUS = '0.5';
+
+// Staging-preview resourcing (#816). Previews used to inherit the
+// production-app defaults above by omission, which meant every preview ran
+// on half a core — including for the 1-3 minutes right after a build when
+// the screenshot + proposal-checks pass is driving a headless browser
+// against it. A reviewer clicking Preview in that window was competing with
+// the capture run for the same 0.5 CPU, which is what made a freshly-built
+// preview feel slow to open.
+//
+// `--cpus` is a CEILING, not a reservation: an idle preview (production
+// measures ~1%) costs nothing extra at 1.0, and the extra headroom only
+// materialises during the capture window this exists to fix. Memory stays
+// at 256m deliberately — production previews sit at 28-57 MiB, so memory
+// was never the constraint. Both are env-overridable if a host proves tight.
+const STAGING_MEMORY = process.env.STAGING_MEMORY || '256m';
+const STAGING_CPUS = process.env.STAGING_CPUS || '1';
+
 const SHARED_NETWORK = process.env.DOCKER_NETWORK || 'shared-web';
 
 // SIGTERM→SIGKILL budget handed to `docker stop -t <n>` (#767).
@@ -462,29 +479,58 @@ function healthBackoffMs(attemptIndex) {
   return HEALTH_BACKOFF_MS[attemptIndex] ?? HEALTH_BACKOFF_MAX_MS;
 }
 
+// ONE healthcheck attempt against a running container, as a boolean.
+//
+// This is the body of waitForHealthy's retry loop, extracted so the two
+// consumers share an implementation rather than growing a second copy of
+// the wget invocation (#816). waitForHealthy still owns the retry policy;
+// this owns "can the app inside this container answer right now".
+//
+// 127.0.0.1, not localhost: in Alpine containers `/etc/hosts` lists
+// `::1 localhost` before `127.0.0.1 localhost`, BusyBox's resolver returns
+// the v6 entry first, and Node's app.listen(PORT, '0.0.0.0') binds IPv4
+// only — so a localhost wget gets "connection refused" against ::1:port.
+// Hitting the numeric v4 loopback dodges the resolver entirely.
+//
+// Never throws: a missing container, an unreachable daemon and an app that
+// answers non-2xx are all just `false`. Callers that need to distinguish
+// those use inspectContainer.
+// `onError` receives the swallowed error so a retrying caller can keep the
+// last failure for its give-up diagnostics without reintroducing throws.
+async function probeHealthOnce(name, port, healthPath, { timeoutMs = 5000, onError } = {}) {
+  // `--timeout` is in whole seconds and must stay strictly inside the exec
+  // budget so wget's own failure (not the CLI kill) is what we observe.
+  const wgetTimeoutSec = Math.max(1, Math.floor(timeoutMs / 1000) - 1);
+  try {
+    await execFileAsync('docker', [
+      'exec', name, 'wget', '-qO-', `--timeout=${wgetTimeoutSec}`,
+      `http://127.0.0.1:${port}${healthPath}`,
+    ], { timeout: timeoutMs });
+    return true;
+  } catch (err) {
+    if (typeof onError === 'function') {
+      try { onError(err); } catch { /* diagnostics must never fail a probe */ }
+    }
+    return false;
+  }
+}
+
 async function waitForHealthy(name, port, healthPath, maxRetries = 33) {
   log.info('docker', 'Waiting for healthcheck', { name, path: healthPath });
   const startedAt = Date.now();
   let lastErr = null;
   for (let i = 0; i < maxRetries; i++) {
-    try {
-      // 127.0.0.1, not localhost: in Alpine containers `/etc/hosts`
-      // lists `::1 localhost` before `127.0.0.1 localhost`, BusyBox's
-      // resolver returns the v6 entry first, and Node's
-      // app.listen(PORT, '0.0.0.0') binds IPv4 only — so a localhost
-      // wget gets "connection refused" against ::1:port. Hitting the
-      // numeric v4 loopback dodges the resolver entirely.
-      await execFileAsync('docker', [
-        'exec', name, 'wget', '-qO-', '--timeout=2',
-        `http://127.0.0.1:${port}${healthPath}`,
-      ], { timeout: 5000 });
+    // 5000ms exec budget / `--timeout=2` inside it: unchanged from the
+    // inlined version this replaced.
+    if (await probeHealthOnce(name, port, healthPath, {
+      timeoutMs: 5000,
+      onError: (err) => { lastErr = err; },
+    })) {
       const waitedMs = Date.now() - startedAt;
       log.info('docker', 'Healthcheck passed', { name, attempt: i + 1, waitedMs });
       return { attempts: i + 1, waitedMs };
-    } catch (err) {
-      lastErr = err;
-      await sleep(healthBackoffMs(i));
     }
+    await sleep(healthBackoffMs(i));
   }
   const waitedMs = Date.now() - startedAt;
   // Capture container logs + status before giving up. Without this the
@@ -567,11 +613,14 @@ module.exports = {
   containerExists,
   imageExists,
   waitForHealthy,
+  probeHealthOnce,
   getHostPort,
   ensureVolume,
   removeVolume,
   STOP_GRACE_SEC,
   STAGING_STOP_GRACE_SEC,
+  STAGING_MEMORY,
+  STAGING_CPUS,
   HEALTH_BACKOFF_MS,
   HEALTH_BACKOFF_MAX_MS,
 };

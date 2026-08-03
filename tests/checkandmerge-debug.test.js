@@ -38,7 +38,7 @@ stub('../src/services/staging', {
   rebuildProduction: async () => ({ sha: 'def5678ab', containerId: 'c1' }),
   teardownStaging: async () => {},
   buildAndDeployStaging: async () => ({ containerId: 'c2', stagingUrl: 'u', hostname: 'h' }),
-  warmStagingCert: async () => {},
+  verifyStagingEdge: async () => {},
 });
 stub('../src/services/docker', {});
 stub('../src/services/conflict-resolver', {
