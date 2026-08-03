@@ -264,6 +264,47 @@ test('both trailing sections share the section shape, full-width in the column',
   }
 });
 
+// Short feed on a tall screen: the trailing sections sit at the BOTTOM of
+// the visible page instead of hugging the "Your apps" grid. Pure CSS —
+// #home-body is a min-height:100% flex column and the first trailing
+// section carries margin-top:auto, which also means a feed taller than the
+// viewport has no free space to absorb and the sections flow normally right
+// below the grid (no gap, no clipping, no measurement, no media query).
+test('the trailing sections bottom-anchor on a tall screen', () => {
+  const css = read('public/css/app.css');
+
+  const body = INDEX.match(/<div id="home-body"[^>]*>/)[0];
+  assert.match(body, /class="[^"]*\bhome-body-fill\b/, '#home-body is the flex column');
+  const fill = css.match(/\.home-body-fill \{[^}]*\}/)[0];
+  assert.match(fill, /display:\s*flex/);
+  assert.match(fill, /flex-direction:\s*column/);
+  // The floor that makes "bottom of the box" == "bottom of the page" at the
+  // search bar's resting scroll position (see home-search-reveal.test.js).
+  assert.match(fill, /min-height:\s*100%/);
+  // A bottom-anchored section must clear the iPhone home indicator.
+  assert.match(fill, /padding-bottom:\s*env\(safe-area-inset-bottom/);
+  assert.doesNotMatch(fill, /(^|[^-])height:\s*100%/,
+    'height must stay auto so a long feed grows instead of clipping');
+
+  // The anchor is on the FIRST trailing section, so it carries the one
+  // after it down too — no wrapper element needed.
+  const main = INDEX.slice(
+    INDEX.indexOf('<main id="home-screen"'),
+    INDEX.indexOf('<main id="browse-screen"')
+  );
+  const findMore = main.match(/<section id="home-find-more"[^>]*>/)[0];
+  assert.match(findMore, /class="[^"]*\bhome-bottom-anchor\b/);
+  assert.match(css.match(/\.home-bottom-anchor \{[^}]*\}/)[0], /margin-top:\s*auto/);
+  // Only one anchor: a second one on the create section would strand it
+  // at the bottom on its own, leaving a gap between the two cards.
+  const create = main.match(/<section id="home-create-section"[^>]*>/)[0];
+  assert.doesNotMatch(create, /home-bottom-anchor/);
+  assert.ok(
+    main.indexOf('id="home-find-more"') < main.indexOf('id="home-create-section"'),
+    'the anchor precedes the create section, which rides down with it'
+  );
+});
+
 // The column itself: 1024px max, centred, and applied BOTH to the content
 // body and to the search bar's inner content — the bar's own background
 // stays full-bleed, so only its content is capped.

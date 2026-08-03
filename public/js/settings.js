@@ -1314,32 +1314,57 @@
     async logout() {
       const btn = document.getElementById('settings-logout');
       if (btn) btn.disabled = true;
-      // Thin-shell migration: web logout also tears down the native side
-      // (stop node, drop the mobile credential) so the next login starts
-      // clean. Bounded + best-effort inside handleWebLogout — never hangs
-      // the web logout on a wedged bridge, no-op outside the app.
-      try {
-        if (window.NativeChrome && NativeChrome.handleWebLogout) {
-          await NativeChrome.handleWebLogout();
+
+      const fail = (error) => {
+        if (btn) btn.disabled = false;
+        if (window.PlatformUI && PlatformUI.toast) {
+          PlatformUI.toast(
+            'Could not sign out. Check your connection and try again.',
+            { error: true }
+          );
         }
-      } catch (_) {}
+        console.warn('[settings] logout failed:', error);
+        return false;
+      };
+
+      // Close wallet admission before the first asynchronous web cleanup.
+      // New native builds also acknowledge their process-wide latch here.
+      let nativeTerminal = false;
       try {
-        await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
-      } catch (_) {
-        // Server-side session deletion is best-effort; the auth middleware
-        // will still treat the user as logged out once the cookie is
-        // cleared (server clears it on the response) or expires.
+        if (window.NativeChrome && NativeChrome.prepareWebLogout) {
+          nativeTerminal = await NativeChrome.prepareWebLogout();
+        }
+      } catch (error) {
+        return fail(error);
+      }
+
+      try {
+        const response = await fetch('/api/auth/logout', {
+          method: 'POST', credentials: 'same-origin',
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      } catch (error) {
+        // Do not tear down native while the HttpOnly web-session cookie can
+        // still restore this participant in the replacement WebView.
+        return fail(error);
       }
       // Offline mode (#487): the service worker caches GET /api/* responses
       // per-URL, not per-user — wipe them so the next account on this
       // device can't see this user's cached feed. Belt-and-braces: the SW
       // also clears the API cache when it sees the logout POST above.
       try { await this._clearSwApiCache(); } catch (_) {}
+
+      // This must remain the final statement on the native path: successful
+      // native logout replaces the WebView, so the old document has no
+      // timeout or navigation continuation.
+      if (nativeTerminal) {
+        // FIXME: if this rejects after web cleanup, add a fail-closed retry UI
+        // without resuming normal work in this old document.
+        return NativeChrome.commitNativeLogout();
+      }
+
       // Hard navigation on purpose: enterAuthed is one-shot per document
-      // (WS connections, intervals, module state all assume a single
-      // session), so a real reload is the correct teardown for a session
-      // switch. #login lands the fresh document on the in-SPA login
-      // screen (fold-auth-pages-into-SPA).
+      // in a regular browser or an old app without hard logout.
       window.location.href = '/#login';
     },
 

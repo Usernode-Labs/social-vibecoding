@@ -238,11 +238,11 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
 
   // Stamp 'pending' immediately so the badge stops showing the old-head
   // verdict while the (minutes-long) rebuild runs.
-  await visuals.setChecksPending(pool, session.id, newHead)
+  await visuals.setChecksPending(pool, session.id, newHead, 'building')
     .catch((err) => log.warn('pr-import-sync', 'setChecksPending failed (non-fatal)', {
       sessionId: session.id, err: err.message,
     }));
-  visuals.notifyChecksPending(session.id, newHead);
+  visuals.notifyChecksPending(session.id, newHead, 'building');
 
   // #687: in mock-GitHub mode (staging previews) there is no real repo to
   // clone against the new head — record a gate-passing 'skipped' verdict
@@ -384,11 +384,11 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
   const visuals = require('./visuals');
   const staging = require('./staging');
   try {
-    await visuals.setChecksPending(pool, session.id, headSha || null)
+    await visuals.setChecksPending(pool, session.id, headSha || null, 'building')
       .catch((err) => log.warn('pr-import-sync', 'import setChecksPending failed (non-fatal)', {
         sessionId: session.id, err: err.message,
       }));
-    visuals.notifyChecksPending(session.id, headSha || null);
+    visuals.notifyChecksPending(session.id, headSha || null, 'building');
 
     // #687 Slice 6: in mock-GitHub mode there is no real repo to clone, so
     // skip the staging build entirely and record a gate-passing 'skipped'

@@ -466,9 +466,9 @@ function kickChecks(config, pool, session, app) {
   (async () => {
     const visuals = require('./visuals');
     const staging = require('./staging');
-    await visuals.setChecksPending(pool, session.id, null)
+    await visuals.setChecksPending(pool, session.id, null, 'building')
       .catch((err) => log.warn('fleet-maintenance', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
-    visuals.notifyChecksPending(session.id, null);
+    visuals.notifyChecksPending(session.id, null, 'building');
     let result;
     try {
       result = await staging.buildAndDeployStaging(config, session, app, 'latest');

@@ -389,6 +389,41 @@ html, body {
   border-top: 1px solid var(--border-light);
 }
 
+/* The feed body is a full-height flex COLUMN so the trailing sections can
+   be bottom-anchored on a tall screen.
+
+   min-height:100% (of the #home-screen scroller) does double duty:
+   - it guarantees the scroller can always be scrolled by at least the
+     hidden search bar's height, even with an empty "Your apps" — a short
+     page would otherwise leave the bar permanently on screen (the search
+     bar sits ABOVE this box inside the same scroller, so total content is
+     always barHeight + 100%, and Home._searchReveal parks the scroller at
+     barHeight);
+   - it makes this box exactly as tall as the visible feed at that resting
+     scroll position, which is what makes "anchored to the bottom of the
+     box" read as "anchored to the bottom of the page".
+
+   Height stays AUTO (min-height is only a floor), so nothing shrinks and
+   nothing clips once the content is taller than the viewport. The
+   safe-area padding keeps a bottom-anchored section off an iPhone's home
+   indicator; box-sizing:border-box means it eats into the 100% rather
+   than adding scroll. */
+.home-body-fill {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* Bottom-anchors this section AND everything after it: `margin-top:auto`
+   on a flex item absorbs all the column's free space above it. When the
+   feed is taller than the viewport there is no free space, so the margin
+   resolves to 0 and the sections flow normally right below "Your apps" —
+   no gap, no clipping, no media query, no measurement. */
+.home-bottom-anchor {
+  margin-top: auto;
+}
+
 /* ── Browse screen rows / boxes ─────────────────────────────
    The #apps screen renders ONE row markup (icon · name+meta · Add
    button) and lets CSS pick the layout: a hairline-divided vertical

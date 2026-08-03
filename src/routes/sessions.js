@@ -3513,6 +3513,13 @@ function sessionRoutes(config) {
            JSON.stringify(wrapUpPills ? { quickReplies: wrapUpPills } : {})]
         );
         if (wrapUpPills) send('quick_replies', { replies: wrapUpPills });
+        // Tail milestone: the wrap-up the recovery path would otherwise
+        // re-issue is on the transcript. A NO-OP in the common case — the
+        // dispatch tool's `finally` already released the record, and
+        // noteTailMilestone is guarded on `active_turn IS NOT NULL` — but
+        // it lands for any future caller that holds the record across
+        // phase 2, and costs one cheap UPDATE either way.
+        await worker.noteTailMilestone(session.id, { wrapUpPosted: true });
         await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
         send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
       } catch (err) {
@@ -4410,11 +4417,11 @@ function sessionRoutes(config) {
       // fire-and-forget below re-stamps idempotently — same commit sha, so
       // the failure-streak bookkeeping is preserved).
       const visualsService = require('../services/visuals');
-      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null)
+      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building')
         .catch((err) => log.warn('sessions', 'recheck setChecksPending failed (non-fatal)', {
           sessionId, err: err.message,
         }));
-      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null);
+      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building');
 
       res.json({ status: 'running', checkState: 'pending' });
 
@@ -5651,7 +5658,10 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
       broadcastGlobal({ type: 'session_event', sessionId: session.id, event: 'cc_progress', text: headlessTerminal });
     }
     flushProgress();
-    await worker.clearActiveTurn(session.id);
+    // Release the record AND the journal it points at (the resume above
+    // consumed it, and holdTurnRecord callers no longer delete it in
+    // execInWorker's finally).
+    await worker.finishTurn(session.id, { journal: activeTurn.journal });
 
     // #174: the journal replay rebuilt the turn's self-reported cost —
     // debit it before the recovery check below, because the Anthropic
@@ -5750,7 +5760,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         // #461: pend the checks for the NEW commit before the build, so the
         // previous commit's verdict (e.g. a stale 'passing') can't satisfy
         // the merge gate while this build runs — or after it fails.
-        await visuals.setChecksPending(pool, session.id, result.sha)
+        await visuals.setChecksPending(pool, session.id, result.sha, 'building')
           .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
         try {
           stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
@@ -6856,6 +6866,11 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
         branchName: session.branch_name,
         anthropicApiKey: userApiKey || null,
         prodDebug,
+        // Hold the durable turn record through this tool's own tail
+        // (spec persist + frozen version + Mayor wrap-up). Short, but the
+        // same restart shape loses it — see the "Post-agent TAIL" note in
+        // services/worker.js. Released by finishTurn in the finally below.
+        holdTurnRecord: true,
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
@@ -6972,6 +6987,11 @@ HEADLESS RUN (#178): this spec is being drafted unattended for a GitHub issue �
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
+    // The scout tail is over (spec persisted or not): release the held
+    // turn record + its journal. Must run for EVERY exit path out of this
+    // tool — a held record with nobody to consume it is what the stale
+    // active_turn watchdog exists to reap, and reaping narrates.
+    await worker.finishTurn(session.id).catch(() => {});
     // Turn completion counts as activity: a fresh idle window so the
     // auto-pause sweeper can't pause the session moments after a long
     // scout finishes (its last_activity_at is otherwise still the user
@@ -7666,6 +7686,16 @@ path: /another/changed/view
         branchName: session.branch_name,
         anthropicApiKey: userApiKey || null,
         prodDebug,
+        // Hold the durable turn record through the tail below (push heal →
+        // PR → staging build → visuals → completion card → Mayor wrap-up).
+        // That stretch is minutes long — a self-app staging build alone
+        // spends ~4:45 cloning the platform DB — and used to run with
+        // active_turn already cleared, so a restart inside it left the chat
+        // frozen on "Building staging preview..." with no way back (session
+        // 2954). Released by finishTurn in the finally at the end of this
+        // function; every tail step stamps its milestone so a resumed tail
+        // redoes none of them.
+        holdTurnRecord: true,
         onProgress: (text) => {
           send('cc_progress', { text });
           workerProgress.set(session.id, text, { model: selectedModel });
@@ -7907,7 +7937,7 @@ path: /another/changed/view
       // #461: pend the checks for the NEW commit before the build starts, so
       // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
       // the merge gate while this build runs — or after it fails.
-      await visuals.setChecksPending(pool, session.id, commitHash)
+      await visuals.setChecksPending(pool, session.id, commitHash, 'building')
         .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
@@ -8050,6 +8080,11 @@ path: /another/changed/view
           sessionId: session.id,
           metadata: { prNumber: prResult.prNumber },
         });
+        // Tail milestone: a resume must not open a second PR-opened event
+        // (applyPrMetadata itself is update-safe once pr_number is set).
+        await worker.noteTailMilestone(session.id, {
+          prNumber: prResult.prNumber, prOpenedEventRecorded: true,
+        });
       } else if (session.pr_number && !wasNewPR) {
         summaryParts.push(`Pushed to existing PR #${session.pr_number}.`);
       }
@@ -8080,7 +8115,7 @@ path: /another/changed/view
       // #461: pend the checks for the NEW commit before the build starts, so
       // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
       // the merge gate while this build runs — or after it fails.
-      await visuals.setChecksPending(pool, session.id, commitHash)
+      await visuals.setChecksPending(pool, session.id, commitHash, 'building')
         .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
@@ -8093,6 +8128,13 @@ path: /another/changed/view
           `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
           [stagingResult.containerId, stagingResult.stagingUrl, session.id]
         );
+        // Tail milestone: the preview for THIS commit exists. A resumed
+        // tail re-checks its liveness before deciding to rebuild, so a
+        // healthy container is left alone rather than rebuilt for another
+        // ~5 minutes.
+        await worker.noteTailMilestone(session.id, {
+          stagingUrl: stagingResult.stagingUrl,
+        });
 
         // Make one real end-to-end request through the edge now that
         // staging_url is persisted and BEFORE emitting `staging_ready`
@@ -8136,6 +8178,14 @@ path: /another/changed/view
           }));
 
         if (session.status === 'promoted') {
+          // Tail milestone BEFORE the work, not after: the vote reset is
+          // the one tail step that is destructive and not idempotent (it
+          // DELETEs votes and announces it). A resumed tail must not
+          // re-announce a reset for a commit whose votes are already gone,
+          // so claim it up front — a crash between the stamp and the
+          // delete leaves at worst an unannounced reset, which the next
+          // push redoes anyway.
+          await worker.noteTailMilestone(session.id, { votesResetFor: commitHash });
           // #788: the new commit may have added or removed a name in
           // dapp.json's `admins` block, so re-classify alongside the
           // vote reset. Best-effort (swallows GitHub failures) and
@@ -8275,6 +8325,10 @@ path: /another/changed/view
           ? 'Claude Code made no changes'
           : 'Claude Code did not complete';
       await sendStatus(statusText, { ccOutput: ccText, ccOutcome, durationMs: Date.now() - turnStartedMs });
+      // Tail milestone: the agent's own summary card is on the transcript.
+      // A resumed tail must not post a second one (finalizeRecoveredTurn's
+      // persistCompletionRow is otherwise unconditional).
+      await worker.noteTailMilestone(session.id, { completionRowPosted: true });
       // Prepend CC's own description so the Mayor leads with what was
       // actually built, with our outcome bullets as supplementary context.
       summaryParts.unshift(`What the agent did:\n${ccText}`);
@@ -8282,6 +8336,18 @@ path: /another/changed/view
   } finally {
     activeWorkers.delete(session.id);
     workerProgress.clear(session.id);
+    // The tail is over — release the held turn record and its journal.
+    // Deliberately in the `finally`: every exit path out of this tool
+    // (stop, staging failure, a throw in the PR block) must release it,
+    // or the stale-active_turn watchdog reaps the row 5 minutes later and
+    // narrates an interruption that didn't happen.
+    //
+    // NOTE the ordering with the Mayor wrap-up: phase 2 runs in the chat
+    // handler AFTER this tool returns, so a restart in that last window
+    // is covered by the resume's own `wrapUpPosted` check rather than by
+    // this record. The window is seconds, and re-issuing a wrap-up is the
+    // benign direction to fail in.
+    await worker.finishTurn(session.id).catch(() => {});
     // Turn completion counts as activity: a fresh idle window so the
     // auto-pause sweeper can't pause the session moments after a long
     // build finishes (its last_activity_at is otherwise still the user

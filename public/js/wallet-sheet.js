@@ -23,6 +23,28 @@
     _sheet: null,
     _timer: null,
 
+    // Drops any snapshot read before the current web participant was handed
+    // to native. Reopening refreshes from the newly admitted identity.
+    _setSessionWalletAdmission(admitted) {
+      if (admitted !== true) {
+        WalletSheet._state = null;
+        WalletSheet._records = null;
+        WalletSheet._renderChip();
+        if (WalletSheet._sheet) WalletSheet._renderSheetBody();
+        // FIXME(#514): an already-admitted native read may still finish after
+        // this clear; cancelling/fencing in-flight native operations is
+        // intentionally deferred.
+        return Promise.resolve();
+      }
+      return Promise.all([
+        WalletSheet._refreshState(),
+        WalletSheet._refreshRecords(),
+      ]).then(() => {
+        WalletSheet._renderChip();
+        if (WalletSheet._sheet) WalletSheet._renderSheetBody();
+      });
+    },
+
     async init() {
       if (!window.NativeChrome) return;
       if (!(await NativeChrome.has('getWalletState'))) return;

@@ -561,10 +561,15 @@
         </div>
       </div>
     </div>
-    <!-- min-height:100% guarantees the scroller can always be scrolled by at
+    <!-- .home-body-fill (app.css) makes this a min-height:100% flex column:
+         the min-height guarantees the scroller can always be scrolled by at
          least the search bar's height, even with an empty "Your apps" — a
-         short page would otherwise leave the bar permanently on screen. -->
-    <div id="home-body" class="home-column" style="min-height:100%">
+         short page would otherwise leave the bar permanently on screen — and
+         the flex column lets the trailing sections carry
+         .home-bottom-anchor (margin-top:auto) so they sit at the BOTTOM of
+         the visible page when the feed is shorter than the viewport, and
+         flow normally right after "Your apps" when it isn't. -->
+    <div id="home-body" class="home-column home-body-fill">
       <div id="app-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 p-3 pt-2"></div>
 
       <!-- Home-screen panels (#911): cards that sit between the launcher
@@ -602,8 +607,15 @@
            The card is a plain FULL-WIDTH child of the section: the whole
            feed is already capped and centred by .home-column on
            #home-body, so the card spans the column's gutters and lines up
-           with the "Your apps" grid's own edges. -->
-      <section id="home-find-more" class="px-3 pb-3">
+           with the "Your apps" grid's own edges.
+
+           .home-bottom-anchor pushes this section — and "Create an app"
+           after it — to the bottom of the visible page whenever the whole
+           feed is shorter than the viewport. It is a plain
+           `margin-top:auto` inside #home-body's flex column, so a feed
+           that fills or overflows the screen has no free space to absorb
+           and the section flows normally right below the grid. -->
+      <section id="home-find-more" class="home-bottom-anchor px-3 pb-3">
         <div class="home-section-header">Featured apps</div>
         <!-- ONE contained card: the featured tiles and the browse action
              sit on the same rounded surface, with the browse row as the

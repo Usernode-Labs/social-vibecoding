@@ -420,6 +420,18 @@ const AppView = {
       // links paint each loader state directly. Pure UI state (no fetch, no
       // write, no container), so they render identically in every
       // environment and the "before" side of a capture works too.
+      // #929: the dev screen's "+" menu is the other surface that broke on
+      // mobile, and it was untestable for the same reason as the secrets
+      // modal — it only exists after a tap. This link taps the button
+      // itself, so whichever idiom the platform picks (kit action sheet on
+      // touch, the anchored #dev-plus-menu dropdown on desktop) is the one
+      // a check sees. Pure UI state, no writes, not env-gated.
+      if (shot === 'plus-menu') {
+        setTimeout(() => {
+          if (!String(location.hash || '').includes(`app/${slug}`)) return;
+          document.getElementById('dev-plus-btn')?.click();
+        }, 300);
+      }
       if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
         setTimeout(() => {
           // Gate on the ROUTE, not on appData: the dev tab clears appData
@@ -5181,10 +5193,17 @@ const AppView = {
       const started = pr.checks_checked_at
         ? `<div class="mt-0.5 opacity-80">Started ${escapeHtml(relTime(pr.checks_checked_at))}.</div>`
         : '';
+      // Name the STAGE the run is actually in. A checks run is two very
+      // differently-sized halves — build the branch + clone the app's data,
+      // then run the suite against the live preview — and one opaque message
+      // for both made a mid-flight build look identical to a wedged one. An
+      // unrecognised / absent phase (legacy rows, a proposal checked before
+      // this shipped) keeps the previous wording verbatim.
+      const phase = AppView._checksPhaseCopy(pr.check_phase);
       return `
         <div class="mt-2 rounded border border-zinc-300/40 dark:border-zinc-700/60 bg-zinc-500/5 px-2 py-1.5 text-zinc-600 dark:text-zinc-400">
-          <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>Checks are still running…</div>
-          <div class="mt-0.5 opacity-90">The staging build is being tested. Merge is blocked until all tests pass.</div>
+          <div class="font-medium"><span class="dc-status-icon dc-status-spinner-arc" aria-hidden="true"></span>${escapeHtml(phase.title)}</div>
+          <div class="mt-0.5 opacity-90">${escapeHtml(phase.detail)} Merge is blocked until all tests pass.</div>
           ${started}
           ${stale ? '<div class="mt-1 opacity-80">If this has been running for a while, the platform re-runs the checks automatically — or re-run them now.</div>' : ''}
           ${stale ? AppView._recheckBtnHtml(pr) : ''}
@@ -5339,6 +5358,31 @@ const AppView = {
     if (!ts) return true;
     const t = new Date(ts).getTime();
     return !Number.isFinite(t) || (Date.now() - t) > AppView.CHECKS_STALE_CLIENT_MS;
+  },
+
+  // Copy for the two stages a 'pending' checks run can be in
+  // (chat_sessions.check_phase). The build half is where the long wait
+  // actually lives — the platform's own preview has to clone its database —
+  // so saying which half is running is the difference between "this is
+  // progressing" and "this looks stuck". Anything unrecognised, including
+  // NULL on rows checked before the column existed, falls back to the
+  // wording this block had before, so no legacy proposal changes.
+  CHECKS_PHASE_COPY: {
+    building: {
+      title: 'Preparing the staging preview…',
+      detail: 'The change is being built and a preview copy of the app’s data is being made.',
+    },
+    testing: {
+      title: 'Running the automated tests…',
+      detail: 'The preview is up and the automated tests are running against it.',
+    },
+  },
+
+  _checksPhaseCopy(phase) {
+    return AppView.CHECKS_PHASE_COPY[phase] || {
+      title: 'Checks are still running…',
+      detail: 'The staging build is being tested.',
+    };
   },
 
   // #447: the "Re-run checks" action. Renders for the proposal's owner or an

@@ -195,6 +195,62 @@ test('a FRESH pending run shows the spinner + started line and hides the re-run 
   assert.doesNotMatch(html, /Re-run checks/);
 });
 
+// The two stage captions. A checks run is two very differently-sized halves
+// (build the branch + clone the app's data, then run the suite), and showing
+// one opaque message for both made a mid-flight build look identical to a
+// wedged one. The two tests above deliberately pass NO check_phase, so they
+// are the NULL/legacy-wording guard.
+test('a pending run in its BUILDING half names the preview-preparation stage', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._checksDetailHtml(baseProposal({
+    user_id: ME, check_state: 'pending', check_phase: 'building', test_results: [],
+    checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
+  }));
+  assert.match(html, /Preparing the staging preview/);
+  assert.doesNotMatch(html, /Checks are still running/);
+  assert.match(html, /dc-status-spinner-arc/);
+  // The surrounding affordances are untouched by the caption change.
+  assert.match(html, /Merge is blocked until all tests pass/);
+  assert.match(html, /Started .+\./);
+});
+
+test('a pending run in its TESTING half names the test stage', () => {
+  const AppView = makeAppView(ME);
+  const html = AppView._checksDetailHtml(baseProposal({
+    user_id: ME, check_state: 'pending', check_phase: 'testing', test_results: [],
+    checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
+  }));
+  assert.match(html, /Running the automated tests/);
+  assert.doesNotMatch(html, /Preparing the staging preview/);
+  assert.match(html, /Merge is blocked until all tests pass/);
+});
+
+test('an unrecognised phase falls back to the previous wording verbatim', () => {
+  // Legacy rows carry NULL; a typo or a value from a newer writer must not
+  // render an unknown caption.
+  const AppView = makeAppView(ME);
+  for (const check_phase of [null, undefined, '', 'cloning', 'BUILDING', 42]) {
+    const html = AppView._checksDetailHtml(baseProposal({
+      user_id: ME, check_state: 'pending', check_phase, test_results: [],
+      checks_checked_at: new Date(Date.now() - 60 * 1000).toISOString(),
+    }));
+    assert.match(html, /Checks are still running/, `phase ${JSON.stringify(check_phase)}`);
+    assert.match(html, /The staging build is being tested/);
+  }
+});
+
+test('the phase caption still renders the stale-run escape hatch', () => {
+  // The phase is only the wording — the freshness gate that reveals "Re-run
+  // checks" is unchanged, so a wedged BUILDING run is still recoverable.
+  const AppView = makeAppView(ME);
+  const html = AppView._checksDetailHtml(baseProposal({
+    user_id: ME, check_state: 'pending', check_phase: 'building', test_results: [],
+    checks_checked_at: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+  }));
+  assert.match(html, /Preparing the staging preview/);
+  assert.match(html, /Re-run checks/);
+});
+
 test('a STALE pending run (past the 10-min window) still offers the re-run button', () => {
   const AppView = makeAppView(ME);
   const html = AppView._checksDetailHtml(baseProposal({

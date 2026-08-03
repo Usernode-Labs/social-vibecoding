@@ -1132,3 +1132,85 @@ test('zoomRectUsable accepts partially visible rects and rejects off-screen ones
   assert.equal(zoomRectUsable({ left: 0, top: -50, width: 10, height: 100 }, vh), true);
   assert.equal(zoomRectUsable({ left: 0, top: -200, width: 10, height: 100 }, vh), false);
 });
+
+// ── Undefined-helper scope check (issue #929) ──────────────────────────
+//
+// The kit's DOM half is not unit-testable in Node (it needs a real
+// document), so a *stale internal call* in it is invisible to this file
+// and, because a browser only evaluates it when the surface is actually
+// presented, invisible to `node --check` and to any page load that
+// doesn't open that surface. That is exactly how #929 shipped: #915
+// renamed `watchHeight(el, cb)` to `watchSize(el, prop, cb)` and updated
+// the bottom sheet but not the action sheet, so EVERY touch action sheet
+// (the home app-card menu, the dev screen's "+" menu) threw
+// "watchHeight is not defined" on present — mounting an invisible
+// full-screen backdrop and never showing a menu.
+//
+// So check it statically instead: every identifier the file CALLS must be
+// declared somewhere in the file, or be one of the browser/JS globals
+// listed below. Cheap, no parser dependency, and it fails on the next
+// rename miss anywhere in the kit — including in the presenters this test
+// file can't otherwise reach.
+test('every helper native.js calls is declared in it (no stale renames)', () => {
+  const src = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'),
+    'utf8'
+  );
+  // Blank out comments and string/template literals so their contents
+  // can't look like code. Order matters: comments first.
+  const code = src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    .replace(/'(?:\\.|[^'\\])*'/g, "''")
+    .replace(/"(?:\\.|[^"\\])*"/g, '""')
+    .replace(/`(?:\\.|[^`\\])*`/g, '``');
+
+  const declared = new Set();
+  const addName = (raw) => {
+    const n = String(raw).trim().replace(/[=:].*$/, '').trim();
+    if (/^[A-Za-z_$][\w$]*$/.test(n)) declared.add(n);
+  };
+  // Function declarations/expressions + their parameter lists.
+  for (const m of code.matchAll(/\bfunction\s*\*?\s*([A-Za-z_$][\w$]*)?\s*\(([^)]*)\)/g)) {
+    if (m[1]) declared.add(m[1]);
+    m[2].split(',').forEach(addName);
+  }
+  // var/let/const declarators, catch bindings, arrow parameters.
+  for (const m of code.matchAll(/\b(?:var|let|const)\s+([^;\n=]+)/g)) m[1].split(',').forEach(addName);
+  for (const m of code.matchAll(/\bcatch\s*\(\s*([A-Za-z_$][\w$]*)/g)) declared.add(m[1]);
+  for (const m of code.matchAll(/\(([^()]*)\)\s*=>/g)) m[1].split(',').forEach(addName);
+  for (const m of code.matchAll(/\b([A-Za-z_$][\w$]*)\s*=>/g)) declared.add(m[1]);
+
+  // Statement keywords that are followed by "(" and so read as calls.
+  const KEYWORDS = new Set([
+    'if', 'for', 'while', 'switch', 'catch', 'function', 'return', 'typeof',
+    'new', 'delete', 'void', 'in', 'of', 'do', 'else', 'try', 'case',
+    'instanceof', 'throw', 'await', 'yield', 'super', 'this',
+  ]);
+  // Globals the kit is allowed to call. Deliberately a short, explicit
+  // list: a NEW name showing up here should be a conscious decision, and
+  // anything else is a typo or a stale internal helper.
+  const GLOBALS = new Set([
+    'String', 'Number', 'Boolean', 'Object', 'Array', 'Promise', 'Error',
+    'Math', 'JSON', 'Date', 'parseInt', 'parseFloat', 'isNaN', 'isFinite',
+    'requestAnimationFrame', 'cancelAnimationFrame', 'setTimeout',
+    'clearTimeout', 'setInterval', 'clearInterval', 'getComputedStyle',
+    'ResizeObserver', 'MutationObserver', 'IntersectionObserver',
+    'CustomEvent', 'URLSearchParams', 'matchMedia', 'require',
+  ]);
+
+  const unknown = [];
+  code.split('\n').forEach((line, i) => {
+    for (const m of line.matchAll(/(^|[^.\w$'"`])([A-Za-z_$][\w$]*)\s*\(/g)) {
+      const name = m[2];
+      if (KEYWORDS.has(name) || GLOBALS.has(name) || declared.has(name)) continue;
+      unknown.push(`${name}() at native.js:${i + 1}`);
+    }
+  });
+  assert.deepEqual(
+    unknown,
+    [],
+    'native.js calls something it never declares (stale rename, or a new global '
+      + 'that belongs in this test\'s GLOBALS list):\n  ' + unknown.join('\n  ')
+  );
+});

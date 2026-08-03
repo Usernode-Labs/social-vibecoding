@@ -71,6 +71,12 @@ const AdminMerges = (() => {
     // The proposal's PR is closed on GitHub and couldn't be reopened —
     // terminal, distinct from a conflict.
     pr_closed:          { label: 'PR closed',            cls: 'bg-red-500/20 text-red-600 dark:text-red-300' },
+    // A kind='checks' run ends on the verdict its suite produced rather than
+    // on a merge outcome. ('error' above is shared — a checks run whose
+    // container broke reports the same thing a failed merge does.)
+    passing:            { label: 'Checks passing',       cls: 'bg-green-500/20 text-green-600 dark:text-green-300' },
+    failing:            { label: 'Checks failing',       cls: 'bg-red-500/20 text-red-600 dark:text-red-300' },
+    skipped:            { label: 'Checks skipped',       cls: 'bg-zinc-500/20 text-zinc-500 dark:text-zinc-400' },
   };
   function badge(status) {
     const b = BADGES[status] || { label: status || '—', cls: 'bg-zinc-500/20 text-zinc-600 dark:text-zinc-300' };
@@ -101,7 +107,9 @@ const AdminMerges = (() => {
   function runCard(run) {
     const title = run.pr_title ? ` — ${esc(run.pr_title)}` : '';
     const pr = run.pr_number ? `PR #${run.pr_number}` : `session ${esc(run.session_id)}`;
-    const kindLabel = run.kind === 'conflict_resolution' ? 'conflict resolution' : 'merge';
+    const kindLabel = run.kind === 'conflict_resolution' ? 'conflict resolution'
+      : run.kind === 'checks' ? 'checks'
+      : 'merge';
     const el = document.createElement('div');
     el.className = 'border border-zinc-200 dark:border-zinc-800 rounded-lg bg-zinc-50 dark:bg-zinc-900 overflow-hidden';
     el.innerHTML = `
@@ -151,6 +159,13 @@ const AdminMerges = (() => {
       const dot = LEVEL_DOT[s.level] || LEVEL_DOT.info;
       const hasDetail = s.detail && Object.keys(s.detail).length > 0;
       const detailJson = hasDetail ? esc(JSON.stringify(s.detail, null, 2)) : '';
+      // A kind='checks' step's whole point is its duration — show it on the
+      // line rather than only inside the collapsed detail JSON, so scanning
+      // a run tells you which phase is the slow one at a glance.
+      const ms = s.detail && typeof s.detail.durationMs === 'number' ? s.detail.durationMs : null;
+      const dur = ms == null ? '' :
+        `<span class="text-[10px] font-mono px-1 rounded bg-zinc-200/70 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">${
+          esc(ms < 1000 ? ms + 'ms' : (ms / 1000).toFixed(1) + 's')}</span>`;
       return `<li class="text-sm">
         <div class="flex items-start gap-2">
           <span class="mt-1.5 w-2 h-2 rounded-full ${dot} flex-shrink-0"></span>
@@ -158,6 +173,7 @@ const AdminMerges = (() => {
             <div class="flex items-baseline gap-2">
               <span class="text-[10px] uppercase tracking-wide text-zinc-500 font-mono">${esc(s.phase || '')}</span>
               <span class="text-[10px] text-zinc-500 dark:text-zinc-600">${esc(fmtTime(s.created_at))}</span>
+              ${dur}
             </div>
             <div class="${s.level === 'error' ? 'text-red-600 dark:text-red-300' : s.level === 'warn' ? 'text-amber-600 dark:text-amber-300' : 'text-zinc-700 dark:text-zinc-200'}">${esc(s.message || '')}</div>
             ${hasDetail ? `<button type="button" class="detail-toggle text-[11px] text-violet-500 dark:text-violet-400 hover:text-violet-400 dark:hover:text-violet-300 mt-0.5">detail</button>
@@ -313,6 +329,9 @@ const AdminMerges = (() => {
               <option value="noop">No-op</option>
               <option value="error">Error</option>
               <option value="pr_closed">PR closed</option>
+              <option value="passing">Checks passing</option>
+              <option value="failing">Checks failing</option>
+              <option value="skipped">Checks skipped</option>
             </select>
           </label>
           <label class="flex flex-col text-xs text-zinc-500 dark:text-zinc-400">Kind
@@ -320,6 +339,10 @@ const AdminMerges = (() => {
               <option value="">Any</option>
               <option value="merge">Merge</option>
               <option value="conflict_resolution">Conflict resolution</option>
+              <!-- kind='checks' runs are EXCLUDED from the unfiltered list on
+                   purpose (several per proposal would bury the merge traces),
+                   so this chip is the only way to reach them. -->
+              <option value="checks">Checks (timings)</option>
             </select>
           </label>
           <button id="admin-merges-apply" type="button" class="ml-auto px-3 py-1.5 rounded bg-violet-600 hover:bg-violet-700 text-white text-sm">Apply</button>

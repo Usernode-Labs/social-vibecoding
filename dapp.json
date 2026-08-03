@@ -313,6 +313,16 @@
       "expectSelector": "#home-body.home-column #home-create-section > #home-create-body .home-create-btn"
     },
     {
+      "name": "Trailing sections bottom-anchor in the full-height feed column",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-body-fill > #home-find-more.home-bottom-anchor"
+    },
+    {
+      "name": "Create-an-app rides down with the anchor (no second anchor of its own)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-body-fill > #home-create-section:not(.home-bottom-anchor)"
+    },
+    {
       "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
       "path": "/?shot=home-search",
       "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
@@ -419,6 +429,35 @@
       "expectText": "Revise the spec"
     },
     {
+      "name": "An interrupted turn's tail finishes itself: Changes-ready card lands",
+      "path": "/#app/usernode-2d5619/dev/sessions/900820",
+      "expectSelector": "#dc-pr-card .dc-pr-card-actions .dc-pr-btn-promote",
+      "expectText": "Staging deployed!"
+    },
+    {
+      "name": "A tail-recovered turn still gets its wrap-up pills",
+      "path": "/#app/usernode-2d5619/dev/sessions/900820",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Propose it to the group"
+    },
+    {
+      "name": "A background preview rebuild shows a spinning in-progress row",
+      "path": "/#app/usernode-2d5619/dev/sessions/900821",
+      "expectSelector": ".dc-status-line .dc-status-spinner-arc",
+      "expectText": "Building staging preview"
+    },
+    {
+      "name": "An unresumable turn whose code landed says so instead of asking for a resend",
+      "path": "/#app/usernode-2d5619/dev/sessions/900822",
+      "expectText": "committed and pushed to PR #36"
+    },
+    {
+      "name": "The code-landed breadcrumb offers Propose, not \"Try that again\"",
+      "path": "/#app/usernode-2d5619/dev/sessions/900822",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Propose it to the group"
+    },
+    {
       "name": "Estimator-off run under 10 min shows NO side text (#906)",
       "path": "/#app/usernode-2d5619/dev/sessions/900810",
       "expectSelector": ".dc-cc-attached-summary .dc-cc-cohort",
@@ -511,6 +550,21 @@
       "expectSelector": ".un-popover[data-surface=\"opaque\"]"
     },
     {
+      "name": "Home card actions menu opens as an action sheet on touch (#929)",
+      "path": "/?demo=1&shot=card-menu&un-platform=ios",
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
+    },
+    {
+      "name": "Dev \"+\" menu opens as an action sheet on touch (#929)",
+      "path": "/?shot=plus-menu&un-platform=ios#app/usernode-2d5619/dev",
+      "expectSelector": ".un-action-sheet .un-action-card .un-action-btn"
+    },
+    {
+      "name": "Dev \"+\" menu still opens the anchored dropdown on desktop (#929)",
+      "path": "/?shot=plus-menu#app/usernode-2d5619/dev",
+      "expectSelector": "#dev-plus-menu:not(.hidden) button[data-plus=\"proposal\"]"
+    },
+    {
       "name": "Waitlist survey lives on its own #waitlist screen",
       "path": "/?shot=anon#waitlist",
       "expectSelector": "#auth-waitlist-screen #waitlist-form #waitlist-email",
@@ -587,6 +641,11 @@
       "name": "Merge debug pr_closed badge renders on the demo run",
       "path": "/?demo=1#admin/merges",
       "expectText": "PR closed"
+    },
+    {
+      "name": "Merge debug offers the Checks kind filter for the timing traces",
+      "path": "/?demo=1#admin/merges",
+      "expectText": "Checks (timings)"
     },
     {
       "name": "Submitted features section renders",
@@ -841,6 +900,16 @@
       "name": "Checks-starting mock proposal shows the in-progress badge",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Checks starting"
+    },
+    {
+      "name": "Checks card names the preview-preparation stage on a building run",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000022",
+      "expectText": "Preparing the staging preview"
+    },
+    {
+      "name": "Checks card names the test stage on a testing run",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
+      "expectText": "Running the automated tests"
     },
     {
       "name": "Imported PR proposal card shows the Imported PR badge (#687)",
@@ -1249,6 +1318,16 @@
       "name": "Native kit: side panel presents from the right edge with a scrollable body",
       "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=panel",
       "expectSelector": ".un-panel[data-un-side=\"right\"] > .un-panel-body"
+    },
+    {
+      "name": "Native kit: the touch action sheet actually presents (#929 regression lock)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=action-sheet",
+      "expectSelector": ".un-action-sheet > .un-action-card > .un-action-btn"
+    },
+    {
+      "name": "Native kit: unNative.menu picks the action sheet on touch (#929)",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=adaptive-menu",
+      "expectSelector": ".un-action-sheet .un-action-btn.un-destructive"
     },
     {
       "name": "Hamburger menu opens as a right-side panel on touch, not a bottom sheet",

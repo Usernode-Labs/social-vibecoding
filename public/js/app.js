@@ -85,7 +85,7 @@ const App = {
     // fragment picks the screen. Pure UI state: no writes, no env gate, so
     // the "before" side starts working the moment this ships.
     if (App._anonShot()) {
-      App.enterAnonymous();
+      await App.enterAnonymous();
       return;
     }
 
@@ -97,7 +97,7 @@ const App = {
       // never enter the SW cache) boots the anonymous shell below.
       const res = await fetch('/api/auth/me');
       if (!res.ok) {
-        App.enterAnonymous();
+        await App.enterAnonymous();
         return;
       }
       const data = await res.json();
@@ -107,7 +107,7 @@ const App = {
       // i.e. offline on a device that never logged in (or predates the
       // SW). Boot the anonymous shell; offline.js owns the connectivity
       // banner and the login screen refuses submits while offline.
-      App.enterAnonymous();
+      await App.enterAnonymous();
     }
   },
 
@@ -123,7 +123,10 @@ const App = {
   //                          or the full one-shot authed boot.
   _authedBooted: false,
 
-  enterAnonymous() {
+  async enterAnonymous() {
+    if (window.NativeChrome && NativeChrome.enterAnonymous) {
+      await NativeChrome.enterAnonymous();
+    }
     // Capture the platform SHA this document booted with. The anonymous
     // shell has no WS "platform updating" banner, so pull-to-refresh is
     // its only recovery path after a deploy — and platformMovedOn()
@@ -1318,7 +1321,7 @@ const App = {
         // paths broadcast pills on the status event, not 'quick_replies'
         // (that handler attaches to the last ASSISTANT row, which a
         // recovered turn doesn't have).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;

@@ -1041,12 +1041,26 @@ const DevChat = {
           if (m.metadata.platformIssueDraft) {
             m.platformIssueDraft = { ...m.metadata.platformIssueDraft, msgId: m.id };
           }
+          // A background preview rebuild marks its in-progress row
+          // `stagingBuild: 'running'`. Carried onto the message so the
+          // spinner pass below can find it after a reload — the /status
+          // check can't help here, because a heal-sweep or preview-click
+          // rebuild has no turn in flight to report.
+          if (m.metadata.stagingBuild) m.stagingBuild = m.metadata.stagingBuild;
         }
         return m;
       });
       // #647: flag the rows this session inherited from an auto session so
       // their Claude Code disclosures render collapsed by default.
       DevChat._markInheritedMessages(DevChat.messages, session);
+      // Spin a still-running background rebuild's row on load. Rebuilds take
+      // minutes (the self-app's DB clone alone is ~4:45), so a reload lands
+      // mid-build often enough to matter, and a static gear next to
+      // "Building staging preview..." reads as "stuck" — which is exactly
+      // the misread that cost session 2954 a duplicate build turn. Every
+      // outcome (rebuilt / failed) appends a row after it, so the flag can
+      // only stick while the build genuinely is the last word.
+      DevChat._activateTrailingStagingBuild();
 
       // #252: sync state is keyed per session — drop a stale indicator
       // (in-flight or terminal feedback) when switching to a different
@@ -1379,7 +1393,7 @@ const DevChat = {
                 // #786: quickReplies ride the status event so a
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -1848,7 +1862,7 @@ const DevChat = {
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -2811,6 +2825,27 @@ const DevChat = {
       return `<span class="dc-status-elapsed">(took ${formatElapsed(Math.max(0, msg._elapsedFinalMs))})</span>`;
     }
     return '';
+  },
+
+  // Re-apply the arc spinner to a trailing `stagingBuild: 'running'` row
+  // after a history load. Only when it IS trailing: a rebuild that has
+  // since finished (or failed) has a row after it, and re-spinning a
+  // superseded row would claim work that is over.
+  //
+  // Separate from the /status-driven `_active` pass because the two answer
+  // different questions — that one asks "is a TURN running?", this one asks
+  // "is a background rebuild still going?", and a heal-sweep rebuild has no
+  // turn at all.
+  _activateTrailingStagingBuild() {
+    const msgs = DevChat.messages;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role === 'user' || m.role === 'assistant') return;
+      if (m.role !== 'system') continue;
+      // A terminal artefact below the build row means it's done.
+      if (m.ccOutput || m.stagingUrl || m.changesReady || m.stagingFailed) return;
+      if (m.stagingBuild === 'running') { m._active = true; return; }
+    }
   },
 
   _deactivateLastStatus() {
