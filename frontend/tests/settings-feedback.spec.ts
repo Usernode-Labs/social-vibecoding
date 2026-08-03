@@ -2,6 +2,7 @@ import { expect, test, type Locator } from "@playwright/test"
 import AxeBuilder from "@axe-core/playwright"
 
 async function probeHitTarget(target: Locator) {
+  await target.evaluate((element) => element.scrollIntoView({ block: "center", inline: "center" }))
   return target.evaluate((element) => {
     const rectangle = element.getBoundingClientRect()
     const centerX = Math.floor(rectangle.left + rectangle.width / 2)

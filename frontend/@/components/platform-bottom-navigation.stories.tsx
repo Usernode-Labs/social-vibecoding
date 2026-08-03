@@ -28,8 +28,8 @@ const baseArgs = {
 
 function BottomNavigationFixture(props: PlatformBottomNavigationProps) {
   return (
-    <main className="min-h-dvh bg-background p-3" data-surface="canvas">
-      <section className="min-h-dvh rounded-3xl bg-paper p-6" data-surface="paper">
+    <main className="flex h-dvh flex-col bg-background p-3 pb-20" data-surface="canvas">
+      <section className="min-h-0 flex-1 rounded-3xl bg-paper p-6" data-surface="paper">
         <h1 className="text-lg font-semibold">Mobile navigation specimen</h1>
       </section>
       <PlatformBottomNavigation {...props} />

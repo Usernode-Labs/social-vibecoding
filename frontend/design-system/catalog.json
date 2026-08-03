@@ -2310,7 +2310,7 @@
           "Render exactly three visible links named Home, Work and Search in that order.",
           "Only the matching destination owns aria-current, and Search preserves the existing Explore route.",
           "Each link has non-overlapping 48 CSS-pixel reach for coarse pointers.",
-          "The persistent Overlay stays outside Paper and clears the active device safe area."
+          "The persistent Overlay stays outside and does not geometrically overlap Paper; the route scroll owner remains inside Paper and the Overlay clears the active device safe area."
         ],
         "evidence": "Home, Work, Search and dark Storybook states plus actual-route mobile and desktop browser contracts for selection, reach, safe area, theme, persistence and Paper separation."
       },

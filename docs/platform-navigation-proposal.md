@@ -16,7 +16,8 @@ navigation, and focused mini-app cards.
 
 - Global navigation lives in the drawer.
 - Narrow screens keep Home, Work, and Search persistently reachable in the one
-  permitted bottom Overlay. Search keeps the existing Explore route.
+  permitted bottom Overlay. Search keeps the existing Explore route. The
+  Overlay occupies a Canvas band below Paper instead of covering route content.
 - Home is a personalized launch surface.
 - Explore is the ecosystem catalog.
 - An open app is a visually contained card on the platform plane.

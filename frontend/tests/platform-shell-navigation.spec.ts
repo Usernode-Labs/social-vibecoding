@@ -224,17 +224,23 @@ test("keeps Home, Work, and Search reachable through the sole persistent mobile 
   })
   await expect.poll(async () => {
     const box = await bottomNavigation.boundingBox()
+    const paperBox = await paper.boundingBox()
     const viewport = page.viewportSize()
-    if (!box || !viewport) return null
+    if (!box || !paperBox || !viewport) return null
     return {
       bottom: Math.round(viewport.height - box.y - box.height),
       left: Math.round(box.x),
-      paperBottomPadding: Math.round(await paper.evaluate((node) =>
-        Number.parseFloat(getComputedStyle(node).paddingBottom)
-      )),
+      paperBottomClearance: Math.round(viewport.height - paperBox.y - paperBox.height),
+      paperDoesNotOverlapNavigation: paperBox.y + paperBox.height <= box.y,
       right: Math.round(viewport.width - box.x - box.width),
     }
-  }).toEqual({ bottom: 31, left: 21, paperBottomPadding: 111, right: 25 })
+  }).toEqual({
+    bottom: 31,
+    left: 21,
+    paperBottomClearance: 111,
+    paperDoesNotOverlapNavigation: true,
+    right: 25,
+  })
 
   for (const dark of [false, true]) {
     await page.locator("html").evaluate((node, nextDark) => node.classList.toggle("dark", nextDark), dark)

@@ -165,16 +165,26 @@
   left: max(1rem, var(--safe-area-left));
 }
 /* The mobile quick switcher is the sole persistent Overlay. It sits outside
- * Paper, owns the active bottom/side insets, and reserves enough Paper space
- * that route content never hides behind it. */
+ * Paper, owns the active bottom/side insets, and receives a real Canvas band
+ * so route content can never hide behind it. */
 [data-slot="platform-bottom-navigation"] {
   bottom: max(0.75rem, var(--safe-area-bottom-active));
   inset-inline-start: max(0.75rem, var(--safe-area-left));
   inset-inline-end: max(0.75rem, var(--safe-area-right));
 }
 @media (max-width: 47.999rem) {
-  [data-slot="sidebar-inset"][data-bottom-navigation="true"] {
+  [data-slot="sidebar-wrapper"]:has(> [data-slot="platform-bottom-navigation"]) {
+    height: 100svh;
+    min-height: 100svh;
+    overflow: hidden;
     padding-bottom: calc(5rem + var(--safe-area-bottom-active));
+  }
+  [data-slot="sidebar-inset"][data-bottom-navigation="true"] {
+    min-height: 0;
+  }
+  [data-slot="sidebar-inset"][data-bottom-navigation="true"] > [data-slot="route-viewport"] {
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   [data-slot="external-link-feedback"] {
     bottom: calc(5rem + max(1rem, var(--safe-area-bottom-active)));
