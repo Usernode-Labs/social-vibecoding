@@ -20,7 +20,7 @@
 //
 // DENSITY — the block is capped at two app-grid rows (--home-panel-max-h,
 // derived in app.css) and spends that budget on a ~28px title bar plus
-// FOUR 44px single-line rows. Overflow is handled by rendering fewer rows
+// FOUR 38px single-line rows. Overflow is handled by rendering fewer rows
 // and giving the last slot to a "See all N" link — never an inner
 // scroller (a nested scroll region inside the page scroller is a touch
 // trap) and never a horizontal pager (invisible to the screenshot capture
@@ -43,7 +43,7 @@ const HomePanels = {
   _inflight: null,
   TTL_MS: 60 * 1000,
 
-  // How many 44px slots fit under the height cap. The server returns at
+  // How many row slots fit under the height cap. The server returns at
   // most this many challenges; when more are open, the last slot becomes
   // the "See all N" link instead of a fourth challenge.
   ROW_SLOTS: 4,
@@ -216,7 +216,7 @@ const HomePanels = {
   _panelShell(key, titleHtml, bodyHtml) {
     return `
       <article class="home-panel home-panel-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden" data-panel="${HomePanels.esc(key)}">
-        <div class="home-panel-bar flex-none flex items-center gap-2 px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-800">
+        <div class="home-panel-bar flex-none flex items-center gap-2 px-2.5 py-1 border-b border-zinc-200 dark:border-zinc-800">
           ${titleHtml}
           <button type="button" class="home-panel-hide un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 text-sm leading-none"
             data-panel-key="${HomePanels.esc(key)}"
@@ -240,15 +240,18 @@ const HomePanels = {
       if (!isAdmin) return '';
       return HomePanels._panelShell(
         panel.key,
-        `<span class="home-panel-title min-w-0 truncate text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}</span>`,
-        `<p class="home-panel-rows flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-400" style="height:2.75rem">No challenges are running right now</p>`
+        `<span class="home-panel-title min-w-0 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}</span>`,
+        `<p class="home-panel-rows home-panel-row flex items-center px-2.5 text-[13px] text-zinc-500 dark:text-zinc-400">No challenges are running right now</p>`
       );
     }
 
     const { rows, link } = HomePanels.visibleSlots(panel);
     const summary = esc(HomePanels.summaryLine(panel));
+    // truncate (which carries white-space: nowrap) + an explicit nowrap on
+    // the inner span: the counter must never push the title onto a second
+    // line, it gets clipped with an ellipsis instead.
     const titleHtml = `
-      <span class="home-panel-title min-w-0 flex-1 truncate text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}<span class="normal-case tracking-normal"> · ${summary}</span></span>`;
+      <span class="home-panel-title min-w-0 flex-1 truncate whitespace-nowrap text-[11px] uppercase tracking-wide text-zinc-500 dark:text-zinc-400">${title}<span class="normal-case tracking-normal whitespace-nowrap"> · ${summary}</span></span>`;
 
     const rowsHtml = rows.map((c) => HomePanels.renderChallengeRow(c)).join('')
       + (link ? HomePanels.renderMoreRow(total) : '');
@@ -257,7 +260,7 @@ const HomePanels = {
       `<div class="home-panel-rows">${rowsHtml}</div>`);
   },
 
-  // One 44px line: glyph · goal · count · reward, plus a 2px progress bar
+  // One 38px line: glyph · goal · count · reward, plus a 2px progress bar
   // riding the row's bottom edge on numeric rows. Category, task, the
   // organiser CTA and the earned-points line are deliberately absent —
   // they don't fit at this density and all four live one tap away on the
@@ -272,9 +275,13 @@ const HomePanels = {
       ? '<span class="home-panel-glyph shrink-0 text-emerald-500 text-xs leading-none" aria-hidden="true">&#10003;</span>'
       : '<span class="home-panel-glyph shrink-0 w-2.5 h-2.5 rounded-full border border-zinc-300 dark:border-zinc-600" aria-hidden="true"></span>';
 
+    // whitespace-nowrap on the chip is load-bearing, not decoration: the
+    // reward is organiser prose and multi-word ("Up to 6,500 pts",
+    // "½ of your final credits"), so without it a tight row wraps the chip
+    // to a second line that the fixed row height then clips.
     const reward = HomePanels.formatReward(c.reward);
     const rewardHtml = reward
-      ? `<span class="shrink-0 text-[11px] font-semibold text-violet-600 dark:text-violet-400">${esc(reward)}</span>`
+      ? `<span class="shrink-0 whitespace-nowrap text-[11px] font-semibold text-violet-600 dark:text-violet-400">${esc(reward)}</span>`
       : '';
 
     let countHtml = '';
@@ -284,18 +291,18 @@ const HomePanels = {
       const target = Number(c.progress.target);
       const pct = HomePanels.progressPercent(current, target);
       const label = c.metric.label ? ` ${c.metric.label}` : '';
-      countHtml = `<span class="shrink-0 text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">${esc(current)}/${esc(target)}</span>`;
+      countHtml = `<span class="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">${esc(current)}/${esc(target)}</span>`;
       // Absolutely positioned near the row's bottom edge so the row stays
-      // exactly 44px — a real progressbar, not a decorative stripe.
+      // its fixed height — a real progressbar, not a decorative stripe.
       // Inset horizontally (to the row's own text gutter) and lifted 3px
       // off the edge with rounded ends: flush at bottom-0 and full-bleed,
       // an EMPTY track is indistinguishable from the row's hairline
       // divider, which reads as a rendering bug rather than "0 of 5".
       barHtml = `
-        <span class="absolute left-2.5 right-2.5 bottom-[3px] h-[2px] rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden"
+        <span class="home-panel-bar-track absolute left-2.5 right-2.5 bottom-[3px] h-[2px] rounded-full bg-zinc-200 dark:bg-zinc-800 overflow-hidden"
               role="progressbar" aria-valuenow="${esc(current)}" aria-valuemin="0" aria-valuemax="${esc(target)}"
               aria-label="${esc(c.goal || 'Challenge')}: ${esc(current)} of ${esc(target)}${esc(label)}">
-          <span class="block h-full rounded-full bg-violet-500" style="width:${pct}%"></span>
+          <span class="home-panel-bar-fill block h-full rounded-full bg-violet-500" style="width:${pct}%"></span>
         </span>`;
     }
 
@@ -306,7 +313,7 @@ const HomePanels = {
       <div class="home-panel-row flex items-center gap-2 px-2.5 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors"
            data-challenge-id="${esc(c.id)}" title="${esc(tip)}">
         ${glyph}
-        <span class="flex-1 min-w-0 truncate text-[13px] text-zinc-900 dark:text-zinc-100">${esc(c.goal || '')}</span>
+        <span class="home-panel-goal flex-1 min-w-0 truncate whitespace-nowrap text-[13px] text-zinc-900 dark:text-zinc-100">${esc(c.goal || '')}</span>
         ${countHtml}
         ${rewardHtml}
         ${barHtml}
@@ -318,7 +325,7 @@ const HomePanels = {
   renderMoreRow(total) {
     return `
       <div class="home-panel-row home-panel-more flex items-center justify-between gap-2 px-2.5 cursor-pointer text-[13px] font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/[0.06] dark:hover:bg-violet-500/10 transition-colors">
-        <span>See all ${HomePanels.esc(total)} challenges</span>
+        <span class="min-w-0 truncate whitespace-nowrap">See all ${HomePanels.esc(total)} challenges</span>
         <svg class="w-3.5 h-3.5 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
       </div>`;
   },

@@ -169,7 +169,7 @@ test('summaryLine: the points clause only appears when it can be honest', () => 
 
 // ── visibleSlots ──────────────────────────────────────────────────
 //
-// The height cap buys exactly ROW_SLOTS 44px rows. Overflow spends the
+// The height cap buys exactly ROW_SLOTS 38px rows. Overflow spends the
 // LAST slot on the "See all N" link rather than adding a row, so the
 // budget is the same whether or not there is overflow.
 
@@ -425,6 +425,71 @@ test('render: each panel is its own bordered article, stacked as siblings', () =
   assert.ok(first > 0 && second > first, 'blocks are siblings, not nested');
 });
 
+// ── Strictly one line per row ──────────────────────────────────────
+//
+// The row is a FIXED height, which means a wrap is invisible in a
+// screenshot: the second line overflows the box and gets clipped by the
+// panel. So the constraint has to be pinned in the markup, not eyeballed.
+// Every text node in a row is either `truncate` (which carries
+// white-space: nowrap) or explicitly `whitespace-nowrap`, and the row
+// itself declares nowrap so future children inherit it.
+
+test('every text node in a row is single-line — no wrapping anywhere', () => {
+  const p = panel({
+    total: 9,
+    challenges: [challenge({
+      // Real production strings: multi-word goal AND multi-word prose
+      // reward, the combination that wraps first.
+      goal: 'Produce Every Block - June 2026',
+      reward: 'Up to 6,500 pts',
+      metric: { kind: 'count', label: 'Blocks produced', target: 720 },
+      progress: { done: false, current: 543, target: 720 },
+    })],
+  });
+  const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
+
+  // Pull out every <span> inside a row and require each to opt out of
+  // wrapping. A new chip added without nowrap fails here.
+  const rowHtml = html.slice(html.indexOf('home-panel-row'));
+  const spans = rowHtml.match(/<span class="[^"]*"/g) || [];
+  assert.ok(spans.length >= 3, 'goal + count + reward at least');
+  for (const span of spans) {
+    // The glyph, the bar's track and its fill carry no text; every span
+    // that CAN hold text must opt out of wrapping.
+    if (/home-panel-glyph|home-panel-bar-(fill|track)/.test(span)) continue;
+    assert.match(span, /whitespace-nowrap|truncate/,
+      `a row span may not wrap: ${span}`);
+  }
+
+  // The goal specifically: truncate (ellipsis) rather than clip-with-no-hint.
+  assert.match(html, /home-panel-goal[^"]*min-w-0 truncate whitespace-nowrap/);
+  // The reward chip is the one most likely to wrap — multi-word and shrink-0.
+  assert.match(html, /shrink-0 whitespace-nowrap text-\[11px\] font-semibold/);
+  // The count.
+  assert.match(html, /shrink-0 whitespace-nowrap text-\[11px\] tabular-nums/);
+});
+
+test('the title bar and the overflow row are single-line too', () => {
+  const { html } = renderWith({
+    registry: [], hidden: [],
+    panels: [panel({ total: 9, done: 2, points_remaining: 24300 })],
+  });
+  // Title + counter: the counter must not push the title to a second line.
+  assert.match(html, /home-panel-title[^"]*truncate whitespace-nowrap/);
+  assert.match(html, /normal-case tracking-normal whitespace-nowrap/);
+  // The "See all N challenges" label.
+  assert.match(html, /<span class="min-w-0 truncate whitespace-nowrap">See all 9/);
+});
+
+test('the row declares nowrap and clips, so a wrap cannot ship unnoticed', () => {
+  const css = read('public/css/app.css');
+  const rowRule = css.match(/\.home-panel-row \{[^}]*\}/)[0];
+  assert.match(rowRule, /white-space:\s*nowrap/,
+    'declared on the row so every child inherits it');
+  assert.match(rowRule, /overflow:\s*hidden/,
+    'a chip that still overflows is clipped, not spilled onto the next row');
+});
+
 // ── Height cap ────────────────────────────────────────────────────
 
 test('the cap is a CSS constant, enforced by flex, and clips rather than grows', () => {
@@ -439,8 +504,8 @@ test('the cap is a CSS constant, enforced by flex, and clips rather than grows',
   const rowsRule = css.match(/\.home-panel-rows \{[^}]*\}/)[0];
   assert.match(rowsRule, /min-height:\s*0/);
   assert.match(rowsRule, /overflow:\s*hidden/);
-  // 44px rows are what make the 4-slot budget exact.
-  assert.match(css.match(/\.home-panel-row \{[^}]*\}/)[0], /height:\s*2\.75rem/);
+  // Uniform 38px rows are what make the 4-slot budget exact.
+  assert.match(css.match(/\.home-panel-row \{[^}]*\}/)[0], /height:\s*2\.375rem/);
   // No runtime measurement — #922 deleted that mechanism for the width
   // axis and app.css says not to bring it back.
   assert.doesNotMatch(HOME, /alignSections|--home-section-indent/);

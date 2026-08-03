@@ -355,8 +355,13 @@ html, body {
    The cap is enforced by flexbox, not arithmetic: the title bar is
    flex: none and the rows list takes the remainder with min-height: 0 +
    overflow: hidden, so content clips at the cap instead of growing the
-   block. Budget inside 14rem: 2px border + ~28px title bar + 4 rows x
-   44px = ~206px, leaving headroom for larger text settings. */
+   block. Budget inside 14rem: 2px border + ~26px title bar + 4 rows x
+   38px = ~180px. The block deliberately spends LESS than the cap — the
+   cap is the ceiling that stops it pushing "Featured apps" off the fold,
+   but a widget that merely fits under a ceiling still reads tall. 180px
+   against a 224px cap leaves ~44px of headroom, which is also what
+   absorbs a larger system text size before the rows list starts to
+   clip. */
 :root {
   --home-panel-max-h: 14rem;
 }
@@ -381,9 +386,24 @@ html, body {
    the 4-slot budget above exact, which is why a numeric row's progress
    bar rides the row's bottom EDGE (absolutely positioned) instead of
    taking a second line. */
+/* STRICTLY ONE LINE PER ROW. `nowrap` here is the belt to the per-element
+   `whitespace-nowrap` braces in home-panels.js: a fixed-height row HIDES a
+   wrap (the second line just overflows the box and gets clipped by the
+   panel), so relying on the goal's `truncate` alone and on flex to keep
+   the chips honest is how a two-line row ships unnoticed. Declaring it on
+   the row means every present and future child inherits it, and
+   `overflow: hidden` clips rather than letting a chip spill over the
+   neighbouring row.
+
+   38px, not 44: the whole row is the tap target and it spans the column
+   (~366px on a phone), so its hit AREA is far past what the 44px
+   minimum-dimension guideline protects — that rule is about small icon
+   controls, and the one of those here (the ✕) keeps .un-touch-target. */
 .home-panel-row {
   position: relative;
-  height: 2.75rem; /* 44px */
+  height: 2.375rem; /* 38px */
+  white-space: nowrap;
+  overflow: hidden;
 }
 .home-panel-row + .home-panel-row {
   border-top: 1px solid var(--border-light);

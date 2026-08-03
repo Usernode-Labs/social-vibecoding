@@ -323,9 +323,9 @@
       "expectSelector": "#home-body.home-body-fill > #home-create-section:not(.home-bottom-anchor)"
     },
     {
-      "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
-      "path": "/?shot=home-search",
-      "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
+      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-list code"
     },
     {
       "name": "Browse renders app-store rows with an Add button (no \"…\" menu)",
@@ -334,9 +334,9 @@
       "expectText": "All apps"
     },
     {
-      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
-      "path": "/?shot=secrets#app/usernode-2d5619/dev",
-      "expectSelector": "#app-secrets-list code"
+      "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
+      "path": "/?shot=home-search",
+      "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
     },
     {
       "name": "Admins get a Featured apps console section",
