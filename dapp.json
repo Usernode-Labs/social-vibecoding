@@ -1189,6 +1189,11 @@
       "expectText": "limit $"
     },
     {
+      "name": "AI credit value is right-aligned to the panel edge, wrapped or not",
+      "path": "/?shot=menu&demo=1",
+      "expectSelector": "#drawer-row-ai-budget #ai-budget-slot.grow.text-right"
+    },
+    {
       "name": "The admin console's Limits section offers the Anthropic credit balance fields (#555)",
       "path": "/#admin/limits",
       "expectSelector": "#admin-credit-balance"

@@ -3372,7 +3372,12 @@ html.in-native-webview #header-title {
    "limit $13.60/$20.00 · your key $4.50" — which cannot fit the 15rem
    panel on one line — breaks at the "·" instead of mid-number or being
    ellipsised into "your key $4…". The row's own `flex-wrap` drops the
-   whole value below its label first; this is the second-level fallback. */
+   whole value below its label first; this is the second-level fallback.
+
+   Horizontal alignment is NOT set here: it's inherited from the slot
+   (see #ai-budget-slot's `text-right` in index.html), so a value that
+   wraps stays right-aligned to the panel edge line by line instead of
+   falling flush left under the row icon. */
 .drawer-meter {
   /* inline-block, NOT inline-flex: the value is composed of several
      coloured <span>s and must stay ONE run of text. As flex items those
