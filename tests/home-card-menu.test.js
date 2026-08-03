@@ -375,17 +375,18 @@ test('card: Retry renders inline only on errored cards, creator or full admin', 
 // Array.prototype, which deepStrictEqual rejects.
 const keys = (items) => Array.from(items, (i) => i.key);
 
-test('menu: plain user on a non-member app gets exactly the favorite toggle', () => {
+test('menu: plain user on a non-member app gets App details + the favorite toggle', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['favorite'], 'nothing admin-gated leaks');
-  assert.equal(items[0].label, 'Add to Your apps');
+  assert.deepEqual(keys(items), ['app-details', 'favorite'], 'nothing admin-gated leaks');
+  assert.equal(items[1].label, 'Add to Your apps');
 });
 
 test('menu: favorited app flips the label to Remove', () => {
   const Home = makeHome({ id: ME });
-  const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
-  assert.equal(items[0].label, 'Remove from Your apps');
+  const fav = Home.menuItemsFor(baseApp({ is_favorited: true }))
+    .find((i) => i.key === 'favorite');
+  assert.equal(fav.label, 'Remove from Your apps');
 });
 
 test('menu: member apps get a WORKING Remove from Your apps item (#618)', () => {
@@ -432,6 +433,62 @@ test('menu: member toggle sends the explicit desired value, not !is_favorited (#
   );
 });
 
+// ── App details ───────────────────────────────────────────────────
+//
+// The menu's way to the app's own page — the SAME destination a row in
+// the browse-all-apps list opens (#apps/<slug>), so the two entry points
+// share one screen. Browse.DETAIL_EXCLUDED_KEYS drops it again on that
+// page (pinned in tests/browse-screen.test.js) so it can't link to
+// itself.
+
+test('menu: App details leads the list, on every app and for every viewer', () => {
+  for (const user of [
+    { id: ME },
+    { id: ME, isAdmin: true, canAdminWrite: false },
+    { id: ME, canAdminWrite: true },
+  ]) {
+    const Home = makeHome(user);
+    for (const over of [
+      {},
+      { is_collaborator: true },
+      { is_favorited: true },
+      { status: 'error', created_by: ME },
+      { self_hosted: true },
+      { locked: true },
+    ]) {
+      const items = Home.menuItemsFor(baseApp(over));
+      assert.equal(items[0].key, 'app-details',
+        `first for ${JSON.stringify(over)} / ${JSON.stringify(user)}`);
+      assert.equal(items[0].label, 'App details');
+    }
+  }
+});
+
+test('menu: App details routes through the hash, like a browse row tap', () => {
+  // Assigning location.hash (rather than calling a navigate helper) is
+  // what keeps the browser/OS back gesture working.
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  Home.menuItemsFor(baseApp({ slug: 'chess-arena' }))
+    .find((i) => i.key === 'app-details').run();
+  assert.equal(sandbox.location.hash, '#apps/chess-arena');
+});
+
+test('menu: App details escapes the slug into the hash', () => {
+  const { Home, sandbox } = makeHomeEnv({ id: ME });
+  Home.menuItemsFor(baseApp({ slug: 'a b&c' }))
+    .find((i) => i.key === 'app-details').run();
+  assert.equal(sandbox.location.hash, `#apps/${encodeURIComponent('a b&c')}`);
+});
+
+test('menu: the inert ?demo=1 tiles get no App details row', () => {
+  // Their slugs 404 on GET /api/apps/:slug, so the page would open on an
+  // inline "not available" state — same reason a demo row doesn't drill in.
+  const Home = makeHome({ id: ME });
+  assert.ok(!keys(Home.menuItemsFor(baseApp({ demo: true }))).includes('app-details'));
+  // …and a slugless row can't be addressed at all.
+  assert.ok(!keys(Home.menuItemsFor(baseApp({ slug: null }))).includes('app-details'));
+});
+
 test('menu: every app carries a favorite entry — no card menu omits it', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   for (const over of [
@@ -442,14 +499,15 @@ test('menu: every app carries a favorite entry — no card menu omits it', () =>
     { self_hosted: true },
   ]) {
     const items = Home.menuItemsFor(baseApp(over));
-    assert.equal(items[0].key, 'favorite', `favorite entry first for ${JSON.stringify(over)}`);
+    assert.ok(keys(items).includes('favorite'),
+      `favorite entry present for ${JSON.stringify(over)}`);
   }
 });
 
 test('menu: full admin on a running repo app gets check-updates, lock and delete', () => {
   const Home = makeHome({ id: ME, canAdminWrite: true });
   const items = Home.menuItemsFor(baseApp());
-  assert.deepEqual(keys(items), ['favorite', 'check-updates', 'lock', 'delete']);
+  assert.deepEqual(keys(items), ['app-details', 'favorite', 'check-updates', 'lock', 'delete']);
   assert.equal(items.find((i) => i.key === 'lock').label, 'Lock app');
   assert.equal(items.find((i) => i.key === 'delete').danger, true);
 });
@@ -473,13 +531,15 @@ test('menu: check-updates hidden without repo / when not running / when self-hos
 test('menu: view-only admins (no canAdminWrite) get no mutating items (#311)', () => {
   const Home = makeHome({ id: ME, isAdmin: true, canAdminWrite: false });
   const items = Home.menuItemsFor(baseApp({ status: 'error' }));
-  assert.deepEqual(keys(items), ['favorite'], 'no retry/check/lock/delete');
+  // App details is navigation, not a mutation, so it survives the gate.
+  assert.deepEqual(keys(items), ['app-details', 'favorite'],
+    'no retry/check/lock/delete');
 });
 
 test('menu: errored app adds Retry + View build log for the creator (#416)', () => {
   const Home = makeHome({ id: ME });
   const items = Home.menuItemsFor(baseApp({ status: 'error', created_by: ME }));
-  assert.deepEqual(keys(items), ['favorite', 'retry', 'build-log']);
+  assert.deepEqual(keys(items), ['app-details', 'favorite', 'retry', 'build-log']);
 });
 
 // ── "View build log" gating (#416) ────────────────────────────────
@@ -545,7 +605,7 @@ test('menu: shortcut item renders when the bridge reports support', () => {
   Home._shortcutSupport = { mechanism: 'pinned-shortcut' };
   // "Your apps" only — favorited (or collaborator) apps get the item.
   const items = Home.menuItemsFor(baseApp({ is_favorited: true }));
-  assert.deepEqual(keys(items), ['favorite', 'add-to-homescreen']);
+  assert.deepEqual(keys(items), ['app-details', 'favorite', 'add-to-homescreen']);
   assert.equal(
     items.find((i) => i.key === 'add-to-homescreen').label,
     'Add to phone home screen'

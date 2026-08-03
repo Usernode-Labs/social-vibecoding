@@ -4,8 +4,9 @@
 // All three sections share one shape: a .home-section-header, then the
 // content, inside a width-bounded .home-section-block so they read as a
 // consistent stack and don't stretch edge-to-edge on a desktop window.
-// The heading is full-width and LEFT-aligned on the "Your apps" gutter;
-// only the card below it sits in the centred, width-bounded block.
+// The heading is full-width; only the card below it sits in the
+// width-bounded block. Both are LEFT-aligned on the "Your apps" gutter —
+// the bound just stops the card early on the right.
 //
 // Featured apps' content is ONE contained card: the admin-curated tiles
 // (the `featured` / `featured_order` flags GET /api/apps serializes from
@@ -243,9 +244,11 @@ test('the featured tiles + browse action are ONE contained card', () => {
   assert.ok(section.indexOf('>Featured apps<') < section.indexOf('home-find-more-card'));
 });
 
-// Headings LEFT, boxes CENTRED. The two halves of that split look like a
-// bug from each other's point of view — a heading inboard of the "Your
-// apps" grid, or a card stretched edge-to-edge — so both are pinned here
+// Everything shares ONE left gutter — heading, card and the "Your apps"
+// grid above — and the card's max-width just stops it early on the right.
+// The heading stays a sibling ABOVE the bounded block (so the bound can
+// never pull it inboard), and the block carries no auto margins (which
+// would centre the card away from that shared edge). Both halves pinned
 // together, in the order the markup has to be in.
 test('both trailing sections share the section shape and a width bound', () => {
   const main = INDEX.slice(
@@ -270,15 +273,14 @@ test('both trailing sections share the section shape and a width bound', () => {
   const css = read('public/css/app.css');
   const rule = css.match(/\.home-section-block \{[^}]*\}/)[0];
   assert.match(rule, /max-width/);
-  // A max-width alone would left-anchor the box; the auto side margins are
-  // what centre it. Pin them so a later "the heading and the card don't line
-  // up" tweak can't quietly drop them instead of leaving the split alone.
-  assert.ok(
-    /margin-inline:\s*auto/.test(rule)
-      || (/margin-left:\s*auto/.test(rule) && /margin-right:\s*auto/.test(rule))
-      || /margin:\s*[^;]*auto/.test(rule),
-    'both side margins are auto, so the box stays centred'
-  );
+  // LEFT-ALIGNED: a max-width and nothing else, so the card's left edge
+  // lands on the same gutter as the heading above it and the first tile of
+  // the "Your apps" grid. Auto side margins would centre it and break that
+  // alignment, so pin their absence in every spelling.
+  assert.doesNotMatch(rule, /margin-left:\s*auto/);
+  assert.doesNotMatch(rule, /margin-right:\s*auto/);
+  assert.doesNotMatch(rule, /margin-inline:\s*auto/);
+  assert.doesNotMatch(rule, /margin:\s*[^;]*auto/);
 });
 
 test('the browse action is an attached footer row of that card', () => {

@@ -1639,6 +1639,24 @@ const Home = {
     const user = App.user || {};
     const isRunning = app.status === 'running';
     const isError = app.status === 'error';
+    // The way to the app's own page (#apps/<slug>) — the same destination a
+    // row in the browse-all-apps list opens, so both entry points land on
+    // one screen rather than the page duplicating the menu. First in the
+    // list because it's navigation, not an action.
+    //
+    // Routed by assigning location.hash so the browser/OS back gesture
+    // works, exactly as Browse._wireRows does. Skipped for the inert
+    // ?demo=1 tiles, whose slugs 404 on GET /api/apps/:slug — and filtered
+    // out of the detail page's own action rows by
+    // Browse.DETAIL_EXCLUDED_KEYS, so the page can never link to itself.
+    if (!app.demo && app.slug) {
+      items.push({
+        key: 'app-details',
+        label: 'App details',
+        title: 'Version, status and everything you can do with this app',
+        run: () => { location.hash = `#apps/${encodeURIComponent(app.slug)}`; },
+      });
+    }
     if (app.is_collaborator) {
       items.push({
         key: 'favorite',

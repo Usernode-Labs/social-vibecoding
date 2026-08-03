@@ -280,20 +280,18 @@ html, body {
 /* Width bound for the BOX in each of the home screen's trailing sections
    (Featured apps, Create an app). Their content is a single card rather
    than a launcher grid, so letting it stretch the full width of a desktop
-   window leaves one very wide, very short box; this keeps them a readable,
-   centred column (the auto side margins below).
+   window leaves one very wide, very short box; this keeps them a readable
+   column.
 
-   This wraps ONLY the card — the .home-section-header is a sibling ABOVE
-   it in index.html, full-width and left-aligned on the same gutter as the
-   "Your apps" heading and grid. Headings left, boxes centred: that split
-   is the whole point, and each half looks like a bug from the other's
-   point of view. Don't drop the auto margins to line the boxes up with the
-   headings, and don't move a heading inside this block to line it up with
-   its card. */
+   LEFT-ALIGNED, not centred: a plain block with only a max-width, so the
+   card's left edge lands on the section's own gutter — the same one the
+   .home-section-header above it and the first tile of the "Your apps" grid
+   sit on. Everything on the screen therefore shares one left edge and the
+   box just stops early on the right. Do NOT add auto side margins back:
+   that centres the card and breaks the alignment with the grid above,
+   which is what this rule exists to hold. */
 .home-section-block {
   max-width: 48rem; /* Tailwind max-w-3xl */
-  margin-left: auto;
-  margin-right: auto;
 }
 
 /* ── Browse screen rows / boxes ─────────────────────────────

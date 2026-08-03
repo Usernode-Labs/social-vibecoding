@@ -376,11 +376,12 @@ test('the browse rows no longer touch the home card menu at all', () => {
 
 // ── Level 2: the app detail page ──────────────────────────────────
 
-test('detailActionsFor: filters exactly favorite + add-to-homescreen', () => {
+test('detailActionsFor: filters favorite + add-to-homescreen + app-details', () => {
   const { Browse, Home } = makeBrowse();
   // Stub the menu so this test pins the FILTER, not the (separately
   // tested) permission gates inside menuItemsFor.
   Home.menuItemsFor = () => ([
+    { key: 'app-details', label: 'App details', run: () => {} },
     { key: 'favorite', label: 'Add to Your apps', run: () => {} },
     { key: 'add-to-homescreen', label: 'Add to Usernode widget', run: () => {} },
     { key: 'retry', label: 'Retry', run: () => {} },
@@ -392,13 +393,15 @@ test('detailActionsFor: filters exactly favorite + add-to-homescreen', () => {
   ]);
   const keys = Browse.detailActionsFor(app({ slug: 'x' })).map((i) => i.key);
   // Favorite is the dedicated Add/Remove button; the widget item is
-  // "Your apps" only and belongs on home.
+  // "Your apps" only and belongs on home; app-details IS this page, so a
+  // row for it would set the hash it's already on and appear dead.
   assert.deepEqual(keys, ['retry', 'build-log', 'check-updates', 'fork', 'lock', 'delete'],
-    'order preserved, only the two excluded keys dropped');
+    'order preserved, only the three excluded keys dropped');
   const actions = Browse.detailActionsFor(app({ slug: 'x' }));
   assert.equal(actions.find((a) => a.key === 'delete').danger, true, 'flags survive');
   assert.equal(actions.find((a) => a.key === 'check-updates').keepOpen, true);
-  assert.deepEqual([...Browse.DETAIL_EXCLUDED_KEYS], ['favorite', 'add-to-homescreen']);
+  assert.deepEqual([...Browse.DETAIL_EXCLUDED_KEYS],
+    ['favorite', 'add-to-homescreen', 'app-details']);
   assert.equal(Browse.detailActionsFor(null).length, 0, 'null-safe');
 });
 

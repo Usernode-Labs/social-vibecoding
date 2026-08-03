@@ -365,8 +365,10 @@ const Browse = {
   // dedicated Open and Add/Remove buttons above it.
   //   favorite           — the Add/Remove button IS this action
   //   add-to-homescreen  — "Your apps" only; it belongs on the home grid
+  //   app-details        — THIS page; a row linking here would be a no-op
+  //                        that looks broken (the hash never changes)
   // Pure — unit-tested in tests/browse-screen.test.js.
-  DETAIL_EXCLUDED_KEYS: ['favorite', 'add-to-homescreen'],
+  DETAIL_EXCLUDED_KEYS: ['favorite', 'add-to-homescreen', 'app-details'],
 
   detailActionsFor(app) {
     if (!app) return [];
