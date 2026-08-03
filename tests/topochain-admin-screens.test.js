@@ -156,7 +156,7 @@ test('render() reads the deep-linked sub-key from the hash rather than a passed 
 
 // ─── Security: esc()/safeHref() discipline ─────────────────────────────────
 
-test('esc() mirrors the hardened topochain-seasons.js/topochain-leaderboard.js version, not the older admin-console.js one', () => {
+test('esc() mirrors the hardened topochain-challenges.js/topochain-leaderboard.js version, not the older admin-console.js one', () => {
   const fn = topoJs.slice(topoJs.indexOf('esc(s) {'), topoJs.indexOf('esc(s) {') + 300);
   assert.ok(fn.includes(".replace(/&/g, '&amp;')"), 'esc() escapes &');
   assert.ok(fn.includes(".replace(/</g, '&lt;')"), 'esc() escapes <');
@@ -176,7 +176,7 @@ test('no admin/API-supplied URL is ever interpolated into a raw href attribute',
   // etc. as clickable anchors (they're shown as escaped text in form
   // fields instead) — so there should be no interpolated href="${...}" at
   // all. If a future change adds one, it must go through safeHref() like
-  // topochain-seasons.js's _ctaHtml does.
+  // topochain-challenges.js's _ctaHtml does.
   const hrefSites = (topoJs.match(/href="\$\{/g) || []).length;
   assert.equal(hrefSites, 0, 'no interpolated href exists in admin-topochain.js');
 });

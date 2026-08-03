@@ -229,8 +229,11 @@ test('navigateToSettings mounts the screen and routes when already mounted', () 
   assert.match(head, /App\.setHeaderTitle\('Settings'\)/, 'sets the header title');
   assert.match(head, /App\._inSettings = true;/, 'records that we are on the screen');
   assert.match(head, /Settings\.open\(section\)/, 'hands the section to the module');
-  // Every sibling screen is torn down on entry.
-  for (const sib of ['_exitLeaderboard', '_exitChallenges', '_exitProfile', '_exitAdminConsole']) {
+  // Every sibling screen is torn down on entry. (_exitChallenges and
+  // _exitTopochainSeasons dropped off this list in the leaderboard merge:
+  // both screens became tabs of the Leaderboard screen, so _exitLeaderboard
+  // is what tears them down now.)
+  for (const sib of ['_exitLeaderboard', '_exitProfile', '_exitAdminConsole']) {
     assert.ok(head.includes(sib), `entry exits the ${sib} screen`);
   }
 });
@@ -251,7 +254,11 @@ test('every sibling-exit site tears the settings screen down too', () => {
   // stops a stale hidden screen from being left mounted.
   const adminExits = (appJs.match(/if \(App\._inAdmin\) App\._exitAdminConsole\(\);/g) || []).length;
   const settingsExits = (appJs.match(/if \(App\._inSettings\) App\._exitSettings\(\);/g) || []).length;
-  assert.ok(adminExits >= 9, `admin exit sites found (${adminExits})`);
+  // Floor lowered from 9 to 7 by the leaderboard merge: navigateToChallenges
+  // and navigateToTopochainSeasons were two of the sibling sites, and both
+  // screens became tabs of the Leaderboard screen. The equality below is the
+  // real invariant — the floor only catches the list collapsing entirely.
+  assert.ok(adminExits >= 7, `admin exit sites found (${adminExits})`);
   assert.equal(settingsExits, adminExits,
     'the settings exit is paired with the admin exit at every navigation');
 

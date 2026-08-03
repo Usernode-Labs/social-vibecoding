@@ -14,7 +14,7 @@
 //
 // SECURITY (a previous task shipped an XSS here — non-negotiable): every
 // interpolated value goes through esc() below, including attribute values
-// (esc() escapes quotes too, ported verbatim from topochain-seasons.js /
+// (esc() escapes quotes too, ported verbatim from topochain-challenges.js /
 // topochain-leaderboard.js's hardened version — plain &/</> escaping is
 // not enough for a double-quoted attribute value). Any URL this module
 // would ever render into an href goes through safeHref() first (http(s)
@@ -94,7 +94,7 @@ const AdminTopochain = {
   // Escapes every character dangerous in EITHER a text-node OR a
   // double-quoted attribute-value context (this module interpolates into
   // both, e.g. inside data-* attributes) — ported verbatim from
-  // topochain-seasons.js's hardened esc(), NOT the older &/</>-only
+  // topochain-challenges.js's hardened esc(), NOT the older &/</>-only
   // version in admin-console.js.
   esc(s) {
     return String(s == null ? '' : s)
@@ -114,7 +114,7 @@ const AdminTopochain = {
   async _confirm(opts) { return window.AdminConsole ? AdminConsole._confirm(opts) : window.confirm(opts.message); },
 
   // Safe fetch+parse, never throws — same contract as
-  // AdminConsole.fetchJson/TopochainSeasons.fetchJson, extended with an
+  // AdminConsole.fetchJson/TopochainChallenges.fetchJson, extended with an
   // options bag so this module can also POST/PUT/PATCH/DELETE (the other
   // two only ever GET).
   async fetchJson(url, opts) {

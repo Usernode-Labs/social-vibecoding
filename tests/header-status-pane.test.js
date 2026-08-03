@@ -57,7 +57,7 @@ test('none of the moved slots are left in the header', () => {
     assert.ok(!header.includes(`id="${id}"`), `#${id} has left the header`);
   }
   assert.ok(!header.includes('id="leaderboard-btn"'),
-    'the trophy left the header (it is #drawer-row-standings now)');
+    'the trophy left the header (it is #drawer-row-leaderboard now)');
   assert.ok(!header.includes('id="admin-dashboard-btn"'),
     'the admin shield left the header (it is #drawer-row-admin now)');
 });
