@@ -479,13 +479,10 @@
       "rule": "no-manual-dark-colors",
       "file": "@/components/ui/tabs.tsx",
       "matches": [
-        "dark:data-active:bg-input/30",
-        "dark:data-active:border-input",
-        "dark:data-active:text-foreground",
         "dark:hover:text-foreground",
         "dark:text-muted-foreground"
       ],
-      "count": 5,
+      "count": 2,
       "owner": "frontend-platform",
       "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
       "expires": "2026-09-30"

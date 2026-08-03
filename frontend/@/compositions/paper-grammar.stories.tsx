@@ -118,7 +118,7 @@ function PaperGrammar() {
               </div>
             </div>
 
-            <div className="rounded-2xl bg-muted/70 p-4 ring-1 ring-inset ring-border/70" data-recess-role="input" data-slot="paper-recess" data-surface="recess">
+            <div data-slot="paper-input-role">
               <Field>
                 <FieldLabel htmlFor="paper-note">Monthly note</FieldLabel>
                 <Input id="paper-note" placeholder="Add context for this month" />
@@ -157,6 +157,21 @@ function PaperGrammar() {
   )
 }
 
+function renderedLuminance(color: string) {
+  const context = document.createElement("canvas").getContext("2d")
+  if (!context) throw new Error("Paper grammar needs a 2D canvas context for rendered colour checks")
+  context.canvas.width = 1
+  context.canvas.height = 1
+  context.fillStyle = color
+  context.fillRect(0, 0, 1, 1)
+  const [red, green, blue] = context.getImageData(0, 0, 1, 1).data
+  const linear = [red, green, blue].map((channel) => {
+    const value = channel / 255
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
+  })
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+}
+
 async function assertPaperGrammar(canvasElement: HTMLElement, mobile: boolean) {
   const canvas = within(canvasElement)
   const canvasSurface = canvas.getByRole("main", { name: "Paper grammar specimen" })
@@ -183,6 +198,10 @@ async function assertPaperGrammar(canvasElement: HTMLElement, mobile: boolean) {
   const paperStyle = getComputedStyle(paper!)
   const recessStyle = getComputedStyle(recess!)
   await expect(canvasStyle.backgroundColor).not.toBe(paperStyle.backgroundColor)
+  await expect(renderedLuminance(recessStyle.backgroundColor)).toBeLessThan(renderedLuminance(paperStyle.backgroundColor))
+  await expect(recessStyle.borderTopStyle).toBe("solid")
+  await expect(recessStyle.borderTopWidth).not.toBe("0px")
+  await expect(recessStyle.borderTopColor).not.toBe("transparent")
   await expect(Number.parseFloat(paperStyle.borderTopLeftRadius)).toBeGreaterThan(Number.parseFloat(recessStyle.borderTopLeftRadius))
   await expect(getComputedStyle(rowTitle!).fontSize).toBe("16px")
   await expect(getComputedStyle(tertiary!).fontSize).toBe("12px")

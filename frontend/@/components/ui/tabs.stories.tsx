@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
+import { expect, within } from "storybook/test"
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
@@ -20,6 +21,14 @@ export const Default: Story = {
       <TabsContent className="pt-3" value="activity">Recent activity</TabsContent>
     </Tabs>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const list = canvas.getByRole("tablist")
+    const active = canvas.getByRole("tab", { name: "Overview" })
+    await expect(list).toHaveAttribute("data-surface", "recess")
+    await expect(list).toHaveAttribute("data-recess-role", "tab-track")
+    await expect(getComputedStyle(list).backgroundColor).not.toBe(getComputedStyle(active).backgroundColor)
+  },
 }
 
 export const Line: Story = {

@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
+import { expect, within } from "storybook/test"
 
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
@@ -14,7 +15,15 @@ const meta = {
 export default meta
 type Story = StoryObj<typeof meta>
 
-export const Default: Story = {}
+export const Default: Story = {
+  play: async ({ canvasElement }) => {
+    const input = within(canvasElement).getByRole("textbox", { name: "App name" })
+    await expect(input).toHaveAttribute("data-surface", "recess")
+    await expect(input).toHaveAttribute("data-recess-role", "input")
+    await expect(getComputedStyle(input).borderTopStyle).toBe("solid")
+    await expect(getComputedStyle(input).borderTopWidth).not.toBe("0px")
+  },
+}
 export const Filled: Story = { args: { defaultValue: "RecipeBot" } }
 export const Disabled: Story = { args: { defaultValue: "Unavailable", disabled: true } }
 export const Password: Story = { args: { "aria-label": "Password", type: "password", defaultValue: "secret-passphrase" } }

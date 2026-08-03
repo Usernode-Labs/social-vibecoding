@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite"
+import { expect, within } from "storybook/test"
 import { Search, Send, X } from "lucide-react"
 
 import { PlatformIcon } from "@/components/platform-icon"
@@ -31,6 +32,15 @@ export const SearchInput: Story = {
       </InputGroupAddon>
     </InputGroup>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement)
+    const control = canvas.getByRole("textbox", { name: "Search apps" })
+    const recess = control.closest("[data-recess-role='input']")
+
+    await expect(recess).toHaveAttribute("data-surface", "recess")
+    await expect(control).not.toHaveAttribute("data-surface")
+    await expect(canvasElement.querySelectorAll("[data-surface='recess']")).toHaveLength(1)
+  },
 }
 
 export const Composer: Story = {

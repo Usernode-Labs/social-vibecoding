@@ -89,10 +89,16 @@ function validateSurfaceFoundation(tokens, mode) {
   const background = { label: `${label}.background`, token: semanticToken(tokens, "background", label) }
   const stage = { label: `${label}.stage`, token: semanticToken(tokens, "stage", label) }
   const card = { label: `${label}.card`, token: semanticToken(tokens, "card", label) }
+  const recess = { label: `${label}.recess`, token: semanticToken(tokens, "recess", label) }
+  const mutedForeground = semanticToken(tokens, "muted-foreground", label)
 
   assertLightnessStep(background, card, 0.02, `${label} Canvas to Paper`)
   assertLightnessStep(background, stage, 0.02, `${label} shell Canvas to hosted Canvas`)
   assertLightnessStep(stage, card, 0.02, `${label} hosted Canvas to Paper`)
+  assertLightnessStep(recess, card, 0.02, `${label} Recess to Paper`)
+  assertContrast(semanticToken(tokens, "foreground", label), recess.token, 4.5, `${label}.foreground/Recess`)
+  assertContrast(mutedForeground, background.token, 4.5, `${label}.muted-foreground/Canvas`)
+  assertContrast(mutedForeground, recess.token, 4.5, `${label}.muted-foreground/Recess`)
   assertContrast(semanticToken(tokens, "destructive", label), background.token, 4.5, `${label}.destructive text/Canvas`)
   assertContrast(semanticToken(tokens, "destructive", label), card.token, 4.5, `${label}.destructive text/Paper`)
 }
