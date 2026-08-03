@@ -277,17 +277,19 @@ html, body {
   padding: 0.25rem 0;
 }
 
-/* Width bound for the home screen's trailing sections (Featured apps,
-   Create an app). Their content is a single card rather than a launcher
-   grid, so letting it stretch the full width of a desktop window leaves
-   one very wide, very short box; this keeps them a readable column.
+/* Width bound for the BOX in each of the home screen's trailing sections
+   (Featured apps, Create an app). Their content is a single card rather
+   than a launcher grid, so letting it stretch the full width of a desktop
+   window leaves one very wide, very short box; this keeps them a readable,
+   centred column (the auto side margins below).
 
-   CENTRED within the scroller (the auto side margins below). The tradeoff
-   is known and accepted: "Your apps" above is a full-width launcher grid
-   starting at the scroller's own left gutter, so once the window is wider
-   than the bound these two sit inboard of it and their headings no longer
-   share that left edge. Centring is the requested look — don't "fix" the
-   heading alignment by dropping the auto margins. */
+   This wraps ONLY the card — the .home-section-header is a sibling ABOVE
+   it in index.html, full-width and left-aligned on the same gutter as the
+   "Your apps" heading and grid. Headings left, boxes centred: that split
+   is the whole point, and each half looks like a bug from the other's
+   point of view. Don't drop the auto margins to line the boxes up with the
+   headings, and don't move a heading inside this block to line it up with
+   its card. */
 .home-section-block {
   max-width: 48rem; /* Tailwind max-w-3xl */
   margin-left: auto;

@@ -557,11 +557,17 @@
            "Create an app" below — a .home-section-header, then the
            content — so the three read as one consistent stack. The
            heading sits OUTSIDE the card for that reason.
-           .home-section-block bounds the width and centres it so the card
-           doesn't stretch edge-to-edge on a wide screen. -->
+
+           Note the SPLIT, which is deliberate and easy to undo by accident:
+           the heading is a plain full-width child of the section, so it
+           lines up with the "Your apps" heading and grid at every width,
+           while only the CARD is wrapped in .home-section-block (bounded
+           width, centred). Headings left, boxes centred. Don't move the
+           heading back inside the block — that drags it inboard with the
+           card and the three headings stop lining up. -->
       <section id="home-find-more" class="px-3 pb-3">
+        <div class="home-section-header">Featured apps</div>
         <div class="home-section-block">
-          <div class="home-section-header">Featured apps</div>
           <!-- ONE contained card: the featured tiles and the browse action
                sit on the same rounded surface, with the browse row as the
                card's footer — separated by a hairline rather than a gap, so
@@ -590,10 +596,11 @@
       <!-- Create an app: the former in-grid create tile ("Build your own
            app"), now its own trailing section. Home.renderCreateSection()
            fills it with either that tile or the "ask an admin" hint.
-           Same .home-section-block width bound as the featured card. -->
+           Same heading-outside / .home-section-block-around-the-box split
+           as the featured section above. -->
       <section id="home-create-section" class="px-3 pb-4">
+        <div class="home-section-header">Create an app</div>
         <div class="home-section-block">
-          <div class="home-section-header">Create an app</div>
           <div id="home-create-body"></div>
         </div>
       </section>

@@ -4,7 +4,8 @@
 // All three sections share one shape: a .home-section-header, then the
 // content, inside a width-bounded .home-section-block so they read as a
 // consistent stack and don't stretch edge-to-edge on a desktop window.
-// The bounded block is CENTRED in the scroller.
+// The heading is full-width and LEFT-aligned on the "Your apps" gutter;
+// only the card below it sits in the centred, width-bounded block.
 //
 // Featured apps' content is ONE contained card: the admin-curated tiles
 // (the `featured` / `featured_order` flags GET /api/apps serializes from
@@ -242,6 +243,10 @@ test('the featured tiles + browse action are ONE contained card', () => {
   assert.ok(section.indexOf('>Featured apps<') < section.indexOf('home-find-more-card'));
 });
 
+// Headings LEFT, boxes CENTRED. The two halves of that split look like a
+// bug from each other's point of view — a heading inboard of the "Your
+// apps" grid, or a card stretched edge-to-edge — so both are pinned here
+// together, in the order the markup has to be in.
 test('both trailing sections share the section shape and a width bound', () => {
   const main = INDEX.slice(
     INDEX.indexOf('<main id="home-screen"'),
@@ -250,27 +255,29 @@ test('both trailing sections share the section shape and a width bound', () => {
   for (const id of ['home-find-more', 'home-create-section']) {
     const section = main.slice(main.indexOf(`<section id="${id}"`));
     const head = section.slice(0, section.indexOf('</section>'));
-    // Width-bounded, so neither card stretches the full width of a desktop
-    // window.
-    assert.match(head, /home-section-block/, `${id} is width-bounded`);
+    // The BOX is width-bounded, so neither card stretches the full width of
+    // a desktop window.
+    assert.match(head, /home-section-block/, `${id}'s box is width-bounded`);
     // …and the heading uses the same class as "Your apps".
     assert.match(head, /class="home-section-header"/, `${id} uses the shared heading`);
-    assert.ok(head.indexOf('home-section-block') < head.indexOf('home-section-header'),
-      `${id}: the heading sits inside the bounded block, aligned to its card`);
+    // The heading is a SIBLING ABOVE the bounded block, not inside it: that
+    // is what keeps it full-width and on the "Your apps" gutter while the
+    // card centres.
+    assert.ok(head.indexOf('home-section-header') < head.indexOf('home-section-block'),
+      `${id}: the heading sits OUTSIDE the bounded block, so it stays left-aligned`);
   }
   // The bound itself lives in app.css (one rule, both sections).
   const css = read('public/css/app.css');
   const rule = css.match(/\.home-section-block \{[^}]*\}/)[0];
   assert.match(rule, /max-width/);
-  // CENTRED within the scroller. A max-width alone would left-anchor the
-  // block against the "Your apps" grid's gutter; the auto side margins are
-  // what centre it, and they're the requested look — so pin them rather
-  // than let a later alignment tweak quietly drop them.
+  // A max-width alone would left-anchor the box; the auto side margins are
+  // what centre it. Pin them so a later "the heading and the card don't line
+  // up" tweak can't quietly drop them instead of leaving the split alone.
   assert.ok(
     /margin-inline:\s*auto/.test(rule)
       || (/margin-left:\s*auto/.test(rule) && /margin-right:\s*auto/.test(rule))
       || /margin:\s*[^;]*auto/.test(rule),
-    'both side margins are auto, so the block stays centred'
+    'both side margins are auto, so the box stays centred'
   );
 });
 
