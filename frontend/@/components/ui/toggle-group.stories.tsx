@@ -25,10 +25,12 @@ export const ElevatedSelected: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     const group = canvas.getByRole("group", { name: "Theme" })
+    const unselected = canvas.getByRole("button", { name: "Light" })
     const selected = canvas.getByRole("button", { name: "System" })
     await expect(group).toHaveAttribute("data-surface", "recess")
     await expect(selected).toHaveAttribute("aria-pressed", "true")
     await expect(selected).toHaveAttribute("data-selection-variant", "elevated")
+    await expect(getComputedStyle(selected).backgroundColor).not.toBe(getComputedStyle(unselected).backgroundColor)
   },
 }
 
