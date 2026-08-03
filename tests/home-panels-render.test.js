@@ -320,6 +320,30 @@ test('index.html hosts #home-panels between the grid and Featured apps', () => {
   assert.ok(INDEX.indexOf('</section>', panels) < findMore);
 });
 
+// #922 centred the whole feed in a 1024px .home-column and DELETED the
+// per-box .home-section-block bound (plus Home.alignSections). The card has
+// to follow that convention: header, then the card as a plain full-width
+// child of the section — same shape tests/home-find-more.test.js pins for
+// "Featured apps" and "Create an app". A re-introduced wrapper would render
+// this one box narrower than its neighbours.
+test('the card is a full-width child of its section, not separately bounded', () => {
+  const populated = renderWith({ registry: [], hidden: [], panels: [panel()] }).html;
+  const empty = renderWith(
+    { registry: [], hidden: [], panels: [panel({ total: 0, done: 0, challenges: [] })] },
+    { user: { id: 1, isAdmin: true } }
+  ).html;
+  for (const [name, html] of [['populated', populated], ['empty state', empty]]) {
+    assert.doesNotMatch(html, /home-section-block/,
+      `${name}: the column is the only width cap now`);
+    assert.match(html, /class="home-section-header/, `${name}: shared heading`);
+    // The card follows the header directly — no wrapper between them.
+    assert.match(html, /<\/div>\s*<div class="home-panel-card/,
+      `${name}: the card is the header's sibling`);
+  }
+  const css = read('public/css/app.css');
+  assert.doesNotMatch(css, /\.home-section-block\b/, 'the class really is gone');
+});
+
 test('the module is loaded before home.js and precached by the service worker', () => {
   const panelsTag = INDEX.indexOf('src="/js/home-panels.js"');
   const homeTag = INDEX.indexOf('src="/js/home.js"');

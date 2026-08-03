@@ -528,7 +528,13 @@
   <!-- Home screen: app list. Rendered as a responsive grid of compact
        tiles — see Home.renderAppCard. The "Create new app" container
        that Home.render() appends after the tiles uses `col-span-full`
-       so it spans the full grid row at every breakpoint. -->
+       so it spans the full grid row at every breakpoint.
+
+       The whole feed lives in a 1024px-max, viewport-centred column
+       (.home-column, in public/css/app.css) — applied to #home-body and,
+       separately, to the search bar's inner content so the bar's
+       background stays full-bleed. Horizontal gutters stay on the blocks
+       inside it, so narrow screens are unaffected. -->
   <main id="home-screen" class="flex-1 overflow-y-auto" style="position:relative">
     <!-- Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
          child of the scroller and NOT sticky: it occupies real scroll space
@@ -542,18 +548,23 @@
          grid's innerHTML on every WS app event and every keystroke, and the
          input must keep its focus/caret through those re-renders. Wired
          once by Home._wireSearch(). -->
-    <div id="home-search-bar" data-revealed="false" class="px-3 pt-3 pb-2 bg-white dark:bg-zinc-950">
-      <div class="relative max-w-xl">
-        <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-        <input id="home-search-input" type="text" autocomplete="off" placeholder="Search your apps…" aria-label="Search your apps"
-               class="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600" />
-        <button id="home-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none" title="Clear search" aria-label="Clear search">&times;</button>
+    <div id="home-search-bar" data-revealed="false" class="bg-white dark:bg-zinc-950">
+      <!-- The bar's BACKGROUND stays full-bleed; only its content sits in
+           the 1024px column, and the px-3 gutter lives here (not on the
+           bar) so this column's content edges match #home-body's exactly. -->
+      <div class="home-column px-3 pt-3 pb-2">
+        <div class="relative max-w-xl">
+          <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+          <input id="home-search-input" type="text" autocomplete="off" placeholder="Search your apps…" aria-label="Search your apps"
+                 class="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600" />
+          <button id="home-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none" title="Clear search" aria-label="Clear search">&times;</button>
+        </div>
       </div>
     </div>
     <!-- min-height:100% guarantees the scroller can always be scrolled by at
          least the search bar's height, even with an empty "Your apps" — a
          short page would otherwise leave the bar permanently on screen. -->
-    <div id="home-body" style="min-height:100%">
+    <div id="home-body" class="home-column" style="min-height:100%">
       <div id="app-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 p-3 pt-2"></div>
 
       <!-- Home-screen panels (#911): cards that sit between the launcher
@@ -565,11 +576,13 @@
            Deliberately OUTSIDE #app-list, like the search bar above: the
            grid's innerHTML is replaced on every WS app event and every
            search keystroke, which would otherwise destroy this card and
-           its listeners. The panel's own markup reuses
-           .home-section-header + .home-section-block so it lines up with
-           the two sections below it. NOTE "panel" ≠ the "Usernode widget"
-           strip home.js renders INSIDE the grid (that's the iOS
-           home-screen widget). -->
+           its listeners. The panel's own markup carries a
+           .home-section-header and then the card as a plain FULL-WIDTH
+           child, exactly like the two sections below it — .home-column on
+           #home-body is what bounds and centres the feed, so don't wrap
+           the card in a per-box width bound (see app.css .home-column).
+           NOTE "panel" ≠ the "Usernode widget" strip home.js renders
+           INSIDE the grid (that's the iOS home-screen widget). -->
       <section id="home-panels" class="hidden px-3 pb-3"></section>
 
       <!-- Find more apps: admin-curated featured tiles + the way into the
@@ -579,50 +592,44 @@
            content — so the three read as one consistent stack. The
            heading sits OUTSIDE the card for that reason.
 
-           The heading is a plain full-width child of the section, on the
-           scroller's gutter; only the CARD is wrapped in
-           .home-section-block, which bounds its width AND indents it to
-           line up with the leftmost app icon in the grid above (a measured
-           offset — see Home.alignSections and app.css). Don't move the
-           heading inside the block: it would inherit the indent. -->
+           The card is a plain FULL-WIDTH child of the section: the whole
+           feed is already capped and centred by .home-column on
+           #home-body, so the card spans the column's gutters and lines up
+           with the "Your apps" grid's own edges. -->
       <section id="home-find-more" class="px-3 pb-3">
         <div class="home-section-header">Featured apps</div>
-        <div class="home-section-block">
-          <!-- ONE contained card: the featured tiles and the browse action
-               sit on the same rounded surface, with the browse row as the
-               card's footer — separated by a hairline rather than a gap, so
-               it stays visibly attached (and is the whole reason the footer
-               is a full-width row rather than a floating pill). -->
-          <div class="home-find-more-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden">
-            <div class="px-3 pt-3">
-              <div id="home-featured-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 pb-3"></div>
-              <!-- Shown in place of the tiles when nothing is left to feature,
-                   so the card never collapses to a bare footer. -->
-              <p id="home-featured-empty" class="hidden pb-3 text-sm text-zinc-500 dark:text-zinc-400">
-                Nothing featured right now — browse the full directory to find apps to add.
-              </p>
-            </div>
-            <button type="button" id="home-browse-btn" class="w-full flex items-center justify-between gap-2 px-3 py-3 border-t border-zinc-200 dark:border-zinc-800 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/[0.06] dark:hover:bg-violet-500/10 transition-colors">
-              <span class="flex items-center gap-2">
-                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-                Browse all apps
-              </span>
-              <svg class="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-            </button>
+        <!-- ONE contained card: the featured tiles and the browse action
+             sit on the same rounded surface, with the browse row as the
+             card's footer — separated by a hairline rather than a gap, so
+             it stays visibly attached (and is the whole reason the footer
+             is a full-width row rather than a floating pill). -->
+        <div class="home-find-more-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden">
+          <div class="px-3 pt-3">
+            <div id="home-featured-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 pb-3"></div>
+            <!-- Shown in place of the tiles when nothing is left to feature,
+                 so the card never collapses to a bare footer. -->
+            <p id="home-featured-empty" class="hidden pb-3 text-sm text-zinc-500 dark:text-zinc-400">
+              Nothing featured right now — browse the full directory to find apps to add.
+            </p>
           </div>
+          <button type="button" id="home-browse-btn" class="w-full flex items-center justify-between gap-2 px-3 py-3 border-t border-zinc-200 dark:border-zinc-800 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/[0.06] dark:hover:bg-violet-500/10 transition-colors">
+            <span class="flex items-center gap-2">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+              Browse all apps
+            </span>
+            <svg class="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+          </button>
         </div>
       </section>
 
       <!-- Create an app: the former in-grid create tile ("Build your own
            app"), now its own trailing section. Home.renderCreateSection()
            fills it with either that tile or the "ask an admin" hint.
-           Same heading-outside / .home-section-block-around-the-box split
-           as the featured section above. -->
+           Same heading-outside / full-width-box shape as the featured
+           section above. -->
       <section id="home-create-section" class="px-3 pb-4">
         <div class="home-section-header">Create an app</div>
-        <div class="home-section-block">
-          <div id="home-create-body"></div>
-        </div>
+        <div id="home-create-body"></div>
       </section>
     </div>
   </main>

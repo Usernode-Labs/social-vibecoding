@@ -173,12 +173,10 @@ const HomePanels = {
       if (!isAdmin) return '';
       return `
         <div class="home-section-header">${esc(panel.title || 'Challenges')}</div>
-        <div class="home-section-block">
-          <div class="home-panel-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden">
-            <p class="px-3 py-4 text-sm text-zinc-500 dark:text-zinc-400">
-              No challenges are running right now — check the leaderboard for past seasons.
-            </p>
-          </div>
+        <div class="home-panel-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden">
+          <p class="px-3 py-4 text-sm text-zinc-500 dark:text-zinc-400">
+            No challenges are running right now — check the leaderboard for past seasons.
+          </p>
         </div>`;
     }
 
@@ -196,16 +194,14 @@ const HomePanels = {
           class="shrink-0 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none un-touch-target"
           title="Hide the Challenges card" aria-label="Hide the Challenges card">&times;</button>
       </div>
-      <div class="home-section-block">
-        <div class="home-panel-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden">
-          <p class="px-3 pt-3 pb-1 text-xs text-zinc-500 dark:text-zinc-400">${esc(HomePanels.summaryLine(panel))}</p>
-          <div class="px-3 pb-1">${rows}</div>
-          <button type="button" id="home-panel-challenges-all"
-            class="w-full flex items-center justify-between gap-2 px-3 py-3 border-t border-zinc-200 dark:border-zinc-800 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/[0.06] dark:hover:bg-violet-500/10 transition-colors">
-            <span>${footerLabel}</span>
-            <svg class="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
-          </button>
-        </div>
+      <div class="home-panel-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden">
+        <p class="px-3 pt-3 pb-1 text-xs text-zinc-500 dark:text-zinc-400">${esc(HomePanels.summaryLine(panel))}</p>
+        <div class="px-3 pb-1">${rows}</div>
+        <button type="button" id="home-panel-challenges-all"
+          class="w-full flex items-center justify-between gap-2 px-3 py-3 border-t border-zinc-200 dark:border-zinc-800 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/[0.06] dark:hover:bg-violet-500/10 transition-colors">
+          <span>${footerLabel}</span>
+          <svg class="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+        </button>
       </div>`;
   },
 
