@@ -29,16 +29,17 @@ test("surface direction exempts ephemeral state and transparent removal but not 
   assert.deepEqual(findings.filter((item) => item.rule === "caller-surface-direction").map((item) => item.match), ["data-[state=on]:bg-card"])
 })
 
-test("paper, recess, spacing, margin, radius, and primitive rules are structural", () => {
+test("paper, container, spacing, margin, radius, and primitive rules are structural", () => {
   const findings = scanInterfaceSource(frontendRoot, fixtureFile, `
     import { Card } from "@/components/ui/card"
     export function Fixture() {
-      return <main data-surface="paper"><section data-surface="paper"><div data-surface="recess" /><Card className="mt-4 rounded-[2px]" /><div data-spacing-tier="macro" /><button>Save</button></section></main>
+      return <main data-surface="paper"><section data-surface="paper"><div data-surface="container" /><Card className="mt-4 rounded-[2px]" /><div data-spacing-tier="macro" /><button>Save</button></section></main>
     }
   `)
-  for (const rule of ["no-paper-in-paper", "named-recess-role", "no-caller-margin", "radius-ladder-only", "macro-spacing-outer-zone", "use-owned-primitive"]) {
+  for (const rule of ["no-paper-in-paper", "no-caller-margin", "radius-ladder-only", "macro-spacing-outer-zone", "use-owned-primitive"]) {
     assert.ok(findings.some((item) => item.rule === rule), `missing ${rule}`)
   }
+  assert.ok(!findings.some((item) => item.rule === "invalid-surface-role"))
 })
 
 test("Sheet remains a legal drawer primitive name and the persistent overlay tenant is exact", () => {

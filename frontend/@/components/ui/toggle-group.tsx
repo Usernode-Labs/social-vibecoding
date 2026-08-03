@@ -12,7 +12,7 @@ const toggleGroupSelectionVariants = cva("", {
   variants: {
     selectionVariant: {
       default: "",
-      elevated: "border border-border bg-recess p-1",
+      container: "border border-border bg-container p-1",
     },
   },
   defaultVariants: {
@@ -24,7 +24,7 @@ const toggleGroupItemSelectionVariants = cva("", {
   variants: {
     selectionVariant: {
       default: "",
-      elevated: "aria-pressed:bg-card aria-pressed:shadow-sm dark:aria-pressed:shadow-none",
+      container: "aria-pressed:bg-container",
     },
   },
   defaultVariants: {
@@ -34,7 +34,7 @@ const toggleGroupItemSelectionVariants = cva("", {
 
 const ToggleGroupContext = React.createContext<
   VariantProps<typeof toggleVariants> & {
-    selectionVariant?: "default" | "elevated"
+    selectionVariant?: "default" | "container"
     spacing?: number
     orientation?: "horizontal" | "vertical"
   }
@@ -56,7 +56,7 @@ function ToggleGroup({
   ...props
 }: ToggleGroupPrimitive.Props &
   VariantProps<typeof toggleVariants> & {
-    selectionVariant?: "default" | "elevated"
+    selectionVariant?: "default" | "container"
     spacing?: number
     orientation?: "horizontal" | "vertical"
   }) {
@@ -72,8 +72,7 @@ function ToggleGroup({
       data-size={size}
       data-selection-variant={selectionVariant}
       data-spacing={spacing}
-      data-surface={selectionVariant === "elevated" ? "recess" : undefined}
-      data-recess-role={selectionVariant === "elevated" ? "tab-track" : undefined}
+      data-surface={selectionVariant === "container" ? "container" : undefined}
       data-orientation={orientation}
       style={{ "--gap": spacing } as React.CSSProperties}
       className={cn(

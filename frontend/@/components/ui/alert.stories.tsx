@@ -5,6 +5,7 @@ import { expect, within } from "storybook/test"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Alert, AlertAction, AlertDescription, AlertTitle, AlertValue, type AlertTone } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { renderedAlpha } from "@/lib/rendered-color"
 
 const meta = {
   title: "Elements/Primitives/Alert",
@@ -24,6 +25,12 @@ export const Default: Story = {
       <AlertDescription>Your settings are now active.</AlertDescription>
     </Alert>
   ),
+  play: async ({ canvasElement }) => {
+    const alert = within(canvasElement).getByRole("alert")
+    await expect(alert).toHaveAttribute("data-surface", "container")
+    await expect(renderedAlpha(getComputedStyle(alert).backgroundColor)).toBeGreaterThan(0)
+    await expect(getComputedStyle(alert).boxShadow).toBe("none")
+  },
 }
 
 export const Destructive: Story = {

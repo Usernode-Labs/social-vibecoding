@@ -9,11 +9,19 @@ function readTokens() {
   return JSON.parse(fs.readFileSync(sourcePath, "utf8"))
 }
 
-function colorToCss(token, label) {
+function referenceTarget(value, label, mode) {
+  const match = /^\{semantic\.(light|dark)\.([a-z0-9-]+)\}$/.exec(value)
+  if (!match) throw new Error(`${label} must reference a semantic color in the same mode`)
+  if (match[1] !== mode) throw new Error(`${label} cannot reference semantic.${match[1]} from semantic.${mode}`)
+  return match[2]
+}
+
+function colorToCss(token, label, mode) {
   if (token?.$type !== "color" && !token?.$value) {
     throw new Error(`${label} must be a DTCG color token`)
   }
   const value = token.$value
+  if (typeof value === "string") return `var(--${referenceTarget(value, label, mode)})`
   if (value?.colorSpace !== "oklch" || !Array.isArray(value.components) || value.components.length !== 3) {
     throw new Error(`${label} must use an oklch DTCG color value`)
   }
@@ -25,7 +33,7 @@ function colorToCss(token, label) {
 function renderBlock(selector, tokens) {
   const lines = Object.entries(tokens)
     .filter(([key]) => !key.startsWith("$"))
-    .map(([name, token]) => `  --${name}: ${colorToCss(token, `semantic.${selector}.${name}`)};`)
+    .map(([name, token]) => `  --${name}: ${colorToCss(token, `semantic.${selector}.${name}`, selector)};`)
   return `${selector === "light" ? ":root" : ".dark"} {\n${lines.join("\n")}\n}`
 }
 
@@ -33,9 +41,14 @@ const identitySlots = Array.from({ length: 8 }, (_, index) => index + 1)
 const statusRoles = ["positive", "info", "warning", "negative"]
 const semanticRoles = [...statusRoles, "attention"]
 
-function semanticToken(tokens, name, label) {
+function semanticToken(tokens, name, label, seen = new Set()) {
   const token = tokens[name]
   if (!token) throw new Error(`${label}.${name} is required`)
+  if (seen.has(name)) throw new Error(`${label}.${name} has a circular semantic reference`)
+  if (typeof token.$value === "string") {
+    const target = referenceTarget(token.$value, `${label}.${name}`, label.split(".")[1])
+    return semanticToken(tokens, target, label, new Set([...seen, name]))
+  }
   return token
 }
 
@@ -54,13 +67,37 @@ function oklchToLinearSrgb({ components }) {
   ].map((channel) => Math.max(0, Math.min(1, channel)))
 }
 
-function relativeLuminance(token) {
-  const [red, green, blue] = oklchToLinearSrgb(token.$value)
+function linearToSrgb(channel) {
+  return channel <= 0.0031308 ? 12.92 * channel : 1.055 * channel ** (1 / 2.4) - 0.055
+}
+
+function srgbToLinear(channel) {
+  return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4
+}
+
+function tokenSrgb(token) {
+  return oklchToLinearSrgb(token.$value).map(linearToSrgb)
+}
+
+function tokenAlpha(token) {
+  return token.$value.alpha ?? 1
+}
+
+function compositeToken(token, backdrop) {
+  const alpha = tokenAlpha(token)
+  const source = tokenSrgb(token)
+  return source.map((channel, index) => channel * alpha + backdrop[index] * (1 - alpha))
+}
+
+function relativeLuminance(color) {
+  const [red, green, blue] = color.map(srgbToLinear)
   return 0.2126 * red + 0.7152 * green + 0.0722 * blue
 }
 
 function contrastRatio(left, right) {
-  const [high, low] = [relativeLuminance(left), relativeLuminance(right)].sort((a, b) => b - a)
+  const rightColor = tokenSrgb(right)
+  const leftColor = compositeToken(left, rightColor)
+  const [high, low] = [relativeLuminance(leftColor), relativeLuminance(rightColor)].sort((a, b) => b - a)
   return (high + 0.05) / (low + 0.05)
 }
 
@@ -84,23 +121,72 @@ function assertLightnessStep(lower, upper, minimum, label) {
   }
 }
 
+function assertAlias(tokens, name, target, mode) {
+  const expected = `{semantic.${mode}.${target}}`
+  if (tokens[name]?.$value !== expected) {
+    throw new Error(`semantic.${mode}.${name} must alias semantic.${mode}.${target}`)
+  }
+}
+
+function assertContainerSystem(tokens, mode, paper) {
+  const label = `semantic.${mode}`
+  const container = semanticToken(tokens, "container", label)
+  const alpha = tokenAlpha(container)
+  if (alpha < 0.04 || alpha > 0.08) {
+    throw new Error(`${label}.container alpha ${alpha.toFixed(2)} must stay between 0.04 and 0.08`)
+  }
+
+  const stack = [tokenSrgb(paper)]
+  for (let depth = 1; depth <= 3; depth += 1) {
+    stack.push(compositeToken(container, stack.at(-1)))
+  }
+  const luminances = stack.map(relativeLuminance)
+  for (let depth = 1; depth < luminances.length; depth += 1) {
+    const movesInExpectedDirection = mode === "light"
+      ? luminances[depth] < luminances[depth - 1]
+      : luminances[depth] > luminances[depth - 1]
+    if (!movesInExpectedDirection) {
+      throw new Error(`${label}.container must ${mode === "light" ? "darken" : "lighten"} its immediate context at depth ${depth}`)
+    }
+  }
+
+  const foregroundRoles = ["fg-primary", "fg-secondary", "fg-tertiary"]
+  const foregroundAlphas = foregroundRoles.map((name) => tokenAlpha(semanticToken(tokens, name, label)))
+  if (!(foregroundAlphas[0] > foregroundAlphas[1] && foregroundAlphas[1] > foregroundAlphas[2])) {
+    throw new Error(`${label} foreground alpha must descend primary to secondary to tertiary`)
+  }
+  for (const role of [...foregroundRoles, "destructive"]) {
+    const foreground = semanticToken(tokens, role, label)
+    for (let depth = 0; depth < stack.length; depth += 1) {
+      const foregroundColor = compositeToken(foreground, stack[depth])
+      const ratio = (() => {
+        const [high, low] = [relativeLuminance(foregroundColor), relativeLuminance(stack[depth])].sort((a, b) => b - a)
+        return (high + 0.05) / (low + 0.05)
+      })()
+      if (ratio < 4.5) {
+        throw new Error(`${label}.${role}/Container depth ${depth} contrast ${ratio.toFixed(2)}:1 is below 4.5:1`)
+      }
+    }
+  }
+}
+
 function validateSurfaceFoundation(tokens, mode) {
   const label = `semantic.${mode}`
   const background = { label: `${label}.background`, token: semanticToken(tokens, "background", label) }
   const stage = { label: `${label}.stage`, token: semanticToken(tokens, "stage", label) }
-  const card = { label: `${label}.card`, token: semanticToken(tokens, "card", label) }
-  const recess = { label: `${label}.recess`, token: semanticToken(tokens, "recess", label) }
+  const paper = { label: `${label}.paper`, token: semanticToken(tokens, "paper", label) }
   const mutedForeground = semanticToken(tokens, "muted-foreground", label)
 
-  assertLightnessStep(background, card, 0.02, `${label} Canvas to Paper`)
+  assertAlias(tokens, "foreground", "fg-primary", mode)
+  assertAlias(tokens, "muted-foreground", "fg-secondary", mode)
+  assertAlias(tokens, "card", "paper", mode)
+  assertLightnessStep(background, paper, 0.02, `${label} Canvas to Paper`)
   assertLightnessStep(background, stage, 0.02, `${label} shell Canvas to hosted Canvas`)
-  assertLightnessStep(stage, card, 0.02, `${label} hosted Canvas to Paper`)
-  assertLightnessStep(recess, card, 0.02, `${label} Recess to Paper`)
-  assertContrast(semanticToken(tokens, "foreground", label), recess.token, 4.5, `${label}.foreground/Recess`)
+  assertLightnessStep(stage, paper, 0.02, `${label} hosted Canvas to Paper`)
+  assertContainerSystem(tokens, mode, paper.token)
   assertContrast(mutedForeground, background.token, 4.5, `${label}.muted-foreground/Canvas`)
-  assertContrast(mutedForeground, recess.token, 4.5, `${label}.muted-foreground/Recess`)
   assertContrast(semanticToken(tokens, "destructive", label), background.token, 4.5, `${label}.destructive text/Canvas`)
-  assertContrast(semanticToken(tokens, "destructive", label), card.token, 4.5, `${label}.destructive text/Paper`)
+  assertContrast(semanticToken(tokens, "destructive", label), paper.token, 4.5, `${label}.destructive text/Paper`)
 }
 
 function validateSemanticFoundation(tokens, mode) {

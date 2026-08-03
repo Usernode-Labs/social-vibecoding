@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite"
 import { expect, within } from "storybook/test"
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { renderedAlpha } from "@/lib/rendered-color"
 
 const meta = {
   title: "Elements/Primitives/Tabs",
@@ -25,9 +26,10 @@ export const Default: Story = {
     const canvas = within(canvasElement)
     const list = canvas.getByRole("tablist")
     const active = canvas.getByRole("tab", { name: "Overview" })
-    await expect(list).toHaveAttribute("data-surface", "recess")
-    await expect(list).toHaveAttribute("data-recess-role", "tab-track")
-    await expect(getComputedStyle(list).backgroundColor).not.toBe(getComputedStyle(active).backgroundColor)
+    await expect(list).toHaveAttribute("data-surface", "container")
+    await expect(active).not.toHaveAttribute("data-surface")
+    await expect(renderedAlpha(getComputedStyle(list).backgroundColor)).toBeGreaterThan(0)
+    await expect(getComputedStyle(active).backgroundColor).toBe(getComputedStyle(list).backgroundColor)
   },
 }
 

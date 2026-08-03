@@ -39,7 +39,11 @@
     --color-popover: var(--popover);
     --color-card-foreground: var(--card-foreground);
     --color-card: var(--card);
-    --color-recess: var(--recess);
+    --color-paper: var(--paper);
+    --color-container: var(--container);
+    --color-fg-primary: var(--fg-primary);
+    --color-fg-secondary: var(--fg-secondary);
+    --color-fg-tertiary: var(--fg-tertiary);
     --color-foreground: var(--foreground);
     --color-background: var(--background);
     --color-stage-foreground: var(--stage-foreground);

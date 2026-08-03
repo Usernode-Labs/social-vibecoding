@@ -35,11 +35,11 @@ export const SearchInput: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     const control = canvas.getByRole("textbox", { name: "Search apps" })
-    const recess = control.closest("[data-recess-role='input']")
+    const container = control.closest("[data-surface='container']")
 
-    await expect(recess).toHaveAttribute("data-surface", "recess")
+    await expect(container).toHaveAttribute("data-slot", "input-group")
     await expect(control).not.toHaveAttribute("data-surface")
-    await expect(canvasElement.querySelectorAll("[data-surface='recess']")).toHaveLength(1)
+    await expect(canvasElement.querySelectorAll("[data-surface='container']")).toHaveLength(1)
   },
 }
 

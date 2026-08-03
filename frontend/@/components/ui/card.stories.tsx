@@ -5,12 +5,13 @@ import { expect, within } from "storybook/test"
 import { PlatformIcon } from "@/components/platform-icon"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { renderedAlpha } from "@/lib/rendered-color"
 
 const meta = {
   title: "Elements/Primitives/Card",
   component: Card,
   parameters: { layout: "centered" },
-  decorators: [(Story) => <div className="w-screen max-w-lg rounded-4xl bg-card p-4 text-card-foreground shadow-sm" data-surface="paper"><Story /></div>],
+  decorators: [(Story) => <div className="w-screen max-w-lg rounded-4xl bg-paper p-4 text-foreground shadow-sm" data-surface="paper"><Story /></div>],
 } satisfies Meta<typeof Card>
 
 export default meta
@@ -30,12 +31,11 @@ export const Default: Story = {
   ),
   play: async ({ canvasElement }) => {
     const card = canvasElement.querySelector<HTMLElement>('[data-slot="card"]')
-    const transparentReference = document.createElement("div")
-    canvasElement.append(transparentReference)
-    await expect(card).toHaveAttribute("data-surface", "print")
-    await expect(getComputedStyle(card!).backgroundColor).toBe(getComputedStyle(transparentReference).backgroundColor)
+    const paper = card?.parentElement
+    await expect(card).toHaveAttribute("data-surface", "container")
+    await expect(renderedAlpha(getComputedStyle(card!).backgroundColor)).toBeGreaterThan(0)
+    await expect(getComputedStyle(card!).backgroundColor).not.toBe(getComputedStyle(paper!).backgroundColor)
     await expect(getComputedStyle(card!).boxShadow).toBe("none")
-    transparentReference.remove()
   },
 }
 

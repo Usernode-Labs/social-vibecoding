@@ -8,9 +8,9 @@ const alertVariants = cva(
   {
     variants: {
       appearance: {
-        default: "bg-card text-card-foreground",
+        default: "bg-container text-foreground",
         destructive:
-          "bg-card text-destructive *:data-[slot=alert-description]:text-destructive/90 *:[svg]:text-current",
+          "bg-container text-destructive *:data-[slot=alert-description]:text-destructive *:[svg]:text-current",
         positive: "status-surface *:data-[slot=alert-description]:text-current/80",
         info: "status-surface *:data-[slot=alert-description]:text-current/80",
         warning: "status-surface *:data-[slot=alert-description]:text-current/80",
@@ -52,6 +52,7 @@ function Alert({
       role={role ?? (form === "footer" ? undefined : "alert")}
       className={cn(alertVariants({ appearance, form }), className)}
       {...props}
+      data-surface="container"
     />
   )
 }

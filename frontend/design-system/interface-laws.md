@@ -18,13 +18,14 @@ Every view has one Paper. Print content; never stack Cards.
 |---|---|---|
 | Canvas | Darker page field; nothing prints on it | Treat it as content |
 | Paper | One lighter shell-owned sheet on Canvas | Nest Paper or spell `div` as Card |
-| Print | Card inherits Paper; group by type, dividers, space, or owned wash | Add default fill, ring, or shadow |
-| Recess | Owned well darker than Paper: input, tab-track, code, terminal | Borrow `muted` or invent inset recipes |
+| Print | Bare inherited content | Add opaque fill, ring, or shadow |
+| Container | Alpha grouping; compounds at any depth | Paint opaque Paper |
 | Overlay | Transient; bottom navigation is the persistent tenant | Add another persistent Overlay |
 
-`Sheet` remains the drawer primitive; it is not a surface role. Owned wrappers
-use `data-surface="canvas|paper|print|recess|overlay"`; absent is Print.
-Recess uses `data-recess-role="input|tab-track|code|terminal"`; only
+`Sheet` is the drawer, never a surface. Wrappers use
+`data-surface="canvas|paper|print|container|overlay"`; absent means Print.
+Canvas/Paper are opaque. Container alpha darkens light mode and lightens dark;
+stacking is intentional, never a hole or lint condition. Only
 `data-slot="platform-bottom-navigation"` persists as Overlay.
 
 Status is ink, not Paper. Metric is one definition list, never a
@@ -75,9 +76,8 @@ Link or anchor semantics and uses shared link visual variants; an ordinary Link
 is not rendered through Button. Destructive color is reserved for irreversible
 consequence.
 
-Selection remains owned by Tabs, ToggleGroup, radio, or select. Its selected
-treatment is an elevated pill on a recessed track, never primary filled and
-never visually confused with submission.
+Tabs, ToggleGroup, radio, and select own selection: nested Container on
+Container, never opaque Paper, primary fill, shadow, or submission styling.
 
 On narrow screens, the identity anchor remains complete before utilities take
 space: application identity anchors application routes, the page name anchors

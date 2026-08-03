@@ -3,6 +3,7 @@ import { expect, within } from "storybook/test"
 
 import { Field, FieldDescription, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
+import { renderedAlpha } from "@/lib/rendered-color"
 
 const meta = {
   title: "Elements/Primitives/Input",
@@ -18,8 +19,8 @@ type Story = StoryObj<typeof meta>
 export const Default: Story = {
   play: async ({ canvasElement }) => {
     const input = within(canvasElement).getByRole("textbox", { name: "App name" })
-    await expect(input).toHaveAttribute("data-surface", "recess")
-    await expect(input).toHaveAttribute("data-recess-role", "input")
+    await expect(input).toHaveAttribute("data-surface", "container")
+    await expect(renderedAlpha(getComputedStyle(input).backgroundColor)).toBeGreaterThan(0)
     await expect(getComputedStyle(input).borderTopStyle).toBe("solid")
     await expect(getComputedStyle(input).borderTopWidth).not.toBe("0px")
   },

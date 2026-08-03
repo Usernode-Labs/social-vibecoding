@@ -466,18 +466,6 @@
     },
     {
       "rule": "no-manual-dark-colors",
-      "file": "@/components/ui/tabs.tsx",
-      "matches": [
-        "dark:hover:text-foreground",
-        "dark:text-muted-foreground"
-      ],
-      "count": 2,
-      "owner": "frontend-platform",
-      "reason": "Official shadcn source predates widened shell enforcement; the exact-match ratchet prevents local drift until the approved upstream preset refreshes the primitive.",
-      "expires": "2026-09-30"
-    },
-    {
-      "rule": "no-manual-dark-colors",
       "file": "@/components/ui/textarea.tsx",
       "matches": [
         "dark:aria-invalid:border-destructive/50",

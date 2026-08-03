@@ -20,16 +20,16 @@ export const Segmented: Story = {
   render: () => <ToggleGroup aria-label="Theme" defaultValue={["system"]} spacing={0} variant="outline"><ToggleGroupItem value="light">Light</ToggleGroupItem><ToggleGroupItem value="dark">Dark</ToggleGroupItem><ToggleGroupItem value="system">System</ToggleGroupItem></ToggleGroup>,
 }
 
-export const ElevatedSelected: Story = {
-  render: () => <ToggleGroup aria-label="Theme" defaultValue={["system"]} selectionVariant="elevated" size="sm" spacing={1}><ToggleGroupItem value="light">Light</ToggleGroupItem><ToggleGroupItem value="dark">Dark</ToggleGroupItem><ToggleGroupItem value="system">System</ToggleGroupItem></ToggleGroup>,
+export const ContainerSelected: Story = {
+  render: () => <ToggleGroup aria-label="Theme" defaultValue={["system"]} selectionVariant="container" size="sm" spacing={1}><ToggleGroupItem value="light">Light</ToggleGroupItem><ToggleGroupItem value="dark">Dark</ToggleGroupItem><ToggleGroupItem value="system">System</ToggleGroupItem></ToggleGroup>,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement)
     const group = canvas.getByRole("group", { name: "Theme" })
     const unselected = canvas.getByRole("button", { name: "Light" })
     const selected = canvas.getByRole("button", { name: "System" })
-    await expect(group).toHaveAttribute("data-surface", "recess")
+    await expect(group).toHaveAttribute("data-surface", "container")
     await expect(selected).toHaveAttribute("aria-pressed", "true")
-    await expect(selected).toHaveAttribute("data-selection-variant", "elevated")
+    await expect(selected).toHaveAttribute("data-selection-variant", "container")
     await expect(getComputedStyle(selected).backgroundColor).not.toBe(getComputedStyle(unselected).backgroundColor)
   },
 }

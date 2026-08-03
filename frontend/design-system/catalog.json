@@ -1469,7 +1469,7 @@
       "variants": [
         "Default",
         "Segmented",
-        "ElevatedSelected",
+        "ContainerSelected",
         "Vertical",
         "Disabled"
       ],
@@ -1501,7 +1501,7 @@
         "states": [
           "Default",
           "Segmented",
-          "ElevatedSelected",
+          "ContainerSelected",
           "Vertical",
           "Disabled"
         ]

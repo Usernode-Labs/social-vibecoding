@@ -85,18 +85,21 @@ test("keeps active sessions and proposals distinct while handing read paths to R
 test("re-reads Work after a typed session_update instead of patching an incomplete socket payload", async ({ page }) => {
   await installSessionEventsSocket(page)
   let reads = 0
+  let sessionCompleted = false
   await page.route("**/api/me/active-sessions", (route) => {
     reads += 1
-    return route.fulfill({ json: { sessions: [{ id: 23, app_slug: "recipebot", app_name: "RecipeBot", branch_name: "feature/pantry", pr_title: null, session_title: reads <= 2 ? "Improve pantry search" : "Pantry search complete", status: reads <= 2 ? "active" : "paused", busy: false, last_activity_at: "2026-07-28T12:00:00.000Z", created_at: "2026-07-28T11:00:00.000Z" }] } })
+    return route.fulfill({ json: { sessions: [{ id: 23, app_slug: "recipebot", app_name: "RecipeBot", branch_name: "feature/pantry", pr_title: null, session_title: sessionCompleted ? "Pantry search complete" : "Improve pantry search", status: sessionCompleted ? "paused" : "active", busy: false, last_activity_at: "2026-07-28T12:00:00.000Z", created_at: "2026-07-28T11:00:00.000Z" }] } })
   })
   await page.goto("/react/work")
   await expect(page.getByTestId("work")).toContainText("Improve pantry search")
+  const readsBeforeEvent = reads
+  sessionCompleted = true
   await page.evaluate(() => {
     const sockets = (window as unknown as { __sessionEventsSockets: Array<{ url: string; emit: (value: unknown) => void }> }).__sessionEventsSockets
     sockets.findLast((socket) => socket.url.includes("/ws/events"))?.emit({ type: "session_update", action: "paused", sessionId: 23, appSlug: "recipebot" })
   })
   await expect(page.getByTestId("work")).toContainText("Pantry search complete")
-  expect(reads).toBeGreaterThanOrEqual(2)
+  expect(reads).toBeGreaterThan(readsBeforeEvent)
 })
 
 test("explains the periodic fallback when live updates are unavailable", async ({ page }) => {

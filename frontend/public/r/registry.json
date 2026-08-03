@@ -34,7 +34,7 @@
       "name": "theme-switcher",
       "type": "registry:component",
       "title": "Theme Switcher",
-      "description": "Shell Light, Dark, and System preference selector using the owned elevated ToggleGroup selection contract and canonical theme persistence adapter.",
+      "description": "Shell Light, Dark, and System preference selector using the owned nested-Container ToggleGroup selection contract and canonical theme persistence adapter.",
       "author": "Usernode Labs",
       "registryDependencies": ["toggle"],
       "dependencies": ["lucide-react"],

@@ -23,7 +23,7 @@ export function ThemeSwitcherView({ className, effectiveMode, onPreferenceChange
         if (next === "light" || next === "dark" || next === "system") onPreferenceChange(next)
       }}
       size="sm"
-      selectionVariant="elevated"
+      selectionVariant="container"
       spacing={1}
       value={[preference]}
     >

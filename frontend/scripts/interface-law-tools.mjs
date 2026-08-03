@@ -6,8 +6,7 @@ import ts from "typescript"
 const sourceExtensions = new Set([".ts", ".tsx"])
 const governedImportPrefix = "@/components/"
 const rawInteractiveElements = new Set(["button", "input", "select", "textarea"])
-const surfaceRoles = new Set(["canvas", "paper", "print", "recess", "overlay"])
-const recessRoles = new Set(["input", "tab-track", "code", "terminal"])
+const surfaceRoles = new Set(["canvas", "paper", "print", "container", "overlay"])
 const ephemeralVariant = /^(?:group-|peer-)?(?:hover|focus|focus-visible|focus-within|active)(?:\/.*)?$/
 
 function normalize(value) {
@@ -155,7 +154,7 @@ export function scanInterfaceSource(frontendRoot, fileName, source) {
       const surface = staticAttribute(node, "data-surface", sourceFile)
 
       if (surface && !surfaceRoles.has(surface)) {
-        findings.push(finding(frontendRoot, fileName, sourceFile, node, "invalid-surface-role", surface, "Use canvas, paper, print, recess, or overlay; status colour is ink."))
+        findings.push(finding(frontendRoot, fileName, sourceFile, node, "invalid-surface-role", surface, "Use canvas, paper, print, container, or overlay; status colour is ink."))
       }
       if (surface === "paper") {
         let parent = ancestorOpening(node)
@@ -166,9 +165,6 @@ export function scanInterfaceSource(frontendRoot, fileName, source) {
           }
           parent = ancestorOpening(parent)
         }
-      }
-      if (surface === "recess" && !recessRoles.has(staticAttribute(node, "data-recess-role", sourceFile))) {
-        findings.push(finding(frontendRoot, fileName, sourceFile, node, "named-recess-role", node.getText(sourceFile), "Name the Recess as input, tab-track, code, or terminal."))
       }
       if (
         surface === "overlay"

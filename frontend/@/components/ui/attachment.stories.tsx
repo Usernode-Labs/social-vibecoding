@@ -13,6 +13,7 @@ import {
   AttachmentMedia,
   AttachmentTitle,
 } from "@/components/ui/attachment"
+import { renderedAlpha } from "@/lib/rendered-color"
 
 const meta = {
   title: "Elements/Conversation/Attachment",
@@ -39,7 +40,15 @@ function DocumentAttachment({ state = "done" }: { state?: "idle" | "uploading" |
   )
 }
 
-export const Complete: Story = { render: () => <DocumentAttachment /> }
+export const Complete: Story = {
+  render: () => <DocumentAttachment />,
+  play: async ({ canvasElement }) => {
+    const attachment = within(canvasElement).getByText("implementation-notes.md").closest('[data-slot="attachment"]')
+    await expect(attachment).toHaveAttribute("data-surface", "container")
+    await expect(renderedAlpha(getComputedStyle(attachment!).backgroundColor)).toBeGreaterThan(0)
+    await expect(getComputedStyle(attachment!).boxShadow).toBe("none")
+  },
+}
 export const Uploading: Story = { render: () => <DocumentAttachment state="uploading" /> }
 export const Error: Story = { render: () => <DocumentAttachment state="error" /> }
 export const Group: Story = {

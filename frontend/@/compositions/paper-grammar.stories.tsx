@@ -43,7 +43,7 @@ function PaperGrammar() {
       data-surface="canvas"
     >
       <section
-        className="mx-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-4xl bg-card text-card-foreground shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10"
+        className="mx-auto flex w-full max-w-5xl flex-col overflow-hidden rounded-4xl bg-paper text-foreground shadow-md ring-1 ring-foreground/5 dark:ring-foreground/10"
         data-slot="paper-grammar-paper"
         data-surface="paper"
       >
@@ -51,11 +51,11 @@ function PaperGrammar() {
           <div className="flex min-w-0 flex-col gap-1">
             <p className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase" data-type-role="tertiary">Personal treasury</p>
             <h1 className="text-2xl font-semibold tracking-tight">Quiet money</h1>
-            <p className="max-w-xl text-base text-muted-foreground" data-type-role="prose">One Paper carries the decisions. Everything inside it is printed, recessed, or semantic ink.</p>
+            <p className="max-w-xl text-base text-muted-foreground" data-type-role="prose">One Paper carries the decisions. Containers group printed content by compositing with their immediate context.</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <nav aria-label="Paper sections" className="flex items-center gap-1 text-sm">
-              <Link aria-current="page" className="rounded-full bg-muted px-3 py-2 font-medium text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/30" to="/">Overview</Link>
+              <Link aria-current="page" className="rounded-full bg-container px-3 py-2 font-medium text-foreground outline-none focus-visible:ring-3 focus-visible:ring-ring/30" to="/">Overview</Link>
               <Link className="rounded-full px-3 py-2 text-muted-foreground outline-none hover:bg-muted/60 hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30" to="/work">Activity</Link>
             </nav>
             <Button className="pointer-coarse:min-h-12" type="button">Add funds</Button>
@@ -122,13 +122,23 @@ function PaperGrammar() {
               <Field>
                 <FieldLabel htmlFor="paper-note">Monthly note</FieldLabel>
                 <Input id="paper-note" placeholder="Add context for this month" />
-                <FieldDescription>This named input well is the one justified Recess.</FieldDescription>
+                <FieldDescription>The input uses the same Container material as every other printed grouping.</FieldDescription>
               </Field>
+            </div>
+
+            <div className="flex flex-col gap-3 rounded-3xl bg-container p-4" data-container-depth="1" data-surface="container">
+              <p className="text-sm font-medium text-fg-primary" data-foreground-role="primary">Container</p>
+              <div className="flex flex-col gap-3 rounded-2xl bg-container p-3" data-container-depth="2" data-surface="container">
+                <p className="text-sm text-fg-secondary" data-foreground-role="secondary">Nested Container</p>
+                <div className="rounded-xl bg-container p-3" data-container-depth="3" data-surface="container">
+                  <p className="text-xs text-fg-tertiary" data-foreground-role="tertiary" data-type-role="tertiary">Third layer, same material</p>
+                </div>
+              </div>
             </div>
 
             <div className="flex flex-col gap-2 border-t pt-4" data-surface="print">
               <p className="text-xs font-medium tracking-[0.16em] text-muted-foreground uppercase" data-type-role="tertiary">Grammar</p>
-              <p className="text-base">Canvas → Paper → Print → Recess → Overlay</p>
+              <p className="text-base">Canvas → Paper → Print or Container → Overlay</p>
             </div>
           </aside>
         </div>
@@ -136,7 +146,7 @@ function PaperGrammar() {
 
       <nav
         aria-label="Mobile primary navigation"
-        className="fixed inset-x-3 bottom-3 z-20 flex min-h-14 items-center justify-around rounded-full border bg-card px-2 text-card-foreground shadow-md sm:hidden"
+        className="fixed inset-x-3 bottom-3 z-20 flex min-h-14 items-center justify-around rounded-full border bg-paper px-2 text-foreground shadow-md sm:hidden"
         data-slot="platform-bottom-navigation"
         data-surface="overlay"
         data-surface-persistence="persistent"
@@ -157,26 +167,48 @@ function PaperGrammar() {
   )
 }
 
-function renderedLuminance(color: string) {
+type RenderedColor = { red: number; green: number; blue: number; alpha: number }
+
+function renderedColor(color: string): RenderedColor {
   const context = document.createElement("canvas").getContext("2d")
   if (!context) throw new Error("Paper grammar needs a 2D canvas context for rendered colour checks")
   context.canvas.width = 1
   context.canvas.height = 1
+  context.clearRect(0, 0, 1, 1)
   context.fillStyle = color
   context.fillRect(0, 0, 1, 1)
-  const [red, green, blue] = context.getImageData(0, 0, 1, 1).data
-  const linear = [red, green, blue].map((channel) => {
+  const [red, green, blue, alpha] = context.getImageData(0, 0, 1, 1).data
+  return { red, green, blue, alpha: alpha / 255 }
+}
+
+function composite(source: RenderedColor, backdrop: RenderedColor): RenderedColor {
+  return {
+    red: source.red * source.alpha + backdrop.red * (1 - source.alpha),
+    green: source.green * source.alpha + backdrop.green * (1 - source.alpha),
+    blue: source.blue * source.alpha + backdrop.blue * (1 - source.alpha),
+    alpha: 1,
+  }
+}
+
+function renderedLuminance(color: RenderedColor) {
+  const linear = [color.red, color.green, color.blue].map((channel) => {
     const value = channel / 255
     return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4
   })
   return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
 }
 
+function renderedContrast(foreground: RenderedColor, background: RenderedColor) {
+  const [high, low] = [renderedLuminance(composite(foreground, background)), renderedLuminance(background)].sort((left, right) => right - left)
+  return (high + 0.05) / (low + 0.05)
+}
+
 async function assertPaperGrammar(canvasElement: HTMLElement, mobile: boolean) {
   const canvas = within(canvasElement)
   const canvasSurface = canvas.getByRole("main", { name: "Paper grammar specimen" })
   const paper = canvasElement.querySelector<HTMLElement>('[data-surface="paper"]')
-  const recess = canvasElement.querySelector<HTMLElement>('[data-surface="recess"]')
+  const input = canvasElement.querySelector<HTMLElement>('[data-slot="input"]')
+  const containerStack = Array.from(canvasElement.querySelectorAll<HTMLElement>("[data-container-depth]"))
   const overlay = canvasElement.querySelector<HTMLElement>('[data-slot="platform-bottom-navigation"]')
   const statusInk = canvasElement.querySelector<HTMLElement>('[data-slot="paper-status-ink"]')
   const rowTitle = canvasElement.querySelector<HTMLElement>('[data-slot="stream-row-title"]')
@@ -186,7 +218,8 @@ async function assertPaperGrammar(canvasElement: HTMLElement, mobile: boolean) {
   await expect(paper).toBeTruthy()
   await expect(paper?.querySelector('[data-surface="paper"]')).toBeNull()
   await expect(paper?.parentElement).toBe(canvasSurface)
-  await expect(recess).toHaveAttribute("data-recess-role", "input")
+  await expect(input).toHaveAttribute("data-surface", "container")
+  await expect(containerStack).toHaveLength(3)
   await expect(overlay).toHaveAttribute("data-slot", "platform-bottom-navigation")
   await expect(overlay).toHaveAttribute("data-surface-persistence", "persistent")
   await expect(paper?.contains(overlay)).toBe(false)
@@ -196,13 +229,32 @@ async function assertPaperGrammar(canvasElement: HTMLElement, mobile: boolean) {
 
   const canvasStyle = getComputedStyle(canvasSurface)
   const paperStyle = getComputedStyle(paper!)
-  const recessStyle = getComputedStyle(recess!)
+  const inputStyle = getComputedStyle(input!)
+  const canvasColor = renderedColor(canvasStyle.backgroundColor)
+  const paperColor = renderedColor(paperStyle.backgroundColor)
   await expect(canvasStyle.backgroundColor).not.toBe(paperStyle.backgroundColor)
-  await expect(renderedLuminance(recessStyle.backgroundColor)).toBeLessThan(renderedLuminance(paperStyle.backgroundColor))
-  await expect(recessStyle.borderTopStyle).toBe("solid")
-  await expect(recessStyle.borderTopWidth).not.toBe("0px")
-  await expect(recessStyle.borderTopColor).not.toBe("transparent")
-  await expect(Number.parseFloat(paperStyle.borderTopLeftRadius)).toBeGreaterThan(Number.parseFloat(recessStyle.borderTopLeftRadius))
+  await expect(renderedLuminance(paperColor)).toBeGreaterThan(renderedLuminance(canvasColor))
+  await expect(inputStyle.backgroundColor).toBe(getComputedStyle(containerStack[0]).backgroundColor)
+  await expect(inputStyle.borderTopStyle).toBe("solid")
+  await expect(inputStyle.borderTopWidth).not.toBe("0px")
+  await expect(inputStyle.borderTopColor).not.toBe("transparent")
+  await expect(Number.parseFloat(paperStyle.borderTopLeftRadius)).toBeGreaterThan(Number.parseFloat(inputStyle.borderTopLeftRadius))
+
+  const rawContainerColors = containerStack.map((element) => renderedColor(getComputedStyle(element).backgroundColor))
+  await expect(rawContainerColors.map((color) => color.alpha)).toEqual([rawContainerColors[0].alpha, rawContainerColors[0].alpha, rawContainerColors[0].alpha])
+  await expect(rawContainerColors[0].alpha).toBeGreaterThan(0)
+  await expect(rawContainerColors[0].alpha).toBeLessThan(1)
+  const compositedStack = rawContainerColors.reduce<RenderedColor[]>((layers, color) => [...layers, composite(color, layers.at(-1)!)], [paperColor])
+  const stackLuminances = compositedStack.map(renderedLuminance)
+  const dark = document.documentElement.classList.contains("dark")
+  for (let depth = 1; depth < stackLuminances.length; depth += 1) {
+    if (dark) await expect(stackLuminances[depth]).toBeGreaterThan(stackLuminances[depth - 1])
+    else await expect(stackLuminances[depth]).toBeLessThan(stackLuminances[depth - 1])
+  }
+  for (const [depth, role] of ["primary", "secondary", "tertiary"].entries()) {
+    const foreground = canvasElement.querySelector<HTMLElement>(`[data-foreground-role="${role}"]`)
+    await expect(renderedContrast(renderedColor(getComputedStyle(foreground!).color), compositedStack[depth + 1])).toBeGreaterThanOrEqual(4.5)
+  }
   await expect(getComputedStyle(rowTitle!).fontSize).toBe("16px")
   await expect(getComputedStyle(tertiary!).fontSize).toBe("12px")
   if (mobile) {
