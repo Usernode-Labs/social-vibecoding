@@ -6,7 +6,7 @@ import ts from "typescript"
 const sourceExtensions = new Set([".ts", ".tsx"])
 const governedImportPrefix = "@/components/"
 const rawInteractiveElements = new Set(["button", "input", "select", "textarea"])
-const surfaceRoles = new Set(["canvas", "paper", "print", "recess", "status", "overlay"])
+const surfaceRoles = new Set(["canvas", "paper", "print", "recess", "overlay"])
 const recessRoles = new Set(["input", "tab-track", "code", "terminal"])
 const ephemeralVariant = /^(?:group-|peer-)?(?:hover|focus|focus-visible|focus-within|active)(?:\/.*)?$/
 
@@ -155,7 +155,7 @@ export function scanInterfaceSource(frontendRoot, fileName, source) {
       const surface = staticAttribute(node, "data-surface", sourceFile)
 
       if (surface && !surfaceRoles.has(surface)) {
-        findings.push(finding(frontendRoot, fileName, sourceFile, node, "invalid-surface-role", surface, "Use canvas, paper, print, recess, status, or overlay."))
+        findings.push(finding(frontendRoot, fileName, sourceFile, node, "invalid-surface-role", surface, "Use canvas, paper, print, recess, or overlay; status colour is ink."))
       }
       if (surface === "paper") {
         let parent = ancestorOpening(node)

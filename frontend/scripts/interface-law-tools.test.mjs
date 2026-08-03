@@ -52,6 +52,17 @@ test("Sheet remains a legal drawer primitive name and the persistent overlay ten
   assert.ok(findings.some((item) => item.rule === "single-persistent-overlay"))
 })
 
+test("status colour is ink rather than a sixth surface role", () => {
+  const findings = scanInterfaceSource(frontendRoot, fixtureFile, `
+    export function Fixture() {
+      return <div data-surface="status" />
+    }
+  `)
+  const invalid = findings.find((item) => item.rule === "invalid-surface-role")
+  assert.equal(invalid?.match, "status")
+  assert.match(invalid?.remediation || "", /status colour is ink/)
+})
+
 test("exact warning ratchet rejects additions and requires resolved entries to be removed", () => {
   const accepted = [{ rule: "no-caller-margin", file: "@/a.tsx", match: "mt-2" }]
   assert.deepEqual(evaluateInterfaceLawRatchet(accepted, accepted), { added: [], resolved: [] })

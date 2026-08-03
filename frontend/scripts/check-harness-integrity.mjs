@@ -71,6 +71,25 @@ skillDirectories.forEach(validateSkill)
 validateClaudeAdapter("CLAUDE.md")
 validateClaudeAdapter("frontend/CLAUDE.md")
 
+const postEditScript = "frontend/scripts/post-edit-interface-laws.mjs"
+const postEditCommand = `node \"$(git rev-parse --show-toplevel)/${postEditScript}\"`
+if (!exists(postEditScript)) violations.push(`${postEditScript} must provide the shared per-edit interface-law check`)
+for (const [configPath, matcher] of [[".codex/hooks.json", "^(?:apply_patch|Edit|Write)$"], [".claude/settings.json", "Edit|Write"]]) {
+  if (!exists(configPath)) {
+    violations.push(`${configPath} must invoke the per-edit interface-law check`)
+    continue
+  }
+  const config = readJson(configPath)
+  const groups = config.hooks?.PostToolUse || []
+  const handler = groups.find((group) => group.matcher === matcher)?.hooks?.find((hook) => hook.type === "command")
+  if (handler?.command !== postEditCommand) {
+    violations.push(`${configPath} must invoke ${postEditScript} from the repository root`)
+  }
+  if (!Number.isFinite(handler?.timeout) || handler.timeout <= 0) {
+    violations.push(`${configPath} must bound the per-edit interface-law check`)
+  }
+}
+
 // Trigger: Buzz event c96af214339c272aa1d227ce441341f21ab594215f26e86aa25836f7a1723d7d
 // proved that wildcard ephemeral listeners can be shadowed by a more-specific
 // loopback listener on macOS. Proof: npm run check:harness-integrity. Owner: lead-codex.

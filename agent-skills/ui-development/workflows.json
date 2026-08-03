@@ -10,6 +10,8 @@
   "changedFileScope": [
     "AGENTS.md",
     "CLAUDE.md",
+    ".claude/",
+    ".codex/",
     ".gitignore",
     ".github/workflows/frontend-checks.yml",
     "NATIVE-BRIDGE.md",
@@ -40,11 +42,14 @@
       "paths": [
         "AGENTS.md",
         "CLAUDE.md",
+        ".claude/",
+        ".codex/",
         ".gitignore",
         ".github/workflows/frontend-checks.yml",
         "agent-skills/",
         "tool/",
         "frontend/scripts/check-harness",
+        "frontend/scripts/post-edit-interface-laws",
         "frontend/scripts/check-context-budget",
         "frontend/scripts/harness-fingerprint",
         "frontend/scripts/run-agent-battery",

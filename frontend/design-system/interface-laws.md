@@ -23,7 +23,7 @@ Every view has one Paper. Print content instead of stacking ceremonial Cards.
 | Overlay | Transient; bottom navigation is the persistent tenant | Add another persistent Overlay |
 
 `Sheet` remains the drawer primitive; it is not a surface role. Owned wrappers
-use `data-surface="canvas|paper|print|recess|status|overlay"`; absent means Print.
+use `data-surface="canvas|paper|print|recess|overlay"`; absent means Print.
 Recess also names `data-recess-role="input|tab-track|code|terminal"`. The only
 persistent Overlay is `data-slot="platform-bottom-navigation"`.
 
@@ -40,7 +40,7 @@ anatomy, and internal state stay owned; governed-to-governed calls still count.
 ## 2. Radius and spacing
 
 Large radii belong to independent raised surfaces, dialogs, and substantial
-media. Medium radii belong to controls, status surfaces, and inset sections.
+media. Medium radii belong to controls, status treatments, and inset sections.
 Small radii belong to compact rows, focus contours, and tight nesting. Full
 radii are reserved for true pills, circular controls, and content-shaped chips.
 Inner geometry remains visually concentric and never appears rounder than its
