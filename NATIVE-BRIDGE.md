@@ -8,11 +8,14 @@ the app (producer — the Flutter shell, which lives in its **own repository**,
 `lib/features/dapps/dapp_webview_screen.dart` there) and SV chrome (consumer,
 this repo) for the methods SV's own shell depends on.
 
-Wire format: the page posts `{ id, method, args }` as JSON to the channel;
-the app resolves via `window.__usernodeResolve(id, value, error)`. Unknown
+Wire format: the page posts
+`{ id, method, args, privilegedCapability? }` as JSON to the channel; the app
+resolves via `window.__usernodeResolve(id, value, error)`. The optional field
+is used only when the app advertises `privilegedBridgeCapability`; older app
+builds keep receiving the original `{ id, method, args }` shape. Unknown
 methods are silently dropped by old app builds, so every bridge wrapper races
-a timeout and degrades gracefully — never assume a method exists, feature-
-detect with `getBridgeInfo`.
+a timeout and degrades gracefully — never assume a method exists,
+feature-detect with `getBridgeInfo`.
 
 ## Versioning
 
@@ -28,6 +31,14 @@ detect with `getBridgeInfo`.
   have the old surface and some have the new one. That is exactly what
   `capabilities` is for — never assume a method exists because this document
   lists it.
+
+Two additive security/session capabilities extend v4 without changing its
+version:
+
+- `privilegedBridgeCapability`: privileged top-frame methods require a
+  native-issued capability scoped to the current trusted navigation.
+- `sessionBoundAuthStatus`: auth snapshots include `participantId` and
+  identity `epoch`, and node starts can be bound to both values.
 
 ## Methods
 
@@ -202,7 +213,7 @@ wrapper uses a longer (12s) timeout for this method.
 |---|---|
 | `resetZkChallenge()` | discards in-progress ZK identity registration (confirm web-side first) |
 | `openBatterySettings()` | opens Android battery-optimization settings |
-| `logout()` | logs out of the app account (confirm web-side first); with platform login, SV should also call `stopNode()` and clear its web session |
+| `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); confirm web-side first, then clear the web session |
 
 ### Platform login + node lifecycle (v4 — thin-shell migration)
 
@@ -211,21 +222,37 @@ platform-owned: the SV shell signs the user in on the web, exchanges the
 session for a mobile bearer token (`POST /api/v4/mobile/auth/from-session`),
 hands the credential to the app, and then drives the node. Orchestration
 lives in `public/js/native-chrome.js` (`runLoginHandoff`,
-`handleWebLogout`).
+`handleWebLogout`). The exchange runs for every live web session, including
+when native already reports `ready`, so same-user bearer rotation is never
+skipped. Its returned `user.id` must still match the current web participant
+before the token crosses the bridge. Overlapping session signals coalesce;
+if the web participant changes during an exchange, the latest session is
+exchanged once the active run settles.
 
-#### `completeLogin({ token, user })` → auth status snapshot
+#### `completeLogin({ token, user })` → auth status snapshot or restart signal
 
 Imports the platform credential into the native identity: the app stores
 the bearer token, provisions/imports the custodial wallet
 (`POST /api/v4/mobile/wallet/provision`), and settles the identity at
-`ready`. Idempotent for the same user. Wallet provisioning can take a
-while on a fresh install — the bridge wrapper allows up to 120s.
+`ready`. Idempotent for the same user, including bearer-token rotation.
+Wallet provisioning can take a while on a fresh install — the bridge wrapper
+allows up to 120s.
 
-#### `startNode({ address? })` → node status snapshot
+With `sessionBoundAuthStatus`, a settled response is
+`{ phase, address, participantId, epoch, reconciliationStatus }`, where
+`reconciliationStatus` reports `idle | reconciling | transient | refreshing |
+settled | failed`. A cross-participant login first performs the native
+hard-logout boundary and resolves `{ restarting: true }`; the current document
+must stop there while the native runtime restarts.
+
+#### `startNode({ address?, participantId?, epoch? })` → node status snapshot
 
 Starts the native node bound to the given wallet address. The native side
 validates the address belongs to the current (ready) identity and rejects
 otherwise; omitting `address` starts with the identity's active account.
+Builds advertising `sessionBoundAuthStatus` also require the supplied
+participant and epoch to match the current identity. Older v4 builds ignore
+the additive binding fields and retain the address-only compatibility path.
 No native auto-start exists anymore — SV requests every node start.
 
 Block production is a released capability (onboarding flow alignment):
@@ -239,14 +266,16 @@ Waitlist tab. No bridge payload change — the contract stays at v4.
 
 #### `stopNode()` → `{ stopped: true }`
 
-Stops the node. Idempotent. Called by SV on web logout before clearing
-the session.
+Stops the node. Idempotent and available for explicit lifecycle control;
+normal web logout calls the single hard native `logout()` boundary instead.
 
-#### `getAuthStatus()` → `{ phase, address }`
+#### `getAuthStatus()` → `{ phase, address, participantId?, epoch?, reconciliationStatus? }`
 
 Poll-style twin of the push events below. `phase` is the identity phase
 (`unknown | transitioning | unauthenticated | guest | reconciling |
-ready`); `address` is the active wallet address once `ready`.
+ready`); `address` is the active wallet address once `ready`. Builds with
+`sessionBoundAuthStatus` also include the current participant and identity
+epoch.
 
 **Push events:** the app dispatches a `usernode:auth-status` `CustomEvent`
 on `window` with the same shape as `detail` — once per page load and on
@@ -257,8 +286,18 @@ the phase reaches `ready`.
 
 - The native transaction confirm sheet remains the sole native chrome over
   SV content (Apple Pay model). Nothing in this contract bypasses it.
-- `openNativeScreen` and the shortcut-management methods are gated to the
-  configured SV origin on the native side.
+- Privileged native methods are gated to the configured SV top-frame origin.
+  On each trusted main-frame navigation, the top-frame bridge privately asks
+  for `getPrivilegedBridgeCapability` and keeps the returned opaque string in
+  its closure. The capability is revoked on navigation and is never exposed
+  as a public `window.usernode` property.
+- The parent bridge refuses both capability bootstrap and privileged relays
+  from child frames. Non-privileged dapp reads and transaction methods keep
+  their existing relay behavior.
+- Loopback origins are not privileged by default. Flutter development builds
+  can opt in with `--dart-define=ENABLE_LOCAL_PRIVILEGED_BRIDGE=true`; the
+  switch is additionally gated by Flutter debug mode and cannot enable
+  loopback privileges in a release build.
 - `openExternal` accepts http/https only.
 
 ## Offline / App-Bound Domains

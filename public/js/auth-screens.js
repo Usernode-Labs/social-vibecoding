@@ -1514,8 +1514,8 @@
     _wireWaiting() {
       byId('waiting-logout').addEventListener('click', async () => {
         AuthScreens._stopWaitingPoll();
-        // Settings.logout does the full teardown (native stopNode/logout,
-        // SW cache clear) and hard-navigates — the reload is the correct
+        // Settings.logout does the full teardown (hard native logout, SW
+        // cache clear) and hard-navigates — the reload is the correct
         // teardown for a session switch (enterAuthed is one-shot).
         if (window.Settings && typeof Settings.logout === 'function') {
           Settings.logout();

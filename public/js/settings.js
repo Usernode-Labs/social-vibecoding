@@ -1249,10 +1249,10 @@
     async logout() {
       const btn = document.getElementById('settings-logout');
       if (btn) btn.disabled = true;
-      // Thin-shell migration: web logout also tears down the native side
-      // (stop node, drop the mobile credential) so the next login starts
-      // clean. Bounded + best-effort inside handleWebLogout — never hangs
-      // the web logout on a wedged bridge, no-op outside the app.
+      // Thin-shell migration: web logout crosses the native hard-logout
+      // boundary (which owns node drain and credential/identity cleanup) so
+      // the next login starts clean. Bounded + best-effort inside
+      // handleWebLogout — no-op outside the app.
       try {
         if (window.NativeChrome && NativeChrome.handleWebLogout) {
           await NativeChrome.handleWebLogout();
