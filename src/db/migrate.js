@@ -6892,14 +6892,16 @@ async function seedStagingImportedPrProposal(pool, config) {
         `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
             status, source, imported_pr_head_sha, imported_pr_author,
-            check_state, checks_commit_sha,
+            check_state, check_phase, checks_commit_sha,
             votes_required, promoted_at, created_at)
          VALUES
            ($1, $2, $3, 9311, 'https://github.com/example/example/pull/9311',
             '[staging fixture] Imported PR — head updated, please re-review',
             'In plain terms: the contributor pushed new code to this PR, so earlier votes were cleared and the checks are running again.',
             'promoted', 'imported', $4, 'octo-contributor',
-            'pending', $4,
+            -- The preview for this head is already up, so the run is in its
+            -- TESTING half: renders "Running the automated tests…".
+            'pending', 'testing', $4,
             $5, NOW() - INTERVAL '30 minutes', NOW() - INTERVAL '30 minutes')
          RETURNING id`,
         [appId, importer.id, branch2, headSha2, votesRequired]
@@ -6910,6 +6912,7 @@ async function seedStagingImportedPrProposal(pool, config) {
         `UPDATE chat_sessions
             SET source = 'imported', imported_pr_head_sha = $2,
                 imported_pr_author = 'octo-contributor', check_state = 'pending',
+                check_phase = 'testing',
                 checks_commit_sha = $2
           WHERE id = $1`,
         [id2, headSha2]
@@ -6958,14 +6961,17 @@ async function seedStagingImportedPrProposal(pool, config) {
         `INSERT INTO chat_sessions
            (app_id, user_id, branch_name, pr_number, pr_url, pr_title, pr_summary_md,
             status, source, imported_pr_head_sha, imported_pr_author,
-            check_state, checks_commit_sha, checks_checked_at,
+            check_state, check_phase, checks_commit_sha, checks_checked_at,
             votes_required, promoted_at, created_at)
          VALUES
            ($1, $2, $3, 9312, 'https://github.com/example/example/pull/9312',
             '[staging fixture] Imported PR — just imported, preview still building',
             'In plain terms: this pull request was just imported from GitHub, so its preview is still being built and the automated checks haven''t finished yet.',
             'promoted', 'imported', $4, 'octo-contributor',
-            'pending', $4, NOW(),
+            -- Just imported: the SHA-pinned preview is still being built and
+            -- its database cloned, so the run is in its BUILDING half —
+            -- renders "Preparing the staging preview…".
+            'pending', 'building', $4, NOW(),
             $5, NOW(), NOW())
          RETURNING id`,
         [appId, importer.id, branch3, headSha3, votesRequired]
@@ -6980,6 +6986,7 @@ async function seedStagingImportedPrProposal(pool, config) {
         `UPDATE chat_sessions
             SET source = 'imported', imported_pr_head_sha = $2,
                 imported_pr_author = 'octo-contributor', check_state = 'pending',
+                check_phase = 'building',
                 checks_commit_sha = $2, checks_checked_at = NOW(),
                 staging_url = NULL, staging_container_id = NULL,
                 promoted_at = NOW()

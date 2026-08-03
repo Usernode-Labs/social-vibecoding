@@ -4410,11 +4410,11 @@ function sessionRoutes(config) {
       // fire-and-forget below re-stamps idempotently — same commit sha, so
       // the failure-streak bookkeeping is preserved).
       const visualsService = require('../services/visuals');
-      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null)
+      await visualsService.setChecksPending(pool, sessionId, session.checks_commit_sha || null, 'building')
         .catch((err) => log.warn('sessions', 'recheck setChecksPending failed (non-fatal)', {
           sessionId, err: err.message,
         }));
-      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null);
+      visualsService.notifyChecksPending(sessionId, session.checks_commit_sha || null, 'building');
 
       res.json({ status: 'running', checkState: 'pending' });
 
@@ -5750,7 +5750,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
         // #461: pend the checks for the NEW commit before the build, so the
         // previous commit's verdict (e.g. a stale 'passing') can't satisfy
         // the merge gate while this build runs — or after it fails.
-        await visuals.setChecksPending(pool, session.id, result.sha)
+        await visuals.setChecksPending(pool, session.id, result.sha, 'building')
           .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
         try {
           stagingResult = await staging.buildAndDeployStaging(config, session, app, result.sha);
@@ -7907,7 +7907,7 @@ path: /another/changed/view
       // #461: pend the checks for the NEW commit before the build starts, so
       // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
       // the merge gate while this build runs — or after it fails.
-      await visuals.setChecksPending(pool, session.id, commitHash)
+      await visuals.setChecksPending(pool, session.id, commitHash, 'building')
         .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
@@ -8080,7 +8080,7 @@ path: /another/changed/view
       // #461: pend the checks for the NEW commit before the build starts, so
       // the previous commit's verdict (e.g. a stale 'passing') can't satisfy
       // the merge gate while this build runs — or after it fails.
-      await visuals.setChecksPending(pool, session.id, commitHash)
+      await visuals.setChecksPending(pool, session.id, commitHash, 'building')
         .catch((err) => log.warn('visuals', 'setChecksPending failed (non-fatal)', { sessionId: session.id, err: err.message }));
       try {
         stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);

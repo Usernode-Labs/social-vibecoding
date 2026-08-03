@@ -19,7 +19,7 @@ const STATUS_VALUES = new Set([
   // terminal, distinct from a conflict (conflict-resolver / checkAndMerge).
   'pr_closed',
 ]);
-const KIND_VALUES = new Set(['merge', 'conflict_resolution']);
+const KIND_VALUES = new Set(['merge', 'conflict_resolution', 'checks']);
 
 // ── Staging mock data ──────────────────────────────────────────────────
 // merge_debug_runs is new + staging:private, so a staging clone has zero
@@ -138,6 +138,31 @@ function stagingMockMergeRuns() {
         { phase: 'retry_merge', message: 'Re-attempting merge… merged as commit 5566778.', detail: { sha: '5566778ee' } },
         { phase: 'merged', message: 'Marked session merged (merged).' },
       ]),
+    // 7. A kind='checks' run — the proposal-checks timing trace. Reviewable
+    // only via the "Checks" kind chip (the unfiltered list is a merge list by
+    // design). merge_debug_runs is staging:private, so without these two rows
+    // a preview has nothing to render for the new kind at all. The durations
+    // are the shape a HEALTHY run has after the clone stopped copying the
+    // ~9.4 GB of staging:private data it used to throw away — a clone phase
+    // in the tens of seconds rather than the ~4m35s production measured.
+    mk(9500007, 900207, 'Tighten the vote pill spacing on narrow screens',
+      'checks', 'capture', 'passing', 1, 2, [
+        { phase: 'image_build', message: 'Staging image built', detail: { durationMs: 10420 } },
+        { phase: 'clone', message: 'Preview database cloned', detail: { durationMs: 21870 } },
+        { phase: 'staging_health', message: 'Preview answered its healthcheck', detail: { durationMs: 6040 } },
+        { phase: 'capture', message: 'Capture container finished', detail: { durationMs: 61350, targets: 2, tests: 10, media: true } },
+        { phase: 'tests', message: 'Suite verdict: passing', detail: { state: 'passing', tests: 10, failing: 0, durationMs: 99680 } },
+      ]),
+    // 8. A checks run that broke before it could produce a verdict — the
+    // 'error' path the merge gate fail-closes on ("⚠ Checks couldn't run").
+    mk(9500008, 900208, 'Add a leaderboard filter for the current season',
+      'checks', 'capture', 'error', 3, 4, [
+        { phase: 'image_build', message: 'Staging image built', detail: { durationMs: 11210 } },
+        { phase: 'clone', message: 'Preview database cloned', detail: { durationMs: 23940 } },
+        { phase: 'staging_health', message: 'Preview answered its healthcheck', detail: { durationMs: 6110 } },
+        { phase: 'capture', message: 'Capture container finished', detail: { durationMs: 240000, partial: true, partialReason: 'timeout', targets: 3, tests: 10, media: true }, level: 'warn' },
+        { phase: 'capture_error', message: 'Checks run threw', level: 'error', detail: { error: 'capture run timed out after 240000ms' } },
+      ]),
   ];
 }
 
@@ -178,7 +203,13 @@ function debugRoutes(config) {
       if (Number.isFinite(prn)) add('r.pr_number = $$', prn);
       const outcome = req.query.outcome || req.query.status;
       if (outcome && STATUS_VALUES.has(String(outcome))) add('r.status = $$', String(outcome));
-      if (req.query.kind && KIND_VALUES.has(String(req.query.kind))) add('r.kind = $$', String(req.query.kind));
+      const kindRaw = req.query.kind ? String(req.query.kind) : '';
+      if (kindRaw && KIND_VALUES.has(kindRaw)) add('r.kind = $$', kindRaw);
+      // The unfiltered list stays a MERGE list. There is one kind='checks'
+      // run per checks run — several per proposal, far outnumbering merge
+      // attempts — so including them by default would bury the merge traces
+      // this view exists for. They are one kind chip away.
+      else if (!kindRaw) add("r.kind <> $$", 'checks');
 
       // Keyset cursor: strictly older than (before, before_id).
       const beforeRaw = req.query.before;
@@ -216,7 +247,11 @@ function debugRoutes(config) {
         const mocks = stagingMockMergeRuns()
           .filter((m) => !have.has(m.id))
           .filter((m) => !outcome || !STATUS_VALUES.has(String(outcome)) || m.status === outcome)
-          .filter((m) => !req.query.kind || !KIND_VALUES.has(String(req.query.kind)) || m.kind === req.query.kind)
+          .filter((m) => (kindRaw && KIND_VALUES.has(kindRaw)
+            ? m.kind === kindRaw
+            // Mirror the SQL's default: the unfiltered list is a merge list,
+            // so the mock checks runs stay behind the kind chip too.
+            : !(!kindRaw && m.kind === 'checks')))
           .map(({ _steps, ...rest }) => rest); // eslint-disable-line no-unused-vars
         rows.unshift(...mocks);
       }

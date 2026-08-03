@@ -567,6 +567,11 @@
       "expectText": "PR closed"
     },
     {
+      "name": "Merge debug offers the Checks kind filter for the timing traces",
+      "path": "/?demo=1#admin/merges",
+      "expectText": "Checks (timings)"
+    },
+    {
       "name": "Submitted features section renders",
       "path": "/?demo=1#admin/features",
       "expectText": "Submitted features"
@@ -807,6 +812,16 @@
       "name": "Checks-starting mock proposal shows the in-progress badge",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Checks starting"
+    },
+    {
+      "name": "Checks card names the preview-preparation stage on a building run",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000022",
+      "expectText": "Preparing the staging preview"
+    },
+    {
+      "name": "Checks card names the test stage on a testing run",
+      "path": "/?demo=1#app/usernode-2d5619/dev/proposals/9000023",
+      "expectText": "Running the automated tests"
     },
     {
       "name": "Imported PR proposal card shows the Imported PR badge (#687)",

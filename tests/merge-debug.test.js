@@ -126,3 +126,55 @@ test('pruneOldRuns issues a bounded DELETE and never throws', async () => {
   const del = pool.calls.find((c) => /DELETE FROM merge_debug_runs/.test(c.sql));
   assert.ok(del);
 });
+
+// ── kind='checks': the proposal-checks timing trace ─────────────────────
+// The tracer is kind-agnostic by design, so the checks pipeline reuses it
+// rather than growing a parallel table. These pin that the new kind and its
+// verdict statuses round-trip, and that a duration-bearing step keeps its
+// detail intact (the durations are the entire point of the trace).
+
+test("a kind='checks' run round-trips its kind and trigger", async () => {
+  const pool = makePool();
+  const runId = await md.startRun(pool, {
+    appId: 1, sessionId: 2951, prNumber: 914, kind: 'checks', trigger: 'capture',
+  });
+  const ins = pool.calls.find((c) => /INSERT INTO merge_debug_runs/.test(c.sql));
+  assert.deepEqual(ins.params, [1, 2951, 914, 'checks', 'capture']);
+  assert.equal(runId, 1);
+});
+
+test('a checks step carries its durationMs through to the stored detail', async () => {
+  const pool = makePool();
+  const runId = await md.startRun(pool, { kind: 'checks' });
+  await md.step(pool, runId, {
+    phase: 'clone', message: 'Preview database cloned', detail: { durationMs: 21870 },
+  });
+  const ins = pool.calls.find((c) => /INSERT INTO merge_debug_steps/.test(c.sql));
+  assert.equal(ins.params[2], 'clone');
+  assert.deepEqual(JSON.parse(ins.params[5]), { durationMs: 21870 });
+});
+
+test('a checks run closes on its suite verdict rather than a merge outcome', async () => {
+  for (const status of ['passing', 'failing', 'skipped', 'error']) {
+    const pool = makePool();
+    const runId = await md.startRun(pool, { kind: 'checks' });
+    await md.endRun(pool, runId, { status, summary: `checks ${status} in 42s` });
+    const upd = pool.calls.find((c) => /UPDATE merge_debug_runs/.test(c.sql));
+    assert.deepEqual(upd.params, [runId, status, `checks ${status} in 42s`]);
+  }
+});
+
+test('tracing never throws when the run insert fails — a null id no-ops every call', async () => {
+  // captureForSession traces unconditionally, so a debug-table failure must
+  // never be able to fail a checks run.
+  const pool = makePool((sql) => {
+    if (/INSERT INTO merge_debug_runs/.test(sql)) throw new Error('table missing');
+    return { rows: [] };
+  });
+  const runId = await md.startRun(pool, { kind: 'checks' });
+  assert.equal(runId, null);
+  await md.step(pool, runId, { phase: 'clone', detail: { durationMs: 1 } });
+  await md.endRun(pool, runId, { status: 'passing' });
+  assert.ok(!pool.calls.some((c) => /INSERT INTO merge_debug_steps/.test(c.sql)));
+  assert.ok(!pool.calls.some((c) => /UPDATE merge_debug_runs/.test(c.sql)));
+});

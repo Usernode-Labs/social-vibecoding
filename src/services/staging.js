@@ -145,6 +145,12 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
 
   log.info('staging', 'Building staging', { sessionId: session.id, app: app.slug });
 
+  // Per-phase wall-clock for the build half of a checks run. Nothing
+  // persisted how long any of this took, which is why diagnosing the
+  // proposal-checks slowdown meant reading a container log tail.
+  const buildStartedAt = Date.now();
+  const timings = {};
+
   try {
     // 1. Clone the PR branch
     const [, owner, repo] = app.repo_url.match(/github\.com\/([^/]+)\/([^/]+)/) || [];
@@ -296,7 +302,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     }
 
     // 3. Build Docker image
+    const imageBuildStartedAt = Date.now();
     await docker.buildImage(cloneDir, imageName);
+    timings.imageBuildMs = Date.now() - imageBuildStartedAt;
     await docker.execFileAsync('rm', ['-rf', cloneDir]).catch(() => {});
 
     // 3. Clone the production database. cloneDatabase creates a fresh
@@ -307,7 +315,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // teardown drops the role with the clone DB.
     const prodDbName = dbManager.appDbName(app.slug);
     const stagingDbNameStr = dbManager.stagingDbName(app.slug, `s${session.id}`, commitHash);
+    const cloneStartedAt = Date.now();
     const { password: stagingDbPassword } = await dbManager.cloneDatabase(prodDbName, stagingDbNameStr);
+    timings.cloneMs = Date.now() - cloneStartedAt;
     const stagingDbUrl = dbManager.connectionUrl(stagingDbNameStr, stagingDbPassword);
 
     // 4. Stop existing staging container if any. Short grace: a preview
@@ -383,7 +393,9 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     });
 
     // 6. Wait for health
+    const healthStartedAt = Date.now();
     await docker.waitForHealthy(containerName, 3000, '/health');
+    timings.healthMs = Date.now() - healthStartedAt;
 
     // 7. Determine accessible URL. No Caddy route to register: the
     // wildcard site in the Caddyfile maps this hostname straight to the
@@ -405,9 +417,16 @@ async function buildAndDeployStagingInner(config, session, app, commitHash) {
     // caller runs verifyStagingEdge() right after the persist and before
     // revealing the preview button.
 
-    log.info('staging', 'Staging deployed', { sessionId: session.id, url: stagingUrl });
+    timings.totalMs = Date.now() - buildStartedAt;
+    log.info('staging', 'Staging deployed', {
+      sessionId: session.id, url: stagingUrl, ...timings,
+    });
 
-    return { containerId, stagingUrl, hostname };
+    // `timings` is threaded out so the checks tracer can attribute the wait
+    // to a phase (visuals.captureForSession opens the kind='checks' run and
+    // records these as its build-half steps). Purely diagnostic — no caller
+    // branches on it, and it is absent on paths that reuse a live preview.
+    return { containerId, stagingUrl, hostname, timings };
   } catch (err) {
     log.error('staging', 'Staging build failed', { sessionId: session.id, err: err.message });
     // Cleanup on failure — short grace, this container is being discarded.

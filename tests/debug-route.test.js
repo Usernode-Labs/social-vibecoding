@@ -192,3 +192,64 @@ test('the reopened_closed_pr happy-path mock carries its reopen step', async () 
   assert.ok(body.steps.some((s) => s.phase === 'reopened_closed_pr'),
     'the auto-reopen is narrated as its own step');
 });
+
+// ── kind='checks': the proposal-checks timing trace ─────────────────────
+// The checks pipeline reuses this tracer (one run per checks run, a step per
+// phase carrying detail.durationMs) because nothing else persisted how long a
+// checks run took. There are several per proposal, far outnumbering merge
+// attempts, so they are EXCLUDED from the unfiltered list and reachable only
+// via the kind filter.
+
+test("the unfiltered list excludes kind='checks' so it stays a merge list", async () => {
+  calls = [];
+  await fetch(`${base}/api/debug/merge-runs`);
+  const listCall = calls.find((c) => /FROM merge_debug_runs r/.test(c.sql) && /LIMIT/.test(c.sql));
+  assert.match(listCall.sql, /r\.kind <> \$\d+/, 'a kind exclusion is applied by default');
+  assert.ok(listCall.params.includes('checks'), "'checks' is the excluded kind");
+});
+
+test("kind=checks is an accepted filter and switches to an equality match", async () => {
+  calls = [];
+  await fetch(`${base}/api/debug/merge-runs?kind=checks`);
+  const listCall = calls.find((c) => /FROM merge_debug_runs r/.test(c.sql) && /LIMIT/.test(c.sql));
+  assert.match(listCall.sql, /r\.kind = \$\d+/, 'filters TO checks');
+  assert.doesNotMatch(listCall.sql, /r\.kind <> \$\d+/, 'and drops the default exclusion');
+  assert.ok(listCall.params.includes('checks'));
+});
+
+test("an explicit kind=merge still filters to merge (the default exclusion does not stack)", async () => {
+  calls = [];
+  await fetch(`${base}/api/debug/merge-runs?kind=merge`);
+  const listCall = calls.find((c) => /FROM merge_debug_runs r/.test(c.sql) && /LIMIT/.test(c.sql));
+  assert.match(listCall.sql, /r\.kind = \$\d+/);
+  assert.doesNotMatch(listCall.sql, /r\.kind <> \$\d+/);
+  assert.ok(listCall.params.includes('merge'));
+});
+
+test('the staging demo ships checks runs, behind the kind filter like the real ones', async () => {
+  // Unfiltered: the mock checks runs are held back, mirroring the SQL.
+  const plain = await (await fetch(`${base}/api/debug/merge-runs?demo=1`)).json();
+  assert.ok(!plain.runs.some((x) => x.kind === 'checks'),
+    'mock checks runs stay out of the unfiltered merge list');
+
+  // Filtered: both the passing and the error trace are reviewable.
+  const body = await (await fetch(`${base}/api/debug/merge-runs?demo=1&kind=checks`)).json();
+  const mocks = body.runs.filter((x) => x.id >= 9500000);
+  assert.ok(mocks.length >= 2, 'a passing and an error checks run are seeded');
+  assert.ok(mocks.every((x) => x.kind === 'checks'));
+  assert.ok(mocks.some((x) => x.status === 'passing'));
+  assert.ok(mocks.some((x) => x.status === 'error'));
+});
+
+test('a demo checks run carries per-phase durations for every phase of the pipeline', async () => {
+  const body = await (await fetch(`${base}/api/debug/merge-runs/9500007?demo=1`)).json();
+  const phases = body.steps.map((s) => s.phase);
+  assert.deepEqual(phases, ['image_build', 'clone', 'staging_health', 'capture', 'tests']);
+  for (const s of body.steps) {
+    assert.equal(typeof s.detail.durationMs, 'number', `${s.phase} carries a durationMs`);
+  }
+  // The clone was the dominant phase before the dump-exclusion fix; the
+  // fixture must show the healthy shape, not the ~4m35s regression.
+  const clone = body.steps.find((s) => s.phase === 'clone');
+  assert.ok(clone.detail.durationMs < 120000, 'the seeded clone reads as healthy');
+});
