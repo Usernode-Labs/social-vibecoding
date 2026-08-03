@@ -414,7 +414,59 @@ const AppView = {
           }
         }, 300);
       }
+      // #816: the preview loader is the screen this change is about, and it
+      // only exists mid-click on a Preview button — no URL reaches it, so
+      // the before/after captures would show the dev board instead. These
+      // links paint each loader state directly. Pure UI state (no fetch, no
+      // write, no container), so they render identically in every
+      // environment and the "before" side of a capture works too.
+      if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
+        setTimeout(() => {
+          // Gate on the ROUTE, not on appData: the dev tab clears appData
+          // as it mounts, so an appData check here would race the render.
+          // A fast navigate-away must not pop the overlay onto whatever
+          // screen the user actually landed on.
+          if (String(location.hash || '').includes(`app/${slug}`)) {
+            AppView.showPreviewLoaderShot(shot);
+          }
+        }, 300);
+      }
     } catch { /* malformed query string — nothing to open */ }
+  },
+
+  // #816: paint one staging-preview loader state with no preview behind it.
+  // Screenshot-state deep link only (see the `?shot=` block above) — never
+  // reached by a real Preview click, which goes through ensureStaging.
+  showPreviewLoaderShot(shot) {
+    const overlay = document.getElementById('staging-overlay');
+    if (!overlay) return;
+    // Take a load id so the Back button's teardown (and any later real
+    // preview) supersedes this exactly as it would a genuine open.
+    AppView._stagingLoadId += 1;
+    AppView._stagingDockable = false;
+    AppView._setStagingMode('fullscreen');
+    const iframe = document.getElementById('staging-iframe');
+    if (iframe) iframe.src = '';
+    const label = document.getElementById('staging-url-label');
+    if (label) label.textContent = 'https://staging-demo-preview.example';
+    overlay.classList.remove('hidden');
+    const back = document.getElementById('staging-back');
+    if (back) back.onclick = () => AppView.closeStagingOverlay();
+    if (shot === 'preview-rebuilding') {
+      // The ONE state that still promises 20–60 seconds: a real rebuild.
+      AppView._setStagingLoader(true, {
+        title: 'Spinning the preview back up…',
+        sub: 'The preview was paused after a while of inactivity. Rebuilding it '
+          + 'from the session’s latest changes — this usually takes 20–60 seconds.',
+      });
+      return;
+    }
+    // The common post-build path: the server verified the preview, so this
+    // is a plain "the page is rendering" spinner with no invented duration.
+    AppView._setStagingLoader(true, {
+      title: 'Loading the preview…',
+      sub: 'Automated checks are running against this preview, so the first load may be a little slower.',
+    });
   },
 
   close() {
@@ -9091,11 +9143,13 @@ const AppView = {
     const loadId = ++AppView._stagingLoadId;
     document.getElementById('staging-iframe').src = '';
     AppView._pendingStagingPreview = null;
-    AppView._setStagingLoader(true, {
-      title: 'Spinning the preview back up…',
-      sub: 'The preview was paused after a while of inactivity. Rebuilding it '
-        + 'from the session’s latest changes — this usually takes 20–60 seconds.',
-    });
+    // #816: a NEUTRAL opening state. This used to assert "the preview was
+    // paused… this usually takes 20–60 seconds" before the server had even
+    // been asked whether a rebuild was needed — so the overwhelmingly common
+    // case (a preview that is live and answers in well under a second) was
+    // fronted by a screen promising a minute's wait. The rebuild copy now
+    // lives in the `rebuilding` branch below, where it is actually true.
+    AppView._setStagingLoader(true, { title: 'Opening preview…', sub: '' });
     document.getElementById('staging-back').onclick = () => AppView.closeStagingOverlay();
 
     let data;
@@ -9114,7 +9168,17 @@ const AppView = {
     if (loadId !== AppView._stagingLoadId) return;
 
     if (data.status === 'ready') {
-      AppView.swapToStaging(data.url || fallbackUrl, testing, { jump });
+      // #816: `verified` means the server just watched the container answer
+      // its own healthcheck, so the client can point the iframe straight at
+      // it instead of re-deriving readiness with a poll of its own.
+      // `checksRunning` says the post-build screenshot/checks pass is still
+      // hitting the same container, which is the one honest reason a live
+      // preview's first load can be slow.
+      AppView.swapToStaging(data.url || fallbackUrl, testing, {
+        jump,
+        verified: !!data.verified,
+        checksRunning: !!data.checksRunning,
+      });
       return;
     }
     if (data.status === 'unavailable') {
@@ -9126,10 +9190,17 @@ const AppView = {
       );
       return;
     }
-    // status === 'rebuilding' — park a marker the staging_ready /
-    // staging_failed WS handlers match against, then keep the loader up.
-    // A client-side give-up keeps the loader honest if the event never
-    // lands (the server rebuild is still allowed to finish on its own).
+    // status === 'rebuilding' — the ONE case where a real rebuild is
+    // running and the 20–60s estimate is true. Park a marker the
+    // staging_ready / staging_failed WS handlers match against, then keep
+    // the loader up. A client-side give-up keeps the loader honest if the
+    // event never lands (the server rebuild is still allowed to finish on
+    // its own).
+    AppView._setStagingLoader(true, {
+      title: 'Spinning the preview back up…',
+      sub: 'The preview was paused after a while of inactivity. Rebuilding it '
+        + 'from the session’s latest changes — this usually takes 20–60 seconds.',
+    });
     AppView._pendingStagingPreview = { sessionId, jump, testing, dock, loadId };
     if (AppView._stagingRebuildTimer) clearTimeout(AppView._stagingRebuildTimer);
     AppView._stagingRebuildTimer = setTimeout(() => {
@@ -9188,6 +9259,12 @@ const AppView = {
   // resolution path (onStagingRebuildResult) relies on this so a mid-wait
   // fullscreen/dock toggle wins over the mode the click originally asked
   // for.
+  //
+  // #816: `opts.verified` means the server confirmed the container answered
+  // its healthcheck moments ago, so the readiness poll is skipped entirely
+  // and the iframe is pointed at the preview immediately.
+  // `opts.checksRunning` adds one line explaining a legitimately slower
+  // first load while the post-build checks pass runs.
   swapToStaging(stagingUrl, testing, opts) {
     const overlay = document.getElementById('staging-overlay');
     const iframe = document.getElementById('staging-iframe');
@@ -9248,22 +9325,94 @@ const AppView = {
       AppView.closeStagingOverlay();
     };
 
-    // Don't point the iframe at the host until it actually answers. A fresh
-    // preview's on-demand TLS cert can take a minute (occasionally a few) to
-    // issue; loading the iframe during that window shows a black void with no
-    // feedback. Probe the host first and only swap in the real src once the
-    // TLS handshake succeeds. Each probe also nudges Caddy's on-demand
-    // issuance along, so polling actively warms the cert too. (The probe
-    // always targets the origin root, not the deep link — readiness is a
-    // host/TLS property, and the deep path may be app-routed or auth-gated.)
     iframe.src = '';
     const loadId = ++AppView._stagingLoadId;
-    AppView._waitForStagingReady(resolved, loadId).then((ready) => {
+    const checksRunning = !!(opts && opts.checksRunning);
+
+    // #816: FAST PATH. The server verified this container answered its
+    // healthcheck moments ago, so there is nothing left to wait for —
+    // point the iframe at the preview now. The loader stays up (rather
+    // than being hidden before the src is even assigned, as it used to be)
+    // so the page render has a spinner instead of a black rectangle, and
+    // _watchStagingIframeLoad takes it down the instant the page paints.
+    if (opts && opts.verified) {
+      AppView._setStagingLoader(true, {
+        title: 'Loading the preview…',
+        sub: checksRunning
+          ? 'Automated checks are running against this preview, so the first load may be a little slower.'
+          : '',
+      });
+      AppView._watchStagingIframeLoad(iframe, loadId);
+      iframe.src = pending.src;
+      return;
+    }
+
+    // FALLBACK. No server verification (a read-only viewer opening a
+    // last-known URL, a preview that didn't answer its healthcheck, or a
+    // rebuild we're opening straight off the WS event): confirm the host
+    // answers before pointing the iframe at it, so a dead preview shows a
+    // spinner rather than a browser error page. (The probe always targets
+    // the origin root, not the deep link — readiness is a host property,
+    // and the deep path may be app-routed or auth-gated.)
+    AppView._waitForStagingReady(resolved, loadId, { checksRunning }).then((ready) => {
       // A newer swap (or a close) superseded this one — drop the result.
       if (loadId !== AppView._stagingLoadId) return;
-      AppView._setStagingLoader(false);
-      if (ready) iframe.src = pending.src;
+      if (!ready) return;
+      // Keep the spinner up across the render, same as the fast path.
+      AppView._setStagingLoader(true, { title: 'Loading the preview…', sub: '' });
+      AppView._watchStagingIframeLoad(iframe, loadId);
+      iframe.src = pending.src;
     });
+  },
+
+  // #816: the last leg — the iframe's own page load — used to be
+  // unobserved: the loader was hidden before `src` was assigned, so the
+  // user watched a black rectangle with no spinner and no timeout while the
+  // preview rendered. Hide the loader on the real signal (`load`), surface
+  // a failed navigation (`error`), and keep a safety timeout so an app that
+  // hangs on first byte can't spin forever.
+  //
+  // Every path re-checks `_stagingLoadId`: closing the overlay or opening a
+  // different preview bumps it, and a late event from the superseded load
+  // must not touch the loader.
+  _stagingIframeTimer: null,
+  _watchStagingIframeLoad(iframe, loadId) {
+    if (!iframe) return;
+    if (AppView._stagingIframeTimer) {
+      clearTimeout(AppView._stagingIframeTimer);
+      AppView._stagingIframeTimer = null;
+    }
+    const settle = () => {
+      iframe.onload = null;
+      iframe.onerror = null;
+      if (AppView._stagingIframeTimer) {
+        clearTimeout(AppView._stagingIframeTimer);
+        AppView._stagingIframeTimer = null;
+      }
+    };
+    iframe.onload = () => {
+      settle();
+      if (loadId !== AppView._stagingLoadId) return;
+      AppView._setStagingLoader(false);
+    };
+    iframe.onerror = () => {
+      settle();
+      if (loadId !== AppView._stagingLoadId) return;
+      AppView._setStagingLoader(true, {
+        title: 'This is taking longer than expected',
+        sub: 'The preview didn’t finish loading. Close this and click Preview '
+          + 'again in a moment.',
+      });
+    };
+    AppView._stagingIframeTimer = setTimeout(() => {
+      AppView._stagingIframeTimer = null;
+      if (loadId !== AppView._stagingLoadId) return;
+      AppView._setStagingLoader(true, {
+        title: 'This is taking longer than expected',
+        sub: 'The preview is still loading. Close this and click Preview '
+          + 'again in a moment.',
+      });
+    }, AppView.STAGING_IFRAME_LOAD_TIMEOUT_MS);
   },
 
   // #127: Preview entry point for vote-panel / group-chat rows — looks up
@@ -9517,57 +9666,95 @@ const AppView = {
   // iframe.
   _stagingLoadId: 0,
 
+  // #816: an EXPLICIT empty string clears the line; only `undefined` leaves
+  // it alone. The old truthiness check made '' a no-op, which would leave a
+  // previous state's sub-line (the rebuild estimate, the checks note)
+  // stranded under a title that no longer matches it.
   _setStagingLoader(visible, { title, sub } = {}) {
     const loader = document.getElementById('staging-loader');
     if (!loader) return;
     loader.classList.toggle('hidden', !visible);
-    if (title) {
+    if (title !== undefined) {
       const t = document.getElementById('staging-loader-title');
       if (t) t.textContent = title;
     }
-    if (sub) {
+    if (sub !== undefined) {
       const s = document.getElementById('staging-loader-sub');
       if (s) s.textContent = sub;
     }
   },
 
-  // Poll the staging host until its TLS handshake + HTTP response succeed.
-  // Uses a no-cors GET: it resolves for any reply (even opaque/redirect/4xx),
-  // and rejects on the network/TLS failure we get while the cert is still
-  // issuing — exactly the readiness signal we want. Resolves true when ready,
-  // false only if the user backed out (stale loadId).
-  async _waitForStagingReady(resolved, loadId) {
+  // #816: retry schedule for the fallback readiness poll below.
+  //
+  // This used to be a flat 2500ms sleep with an 8000ms per-attempt abort —
+  // granularity sized for the on-demand-TLS era, when a first load really
+  // could block for a minute on certificate issuance. That era is gone (one
+  // pre-existing wildcard cert covers every preview), and a live preview
+  // answers in tens to low hundreds of milliseconds, so a single unlucky
+  // first attempt was costing 2.5-10.5s of pure waiting against something
+  // that was already serving. Start tight and escalate to the same 2s
+  // ceiling, and cut each attempt off at 5s.
+  STAGING_POLL_BACKOFF_MS: [300, 600, 1200],
+  STAGING_POLL_BACKOFF_MAX_MS: 2000,
+  STAGING_POLL_ATTEMPT_TIMEOUT_MS: 5000,
+  // Safety net for the iframe's own page load (see _watchStagingIframeLoad).
+  STAGING_IFRAME_LOAD_TIMEOUT_MS: 20000,
+
+  _stagingPollBackoffMs(attemptIndex) {
+    const table = AppView.STAGING_POLL_BACKOFF_MS;
+    return attemptIndex < table.length
+      ? table[attemptIndex]
+      : AppView.STAGING_POLL_BACKOFF_MAX_MS;
+  },
+
+  // Poll the staging host until it answers. Uses a no-cors GET: it resolves
+  // for any reply (even opaque/redirect/4xx) and rejects on a network-level
+  // failure — exactly the readiness signal we want. Resolves true when the
+  // host answers, false only if the user backed out (stale loadId).
+  //
+  // #816: this is now the FALLBACK only. When the server verified the
+  // preview in the ensure-staging response, swapToStaging skips straight to
+  // the iframe. The copy makes no claim about WHY a preview isn't answering
+  // yet — the old wording blamed a certificate authority that is no longer
+  // in the path.
+  async _waitForStagingReady(resolved, loadId, opts) {
+    const checksRunning = !!(opts && opts.checksRunning);
     AppView._setStagingLoader(true, {
-      title: 'Provisioning secure preview…',
-      sub: 'Issuing a TLS certificate for this preview. First load can take a minute.',
+      title: 'Waiting for the preview to respond…',
+      sub: checksRunning
+        ? 'Automated checks are running against this preview, so the first load may be a little slower.'
+        : '',
     });
     const startedAt = Date.now();
     let attempt = 0;
     while (loadId === AppView._stagingLoadId) {
-      attempt += 1;
       const controller = new AbortController();
-      const to = setTimeout(() => controller.abort(), 8000);
+      const to = setTimeout(
+        () => controller.abort(), AppView.STAGING_POLL_ATTEMPT_TIMEOUT_MS
+      );
       try {
         await fetch(resolved, { mode: 'no-cors', cache: 'no-store', signal: controller.signal });
         clearTimeout(to);
-        return true; // handshake + response succeeded → cert is live
+        return true; // the host answered
       } catch {
         clearTimeout(to);
         if (loadId !== AppView._stagingLoadId) return false;
         const elapsed = Math.round((Date.now() - startedAt) / 1000);
         // Escalate the copy so a longer-than-usual wait doesn't look hung.
-        if (elapsed >= 90) {
+        // No cause is asserted — we genuinely don't know one here.
+        if (elapsed >= 60) {
           AppView._setStagingLoader(true, {
-            title: 'Still provisioning…',
-            sub: `The certificate authority is taking longer than usual (${elapsed}s). Hang tight — this keeps retrying automatically.`,
+            title: 'Still waiting on the preview',
+            sub: `The preview hasn’t responded yet (${elapsed}s). Hang tight — this keeps retrying automatically.`,
           });
-        } else if (elapsed >= 30) {
+        } else if (elapsed >= 20) {
           AppView._setStagingLoader(true, {
-            title: 'Provisioning secure preview…',
-            sub: `Almost there — waiting on the TLS certificate (${elapsed}s).`,
+            title: 'Waiting for the preview to respond…',
+            sub: `Taking a little longer than usual (${elapsed}s).`,
           });
         }
-        await new Promise((r) => setTimeout(r, 2500));
+        await new Promise((r) => setTimeout(r, AppView._stagingPollBackoffMs(attempt)));
+        attempt += 1;
       }
     }
     return false; // superseded/closed
@@ -9596,6 +9783,10 @@ const AppView = {
     // a late staging_ready can't reopen the overlay after the user left.
     AppView._pendingStagingPreview = null;
     if (AppView._stagingRebuildTimer) { clearTimeout(AppView._stagingRebuildTimer); AppView._stagingRebuildTimer = null; }
+    // #816: drop the iframe-load watch + its safety timeout so a late load
+    // event from the preview being torn down here can't re-touch the loader.
+    if (AppView._stagingIframeTimer) { clearTimeout(AppView._stagingIframeTimer); AppView._stagingIframeTimer = null; }
+    if (iframe) { iframe.onload = null; iframe.onerror = null; }
     AppView._setStagingLoader(false);
     if (overlay) overlay.classList.add('hidden');
     if (iframe) iframe.src = '';

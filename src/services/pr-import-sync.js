@@ -284,8 +284,8 @@ async function rerunChecksForNewHead({ config, pool, session, newHead }) {
     [result.containerId, result.stagingUrl, session.id]
   );
   try {
-    await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
-  } catch (_) { /* cert warm is best-effort */ }
+    await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
+  } catch (_) { /* edge verification is best-effort */ }
 
   await visuals.captureForSession(config, session, app, newHead || null, result, { send: () => {} })
     .catch((err) => log.warn('pr-import-sync', 'checks capture failed (non-fatal)', {
@@ -444,7 +444,7 @@ async function kickImportedChecks({ config, pool, session, app, headSha }) {
       `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
       [result.containerId, result.stagingUrl, session.id]
     );
-    await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+    await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
 
     // #866: and that it landed. The URL rides in metadata rather than the
     // body — a preview host is long, ugly, and rotates on every rebuild,

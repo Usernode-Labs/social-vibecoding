@@ -96,7 +96,7 @@ function loadSessions(mockPool, overrides = {}) {
       stagingCalls.push({ sessionId: session.id, commitHash });
       return { containerId: 'stg-container-1', stagingUrl: 'https://stg-test.example', hostname: 'stg-test.example' };
     },
-    warmStagingCert: async () => {},
+    verifyStagingEdge: async () => {},
     ...(overrides.staging || {}),
   };
 
@@ -425,7 +425,7 @@ function loadVotes(mockPool, overrides = {}) {
       stagingCalls.push({ sessionId: session.id });
       return { containerId: 'stg-c', stagingUrl: 'https://clone-stg.example', hostname: 'clone-stg.example' };
     },
-    warmStagingCert: async () => {},
+    verifyStagingEdge: async () => {},
     ...(overrides.staging || {}),
   };
   const prMetadataStub = {

@@ -79,7 +79,7 @@ function loadSessions(mockPool, overrides = {}) {
     PrivateSecretMissingStagingDefaultError,
     MissingSecretsError,
     buildAndDeployStaging: async () => { throw new Error('staging disabled in tests'); },
-    warmStagingCert: async () => {},
+    verifyStagingEdge: async () => {},
     ...(overrides.staging || {}),
   };
 

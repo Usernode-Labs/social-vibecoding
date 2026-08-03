@@ -4150,10 +4150,9 @@ function sessionRoutes(config) {
             `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
             [result.containerId, result.stagingUrl, session.id]
           );
-          // Warm the cert only after staging_url is persisted (Caddy's `ask`
-          // gate keys off it); otherwise the warm is refused and the first
-          // click hits a cold hostname.
-          await staging.warmStagingCert(session, result.hostname, result.stagingUrl);
+          // Verify the edge only after staging_url is persisted — that is
+          // the point at which the hostname is a referenceable preview.
+          await staging.verifyStagingEdge(session, result.hostname, result.stagingUrl);
           // #461: run the proposal checks against the fresh build, matching
           // every other staging-deploy path. Before this, a preview built
           // via this button left check_state NULL — the promote path then
@@ -4221,7 +4220,38 @@ function sessionRoutes(config) {
       // platform env? Open it as-is. A stale-env preview (#851) falls through
       // to the rebuild below instead of opening the app's login screen.
       if (!(await stagingRecovery.stagingNeedsRebuild(session, { config }))) {
-        return res.json({ status: 'ready', url: session.staging_url });
+        // #816: liveness says the CONTAINER is running; it does not say the
+        // app inside it is answering. One bounded in-container healthcheck
+        // upgrades the answer from "should work" to "answered just now",
+        // which is what lets the client point the iframe straight at the
+        // preview instead of re-deriving readiness with its own poll.
+        //
+        // A failed probe is NOT an error and NOT a rebuild trigger — the
+        // preview may simply be busy under the post-build checks run. We
+        // still answer `ready`, just without the verification, and the
+        // client falls back to polling.
+        //
+        // probeHealthOnce swallows its own failures; the .catch is belt and
+        // braces so a docker-layer surprise can never turn "open the
+        // preview" into a 500.
+        const verified = await docker.probeHealthOnce(
+          `usernode-staging-${session.app_slug}--${sessionId}`, 3000, '/health',
+          { timeoutMs: 3000 }
+        ).catch(() => false);
+        if (!verified) {
+          log.warn('sessions', 'ensure-staging: preview is live but did not answer its healthcheck', {
+            sessionId, appSlug: session.app_slug,
+          });
+        }
+        return res.json({
+          status: 'ready',
+          url: session.staging_url,
+          verified,
+          // Drives one honest line of loader copy: the screenshot + checks
+          // pass runs against this same container for 1-3 minutes after a
+          // build, so the first load can legitimately be slower.
+          checksRunning: session.check_state === 'pending',
+        });
       }
 
       // Dedup concurrent clicks: at most one rebuild per session in flight.
@@ -5671,7 +5701,7 @@ async function resumeOneHeadlessRunInner({ pool, config, session }) {
             'UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3',
             [stagingResult.containerId, stagingResult.stagingUrl, session.id]
           ).catch(() => {});
-          await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl).catch(() => {});
+          await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl).catch(() => {});
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, metadata)
              VALUES ($1, 'system', $2, $3)`,
@@ -7829,10 +7859,10 @@ path: /another/changed/view
           `UPDATE chat_sessions SET staging_container_id = $1, staging_url = $2 WHERE id = $3`,
           [stagingResult.containerId, stagingResult.stagingUrl, session.id]
         );
-        // Same cert pre-warm as the interactive tail: persist staging_url
-        // first (Caddy's `ask` gate keys off it), warm before revealing
-        // the preview anywhere.
-        await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
+        // Same edge verification as the interactive tail: persist
+        // staging_url first, then make the first real request through the
+        // edge before revealing the preview anywhere.
+        await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl);
         stagingUrl = stagingResult.stagingUrl;
         // The stagingUrl metadata is what makes this row render as the
         // "Changes ready" staging card (Preview / Test / Propose buttons)
@@ -8003,12 +8033,14 @@ path: /another/changed/view
           [stagingResult.containerId, stagingResult.stagingUrl, session.id]
         );
 
-        // Pre-warm the TLS cert now that staging_url is persisted (so Caddy's
-        // on-demand `ask` gate will approve the host) and BEFORE emitting
-        // `staging_ready` (which reveals the preview button). Otherwise the
-        // first click pays the ~60-90s ZeroSSL cold-start. Bounded; never
-        // blocks the deploy.
-        await staging.warmStagingCert(session, stagingResult.hostname, stagingResult.stagingUrl);
+        // Make one real end-to-end request through the edge now that
+        // staging_url is persisted and BEFORE emitting `staging_ready`
+        // (which reveals the preview button), so the reviewer's click
+        // doesn't pay the container's cold first request — and so a preview
+        // the edge can't actually route to is visible in the platform log
+        // rather than only to whoever clicks it. Bounded; never blocks the
+        // deploy.
+        await staging.verifyStagingEdge(session, stagingResult.hostname, stagingResult.stagingUrl);
 
         stagingUrl = stagingResult.stagingUrl;
         // `changesReady: true` is now what drives the "Changes ready" card
@@ -8485,10 +8517,10 @@ CMD ["node", "server.js"]
     ? `http://localhost:${hostPort}`
     : `https://${hostname}`;
 
-  // TLS pre-warm happens in the caller (staging.warmStagingCert) AFTER the
-  // session's staging_url is persisted — Caddy's on-demand `ask` gate keys
-  // off that row, so warming here would be refused. See staging.js for the
-  // full ordering rationale.
+  // Edge verification happens in the caller (staging.verifyStagingEdge)
+  // AFTER the session's staging_url is persisted — that persist is what
+  // makes the hostname a referenceable preview. See staging.js for the full
+  // ordering rationale.
 
   return { containerId, stagingUrl, hostname };
 }

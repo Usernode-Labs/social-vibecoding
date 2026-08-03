@@ -55,7 +55,7 @@ fakeModule('../src/services/visuals', {
 });
 fakeModule('../src/services/staging', {
   buildAndDeployStaging: async () => ({ containerId: 'c', stagingUrl: 'u', hostname: 'h' }),
-  warmStagingCert: async () => {},
+  verifyStagingEdge: async () => {},
 });
 fakeModule('../src/services/sync-main', {
   // Mirror the real persistBehindMain's DB write so the recording pool

@@ -2,11 +2,11 @@
 // kickImportedChecks), extracted out of the POST /pr-import route so it can
 // be exercised on its own. Covers:
 //   - the real-GitHub sequence: setChecksPending → notifyChecksPending →
-//     buildAndDeployStaging → UPDATE staging_url → warmStagingCert →
+//     buildAndDeployStaging → UPDATE staging_url → verifyStagingEdge →
 //     staging_ready broadcast + pushSessionUpdate → captureForSession, in
 //     that order (the broadcast MUST come after the staging_url persist —
-//     Caddy's on-demand TLS gate only approves a host once the column
-//     matches it);
+//     that persist is what makes the hostname a referenceable preview, so
+//     the edge check and the reveal both have to follow it);
 //   - the mock-GitHub (staging preview) branch short-circuits to a
 //     gate-passing 'skipped' verdict with no build and no staging_ready;
 //   - a build failure records a terminal boot-failure verdict, emits no
@@ -55,7 +55,7 @@ fakeModule('../src/services/visuals', {
 });
 fakeModule('../src/services/staging', {
   buildAndDeployStaging: async () => ({ containerId: 'c1', stagingUrl: 'https://s.example', hostname: 'h' }),
-  warmStagingCert: async () => {},
+  verifyStagingEdge: async () => {},
   teardownStaging: async () => ({ removed: true }),
 });
 fakeModule('../src/services/staging-recovery', {
@@ -91,7 +91,7 @@ function makeTrace({ buildImpl, statusAfterBuild = 'promoted' } = {}) {
     trace.push(['build', commit]);
     return { containerId: 'c1', stagingUrl: 'https://s.example', hostname: 'h' };
   });
-  fakeStaging.warmStagingCert = async (s, host, url) => { trace.push(['warmStagingCert', url]); };
+  fakeStaging.verifyStagingEdge = async (s, host, url) => { trace.push(['verifyStagingEdge', url]); };
   fakeStaging.teardownStaging = async (s, app) => {
     trace.push(['teardownStaging', s.staging_container_id, s.staging_url, app && app.slug]);
     return { removed: true };
@@ -140,7 +140,7 @@ test('kickImportedChecks runs the full sequence and broadcasts staging_ready aft
     'build',
     'statusRecheck',     // #866: still promoted?
     'persistStagingUrl',
-    'warmStagingCert',
+    'verifyStagingEdge',
     'note',              // #866: "…preview is ready"
     'broadcastGlobal',
     'pushSessionUpdate',
