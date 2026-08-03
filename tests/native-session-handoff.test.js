@@ -8,6 +8,10 @@ const nativeChromeSource = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'native-chrome.js'),
   'utf8'
 );
+const appSource = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'app.js'),
+  'utf8'
+);
 
 function deferred() {
   let resolve;
@@ -33,13 +37,19 @@ function plain(value) {
 
 function loadNativeChrome({
   initialUser = null,
+  bridgeVersion = 4,
   capabilities = [
     'completeLogin',
     'startNode',
     'logout',
+    'beginSessionHandoff',
+    'enterAnonymousSession',
     'sessionBoundAuthStatus',
   ],
+  getBridgeInfoImpl,
   fetchImpl,
+  beginSessionHandoffImpl,
+  enterAnonymousSessionImpl,
   completeLoginImpl,
   startNodeImpl,
   logoutImpl,
@@ -50,14 +60,41 @@ function loadNativeChrome({
     startNode: [],
     logout: 0,
     stopNode: 0,
+    beginSessionHandoff: 0,
+    enterAnonymousSession: 0,
+    walletRelayAdmission: [],
+    order: [],
   };
   const windowListeners = {};
   const documentListeners = {};
   const usernode = {
     isNative: true,
-    async getBridgeInfo() { return { version: 4, capabilities }; },
+    _setSessionWalletRelayAdmission(admitted) {
+      calls.walletRelayAdmission.push(admitted === true);
+      return admitted === true;
+    },
+    async getBridgeInfo() {
+      return getBridgeInfoImpl
+        ? getBridgeInfoImpl()
+        : { version: bridgeVersion, capabilities };
+    },
+    async beginSessionHandoff() {
+      calls.beginSessionHandoff += 1;
+      calls.order.push('begin-session-handoff');
+      return beginSessionHandoffImpl
+        ? beginSessionHandoffImpl()
+        : { blocked: true };
+    },
+    async enterAnonymousSession() {
+      calls.enterAnonymousSession += 1;
+      calls.order.push('enter-anonymous-session');
+      return enterAnonymousSessionImpl
+        ? enterAnonymousSessionImpl()
+        : { admitted: true };
+    },
     async completeLogin(payload) {
       calls.completeLogin.push(payload);
+      calls.order.push('complete-login');
       if (completeLoginImpl) return completeLoginImpl(payload);
       return {
         phase: 'ready',
@@ -98,6 +135,7 @@ function loadNativeChrome({
     clearTimeout,
     async fetch(url, options) {
       calls.fetch.push({ url, options });
+      calls.order.push('from-session');
       if (fetchImpl) return fetchImpl(url, options, calls.fetch.length);
       const id = sandbox.App.user.id;
       return response({ success: true, token: `token-${id}`, user: { id } });
@@ -125,6 +163,116 @@ async function settle() {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test('anonymous auth screens wait for native wallet admission', async () => {
+  const admission = deferred();
+  const order = [];
+  const sandbox = {
+    console: { log() {}, warn() {}, error() {} },
+    NativeChrome: {
+      enterAnonymous() {
+        order.push('native-admission');
+        return admission.promise;
+      },
+    },
+    AuthScreens: {
+      enter() {
+        order.push('auth-screens');
+        // Login routing synchronously starts the one-shot wallet probe.
+        order.push('wallet-detect');
+      },
+    },
+    document: { addEventListener() {} },
+    location: { search: '', hash: '' },
+    URLSearchParams,
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(appSource, sandbox);
+  sandbox.App.loadVersion = () => order.push('load-version');
+
+  const entering = sandbox.App.enterAnonymous();
+  await settle();
+  assert.deepEqual(order, ['native-admission']);
+
+  admission.resolve(true);
+  await entering;
+  assert.deepEqual(order, [
+    'native-admission',
+    'load-version',
+    'auth-screens',
+    'wallet-detect',
+  ]);
+});
+
+test('anonymous entry opens local admission only after native acknowledgement',
+  async () => {
+    const admission = deferred();
+    const loaded = loadNativeChrome({
+      enterAnonymousSessionImpl: () => admission.promise,
+    });
+
+    assert.deepEqual(loaded.calls.walletRelayAdmission, [false]);
+    const entering = loaded.NativeChrome.enterAnonymous();
+    await settle();
+    assert.equal(loaded.calls.enterAnonymousSession, 1);
+    assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
+
+    admission.resolve({ admitted: true });
+    assert.equal(await entering, true);
+    assert.equal(loaded.calls.walletRelayAdmission.at(-1), true);
+  });
+
+test('failed anonymous native admission stays closed', async () => {
+  const loaded = loadNativeChrome({
+    enterAnonymousSessionImpl: async () => { throw new Error('not admitted'); },
+  });
+
+  assert.equal(await loaded.NativeChrome.enterAnonymous(), false);
+  assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
+});
+
+test('a newer login handoff prevents stale anonymous native admission',
+  async () => {
+    const info = deferred();
+    const loaded = loadNativeChrome({
+      getBridgeInfoImpl: () => info.promise,
+    });
+
+    const enteringAnonymous = loaded.NativeChrome.enterAnonymous();
+    loaded.sandbox.App.user = { id: 12 };
+    const loggingIn = loaded.NativeChrome.runLoginHandoff();
+    info.resolve({
+      version: 4,
+      capabilities: [
+        'completeLogin',
+        'startNode',
+        'beginSessionHandoff',
+        'enterAnonymousSession',
+        'sessionBoundAuthStatus',
+      ],
+    });
+
+    assert.equal(await enteringAnonymous, false);
+    await loggingIn;
+    assert.equal(loaded.calls.enterAnonymousSession, 0,
+      'stale anonymous work must not reopen native after login begins');
+    assert.equal(loaded.calls.beginSessionHandoff, 1);
+    assert.equal(loaded.calls.walletRelayAdmission.at(-1), true,
+      'only the verified participant handoff reopens local admission');
+  });
+
+test('pre-v4 anonymous entry preserves local wallet compatibility', async () => {
+  const loaded = loadNativeChrome({
+    bridgeVersion: 3,
+    capabilities: ['getWalletState'],
+  });
+
+  assert.equal(await loaded.NativeChrome.enterAnonymous(), true);
+  assert.equal(loaded.calls.enterAnonymousSession, 0);
+  assert.equal(loaded.calls.walletRelayAdmission.at(-1), true);
+});
+
 test('every handoff exchanges the web session and starts the bound identity', async () => {
   const loaded = loadNativeChrome();
   loaded.sandbox.App.user = { id: 7 };
@@ -133,6 +281,10 @@ test('every handoff exchanges the web session and starts the bound identity', as
 
   assert.equal(result.participantId, 7);
   assert.equal(loaded.calls.fetch.length, 1);
+  assert.equal(loaded.calls.beginSessionHandoff, 1);
+  assert.deepEqual(loaded.calls.order.slice(0, 3), [
+    'begin-session-handoff', 'from-session', 'complete-login',
+  ]);
   assert.equal(loaded.calls.fetch[0].url, '/api/v4/mobile/auth/from-session');
   assert.equal(loaded.calls.fetch[0].options.credentials, 'same-origin');
   assert.deepEqual(plain(loaded.calls.completeLogin), [
@@ -165,6 +317,20 @@ test('a mismatched from-session participant is never handed to native', async ()
   assert.equal(loaded.calls.completeLogin.length, 0);
   assert.equal(loaded.calls.startNode.length, 0);
 });
+
+test('native handoff-latch failure stops before the session exchange',
+  async () => {
+    const loaded = loadNativeChrome({
+      beginSessionHandoffImpl: async () => { throw new Error('latch failed'); },
+    });
+    loaded.sandbox.App.user = { id: 7 };
+
+    await loaded.NativeChrome.runLoginHandoff();
+
+    assert.equal(loaded.calls.beginSessionHandoff, 1);
+    assert.equal(loaded.calls.fetch.length, 0);
+    assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
+  });
 
 test('an overlapping A to B login reruns once for the latest web session', async () => {
   const firstFetch = deferred();
@@ -213,6 +379,36 @@ test('a boot session still observes later SPA account changes', async () => {
   );
 });
 
+test('A to B closes wallet admission synchronously and keeps old document closed',
+  async () => {
+    const replacement = deferred();
+    const loaded = loadNativeChrome({
+      initialUser: { id: 1 },
+      completeLoginImpl: async (payload) => {
+        if (payload.user.id === 2) return replacement.promise;
+        return {
+          phase: 'ready', address: 'ut1-1', participantId: 1, epoch: 1,
+        };
+      },
+    });
+    await loaded.NativeChrome._handoffPromise;
+    assert.equal(loaded.calls.walletRelayAdmission.at(-1), true,
+      'verified A handoff admits its wallet');
+
+    loaded.sandbox.App.user = { id: 2 };
+    loaded.dispatchDocument('sv:session');
+    assert.equal(loaded.calls.walletRelayAdmission.at(-1), false,
+      'the session event closes admission before any async exchange step');
+
+    await settle();
+    assert.equal(loaded.calls.beginSessionHandoff, 2,
+      'the paired native latch closes before B reaches completeLogin');
+    replacement.resolve({ restarting: true });
+    await loaded.NativeChrome._handoffPromise;
+    assert.equal(loaded.calls.walletRelayAdmission.at(-1), false,
+      'a replacement makes the old document terminal; it never re-admits A');
+  });
+
 test('stale native completion and restart responses cannot start a node', async () => {
   const completion = deferred();
   const loaded = loadNativeChrome({
@@ -255,6 +451,8 @@ test('native failures do not start and logout invalidates an active handoff', as
   rejected.sandbox.App.user = { id: 4 };
   await rejected.NativeChrome.runLoginHandoff();
   assert.equal(rejected.calls.startNode.length, 0);
+  assert.equal(rejected.calls.walletRelayAdmission.at(-1), false,
+    'failed handoffs remain fail-closed');
 
   const exchange = deferred();
   const loggingOut = loadNativeChrome({
@@ -263,7 +461,10 @@ test('native failures do not start and logout invalidates an active handoff', as
   loggingOut.sandbox.App.user = { id: 5 };
   const active = loggingOut.NativeChrome.runLoginHandoff();
   await settle();
-  await loggingOut.NativeChrome.handleWebLogout();
+  assert.equal(await loggingOut.NativeChrome.prepareWebLogout(), true);
+  assert.equal(loggingOut.calls.logout, 0,
+    'preflight closes admission without tearing down the WebView');
+  assert.equal(await loggingOut.NativeChrome.commitNativeLogout(), true);
   exchange.resolve(response({
     success: true, token: 'stale-token', user: { id: 5 },
   }));
@@ -313,3 +514,28 @@ test('old app builds retain the address-only node-start fallback', async () => {
 
   assert.deepEqual(plain(loaded.calls.startNode), [{ address: 'ut1-legacy' }]);
 });
+
+test('pre-v4 app builds reopen wallet admission after capability probing',
+  async () => {
+    const loaded = loadNativeChrome({
+      bridgeVersion: 3,
+      capabilities: ['getWalletState'],
+    });
+    loaded.sandbox.App.user = { id: 10 };
+
+    await loaded.NativeChrome.runLoginHandoff();
+
+    assert.equal(loaded.calls.fetch.length, 0);
+    assert.deepEqual(loaded.calls.walletRelayAdmission, [false, false, true]);
+  });
+
+test('an inconclusive bridge probe keeps wallet admission fail-closed',
+  async () => {
+    const loaded = loadNativeChrome({ bridgeVersion: 0, capabilities: [] });
+    loaded.sandbox.App.user = { id: 11 };
+
+    await loaded.NativeChrome.runLoginHandoff();
+
+    assert.equal(loaded.calls.fetch.length, 0);
+    assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
+  });

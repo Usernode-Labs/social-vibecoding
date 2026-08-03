@@ -95,19 +95,48 @@
     resetZkChallenge: true,
     requestPermissions: true,
     openBatterySettings: true,
+    // Removed in bridge v4, but old v3 iOS builds still accept it. Keep the
+    // legacy action fenced so an embedded app cannot borrow the top frame's
+    // trusted origin through the relay.
+    setIosKeepAlive: true,
     logout: true,
+    beginSessionHandoff: true,
+    enterAnonymousSession: true,
     completeLogin: true,
     startNode: true,
     stopNode: true,
     getAuthStatus: true,
   };
+  var _SESSION_WALLET_METHODS = {
+    getNodeAddress: true,
+    sendTransaction: true,
+    signMessage: true,
+    txObserved: true,
+    getWalletState: true,
+    getTransactionRecords: true,
+  };
   var _privilegedCapability = null;
   var _privilegedCapabilityPromise = null;
   var _privilegedCapabilitySupported = null;
+  var _sessionWalletRelayAdmitted = true;
 
   function isPrivilegedNativeMethod(method) {
     return _PRIVILEGED_NATIVE_METHODS[method] === true;
   }
+
+  function isSessionWalletMethod(method) {
+    return _SESSION_WALLET_METHODS[method] === true;
+  }
+
+  // NativeChrome closes this synchronously when `sv:session` announces a
+  // login or account change, then reopens it only after that participant's
+  // native handoff succeeds. The iframe's own bridge cannot change the
+  // parent closure; same-origin top-frame code is already trusted.
+  window.usernode._setSessionWalletRelayAdmission = function (admitted) {
+    if (_inIframe) return false;
+    _sessionWalletRelayAdmitted = admitted === true;
+    return _sessionWalletRelayAdmitted;
+  };
 
   // ── Configuration for QR/desktop mode ─────────────────────────────────
   // Apps call window.usernode.configure({ address: "ut1..." }) to set the
@@ -275,6 +304,11 @@
   }
 
   function callNative(method, args) {
+    if (isSessionWalletMethod(method) && !_sessionWalletRelayAdmitted) {
+      return Promise.reject(new Error(
+        "Native wallet handoff is in progress"
+      ));
+    }
     if (!isPrivilegedNativeMethod(method)) {
       return postNative(method, args);
     }
@@ -355,27 +389,6 @@
       }
       if (data.__usernode_relay !== "request") return;
       var origId = data.id;
-      // The native capability is delivered only into this top-frame JS
-      // realm. Never let a child bootstrap it or ask the parent to exercise
-      // a privileged method on its behalf; non-privileged dapp methods keep
-      // using the relay below.
-      if (data.method === _PRIVILEGED_CAPABILITY_METHOD ||
-          isPrivilegedNativeMethod(data.method)) {
-        console.warn(_BRIDGE_TAG, "refusing privileged relay", data.method,
-          "from child iframe", origin);
-        try {
-          source.postMessage(
-            { __usernode_relay: "response", id: origId, value: null,
-              error: "Privileged Usernode methods are only available to the top-level page" },
-            origin
-          );
-        } catch (_) { /* iframe gone, ignore */ }
-        return;
-      }
-      var nativeId = "relay-" + String(Date.now()) + "-" +
-        Math.random().toString(16).slice(2);
-      console.log(_BRIDGE_TAG, "← relay request",
-        data.method, "id", origId, "→ native id", nativeId);
       function reply(value, error) {
         try {
           source.postMessage(
@@ -384,6 +397,29 @@
           );
         } catch (_) { /* iframe gone, ignore */ }
       }
+      if (isSessionWalletMethod(data.method) &&
+          !_sessionWalletRelayAdmitted) {
+        console.warn(_BRIDGE_TAG, "refusing wallet relay during handoff",
+          data.method, "from child iframe", origin);
+        reply(null, "Native wallet handoff is in progress");
+        return;
+      }
+      // The native capability is delivered only into this top-frame JS
+      // realm. Never let a child bootstrap it or ask the parent to exercise
+      // a privileged method on its behalf; non-privileged dapp methods keep
+      // using the relay below.
+      if (data.method === _PRIVILEGED_CAPABILITY_METHOD ||
+          isPrivilegedNativeMethod(data.method)) {
+        console.warn(_BRIDGE_TAG, "refusing privileged relay", data.method,
+          "from child iframe", origin);
+        reply(null,
+          "Privileged Usernode methods are only available to the top-level page");
+        return;
+      }
+      var nativeId = "relay-" + String(Date.now()) + "-" +
+        Math.random().toString(16).slice(2);
+      console.log(_BRIDGE_TAG, "← relay request",
+        data.method, "id", origId, "→ native id", nativeId);
       window.__usernodeBridge.pending[nativeId] = {
         resolve: function (v) {
           console.log(_BRIDGE_TAG, "native resolve →", nativeId);
@@ -502,6 +538,7 @@
     if (typeof txId !== "string") return;
     var trimmed = txId.trim();
     if (!trimmed) return;
+    if (!_sessionWalletRelayAdmitted) return;
     if (_observedTxIds[trimmed]) return;
     _observedTxIds[trimmed] = true;
 
@@ -4164,7 +4201,7 @@
 
   // =====================================================================
   //  Public API: platform login + node lifecycle (bridge v4)
-  //  (usernode.completeLogin / startNode / stopNode)
+  //  (usernode.beginSessionHandoff / completeLogin / startNode / stopNode)
   // =====================================================================
   //
   // Thin-shell migration: the platform (SV) is the ONLY sign-in surface
@@ -4177,8 +4214,26 @@
   // `usernode:node-status`). Node start/stop is then requested explicitly
   // by SV chrome (public/js/native-chrome.js owns the orchestration).
   //
-  // All three reject on old builds / outside the app / from non-SV
+  // These methods reject on old builds / outside the app / from non-SV
   // origins. Contract: NATIVE-BRIDGE.md (bridge v4).
+
+  // beginSessionHandoff() → { blocked: true }. New app builds close their
+  // native wallet-dispatch latch before the web session exchange, including
+  // raw Android child-frame channel messages that cannot be stopped by this
+  // JavaScript wrapper alone.
+  window.usernode.beginSessionHandoff = function () {
+    return callNativeChromeAction(
+      "beginSessionHandoff", {}, _CHROME_PROBE_TIMEOUT_MS
+    );
+  };
+
+  // enterAnonymousSession() → { admitted: true }. The trusted shell calls
+  // this only after it has confirmed that no web participant is signed in.
+  window.usernode.enterAnonymousSession = function () {
+    return callNativeChromeAction(
+      "enterAnonymousSession", {}, _CHROME_PROBE_TIMEOUT_MS
+    );
+  };
 
   // completeLogin({ token, user }) → identity snapshot
   //   { phase, address, participantId?, epoch? }, or { restarting: true }

@@ -19,7 +19,8 @@
 //     (POST /api/v4/mobile/auth/from-session), hand it to the native app
 //     via completeLogin, then request node start bound to the current native
 //     participant + identity epoch. SV logout crosses one hard native boundary
-//     (settings.js calls NativeChrome.handleWebLogout()).
+//     (settings.js prepares, commits its web cleanup, then calls the terminal
+//     NativeChrome.commitNativeLogout()).
 //
 // Everything here is capability-gated: on desktop, in child-app iframes,
 // and on old app builds the probe resolves { version: 0, capabilities: [] }
@@ -110,17 +111,88 @@
       return { address: value.address, participantId, epoch };
     },
 
+    _setSessionWalletRelayAdmission(admitted) {
+      const bridge = window.usernode;
+      if (bridge &&
+          typeof bridge._setSessionWalletRelayAdmission === 'function') {
+        bridge._setSessionWalletRelayAdmission(admitted === true);
+      }
+      const walletSheet = window.WalletSheet;
+      if (walletSheet &&
+          typeof walletSheet._setSessionWalletAdmission === 'function') {
+        walletSheet._setSessionWalletAdmission(admitted === true);
+      }
+    },
+
+    enterAnonymous() {
+      NativeChrome._setSessionWalletRelayAdmission(false);
+      if (NativeChrome._logoutRunning) return Promise.resolve(false);
+      const generation = ++NativeChrome._handoffGeneration;
+      const isCurrentAnonymous = () =>
+        !NativeChrome._logoutRunning &&
+        NativeChrome._handoffGeneration === generation &&
+        NativeChrome._webParticipantId() == null;
+      return (async () => {
+        const bridge = window.usernode;
+        if (!bridge || bridge.isNative !== true) {
+          if (!isCurrentAnonymous()) return false;
+          NativeChrome._setSessionWalletRelayAdmission(true);
+          return true;
+        }
+
+        const info = await NativeChrome.getInfo();
+        const capabilities = Array.isArray(info.capabilities)
+          ? info.capabilities
+          : [];
+        if (capabilities.includes('enterAnonymousSession')) {
+          if (!isCurrentAnonymous()) return false;
+          if (typeof bridge.enterAnonymousSession !== 'function') {
+            console.warn('[native-chrome] anonymous-session admission is unavailable');
+            return false;
+          }
+          const admission = await bridge.enterAnonymousSession();
+          if (!admission || admission.admitted !== true) {
+            console.warn('[native-chrome] anonymous session was not admitted');
+            return false;
+          }
+          if (!isCurrentAnonymous()) return false;
+          NativeChrome._setSessionWalletRelayAdmission(true);
+          return true;
+        }
+
+        // Pre-v4 builds have no native handoff gate to acknowledge. Preserve
+        // their existing local wallet behavior after a conclusive probe;
+        // a v4/inconclusive native result stays fail-closed.
+        const confirmedPreV4 = Number.isInteger(info.version) &&
+          info.version > 0 && info.version < 4;
+        if (confirmedPreV4 && isCurrentAnonymous()) {
+          NativeChrome._setSessionWalletRelayAdmission(true);
+          return true;
+        }
+        return false;
+      })().catch((error) => {
+        console.warn('[native-chrome] anonymous-session admission failed:',
+          error && error.message ? error.message : error);
+        return false;
+      });
+    },
+
     // Boot-time orchestration. Runs once a web session exists (init()
     // defers it to the `sv:session` boot stage — the SPA also boots
     // anonymously now) and safe to call again later. Sequence:
-    //   1. Always exchange the current web session for a fresh mobile bearer.
-    //   2. Verify the exchange still describes the current web participant.
-    //   3. Run completeLogin, then start only the matching native
+    //   1. Close local wallet admission and, when supported, the native latch.
+    //   2. Always exchange the current web session for a fresh mobile bearer.
+    //   3. Verify the exchange still describes the current web participant.
+    //   4. Run completeLogin, then start only the matching native
     //      participant + identity epoch. A cross-participant result asks the
     //      native runtime to restart; this document does no further work.
     // Every failure is a console.warn and a clean exit — the web shell
     // keeps working without the native side.
     runLoginHandoff() {
+      // Close synchronously with the `sv:session` listener invocation. No
+      // wallet read/sign/send may reach the previous native identity while
+      // the new web participant is being exchanged and verified.
+      NativeChrome._setSessionWalletRelayAdmission(false);
       if (NativeChrome._logoutRunning) return Promise.resolve(null);
       if (NativeChrome._handoffPromise) {
         NativeChrome._handoffRerunRequested = true;
@@ -154,10 +226,39 @@
     },
 
     async _runLoginHandoff(generation) {
-      if (!(await NativeChrome.has('completeLogin'))) return null;
+      const info = await NativeChrome.getInfo();
+      const capabilities = Array.isArray(info.capabilities)
+        ? info.capabilities
+        : [];
+      if (!capabilities.includes('completeLogin')) {
+        // Pre-v4 app builds have no platform-session handoff to verify. Keep
+        // their existing wallet behavior only when a real older bridge version
+        // confirms that absence. A version-0 timeout/fallback remains closed.
+        const confirmedPreV4 = Number.isInteger(info.version) &&
+          info.version > 0 && info.version < 4;
+        if (confirmedPreV4 && !NativeChrome._logoutRunning &&
+            !NativeChrome._handoffRerunRequested) {
+          NativeChrome._setSessionWalletRelayAdmission(true);
+        }
+        return null;
+      }
       const webParticipantId = NativeChrome._webParticipantId();
       if (webParticipantId == null) return null;
       try {
+        if (capabilities.includes('beginSessionHandoff')) {
+          if (typeof window.usernode.beginSessionHandoff !== 'function') {
+            console.warn('[native-chrome] session handoff latch is unavailable');
+            return null;
+          }
+          const admission = await window.usernode.beginSessionHandoff();
+          if (!admission || admission.blocked !== true) {
+            console.warn('[native-chrome] native wallet handoff was not blocked');
+            return null;
+          }
+          if (!NativeChrome._isCurrentWebParticipant(
+            webParticipantId, generation
+          )) return null;
+        }
         const res = await fetch('/api/v4/mobile/auth/from-session', {
           method: 'POST',
           credentials: 'same-origin',
@@ -197,12 +298,24 @@
             return null;
           }
           await NativeChrome._ensureNodeStarted(status, generation);
+          if (!NativeChrome._handoffRerunRequested &&
+              NativeChrome._isCurrentWebParticipant(
+            webParticipantId, generation
+          )) {
+            NativeChrome._setSessionWalletRelayAdmission(true);
+          }
         } else if (result && result.address) {
           // Compatibility for bridge v4 builds. New builds advertise
           // sessionBoundAuthStatus and take the participant/epoch path above.
           await NativeChrome._ensureLegacyNodeStarted(
             result.address, webParticipantId, generation
           );
+          if (!NativeChrome._handoffRerunRequested &&
+              NativeChrome._isCurrentWebParticipant(
+            webParticipantId, generation
+          )) {
+            NativeChrome._setSessionWalletRelayAdmission(true);
+          }
         }
         return result || null;
       } catch (e) {
@@ -276,21 +389,37 @@
       return promise;
     },
 
-    // Web logout teardown — called by settings.js before it clears the web
-    // session and bounces to login.html. Native logout owns stop/drain/cleanup;
-    // keep this to one bounded call so the web and native boundary is atomic.
-    async handleWebLogout() {
+    // Close every local/native wallet admission path before the first web
+    // logout await. This preflight does not tear down the WebView.
+    prepareWebLogout() {
       NativeChrome._logoutRunning = true;
+      NativeChrome._setSessionWalletRelayAdmission(false);
       NativeChrome._handoffGeneration++;
       NativeChrome._handoffRerunRequested = false;
       NativeChrome._nodeStartKey = null;
-      if (!(await NativeChrome.has('logout'))) return;
-      if (window.usernode && typeof window.usernode.logout === 'function') {
-        await Promise.race([
-          window.usernode.logout().catch(() => {}),
-          new Promise((resolve) => setTimeout(resolve, 5000)),
-        ]);
-      }
+      return (async () => {
+        const info = await NativeChrome.getInfo();
+        const capabilities = Array.isArray(info.capabilities)
+          ? info.capabilities
+          : [];
+        if (capabilities.includes('beginSessionHandoff')) {
+          if (typeof window.usernode.beginSessionHandoff !== 'function') {
+            throw new Error('Native session handoff latch is unavailable');
+          }
+          const admission = await window.usernode.beginSessionHandoff();
+          if (!admission || admission.blocked !== true) {
+            throw new Error('Native wallet handoff was not blocked');
+          }
+        }
+        return capabilities.includes('logout') &&
+          !!window.usernode && typeof window.usernode.logout === 'function';
+      })();
+    },
+
+    // Successful native logout replaces this WebView. Callers must return
+    // this exact promise and perform no continuation work in the old document.
+    commitNativeLogout() {
+      return window.usernode.logout();
     },
 
     // ── First-run permissions step (thin-shell onboarding) ───────────
@@ -438,6 +567,10 @@
     },
 
     init() {
+      // The bridge loads before wallet-sheet.js and before App resolves its
+      // web session. Start closed so native A cannot be cached/rendered while
+      // the shell is still deciding whether this document is anonymous or B.
+      NativeChrome._setSessionWalletRelayAdmission(false);
       NativeChrome._initDrawerRows();
       NativeChrome._initAuthStatusEvents();
       // Anonymous SPA boot (fold-auth-pages-into-SPA): the login handoff

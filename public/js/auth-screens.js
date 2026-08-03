@@ -1513,14 +1513,14 @@
 
     _wireWaiting() {
       byId('waiting-logout').addEventListener('click', async () => {
-        AuthScreens._stopWaitingPoll();
-        // Settings.logout does the full teardown (hard native logout, SW
-        // cache clear) and hard-navigates — the reload is the correct
-        // teardown for a session switch (enterAuthed is one-shot).
+        // Settings.logout commits web logout/cache cleanup before its final
+        // hard-native boundary (or hard-navigates in a regular browser).
+        // Keep polling alive if that preflight or web logout fails.
         if (window.Settings && typeof Settings.logout === 'function') {
           Settings.logout();
           return;
         }
+        AuthScreens._stopWaitingPoll();
         try {
           await fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' });
         } catch (_) {}

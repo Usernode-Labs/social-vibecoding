@@ -32,11 +32,15 @@ feature-detect with `getBridgeInfo`.
   `capabilities` is for — never assume a method exists because this document
   lists it.
 
-Two additive security/session capabilities extend v4 without changing its
+Four additive security/session capabilities extend v4 without changing its
 version:
 
 - `privilegedBridgeCapability`: privileged top-frame methods require a
   native-issued capability scoped to the current trusted navigation.
+- `beginSessionHandoff`: closes native wallet dispatch before a web-session
+  exchange, including raw Android child-frame channel messages.
+- `enterAnonymousSession`: reopens native wallet dispatch after the shell has
+  confirmed that no web participant is signed in.
 - `sessionBoundAuthStatus`: auth snapshots include `participantId` and
   identity `epoch`, and node starts can be bound to both values.
 
@@ -213,7 +217,7 @@ wrapper uses a longer (12s) timeout for this method.
 |---|---|
 | `resetZkChallenge()` | discards in-progress ZK identity registration (confirm web-side first) |
 | `openBatterySettings()` | opens Android battery-optimization settings |
-| `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); confirm web-side first, then clear the web session |
+| `logout()` | performs the bounded hard native logout (node stop/drain plus identity and credential cleanup); clear the web session and cache first, then invoke this as the terminal operation |
 
 ### Platform login + node lifecycle (v4 — thin-shell migration)
 
@@ -222,12 +226,32 @@ platform-owned: the SV shell signs the user in on the web, exchanges the
 session for a mobile bearer token (`POST /api/v4/mobile/auth/from-session`),
 hands the credential to the app, and then drives the node. Orchestration
 lives in `public/js/native-chrome.js` (`runLoginHandoff`,
-`handleWebLogout`). The exchange runs for every live web session, including
-when native already reports `ready`, so same-user bearer rotation is never
-skipped. Its returned `user.id` must still match the current web participant
-before the token crosses the bridge. Overlapping session signals coalesce;
-if the web participant changes during an exchange, the latest session is
-exchanged once the active run settles.
+`prepareWebLogout`, and `commitNativeLogout`). The exchange runs for every
+live web session, including when native already reports `ready`, so same-user
+bearer rotation is never skipped. Its returned `user.id` must still match the
+current web participant before the token crosses the bridge. Overlapping
+session signals coalesce; if the web participant changes during an exchange,
+the latest session is exchanged once the active run settles.
+
+The shell closes its local top-frame/iframe wallet gate synchronously with
+`sv:session`. Builds advertising `beginSessionHandoff` also close native
+wallet dispatch before `/from-session`, so Android child frames cannot bypass
+the JavaScript wrapper with a raw channel message. A verified current-user
+handoff reopens both gates; failures stay closed. Pre-v4 builds reopen the
+local gate after their older bridge version confirms that no handoff exists.
+
+#### `beginSessionHandoff()` → `{ blocked: true }`
+
+Privileged preflight for builds that advertise it. Closes session-scoped
+native wallet reads, signing, and transaction dispatch in this WebView until
+`completeLogin` admits the current participant. Participant replacement keeps
+the old WebView closed while its runtime is replaced.
+
+#### `enterAnonymousSession()` → `{ admitted: true }`
+
+Privileged acknowledgement used after the shell confirms an anonymous web
+session. The shell keeps its local wallet relay closed until native admits
+wallet access, so a failed or stale acknowledgement remains fail-closed.
 
 #### `completeLogin({ token, user })` → auth status snapshot or restart signal
 
@@ -293,7 +317,8 @@ the phase reaches `ready`.
   as a public `window.usernode` property.
 - The parent bridge refuses both capability bootstrap and privileged relays
   from child frames. Non-privileged dapp reads and transaction methods keep
-  their existing relay behavior.
+  their existing relay behavior only while the current web/native session
+  handoff is admitted.
 - Loopback origins are not privileged by default. Flutter development builds
   can opt in with `--dart-define=ENABLE_LOCAL_PRIVILEGED_BRIDGE=true`; the
   switch is additionally gated by Flutter debug mode and cannot enable
