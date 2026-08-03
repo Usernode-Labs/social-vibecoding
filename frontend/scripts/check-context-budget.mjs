@@ -76,7 +76,8 @@ function activeLimit(metric, baseLimit, exceptions, violations) {
   )
 }
 
-function bucketMeasurement(bucket, measuredEntries, bucketName, violations) {
+function bucketMeasurement(bucket, measuredEntries, bucketName, violations, options = {}) {
+  const requirePresent = options.requirePresent ?? true
   if (!integer(bucket.startBytes) || !integer(bucket.maximumBytes)) {
     violations.push(`${bucketName} bucket needs integer startBytes and maximumBytes`)
   }
@@ -103,11 +104,51 @@ function bucketMeasurement(bucket, measuredEntries, bucketName, violations) {
     bytes: paths.reduce((total, relativePath) => {
       const entry = measuredEntries.get(relativePath)
       if (!entry) {
-        violations.push(`${bucketName} entry is absent from the routed component review: ${relativePath}`)
+        if (requirePresent) {
+          violations.push(`${bucketName} entry is absent from the routed component review: ${relativePath}`)
+        }
         return total
       }
       return total + entry.bytes
     }, 0),
+  }
+}
+
+function postRoutingMeasurement(componentReview, measuredEntries, totalBytes, violations) {
+  const entries = Array.isArray(componentReview?.postRoutingEntries)
+    ? componentReview.postRoutingEntries
+    : []
+  if (!Array.isArray(componentReview?.postRoutingEntries)) {
+    violations.push("postRoutingEntries must be an array in post-routing phase")
+  }
+  const paths = []
+  let acceptedBytes = 0
+  for (const entry of entries) {
+    if (!entry.path || !integer(entry.acceptedBytes)) {
+      violations.push("postRoutingEntries need path and acceptedBytes")
+      continue
+    }
+    paths.push(entry.path)
+    acceptedBytes += entry.acceptedBytes
+  }
+  if (new Set(paths).size !== paths.length) {
+    violations.push("postRoutingEntries contain duplicate paths")
+  }
+  for (const path of paths) {
+    if (!measuredEntries.has(path)) {
+      violations.push(`post-routing entry is absent from component review: ${path}`)
+    }
+  }
+  for (const path of measuredEntries.keys()) {
+    if (!paths.includes(path)) {
+      violations.push(`routed component-review entry is not in postRoutingEntries: ${path}`)
+    }
+  }
+  if (acceptedBytes !== componentReview?.postRoutingRatchetBytes) {
+    violations.push("postRoutingRatchetBytes does not equal its accepted entry total")
+  }
+  if ([...measuredEntries.values()].reduce((total, entry) => total + entry.bytes, 0) !== totalBytes) {
+    violations.push("post-routing entry bytes do not equal the routed total")
   }
 }
 
@@ -171,29 +212,34 @@ export function evaluateContextBudget(policy, measurement, options = {}) {
   }
 
   const measuredEntries = new Map(measurement.componentReview.entries.map((entry) => [entry.path, entry]))
+  const preRouting = policy.phase === "pre-routing"
   const payload = bucketMeasurement(
     policy.componentReview?.buckets?.payload || {},
     measuredEntries,
     "payload",
     violations,
+    { requirePresent: preRouting },
   )
   const guidance = bucketMeasurement(
     policy.componentReview?.buckets?.guidance || {},
     measuredEntries,
     "guidance",
     violations,
+    { requirePresent: preRouting },
   )
   const listedPaths = [...payload.paths, ...guidance.paths]
   if (new Set(listedPaths).size !== listedPaths.length) {
     violations.push("component-review bucket membership overlaps")
   }
-  for (const entry of measurement.componentReview.entries) {
-    if (!listedPaths.includes(entry.path)) {
-      violations.push(`routed component-review entry is not classified: ${entry.path}`)
+  if (preRouting) {
+    for (const entry of measurement.componentReview.entries) {
+      if (!listedPaths.includes(entry.path)) {
+        violations.push(`routed component-review entry is not classified: ${entry.path}`)
+      }
     }
-  }
-  if (payload.bytes + guidance.bytes !== measurement.componentReview.totalBytes) {
-    violations.push("component-review bucket totals do not equal the routed total")
+    if (payload.bytes + guidance.bytes !== measurement.componentReview.totalBytes) {
+      violations.push("component-review bucket totals do not equal the routed total")
+    }
   }
   const recordedStartBytes = (policy.componentReview?.buckets?.payload?.startBytes ?? -1)
     + (policy.componentReview?.buckets?.guidance?.startBytes ?? -1)
@@ -215,6 +261,23 @@ export function evaluateContextBudget(policy, measurement, options = {}) {
   }
   if (policy.phase === "post-routing" && !integer(policy.componentReview?.postRoutingRatchetBytes)) {
     violations.push("postRoutingRatchetBytes must be set in post-routing phase")
+  }
+  if (policy.phase === "post-routing") {
+    if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(policy.routingSlice?.startRevision || "")) {
+      violations.push("routingSlice.startRevision must be a full Git revision")
+    }
+    if (Number.isNaN(new Date(policy.routingSlice?.activatedAt || "").getTime())) {
+      violations.push("routingSlice.activatedAt must be an ISO date-time")
+    }
+    if (policy.routingSlice?.batteryCommand !== "npm run check:progressive-context") {
+      violations.push("routingSlice must name the progressive discovery battery")
+    }
+    postRoutingMeasurement(
+      policy.componentReview,
+      measuredEntries,
+      measurement.componentReview.totalBytes,
+      violations,
+    )
   }
 
   const exceptions = validatedExceptions(policy, now, violations)
@@ -304,8 +367,13 @@ function printSummary(report) {
   console.log("Context budget check (blocking):")
   console.log(`- Phase: ${report.phase}`)
   console.log(`- Component review: ${report.current.postRoutingBytes} bytes`)
-  console.log(`- Payload: ${report.current.payloadBytes}/${report.limits.payloadBytes} bytes`)
-  console.log(`- Guidance: ${report.current.guidanceBytes}/${report.limits.guidanceBytes} bytes`)
+  if (report.phase === "pre-routing") {
+    console.log(`- Payload: ${report.current.payloadBytes}/${report.limits.payloadBytes} bytes`)
+    console.log(`- Guidance: ${report.current.guidanceBytes}/${report.limits.guidanceBytes} bytes`)
+  } else {
+    console.log(`- Post-routing ratchet: ${report.limits.postRoutingBytes} bytes`)
+    console.log(`- Owner ceiling: ${report.ownerCeilingBytes} bytes`)
+  }
   console.log(`- Always loaded: ${report.current.alwaysLoadedBytes}/${report.limits.alwaysLoadedBytes} bytes`)
   console.log(`- Skill activation: ${report.current.skillActivationBytes}/${report.limits.skillActivationBytes} bytes`)
 }

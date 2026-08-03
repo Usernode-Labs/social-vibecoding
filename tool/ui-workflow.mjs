@@ -83,6 +83,7 @@ const result = {
   changedFiles: files,
   descriptions: selected.map((workflow) => workflow.description),
   context: unique(selected.flatMap((workflow) => workflow.context)),
+  discovery: unique(selected.flatMap((workflow) => workflow.discovery || [])),
   checks: unique(selected.flatMap((workflow) => workflow.checks)),
   evidence: unique(selected.flatMap((workflow) => workflow.evidence)),
   stopConditions: unique(selected.map((workflow) => workflow.stop)),
@@ -97,6 +98,10 @@ if (json) {
   console.log(result.description)
   console.log("\nContext:")
   result.context.forEach((item) => console.log(`- ${item}`))
+  if (result.discovery.length) {
+    console.log("\nProgressive discovery:")
+    result.discovery.forEach((item) => console.log(`- ${item}`))
+  }
   console.log("\nChecks (run from frontend/):")
   result.checks.forEach((item) => console.log(`- ${item}`))
   console.log("\nEvidence:")

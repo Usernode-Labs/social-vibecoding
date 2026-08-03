@@ -72,6 +72,7 @@
       "checks": [
         "npm run check:harness-integrity",
         "npm run check:harness-fitness",
+        "npm run check:progressive-context",
         "npm run check:context-budget",
         "npm run test:harness",
         "npm run test:agent-battery"
@@ -229,8 +230,7 @@
       ],
       "context": [
         "frontend/design-system/content-guidelines.md",
-        "frontend/design-system/content-exceptions.json",
-        "frontend/design-system/catalog.json"
+        "frontend/design-system/content-exceptions.json"
       ],
       "checks": [
         "npm run check:content",
@@ -263,10 +263,11 @@
       ],
       "context": [
         "agent-skills/ui-development/references/authority.md",
-        "frontend/design-system/catalog.json",
-        "frontend/design-system.manifest.json",
-        "frontend/@/components/ui",
-        "frontend/registry.json"
+        "frontend/design-system/interface-laws.md"
+      ],
+      "discovery": [
+        "npm run query:design-system -- \"<component name, id, variant, or job>\"",
+        "npm run query:design-system -- --related \"<component name, id, variant, or job>\""
       ],
       "checks": [
         "npm run check:design-system",
@@ -297,10 +298,7 @@
       "paths": [],
       "context": [
         "agent-skills/ui-development/references/evidence.md",
-        "agent-skills/ui-development/references/review.md",
-        "frontend/design-system/catalog.json",
-        "frontend/design-system/exceptions.json",
-        "docs/react-migration.md"
+        "agent-skills/ui-development/references/review.md"
       ],
       "checks": [
         "npm run check:ui"
@@ -386,7 +384,7 @@
     },
     {
       "id": "component-review",
-      "task": "Polish Activity feed component copy and add Storybook state",
+      "task": "Polish Home app shortcut component copy and add Storybook state",
       "files": [],
       "expected": ["content", "component", "review"],
       "forbidden": ["harness"]
@@ -438,21 +436,22 @@
       { "id": "content-tests", "step": 9, "units": 1, "priority": 20 },
       { "id": "harness-integrity", "step": 10, "units": 1, "priority": 20 },
       { "id": "harness-fitness", "step": 11, "units": 1, "priority": 10 },
-      { "id": "context-budget", "step": 12, "units": 1, "priority": 20 },
-      { "id": "harness-policy", "step": 13, "units": 1, "priority": 10 },
-      { "id": "harness-tests", "step": 14, "units": 1, "priority": 20 },
-      { "id": "agent-battery", "step": 15, "units": 1, "priority": 20 },
-      { "id": "typecheck", "step": 16, "units": 1, "priority": 20 },
-      { "id": "native-bridge", "step": 17, "units": 2, "priority": 60 },
-      { "id": "build", "step": 18, "units": 2, "priority": 80 },
-      { "id": "service-worker", "step": 19, "units": 2, "priority": 70, "dependsOn": ["build"] },
-      { "id": "browser-matrix", "step": 20, "units": 9, "priority": 100 },
-      { "id": "production-guard", "step": 21, "units": 3, "priority": 75 },
-      { "id": "production-smoke", "step": 22, "units": 2, "priority": 65 },
-      { "id": "cutover-contract", "step": 23, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
-      { "id": "bundle-budget", "step": 24, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
-      { "id": "storybook-tests", "step": 25, "units": 4, "priority": 85 },
-      { "id": "storybook-build", "step": 26, "units": 2, "priority": 55 }
+      { "id": "progressive-context", "step": 12, "units": 1, "priority": 20 },
+      { "id": "context-budget", "step": 13, "units": 1, "priority": 20 },
+      { "id": "harness-policy", "step": 14, "units": 1, "priority": 10 },
+      { "id": "harness-tests", "step": 15, "units": 1, "priority": 20 },
+      { "id": "agent-battery", "step": 16, "units": 1, "priority": 20 },
+      { "id": "typecheck", "step": 17, "units": 1, "priority": 20 },
+      { "id": "native-bridge", "step": 18, "units": 2, "priority": 60 },
+      { "id": "build", "step": 19, "units": 2, "priority": 80 },
+      { "id": "service-worker", "step": 20, "units": 2, "priority": 70, "dependsOn": ["build"] },
+      { "id": "browser-matrix", "step": 21, "units": 9, "priority": 100 },
+      { "id": "production-guard", "step": 22, "units": 3, "priority": 75 },
+      { "id": "production-smoke", "step": 23, "units": 2, "priority": 65 },
+      { "id": "cutover-contract", "step": 24, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
+      { "id": "bundle-budget", "step": 25, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
+      { "id": "storybook-tests", "step": 26, "units": 4, "priority": 85 },
+      { "id": "storybook-build", "step": 27, "units": 2, "priority": 55 }
     ]
   },
   "fullGate": [
@@ -512,6 +511,11 @@
       "cwd": "frontend",
       "command": "npm run check:harness-fitness",
       "ciEvidence": "npm run check:harness-fitness"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:progressive-context",
+      "ciEvidence": "npm run check:progressive-context"
     },
     {
       "cwd": "frontend",

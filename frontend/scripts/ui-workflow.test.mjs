@@ -15,12 +15,21 @@ function resolve(task, files = []) {
 }
 
 test("copy-bearing component review composes content, component, and review", () => {
-  const result = resolve("Polish Activity feed component copy and add Storybook state")
+  const result = resolve("Polish Home app shortcut component copy and add Storybook state")
   for (const workflow of ["content", "component", "review"]) {
     assert.ok(result.classifications.includes(workflow))
   }
   assert.ok(result.checks.includes("npm run check:content"))
   assert.ok(result.checks.includes("npm run check:ui"))
+  assert.ok(result.discovery.includes('npm run query:design-system -- "<component name, id, variant, or job>"'))
+  assert.ok(result.context.includes("frontend/design-system/interface-laws.md"))
+  for (const bulkPath of [
+    "frontend/design-system/catalog.json",
+    "frontend/@/components/ui",
+    "docs/react-migration.md",
+  ]) {
+    assert.ok(!result.context.includes(bulkPath))
+  }
 })
 
 test("contract-backed component work composes contract and component", () => {
@@ -47,6 +56,7 @@ test("harness audit selects harness checks without the UI review gate", () => {
   assert.deepEqual(result.classifications, ["harness"])
   assert.ok(result.checks.includes("npm run check:harness-integrity"))
   assert.ok(result.checks.includes("npm run check:harness-fitness"))
+  assert.ok(result.checks.includes("npm run check:progressive-context"))
   assert.ok(result.checks.includes("npm run check:context-budget"))
   assert.ok(!result.checks.includes("npm run check:ui"))
 })

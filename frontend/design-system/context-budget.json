@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "phase": "pre-routing",
+  "phase": "post-routing",
   "policy": "Loaded-context ratchets move down mechanically. Upward exceptions are exact, owned, expiring, and never waive the owner ceiling or change bucket membership.",
   "ownerLock": {
     "eventId": "9626471f2ea679b95328ba4cfa940dcee1bf59cdfbce6dfab5ffa44decabb76c",
@@ -23,31 +23,100 @@
         "startBytes": 346240,
         "maximumBytes": 346240,
         "entries": [
-          { "path": "frontend/design-system/catalog.json", "startBytes": 134594 },
-          { "path": "frontend/@/components/ui", "startBytes": 158162 },
-          { "path": "frontend/design-system/exceptions.json", "startBytes": 21326 },
-          { "path": "frontend/design-system.manifest.json", "startBytes": 20966 },
-          { "path": "frontend/design-system/content-guidelines.md", "startBytes": 8318 },
-          { "path": "frontend/registry.json", "startBytes": 2217 },
-          { "path": "frontend/design-system/content-exceptions.json", "startBytes": 657 }
+          {
+            "path": "frontend/design-system/catalog.json",
+            "startBytes": 134594
+          },
+          {
+            "path": "frontend/@/components/ui",
+            "startBytes": 158162
+          },
+          {
+            "path": "frontend/design-system/exceptions.json",
+            "startBytes": 21326
+          },
+          {
+            "path": "frontend/design-system.manifest.json",
+            "startBytes": 20966
+          },
+          {
+            "path": "frontend/design-system/content-guidelines.md",
+            "startBytes": 8318
+          },
+          {
+            "path": "frontend/registry.json",
+            "startBytes": 2217
+          },
+          {
+            "path": "frontend/design-system/content-exceptions.json",
+            "startBytes": 657
+          }
         ]
       },
       "guidance": {
         "startBytes": 52790,
         "maximumBytes": 53529,
         "entries": [
-          { "path": "docs/react-migration.md", "startBytes": 48677 },
-          { "path": "agent-skills/ui-development/references/authority.md", "startBytes": 1566 },
-          { "path": "agent-skills/ui-development/references/evidence.md", "startBytes": 1480 },
-          { "path": "agent-skills/ui-development/references/review.md", "startBytes": 1067 }
+          {
+            "path": "docs/react-migration.md",
+            "startBytes": 48677
+          },
+          {
+            "path": "agent-skills/ui-development/references/authority.md",
+            "startBytes": 1566
+          },
+          {
+            "path": "agent-skills/ui-development/references/evidence.md",
+            "startBytes": 1480
+          },
+          {
+            "path": "agent-skills/ui-development/references/review.md",
+            "startBytes": 1067
+          }
         ]
       }
     },
-    "postRoutingRatchetBytes": null
+    "postRoutingRatchetBytes": 21479,
+    "postRoutingEntries": [
+      {
+        "path": "frontend/design-system/content-guidelines.md",
+        "acceptedBytes": 8318
+      },
+      {
+        "path": "frontend/design-system/content-exceptions.json",
+        "acceptedBytes": 657
+      },
+      {
+        "path": "agent-skills/ui-development/references/authority.md",
+        "acceptedBytes": 2305
+      },
+      {
+        "path": "frontend/design-system/interface-laws.md",
+        "acceptedBytes": 7652
+      },
+      {
+        "path": "agent-skills/ui-development/references/evidence.md",
+        "acceptedBytes": 1480
+      },
+      {
+        "path": "agent-skills/ui-development/references/review.md",
+        "acceptedBytes": 1067
+      }
+    ]
   },
   "globalRatchets": {
     "alwaysLoadedBytes": 17427,
     "skillActivationBytes": 7772
   },
-  "exceptions": []
+  "exceptions": [],
+  "routingSlice": {
+    "startRevision": "1ae9d002489234652d7de40008a447d3083d2565",
+    "activatedAt": "2026-08-03T11:48:55.010Z",
+    "batteryCommand": "npm run check:progressive-context",
+    "fixture": {
+      "task": "Polish Home app shortcut component copy and add Storybook state",
+      "query": "Home app shortcut",
+      "componentId": "home-app-shortcut"
+    }
+  }
 }

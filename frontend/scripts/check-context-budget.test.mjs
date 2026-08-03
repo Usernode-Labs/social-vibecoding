@@ -32,6 +32,15 @@ function fixture() {
           guidance: { startBytes: 20, maximumBytes: 20, entries: [{ path: "guidance", startBytes: 20 }] },
         },
         postRoutingRatchetBytes: 60,
+        postRoutingEntries: [
+          { path: "payload", acceptedBytes: 40 },
+          { path: "guidance", acceptedBytes: 20 },
+        ],
+      },
+      routingSlice: {
+        startRevision: "a".repeat(40),
+        activatedAt: "2026-08-03T00:00:00Z",
+        batteryCommand: "npm run check:progressive-context",
       },
       globalRatchets: { alwaysLoadedBytes: 10, skillActivationBytes: 5 },
       exceptions: [],
@@ -98,7 +107,7 @@ test("bucket membership cannot drift silently", () => {
   measurement.componentReview.entries.push({ path: "unclassified", bytes: 1 })
   measurement.componentReview.totalBytes += 1
   const report = evaluateContextBudget(policy, measurement, { now: new Date("2026-08-03T00:00:00Z") })
-  assert.ok(report.violations.some((item) => item.includes("is not classified")))
+  assert.ok(report.violations.some((item) => item.includes("is not in postRoutingEntries")))
 })
 
 test("expired exceptions fail even when the current measurement is below the base ratchet", () => {

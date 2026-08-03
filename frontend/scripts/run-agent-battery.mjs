@@ -133,7 +133,7 @@ result("T6", Boolean(
 const composedRaw = execFileSync(process.execPath, [
   path.join(repoRoot, "tool", "ui-workflow.mjs"),
   "--task",
-  "Polish Activity feed component copy and add Storybook state",
+  "Polish Home app shortcut component copy and add Storybook state",
   "--files",
   "",
   "--json",
