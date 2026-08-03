@@ -97,6 +97,7 @@
 
       { key: 'language', label: 'Language', group: 'Preferences' },
       { key: 'alerts', label: 'Dev-chat sound & alerts', group: 'Preferences' },
+      { key: 'home-panels', label: 'Home screen widgets', group: 'Preferences' },
 
       { key: 'cli', label: 'CLI & coding-agent access', group: 'Developer' },
       { key: 'dev-console', label: 'Developer console', group: 'Developer' },
@@ -308,6 +309,7 @@
       this._renderChangePasswordSection();
       this._renderDevConsoleSection();
       this._renderLanguageSection();
+      this._renderHomePanelsSection();
       this._renderExperimentalSection();
       this._renderAdminSection();
       this._renderUsernodeSection();
@@ -702,6 +704,69 @@
       if (toggle) toggle.checked = !!this.state.aiProgressEstimate;
       const status = document.getElementById('ai-progress-estimate-status');
       if (status) { status.classList.add('hidden'); status.textContent = ''; }
+    },
+
+    // #911: one checkbox per home-screen panel, built from
+    // GET /api/home-panels's `registry` + `hidden`. Absence from `hidden`
+    // means visible, so a fresh account renders every box ticked without
+    // any per-user rows existing. Rebuilt (not patched) on each render:
+    // the list is two lines of markup and the listeners go with it.
+    async _renderHomePanelsSection() {
+      const list = document.getElementById('settings-home-panels-list');
+      if (!list) return;
+      const status = document.getElementById('settings-home-panels-status');
+      if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      let data = null;
+      try {
+        const r = await fetch('/api/home-panels', { credentials: 'same-origin' });
+        if (r.ok) data = await r.json();
+      } catch {}
+      const registry = (data && Array.isArray(data.registry)) ? data.registry : [];
+      const hidden = (data && Array.isArray(data.hidden)) ? data.hidden : [];
+      if (!registry.length) {
+        list.innerHTML = '<p class="text-xs text-zinc-500 dark:text-zinc-400">No home screen widgets are available.</p>';
+        return;
+      }
+      const esc = (s) => String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+      list.innerHTML = registry.map((p) => `
+        <label class="flex items-center gap-2 cursor-pointer select-none">
+          <input type="checkbox" class="un-switch settings-home-panel-toggle"
+                 data-panel-key="${esc(p.key)}" ${hidden.includes(p.key) ? '' : 'checked'} />
+          <span class="text-sm text-zinc-800 dark:text-zinc-200">${esc(p.title || p.key)}</span>
+        </label>`).join('');
+      list.querySelectorAll('.settings-home-panel-toggle').forEach((el) => {
+        el.addEventListener('change', () => {
+          Settings._saveHomePanelVisibility(el.dataset.panelKey, !el.checked, el);
+        });
+      });
+    },
+
+    async _saveHomePanelVisibility(key, hidden, toggle) {
+      const status = document.getElementById('settings-home-panels-status');
+      try {
+        const r = await fetch(`/api/home-panels/${encodeURIComponent(key)}/visibility`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ hidden: !!hidden }),
+        });
+        if (!r.ok) throw new Error('save failed');
+        // Repaint the home card straight away so returning to the home
+        // screen doesn't show the stale state for up to a TTL.
+        if (window.HomePanels) {
+          try { await HomePanels.ensureLoaded({ force: true }); } catch {}
+        }
+        if (status) { status.classList.add('hidden'); status.textContent = ''; }
+      } catch (err) {
+        if (toggle) toggle.checked = !hidden;
+        if (status) {
+          status.textContent = 'Failed to save — try again.';
+          status.classList.remove('hidden', 'text-emerald-500');
+          status.classList.add('text-red-500');
+        }
+      }
     },
 
     _renderLanguageSection() {

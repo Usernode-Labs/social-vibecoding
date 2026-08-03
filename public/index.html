@@ -556,6 +556,22 @@
     <div id="home-body" style="min-height:100%">
       <div id="app-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 p-3 pt-2"></div>
 
+      <!-- Home-screen panels (#911): cards that sit between the launcher
+           grid and "Featured apps". One panel today — "Challenges", the
+           season's open challenges with the viewer's own progress. Owned
+           by public/js/home-panels.js (HomePanels.render fills this
+           section wholesale and hides it when there is nothing to show).
+
+           Deliberately OUTSIDE #app-list, like the search bar above: the
+           grid's innerHTML is replaced on every WS app event and every
+           search keystroke, which would otherwise destroy this card and
+           its listeners. The panel's own markup reuses
+           .home-section-header + .home-section-block so it lines up with
+           the two sections below it. NOTE "panel" ≠ the "Usernode widget"
+           strip home.js renders INSIDE the grid (that's the iOS
+           home-screen widget). -->
+      <section id="home-panels" class="hidden px-3 pb-3"></section>
+
       <!-- Find more apps: admin-curated featured tiles + the way into the
            #apps browse screen. Populated by Home.renderFindMore(). -->
       <!-- Featured apps: same section shape as "Your apps" above and
@@ -1001,6 +1017,24 @@
                   Send a test alert
                 </button>
                 <p id="devchat-alerts-test-status" class="text-xs mt-2 hidden text-zinc-500 dark:text-zinc-400"></p>
+              </div>
+            </div>
+
+            <div data-settings-section="home-panels" class="hidden">
+              <!-- #911: which home-screen cards ("widgets" to the user,
+                   panels in the code) are shown. Every registry entry is
+                   on by default — users.home_panels_hidden lists only the
+                   ones this viewer dismissed with the card's own ✕, so an
+                   unticked box here is the way to get one back. Rows are
+                   rendered by settings.js _renderHomePanelsSection() from
+                   GET /api/home-panels's `registry` + `hidden`. -->
+              <div id="settings-home-panels-section">
+                <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Home screen widgets</h3>
+                <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">
+                  Cards shown on your home screen below your apps. Untick one to hide it — the same as pressing the &times; on the card itself.
+                </p>
+                <div id="settings-home-panels-list" class="space-y-2"></div>
+                <p id="settings-home-panels-status" class="text-xs mt-2 hidden"></p>
               </div>
             </div>
 
@@ -2516,6 +2550,10 @@
        Loaded before app.js so the modal wiring can gate the attach
        button on ScreenshotSelect.isSupported(). -->
   <script src="/js/screenshot-select.js"></script>
+  <!-- Home-screen panels (#911): the Challenges card between the launcher
+       grid and "Featured apps". Loaded BEFORE home.js, whose load() /
+       render() call into HomePanels. -->
+  <script src="/js/home-panels.js"></script>
   <script src="/js/home.js"></script>
   <!-- Browse-all-apps screen (#apps). After home.js: it reuses
        Home.renderAppCard / Home.isYours / Home.matchesQuery so the two

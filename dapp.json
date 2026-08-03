@@ -291,6 +291,24 @@
       "expectSelector": "#home-featured-list .app-card"
     },
     {
+      "name": "The home Challenges card lists open challenges (#911, staging seed + ?demo=1)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-panels .home-panel-row",
+      "expectText": "Staging demo challenge"
+    },
+    {
+      "name": "A numeric challenge renders a real progress bar, not just a chip (#911)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-panels [role=progressbar]",
+      "expectText": "3 / 8 Apps tested"
+    },
+    {
+      "name": "The Challenges card links out to the full challenges screen (#911)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-panels #home-panel-challenges-all",
+      "expectText": "See all"
+    },
+    {
       "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
       "path": "/?shot=home-search",
       "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"

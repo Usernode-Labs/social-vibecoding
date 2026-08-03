@@ -234,6 +234,17 @@ const boardOrderLimiter = makeLimiter({
   message: 'Too many reorder updates — slow down for a minute.',
 });
 
+// #911: per-user show/hide of a home-screen panel. A checkbox flip is a
+// single small write and nobody legitimately toggles one more than a few
+// times a minute; per-user keyed, mirroring boardOrderLimiter.
+const homePanelPrefLimiter = makeLimiter({
+  windowMs: 60 * 1000,
+  max: 30,
+  name: 'home-panel-pref',
+  keyByUser: true,
+  message: 'Too many changes — slow down for a minute.',
+});
+
 // Platform database export tickets: 3 / 24h / full admin. Each ticket
 // authorizes ONE full, unredacted pg_dump of the platform database — every
 // password hash, every live session token, every app credential — so the
@@ -293,4 +304,4 @@ const waitlistJoinLimiter = makeLimiter({
   message: 'Too many signups from this address — try again in a few minutes.',
 });
 
-module.exports = { dbExportLimiter, authLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, waitlistJoinLimiter };
+module.exports = { dbExportLimiter, authLimiter, homePanelPrefLimiter, walletCheckLimiter, appCreateLimiter, issueCreateLimiter, closeProposalLimiter, issueKindLimiter, agentFileWriteLimiter, chatLimiter, attributeVoteLimiter, attachmentUploadLimiter, appFileUploadLimiter, feedbackTitleLimiter, boardOrderLimiter, issueScreenshotLimiter, topochainMobileAuthLimiter, waitlistJoinLimiter };

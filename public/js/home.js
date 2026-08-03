@@ -14,6 +14,10 @@ const Home = {
       return;
     }
     Home._probeShortcutSupport();
+    // Home-screen panels (#911, public/js/home-panels.js). TTL-guarded
+    // inside, so the dozen WS/event paths that call load() don't turn into
+    // a dozen fetches; it paints its own section when the data lands.
+    window.HomePanels?.ensureLoaded();
     const listEl = document.getElementById('app-list');
 
     try {
@@ -189,6 +193,9 @@ const Home = {
     listEl.innerHTML = html;
     Home._wireCards(listEl, canDragYours, yoursCount);
     Home._wireWidgetStrip(listEl);
+    // Pure paint from the panels cache (#911) — no network. Keeps the card
+    // present through the grid's wholesale innerHTML re-renders.
+    window.HomePanels?.render();
     Home.renderFindMore(apps);
     Home.renderCreateSection(canCreate);
     Home._wireSectionAlign();

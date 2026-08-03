@@ -79,6 +79,19 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 -- POST /api/me/ai-progress-estimate.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Home-screen panels the viewer has dismissed (issue #911) — the keys of
+-- the cards that sit on the home screen next to the app grid ('challenges'
+-- today; see PANEL_REGISTRY in src/routes/home-panels.js, the only reader
+-- and writer of this column). ABSENCE MEANS VISIBLE: an empty array — the
+-- default for every existing and future row — means every panel in the
+-- registry shows, which is what makes the challenges card default-on for
+-- everyone with no backfill. Written only through
+-- POST /api/home-panels/:key/visibility, which validates the key against
+-- the registry, so the array can never accumulate unknown values. Called
+-- "panels" and not "widgets" deliberately: public/js/home.js already uses
+-- "widget" for the iOS home-screen widget's pinned app grid.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
+
 -- Platform-level user language preference (issue #757). A BCP-47 language
 -- tag ("id", "pt-BR", …) or NULL for "unset/auto — use device language".
 -- Set from Settings → Language via POST /api/me/locale; exposed to apps as
