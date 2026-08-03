@@ -3946,17 +3946,33 @@ function sessionRoutes(config) {
     // missed-WS-event safety net.
     const { isResolving } = require('../services/conflict-resolver');
 
+    // Merge lifecycle status ('promoted' | 'merging' | 'merged' | …).
+    // The self-app "Platform updating…" banner's restore path verifies
+    // against this that the merge behind a restored banner is still in
+    // flight — a banner re-armed from sessionStorage after the merge
+    // aborted (head moved, revision unverifiable) has no SHA flip coming
+    // and would otherwise hold the tab read-only until the stuck timer.
+    let mergeStatus = null;
+    try {
+      const { rows } = await pool.query(
+        `SELECT status FROM chat_sessions WHERE id = $1`,
+        [sessionId]
+      );
+      mergeStatus = rows[0]?.status || null;
+    } catch {}
+
     // #252: in-flight sync-with-main state ({ phase, startedAt } |
     // null) — the dev-chat sync banner's reload recovery and poll
     // fallback read this the same way the resolving banner reads
     // `resolving`.
-    // Keys: busy, progress, phase, stopping, estimate (+ resolving, sync).
-    // `estimate` is { text, remainingSeconds, estimatedAt } | null — see
-    // workerProgress.setEstimate / clearEstimate.
+    // Keys: busy, progress, phase, stopping, estimate (+ resolving, sync,
+    // status). `estimate` is { text, remainingSeconds, estimatedAt } |
+    // null — see workerProgress.setEstimate / clearEstimate.
     res.json({
       busy, progress, phase, stopping, estimate,
       resolving: isResolving(sessionId),
       sync: syncMainSvc.getSyncState(sessionId),
+      status: mergeStatus,
     });
   });
 

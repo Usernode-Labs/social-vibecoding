@@ -3884,6 +3884,12 @@ async function checkAndMerge(config, pool, session, options = {}) {
                 ).catch(() => {});
                 try {
                   const { pushVoteUpdate } = require('../services/ws');
+                  // merging:false + merged:false is the terminal "attempt
+                  // ended, no deploy coming" shape — clients un-latch the
+                  // self-app "Platform updating…" banner off it (see
+                  // handleVoteUpdate). Every terminal broadcast must carry
+                  // merging:false or self-app tabs stay read-only waiting
+                  // for a SHA flip that never comes.
                   pushVoteUpdate({
                     sessionId: session.id, appSlug: session.app_slug,
                     merged: false, merging: false,
@@ -3916,6 +3922,12 @@ async function checkAndMerge(config, pool, session, options = {}) {
             ).catch(() => {});
             try {
               const { pushVoteUpdate } = require('../services/ws');
+              // merging:false ends the merge attempt for clients: the
+              // merging:true broadcast above armed the self-app "Platform
+              // updating…" banner, and no deploy — hence no SHA flip —
+              // follows an aborted merge. A head move is deliberately NOT
+              // flagged mergeFailed; the client un-latches off the
+              // merging:false + merged:false shape itself.
               pushVoteUpdate({
                 sessionId: session.id, appSlug: session.app_slug,
                 merged: false, merging: false, headMoved: true,
