@@ -273,14 +273,112 @@ test('both trailing sections share the section shape and a width bound', () => {
   const css = read('public/css/app.css');
   const rule = css.match(/\.home-section-block \{[^}]*\}/)[0];
   assert.match(rule, /max-width/);
-  // LEFT-ALIGNED: a max-width and nothing else, so the card's left edge
-  // lands on the same gutter as the heading above it and the first tile of
-  // the "Your apps" grid. Auto side margins would centre it and break that
-  // alignment, so pin their absence in every spelling.
+  // LEFT-ALIGNED and INDENTED to the leftmost app icon, via the custom
+  // property Home.alignSections() measures. Centring (auto side margins in
+  // any spelling) is what this replaced — pin its absence.
+  assert.match(rule, /margin-left:\s*var\(--home-section-indent,\s*0px\)/);
   assert.doesNotMatch(rule, /margin-left:\s*auto/);
   assert.doesNotMatch(rule, /margin-right:\s*auto/);
   assert.doesNotMatch(rule, /margin-inline:\s*auto/);
   assert.doesNotMatch(rule, /margin:\s*[^;]*auto/);
+});
+
+// ── The indent: measured, not hard-coded ─────────────────────────
+//
+// The cards line up with the leftmost APP ICON in the "Your apps" grid —
+// the visible left edge of the first app. Because that icon is centred in
+// its grid cell, the offset is a function of the cell width (~94px at
+// 1280, ~62px on a phone), so it cannot be a CSS constant.
+
+// Its own sandbox: this is the one behaviour in the file that needs real
+// element geometry (getBoundingClientRect + getComputedStyle), which
+// makeHome's null-returning DOM deliberately doesn't provide.
+function makeAligned(opts = {}) {
+  const styles = new Map();
+  const els = {
+    'home-body': {
+      style: {
+        setProperty: (k, v) => styles.set(k, v),
+        removeProperty: (k) => styles.delete(k),
+      },
+    },
+    'home-find-more': {
+      getBoundingClientRect: () => ({ left: opts.sectionLeft ?? 0 }),
+    },
+  };
+  const icon = opts.iconLeft == null
+    ? null
+    : { getBoundingClientRect: () => ({ left: opts.iconLeft }) };
+  const sandbox = {
+    console,
+    App: { user: { id: 1 } },
+    document: {
+      getElementById: (id) => els[id] || null,
+      // Only the Your-apps grid's icon counts — NOT the featured row's,
+      // which carries the same class inside the card being aligned.
+      querySelector: (sel) => {
+        sandbox.selectors.push(sel);
+        return sel.includes('app-icon-tile') ? icon : null;
+      },
+      querySelectorAll: () => ({ forEach: () => {} }),
+      createElement: () => ({ classList: { add() {} }, dataset: {} }),
+      body: { appendChild: () => {} },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    },
+    getComputedStyle: () => ({ paddingLeft: `${opts.pad ?? 12}px` }),
+    selectors: [],
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    URLSearchParams,
+    requestAnimationFrame: (fn) => fn(),
+    location: { search: '' },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  return { Home: sandbox.__Home, styles, sandbox };
+}
+
+test('alignSections publishes the measured icon offset', () => {
+  // The measurement is relative to the section's CONTENT box (it carries
+  // its own px-3), because that is what the margin is relative to.
+  const { Home, styles, sandbox } = makeAligned({ sectionLeft: 0, iconLeft: 106, pad: 12 });
+  Home.alignSections();
+  assert.equal(styles.get('--home-section-indent'), '94px', '106 icon − 12 gutter');
+  // Scoped to the Your-apps grid, not any .app-icon-tile on the page.
+  assert.ok(sandbox.selectors.some((s) => /#app-list .*app-icon-tile/.test(s)));
+});
+
+test('alignSections clears the indent when Your apps is empty', () => {
+  // Nothing to align to, and the CSS fallback (0px) is the gutter — which
+  // is the right answer for an empty grid.
+  const { Home, styles } = makeAligned({ sectionLeft: 0, iconLeft: null });
+  styles.set('--home-section-indent', '94px');
+  Home.alignSections();
+  assert.equal(styles.has('--home-section-indent'), false);
+});
+
+test('alignSections never emits a negative indent', () => {
+  const { Home, styles } = makeAligned({ sectionLeft: 0, iconLeft: 4, pad: 12 });
+  Home.alignSections();
+  assert.equal(styles.get('--home-section-indent'), '0px');
+});
+
+test('alignSections runs on every render and on resize', () => {
+  const render = HOME_SRC.slice(HOME_SRC.indexOf('  render('), HOME_SRC.indexOf('alignSections() {'));
+  assert.match(render, /Home\.alignSections\(\);/, 'a re-render re-measures');
+  assert.match(render, /Home\._wireSectionAlign\(\);/);
+  // Re-columning at a breakpoint changes the offset, so resize must
+  // re-measure; the load pass covers a first paint that beat the Tailwind
+  // CDN stylesheet (an uncolumned grid measures far too wide).
+  const wire = HOME_SRC.slice(HOME_SRC.indexOf('_wireSectionAlign() {'));
+  assert.match(wire.slice(0, 900), /addEventListener\('resize', remeasure\)/);
+  assert.match(wire.slice(0, 900), /addEventListener\('load', remeasure/);
+  assert.match(wire.slice(0, 900), /requestAnimationFrame/, 'coalesced');
 });
 
 test('the browse action is an attached footer row of that card', () => {

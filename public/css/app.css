@@ -283,15 +283,25 @@ html, body {
    window leaves one very wide, very short box; this keeps them a readable
    column.
 
-   LEFT-ALIGNED, not centred: a plain block with only a max-width, so the
-   card's left edge lands on the section's own gutter — the same one the
-   .home-section-header above it and the first tile of the "Your apps" grid
-   sit on. Everything on the screen therefore shares one left edge and the
-   box just stops early on the right. Do NOT add auto side margins back:
-   that centres the card and breaks the alignment with the grid above,
-   which is what this rule exists to hold. */
+   LEFT-ALIGNED, and indented to line up with the leftmost APP ICON in the
+   "Your apps" grid above — the visible left edge of the first app, which is
+   what the eye actually reads as the start of the row. The .app-card box
+   itself begins at the scroller's 12px gutter, but its icon is centred in
+   the grid cell, so the icon sits ~90px further right on a wide window; a
+   card aligned to the gutter looked misaligned against it.
+
+   That offset is a function of the cell width, so it cannot be a constant:
+   Home.alignSections() measures the icon each render (and on resize) and
+   publishes --home-section-indent on #home-body. The 0px fallback keeps
+   this rule honest on its own — an empty "Your apps" grid has no icon to
+   align to, and then the gutter IS the right answer.
+
+   Do NOT add auto side margins (that centres the box, breaking the
+   alignment) and do NOT hard-code the indent (it differs per breakpoint).
+   The headings stay full-width on the gutter — only the box moves. */
 .home-section-block {
   max-width: 48rem; /* Tailwind max-w-3xl */
+  margin-left: var(--home-section-indent, 0px);
 }
 
 /* ── Browse screen rows / boxes ─────────────────────────────

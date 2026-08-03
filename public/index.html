@@ -558,12 +558,12 @@
            content — so the three read as one consistent stack. The
            heading sits OUTSIDE the card for that reason.
 
-           The heading is a plain full-width child of the section; only the
-           CARD is wrapped in .home-section-block, which bounds its width
-           without moving it (no auto margins — see app.css). So the
-           heading, the card and the "Your apps" grid above all start on
-           the same left gutter, and the card simply stops early on the
-           right. Don't move the heading inside the block. -->
+           The heading is a plain full-width child of the section, on the
+           scroller's gutter; only the CARD is wrapped in
+           .home-section-block, which bounds its width AND indents it to
+           line up with the leftmost app icon in the grid above (a measured
+           offset — see Home.alignSections and app.css). Don't move the
+           heading inside the block: it would inherit the indent. -->
       <section id="home-find-more" class="px-3 pb-3">
         <div class="home-section-header">Featured apps</div>
         <div class="home-section-block">

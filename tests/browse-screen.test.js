@@ -86,6 +86,7 @@ function makeBrowse(opts = {}) {
       navigateToApp: () => {},
       setBackIcon: (m) => { chrome.backIcon = m; },
       setHeaderTitle: (t) => { chrome.title = t; },
+      navigateHome: () => { chrome.wentHome = (chrome.wentHome || 0) + 1; },
     },
     PlatformUI: {
       toast: () => {},
@@ -477,10 +478,68 @@ test('handleBack claims the header button only on the detail level', () => {
   Home.menuItemsFor = () => [];
   Browse._apps = [app({ slug: 'a' })];
   assert.equal(Browse.handleBack(), false, 'on the list, back means Home');
+  Browse.noteDetailOrigin('list');
   Browse.showDetail('a');
   assert.equal(Browse.handleBack(), true);
   assert.equal(location.hash, '#apps',
     'routed through the hash so the OS back gesture agrees');
+});
+
+// Back has to land where the user came IN from. A detail page opened from a
+// home card's "App details" menu never showed the list, so backing out to
+// it strands the user on a screen they never visited (the reported bug).
+test('handleBack goes HOME when the detail page was entered from home', () => {
+  const { Browse, Home, location, chrome } = makeBrowse();
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'a' })];
+  Browse.noteDetailOrigin('home');
+  Browse.showDetail('a');
+  assert.equal(Browse._detailOrigin, 'home');
+  assert.equal(Browse.handleBack(), true, 'still claims the button');
+  assert.equal(chrome.wentHome, 1, 'leaves the screen instead of showing the list');
+  assert.equal(location.hash, '',
+    'no #apps write — navigateHome owns the URL from here');
+});
+
+test('the origin defaults to the list for a deep link, and never leaks', () => {
+  const { Browse, Home, location } = makeBrowse();
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'a' }), app({ slug: 'b' })];
+  // No note at all (a cold #apps/<slug> deep link or ?shot=browse-detail):
+  // the enclosing screen is the list, which is the only answer available.
+  Browse.showDetail('a');
+  assert.equal(Browse._detailOrigin, 'list');
+  // A home-entered page followed by a list-entered one must not stay 'home'.
+  Browse.noteDetailOrigin('home');
+  Browse.showDetail('a');
+  assert.equal(Browse._detailOrigin, 'home');
+  Browse.showList();
+  Browse.showDetail('b');
+  assert.equal(Browse._detailOrigin, 'list', 'the note is consumed, not sticky');
+  Browse.handleBack();
+  assert.equal(location.hash, '#apps');
+  // Leaving the screen retires it too.
+  Browse.noteDetailOrigin('home');
+  Browse.close();
+  assert.equal(Browse._detailOrigin, 'list');
+  assert.equal(Browse._pendingOrigin, null);
+});
+
+test('a browse row tap declares the list as its origin; the home menu declares home', () => {
+  // Both call sites note the origin BEFORE writing the hash — the
+  // hashchange lands in a later task, so the note is always in place.
+  const rows = BROWSE_SRC.slice(BROWSE_SRC.indexOf('_wireRows(listEl) {'));
+  const tap = rows.slice(0, 700);
+  assert.match(tap, /noteDetailOrigin\('list'\)/);
+  assert.ok(tap.indexOf("noteDetailOrigin('list')") < tap.indexOf('location.hash'));
+
+  const home = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'js', 'home.js'), 'utf8'
+  );
+  const item = home.slice(home.indexOf("key: 'app-details'"));
+  const run = item.slice(0, 400);
+  assert.match(run, /Browse\?\.noteDetailOrigin\?\.\('home'\)/);
+  assert.ok(run.indexOf("noteDetailOrigin?.('home')") < run.indexOf('location.hash'));
 });
 
 test('route animates a drill-in as a push and the way back as a pop', () => {

@@ -191,9 +191,72 @@ const Home = {
     Home._wireWidgetStrip(listEl);
     Home.renderFindMore(apps);
     Home.renderCreateSection(canCreate);
+    Home._wireSectionAlign();
+    Home.alignSections();
     Home._maybeOpenShotMenu(listEl);
     Home._searchReveal.sync();
   },
+
+  // Line the trailing sections' cards up with the leftmost APP ICON in the
+  // "Your apps" grid — the visible left edge of the first app. The
+  // .app-card box starts at the scroller's gutter, but its icon is centred
+  // in the grid cell, so the icon lands well to the right of it (~94px at
+  // 1280, ~62px on a phone) and a gutter-aligned card read as misaligned.
+  //
+  // The offset is a function of the cell width, so it is measured rather
+  // than hard-coded, and published as a custom property that
+  // .home-section-block consumes (see public/css/app.css). Cheap: two
+  // getBoundingClientRect reads per render, no layout thrash — the DOM is
+  // already settled by the time render() reaches this.
+  //
+  // No icon (an empty "Your apps") clears the property, so the box falls
+  // back to the gutter — there is nothing to align to, and the CSS
+  // fallback is 0px.
+  alignSections() {
+    const body = document.getElementById('home-body');
+    if (!body) return;
+    const section = document.getElementById('home-find-more');
+    const icon = document.querySelector('#app-list .app-card .app-icon-tile');
+    if (!section || !icon) {
+      body.style.removeProperty('--home-section-indent');
+      return;
+    }
+    // Measure against the section's CONTENT box (it carries its own px-3),
+    // since the margin this feeds is relative to that edge, not the window.
+    const pad = parseFloat(getComputedStyle(section).paddingLeft) || 0;
+    const from = section.getBoundingClientRect().left + pad;
+    const indent = Math.max(0, Math.round(icon.getBoundingClientRect().left - from));
+    body.style.setProperty('--home-section-indent', `${indent}px`);
+  },
+
+  // The indent is breakpoint-dependent (the grid re-columns), so it has to
+  // be re-measured when the window changes. rAF-coalesced: a drag-resize
+  // fires resize continuously.
+  //
+  // The `load` pass is not belt-and-braces: Tailwind ships from the Play
+  // CDN as a script that writes the stylesheet, so a render that beats it
+  // measures an UNCOLUMNED grid (one full-width card → an icon centred
+  // near the middle of the window → a far too large indent). Any later
+  // render fixes it, and the /api/apps response reliably triggers one, but
+  // re-measuring once the page has fully loaded closes the window where a
+  // first paint could sit visibly wrong.
+  _wireSectionAlign() {
+    if (Home._alignWired) return;
+    Home._alignWired = true;
+    let pending = false;
+    const remeasure = () => {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(() => {
+        pending = false;
+        Home.alignSections();
+      });
+    };
+    window.addEventListener('resize', remeasure);
+    if (document.readyState === 'complete') remeasure();
+    else window.addEventListener('load', remeasure, { once: true });
+  },
+  _alignWired: false,
 
   // "Featured apps": one contained card holding the admin-curated
   // featured tiles and, as its attached footer row, the way into the
@@ -1649,12 +1712,19 @@ const Home = {
     // ?demo=1 tiles, whose slugs 404 on GET /api/apps/:slug — and filtered
     // out of the detail page's own action rows by
     // Browse.DETAIL_EXCLUDED_KEYS, so the page can never link to itself.
+    //
+    // noteDetailOrigin('home') first: the browse list is never shown on
+    // this path, so the detail page's back button has to return HERE
+    // rather than to a list the user never saw.
     if (!app.demo && app.slug) {
       items.push({
         key: 'app-details',
         label: 'App details',
         title: 'Version, status and everything you can do with this app',
-        run: () => { location.hash = `#apps/${encodeURIComponent(app.slug)}`; },
+        run: () => {
+          window.Browse?.noteDetailOrigin?.('home');
+          location.hash = `#apps/${encodeURIComponent(app.slug)}`;
+        },
       });
     }
     if (app.is_collaborator) {

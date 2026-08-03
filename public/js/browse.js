@@ -42,8 +42,37 @@ const Browse = {
   // Guards the cold-deep-link fetch below so a miss can't loop.
   _detailFetching: null,
   _detailMissing: false,
+  // Where the CURRENT detail page was entered from, so the header's back
+  // button lands where the user actually came from:
+  //   'list' — a browse row tap, or a deep link / screenshot state. Back
+  //            means up to the list (the default: it is the enclosing
+  //            screen, and a deep link has no better answer).
+  //   'home' — a home app card's "App details" menu item. The list was
+  //            never on screen, so backing out to it would strand the user
+  //            on a screen they never visited; back means home. (The
+  //            browser/OS back gesture already does this on its own — it
+  //            pops the hash entry home returned from — so this only
+  //            teaches the header button to agree with it.)
+  _detailOrigin: 'list',
+  // Set by the opener BEFORE it writes the hash, consumed when the detail
+  // level actually opens. A separate field from _detailOrigin so a stale
+  // note can't relabel a later, differently-entered page.
+  _pendingOrigin: null,
 
   isOpen() { return Browse._open; },
+
+  // Declared by whoever is about to open a detail page, immediately before
+  // it assigns location.hash (the hashchange lands in a later task, so the
+  // note is always in place by the time route()/open() reads it).
+  noteDetailOrigin(origin) {
+    Browse._pendingOrigin = origin === 'home' ? 'home' : 'list';
+  },
+
+  // Consume the pending note exactly once per detail entry.
+  _takeOrigin() {
+    Browse._detailOrigin = Browse._pendingOrigin || 'list';
+    Browse._pendingOrigin = null;
+  },
 
   // Screen entry. `slug` (from #apps/<slug>) opens straight onto a detail
   // page. First paint borrows Home's cache when it has one — the user
@@ -52,6 +81,8 @@ const Browse = {
     Browse._open = true;
     Browse._slug = slug || null;
     Browse._detailMissing = false;
+    if (Browse._slug) Browse._takeOrigin();
+    else Browse._pendingOrigin = null;
     if (!Browse._apps.length && Array.isArray(Home._apps) && Home._apps.length) {
       Browse._apps = Home._apps;
     }
@@ -64,6 +95,10 @@ const Browse = {
     Browse._open = false;
     Browse._slug = null;
     Browse._detailMissing = false;
+    // Leaving the screen retires the entry note with it — the next detail
+    // page declares its own origin.
+    Browse._detailOrigin = 'list';
+    Browse._pendingOrigin = null;
   },
 
   // ── Level switching ───────────────────────────────────────────────
@@ -83,6 +118,8 @@ const Browse = {
     const goingDeeper = !!next && !Browse._slug;
     Browse._slug = next;
     Browse._detailMissing = false;
+    if (next) Browse._takeOrigin();
+    else Browse._pendingOrigin = null;
     PlatformUI.transition(() => {
       Browse._syncLevel();
       Browse.render();
@@ -93,6 +130,7 @@ const Browse = {
     if (!slug) return;
     Browse._slug = slug;
     Browse._detailMissing = false;
+    Browse._takeOrigin();
     Browse._syncLevel();
     Browse.render();
   },
@@ -100,15 +138,25 @@ const Browse = {
   showList() {
     Browse._slug = null;
     Browse._detailMissing = false;
+    Browse._pendingOrigin = null;
     Browse._syncLevel();
     Browse.render();
   },
 
-  // The header's single back button. Inside a detail page it means "up to
-  // the list" (via the hash, so the browser/OS back gesture and this
-  // button agree); on the list it declines and App.navigateHome runs.
+  // The header's single back button. Inside a detail page it goes back the
+  // way the user came in — up to the list for a row tap or a deep link,
+  // out to home when the page was opened from a home card's "App details"
+  // menu (see _detailOrigin). Both routes match what the browser/OS back
+  // gesture does from the same state. On the list it declines and the
+  // #back-btn handler's App.navigateHome runs.
   handleBack() {
     if (!Browse._slug) return false;
+    if (Browse._detailOrigin === 'home') {
+      // navigateHome() runs _exitBrowse() and updateHash(), so the URL
+      // stops naming a screen that is no longer showing.
+      App.navigateHome();
+      return true;
+    }
     location.hash = '#apps';
     return true;
   },
@@ -316,7 +364,10 @@ const Browse = {
         if (e.target.closest('.browse-add-btn')) return;
         if (row.dataset.demo === 'true') return;
         const slug = row.dataset.slug;
-        if (slug) location.hash = `#apps/${encodeURIComponent(slug)}`;
+        if (!slug) return;
+        // Back from here means up to this list.
+        Browse.noteDetailOrigin('list');
+        location.hash = `#apps/${encodeURIComponent(slug)}`;
       });
     });
     listEl.querySelectorAll('.browse-add-btn').forEach((btn) => {
