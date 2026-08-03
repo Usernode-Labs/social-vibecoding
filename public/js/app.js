@@ -2067,6 +2067,9 @@ const App = {
     document.getElementById('back-btn').addEventListener('click', () => {
       if (App._inAdmin && window.AdminConsole?.handleBack?.()) return;
       if (App._inSettings && window.Settings?.handleBack?.()) return;
+      // Browse's detail level (#apps/<slug>) claims the button as "up to
+      // the list"; on the list itself it declines and we leave the screen.
+      if (App._inBrowse && window.Browse?.handleBack?.()) return;
       App.navigateHome();
     });
 
@@ -2787,12 +2790,13 @@ const App = {
         return;
       }
       if (parts[0] === 'apps') {
-        // Browse-all-apps screen (home-screen split). No gate: the grid
+        // Browse-all-apps screen (home-screen split). No gate: the list
         // is the visibility-filtered /api/apps payload, and the
         // anonymous-shell branch above already handled a signed-out
-        // visitor.
+        // visitor. An optional second segment (#apps/<slug>) deep-links
+        // that app's detail page — the screen's level 2.
         App.setChromeless(false);
-        App.navigateToBrowse();
+        App.navigateToBrowse(parts[1] ? decodeURIComponent(parts[1]) : null);
         return;
       }
       if (parts[0] === 'admin') {
@@ -3158,7 +3162,16 @@ const App = {
   // this can run. The header's back button goes home; the browser/OS back
   // gesture returns here from an app opened out of this grid, because the
   // screen has its own hash entry.
-  navigateToBrowse() {
+  navigateToBrowse(slug) {
+    // Already mounted: this is an in-screen level change (#apps ↔
+    // #apps/<slug>, the back button, a hand-typed hash), not a screen
+    // entry. Hand it to the module — re-running the screen swap below
+    // would re-hide every sibling and replay the entry animation on what
+    // is really a level change. Same idiom as navigateToAdminConsole.
+    if (App._inBrowse && window.Browse?.isOpen?.()) {
+      Browse.route(slug || null);
+      return;
+    }
     const fromIframe = !!(App.currentApp && App.currentTab === 'app');
     if (App.currentApp) {
       AppView.close();
@@ -3190,13 +3203,19 @@ const App = {
     App.DrawerStatus.setAppOpen(false);
     App.setHeaderTitle('All apps');
     App._inBrowse = true;
-    if (window.Browse?.open) Browse.open();
+    // Browse.open sets the header title / back icon for whichever level
+    // the slug selects, so it runs after setHeaderTitle above.
+    if (window.Browse?.open) Browse.open(slug || null);
   },
 
   _exitBrowse() {
     App._inBrowse = false;
     const screen = document.getElementById('browse-screen');
     if (screen) screen.classList.add('hidden');
+    // The detail level borrows the header's back button as its own back
+    // arrow — hand it back on the way out, or every later screen inherits
+    // a chevron that means "home" (same reason as _exitAdminConsole).
+    App.setBackIcon('home');
     if (window.Browse?.close) Browse.close();
   },
 
@@ -3674,21 +3693,22 @@ const App = {
   // filtered-away tile yields no element / a 0×0 rect, which the kit
   // rejects — so the old home-visible checks live in the kit now.
   //
-  // Scoped to the two authed launcher grids — #app-list (home's "Your
-  // apps"), #home-featured-list (home's featured row) and #browse-list
-  // (the #apps browse screen). NOT the anonymous landing directory
-  // (#landing-apps), which renders `.app-card[data-slug]` tiles too and
-  // lives in this same document after a reload-free login.
+  // Scoped to the two authed launcher grids that still render icon TILES —
+  // #app-list (home's "Your apps") and #home-featured-list (home's
+  // featured row). NOT the anonymous landing directory (#landing-apps),
+  // which renders `.app-card[data-slug]` tiles too and lives in this same
+  // document after a reload-free login; and NOT #browse-list, which
+  // renders app-store `.browse-row` rows rather than tiles, so there is no
+  // tile rect to zoom out of there (the kit falls back to a push).
   //
   // Whichever grid the tap came from is the one whose tile is on screen,
-  // so a single query across all three lands on the right rect.
+  // so a single query across both lands on the right rect.
   _tileFor(slug) {
     try {
       const sel = CSS.escape(slug);
       return document.querySelector(
         `#app-list .app-card[data-slug="${sel}"], `
-        + `#home-featured-list .app-card[data-slug="${sel}"], `
-        + `#browse-list .app-card[data-slug="${sel}"]`
+        + `#home-featured-list .app-card[data-slug="${sel}"]`
       );
     } catch { return null; }
   },

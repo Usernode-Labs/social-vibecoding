@@ -277,6 +277,32 @@ html, body {
   padding: 0.25rem 0;
 }
 
+/* ── Browse screen rows / boxes ─────────────────────────────
+   The #apps screen renders ONE row markup (icon · name+meta · Add
+   button) and lets CSS pick the layout: a hairline-divided vertical
+   list on a phone, bordered app boxes in a 2/3-column grid on a wide
+   screen — the Apple App Store shape at both sizes. The grid itself is
+   Tailwind responsive classes on #browse-list; the per-row BOX
+   treatment lives here rather than as six stacked `md:dark:` variants
+   per row, so the rule is readable and can't depend on the CDN JIT
+   having generated an unusual variant stack.
+
+   Written as one min-width query matching Tailwind's `md` (768px) —
+   keep the two in step if the container's breakpoint ever moves. */
+
+.browse-row { transition: background-color 150ms, border-color 150ms; }
+.browse-row:hover { background-color: var(--bg-card); }
+
+@media (min-width: 768px) {
+  .browse-row {
+    border: 1px solid var(--border-light);
+    border-radius: 0.75rem; /* rounded-xl, matching the icon tiles */
+  }
+  .browse-row:hover { border-color: var(--accent-light); }
+}
+
+.dark .browse-row { border-color: var(--border); }
+
 /* ── App-card "…" actions menu ─────────────────────────────
    Popover built by Home.openCardMenu (appended to <body>, fixed-
    positioned against the trigger rect). Plain CSS rather than

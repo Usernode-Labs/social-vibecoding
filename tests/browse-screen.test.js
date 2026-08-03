@@ -45,6 +45,21 @@ function makeBrowse(opts = {}) {
         contains: (c) => el._classes.has(c),
       },
       addEventListener: () => {},
+      // Mostly a null stub — the detail page wires its Open / Add / action
+      // rows by querying its own host and nothing here needs the elements
+      // back. The ONE selector that must really resolve is the shot deep
+      // link's first-real-row lookup, so answer that from the rendered
+      // markup: find the first `.browse-row` div that carries no
+      // data-demo attribute and hand back just its slug.
+      querySelector: (sel) => {
+        if (id !== 'browse-list' || !/browse-row/.test(String(sel))) return null;
+        for (const tag of el.innerHTML.match(/<div class="browse-row[^>]*>/g) || []) {
+          if (/data-demo="true"/.test(tag)) continue;
+          const m = tag.match(/data-slug="([^"]*)"/);
+          if (m) return { dataset: { slug: m[1] } };
+        }
+        return null;
+      },
       querySelectorAll: () => ({ forEach: () => {} }),
       offsetHeight: 52,
       scrollTop: 0,
@@ -54,15 +69,30 @@ function makeBrowse(opts = {}) {
     nodes[id] = el;
     return el;
   };
-  ['browse-list', 'browse-empty', 'browse-search-input', 'browse-search-clear',
+  ['browse-list', 'browse-empty', 'browse-list-level', 'browse-detail',
+    'browse-search-bar', 'browse-search-input', 'browse-search-clear',
     'home-screen', 'home-search-bar', 'app-list', 'home-featured-list',
     'home-create-body'].forEach(mkEl);
+  // The chrome _syncLevel drives, recorded so the level tests can assert it.
+  const chrome = { backIcon: null, title: null, transitions: [] };
+  // The shot deep link aligns the URL with replaceState — record the URLs.
+  const history = { calls: [], replaceState: (_a, _b, url) => history.calls.push(url) };
 
   const fetchCalls = [];
   const sandbox = {
     console,
-    App: { user: { id: 1 }, navigateToApp: () => {} },
-    PlatformUI: { toast: () => {} },
+    App: {
+      user: opts.user || { id: 1 },
+      navigateToApp: () => {},
+      setBackIcon: (m) => { chrome.backIcon = m; },
+      setHeaderTitle: (t) => { chrome.title = t; },
+    },
+    PlatformUI: {
+      toast: () => {},
+      // The kit wrapper runs fn directly when the kit is absent; do the
+      // same and record the animation type the level change asked for.
+      transition: (fn, o) => { chrome.transitions.push(o?.type); fn(); },
+    },
     document: {
       getElementById: (id) => nodes[id] || null,
       querySelector: () => null,
@@ -92,6 +122,7 @@ function makeBrowse(opts = {}) {
     },
     setTimeout, clearTimeout, setInterval, clearInterval,
     URLSearchParams,
+    history,
     requestAnimationFrame: (fn) => fn(),
     location: { search: opts.search || '', hash: '' },
     addEventListener: () => {},
@@ -105,7 +136,10 @@ function makeBrowse(opts = {}) {
   // the point) but never as a sandbox property — hence the explicit hoist.
   vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
   vm.runInContext(BROWSE_SRC, sandbox);
-  return { Browse: sandbox.Browse, Home: sandbox.__Home, nodes, fetchCalls };
+  return {
+    Browse: sandbox.Browse, Home: sandbox.__Home,
+    nodes, fetchCalls, chrome, history, location: sandbox.location,
+  };
 }
 
 const app = (over) => ({
@@ -180,65 +214,86 @@ test('visibleApps: filters on Home.matchesQuery over the whole list', () => {
 
 // ── render ───────────────────────────────────────────────────────
 
-test('render: tiles carry BOTH the add badge and the "…" actions menu', () => {
+test('renderAppRow: an app-store row — icon, name, meta, Add button', () => {
   const { Browse, nodes } = makeBrowse();
-  Browse._apps = [app({ slug: 'fresh' }), app({ slug: 'mine', is_favorited: true })];
+  Browse._apps = [
+    app({ slug: 'fresh', name: 'Fresh App', active_users: 3 }),
+    app({ slug: 'mine', name: 'My App', is_favorited: true }),
+  ];
   Browse.render();
   const html = nodes['browse-list'].innerHTML;
-  assert.match(html, /card-add-btn/, 'the add badge stays the primary affordance');
-  assert.match(html, /card-menu-btn/, 'same "…" menu the home cards have');
-  // Added apps show the ✓ state, fresh ones the + state.
-  assert.match(html, /data-slug="mine" data-added="true"|data-added="true"/);
+  assert.match(html, /class="browse-row/, 'rows, not launcher tiles');
+  assert.match(html, /data-slug="fresh"/);
+  assert.match(html, /app-icon-tile/, 'reuses the shared icon tile');
+  assert.match(html, /Fresh App/);
+  assert.match(html, /3 users/, 'the derived meta line');
+  assert.match(html, /browse-add-btn/);
+  // Added rows read "Added", fresh ones "Add".
+  assert.match(html, /data-added="true"[\s\S]*?Added/);
   assert.match(html, /data-added="false"/);
+  // The "…" menu is gone from this screen — the detail page absorbed it.
+  assert.doesNotMatch(html, /card-menu-btn/);
+  assert.doesNotMatch(html, /card-add-btn/, 'the corner badge is a real button now');
 });
 
-test('render: the two corner controls take opposite corners', () => {
+test('renderAppRow: the layout switch is pure CSS on the container', () => {
+  // Narrow: a hairline-divided vertical list. md+: a 2/3-column grid whose
+  // rows pick up a box treatment from .browse-row in app.css. No
+  // matchMedia, so nothing re-renders on resize.
+  const listTag = INDEX.match(/<div id="browse-list"[^>]*>/)[0];
+  assert.match(listTag, /divide-y/, 'mobile list hairlines');
+  assert.match(listTag, /md:divide-y-0/);
+  assert.match(listTag, /md:grid/);
+  assert.match(listTag, /md:grid-cols-2/);
+  assert.match(listTag, /lg:grid-cols-3/);
+  assert.doesNotMatch(BROWSE_SRC, /matchMedia\(/, 'the breakpoint is CSS, not JS');
+  // The box treatment itself.
+  const css = read('public/css/app.css');
+  assert.match(css, /@media \(min-width: 768px\) \{\s*\.browse-row \{/);
+  assert.match(css, /\.browse-row \{ transition/);
+});
+
+test('renderAppRow: status pills and the status word ride the row', () => {
   const { Browse, nodes } = makeBrowse();
-  Browse._apps = [app({ slug: 'fresh' })];
+  Browse._apps = [app({
+    slug: 'busy', status: 'awaiting_secrets', open_prs: 2, open_issues: 1,
+    missingSecrets: ['API_KEY'], view_visibility: 'private',
+  })];
   Browse.render();
   const html = nodes['browse-list'].innerHTML;
-  // Add badge keeps top-right (primary); the menu moves to top-left so
-  // they can't overlap on a 56px tile. The fork tag owns bottom-left.
-  const add = html.match(/class="card-add-btn[^"]*"/)[0];
-  const menu = html.match(/class="card-menu-btn[^"]*"/)[0];
-  assert.match(add, /-top-1\.5 -right-1\.5/);
-  assert.match(menu, /-top-1\.5 -left-1\.5/);
+  assert.match(html, /Awaiting secrets/, 'non-running status in the meta line');
+  assert.match(html, /2 to vote/, 'reuses Home.renderAppPillsHtml');
+  assert.match(html, /1 issue/);
+  assert.match(html, /Private/);
 });
 
-test('render: staging demo tiles get NO menu (their slugs have no DB row)', () => {
+test('metaLine: users · updated · status, pluralised, missing bits skipped', () => {
+  const { Browse } = makeBrowse();
+  assert.match(Browse.metaLine(app({ active_users: 1 })), /^1 user\b/);
+  assert.match(Browse.metaLine(app({ active_users: 0 })), /^0 users\b/);
+  const running = Browse.metaLine(app({ active_users: 4, status: 'running' }));
+  assert.doesNotMatch(running, /running/, 'a healthy app needs no status word');
+  assert.match(Browse.metaLine(app({ status: 'error' })), /Error/);
+  assert.match(Browse.metaLine(app({ status: 'creating' })), /Spinning up/);
+  // No timestamps at all still yields a usable line, and null is safe.
+  assert.equal(Browse.metaLine(null), '');
+  assert.match(Browse.metaLine({ status: 'running' }), /^0 users$/);
+});
+
+test('renderAppRow: staging demo rows are inert (no detail page to open)', () => {
   const { Browse, nodes } = makeBrowse();
   Browse._apps = [app({ slug: 'staging-demo-featured', demo: true })];
   Browse.render();
   const html = nodes['browse-list'].innerHTML;
-  assert.doesNotMatch(html, /card-menu-btn/, 'every action would 404');
-  assert.match(html, /card-add-btn/, 'the (inert) add badge still renders');
-});
-
-test('the menu button routes to Home.openCardMenu with the button as anchor', () => {
-  // Wired by the shared discovery-card wiring, not a reimplementation:
-  // openCardMenu resolves the app from Home._apps (which Browse keeps in
-  // step) and PlatformUI.menu picks the touch/desktop idiom.
-  const wiring = HOME_SRC.slice(
-    HOME_SRC.indexOf('_wireDiscoveryCards(listEl, onChange)'),
-    HOME_SRC.indexOf('async toggleAdded(')
-  );
-  assert.ok(wiring.length > 200, 'located _wireDiscoveryCards');
-  assert.match(wiring, /querySelectorAll\('\.card-menu-btn'\)/);
-  assert.match(wiring, /Home\.openCardMenu\(btn\.dataset\.slug, btn\)/);
-  assert.match(wiring, /e\.stopPropagation\(\)/);
-  // A tap on either corner control must not also open the app.
-  assert.match(wiring, /closest\('\.card-add-btn'\) \|\| e\.target\.closest\('\.card-menu-btn'\)/);
-});
-
-test('a re-render dismisses a menu anchored to a button it is replacing', () => {
-  const src = BROWSE_SRC.slice(BROWSE_SRC.indexOf('render() {'));
-  assert.match(src, /Home\.closeCardMenu\(\)/,
-    'otherwise the popover hangs anchored to a detached node');
+  assert.match(html, /data-demo="true"/);
+  assert.match(html, /cursor-default/, 'not presented as tappable');
+  assert.doesNotMatch(html, /cursor-pointer/);
+  assert.match(html, /browse-add-btn/, 'the (inert) Add button still renders');
 });
 
 test('syncFrom adopts an externally-fetched payload and repaints', () => {
-  // Home.load() is where every card-menu action settles (add/remove,
-  // retry, lock, delete), so this is how those land on the browse grid.
+  // Home.load() is where every detail-page action settles (add/remove,
+  // retry, lock, delete), so this is how those land on this screen.
   const { Browse, nodes } = makeBrowse();
   Browse._apps = [app({ slug: 'before' })];
   Browse.render();
@@ -260,22 +315,195 @@ test('Home.load hands its fresh payload to an open browse screen', () => {
   assert.match(load, /Browse\.syncFrom\(apps\)/);
 });
 
-test('?shot=card-menu opens the menu on whichever grid is visible', () => {
-  // The captures can't click, so the OPEN menu needs a URL. The helper is
-  // shared with home's grid; the offsetParent guard is what stops a hidden
-  // #app-list from burning the once-only flag during boot on /#apps.
-  const helper = HOME_SRC.slice(
-    HOME_SRC.indexOf('_maybeOpenShotMenu(listEl) {'),
-    HOME_SRC.indexOf('_assertMenuOpaque()')
-  );
-  assert.ok(helper.length > 200, 'located _maybeOpenShotMenu');
-  assert.match(helper, /listEl\.offsetParent === null\) return/);
-  // The flag is claimed only AFTER the visibility check.
-  assert.ok(
-    helper.indexOf('offsetParent === null') < helper.indexOf('_shotMenuDone = true'),
-    'visibility check precedes the once-only claim'
-  );
-  assert.match(BROWSE_SRC, /Home\._maybeOpenShotMenu\(listEl\)/);
+test('the browse rows no longer touch the home card menu at all', () => {
+  assert.doesNotMatch(BROWSE_SRC, /openCardMenu/);
+  assert.doesNotMatch(BROWSE_SRC, /closeCardMenu/);
+  assert.doesNotMatch(BROWSE_SRC, /_maybeOpenShotMenu/);
+  // ?shot=card-menu stays a HOME-only deep link.
+  assert.match(HOME_SRC, /_maybeOpenShotMenu\(listEl\)/);
+});
+
+// ── Level 2: the app detail page ──────────────────────────────────
+
+test('detailActionsFor: filters exactly favorite + add-to-homescreen', () => {
+  const { Browse, Home } = makeBrowse();
+  // Stub the menu so this test pins the FILTER, not the (separately
+  // tested) permission gates inside menuItemsFor.
+  Home.menuItemsFor = () => ([
+    { key: 'favorite', label: 'Add to Your apps', run: () => {} },
+    { key: 'add-to-homescreen', label: 'Add to Usernode widget', run: () => {} },
+    { key: 'retry', label: 'Retry', run: () => {} },
+    { key: 'build-log', label: 'View build log', run: () => {} },
+    { key: 'check-updates', label: 'Check for updates', keepOpen: true, run: () => {} },
+    { key: 'fork', label: 'Fork this app', run: () => {} },
+    { key: 'lock', label: 'Lock app', run: () => {} },
+    { key: 'delete', label: 'Delete app', danger: true, run: () => {} },
+  ]);
+  const keys = Browse.detailActionsFor(app({ slug: 'x' })).map((i) => i.key);
+  // Favorite is the dedicated Add/Remove button; the widget item is
+  // "Your apps" only and belongs on home.
+  assert.deepEqual(keys, ['retry', 'build-log', 'check-updates', 'fork', 'lock', 'delete'],
+    'order preserved, only the two excluded keys dropped');
+  const actions = Browse.detailActionsFor(app({ slug: 'x' }));
+  assert.equal(actions.find((a) => a.key === 'delete').danger, true, 'flags survive');
+  assert.equal(actions.find((a) => a.key === 'check-updates').keepOpen, true);
+  assert.deepEqual([...Browse.DETAIL_EXCLUDED_KEYS], ['favorite', 'add-to-homescreen']);
+  assert.equal(Browse.detailActionsFor(null).length, 0, 'null-safe');
+});
+
+test('detailActionsFor: derives from Home.menuItemsFor, never re-derived', () => {
+  // The whole point: one place owns the permission gates, so a new menu
+  // item appears here for free unless it is explicitly excluded.
+  const src = BROWSE_SRC.slice(BROWSE_SRC.indexOf('detailActionsFor(app) {'));
+  assert.match(src.slice(0, 400), /Home\.menuItemsFor\(app\)/);
+  // No re-implemented gating in this file.
+  assert.doesNotMatch(BROWSE_SRC, /canAdminWrite/);
+  assert.doesNotMatch(BROWSE_SRC, /is_collaborator/);
+});
+
+test('the detail page renders Open, Add/Remove and the action rows', () => {
+  const { Browse, Home, nodes } = makeBrowse();
+  Home.menuItemsFor = () => ([
+    { key: 'favorite', label: 'Add to Your apps', run: () => {} },
+    { key: 'fork', label: 'Fork this app', run: () => {} },
+    { key: 'delete', label: 'Delete app', danger: true, run: () => {} },
+  ]);
+  Browse._apps = [app({ slug: 'detail-me', name: 'Detail Me', status: 'running' })];
+  Browse.showDetail('detail-me');
+  const html = nodes['browse-detail'].innerHTML;
+  assert.match(html, /Detail Me/, 'full untruncated name');
+  assert.match(html, /detail-me/, 'the slug');
+  assert.match(html, /id="browse-detail-open"[\s\S]*?Open/, 'Open is the primary action');
+  assert.match(html, /id="browse-detail-fav"/);
+  assert.match(html, /Add to Your apps/);
+  assert.match(html, /browse-detail-action[\s\S]*?Fork this app/);
+  assert.match(html, /Delete app/);
+  assert.match(html, /text-red-500/, 'the danger row is tinted');
+  // Favorite is NOT duplicated as an action row.
+  assert.equal((html.match(/browse-detail-action/g) || []).length, 2);
+});
+
+test('the detail page disables Open when the app cannot be opened', () => {
+  const { Browse, Home, nodes } = makeBrowse();
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'broken', status: 'error' })];
+  Browse.showDetail('broken');
+  const html = nodes['browse-detail'].innerHTML;
+  assert.match(html, /id="browse-detail-open"[^>]*disabled/);
+  assert.match(html, /Not running/);
+  // awaiting_secrets IS openable (the user goes there to fill them in).
+  Browse._apps = [app({ slug: 'secrets', status: 'awaiting_secrets' })];
+  Browse.showDetail('secrets');
+  assert.doesNotMatch(nodes['browse-detail'].innerHTML, /disabled/);
+});
+
+test('showDetail / showList toggle both containers plus the search bar', () => {
+  const { Browse, Home, nodes, chrome } = makeBrowse();
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'a', name: 'App A' })];
+
+  Browse.showDetail('a');
+  assert.equal(nodes['browse-detail'].classList.contains('hidden'), false);
+  assert.equal(nodes['browse-list-level'].classList.contains('hidden'), true);
+  assert.equal(nodes['browse-search-bar'].classList.contains('hidden'), true,
+    'searching a list nobody can see is meaningless');
+  assert.equal(chrome.backIcon, 'arrow', 'a drill-in borrows the back chevron');
+  assert.equal(chrome.title, 'App A');
+
+  Browse.showList();
+  assert.equal(nodes['browse-detail'].classList.contains('hidden'), true);
+  assert.equal(nodes['browse-list-level'].classList.contains('hidden'), false);
+  assert.equal(nodes['browse-search-bar'].classList.contains('hidden'), false);
+  assert.equal(chrome.backIcon, 'home');
+  assert.equal(chrome.title, 'All apps');
+});
+
+test('handleBack claims the header button only on the detail level', () => {
+  const { Browse, Home, location } = makeBrowse();
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'a' })];
+  assert.equal(Browse.handleBack(), false, 'on the list, back means Home');
+  Browse.showDetail('a');
+  assert.equal(Browse.handleBack(), true);
+  assert.equal(location.hash, '#apps',
+    'routed through the hash so the OS back gesture agrees');
+});
+
+test('route animates a drill-in as a push and the way back as a pop', () => {
+  const { Browse, Home, chrome } = makeBrowse();
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'a' })];
+  Browse.route('a');
+  assert.deepEqual(chrome.transitions, ['push']);
+  Browse.route(null);
+  assert.deepEqual(chrome.transitions, ['push', 'pop']);
+  // A repeat hash write for the level already showing must not re-animate.
+  Browse.route(null);
+  assert.deepEqual(chrome.transitions, ['push', 'pop']);
+});
+
+test('a cold deep link falls back to GET /api/apps/:slug', async () => {
+  const { Browse, Home, nodes, fetchCalls } = makeBrowse({ apps: [] });
+  Home.menuItemsFor = () => [];
+  // Nothing cached — the detail level has to read the one app itself.
+  Browse._slug = 'cold-app';
+  Browse.render();
+  assert.match(nodes['browse-detail'].innerHTML, /Loading/);
+  await flush();
+  await flush();
+  assert.ok(fetchCalls.some((c) => c.url === '/api/apps/cold-app'),
+    'fetched the single app');
+});
+
+test('a deep link to a missing app renders the not-available state', async () => {
+  const { Browse, Home, nodes } = makeBrowse({ fetchOk: false });
+  Home.menuItemsFor = () => [];
+  Browse._slug = 'ghost';
+  Browse.render();
+  await flush();
+  await flush();
+  assert.match(nodes['browse-detail'].innerHTML, /isn&rsquo;t available|isn't available/);
+  assert.match(nodes['browse-detail'].innerHTML, /Back to all apps/);
+});
+
+test('syncFrom drops to the list when the open app is deleted away', () => {
+  const { Browse, Home, location } = makeBrowse();
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'doomed' })];
+  Browse.showDetail('doomed');
+  location.hash = '#apps/doomed';
+  Browse.syncFrom([app({ slug: 'survivor' })]);
+  assert.equal(location.hash, '#apps', 'no page left to show');
+});
+
+test('?shot=browse-detail drills into the first real row, once', () => {
+  // The captures can never click, so the detail page needs a URL that
+  // doesn't hard-code a slug (seed data moves).
+  const { Browse, Home, nodes, history } = makeBrowse({ search: '?shot=browse-detail' });
+  Home.menuItemsFor = () => [];
+  Browse._apps = [
+    app({ slug: 'demo-row', demo: true }),
+    app({ slug: 'real-row', name: 'Real Row' }),
+  ];
+  Browse.render();
+  assert.equal(Browse._slug, 'real-row', 'skips the inert demo row');
+  assert.match(nodes['browse-detail'].innerHTML, /Real Row/);
+  // The URL is aligned with replaceState — NOT by assigning location.hash,
+  // which would fire a hashchange that races the rest of boot and loses.
+  assert.deepEqual(history.calls, ['?shot=browse-detail#apps/real-row']);
+  assert.doesNotMatch(BROWSE_SRC, /location\.hash = `#apps\/\$\{encodeURIComponent\(row/);
+  // Latched: a later re-render must not yank the user back to a detail.
+  Browse.showList();
+  Browse.render();
+  assert.equal(Browse._slug, null);
+});
+
+test('no ?shot=browse-detail means no drill-in', () => {
+  const { Browse, history } = makeBrowse();
+  Browse._apps = [app({ slug: 'real-row' })];
+  Browse.render();
+  assert.equal(Browse._slug, null);
+  assert.equal(history.calls.length, 0);
 });
 
 test('render: empty result explains itself, with the query when there is one', () => {
@@ -384,6 +612,11 @@ test('index.html hosts #browse-screen with its own search field and grid', () =>
   assert.ok(main.includes('id="browse-empty"'));
   // Always visible here — the hidden-until-pulled treatment is home's.
   assert.match(main, /id="browse-search-bar"[^>]*sticky/);
+  // Two levels in ONE <main>: the list wrapper and the detail page. Keeping
+  // the detail inside this screen is what leaves _exitBrowse, the PTR
+  // wiring and every sibling hide-list untouched.
+  assert.ok(main.includes('id="browse-list-level"'));
+  assert.match(main, /id="browse-detail" class="hidden/);
 });
 
 test('browse.js is loaded after home.js and precached by the service worker', () => {
@@ -395,23 +628,41 @@ test('browse.js is loaded after home.js and precached by the service worker', ()
 
 // ── app.js routing ───────────────────────────────────────────────
 
-test('#apps routes to navigateToBrowse', () => {
+test('#apps and #apps/<slug> both route to navigateToBrowse', () => {
   assert.match(APP_SRC, /parts\[0\] === 'apps'/);
   const branch = APP_SRC.slice(APP_SRC.indexOf("parts[0] === 'apps'"));
-  assert.match(branch.slice(0, 400), /App\.navigateToBrowse\(\)/);
+  // The optional second segment is the detail page's deep link, decoded on
+  // the way in (the hash round-trip isn't guaranteed to be byte-identical).
+  assert.match(branch.slice(0, 700),
+    /App\.navigateToBrowse\(parts\[1\] \? decodeURIComponent\(parts\[1\]\) : null\)/);
 });
 
 test('navigateToBrowse / _exitBrowse follow the screen pattern', () => {
-  assert.match(APP_SRC, /navigateToBrowse\(\) \{/);
+  assert.match(APP_SRC, /navigateToBrowse\(slug\) \{/);
   assert.match(APP_SRC, /_exitBrowse\(\) \{/);
   const nav = APP_SRC.slice(
-    APP_SRC.indexOf('navigateToBrowse() {'),
+    APP_SRC.indexOf('navigateToBrowse(slug) {'),
     APP_SRC.indexOf('_exitBrowse() {')
   );
   assert.match(nav, /setHeaderTitle\('All apps'\)/);
   assert.match(nav, /App\._inBrowse = true/);
-  assert.match(nav, /Browse\.open\(\)/);
+  assert.match(nav, /Browse\.open\(slug \|\| null\)/);
   assert.match(nav, /getElementById\('home-screen'\)\.classList\.add\('hidden'\)/);
+  // Already mounted -> an in-screen LEVEL change, not a screen entry:
+  // re-running the swap would replay the entry animation on a drill-in.
+  assert.match(nav, /App\._inBrowse && window\.Browse\?\.isOpen\?\.\(\)/);
+  assert.match(nav, /Browse\.route\(slug \|\| null\)/);
+  // Leaving the screen hands the back chevron back, like _exitAdminConsole.
+  const exit = APP_SRC.slice(APP_SRC.indexOf('_exitBrowse() {'));
+  assert.match(exit.slice(0, 800), /App\.setBackIcon\('home'\)/);
+});
+
+test('the header back button consults Browse.handleBack', () => {
+  const handler = APP_SRC.slice(APP_SRC.indexOf("getElementById('back-btn').addEventListener"));
+  const body = handler.slice(0, 700);
+  assert.match(body, /App\._inBrowse && window\.Browse\?\.handleBack\?\.\(\)/);
+  // Ordered after the admin/settings hooks and before navigateHome.
+  assert.ok(body.indexOf('Browse?.handleBack') < body.indexOf('App.navigateHome()'));
 });
 
 test('every sibling screen hides #browse-screen and exits the flag', () => {
@@ -444,12 +695,14 @@ test('the app-view zoom departs from whichever grid was tapped', () => {
   assert.match(zoom, /after: \(\) => \{ if \(departing\) departing\.classList\.add\('hidden'\); \}/);
 });
 
-test('_tileFor resolves tiles in all three authed launcher grids', () => {
+test('_tileFor resolves tiles in the two grids that still HAVE tiles', () => {
   const fn = APP_SRC.slice(APP_SRC.indexOf('_tileFor(slug) {'));
   const body = fn.slice(0, fn.indexOf('_departingScreen'));
   assert.match(body, /#app-list \.app-card/);
   assert.match(body, /#home-featured-list \.app-card/);
-  assert.match(body, /#browse-list \.app-card/);
+  // Browse renders app-store ROWS now, not icon tiles, so there is no tile
+  // rect to zoom out of there — the kit falls back to a push.
+  assert.doesNotMatch(body, /#browse-list/);
   // The anonymous landing directory must stay excluded.
   assert.doesNotMatch(body, /#landing-apps/);
 });
