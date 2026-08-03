@@ -18,6 +18,14 @@
 //   1. the creator (apps.created_by),
 //   2. accepted members (app_collaborators status='member'),
 //   3. authors of merged proposals (chat_sessions status='merged').
+//
+// That definition (and the query implementing it) now lives in
+// src/services/contributors.js, shared with the AUTHED per-app read
+// GET /api/apps/:slug/contributors that backs the app-details page's
+// Contributors section (#919) — so "who counts as a contributor" cannot
+// drift between the two surfaces. `loadContributors` / `shapeContributor`
+// are imported and re-exported below unchanged; nothing about this file's
+// behaviour or payloads moved with them.
 
 const { Router } = require('express');
 const { getPool } = require('../db/pool');
@@ -28,56 +36,13 @@ const waitlist = require('../services/waitlist');
 const questions = require('../services/waitlist-questions');
 const { sendWaitlistJoinMail } = require('../services/topochain/mailer');
 const { productionHostname } = require('../services/caddy');
+const { loadContributors, shapeContributor } = require('../services/contributors');
 
 // Apps surfaced publicly: not the self-app, view-public, and in a status
 // that means the app actually exists/runs (creating / awaiting_secrets /
 // error rows aren't usable, so they're hidden — `status` is still returned
 // for the rows that do appear).
 const HIDDEN_APP_STATUSES = ['error', 'creating', 'awaiting_secrets'];
-
-// One round-trip that resolves the contributor set for any number of app
-// ids at once (avoids an N+1 across the apps list). The UNION dedups the
-// (app_id, user_id) pairs across the three sources; the join to users drops
-// any id that no longer resolves (created_by / user_id are ON DELETE SET
-// NULL). Ordered by username for stable output.
-async function loadContributors(pool, appIds) {
-  if (!appIds.length) return new Map();
-  const { rows } = await pool.query(
-    `WITH contributor_ids AS (
-        SELECT id AS app_id, created_by AS user_id
-          FROM apps
-         WHERE id = ANY($1::int[]) AND created_by IS NOT NULL
-        UNION
-        SELECT app_id, user_id
-          FROM app_collaborators
-         WHERE app_id = ANY($1::int[]) AND status = 'member'
-        UNION
-        SELECT app_id, user_id
-          FROM chat_sessions
-         WHERE app_id = ANY($1::int[]) AND status = 'merged' AND user_id IS NOT NULL
-     )
-     SELECT c.app_id, u.id AS user_id, u.username,
-            u.usernode_pubkey AS wallet_address
-       FROM contributor_ids c
-       JOIN users u ON u.id = c.user_id
-      ORDER BY LOWER(u.username)`,
-    [appIds]
-  );
-  const byApp = new Map();
-  for (const r of rows) {
-    if (!byApp.has(r.app_id)) byApp.set(r.app_id, []);
-    byApp.get(r.app_id).push(r);
-  }
-  return byApp;
-}
-
-// Project a contributor row to its wire shape. wallet_address is included
-// by default; `includeWallets === false` drops the key entirely.
-function shapeContributor(row, includeWallets) {
-  const out = { user_id: row.user_id, username: row.username };
-  if (includeWallets) out.wallet_address = row.wallet_address ?? null;
-  return out;
-}
 
 // `?include_wallets=0` (exactly the string '0') opts addresses out;
 // anything else (unset, '1', …) keeps them — addresses-on is the default.

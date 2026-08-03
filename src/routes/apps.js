@@ -21,6 +21,7 @@ const events = require('../services/events');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
+const contributors = require('../services/contributors');
 
 // Cap on the `initialApprovers` list a governance-pr request may carry
 // (see that route below) — a sanity bound, not a product limit.
@@ -2092,6 +2093,62 @@ function appRoutes(config) {
       res.json(payload);
     } catch (err) {
       log.error('apps', 'Failed to list app admins', { slug: req.params.slug, message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // GET /api/apps/:slug/contributors — the ranked Contributors section on
+  // the app-details page (#919: #apps/<slug>, public/js/browse.js).
+  //
+  // VIEW-level, matching GET /api/apps/:slug/merged (routes/votes.js): this
+  // is read-only history, so a non-collaborator who can see the app gets
+  // it. Note the deliberate asymmetry with /collaborators, which is
+  // collab-gated: this list includes members, but it discloses no name that
+  // isn't already reachable — GET /api/public/apps/:slug/contributors
+  // publishes the identical three-source union UNAUTHENTICATED for every
+  // view-public non-self-hosted app, and on a view-private app "view
+  // access" IS collaborators-plus-admins.
+  //
+  // Contributor set + ranking + counts all live in
+  // services/contributors.js, shared with that public route so the two
+  // surfaces can't drift. Deliberately NOT folded into the /api/apps list
+  // payload: it's a per-app aggregate nothing on the home grid needs.
+  router.get('/api/apps/:slug/contributors', async (req, res) => {
+    try {
+      const app = await appAccess.getAppForUser(
+        pool, req.params.slug, req.user, 'view', appAccess.ACCESS_COLUMNS
+      );
+      if (!app) return res.status(404).json({ error: 'App not found' });
+      // getAppForUser has no self_hosted branch, but GET /api/apps/:slug
+      // 404s the self-app for non-admins when SELF_APP_PUBLIC_VOTING is
+      // off — mirror it so this can never be read for an app whose own
+      // details page doesn't exist for the caller. (The flag defaults on,
+      // so this is inert today; it keeps the two routes honest.)
+      if (app.self_hosted && !req.user?.isAdmin && !config.selfAppPublicVoting) {
+        return res.status(404).json({ error: 'App not found' });
+      }
+
+      const { items, total } = await contributors.loadRankedContributors(
+        pool, app.id, { limit: req.query.limit }
+      );
+
+      // Staging mock data (#919): chat_sessions is `staging:private` and is
+      // TRUNCATEd CASCADE into every staging clone (taking pr_votes with
+      // it), so a preview has zero merges and zero votes for every app and
+      // this section would review blank. Request-time only, replaces rather
+      // than tops up (so the ?shot=browse-detail capture is deterministic
+      // whichever cloned app it drills into), and a strict no-op in prod.
+      const demo = contributors.demoRankedContributors(req);
+
+      res.json({
+        slug: app.slug,
+        total: demo ? demo.total : total,
+        contributors: demo ? demo.items : items,
+      });
+    } catch (err) {
+      log.error('apps', 'Failed to list app contributors', {
+        slug: req.params.slug, message: err.message,
+      });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

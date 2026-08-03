@@ -59,6 +59,21 @@ const Browse = {
   // note can't relabel a later, differently-entered page.
   _pendingOrigin: null,
 
+  // ── Contributors section state (#919) ─────────────────────────────
+  //
+  // _renderDetail rebuilds the whole page's innerHTML on EVERY render(),
+  // and render() fires often — syncFrom on each /api/apps refresh, and
+  // after every favourite toggle. So the fetched list has to live out here
+  // or each repaint would refetch and flash. Keyed by slug, cleared on
+  // close() so re-entering the screen gets fresh counts.
+  //   slug -> { state: 'loading' | 'ready' | 'error', items, total }
+  _contrib: new Map(),
+  // Single-flight guard, same discipline as _detailFetching.
+  _contribFetching: null,
+  // Whether the current page's list is past the 5-row fold. Reset on every
+  // level change alongside _detailMissing so a new page never inherits it.
+  _contribExpanded: false,
+
   isOpen() { return Browse._open; },
 
   // Declared by whoever is about to open a detail page, immediately before
@@ -81,6 +96,7 @@ const Browse = {
     Browse._open = true;
     Browse._slug = slug || null;
     Browse._detailMissing = false;
+    Browse._contribExpanded = false;
     if (Browse._slug) Browse._takeOrigin();
     else Browse._pendingOrigin = null;
     if (!Browse._apps.length && Array.isArray(Home._apps) && Home._apps.length) {
@@ -99,6 +115,10 @@ const Browse = {
     // page declares its own origin.
     Browse._detailOrigin = 'list';
     Browse._pendingOrigin = null;
+    // Contributor counts move as proposals merge, so don't carry a cache
+    // across a whole screen visit — the next entry re-reads them.
+    Browse._contrib.clear();
+    Browse._contribExpanded = false;
   },
 
   // ── Level switching ───────────────────────────────────────────────
@@ -118,6 +138,7 @@ const Browse = {
     const goingDeeper = !!next && !Browse._slug;
     Browse._slug = next;
     Browse._detailMissing = false;
+    Browse._contribExpanded = false;
     if (next) Browse._takeOrigin();
     else Browse._pendingOrigin = null;
     PlatformUI.transition(() => {
@@ -130,6 +151,7 @@ const Browse = {
     if (!slug) return;
     Browse._slug = slug;
     Browse._detailMissing = false;
+    Browse._contribExpanded = false;
     Browse._takeOrigin();
     Browse._syncLevel();
     Browse.render();
@@ -138,6 +160,7 @@ const Browse = {
   showList() {
     Browse._slug = null;
     Browse._detailMissing = false;
+    Browse._contribExpanded = false;
     Browse._pendingOrigin = null;
     Browse._syncLevel();
     Browse.render();
@@ -428,6 +451,132 @@ const Browse = {
     return items.filter((i) => i && !Browse.DETAIL_EXCLUDED_KEYS.includes(i.key));
   },
 
+  // ── Contributors (#919) ───────────────────────────────────────────
+  //
+  // Who has actually shipped changes to this app, ranked by merged
+  // proposals. The set (creator ∪ accepted members ∪ merged-proposal
+  // authors), the counts and the ordering are ALL decided server-side by
+  // src/services/contributors.js — shared with the public contributors
+  // API — so this file only paints what it is handed, in the order it
+  // arrives.
+
+  // How many rows show before the "Show all" fold.
+  CONTRIB_FOLD: 5,
+
+  // The card, as a pure function of the cached entry + expanded flag.
+  // Pure so tests/browse-screen.test.js can pin every state without a
+  // DOM or a fetch, exactly like sortApps / metaLine / renderAppRow.
+  contributorsSectionHtml(entry, opts) {
+    const expanded = !!(opts && opts.expanded);
+    const state = (entry && entry.state) || 'loading';
+    const items = (entry && Array.isArray(entry.items)) ? entry.items : [];
+    // `total` is the server's full set size, which can exceed items.length
+    // when the query was capped — so the count and the toggle label stay
+    // honest about what exists rather than what arrived.
+    const total = (entry && Number.isFinite(entry.total)) ? entry.total : items.length;
+
+    // The heading paints in every state (including loading) so the page
+    // doesn't jump when the fetch lands.
+    const countChip = (state === 'ready' && total > 0)
+      ? `<span class="text-zinc-400 dark:text-zinc-500 font-normal"> · ${total}</span>`
+      : '';
+    const head = `
+      <h3 class="px-3 py-2.5 text-sm font-semibold text-zinc-900 dark:text-zinc-100 border-b border-zinc-200 dark:border-zinc-800" title="The app&rsquo;s creator, its members, and everyone whose proposal has been merged into it">Contributors${countChip}</h3>`;
+
+    let body;
+    if (state === 'loading') {
+      body = '<p class="px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400">Loading contributors…</p>';
+    } else if (state === 'error') {
+      body = '<p class="px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400">Couldn&rsquo;t load contributors.</p>';
+    } else if (!items.length) {
+      body = '<p class="px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400">No contributors yet.</p>';
+    } else {
+      const shown = expanded ? items : items.slice(0, Browse.CONTRIB_FOLD);
+      const rows = shown
+        .map((c, i) => Browse.contributorRowHtml(c, i + 1))
+        .join('');
+      // The fold is decided by what ARRIVED (items.length), not by total —
+      // a capped list has nothing more to reveal locally. The label still
+      // quotes `total` so the number matches the heading.
+      const toggle = items.length > Browse.CONTRIB_FOLD
+        ? `<button type="button" id="browse-contrib-toggle" class="w-full px-3 py-2.5 text-sm font-medium text-violet-600 dark:text-violet-400 text-left transition-colors hover:bg-zinc-500/5 border-t border-zinc-200 dark:border-zinc-800">${
+            expanded ? 'Show fewer' : `Show all ${total} contributor${total === 1 ? '' : 's'}`
+          }</button>`
+        : '';
+      body = `<div class="divide-y divide-zinc-200 dark:divide-zinc-800">${rows}</div>${toggle}`;
+    }
+
+    return `
+      <div id="browse-detail-contributors" class="mt-5 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+        ${head}${body}
+      </div>`;
+  },
+
+  // One contributor row. Deliberately mirrors the Top-users leaderboard's
+  // row (public/js/leaderboard.js _renderUserRows) — rank, initial-avatar
+  // circle, @username, a muted meta line, a count pill on the right — so
+  // the platform's two ranked people-lists read as one system. A <button>
+  // so it is keyboard-focusable like those rows are. Pure.
+  contributorRowHtml(c, rank) {
+    const who = (c && c.username) || 'unknown';
+    const initial = (who[0] || '?').toUpperCase();
+    const merged = parseInt(c && c.merged_count, 10) || 0;
+    const votes = parseInt(c && c.votes_count, 10) || 0;
+    // Role first (it says what they ARE on this app), then the vote count.
+    // Creator wins over member — the creator is always backfilled as one,
+    // so showing both would be noise on every single first row.
+    const bits = [];
+    if (c && c.is_creator) bits.push('Creator');
+    else if (c && c.is_member) bits.push('Member');
+    if (votes > 0) bits.push(`${votes} vote${votes === 1 ? '' : 's'}`);
+    const meta = bits.length
+      ? `<div class="text-xs text-zinc-500 dark:text-zinc-400 truncate">${escapeHtml(bits.join(' · '))}</div>`
+      : '';
+    // A zero stays visible in muted grey rather than vanishing, so every
+    // row keeps the same shape and the column doesn't ragged out.
+    const pillTint = merged > 0
+      ? 'bg-violet-50 dark:bg-violet-900/30 border-violet-200 dark:border-violet-700 text-violet-700 dark:text-violet-300'
+      : 'bg-zinc-100 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 text-zinc-500 dark:text-zinc-400';
+    return `
+      <button type="button" class="browse-contrib-row w-full text-left flex items-center gap-3 px-3 py-2.5 transition-colors hover:bg-zinc-500/5" data-username="${browseEscapeAttr(who)}" title="View @${browseEscapeAttr(who)}&rsquo;s proposals">
+        <div class="w-5 shrink-0 text-center text-xs font-mono text-zinc-400 dark:text-zinc-500">${rank}</div>
+        <div class="w-8 h-8 shrink-0 rounded-full bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 flex items-center justify-center font-semibold text-xs">${escapeHtml(initial)}</div>
+        <div class="min-w-0 flex-1">
+          <div class="text-sm font-medium text-zinc-900 dark:text-zinc-100 truncate">@${escapeHtml(who)}</div>
+          ${meta}
+        </div>
+        <div class="shrink-0 inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${pillTint}" title="Proposals merged into this app">${merged} merged</div>
+      </button>`;
+  },
+
+  // Read one app's ranked contributors. Mirrors _fetchDetail: single-flight
+  // on the slug, and only repaints if that page is still the one showing.
+  // Carries the same ?demo=1 passthrough _load() uses so the staging demo
+  // rows reach the detail page too.
+  async _fetchContributors(slug) {
+    if (!slug || Browse._contribFetching === slug) return;
+    Browse._contribFetching = slug;
+    Browse._contrib.set(slug, { state: 'loading', items: [], total: 0 });
+    try {
+      const demoQS = new URLSearchParams(location.search).get('demo') === '1' ? '?demo=1' : '';
+      const res = await fetch(`/api/apps/${encodeURIComponent(slug)}/contributors${demoQS}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      Browse._contrib.set(slug, {
+        state: 'ready',
+        items: Array.isArray(data && data.contributors) ? data.contributors : [],
+        total: Number.isFinite(data && data.total)
+          ? data.total
+          : ((data && data.contributors) || []).length,
+      });
+    } catch (err) {
+      Browse._contrib.set(slug, { state: 'error', items: [], total: 0 });
+    } finally {
+      Browse._contribFetching = null;
+      if (Browse._slug === slug) Browse.render();
+    }
+  },
+
   _renderDetail() {
     const host = document.getElementById('browse-detail');
     if (!host) return;
@@ -466,6 +615,18 @@ const Browse = {
       : '';
     const updatedRel = formatRelativeTime(app.last_deploy_at || app.created_at);
     const actions = Browse.detailActionsFor(app);
+    // Contributors ride the same paint: first visit to this page renders the
+    // loading card and kicks the read off (which repaints when it lands);
+    // every later render() — a syncFrom repaint, a favourite toggle, the
+    // show-all toggle — reads the cache and never refetches.
+    let contribEntry = Browse._contrib.get(slug);
+    if (!contribEntry) {
+      contribEntry = { state: 'loading', items: [], total: 0 };
+      Browse._fetchContributors(slug);
+    }
+    const contribHtml = Browse.contributorsSectionHtml(contribEntry, {
+      expanded: Browse._contribExpanded,
+    });
 
     host.innerHTML = `
       <div class="flex items-start gap-4">
@@ -507,7 +668,9 @@ const Browse = {
             <span>${escapeHtml(a.label)}</span>
             <svg class="w-4 h-4 shrink-0 opacity-40" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
           </button>`).join('')}
-      </div>` : ''}`;
+      </div>` : ''}
+
+      ${contribHtml}`;
 
     if (canOpen) {
       host.querySelector('#browse-detail-open')
@@ -525,6 +688,22 @@ const Browse = {
         if (item && typeof item.run === 'function') item.run(btn);
       });
     });
+    // A contributor row opens that person's existing profile page (every
+    // proposal they've proposed) — the leaderboard's own drill-in route, so
+    // this screen owns no profile rendering of its own. An unresolvable
+    // username lands on that pane's "User not found" state.
+    host.querySelectorAll('.browse-contrib-row').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const who = btn.dataset.username;
+        if (who) location.hash = `#leaderboard/users/${encodeURIComponent(who)}`;
+      });
+    });
+    // The fold toggle is purely local — the full list is already in hand,
+    // so this repaints and never refetches.
+    host.querySelector('#browse-contrib-toggle')?.addEventListener('click', () => {
+      Browse._contribExpanded = !Browse._contribExpanded;
+      Browse.render();
+    });
   },
 
   // Cold deep link (#apps/<slug> on a fresh load, or a link from
@@ -536,7 +715,13 @@ const Browse = {
     try {
       const res = await fetch(`/api/apps/${encodeURIComponent(slug)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const app = await res.json();
+      // The route answers `{ app: … }` (src/routes/apps.js), NOT a bare app
+      // row — reading it as one made every cold deep link resolve to the
+      // "isn't available" state. It only ever surfaced when the concurrent
+      // /api/apps list didn't carry the slug (which is why it went unnoticed:
+      // that list normally wins the race and paints the page first).
+      const payload = await res.json();
+      const app = (payload && payload.app) || null;
       if (app && app.slug) {
         Browse._apps = [...(Browse._apps || []).filter((a) => a.slug !== app.slug), app];
       }
@@ -590,5 +775,13 @@ const Browse = {
     }
   },
 };
+
+// Attribute-safe escape. Home's ambient escapeHtml (public/js/home.js) goes
+// through textContent, which covers & < > but NOT the double quote that
+// would break out of an attribute — the same `.replace` the detail page's
+// action rows already do inline, named so the contributor rows can reuse it.
+function browseEscapeAttr(str) {
+  return escapeHtml(str).replace(/"/g, '&quot;');
+}
 
 window.Browse = Browse;
