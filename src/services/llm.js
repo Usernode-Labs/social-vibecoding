@@ -476,7 +476,7 @@ function isCompletionClaim(text) {
 // RUN_LENGTH_PRIORS_SNAPSHOT. A numbers-only refresh must NOT bump
 // PROMPT_VERSION — that would fragment the accuracy comparison for no
 // reason. See also runCohortHint() in public/js/cc-progress-summary.js,
-// whose three thresholds share this snapshot as their refresh anchor.
+// whose two long-run thresholds share this snapshot as their refresh anchor.
 //
 // REFRESH SQL (verbatim — do not re-derive the method):
 //

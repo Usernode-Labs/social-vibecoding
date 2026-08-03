@@ -143,23 +143,37 @@ test('formatCountdown (#891): a fixed anchor decrements as time passes', () => {
   assert.equal(formatCountdown(target, estimatedAt + 300_000), ' · under a minute left');
 });
 
-// ── 1a-ter. runCohortHint (#892) ────────────────────────────────────────
+// ── 1a-ter. runCohortHint (#892, narrowed in #906) ──────────────────────
 //
-// Population context derived from 880 measured runs (p50 190s, p90 1029s,
+// Long-run context derived from 880 measured runs (p50 190s, p90 1029s,
 // p99 2233s). A statement about the distribution, never a prediction about
 // this run, so it cannot be individually wrong.
+//
+// #906 removed the first bucket. "most runs finish in 2–10 min" was a range
+// standing where a time should have been: it said nothing about your run,
+// never changed, and rendered from second zero — so for anyone without the
+// experimental estimator it was the only thing that ever appeared in this
+// slot. It is removed, not replaced: with no real estimate the slot is
+// empty. Only the genuinely-long-run notes survive.
 
-test('runCohortHint: the three thresholds render the three measured strings', () => {
-  assert.equal(runCohortHint(0), 'most runs finish in 2–10 min');
-  assert.equal(runCohortHint(599_999), 'most runs finish in 2–10 min');
+test('runCohortHint (#906): silent below ten minutes, long-run context above', () => {
+  assert.equal(runCohortHint(0), '');
+  assert.equal(runCohortHint(599_999), '');
   assert.equal(runCohortHint(600_000), 'running longer than most — about 1 in 5 runs do');
   assert.equal(runCohortHint(1_799_999), 'running longer than most — about 1 in 5 runs do');
   assert.equal(runCohortHint(1_800_000), 'this is a long one — some runs go 30 min+');
   assert.equal(runCohortHint(9_999_999), 'this is a long one — some runs go 30 min+');
 });
 
+test('runCohortHint (#906): the retired range copy is gone at every elapsed', () => {
+  for (let ms = 0; ms <= 7_200_000; ms += 5_000) {
+    assert.doesNotMatch(runCohortHint(ms), /most runs finish/,
+      `the retired range copy came back at ${ms}ms`);
+  }
+});
+
 test('runCohortHint: non-decreasing in severity as elapsed grows', () => {
-  const rank = (s) => (s.startsWith('most') ? 0 : s.startsWith('running') ? 1 : 2);
+  const rank = (s) => (s === '' ? 0 : s.startsWith('running') ? 1 : 2);
   let prev = -1;
   for (let ms = 0; ms <= 3_600_000; ms += 15_000) {
     const r = rank(runCohortHint(ms));
@@ -168,10 +182,10 @@ test('runCohortHint: non-decreasing in severity as elapsed grows', () => {
   }
 });
 
-test('runCohortHint: garbage input falls back to the first bucket', () => {
-  assert.equal(runCohortHint(undefined), 'most runs finish in 2–10 min');
-  assert.equal(runCohortHint(NaN), 'most runs finish in 2–10 min');
-  assert.equal(runCohortHint(-5000), 'most runs finish in 2–10 min');
+test('runCohortHint: garbage input falls back to the silent first bucket', () => {
+  assert.equal(runCohortHint(undefined), '');
+  assert.equal(runCohortHint(NaN), '');
+  assert.equal(runCohortHint(-5000), '');
 });
 
 // ── 1b. summarizeCcProgress unit tests ──────────────────────────────────
@@ -381,14 +395,50 @@ test('#892: the client mirrors the server guard and never renders a later target
     'the countdown must prefer the post-guard displayed value');
 });
 
-test('#892: the cohort hint is gated on the estimator being ON', () => {
-  assert.match(devChat, /data-cohort-gated="\$\{msg\._estimate \? '1' : '0'\}"/,
-    'the gate flag must follow whether an AI guess is present');
-  assert.match(devChat, /const gated = el\.dataset\.cohortGated === '1';/,
-    'the ticker must read the gate');
-  assert.match(devChat, /\(gated && elapsed < 600000\)/,
-    'with the estimator on, the hint waits until 10 minutes');
-  assert.match(devChat, /runCohortHint\(elapsed\)/, 'the hint text must come from the pure helper');
+test('#906: the render-time cohort gate is gone', () => {
+  // `data-cohort-gated` was stamped once per render from msg._estimate —
+  // necessarily falsy at first render, since the first AI guess is a full
+  // 60s estimator tick away — and neither _applyEstimate nor
+  // _patchProgressSummary ever refreshed it. So every run rendered
+  // gated="0" and the range blurb kept painting beside the live countdown
+  // for the rest of the run. Matched as literal code forms, not bare
+  // words: the comments explaining what was retired legitimately name it.
+  assert.doesNotMatch(devChat, /data-cohort-gated="/,
+    'the frozen gate attribute must not come back');
+  assert.doesNotMatch(devChat, /dataset\.cohortGated/,
+    'the ticker must not read a frozen gate');
+});
+
+test('#906: the side slot is resolved at tick time from live state only', () => {
+  const tickAt = devChat.indexOf('cohorts.forEach');
+  assert.ok(tickAt > 0, 'the cohort hint must tick');
+  const body = devChat.slice(tickAt, tickAt + 1600);
+  // Elapsed is the only input, recomputed every second from the DOM anchor.
+  assert.match(body, /parseInt\(el\.dataset\.cohortSince, 10\)/,
+    'the hint must be derived from the live elapsed anchor');
+  assert.match(body, /const hint = runCohortHint\(elapsed\);/,
+    'the whole visibility rule must live in the pure helper');
+  // An empty hint must blank the span rather than leave a dangling "· ".
+  assert.match(body, /el\.textContent = hint \? ' (·|\\u00b7) ' \+ hint : '';/,
+    'an empty hint must write an empty span, not a bare separator');
+});
+
+test('#906: the retired range copy ships nowhere in the client', () => {
+  // The comments explaining what was retired legitimately quote the phrase,
+  // so strip comments first — what is left is what actually ships.
+  const stripComments = (s) => s
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1');
+  const dir = path.join(__dirname, '..', 'public');
+  const walk = (d) => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (
+    e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]
+  ));
+  for (const file of walk(dir)) {
+    if (!/\.(js|css|html)$/.test(file)) continue;
+    assert.doesNotMatch(stripComments(fs.readFileSync(file, 'utf8')), /most runs finish/i,
+      `${path.relative(dir, file)} still renders the retired range message`);
+  }
 });
 
 test('#892: the deterministic stage label renders and is patched in place', () => {

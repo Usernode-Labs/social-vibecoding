@@ -3838,6 +3838,35 @@ function sessionRoutes(config) {
     }
   });
 
+  // #906: the side-slot staging fixtures (seedStagingCcCohortRuns in
+  // src/db/migrate.js) seed active coding-run rows at 5 and 12 minutes
+  // elapsed so a reviewer can see the empty slot and the ten-minute long-run
+  // note without waiting out a real run. But the dev-chat client applies its
+  // `_active` flag — which is what makes the row render as a LIVE run with a
+  // ticking elapsed timer and a side slot at all — only when /status reports
+  // `busy`, and `busy` is derived purely from the in-memory worker
+  // registries below. No DB seed can reach those, so without this the
+  // fixtures render as finished rows and demonstrate nothing.
+  //
+  // This is DATA/STATE gating, not feature gating: the code path, the payload
+  // shape and the whole client are identical, only the seeded rows' state
+  // differs, and it is a strict no-op outside staging. The id set is resolved
+  // once and cached, so the 3s status poll costs nothing.
+  let stagingCohortFixtureIds = null;
+  async function stagingCohortFixtureSessions() {
+    if (process.env.USERNODE_ENV !== 'staging') return null;
+    if (stagingCohortFixtureIds) return stagingCohortFixtureIds;
+    try {
+      const { rows } = await pool.query(
+        `SELECT id FROM chat_sessions WHERE branch_name LIKE 'staging-fixture/cc-cohort-%'`
+      );
+      stagingCohortFixtureIds = new Set(rows.map((r) => r.id));
+    } catch {
+      stagingCohortFixtureIds = new Set();
+    }
+    return stagingCohortFixtureIds;
+  }
+
   // Check if a session has an active worker + get latest progress
   router.get('/api/sessions/:id/status', async (req, res) => {
     const sessionId = parseInt(req.params.id);
@@ -3859,7 +3888,12 @@ function sessionRoutes(config) {
     // actual `docker exec`) — redundant in normal flow, but a useful
     // safety net for adopted workers and the brief period between
     // adding to activeWorkers and registering with the warm registry.
-    const busy = activeWorkers.has(sessionId) || worker.isInFlight(sessionId);
+    let busy = activeWorkers.has(sessionId) || worker.isInFlight(sessionId);
+    // #906 staging fixtures — see stagingCohortFixtureSessions above.
+    if (!busy) {
+      const fixtures = await stagingCohortFixtureSessions();
+      if (fixtures && fixtures.has(sessionId)) busy = true;
+    }
 
     let progress = [];
     try {
