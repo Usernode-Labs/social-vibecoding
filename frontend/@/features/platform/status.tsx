@@ -2,13 +2,17 @@ import { Activity, AppWindow, CircleAlert, Container, GitPullRequest, RefreshCw,
 import { useEffect, useState } from "react"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import { StatusDot } from "@/components/status-dot"
 import { TopBar } from "@/components/top-bar"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
+import { appPresentationStatus } from "@/features/apps/app-presentation-status"
+import { nodePresentationStatus } from "@/features/platform/node-presentation-status"
+import { servicePresentationStatus } from "@/features/platform/service-presentation-status"
 import { getOperationalStatus, type OperationalApp, type OperationalNodeStatus, type OperationalStatus, type OperationalWorker, type StuckSession } from "@/lib/status-api"
+import { cn } from "@/lib/utils"
 
 type State =
   | { kind: "loading" }
@@ -24,20 +28,14 @@ function formatDuration(seconds?: number) {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`
 }
 
-function statusVariant(status?: string | null): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "running" || status === "Synced") return "secondary"
-  if (status === "missing" || status === "unreachable" || status === "error") return "destructive"
-  return "outline"
-}
-
 function Metric({ label, value, icon: Icon }: { label: string; value: string; icon: typeof AppWindow }) {
   return <Card size="sm"><CardHeader><div className="flex items-start justify-between gap-3"><div><CardDescription>{label}</CardDescription><CardTitle className="mt-1 text-2xl tabular-nums">{value}</CardTitle></div><PlatformIcon icon={Icon} /></div></CardHeader></Card>
 }
 
 function NodeCard({ node }: { node?: OperationalNodeStatus | null }) {
-  if (!node) return <Card><CardHeader><CardTitle>Node</CardTitle><CardDescription>No node snapshot is currently available.</CardDescription></CardHeader></Card>
+  if (!node) return <Card data-testid="operational-node-card"><CardHeader><CardTitle>Node</CardTitle><CardDescription>No node snapshot is currently available.</CardDescription></CardHeader></Card>
   const height = node.bestTipHeight == null ? "Not reported" : node.peerBestTipHeight == null ? node.bestTipHeight.toLocaleString() : `${node.bestTipHeight.toLocaleString()} / ${node.peerBestTipHeight.toLocaleString()}`
-  return <Card><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-2"><PlatformIcon icon={Server} /><div><CardTitle>Node</CardTitle><CardDescription>Cached sidecar health reported by the platform.</CardDescription></div></div><Badge variant={statusVariant(node.status)}>{node.status || "unknown"}</Badge></div></CardHeader><CardContent className="flex flex-col gap-3"><dl className="grid gap-3 text-sm sm:grid-cols-3"><MetricLine label="Peers" value={String(node.peers ?? "Not reported")} /><MetricLine label="Chain height" value={height} /><MetricLine label="Ledger" value={node.hasFullUtxoDb === false ? "Partial" : node.hasFullUtxoDb === true ? "Full" : "Not reported"} /></dl>{node.hasFullUtxoDb === false ? <Alert><PlatformIcon icon={TriangleAlert} /><AlertTitle>Partial ledger mode</AlertTitle><AlertDescription>The node may not observe every incoming transaction. Resolving it remains an operator action.</AlertDescription></Alert> : null}{node.error ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Node probe failed</AlertTitle><AlertDescription>{node.error}</AlertDescription></Alert> : null}</CardContent></Card>
+  return <Card data-testid="operational-node-card"><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-2"><PlatformIcon icon={Server} /><div><CardTitle>Node</CardTitle><CardDescription>Cached sidecar health reported by the platform.</CardDescription></div></div><StatusDot subject="Node" {...nodePresentationStatus(node.status)} /></div></CardHeader><CardContent className="flex flex-col gap-3"><dl className="grid gap-3 text-sm sm:grid-cols-3"><MetricLine label="Peers" value={String(node.peers ?? "Not reported")} /><MetricLine label="Chain height" value={height} /><MetricLine label="Ledger" value={node.hasFullUtxoDb === false ? "Partial" : node.hasFullUtxoDb === true ? "Full" : "Not reported"} /></dl>{node.hasFullUtxoDb === false ? <Alert><PlatformIcon icon={TriangleAlert} /><AlertTitle>Partial ledger mode</AlertTitle><AlertDescription>The node may not observe every incoming transaction. Resolving it remains an operator action.</AlertDescription></Alert> : null}{node.error ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Node probe failed</AlertTitle><AlertDescription>{node.error}</AlertDescription></Alert> : null}</CardContent></Card>
 }
 
 function MetricLine({ label, value }: { label: string; value: string }) {
@@ -46,20 +44,27 @@ function MetricLine({ label, value }: { label: string; value: string }) {
 
 function AppRow({ app }: { app: OperationalApp }) {
   const state = app.prod?.state || app.dbStatus || "unknown"
-  return <li className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{app.name || app.slug || "Unnamed app"}</p><p className="text-sm text-muted-foreground">{app.openSessions ?? 0} sessions · {app.openIssues ?? 0} issues</p></div><Badge variant={statusVariant(state)}>{state}</Badge></li>
+  const subject = app.name || app.slug || "Unnamed app"
+  const presentation = appPresentationStatus(state)
+  const running = presentation.status === "running"
+  const needsAttention = (app.openSessions ?? 0) > 0 || (app.openIssues ?? 0) > 0
+  return <li className="flex flex-wrap items-center justify-between gap-2" data-testid="operational-app-row"><div className="min-w-0"><p className="truncate font-medium">{subject}</p><p className={cn("text-sm", needsAttention ? "font-medium text-foreground" : "text-muted-foreground")} data-attention={needsAttention ? "true" : "false"}>{app.openSessions ?? 0} sessions · {app.openIssues ?? 0} issues</p></div><StatusDot role={running ? "neutral" : presentation.role} showLabel={!running} subject={subject} label={presentation.label} /></li>
 }
 
 function WorkerRow({ worker }: { worker: OperationalWorker }) {
   const label = worker.appSlug ? `${worker.appSlug}${worker.sessionId == null ? "" : ` · session ${worker.sessionId}`}` : worker.sessionId == null ? "Worker" : `Session ${worker.sessionId}`
-  return <li className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{label}</p><p className="text-sm text-muted-foreground">{worker.workerMode || worker.state || "unknown"} · {formatDuration(worker.uptimeSeconds)}</p></div><Badge variant={worker.orphan ? "destructive" : statusVariant(worker.state)}>{worker.orphan ? "orphan" : worker.state || "unknown"}</Badge></li>
+  const presentation = servicePresentationStatus(worker.orphan ? "orphan" : worker.state)
+  const running = presentation.status === "running"
+  return <li className="flex flex-wrap items-center justify-between gap-2"><div className="min-w-0"><p className="truncate font-medium">{label}</p><p className="text-sm text-muted-foreground">{worker.workerMode || worker.state || "unknown"} · {formatDuration(worker.uptimeSeconds)}</p></div><StatusDot role={running ? "neutral" : presentation.role} showLabel={!running} subject={label} label={presentation.label} /></li>
 }
 
 function StuckRow({ session }: { session: StuckSession }) {
-  return <li className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium">{session.appSlug || "Unknown app"} · session {session.id ?? "?"}</p><p className="text-sm text-muted-foreground">{session.branchName || "No branch reported"} · {formatDuration(session.ageSeconds)}</p></div><Badge variant="outline">stuck</Badge></li>
+  const subject = `${session.appSlug || "Unknown app"} · session ${session.id ?? "?"}`
+  return <li className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-medium">{subject}</p><p className="text-sm text-muted-foreground">{session.branchName || "No branch reported"} · {formatDuration(session.ageSeconds)}</p></div><StatusDot subject={subject} {...servicePresentationStatus("stuck")} /></li>
 }
 
-function StatusList({ title, description, icon: Icon, children }: { title: string; description: string; icon: typeof Wrench; children: React.ReactNode }) {
-  return <Card><CardHeader><div className="flex items-start gap-2"><PlatformIcon icon={Icon} /><div><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></div></div></CardHeader><CardContent><ul className="flex flex-col gap-3">{children}</ul></CardContent></Card>
+function StatusList({ title, description, icon: Icon, children, testId }: { title: string; description: string; icon: typeof Wrench; children: React.ReactNode; testId?: string }) {
+  return <Card data-testid={testId}><CardHeader><div className="flex items-start gap-2"><PlatformIcon icon={Icon} /><div><CardTitle>{title}</CardTitle><CardDescription>{description}</CardDescription></div></div></CardHeader><CardContent><ul className="flex flex-col gap-3">{children}</ul></CardContent></Card>
 }
 
 export function StatusContent({ snapshot }: { snapshot: OperationalStatus }) {
@@ -68,7 +73,7 @@ export function StatusContent({ snapshot }: { snapshot: OperationalStatus }) {
   const workers = snapshot.workers || []
   const stuck = snapshot.stuckSessions || []
   const drift = snapshot.driftContainers || []
-  return <><section aria-label="Operational summary" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric icon={AppWindow} label="Production apps" value={`${summary.prodRunning ?? 0} / ${summary.apps ?? 0}`} /><Metric icon={Container} label="Staging" value={`${summary.stagingRunning ?? 0} / ${summary.stagingCap ?? 0}`} /><Metric icon={Activity} label="Workers" value={String(summary.workersInFlight ?? summary.workersRunning ?? 0)} /><Metric icon={GitPullRequest} label="Stuck sessions" value={String(summary.stuckSessions ?? 0)} /></section>{snapshot.deployProgress?.deploying ? <Alert><PlatformIcon icon={RefreshCw} /><AlertTitle>Deploy in progress</AlertTitle><AlertDescription>Platform changes may take a minute to become available.</AlertDescription></Alert> : null}<section className="grid gap-4 xl:grid-cols-2"><NodeCard node={snapshot.node} /><StatusList description="Current production containers, as reported by the public snapshot." icon={AppWindow} title="Apps">{apps.length ? apps.map((app, index) => <AppRow app={app} key={app.slug || `${app.name}-${index}`} />) : <li className="text-sm text-muted-foreground">No apps reported.</li>}</StatusList><StatusList description="Worker identity and active progress text are intentionally not shown here." icon={Wrench} title="Workers">{workers.length ? workers.map((worker, index) => <WorkerRow key={`${worker.appSlug || "worker"}-${worker.sessionId || index}`} worker={worker} />) : <li className="text-sm text-muted-foreground">No workers running.</li>}</StatusList><StatusList description="Sessions that need attention. This page does not provide operator actions." icon={UsersRound} title="Stuck sessions">{stuck.length ? stuck.map((session, index) => <StuckRow key={`${session.appSlug || "session"}-${session.id || index}`} session={session} />) : <li className="text-sm text-muted-foreground">None reported.</li>}</StatusList></section>{drift.length ? <Alert variant="destructive"><PlatformIcon icon={TriangleAlert} /><AlertTitle>Container drift detected</AlertTitle><AlertDescription>{drift.map((item) => `${item.kind || "container"}: ${item.expected || "expected container missing"}`).join(" · ")}</AlertDescription></Alert> : null}<p className="text-sm text-muted-foreground">Sensitive host capacity, database, spend, event, model, and live worker-progress diagnostics remain outside this read-only React view.</p></>
+  return <><section aria-label="Operational summary" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric icon={AppWindow} label="Production apps" value={`${summary.prodRunning ?? 0} / ${summary.apps ?? 0}`} /><Metric icon={Container} label="Staging" value={`${summary.stagingRunning ?? 0} / ${summary.stagingCap ?? 0}`} /><Metric icon={Activity} label="Workers" value={String(summary.workersInFlight ?? summary.workersRunning ?? 0)} /><Metric icon={GitPullRequest} label="Stuck sessions" value={String(summary.stuckSessions ?? 0)} /></section>{snapshot.deployProgress?.deploying ? <Alert><PlatformIcon icon={RefreshCw} /><AlertTitle>Deploy in progress</AlertTitle><AlertDescription>Platform changes may take a minute to become available.</AlertDescription></Alert> : null}{drift.length || stuck.length ? <section className="grid gap-4" data-testid="operational-attention">{drift.length ? <Alert data-testid="operational-drift-alert" variant="destructive"><PlatformIcon icon={TriangleAlert} /><AlertTitle>Container drift detected</AlertTitle><AlertDescription>{drift.map((item) => `${item.kind || "container"}: ${item.expected || "expected container missing"}`).join(" · ")}</AlertDescription></Alert> : null}{stuck.length ? <StatusList description="Sessions that need attention. This page does not provide operator actions." icon={UsersRound} testId="operational-stuck-sessions" title="Stuck sessions">{stuck.map((session, index) => <StuckRow key={`${session.appSlug || "session"}-${session.id || index}`} session={session} />)}</StatusList> : null}</section> : null}<section className="grid items-start gap-4 xl:grid-cols-2"><NodeCard node={snapshot.node} /><StatusList description="Current production containers, as reported by the public snapshot." icon={AppWindow} testId="operational-apps" title="Apps">{apps.length ? apps.map((app, index) => <AppRow app={app} key={app.slug || `${app.name}-${index}`} />) : <li className="text-sm text-muted-foreground">No apps reported.</li>}</StatusList></section><StatusList description="Worker identity and active progress text are intentionally not shown here." icon={Wrench} testId="operational-workers" title="Workers">{workers.length ? workers.map((worker, index) => <WorkerRow key={`${worker.appSlug || "worker"}-${worker.sessionId || index}`} worker={worker} />) : <li className="text-sm text-muted-foreground">No workers running.</li>}</StatusList><p className="text-sm text-muted-foreground">Sensitive host capacity, database, spend, event, model, and live worker-progress diagnostics remain outside this read-only React view.</p></>
 }
 
 export function StatusPage() {

@@ -1709,7 +1709,8 @@
         "WithDetail",
         "AppLifecycleAdapter",
         "NodeLifecycleAdapter",
-        "ConnectionLifecycleAdapter"
+        "ConnectionLifecycleAdapter",
+        "ServiceLifecycleAdapter"
       ],
       "tokens": [
         "foundation.font.sans",
@@ -1724,11 +1725,11 @@
           "Dot-only status is exposed as a named image to assistive technology.",
           "Forced-colors mode preserves a visible non-color state boundary."
         ],
-        "evidence": "StatusDot role and App/Node/Connection adapter stories, semantic token contrast checks, and forced-colors browser evidence."
+        "evidence": "StatusDot role and App/Node/Connection/Service adapter stories, semantic token contrast checks, and forced-colors browser evidence."
       },
       "dataBoundary": {
         "kind": "props-only",
-        "contract": "StatusDot receives a non-empty subject, finite semantic role, and human state label. Explicit App, Node, and Connection adapters map raw domain values; raw API strings never choose colors."
+        "contract": "StatusDot receives a non-empty subject, finite semantic role, and human state label. Explicit App, Node, Connection, and Service adapters map raw domain values; raw API strings never choose colors."
       },
       "responsive": [
         "narrow-mobile",
@@ -1756,6 +1757,14 @@
           "Building",
           "Configuration required",
           "Unavailable",
+          "Available",
+          "Enabled",
+          "Disabled",
+          "Loaded",
+          "Not loaded",
+          "Missing",
+          "Orphaned",
+          "Stuck",
           "Paused",
           "Unknown"
         ],
@@ -1788,7 +1797,8 @@
           "WithDetail",
           "AppLifecycleAdapter",
           "NodeLifecycleAdapter",
-          "ConnectionLifecycleAdapter"
+          "ConnectionLifecycleAdapter",
+          "ServiceLifecycleAdapter"
         ]
       }
     },

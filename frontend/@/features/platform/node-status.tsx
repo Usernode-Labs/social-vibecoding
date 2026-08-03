@@ -5,11 +5,11 @@ import { PlatformIcon } from "@/components/platform-icon"
 import { TopBar } from "@/components/top-bar"
 import { StatusDot } from "@/components/status-dot"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Skeleton } from "@/components/ui/skeleton"
 import { nodePresentationStatus } from "@/features/platform/node-presentation-status"
+import { servicePresentationStatus, type KnownServiceLifecycleState } from "@/features/platform/service-presentation-status"
 import { getNodeStatusSnapshot, type ExplorerStatusSnapshot, type NodeStatusSnapshot, type NodeStatusSnapshotFull } from "@/lib/node-status-api"
 
 type State =
@@ -29,16 +29,6 @@ function formatAt(timestamp?: number | null) {
   return timestamp ? new Date(timestamp).toLocaleTimeString() : "Not reported"
 }
 
-function statusVariant(status?: string | null): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "Synced" || status === "ok") return "secondary"
-  if (status === "unreachable" || status === "bad_response") return "destructive"
-  return "outline"
-}
-
-function statusTitle(status?: string | null) {
-  return status || "unknown"
-}
-
 function NodeSnapshot({ node }: { node: NodeStatusSnapshot | null | undefined }) {
   if (!node) return <Card><CardHeader><CardTitle>Node</CardTitle><CardDescription>Node data unavailable</CardDescription></CardHeader></Card>
   const height = node.bestTipHeight == null ? "Not reported" : node.peerBestTipHeight == null ? node.bestTipHeight.toLocaleString() : `${node.bestTipHeight.toLocaleString()} / ${node.peerBestTipHeight.toLocaleString()}`
@@ -47,25 +37,35 @@ function NodeSnapshot({ node }: { node: NodeStatusSnapshot | null | undefined })
 
 function ExplorerSnapshot({ explorer }: { explorer: ExplorerStatusSnapshot | null | undefined }) {
   if (!explorer) return <Card><CardHeader><CardTitle>Explorer</CardTitle><CardDescription>Explorer data unavailable</CardDescription></CardHeader></Card>
-  return <Card><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-2"><PlatformIcon icon={RadioTower} /><div><CardTitle>Explorer</CardTitle><CardDescription>{explorer.host || "Explorer endpoint"}</CardDescription></div></div><Badge variant={statusVariant(explorer.status)}>{statusTitle(explorer.status)}</Badge></div></CardHeader><CardContent className="space-y-4"><dl className="grid gap-3 text-base sm:grid-cols-2 sm:text-sm"><Metric label="Chain" value={explorer.chainId || "Not reported"} /><Metric label="Latency" value={explorer.latencyMs == null ? "Not reported" : `${explorer.latencyMs}ms`} numeric /><Metric label="Connected once" value={explorer.hasBeenOk ? "Yes" : "Not yet"} /></dl>{explorer.error ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Explorer unavailable</AlertTitle><AlertDescription>{explorer.error}</AlertDescription></Alert> : null}</CardContent></Card>
+  return <Card><CardHeader><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-start gap-2"><PlatformIcon icon={RadioTower} /><div><CardTitle>Explorer</CardTitle><CardDescription>{explorer.host || "Explorer endpoint"}</CardDescription></div></div><StatusDot subject="Explorer" {...servicePresentationStatus(explorer.status)} /></div></CardHeader><CardContent className="space-y-4"><dl className="grid gap-3 text-base sm:grid-cols-2 sm:text-sm"><Metric label="Chain" value={explorer.chainId || "Not reported"} /><Metric label="Latency" value={explorer.latencyMs == null ? "Not reported" : `${explorer.latencyMs}ms`} numeric /><Metric label="Connected once" value={explorer.hasBeenOk ? "Yes" : "Not yet"} /></dl>{explorer.error ? <Alert variant="destructive"><PlatformIcon icon={CircleAlert} /><AlertTitle>Explorer unavailable</AlertTitle><AlertDescription><span>The explorer did not respond.</span><span className="mt-1 block text-muted-foreground">Technical detail: {explorer.error}</span></AlertDescription></Alert> : null}</CardContent></Card>
 }
 
 function Metric({ label, value, numeric = false }: { label: string; value: string; numeric?: boolean }) {
   return <div><dt className="text-muted-foreground">{label}</dt><dd className={numeric ? "mt-1 font-medium tabular-nums" : "mt-1 font-medium"}>{value}</dd></div>
 }
 
-function serviceDescription(value: unknown) {
-  if (!value || typeof value !== "object") return "No details reported."
+function servicePresentation(value: unknown): { detail?: string; state: KnownServiceLifecycleState | string } {
+  if (!value || typeof value !== "object") return { state: "unknown" }
   const source = value as Record<string, unknown>
-  if (typeof source.enabled === "boolean") return source.enabled ? "Enabled" : "Disabled"
-  if (typeof source.loaded === "boolean") return source.loaded ? `${typeof source.count === "number" ? source.count.toLocaleString() : ""} records loaded`.trim() : "Not loaded"
-  return "No status details"
+  if (typeof source.enabled === "boolean") return { state: source.enabled ? "enabled" : "disabled" }
+  if (typeof source.loaded === "boolean") return source.loaded ? { detail: `${typeof source.count === "number" ? source.count.toLocaleString() : ""} records loaded`.trim(), state: "loaded" } : { state: "not-loaded" }
+  if (typeof source.status === "string") return { state: source.status }
+  return { state: "unknown" }
+}
+
+function serviceTitle(name: string) {
+  return name.replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase())
+}
+
+function humanizeEnum(value?: string | null) {
+  const words = value?.trim().replaceAll(/[-_]+/g, " ") || "Unknown"
+  return `${words.slice(0, 1).toLocaleUpperCase()}${words.slice(1)}`
 }
 
 export function NodeStatusContent({ snapshot }: { snapshot: NodeStatusSnapshotFull }) {
   const server = snapshot.server
   const services = Object.entries(snapshot.services || {})
-  return <><section aria-label="Status overview" className="grid gap-4 sm:grid-cols-3"><Card><CardHeader><CardDescription>Environment</CardDescription><CardTitle>{server?.mode || "Unknown"}</CardTitle></CardHeader></Card><Card><CardHeader><CardDescription>Uptime</CardDescription><CardTitle className="tabular-nums">{humanDuration(server?.uptimeMs)}</CardTitle></CardHeader></Card><Card><CardHeader><CardDescription>Updated</CardDescription><CardTitle className="tabular-nums">{formatAt(snapshot.at)}</CardTitle></CardHeader></Card></section><section aria-label="Chain services" className="grid gap-4 lg:grid-cols-2"><NodeSnapshot node={snapshot.node} /><ExplorerSnapshot explorer={snapshot.explorer} /></section>{services.length ? <section aria-labelledby="chain-services-heading" className="space-y-3"><h3 className="text-xl font-semibold" id="chain-services-heading">Chain-dependent services</h3><div className="grid gap-4 sm:grid-cols-2">{services.map(([name, service]) => <Card key={name} size="sm"><CardHeader><CardTitle>{name.replace(/([A-Z])/g, " $1").replace(/^./, (character) => character.toUpperCase())}</CardTitle><CardDescription>{serviceDescription(service)}</CardDescription></CardHeader></Card>)}</div></section> : null}</>
+  return <><section aria-label="Status overview" className="grid gap-4 sm:grid-cols-3"><Card><CardHeader><CardDescription>Environment</CardDescription><CardTitle>{humanizeEnum(server?.mode)}</CardTitle></CardHeader></Card><Card><CardHeader><CardDescription>Uptime</CardDescription><CardTitle className="tabular-nums">{humanDuration(server?.uptimeMs)}</CardTitle></CardHeader></Card><Card><CardHeader><CardDescription>Updated</CardDescription><CardTitle className="tabular-nums">{formatAt(snapshot.at)}</CardTitle></CardHeader></Card></section><section aria-label="Chain services" className="grid gap-4 lg:grid-cols-2"><NodeSnapshot node={snapshot.node} /><ExplorerSnapshot explorer={snapshot.explorer} /></section>{services.length ? <section aria-labelledby="chain-services-heading" className="space-y-3"><h3 className="text-xl font-semibold" id="chain-services-heading">Chain-dependent services</h3><div className="grid gap-4 sm:grid-cols-2">{services.map(([name, service]) => { const title = serviceTitle(name); const presentation = servicePresentation(service); return <Card key={name} size="sm"><CardHeader><CardTitle>{title}</CardTitle><StatusDot detail={presentation.detail} subject={title} {...servicePresentationStatus(presentation.state)} /></CardHeader></Card> })}</div></section> : null}</>
 }
 
 export function NodeStatusPage() {

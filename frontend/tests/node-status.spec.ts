@@ -9,6 +9,19 @@ const snapshot = {
   at: Date.parse("2026-07-28T12:00:00.000Z"),
 }
 
+async function statusDotStyles(locator: import("@playwright/test").Locator, role: "negative" | "positive" | "warning") {
+  return locator.evaluate((element, statusRole) => {
+    const style = getComputedStyle(element)
+    const root = getComputedStyle(document.documentElement)
+    return {
+      backgroundColor: style.backgroundColor,
+      borderColor: style.borderColor,
+      expectedBackground: root.getPropertyValue(`--status-${statusRole}-surface`).trim(),
+      expectedBorder: root.getPropertyValue(`--status-${statusRole}-border`).trim(),
+    }
+  }, role)
+}
+
 test("renders the public node status snapshot and its chain services", async ({ page }) => {
   await page.route("**/api/node-status/full", (route) => route.fulfill({ json: snapshot }))
   await page.goto("/react/node-status")
@@ -21,6 +34,12 @@ test("renders the public node status snapshot and its chain services", async ({ 
   await expect(status).toContainText("testnet-explorer.usernodelabs.org")
   await expect(status).toContainText("Chain-dependent services")
   await expect(status).toContainText("38 records loaded")
+  await expect(status).toContainText("Production")
+  await expect(status.getByRole("img", { name: "Node, synced" })).toBeVisible()
+  await expect(status.getByRole("img", { name: "Explorer, available" })).toBeVisible()
+  await expect(status.getByRole("img", { name: "Chain poller, enabled" })).toBeVisible()
+  await expect(status.getByRole("img", { name: "Genesis accounts, loaded" })).toBeVisible()
+  await expect(status.locator('[data-slot="badge"]')).toHaveCount(0)
 })
 
 test("makes probe failures explicit without hiding the other snapshot data", async ({ page }) => {
@@ -31,6 +50,34 @@ test("makes probe failures explicit without hiding the other snapshot data", asy
   await expect(status).toContainText("Partial UTXO database")
   await expect(status).toContainText("Node unavailable")
   await expect(status).toContainText("Explorer unavailable")
+  await expect(status).toContainText("The explorer did not respond.")
+  await expect(status).toContainText("Technical detail: connection refused")
+  const explorerStatus = status.getByRole("img", { name: "Explorer, unavailable" })
+  await expect(explorerStatus).toBeVisible()
+  const explorerDot = explorerStatus.locator('[data-status-role="negative"]')
+  await expect(explorerDot).toHaveCount(1)
+  const styles = await statusDotStyles(explorerDot, "negative")
+  expect(styles.backgroundColor).toBe(styles.expectedBackground)
+  expect(styles.borderColor).toBe(styles.expectedBorder)
+  await expect(status.locator('[data-slot="badge"]')).toHaveCount(0)
+})
+
+test("renders unknown service states explicitly", async ({ page }) => {
+  await page.route("**/api/node-status/full", (route) => route.fulfill({ json: {
+    ...snapshot,
+    services: { ...snapshot.services, anomalyProbe: { status: "brand_new_state" } },
+  } }))
+  await page.goto("/react/node-status")
+
+  const status = page.getByTestId("node-status")
+  const unknownStatus = status.getByRole("img", { name: "Anomaly probe, unknown" })
+  await expect(unknownStatus).toBeVisible()
+  const unknownDot = unknownStatus.locator('[data-status-role="warning"]')
+  await expect(unknownDot).toHaveCount(1)
+  const styles = await statusDotStyles(unknownDot, "warning")
+  expect(styles.backgroundColor).toBe(styles.expectedBackground)
+  expect(styles.borderColor).toBe(styles.expectedBorder)
+  await expect(status.locator('[data-slot="badge"]')).toHaveCount(0)
 })
 
 test("renders a request error when the public status service is unavailable", async ({ page }) => {

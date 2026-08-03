@@ -34,6 +34,28 @@ const publicSnapshot = {
   events: [{ message: "operator-only event" }],
 }
 
+const denseApps = Array.from({ length: 38 }, (_, index) => ({
+  name: index === 37 ? "Signal App" : `Quiet App ${String(index + 1).padStart(2, "0")}`,
+  slug: index === 37 ? "signal-app" : `quiet-app-${index + 1}`,
+  dbStatus: "ok",
+  openSessions: index === 37 ? 1 : 0,
+  openIssues: index === 37 ? 1 : 0,
+  prod: { state: "running" },
+}))
+
+async function statusDotStyles(locator: import("@playwright/test").Locator) {
+  return locator.evaluate((element) => {
+    const style = getComputedStyle(element)
+    const root = getComputedStyle(document.documentElement)
+    return {
+      backgroundColor: style.backgroundColor,
+      borderColor: style.borderColor,
+      neutralBackground: root.getPropertyValue("--muted").trim(),
+      neutralBorder: root.getPropertyValue("--border").trim(),
+    }
+  })
+}
+
 test("renders the public operational snapshot without admin diagnostics or controls", async ({ page }) => {
   await page.route("**/api/status", (route) => route.fulfill({ json: publicSnapshot }))
   await page.goto("/react/status")
@@ -56,6 +78,54 @@ test("renders the public operational snapshot without admin diagnostics or contr
   await expect(status.getByRole("button", { name: "Refresh" })).toBeVisible()
   await expect(status.getByRole("button", { name: "Toggle navigation" })).toBeVisible()
   await expect(status.getByRole("button")).toHaveCount(2)
+  await expect(status.getByRole("img", { name: "Node, synced" })).toBeVisible()
+  await expect(status.getByRole("img", { name: "RecipeBot, running" })).toBeVisible()
+  await expect(status.locator('[data-slot="badge"]')).toHaveCount(0)
+})
+
+test("routes attention before the app wall and keeps healthy rows quiet", async ({ page }) => {
+  await page.route("**/api/status", (route) => route.fulfill({ json: {
+    ...publicSnapshot,
+    summary: { ...publicSnapshot.summary, apps: 38, prodRunning: 38 },
+    apps: denseApps,
+  } }))
+  await page.goto("/react/status")
+
+  const status = page.getByTestId("operational-status")
+  const rows = status.getByTestId("operational-app-row")
+  const quietRows = rows.filter({ has: page.locator('[data-attention="false"]') })
+  const signalRow = rows.filter({ has: page.locator('[data-attention="true"]') })
+  await expect(rows).toHaveCount(38)
+  await expect(quietRows).toHaveCount(37)
+  await expect(signalRow).toHaveCount(1)
+
+  const driftBox = await status.getByTestId("operational-drift-alert").boundingBox()
+  const firstAppBox = await rows.first().boundingBox()
+  expect(driftBox).not.toBeNull()
+  expect(firstAppBox).not.toBeNull()
+  expect(driftBox!.y).toBeLessThan(firstAppBox!.y)
+
+  const nodeBox = await status.getByTestId("operational-node-card").boundingBox()
+  const appsBox = await status.getByTestId("operational-apps").boundingBox()
+  expect(nodeBox).not.toBeNull()
+  expect(appsBox).not.toBeNull()
+  expect(nodeBox!.height).toBeLessThan(appsBox!.height)
+
+  const quietDot = quietRows.first().getByRole("img", { name: "Quiet App 01, running" })
+  await expect(quietDot).toBeVisible()
+  await expect(quietDot.locator('[data-status-role="neutral"]')).toHaveCount(1)
+  await expect(quietRows.locator('[data-status-role="neutral"]')).toHaveCount(37)
+  const quietStyles = await statusDotStyles(quietDot.locator(".status-dot"))
+  expect(quietStyles.backgroundColor).toBe(quietStyles.neutralBackground)
+  expect(quietStyles.borderColor).toBe(quietStyles.neutralBorder)
+
+  const quietMetadata = quietRows.first().locator('[data-attention="false"]')
+  const signalMetadata = signalRow.locator('[data-attention="true"]')
+  const quietWeight = Number(await quietMetadata.evaluate((element) => getComputedStyle(element).fontWeight))
+  const signalWeight = Number(await signalMetadata.evaluate((element) => getComputedStyle(element).fontWeight))
+  expect(signalWeight).toBeGreaterThan(quietWeight)
+  await expect(signalRow.getByRole("img", { name: "Signal App, running" })).toBeVisible()
+  await expect(status.locator('[data-slot="badge"]')).toHaveCount(0)
 })
 
 test("refreshes the public snapshot on request", async ({ page }) => {

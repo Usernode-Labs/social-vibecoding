@@ -5,6 +5,7 @@ import { StatusDot } from "@/components/status-dot"
 import { appPresentationStatus } from "@/features/apps/app-presentation-status"
 import { connectionPresentationStatus } from "@/features/platform/connection-presentation-status"
 import { nodePresentationStatus } from "@/features/platform/node-presentation-status"
+import { servicePresentationStatus } from "@/features/platform/service-presentation-status"
 
 const meta = {
   title: "Elements/Status dot",
@@ -62,5 +63,11 @@ export const ConnectionLifecycleAdapter: Story = {
   args: { subject: "Activity", ...connectionPresentationStatus("reconnecting"), showLabel: false },
   play: async ({ canvasElement }) => {
     await expect(within(canvasElement).getByRole("img", { name: "Activity, reconnecting" })).toBeTruthy()
+  },
+}
+export const ServiceLifecycleAdapter: Story = {
+  args: { subject: "Explorer", ...servicePresentationStatus("unreachable") },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole("img", { name: "Explorer, unavailable" })).toBeTruthy()
   },
 }
