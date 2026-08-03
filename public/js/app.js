@@ -353,15 +353,15 @@ const App = {
     });
   },
 
-  // Four rendering states. Reuses .app-version-pill base styles + a
-  // couple of modifier classes (see public/css/app.css) for the deploying
-  // and stale variants. Always leads with the project name (e.g.
-  // "usernode") so it reads symmetrically with the per-app pill that
-  // sits below it in the drawer's status pane ("myapp · 1a2b3c4 · #42").
+  // Four rendering states, all rendered as .drawer-ver text (see
+  // public/css/app.css) with modifier classes for the dev / deploying /
+  // stale variants — the same text form the per-app version line below
+  // it in the drawer footer uses, so the two read as one block.
   //
-  // The slot moved out of the header and into #drawer-status-pane in the
-  // header slim-down, but kept its id — so this renderer is unchanged
-  // apart from the trailing refreshDeployDot(), which mirrors the
+  // The slot moved out of the header (header slim-down) and then out of
+  // the drawer's status pane into #drawer-footer, but kept its id
+  // throughout — so every call site is unchanged, as is the trailing
+  // refreshDeployDot(), which mirrors the
   // deploying state onto the hamburger (the only place a deploy is
   // visible now without opening the menu).
   renderPlatformVersionPill(info) {
@@ -383,19 +383,27 @@ const App = {
       && runningSha !== App.loadedPlatformSha
       && runningSha !== 'dev';
 
-    // Project label — sourced from the server (env-overridable, defaults
-    // to "usernode"). Run through a tiny escaper since it's user-config.
-    const safeName = App._escapeHtml(info.name || 'usernode');
-    const namePart = `<span class="app-version-pill-name">${safeName}</span><span class="app-version-pill-sep">·</span>`;
-
+    // The project label ("usernode ·") used to prefix every state here.
+    // It's gone: the row this renders into is LABELLED "Platform" in the
+    // drawer footer, so repeating the project name was pure redundancy —
+    // and it was what pushed "usernode · 1a2b3c4" past the 15rem panel
+    // and into truncation. Bare version only. (`info.name` is still
+    // served by /api/version; nothing else reads it here.)
     if (!runningSha || runningSha === 'dev') {
-      // Local dev / no GIT_SHA — render a low-key "dev" chip so the slot
-      // isn't empty (which can look like a layout bug).
+      // No GIT_SHA. STAGING PREVIEWS OF THE PLATFORM ARE BUILT WITHOUT
+      // ONE, so this is the state a PR tester actually sees — and a row
+      // reading "Platform version  dev" told them nothing about which
+      // build they were looking at. Name the environment instead when the
+      // server reports one, and keep the literal "dev" for a local run
+      // (and for a production build missing its SHA, where printing
+      // "production" would imply a version we don't actually know).
+      const staging = info.env === 'staging';
+      const label = staging ? 'staging' : 'dev';
+      const tip = staging
+        ? 'Staging preview of the platform — built without a commit SHA, so there is no version to link'
+        : 'Running outside of a deploy (no GIT_SHA set)';
       paint(`
-        <span class="app-version-pill" title="Running outside of a deploy (no GIT_SHA set)">
-          <span class="app-version-pill-dot" style="background:#71717a;box-shadow:none"></span>
-          <span class="app-version-pill-label">${namePart}dev</span>
-        </span>`);
+        <span class="drawer-ver drawer-ver--dev" title="${tip}">${label}</span>`);
       return;
     }
 
@@ -410,9 +418,8 @@ const App = {
       if (elapsed != null) tipParts.push(`${elapsed}s elapsed`);
       const shaLabel = newShort ? `→ ${newShort}` : 'deploying';
       paint(`
-        <span class="app-version-pill app-version-pill--deploying" title="${tipParts.join(' · ')}">
-          <span class="app-version-pill-spinner" aria-hidden="true"></span>
-          <span class="app-version-pill-label">${namePart}${shaLabel}</span>
+        <span class="drawer-ver drawer-ver--deploying" title="${tipParts.join(' · ')}">
+          <span class="drawer-ver-spinner" aria-hidden="true"></span>${shaLabel}
         </span>`);
       return;
     }
@@ -422,28 +429,23 @@ const App = {
       const newShort = runningSha.slice(0, 7);
       paint(`
         <button type="button"
-                class="app-version-pill app-version-pill--stale"
+                class="drawer-ver drawer-ver--stale"
                 title="Platform updated from ${oldShort} to ${newShort}. Click to reload."
-                onclick="location.reload()">
-          <span class="app-version-pill-dot"></span>
-          <span class="app-version-pill-label">${namePart}${newShort} · reload</span>
-        </button>`);
+                onclick="location.reload()">${newShort} · reload</button>`);
       return;
     }
 
     const shortSha = runningSha.slice(0, 7);
     const href = `${repoUrl.replace(/\/$/, '')}/commit/${runningSha}`;
     paint(`
-      <a href="${href}" target="_blank" rel="noopener" class="app-version-pill" title="Platform commit ${shortSha}">
-        <span class="app-version-pill-dot"></span>
-        <span class="app-version-pill-label">${namePart}${shortSha}</span>
-      </a>`);
+      <a href="${href}" target="_blank" rel="noopener" class="drawer-ver" title="Platform commit ${shortSha}">${shortSha}</a>`);
   },
 
-  // Tiny local HTML-escaper so the project name (sourced from an env
-  // var on the server) can't break out of the attribute/text context.
-  // Kept on App rather than reaching into app-view.js's helpers since
-  // those load conditionally / aren't guaranteed to be in scope here.
+  // Tiny local HTML-escaper for server-sourced strings interpolated into
+  // markup here. Kept on App rather than reaching into app-view.js's
+  // helpers since those load conditionally / aren't guaranteed to be in
+  // scope. (Its original caller — the project-name prefix on the platform
+  // version pill — is gone; kept as the local escaper for this file.)
   _escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({
       '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -1702,11 +1704,12 @@ const App = {
     }
   },
 
-  // Drawer status pane (header slim-down): the platform/app build pills,
-  // the fork lineage label and the kudos budget badge all render into
-  // #drawer-status-pane now instead of the header. Their RENDERERS are
-  // untouched — the slots kept their ids — so all this owns is the two
-  // app-scoped rows' visibility plus the hamburger's amber deploy dot.
+  // Drawer status/version rows (header slim-down): the kudos + AI-credit
+  // meters render into #drawer-status-pane, and the platform/app build
+  // lines + fork lineage label into #drawer-footer — none of them in the
+  // header any more. Their RENDERERS are untouched — every slot kept its
+  // id through both moves — so all this owns is the two app-scoped rows'
+  // visibility plus the hamburger's amber deploy dot.
   DrawerStatus: {
     // The "App" build row follows the same lifecycle as
     // #drawer-row-github / #drawer-row-share: visible only while an app
@@ -1759,26 +1762,29 @@ const App = {
     },
 
     // Mirror "a deploy is in flight" onto the hamburger. Read straight
-    // off the rendered pills rather than threading state: the pill
+    // off the rendered version lines rather than threading state: their
     // markup is already the single source of truth for the deploying
     // state (renderAppVersionPillHTML / renderPlatformVersionPill both
-    // stamp .app-version-pill--deploying), and both may change
-    // independently.
+    // stamp .drawer-ver--deploying on the footer's text form), and both
+    // may change independently. Scoped to #drawer-footer — where the two
+    // version lines live since the footer split — so a deploying home-tile
+    // pill elsewhere in the document can never light this dot.
     refreshDeployDot() {
       const dot = document.getElementById('header-menu-deploy-dot');
       if (!dot) return;
       const deploying = !!document.querySelector(
-        '#drawer-status-pane .app-version-pill--deploying');
+        '#drawer-footer .drawer-ver--deploying');
       dot.classList.toggle('hidden', !deploying);
     },
   },
 
   // Slide-out navigation drawer — available at every viewport width
-  // (#122). Since the header slim-down it also carries the theme
-  // selector (first), the build/kudos status pane, Leaderboard and the
-  // admin console row, on top of the secondary actions it already held
-  // (GitHub, Share, Settings). (Members & visibility moved to the Dev
-  // "+" menu — #645.)
+  // (#122). Top to bottom: the kudos/AI-credit status pane, the theme
+  // selector directly below it, the native Node/Wallet rows, the four
+  // main nav rows (Profile, Leaderboard, Settings, Admin & moderation),
+  // and a bottom-anchored footer carrying the platform/app build lines
+  // plus GitHub + Share. (Members & visibility moved to the Dev "+"
+  // menu — #645.)
   HeaderMenu: {
     _sheet: null,
     open() {
@@ -3776,9 +3782,9 @@ const App = {
     if (drs && AppView.appData?.status === 'running' && AppView.appData?.url) {
       drs.classList.remove('hidden');
     }
-    // Reveal the drawer status pane's "App" build row on the same
-    // lifecycle. AppView.refreshVersionPill() fills the slot; the fork
-    // line is revealed separately by AppView.renderForkBadge().
+    // Reveal the drawer footer's "App" build row on the same lifecycle.
+    // AppView.refreshVersionPill() fills the slot; the fork line is
+    // revealed separately by AppView.renderForkBadge().
     App.DrawerStatus.setAppOpen(true);
     // Members & visibility moved from the drawer into the Dev tab's "+"
     // menu (#645) — AppView._plusMenuShowsMembers() is the single gate.
