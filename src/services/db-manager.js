@@ -225,7 +225,25 @@ async function cloneDatabase(sourceDb, targetDb) {
   // reassignUserObjectsTo(DB_USER → targetRole) pass below hands them to
   // the clone role — exactly the end-state the TEMPLATE path produced.
   await execInDb(`CREATE DATABASE ${targetDb} TEMPLATE template0 OWNER ${targetRole}`);
-  await dumpRestore(sourceDb, targetDb);
+
+  // Don't dump data we are about to throw away. The scrub passes below
+  // TRUNCATE every `staging:private` table anyway, so copying their rows
+  // across the pipe is pure cost — and for the self-app it is the
+  // DOMINANT cost of the whole proposal-checks pipeline: 99.3% of that
+  // database's ~9.8 GB lives in private tables (vrf_obligations,
+  // session_visuals, …), so each preview build spent ~4.5 minutes
+  // dumping and restoring ~9.4 GB purely to delete it a moment later.
+  // Discovering the set from the SOURCE (before the clone exists) and
+  // handing it to pg_dump as --exclude-table-data drops the payload to
+  // the ~80 MB that actually survives.
+  const excludeData = await privateDataExclusions(sourceDb);
+  const dumpStartedAt = Date.now();
+  await dumpRestore(sourceDb, targetDb, excludeData);
+  log.info('db-manager', 'Clone copy complete', {
+    sourceDb, targetDb,
+    excludedTables: excludeData.length,
+    durationMs: Date.now() - dumpStartedAt,
+  });
 
   // Lock down PUBLIC connect on the clone — the clone is single-tenant
   // (one staging container) and nothing else should be able to reach it.
@@ -287,9 +305,19 @@ async function cloneDatabase(sourceDb, targetDb) {
   });
 
   // Enforce the public/private convention documented in
-  // src/prompts/app-conventions.md. The TEMPLATE clone above brings
-  // schema + rows wholesale; the two passes below redact prod rows so
-  // staging clients see the structure but none of the production data.
+  // src/prompts/app-conventions.md. The copy above brings schema
+  // wholesale; the two passes below redact prod rows so staging clients
+  // see the structure but none of the production data.
+  //
+  // Pass 1 is now mostly a BACKSTOP rather than the primary mechanism:
+  // privateDataExclusions already kept those tables' data out of the dump
+  // (see the copy step above), so the TRUNCATEs run against empty tables.
+  // It stays, deliberately and unchanged, for three reasons: it is the
+  // redaction guarantee if the exclusion set and this discovery ever
+  // disagree; it covers a table whose identifier the exclusion pass
+  // refused to splice; and `TRUNCATE … RESTART IDENTITY` is what resets
+  // sequences — --exclude-table-data leaves them at their prod positions,
+  // so dropping this pass would silently change clone behaviour.
   //
   // Pass 1 — table-level: any table tagged
   //   COMMENT ON TABLE foo IS 'staging:private'
@@ -577,15 +605,109 @@ async function execInTarget(dbName, sql, opts = {}) {
   return stdout;
 }
 
+// Which tables' DATA can be skipped by the clone's pg_dump — i.e. exactly
+// the set truncatePrivateTables is going to empty anyway.
+//
+// It is NOT just the `staging:private` tables. That pass runs
+// `TRUNCATE … CASCADE`, so it also empties every table holding a foreign
+// key INTO a private table, transitively. Production has three of those:
+// pr_votes, pr_undo_votes and maintenance_campaign_apps all FK
+// chat_sessions (which is private). Excluding a parent's data without
+// excluding the child's would restore rows pointing at nothing, pg_restore
+// would report FK violations, and dumpRestore's "errors ignored on
+// restore" check would fail EVERY staging build. So the closure is a
+// correctness requirement, not an optimisation — hence the recursive CTE
+// below, which mirrors CASCADE's own reachability exactly.
+//
+// Discovery runs against the SOURCE db (the clone has no data yet) and a
+// failure is FATAL: not knowing what is private means we can't know what
+// is safe to skip, and guessing risks shipping prod rows into a preview.
+// Names are re-validated with SAFE_QUALIFIED_IDENT before they reach the
+// shell, same stance as truncatePrivateTables.
+async function privateDataExclusions(sourceDb) {
+  if (!SAFE_IDENT.test(sourceDb)) {
+    throw new Error(`privateDataExclusions: unsafe identifier ${sourceDb}`);
+  }
+
+  const discoverySql = `
+WITH RECURSIVE priv AS (
+  SELECT c.oid
+    FROM pg_class c
+    JOIN pg_namespace n ON n.oid = c.relnamespace
+   WHERE obj_description(c.oid, 'pg_class') = 'staging:private'
+     AND c.relkind = 'r'
+     AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+), closure AS (
+  SELECT oid FROM priv
+  UNION
+  SELECT con.conrelid
+    FROM pg_constraint con
+    JOIN closure cl ON cl.oid = con.confrelid
+   WHERE con.contype = 'f'
+     AND con.conrelid <> con.confrelid
+)
+SELECT n.nspname || '.' || c.relname
+  FROM closure cl
+  JOIN pg_class c     ON c.oid = cl.oid
+  JOIN pg_namespace n ON n.oid = c.relnamespace
+ WHERE c.relkind = 'r'
+   AND n.nspname NOT IN ('pg_catalog', 'information_schema')
+ ORDER BY 1`.trim();
+
+  let stdout;
+  try {
+    stdout = await execInTarget(sourceDb, discoverySql, { tuplesOnly: true });
+  } catch (err) {
+    log.error('db-manager', 'staging:private dump-exclusion discovery failed', {
+      sourceDb, err: err.message,
+    });
+    throw new Error(
+      `Failed to discover staging:private tables in ${sourceDb}: ${err.message}`
+    );
+  }
+
+  const names = (stdout || '')
+    .split('\n')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const safe = [];
+  for (const qualified of names) {
+    if (!SAFE_QUALIFIED_IDENT.test(qualified)) {
+      // Don't splice a non-standard identifier into the dump command.
+      // Omitting it is safe: its data is still dumped and the truncate
+      // pass still empties it — we only lose the speedup for that table.
+      log.warn('db-manager', 'Refusing to exclude non-standard identifier from dump', {
+        sourceDb, qualified,
+      });
+      continue;
+    }
+    safe.push(qualified);
+  }
+
+  log.debug('db-manager', 'Clone dump exclusions resolved', {
+    sourceDb, count: safe.length,
+  });
+  return safe;
+}
+
 // Logical copy of one database into another via pg_dump | pg_restore,
 // run inside the postgres container. cloneDatabase uses this instead of
 // CREATE DATABASE … TEMPLATE so the source can be copied while it is
 // actively serving traffic (see the note in cloneDatabase). Both names
 // are SAFE_IDENT-validated by the caller; we re-check defensively before
 // splicing them into the shell command.
-async function dumpRestore(sourceDb, targetDb) {
+//
+// `excludeData` is the qualified-table list whose rows to skip (see
+// privateDataExclusions) — schema, constraints and comments still ship.
+async function dumpRestore(sourceDb, targetDb, excludeData = []) {
   if (!SAFE_IDENT.test(sourceDb) || !SAFE_IDENT.test(targetDb)) {
     throw new Error(`dumpRestore: unsafe identifiers ${sourceDb}/${targetDb}`);
+  }
+  for (const qualified of excludeData) {
+    if (!SAFE_QUALIFIED_IDENT.test(qualified)) {
+      throw new Error(`dumpRestore: unsafe exclude-table-data ${JSON.stringify(qualified)}`);
+    }
   }
 
   // -Fc custom format piped straight into pg_restore (no temp file on
@@ -598,9 +720,19 @@ async function dumpRestore(sourceDb, targetDb) {
   // disable redaction. `set -o pipefail` makes a pg_dump failure (e.g.
   // an unreachable source) fail the whole pipeline instead of being
   // masked by pg_restore's exit code.
+  //
+  // --exclude-table-data skips the COPY body for a table while still
+  // dumping its schema, indexes, constraints, sequences and COMMENTs — so
+  // the clone keeps the structure staging needs (and the 'staging:private'
+  // comments the scrub passes discover their targets from), it just
+  // arrives empty. See privateDataExclusions for how the set is derived
+  // and why it must include the FK closure.
+  const excludeFlags = excludeData
+    .map((qualified) => ` --exclude-table-data=${qualified}`)
+    .join('');
   const pipeline =
     'set -o pipefail; ' +
-    `pg_dump -U ${DB_USER} -Fc ${sourceDb} | ` +
+    `pg_dump -U ${DB_USER} -Fc${excludeFlags} ${sourceDb} | ` +
     `pg_restore -U ${DB_USER} --no-owner --no-privileges -d ${targetDb}`;
 
   let stderr = '';
@@ -848,4 +980,5 @@ module.exports = {
   roleExists,
   truncatePrivateTables,
   scrubPrivateColumns,
+  privateDataExclusions,
 };

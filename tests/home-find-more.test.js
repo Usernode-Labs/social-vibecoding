@@ -2,11 +2,10 @@
 // screen's "Your apps" grid.
 //
 // All three sections share one shape: a .home-section-header, then the
-// content, inside a width-bounded .home-section-block so they read as a
-// consistent stack and don't stretch edge-to-edge on a desktop window.
-// The heading is full-width; only the card below it sits in the
-// width-bounded block. Both are LEFT-aligned on the "Your apps" gutter —
-// the bound just stops the card early on the right.
+// content. The width bound is on the FEED, not the boxes — #home-body is
+// a 1024px-max, viewport-centred .home-column — so each section's card
+// spans that column's full width and lines up with the "Your apps" grid
+// above it.
 //
 // Featured apps' content is ONE contained card: the admin-curated tiles
 // (the `featured` / `featured_order` flags GET /api/apps serializes from
@@ -244,13 +243,12 @@ test('the featured tiles + browse action are ONE contained card', () => {
   assert.ok(section.indexOf('>Featured apps<') < section.indexOf('home-find-more-card'));
 });
 
-// Everything shares ONE left gutter — heading, card and the "Your apps"
-// grid above — and the card's max-width just stops it early on the right.
-// The heading stays a sibling ABOVE the bounded block (so the bound can
-// never pull it inboard), and the block carries no auto margins (which
-// would centre the card away from that shared edge). Both halves pinned
-// together, in the order the markup has to be in.
-test('both trailing sections share the section shape and a width bound', () => {
+// The width bound is on the FEED, not on each box: #home-body is a
+// 1024px-max, viewport-centred column, so both trailing cards span it
+// edge to edge (inside the section's own px-3 gutter) and share their
+// left edge with the "Your apps" grid above. The heading stays a plain
+// sibling above the card.
+test('both trailing sections share the section shape, full-width in the column', () => {
   const main = INDEX.slice(
     INDEX.indexOf('<main id="home-screen"'),
     INDEX.indexOf('<main id="browse-screen"')
@@ -258,127 +256,82 @@ test('both trailing sections share the section shape and a width bound', () => {
   for (const id of ['home-find-more', 'home-create-section']) {
     const section = main.slice(main.indexOf(`<section id="${id}"`));
     const head = section.slice(0, section.indexOf('</section>'));
-    // The BOX is width-bounded, so neither card stretches the full width of
-    // a desktop window.
-    assert.match(head, /home-section-block/, `${id}'s box is width-bounded`);
-    // …and the heading uses the same class as "Your apps".
     assert.match(head, /class="home-section-header"/, `${id} uses the shared heading`);
-    // The heading is a SIBLING ABOVE the bounded block, not inside it: that
-    // is what keeps it full-width and on the "Your apps" gutter while the
-    // card centres.
-    assert.ok(head.indexOf('home-section-header') < head.indexOf('home-section-block'),
-      `${id}: the heading sits OUTSIDE the bounded block, so it stays left-aligned`);
+    // No per-box width bound any more — that was the narrower, icon-indented
+    // block this replaced. The column is the only cap.
+    assert.doesNotMatch(head, /home-section-block/,
+      `${id}'s box is full width inside the column, not separately bounded`);
   }
-  // The bound itself lives in app.css (one rule, both sections).
+});
+
+// Short feed on a tall screen: the trailing sections sit at the BOTTOM of
+// the visible page instead of hugging the "Your apps" grid. Pure CSS —
+// #home-body is a min-height:100% flex column and the first trailing
+// section carries margin-top:auto, which also means a feed taller than the
+// viewport has no free space to absorb and the sections flow normally right
+// below the grid (no gap, no clipping, no measurement, no media query).
+test('the trailing sections bottom-anchor on a tall screen', () => {
   const css = read('public/css/app.css');
-  const rule = css.match(/\.home-section-block \{[^}]*\}/)[0];
-  assert.match(rule, /max-width/);
-  // LEFT-ALIGNED and INDENTED to the leftmost app icon, via the custom
-  // property Home.alignSections() measures. Centring (auto side margins in
-  // any spelling) is what this replaced — pin its absence.
-  assert.match(rule, /margin-left:\s*var\(--home-section-indent,\s*0px\)/);
-  assert.doesNotMatch(rule, /margin-left:\s*auto/);
-  assert.doesNotMatch(rule, /margin-right:\s*auto/);
-  assert.doesNotMatch(rule, /margin-inline:\s*auto/);
-  assert.doesNotMatch(rule, /margin:\s*[^;]*auto/);
+
+  const body = INDEX.match(/<div id="home-body"[^>]*>/)[0];
+  assert.match(body, /class="[^"]*\bhome-body-fill\b/, '#home-body is the flex column');
+  const fill = css.match(/\.home-body-fill \{[^}]*\}/)[0];
+  assert.match(fill, /display:\s*flex/);
+  assert.match(fill, /flex-direction:\s*column/);
+  // The floor that makes "bottom of the box" == "bottom of the page" at the
+  // search bar's resting scroll position (see home-search-reveal.test.js).
+  assert.match(fill, /min-height:\s*100%/);
+  // A bottom-anchored section must clear the iPhone home indicator.
+  assert.match(fill, /padding-bottom:\s*env\(safe-area-inset-bottom/);
+  assert.doesNotMatch(fill, /(^|[^-])height:\s*100%/,
+    'height must stay auto so a long feed grows instead of clipping');
+
+  // The anchor is on the FIRST trailing section, so it carries the one
+  // after it down too — no wrapper element needed.
+  const main = INDEX.slice(
+    INDEX.indexOf('<main id="home-screen"'),
+    INDEX.indexOf('<main id="browse-screen"')
+  );
+  const findMore = main.match(/<section id="home-find-more"[^>]*>/)[0];
+  assert.match(findMore, /class="[^"]*\bhome-bottom-anchor\b/);
+  assert.match(css.match(/\.home-bottom-anchor \{[^}]*\}/)[0], /margin-top:\s*auto/);
+  // Only one anchor: a second one on the create section would strand it
+  // at the bottom on its own, leaving a gap between the two cards.
+  const create = main.match(/<section id="home-create-section"[^>]*>/)[0];
+  assert.doesNotMatch(create, /home-bottom-anchor/);
+  assert.ok(
+    main.indexOf('id="home-find-more"') < main.indexOf('id="home-create-section"'),
+    'the anchor precedes the create section, which rides down with it'
+  );
 });
 
-// ── The indent: measured, not hard-coded ─────────────────────────
-//
-// The cards line up with the leftmost APP ICON in the "Your apps" grid —
-// the visible left edge of the first app. Because that icon is centred in
-// its grid cell, the offset is a function of the cell width (~94px at
-// 1280, ~62px on a phone), so it cannot be a CSS constant.
+// The column itself: 1024px max, centred, and applied BOTH to the content
+// body and to the search bar's inner content — the bar's own background
+// stays full-bleed, so only its content is capped.
+test('the home feed is a 1024px centred column', () => {
+  const body = INDEX.match(/<div id="home-body"[^>]*>/)[0];
+  assert.match(body, /class="[^"]*\bhome-column\b/, '#home-body is the column');
 
-// Its own sandbox: this is the one behaviour in the file that needs real
-// element geometry (getBoundingClientRect + getComputedStyle), which
-// makeHome's null-returning DOM deliberately doesn't provide.
-function makeAligned(opts = {}) {
-  const styles = new Map();
-  const els = {
-    'home-body': {
-      style: {
-        setProperty: (k, v) => styles.set(k, v),
-        removeProperty: (k) => styles.delete(k),
-      },
-    },
-    'home-find-more': {
-      getBoundingClientRect: () => ({ left: opts.sectionLeft ?? 0 }),
-    },
-  };
-  const icon = opts.iconLeft == null
-    ? null
-    : { getBoundingClientRect: () => ({ left: opts.iconLeft }) };
-  const sandbox = {
-    console,
-    App: { user: { id: 1 } },
-    document: {
-      getElementById: (id) => els[id] || null,
-      // Only the Your-apps grid's icon counts — NOT the featured row's,
-      // which carries the same class inside the card being aligned.
-      querySelector: (sel) => {
-        sandbox.selectors.push(sel);
-        return sel.includes('app-icon-tile') ? icon : null;
-      },
-      querySelectorAll: () => ({ forEach: () => {} }),
-      createElement: () => ({ classList: { add() {} }, dataset: {} }),
-      body: { appendChild: () => {} },
-      addEventListener: () => {},
-      removeEventListener: () => {},
-    },
-    getComputedStyle: () => ({ paddingLeft: `${opts.pad ?? 12}px` }),
-    selectors: [],
-    fetch: async () => ({ ok: true, json: async () => ({}) }),
-    setTimeout, clearTimeout, setInterval, clearInterval,
-    URLSearchParams,
-    requestAnimationFrame: (fn) => fn(),
-    location: { search: '' },
-    addEventListener: () => {},
-    removeEventListener: () => {},
-  };
-  sandbox.window = sandbox;
-  sandbox.globalThis = sandbox;
-  vm.createContext(sandbox);
-  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
-  return { Home: sandbox.__Home, styles, sandbox };
-}
+  const main = INDEX.slice(
+    INDEX.indexOf('<main id="home-screen"'),
+    INDEX.indexOf('<main id="browse-screen"')
+  );
+  const bar = main.slice(main.indexOf('id="home-search-bar"'), main.indexOf('id="home-body"'));
+  assert.match(bar, /home-column/, "the search bar's content sits in the same column");
+  // The gutter moved onto that inner column so its content edges match
+  // #home-body's; the bar element itself must stay full-bleed for its bg.
+  assert.match(bar, /home-column[^"]*px-3/, 'the gutter is on the inner column');
+  assert.doesNotMatch(INDEX.match(/<div id="home-search-bar"[^>]*>/)[0], /px-3/);
 
-test('alignSections publishes the measured icon offset', () => {
-  // The measurement is relative to the section's CONTENT box (it carries
-  // its own px-3), because that is what the margin is relative to.
-  const { Home, styles, sandbox } = makeAligned({ sectionLeft: 0, iconLeft: 106, pad: 12 });
-  Home.alignSections();
-  assert.equal(styles.get('--home-section-indent'), '94px', '106 icon − 12 gutter');
-  // Scoped to the Your-apps grid, not any .app-icon-tile on the page.
-  assert.ok(sandbox.selectors.some((s) => /#app-list .*app-icon-tile/.test(s)));
-});
-
-test('alignSections clears the indent when Your apps is empty', () => {
-  // Nothing to align to, and the CSS fallback (0px) is the gutter — which
-  // is the right answer for an empty grid.
-  const { Home, styles } = makeAligned({ sectionLeft: 0, iconLeft: null });
-  styles.set('--home-section-indent', '94px');
-  Home.alignSections();
-  assert.equal(styles.has('--home-section-indent'), false);
-});
-
-test('alignSections never emits a negative indent', () => {
-  const { Home, styles } = makeAligned({ sectionLeft: 0, iconLeft: 4, pad: 12 });
-  Home.alignSections();
-  assert.equal(styles.get('--home-section-indent'), '0px');
-});
-
-test('alignSections runs on every render and on resize', () => {
-  const render = HOME_SRC.slice(HOME_SRC.indexOf('  render('), HOME_SRC.indexOf('alignSections() {'));
-  assert.match(render, /Home\.alignSections\(\);/, 'a re-render re-measures');
-  assert.match(render, /Home\._wireSectionAlign\(\);/);
-  // Re-columning at a breakpoint changes the offset, so resize must
-  // re-measure; the load pass covers a first paint that beat the Tailwind
-  // CDN stylesheet (an uncolumned grid measures far too wide).
-  const wire = HOME_SRC.slice(HOME_SRC.indexOf('_wireSectionAlign() {'));
-  assert.match(wire.slice(0, 900), /addEventListener\('resize', remeasure\)/);
-  assert.match(wire.slice(0, 900), /addEventListener\('load', remeasure/);
-  assert.match(wire.slice(0, 900), /requestAnimationFrame/, 'coalesced');
+  const css = read('public/css/app.css');
+  const rule = css.match(/\.home-column \{[^}]*\}/)[0];
+  assert.match(rule, /max-width:\s*64rem/, '64rem = 1024px');
+  assert.match(rule, /margin-left:\s*auto/);
+  assert.match(rule, /margin-right:\s*auto/);
+  // The old per-box bound is gone for good.
+  assert.doesNotMatch(css, /\.home-section-block\b/);
+  assert.doesNotMatch(HOME_SRC, /alignSections|--home-section-indent/,
+    'the measured icon indent went away with the centred column');
 });
 
 test('the browse action is an attached footer row of that card', () => {

@@ -13,7 +13,8 @@
 // list of routes, so capture shoots one before/after pair per route):
 //   TARGETS             JSON array of capture targets, each:
 //                         { index, beforeUrl, afterUrl, beforeFallbackUrl,
-//                           beforeCookie, afterCookie, viewport? }
+//                           beforeCookie, afterCookie, viewport?,
+//                           companion? }
 //                       Looped over sequentially; `index` tags every shot
 //                       frame so the orchestrator attributes each artifact
 //                       to its route. Per-target failures stay independent.
@@ -21,6 +22,15 @@
 //                       default 1280x800 frame for BOTH sides of that
 //                       target's pair (a `@mobile` testing path); absent /
 //                       malformed → the desktop default.
+//                       `companion` ({ index, viewport }) asks for one
+//                       extra PNG still from the SAME page at a second
+//                       frame — the automatic phone shot. It reloads the
+//                       already-loaded page instead of opening a second
+//                       one, which is what keeps a two-route proposal at
+//                       4 page loads instead of 8; the still is emitted
+//                       under the companion's own index. Absent → no
+//                       companion (an older orchestrator sends a separate
+//                       `still: true` target instead, still supported).
 //   BEFORE_URL          single-target fallback when TARGETS is unset/empty
 //   AFTER_URL           (an older orchestrator, or a rolling deploy). Each
 //   BEFORE_FALLBACK_URL of these mirrors the same-named TARGETS field for a
@@ -113,6 +123,20 @@ function parseTargetViewport(raw) {
   if (width < 200 || width > 4000 || height < 200 || height > 4000) return null;
   return { width, height };
 }
+// Companion frame descriptor (the automatic phone-sized still). Shares
+// parseTargetViewport's bounds for the frame itself and requires an
+// integer capture index, because that index is what attributes the stored
+// artifact to its rendered row. Anything invalid → null (no companion),
+// never a throw: a malformed field must not cost the target its real shots.
+function parseCompanion(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const viewport = parseTargetViewport(raw.viewport);
+  if (!viewport) return null;
+  const index = parseInt(raw.index, 10);
+  if (!Number.isInteger(index) || index < 0) return null;
+  return { index, viewport };
+}
+
 const NAV_TIMEOUT_MS = 30000;
 const SETTLE_MS = 500;
 const PRE_SCROLL_HOLD_MS = 1500;
@@ -177,17 +201,24 @@ function parseCookie(raw) {
 // `fellback=1` tags a frame whose page was actually the FALLBACK url
 // (a deep "before" path that 404'd on prod and was re-shot at '/') so the
 // platform can persist before_fell_back and caption the pair honestly.
+// Every frame goes through this one sink. In the container it is stdout —
+// the protocol the orchestrator parses. It is indirected solely so tests can
+// collect frames without monkey-patching process.stdout, which would also
+// swallow the test runner's own output.
+let _sink = (s) => process.stdout.write(s);
+function setFrameSink(fn) { _sink = fn || ((s) => process.stdout.write(s)); }
+
 function emit(kind, media, status, buf, index, fellback) {
-  process.stdout.write(
+  _sink(
     `__USERNODE_SHOT__ kind=${kind} media=${media} status=${status} bytes=${buf.length} index=${index || 0}${fellback ? ' fellback=1' : ''}\n`
   );
-  process.stdout.write(buf.toString('base64'));
-  process.stdout.write('\n__USERNODE_SHOT_END__\n');
+  _sink(buf.toString('base64'));
+  _sink('\n__USERNODE_SHOT_END__\n');
 }
 
 function emitFail(kind, media, reason, index) {
   const enc = encodeURIComponent(String(reason || 'unknown').slice(0, 300));
-  process.stdout.write(`__USERNODE_SHOT_FAIL__ kind=${kind} media=${media} index=${index || 0} reason=${enc}\n`);
+  _sink(`__USERNODE_SHOT_FAIL__ kind=${kind} media=${media} index=${index || 0} reason=${enc}\n`);
 }
 
 // #381: one console-result frame per "after" target, mirroring the shot
@@ -198,11 +229,11 @@ function emitFail(kind, media, reason, index) {
 //   __USERNODE_CONSOLE_END__
 function emitConsole(index, errors, loadStatus) {
   const json = JSON.stringify(Array.isArray(errors) ? errors : []);
-  process.stdout.write(
+  _sink(
     `__USERNODE_CONSOLE__ index=${index || 0} errors=${(errors || []).length} loadStatus=${loadStatus || 0}\n`
   );
-  process.stdout.write(Buffer.from(json, 'utf8').toString('base64'));
-  process.stdout.write('\n__USERNODE_CONSOLE_END__\n');
+  _sink(Buffer.from(json, 'utf8').toString('base64'));
+  _sink('\n__USERNODE_CONSOLE_END__\n');
 }
 
 // #47: one test-result frame per declared test, mirroring the console
@@ -213,11 +244,11 @@ function emitConsole(index, errors, loadStatus) {
 //   __USERNODE_TEST_END__
 function emitTest(index, status, loadStatus, payload) {
   const json = JSON.stringify(payload || {});
-  process.stdout.write(
+  _sink(
     `__USERNODE_TEST__ index=${index || 0} status=${status === 'pass' ? 'pass' : 'fail'} loadStatus=${loadStatus || 0}\n`
   );
-  process.stdout.write(Buffer.from(json, 'utf8').toString('base64'));
-  process.stdout.write('\n__USERNODE_TEST_END__\n');
+  _sink(Buffer.from(json, 'utf8').toString('base64'));
+  _sink('\n__USERNODE_TEST_END__\n');
 }
 
 function execFileAsync(cmd, args, opts = {}) {
@@ -274,6 +305,51 @@ async function scrollPass(page) {
       await wait(50);
     }
   }, SHORT_PAGE_HOLD_MS, MAX_SCROLL_VIEWPORTS);
+}
+
+// Resolve once the page has actually painted twice. Two nested rAF ticks
+// is the standard "the compositor has produced a frame" signal — the first
+// callback runs before the upcoming paint, the second after it. Bounded by
+// a race so a page whose rAF never fires (backgrounded, crashed renderer)
+// can't hang the run.
+async function awaitRepaint(page) {
+  await Promise.race([
+    page.evaluate(() => new Promise((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    })),
+    sleep(1000),
+  ]);
+}
+
+// The automatic phone-frame still, shot from the page that is ALREADY
+// loaded for this target rather than from a second one.
+//
+// This used to be a sibling capture target, which meant a full second
+// navigation per side per path: a proposal pointing at two screens loaded
+// 8 pages instead of 4, and paid a cold `newPage` + networkidle2 wait for
+// each. Reusing the page keeps the cookie jar and a warm HTTP cache, so
+// the reload is a fraction of the cost. The reload itself is deliberate
+// rather than a bare setViewport: it re-boots the app at the phone frame,
+// so components that read the viewport at startup (nav chrome, drawers)
+// render their narrow-screen form instead of a resized desktop layout —
+// which is the whole point of shooting the frame at all.
+//
+// Emits under the companion's OWN capture index, so the stored artifact
+// lands in the same rendered row it always has. Best-effort throughout: a
+// failed companion is reported as a failure frame and never costs the
+// target its desktop artifacts.
+async function shootCompanion(page, kind, companion, status, usedFallback) {
+  if (!companion) return;
+  const { index, viewport } = companion;
+  try {
+    await page.setViewport({ ...viewport, deviceScaleFactor: VIEWPORT.deviceScaleFactor });
+    await page.reload({ waitUntil: 'networkidle2', timeout: NAV_TIMEOUT_MS });
+    await sleep(SETTLE_MS);
+    const png = await page.screenshot({ type: 'png' });
+    emit(kind, 'png', status, Buffer.from(png), index, usedFallback);
+  } catch (err) {
+    emitFail(kind, 'png', err.message, index);
+  }
 }
 
 async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opts = {}) {
@@ -371,6 +447,10 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
         emitFail(kind, 'webm', err.message, index);
         emitFail(kind, 'gif', err.message, index);
       }
+      // The companion frame rides this same page, so a dead navigation
+      // takes it down too. Report it under its own index rather than
+      // leaving that capture group silently unaccounted for.
+      if (opts.companion) emitFail(kind, 'png', err.message, opts.companion.index);
     }
     await page.close().catch(() => {});
     return;
@@ -407,6 +487,38 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
     if (collectConsole) {
       emitConsole(index, consoleErrors, status);
     }
+    await shootCompanion(page, kind, opts.companion, status, usedFallback);
+    await page.close().catch(() => {});
+    return;
+  }
+
+  // Is there anything for a recording to show? Chromium's screencast is
+  // CHANGE-driven: it emits frames when the page repaints. On a page that
+  // fits its viewport, scrollPass has nothing to scroll and just holds
+  // (`distance < 8` below), so the screencast sees a static page and the
+  // webm comes back with zero frames — production logged ~270 of these
+  // ("empty webm", plus the matching "no webm to transcode") in two weeks,
+  // each after paying ~6s of holds plus an ffmpeg attempt for nothing.
+  // Measure first and skip the whole recording when it provably cannot
+  // produce anything, with its OWN reason so this stays distinguishable
+  // from a recording that genuinely broke.
+  let scrollable = true;
+  try {
+    scrollable = await page.evaluate(() => {
+      const total = Math.max(
+        document.body ? document.body.scrollHeight : 0,
+        document.documentElement ? document.documentElement.scrollHeight : 0
+      );
+      return (total - window.innerHeight) >= 8;
+    });
+  } catch { /* can't tell — attempt the recording as before */ }
+  if (!scrollable) {
+    emitFail(kind, 'webm', 'page-not-scrollable', index);
+    emitFail(kind, 'gif', 'page-not-scrollable', index);
+    if (collectConsole) {
+      emitConsole(index, consoleErrors, status);
+    }
+    await shootCompanion(page, kind, opts.companion, status, usedFallback);
     await page.close().catch(() => {});
     return;
   }
@@ -423,10 +535,16 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
   const frame = opts.viewport
     ? { width: opts.viewport.width, height: opts.viewport.height }
     : { width: VIEWPORT.width, height: VIEWPORT.height };
+  //    The viewport switch resets the compositor, and a fixed sleep was a
+  //    guess at how long that takes — start the screencast too early and it
+  //    attaches to a surface that never reports a frame (the other half of
+  //    the "empty webm" losses above). Wait for the page to actually paint
+  //    twice instead of for the clock, then settle briefly.
   if (VIEWPORT.deviceScaleFactor !== 1) {
     try {
       await page.setViewport({ ...frame, deviceScaleFactor: 1 });
-      await sleep(300); // let the reflow/repaint settle before recording
+      await awaitRepaint(page);
+      await sleep(200);
     } catch { /* keep the current viewport — a 2x recording still works */ }
   }
   const webmPath = `/tmp/usernode-${kind}-${index}.webm`;
@@ -471,9 +589,14 @@ async function captureTarget(browser, kind, url, fallbackUrl, cookie, index, opt
 
   // #381: report console errors collected across the whole load + scroll
   // lifecycle (errors can surface mid-scroll), after the media frames.
+  // Deliberately BEFORE the companion reload: the console verdict has
+  // always described this target's own load, and the companion re-boots
+  // the page, so emitting first keeps that frame's content unchanged.
   if (collectConsole) {
     emitConsole(index, consoleErrors, status);
   }
+
+  await shootCompanion(page, kind, opts.companion, status, usedFallback);
 
   await page.close().catch(() => {});
 }
@@ -523,6 +646,13 @@ function resolveTargets(env) {
       // Still-only target (the automatic phone-frame companion): PNG only,
       // no recording. Absent on legacy orchestrators → full media.
       still: !!t.still,
+      // Companion still shot from the SAME page as this target, at a
+      // different frame (the automatic phone shot). Replaces the second
+      // full target the orchestrator used to emit for it — see the
+      // companion block in captureTarget for why. Absent / malformed →
+      // null, which is also what a legacy orchestrator produces (it sends
+      // a sibling `still: true` target instead, still handled above).
+      companion: parseCompanion(t.companion),
     });
   }
   return out;
@@ -698,11 +828,11 @@ async function main() {
     for (const t of targets) {
       if (media && t.beforeUrl) {
         await captureTarget(browser, 'before', t.beforeUrl, t.beforeFallbackUrl, t.beforeCookie, t.index,
-          { media, viewport: t.viewport, stillOnly: t.still });
+          { media, viewport: t.viewport, stillOnly: t.still, companion: t.companion });
       }
       if (t.afterUrl && (media || !haveTests)) {
         await captureTarget(browser, 'after', t.afterUrl, '', t.afterCookie, t.index,
-          { media, collectConsole: !haveTests, viewport: t.viewport, stillOnly: t.still });
+          { media, collectConsole: !haveTests, viewport: t.viewport, stillOnly: t.still, companion: t.companion });
       }
     }
     // #47: run the declared test suite (assertions + per-test console
@@ -738,4 +868,8 @@ if (require.main === module) {
     .then(() => process.exit(0));
 }
 
-module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, mediaEnabled, resolveTests, CHROMIUM_LAUNCH_ARGS };
+// captureTarget is exported for tests only — it is the one piece of this
+// file whose BEHAVIOUR (how many navigations it makes, whether it starts a
+// recording) is the thing under test, and it takes its page from the browser
+// it is handed, so a fake browser exercises it without Chromium.
+module.exports = { parseCookie, resolveTargets, resolveDeviceScaleFactor, parseTargetViewport, parseCompanion, mediaEnabled, resolveTests, captureTarget, setFrameSink, CHROMIUM_LAUNCH_ARGS };

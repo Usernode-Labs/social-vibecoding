@@ -1321,7 +1321,7 @@ const App = {
         // paths broadcast pills on the status event, not 'quick_replies'
         // (that handler attaches to the last ASSISTANT row, which a
         // recovered turn doesn't have).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, scoutOutput: data.scoutOutput, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;

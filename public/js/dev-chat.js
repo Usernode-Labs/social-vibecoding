@@ -53,7 +53,18 @@ const DevChat = {
   // where sending is impossible), so the busy copy points at it again.
   COMPOSER_PLACEHOLDER_BUSY:
     'Claude is working — type your next note and tap 💾 to save it for later.',
-  SAVE_DRAFT_TITLE: 'Save this text as a draft — it stays here until you send it',
+  SAVE_DRAFT_TITLE:
+    'Save this text as a draft (Ctrl+Enter) — it stays here until you send it',
+  // #920: the hint under the composer names whatever Ctrl/Cmd+Enter does
+  // RIGHT NOW. While a turn runs sending is impossible and the keystroke
+  // parks the text as a draft instead, so the copy follows the action.
+  // Both carry the same <kbd> markup the template ships inline; the idle
+  // variant IS the template's default, so a fresh render never flashes
+  // the wrong one. _syncShortcutHint swaps them.
+  SHORTCUT_HINT_SEND:
+    '<kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to send',
+  SHORTCUT_HINT_SAVE:
+    '<kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to save as draft',
   // Floppy-disk glyph, same inline-SVG style as the attach button.
   _SAVE_ICON_SVG:
     '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>',
@@ -1030,12 +1041,26 @@ const DevChat = {
           if (m.metadata.platformIssueDraft) {
             m.platformIssueDraft = { ...m.metadata.platformIssueDraft, msgId: m.id };
           }
+          // A background preview rebuild marks its in-progress row
+          // `stagingBuild: 'running'`. Carried onto the message so the
+          // spinner pass below can find it after a reload — the /status
+          // check can't help here, because a heal-sweep or preview-click
+          // rebuild has no turn in flight to report.
+          if (m.metadata.stagingBuild) m.stagingBuild = m.metadata.stagingBuild;
         }
         return m;
       });
       // #647: flag the rows this session inherited from an auto session so
       // their Claude Code disclosures render collapsed by default.
       DevChat._markInheritedMessages(DevChat.messages, session);
+      // Spin a still-running background rebuild's row on load. Rebuilds take
+      // minutes (the self-app's DB clone alone is ~4:45), so a reload lands
+      // mid-build often enough to matter, and a static gear next to
+      // "Building staging preview..." reads as "stuck" — which is exactly
+      // the misread that cost session 2954 a duplicate build turn. Every
+      // outcome (rebuilt / failed) appends a row after it, so the flag can
+      // only stick while the build genuinely is the last word.
+      DevChat._activateTrailingStagingBuild();
 
       // #252: sync state is keyed per session — drop a stale indicator
       // (in-flight or terminal feedback) when switching to a different
@@ -1368,7 +1393,7 @@ const DevChat = {
                 // #786: quickReplies ride the status event so a
                 // restart-recovery breadcrumb repaints the pill bar live
                 // (the server persists them on the same system row).
-                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
+                DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2,8), _active: true });
                 DevChat.renderMessages();
                 DevChat.scrollToBottom();
                 break;
@@ -1837,7 +1862,7 @@ const DevChat = {
         const sealMsg = lastAssistantMsg();
         if (sealMsg) sealMsg._finalized = true;
         // #786: carry quickReplies (see the POST-SSE status handler).
-        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
+        DevChat.messages.push({ role: 'system', content: data.text, ccOutput: data.ccOutput, ccSummary: data.ccSummary, specPreview: data.specPreview, specLines: data.specLines, specVersion: data.specVersion, durationMs: data.durationMs, stagingBuild: data.stagingBuild, quickReplies: data.quickReplies, created_at: new Date().toISOString(), _slug: Math.random().toString(36).slice(2, 8), _active: true });
         DevChat.renderMessages();
         DevChat.scrollToBottom();
         break;
@@ -2800,6 +2825,27 @@ const DevChat = {
       return `<span class="dc-status-elapsed">(took ${formatElapsed(Math.max(0, msg._elapsedFinalMs))})</span>`;
     }
     return '';
+  },
+
+  // Re-apply the arc spinner to a trailing `stagingBuild: 'running'` row
+  // after a history load. Only when it IS trailing: a rebuild that has
+  // since finished (or failed) has a row after it, and re-spinning a
+  // superseded row would claim work that is over.
+  //
+  // Separate from the /status-driven `_active` pass because the two answer
+  // different questions — that one asks "is a TURN running?", this one asks
+  // "is a background rebuild still going?", and a heal-sweep rebuild has no
+  // turn at all.
+  _activateTrailingStagingBuild() {
+    const msgs = DevChat.messages;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role === 'user' || m.role === 'assistant') return;
+      if (m.role !== 'system') continue;
+      // A terminal artefact below the build row means it's done.
+      if (m.ccOutput || m.stagingUrl || m.changesReady || m.stagingFailed) return;
+      if (m.stagingBuild === 'running') { m._active = true; return; }
+    }
   },
 
   _deactivateLastStatus() {
@@ -4928,9 +4974,12 @@ const DevChat = {
                 Send
               </button>
             </form>
-            <div class="text-xs text-zinc-600 mt-1 text-right" id="dc-shortcut-hint">
-              <kbd class="dc-kbd">Ctrl</kbd>+<kbd class="dc-kbd">Enter</kbd> to send
-            </div>
+            <!-- #920: the idle copy is the render-time default; the
+                 running variant ("…to save as draft") is swapped in by
+                 _syncShortcutHint, which every _syncSaveDraftBtn call
+                 site reaches. Sourced from the constant so the two can
+                 never drift apart. -->
+            <div class="text-xs text-zinc-600 mt-1 text-right" id="dc-shortcut-hint">${DevChat.SHORTCUT_HINT_SEND}</div>
           </div>
         </div>
         <div id="dc-spec-resizer" class="dc-spec-resizer ${viewerOpen ? 'dc-spec-resizer-open' : ''}" role="separator" aria-orientation="vertical" aria-label="Resize spec viewer"></div>
@@ -5057,6 +5106,30 @@ const DevChat = {
     if (typeof AppView !== 'undefined' && AppView.rebindStagingDock) {
       AppView.rebindStagingDock();
     }
+  },
+
+  // #920: Ctrl/Cmd+Enter routes to whichever composer action is actually
+  // offered. While a turn runs the send button is a Stop square and the
+  // only thing to do with typed text is park it as a draft (the save
+  // icon), so the keystroke does that instead of nothing at all.
+  //
+  // Gated on the REAL isStreaming — not _chatBusyForPaint — so the
+  // shortcut agrees with the guards inside the two actions it delegates
+  // to. Every "is save available?" sub-condition (streaming, non-empty
+  // text, the MAX_SAVED_DRAFTS cap) already lives inside
+  // _saveComposerDraft; this router deliberately re-implements none of
+  // them, which is also why a lost race (the turn ending between the
+  // keypress and here) refuses silently and leaves the text in the box
+  // rather than falling through to a send the user never asked for.
+  //
+  // It never presses Stop: stopping discards in-flight work and stays a
+  // deliberate click.
+  _onComposerShortcut() {
+    if (DevChat.isStreaming) {
+      DevChat._saveComposerDraft();
+      return;
+    }
+    DevChat._submitFromInput();
   },
 
   _submitFromInput() {
@@ -5450,6 +5523,20 @@ const DevChat = {
     if (window.PlatformUI && typeof PlatformUI.toast === 'function') PlatformUI.toast(msg);
   },
 
+  // #920: keep the hint under the box naming what Ctrl/Cmd+Enter actually
+  // does in the current state — "to send" while stopped, "to save as
+  // draft" while a turn runs, since that is what _onComposerShortcut
+  // routes to. Driven off the PAINT predicate (like the save icon it sits
+  // under) so the `?shot=busy-drafts` capture shows the running copy;
+  // the keystroke's real routing reads the honest isStreaming flag.
+  _syncShortcutHint() {
+    const hint = document.getElementById('dc-shortcut-hint');
+    if (!hint) return;
+    hint.innerHTML = DevChat._chatBusyForPaint()
+      ? DevChat.SHORTCUT_HINT_SAVE
+      : DevChat.SHORTCUT_HINT_SEND;
+  },
+
   // Show the save icon only while a TURN IS RUNNING (#810 — the inverse of
   // the #801 rule it replaces), and — when shown — enable it only if there
   // is non-whitespace text to save.
@@ -5471,6 +5558,11 @@ const DevChat = {
   // its click listener is bound once per render behind `_sdWired`, so a
   // removed-and-recreated button would come back unwired.
   _syncSaveDraftBtn() {
+    // Piggy-backs on this function's call sites (every streaming
+    // transition, every keystroke in the box, every render) rather than
+    // adding listeners of its own — the hint flips on exactly the same
+    // events the save icon does.
+    DevChat._syncShortcutHint();
     const btn = document.getElementById('dc-save-draft-btn');
     if (!btn) return;
     const busy = DevChat._chatBusyForPaint();
@@ -5723,8 +5815,11 @@ const DevChat = {
 
     textarea.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        // preventDefault is unconditional for the combination, including
+        // the nothing-to-do case (#920) — the keystroke must never leave
+        // a stray newline in the box as its only visible effect.
         e.preventDefault();
-        DevChat._submitFromInput();
+        DevChat._onComposerShortcut();
       }
     });
   },

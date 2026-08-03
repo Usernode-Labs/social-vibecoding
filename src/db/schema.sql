@@ -775,6 +775,22 @@ ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS first_check_failure_
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS last_check_failure_at TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_next_retry_at TIMESTAMPTZ;
 ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_error_notified_at TIMESTAMPTZ;
+-- Which STAGE a 'pending' check run is in, so the proposal card can say
+-- "Preparing the staging preview…" vs "Running the automated tests…"
+-- instead of one opaque "Checks are still running…" for the whole run.
+-- A run has two very differently-sized halves and both used to look
+-- identical, which made a mid-flight build indistinguishable from a wedged
+-- one. Values:
+--   'building' — the branch is being built and the preview's database
+--                clone is being made (set by the callers that stamp
+--                'pending' BEFORE buildAndDeployStaging).
+--   'testing'  — the preview is healthy and the headless suite is running
+--                against it (set by visuals.captureForSession's own
+--                setChecksPending at capture start).
+-- NULL on legacy rows and after any terminal verdict; the card falls back
+-- to its previous wording for NULL, so nothing regresses on old proposals.
+-- Advisory/display only — the merge gate reads check_state, never this.
+ALTER TABLE chat_sessions          ADD COLUMN IF NOT EXISTS check_phase VARCHAR(24);
 -- #11: vote-to-undo a merged PR. When the undo majority is reached we
 -- open a `git revert <merge_commit_sha>` PR and insert a new
 -- chat_sessions row pointing back here via revert_of_session_id.
@@ -929,6 +945,33 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS reviewed_head_sha     VARCHAR
 --                   journal file (in the CC volume) instead of killing the
 --                   still-running in-container claude. NULL = no turn in
 --                   flight.
+--
+--                   Two further keys cover the POST-AGENT TAIL — the
+--                   minutes-long platform-side stretch after the agent
+--                   exits (push heal → PR → staging build → cards →
+--                   Mayor wrap-up). A `holdTurnRecord` caller keeps the
+--                   record alive across it instead of clearing it at exec
+--                   end, so a restart mid-tail is resumable rather than
+--                   silently dropped (the incident: a turn's chat froze on
+--                   "Building staging preview..." forever because a
+--                   self-app deploy replaced the process mid-build):
+--                     phase — 'tail' once the exec is over and the tail
+--                             owns the record. Absent means the exec may
+--                             still be running. server.js's adoption
+--                             branches read it to log which shape they
+--                             resumed; both go down the same resume path.
+--                     tail  — milestone map of what the tail ALREADY did,
+--                             so a resumed tail repeats none of the steps
+--                             that aren't idempotent:
+--                             { sha, pushOk, prNumber,
+--                               prOpenedEventRecorded, stagingUrl,
+--                               votesResetFor, completionRowPosted,
+--                               wrapUpPosted }.
+--                             finalizeRecoveredTurn takes it as
+--                             `alreadyDone`. Written with jsonb_set
+--                             merges guarded on `active_turn IS NOT NULL`,
+--                             so a late stamp can never resurrect a
+--                             released record.
 --   headless_step = where the headless auto-session loop last checkpointed:
 --                   'planning' (Mayor phase-1) | 'cc_running' (CC turn
 --                   dispatched) | 'wrapping' (Mayor phase-2). Lets
@@ -2232,12 +2275,22 @@ CREATE TABLE IF NOT EXISTS merge_debug_runs (
   app_id      INTEGER REFERENCES apps(id) ON DELETE SET NULL,
   session_id  INTEGER REFERENCES chat_sessions(id) ON DELETE SET NULL,
   pr_number   INTEGER,
-  -- 'merge' | 'conflict_resolution'
+  -- 'merge' | 'conflict_resolution' | 'checks'
+  --
+  -- 'checks' reuses this tracer for the proposal-checks pipeline
+  -- (services/visuals.js captureForSession) rather than a merge attempt: one
+  -- run per checks run, with a step per phase (image_build, clone,
+  -- staging_health, capture, tests) carrying detail.durationMs. Added because
+  -- nothing persisted how long a checks run took, so a ~8x slowdown in it
+  -- could only be diagnosed from a container log tail before rotation.
   kind        VARCHAR(32) NOT NULL DEFAULT 'merge',
   -- 'vote' | 'force' | 'post_merge_sweep' | 'drift' | 'behind_main' | 'merge_conflict'
+  --   | 'capture' (kind='checks')
   trigger     VARCHAR(48),
   -- running | merged | blocked | conflict_resolving | conflict_failed
-  --   | awaiting_github | noop | error
+  --   | awaiting_github | noop | error | pr_closed
+  -- A kind='checks' run instead ends on its suite's verdict — passing |
+  -- failing | skipped | error — mirroring chat_sessions.check_state.
   status      VARCHAR(32) NOT NULL DEFAULT 'running',
   summary     TEXT,
   started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
