@@ -8339,6 +8339,12 @@ async function seedStagingTopochain(pool, config) {
       // empty bar are both on screen too. ONE statement per table per
       // viewer, deliberately — tests/topochain-staging-seed.test.js pins
       // that shape ("seeded once per viewer, not once in total").
+      //
+      // Rows base+6…base+8 additionally put 900513 at 3 of 5 — a clear
+      // MID-PROGRESS bar (the outlined track visibly part-filled), which
+      // 0/5 and 3/8 alone didn't give a reviewer. 900511 (base+2) is the
+      // binary the viewer has COMPLETED, so the ✓ state is seeded too.
+      // Ids base+2…base+8 all sit inside the viewer's 10-wide block.
       await pool.query(
         `INSERT INTO user_activities
            (id, user_id, season_event_id, activity_type, points, description,
@@ -8350,6 +8356,12 @@ async function seedStagingTopochain(pool, config) {
             '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '3 days', 900501),
            (${base + 2}, $1, $2, 'challenge_completion', 50, 'Shared the season announcement.',
             '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '2 days', 900511),
+           (${base + 6}, $1, $2, 'COMMUNITY', 250, 'Gave kudos to a builder (1 of 5).',
+            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '30 hours', 900513),
+           (${base + 7}, $1, $2, 'COMMUNITY', 250, 'Gave kudos to a builder (2 of 5).',
+            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '20 hours', 900513),
+           (${base + 8}, $1, $2, 'COMMUNITY', 250, 'Gave kudos to a builder (3 of 5).',
+            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '10 hours', 900513),
            (${base + 3}, $1, $2, 'COMMUNITY', 200, 'Tested a demo dApp (1 of 8).',
             '{"kind": "app_tested"}'::jsonb, NOW() - INTERVAL '2 days', 900512),
            (${base + 4}, $1, $2, 'COMMUNITY', 200, 'Tested a demo dApp (2 of 8).',

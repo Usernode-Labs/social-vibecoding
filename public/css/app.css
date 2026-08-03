@@ -409,6 +409,35 @@ html, body {
   border-top: 1px solid var(--border-light);
 }
 
+/* The footer bar: the expand/collapse toggle and the way out to the
+   Challenges screen. Same height family as the title bar so the block
+   reads as chrome-rows-around-content. */
+.home-panel-footer {
+  min-height: 1.75rem; /* 28px */
+}
+
+/* EXPANDED: the cap is lifted so the block grows to fit every challenge,
+   including the organiser-finished ones the collapsed view filters out.
+   The rows list stops clipping too — the whole point of expanding is to
+   see past the cap, and the same control collapses it again. Deliberately
+   NOT a scroll container: a nested scroller inside the page scroller is
+   the touch trap this widget has avoided from the start. */
+.home-panel--expanded {
+  max-height: none;
+}
+.home-panel--expanded .home-panel-rows {
+  overflow: visible;
+}
+
+/* The in-grid drag host. A col-span-full grid item, so the grid breaks its
+   row around the block and it sits BETWEEN app rows — the iOS widget
+   idiom. It carries no visuals of its own: the bordered .home-panel
+   article inside it is the widget. The bottom margin matches the grid's
+   own gap-2 so the row below doesn't crowd it. */
+.home-panel-slot {
+  margin-bottom: 0.5rem;
+}
+
 /* The feed body is a full-height flex COLUMN so the trailing sections can
    be bottom-anchored on a tall screen.
 

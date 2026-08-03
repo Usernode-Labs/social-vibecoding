@@ -297,10 +297,10 @@
       "expectSelector": "#home-featured-list .app-card"
     },
     {
-      "name": "The compact Challenges block renders in the column with a numeric progress bar (#911)",
+      "name": "Challenges widget: outlined progress bar, expand toggle and Open button (#911)",
       "path": "/?demo=1",
-      "expectSelector": "#home-body.home-column #home-panels article.home-panel .home-panel-rows .home-panel-row [role=progressbar]",
-      "expectText": "Staging demo challenge"
+      "expectSelector": "#home-body.home-column article.home-panel .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
+      "expectText": "See all 6 challenges"
     },
     {
       "name": "Home feed sits in the 1024px centred column, featured card full width in it",

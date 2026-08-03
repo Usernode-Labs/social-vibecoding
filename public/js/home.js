@@ -169,18 +169,34 @@ const Home = {
       // manageable in place (drag in / reorder / ✕). Empty string
       // everywhere else — see _widgetUiActive.
       html = Home.renderWidgetSection();
-      html += '<div class="home-section-header col-span-full">Your apps</div>';
+      // No "Your apps" heading: the grid IS the top of the feed, and the
+      // label was pure chrome above icons that already read as apps. The
+      // trailing sections keep their own headings — they need naming, this
+      // didn't.
       if (yours.length) {
         // Tag the cards at render time: data-yours drives both the
         // drag wiring's selector and the drop classification;
         // cursor-grab replaces cursor-pointer as the discoverability
         // hint when the card is draggable.
-        html += yours.map((a) => {
+        // The home-screen panel (#911) rides IN the grid when the viewer
+        // has dragged it: a col-span-full slot planted after N cards, so
+        // it breaks onto its own line between app rows exactly like an iOS
+        // widget. Un-dragged, panelSlotAt is null and the block stays in
+        // its own section below the grid.
+        const panelKey = window.HomePanels?.gridSlotPanelKey?.() || null;
+        const panelAt = panelKey
+          ? Math.max(0, Math.min(window.HomePanels.positionFor(panelKey), yours.length))
+          : null;
+        const cards = yours.map((a) => {
           let card = Home.renderAppCard(a);
           card = card.replace('class="app-card ', 'data-yours="true" class="app-card ');
           if (kitDrag || canDragYours) card = card.replace('cursor-pointer', 'cursor-grab');
           return card;
-        }).join('');
+        });
+        if (panelAt != null) {
+          cards.splice(panelAt, 0, Home.renderPanelSlot(panelKey));
+        }
+        html += cards.join('');
       } else {
         // Compact inline line, NOT a full-height empty state: the
         // sections below ("Featured apps", "Create an app") are what
@@ -200,6 +216,15 @@ const Home = {
     Home.renderCreateSection(canCreate);
     Home._maybeOpenShotMenu(listEl);
     Home._searchReveal.sync();
+  },
+
+  // The in-grid host for a home-screen panel (#911). col-span-full so the
+  // grid breaks the row around it — that is what makes the block sit
+  // BETWEEN app rows, iOS-widget style, at any breakpoint. HomePanels
+  // paints into it; the drag itself is the same kit attachReorder the app
+  // cards use (see _wireCards), with this slot added to its item selector.
+  renderPanelSlot(key) {
+    return `<div id="home-panel-slot" class="home-panel-slot app-card-draggable touch-pan-y col-span-full" data-panel-slot="${escapeHtml(key)}"></div>`;
   },
 
   // "Featured apps": one contained card holding the admin-curated
@@ -618,7 +643,10 @@ const Home = {
       if (Home._reorderHandle) { try { Home._reorderHandle.detach(); } catch {} }
       Home._reorderHandle = window.unNative.attachReorder(listEl, {
         grid: true,
-        itemSelector: '.app-card:not([data-demo])',
+        // The home-screen panel slot (#911) is a draggable item in the SAME
+        // grid, so moving it between app rows is the kit's existing
+        // gesture rather than a second recognizer competing for the touch.
+        itemSelector: '.app-card:not([data-demo]), .home-panel-slot',
         canDrop: (item, to) => Home.canDropCard(item.dataset.yours === 'true', to, yoursCount),
         onLift: () => { Home._dragActive = true; },
         onSettle: () => {
@@ -632,7 +660,7 @@ const Home = {
             Home.render();
           }
         },
-        onReorder: (from, to, item) => { Home._onKitCardDrop(from, to, item, yoursCount); },
+        onReorder: (from, to, item) => { Home._onGridDrop(from, to, item, listEl, yoursCount); },
       });
     }
 
@@ -2254,6 +2282,34 @@ const Home = {
   // _rerenderPending — onReorder fires while _dragActive still holds),
   // then persist. Failure reverts to server truth via Home.load(),
   // same optimistic-then-revert shape as _menuToggleFavorite.
+  // Dispatch a completed grid drop. Two kinds of item share the grid now:
+  // app cards, and the home-screen panel slot (#911).
+  //
+  // Both branches derive their index from the SETTLED DOM rather than the
+  // kit's `to`. That is not belt-and-braces: with a second item type in
+  // the list, `to` counts panel and cards together, so a card dropped
+  // below the panel would persist an index one too high. Counting the
+  // cards that actually precede the item is exact and needs no arithmetic
+  // about what else is in the grid.
+  _onGridDrop(from, to, item, listEl, yoursCount) {
+    const cardsBefore = (el) => {
+      let n = 0;
+      for (const node of listEl.querySelectorAll('.app-card[data-slug], .home-panel-slot')) {
+        if (node === el) break;
+        if (node.classList.contains('app-card')) n += 1;
+      }
+      return n;
+    };
+    if (item?.classList?.contains('home-panel-slot')) {
+      // The panel moved: record how many app cards ended up above it.
+      // Nothing else in the grid changed, so no card order is written.
+      const key = item.dataset.panelSlot;
+      window.HomePanels?.setPosition?.(key, cardsBefore(item));
+      return;
+    }
+    Home._onKitCardDrop(from, cardsBefore(item), item, yoursCount);
+  },
+
   _onKitCardDrop(from, to, item, yoursCount) {
     const drop = Home.classifyCardDrop(from, to, yoursCount);
     const slug = item?.dataset?.slug;

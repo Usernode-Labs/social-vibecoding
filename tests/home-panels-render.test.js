@@ -182,28 +182,39 @@ test('visibleSlots: everything fits, no link row', () => {
   assert.equal(out.total, 4);
 });
 
-test('visibleSlots: overflow gives the last slot to the link', () => {
+test('visibleSlots: overflow keeps all four row slots — the footer owns it', () => {
   const { HP } = makeHomePanels();
   const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
   const out = HP.visibleSlots(panel({ total: 9, challenges: four }));
-  assert.equal(out.rows.length, 3, 'three challenges + the link = four slots');
-  assert.equal(out.link, true);
-  assert.equal(out.total, 9, 'the link carries the TRUE total, not the page size');
-  // Never more than the budget, whichever branch runs.
-  assert.ok(out.rows.length + (out.link ? 1 : 0) <= HP.ROW_SLOTS);
+  // The overflow affordance moved OUT of the row list into the footer's
+  // expand toggle, so a fourth challenge is no longer sacrificed for it.
+  assert.equal(out.rows.length, 4);
+  assert.equal(out.link, false, 'no row slot is spent on overflow any more');
+  assert.equal(out.total, 9, 'the footer label carries the TRUE total');
+  assert.ok(out.rows.length <= HP.ROW_SLOTS);
 });
 
-test('visibleSlots: not-done rows win the slots when overflow trims', () => {
+test('visibleSlots: not-done rows win the slots when the cap trims', () => {
   const { HP } = makeHomePanels();
   const rows = [
     challenge({ id: 1, progress: { done: true, current: null, target: null } }),
     challenge({ id: 2 }),
     challenge({ id: 3 }),
     challenge({ id: 4 }),
+    challenge({ id: 5 }),
   ];
   const out = HP.visibleSlots(panel({ total: 7, challenges: rows }));
-  assert.deepEqual(out.rows.map((c) => c.id), [2, 3, 4],
+  assert.deepEqual(out.rows.map((c) => c.id), [2, 3, 4, 5],
     'the actionable rows survive; the finished one is what gets dropped');
+});
+
+test('visibleSlots: expanded draws every row the server sent', () => {
+  const { HP } = makeHomePanels();
+  const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
+  HP._expanded.challenges = true;
+  const out = HP.visibleSlots(panel({ total: 9, challenges: nine, expanded: true }));
+  assert.equal(out.rows.length, 9, 'the row cap does not apply when expanded');
+  assert.equal(out.expanded, true);
 });
 
 test('visibleSlots: tolerates an empty/absent challenge list', () => {
@@ -262,8 +273,10 @@ test('render: a numeric row gets a progressbar with truthful aria values', () =>
   // stays one line.
   assert.match(html, /3\/8/);
   assert.match(html, /aria-label="[^"]*3 of 8 Apps tested"/);
-  // The bar hugs the row's bottom edge — that's what keeps rows uniform.
-  assert.match(html, /absolute left-2\.5 right-2\.5 bottom-\[3px\] h-\[2px\]/);
+  // The bar hugs the row's bottom edge — that's what keeps rows uniform —
+  // and is OUTLINED so an empty track still reads as a bar.
+  assert.match(html, /absolute left-2\.5 right-2\.5 bottom-\[3px\] h-\[6px\]/);
+  assert.match(html, /home-panel-bar-track[^"]*border border-zinc-300/);
 });
 
 test('render: a numeric row at zero still renders an (empty) bar', () => {
@@ -276,6 +289,10 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
   const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
   assert.match(html, /width:0%/);
   assert.match(html, /0\/5/);
+  // The 0/5 case is exactly why the track is outlined: with no fill at all,
+  // the border + light interior are the only thing distinguishing an empty
+  // bar from the row's hairline divider.
+  assert.match(html, /home-panel-bar-track[^"]*border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900/);
 });
 
 test('render: the row drops the category, task and CTA — task becomes the tooltip', () => {
@@ -310,24 +327,46 @@ test('render: organiser text is escaped in text AND attribute contexts', () => {
   assert.match(html, /&#39;quote&#39;/);
 });
 
-test('render: the overflow slot replaces a row and carries the true total', () => {
+test('render: the footer carries the expand toggle and the Open button', () => {
   const four = Array.from({ length: 4 }, (_, i) => challenge({ id: i + 1 }));
   const { html } = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 8, challenges: four })],
   });
+  // Overflow now lives in the FOOTER, so all four row slots stay
+  // challenges — the label carries the true total.
+  assert.match(html, /home-panel-footer/);
+  assert.match(html, /home-panel-expand[^>]*data-panel-key="challenges"/);
   assert.match(html, /See all 8 challenges/);
-  // Four slots total: three challenges + the link. Count the row class with
-  // a word boundary — `home-panel-rows` (the container) would otherwise
-  // inflate the tally.
   assert.equal((html.match(/home-panel-row\b(?!s)/g) || []).length, 4);
-  assert.equal((html.match(/data-challenge-id/g) || []).length, 3);
+  assert.equal((html.match(/data-challenge-id/g) || []).length, 4);
+  assert.doesNotMatch(html, /home-panel-more/, 'the old link ROW is gone');
+  // And the separate way out to the Challenges screen, bottom right.
+  assert.match(html, /home-panel-open[^>]*title="Open the Challenges screen"/);
+  assert.match(html, /aria-expanded="false"/);
+});
 
-  // Nothing to overflow: four challenge rows, no link.
-  const { html: exact } = renderWith({
-    registry: [], hidden: [], panels: [panel({ total: 4, challenges: four })],
-  });
-  assert.doesNotMatch(exact, /See all/);
-  assert.equal((exact.match(/data-challenge-id/g) || []).length, 4);
+test('render: expanded lifts the cap, shows everything, and flips the toggle', () => {
+  const nine = Array.from({ length: 9 }, (_, i) => challenge({ id: i + 1 }));
+  const { HP, section } = makeHomePanels();
+  HP._data = { registry: [], hidden: [], panels: [panel({ total: 9, challenges: nine })] };
+  HP._expanded.challenges = true;
+  HP.render();
+  const html = section.innerHTML;
+  assert.match(html, /home-panel--expanded/, 'the class app.css hangs max-height: none on');
+  assert.equal((html.match(/data-challenge-id/g) || []).length, 9,
+    'every row the server sent, past the four-slot budget');
+  assert.match(html, /Show less/, 'the same control collapses it');
+  assert.match(html, /aria-expanded="true"/);
+});
+
+test('the expanded cap lift and the footer are declared in CSS', () => {
+  const css = read('public/css/app.css');
+  const rule = css.match(/\.home-panel--expanded \{[^}]*\}/)[0];
+  assert.match(rule, /max-height:\s*none/);
+  // The rows list must stop clipping too, or expanding would reveal
+  // nothing past the old cap.
+  assert.match(css, /\.home-panel--expanded \.home-panel-rows \{[^}]*overflow:\s*visible/);
+  assert.match(css, /\.home-panel-footer \{/);
 });
 
 test('render: the title bar carries the title, the counter and the ✕ — no extra rows', () => {
@@ -469,7 +508,7 @@ test('every text node in a row is single-line — no wrapping anywhere', () => {
   assert.match(html, /shrink-0 whitespace-nowrap text-\[11px\] tabular-nums/);
 });
 
-test('the title bar and the overflow row are single-line too', () => {
+test('the title bar and the footer controls are single-line too', () => {
   const { html } = renderWith({
     registry: [], hidden: [],
     panels: [panel({ total: 9, done: 2, points_remaining: 24300 })],
@@ -477,8 +516,13 @@ test('the title bar and the overflow row are single-line too', () => {
   // Title + counter: the counter must not push the title to a second line.
   assert.match(html, /home-panel-title[^"]*truncate whitespace-nowrap/);
   assert.match(html, /normal-case tracking-normal whitespace-nowrap/);
-  // The "See all N challenges" label.
-  assert.match(html, /<span class="min-w-0 truncate whitespace-nowrap">See all 9/);
+  // Both footer labels — the expand toggle and the Open button. Neither
+  // may wrap: the footer is a fixed-height flex row, so a wrap would be
+  // clipped exactly like a wrapped row.
+  assert.match(html, /<span class="whitespace-nowrap">See all 9 challenges<\/span>/);
+  assert.match(html, /<span class="whitespace-nowrap">Open<\/span>/);
+  assert.match(html, /home-panel-expand[^>]*whitespace-nowrap/);
+  assert.match(html, /home-panel-open[^>]*whitespace-nowrap/);
 });
 
 test('the row declares nowrap and clips, so a wrap cannot ship unnoticed', () => {
@@ -488,6 +532,80 @@ test('the row declares nowrap and clips, so a wrap cannot ship unnoticed', () =>
     'declared on the row so every child inherits it');
   assert.match(rowRule, /overflow:\s*hidden/,
     'a chip that still overflows is clipped, not spilled onto the next row');
+});
+
+// ── Drag position among the app-grid rows ─────────────────────────
+//
+// The block is a col-span-full item in #app-list, so the grid breaks its
+// row around it and it sits BETWEEN app rows, iOS-widget style. The kit's
+// existing attachReorder carries it; only the persisted index is new.
+
+test('positionFor reads the per-user index and defaults to "not dragged"', () => {
+  const { HP } = makeHomePanels();
+  HP._data = { registry: [], hidden: [], positions: { challenges: 4 }, panels: [panel()] };
+  assert.equal(HP.positionFor('challenges'), 4);
+  assert.equal(HP.positionFor('nope'), null);
+
+  // No positions at all → null, which is what keeps the block in its own
+  // section below the grid for every account that has never dragged it.
+  HP._data = { registry: [], hidden: [], panels: [panel()] };
+  assert.equal(HP.positionFor('challenges'), null);
+  assert.equal(HP.gridSlotPanelKey(), null, 'no slot until it has been placed');
+
+  HP._data = { registry: [], hidden: [], positions: { challenges: 0 }, panels: [panel()] };
+  assert.equal(HP.positionFor('challenges'), 0, 'index 0 is a real position, not absent');
+  assert.equal(HP.gridSlotPanelKey(), 'challenges');
+});
+
+test('positionFor rejects junk rather than placing the block at NaN', () => {
+  const { HP } = makeHomePanels();
+  for (const bad of [{ challenges: -1 }, { challenges: 'x' }, { challenges: 1.5 }, null]) {
+    HP._data = { registry: [], hidden: [], positions: bad, panels: [panel()] };
+    assert.equal(HP.positionFor('challenges'), null, JSON.stringify(bad));
+  }
+});
+
+test('setPosition persists the index and updates the cache optimistically', async () => {
+  const { HP, sandbox } = makeHomePanels();
+  HP._data = { registry: [], hidden: [], positions: {}, panels: [panel()] };
+  const calls = [];
+  sandbox.fetch = async (url, opts) => {
+    calls.push({ url, body: JSON.parse(opts.body) });
+    return { ok: true, json: async () => ({ positions: { challenges: 3 } }) };
+  };
+  assert.equal(await HP.setPosition('challenges', 3), true);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/api\/home-panels\/challenges\/position$/);
+  assert.equal(calls[0].body.index, 3);
+  assert.equal(HP._data.positions.challenges, 3, 'cache reflects the drop immediately');
+
+  // A non-integer never reaches the server.
+  assert.equal(await HP.setPosition('challenges', 'x'), false);
+  assert.equal(await HP.setPosition('challenges', -2), false);
+  assert.equal(calls.length, 1);
+});
+
+test('home.js plants the slot in the grid and routes its drop to setPosition', () => {
+  // col-span-full is what makes the block break the grid row.
+  assert.match(HOME, /renderPanelSlot\(key\)/);
+  assert.match(HOME, /id="home-panel-slot"[^`]*col-span-full/);
+  // The slot is an item of the SAME reorder instance as the app cards.
+  assert.match(HOME, /itemSelector: '\.app-card:not\(\[data-demo\]\), \.home-panel-slot'/);
+  // The drop dispatcher distinguishes the two item kinds and persists the
+  // panel index rather than a card order.
+  assert.match(HOME, /_onGridDrop\(from, to, item, listEl, yoursCount\)/);
+  assert.match(HOME, /HomePanels\?\.setPosition\?\.\(key, cardsBefore\(item\)\)/);
+  // Card drops get a CARD-ONLY index — with a second item type in the
+  // list, the kit's raw `to` would be one too high below the panel.
+  assert.match(HOME, /_onKitCardDrop\(from, cardsBefore\(item\), item, yoursCount\)/);
+});
+
+test('the "Your apps" heading is gone from the grid', () => {
+  assert.doesNotMatch(HOME, /home-section-header col-span-full">Your apps/);
+  assert.doesNotMatch(HOME, />Your apps</);
+  // The trailing sections keep theirs — they genuinely need naming.
+  assert.match(INDEX, /home-section-header">Featured apps/);
+  assert.match(INDEX, /home-section-header">Create an app/);
 });
 
 // ── Height cap ────────────────────────────────────────────────────

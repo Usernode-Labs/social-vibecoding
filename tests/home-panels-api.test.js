@@ -48,8 +48,19 @@ function makeMockPool(state) {
       const sql = collapse(rawSql);
       calls.push({ sql, params });
 
-      if (sql.includes('SELECT home_panels_hidden FROM users')) {
-        return { rows: [{ home_panels_hidden: state.hidden ?? [] }] };
+      if (sql.includes('SELECT home_panels_hidden, home_panel_positions FROM users')) {
+        return {
+          rows: [{
+            home_panels_hidden: state.hidden ?? [],
+            home_panel_positions: state.positions ?? {},
+          }],
+        };
+      }
+      if (sql.startsWith('UPDATE users SET home_panel_positions')
+          || sql.includes('jsonb_set(COALESCE(home_panel_positions')) {
+        const [, key, index] = params;
+        state.positions = { ...(state.positions || {}), [key]: index };
+        return { rows: [{ home_panel_positions: state.positions }] };
       }
       if (sql.startsWith('UPDATE users SET home_panels_hidden')) {
         const key = params[1];
@@ -497,6 +508,103 @@ test('POST visibility: hide then show round-trips, and hiding twice cannot dupli
   res = await post(app, '/api/home-panels/challenges/visibility', { hidden: false });
   assert.deepEqual(res.body.hidden, []);
   assert.deepEqual(state.hidden, []);
+});
+
+// ─── Expand mode ──────────────────────────────────────────────────────
+
+test('GET ?expand=challenges drops the not-completed/in-window filters', async () => {
+  const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
+  await get(app, '/api/home-panels?expand=challenges');
+  const queries = calls.filter((c) => c.sql.includes('FROM challenges c'));
+  for (const q of queries) {
+    // Still scoped to the season's PUBLIC events and organiser-enabled…
+    assert.match(q.sql, /se\.internal = FALSE/);
+    assert.match(q.sql, /c\.enabled = TRUE/);
+    // …but the two filters that define "open" are gone, which is how the
+    // expanded list can show finished challenges and their ✓ marks.
+    assert.doesNotMatch(q.sql, /c\.completed = FALSE/);
+    assert.doesNotMatch(q.sql, /COALESCE\(c\.schedule_start/);
+  }
+  // And the row cap lifts.
+  const rowQuery = calls.find((c) => c.sql.includes('LIMIT $3'));
+  assert.equal(rowQuery.params[2], 40);
+});
+
+test('GET without expand keeps the strict open filter and the 4-row cap', async () => {
+  const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
+  const { body } = await get(app, '/api/home-panels');
+  const queries = calls.filter((c) => c.sql.includes('FROM challenges c'));
+  for (const q of queries) assert.match(q.sql, /c\.completed = FALSE/);
+  assert.equal(calls.find((c) => c.sql.includes('LIMIT $3')).params[2], 4);
+  assert.equal(body.panels[0].expanded, false);
+});
+
+test('GET ?expand names ONE panel — an unknown name expands nothing', async () => {
+  const { app, calls } = makeApp({ season: SEASON, rows: [row()] }, { user: USER });
+  const { body } = await get(app, '/api/home-panels?expand=not-a-panel');
+  assert.equal(body.panels[0].expanded, false);
+  for (const q of calls.filter((c) => c.sql.includes('FROM challenges c'))) {
+    assert.match(q.sql, /c\.completed = FALSE/);
+  }
+});
+
+// ─── Drag position ────────────────────────────────────────────────────
+
+test('GET /api/home-panels returns the viewer\'s panel positions', async () => {
+  const { app } = makeApp(
+    { season: SEASON, rows: [row()], positions: { challenges: 4 } },
+    { user: USER }
+  );
+  const { body } = await get(app, '/api/home-panels');
+  assert.deepEqual(body.positions, { challenges: 4 });
+});
+
+test('positions are filtered to the registry and to sane integers', async () => {
+  const { app } = makeApp(
+    {
+      season: SEASON, rows: [row()],
+      positions: { challenges: 2, 'retired-panel': 9, bogus: 'x' },
+    },
+    { user: USER }
+  );
+  const { body } = await get(app, '/api/home-panels');
+  assert.deepEqual(body.positions, { challenges: 2 },
+    'a retired key or junk value never reaches the client');
+
+  for (const bad of [{ challenges: -1 }, { challenges: 1.5 }, { challenges: 99999 }]) {
+    const { app: a } = makeApp({ season: SEASON, rows: [row()], positions: bad }, { user: USER });
+    const { body: b } = await get(a, '/api/home-panels');
+    assert.deepEqual(b.positions, {}, JSON.stringify(bad));
+  }
+});
+
+test('POST …/position persists the index and validates it', async () => {
+  const { app, state } = makeApp({ season: SEASON, rows: [], positions: {} }, { user: USER });
+  const ok = await post(app, '/api/home-panels/challenges/position', { index: 4 });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.body.positions, { challenges: 4 });
+  assert.equal(state.positions.challenges, 4);
+
+  for (const bad of [{ index: -1 }, { index: 1.5 }, { index: 'x' }, { index: 99999 }, {}]) {
+    const res = await post(app, '/api/home-panels/challenges/position', bad);
+    assert.equal(res.status, 400, JSON.stringify(bad));
+  }
+  // Unknown key → 400, so the JSONB column can't accumulate junk.
+  const unknown = await post(app, '/api/home-panels/nope/position', { index: 1 });
+  assert.equal(unknown.status, 400);
+});
+
+test('POST …/position is 401 unauthenticated', async () => {
+  const { app } = makeApp({ season: SEASON, rows: [] });
+  const { status } = await post(app, '/api/home-panels/challenges/position', { index: 1 });
+  assert.equal(status, 401);
+});
+
+test('the position write is rate limited like the visibility write', () => {
+  const route = read('src/routes/home-panels.js');
+  assert.match(route, /position', homePanelPrefLimiter/);
+  const schema = read('src/db/schema.sql');
+  assert.match(schema, /home_panel_positions JSONB NOT NULL DEFAULT '\{\}'/);
 });
 
 // ─── Source pins ──────────────────────────────────────────────────────

@@ -208,6 +208,21 @@ const OPEN_CHALLENGE_WHERE = `
     AND COALESCE(c.schedule_start, ct.schedule_start, NOW() - INTERVAL '1 second') <= NOW()
     AND COALESCE(c.schedule_end, ct.schedule_end, NOW() + INTERVAL '1 second') >= NOW()`;
 
+// The EXPANDED view's predicate: the same season and public-event scope,
+// still organiser-enabled, but WITHOUT the not-completed and in-window
+// filters — expanding is how a viewer sees the season's finished
+// challenges (and their own ✓ marks on them) without leaving home. The
+// collapsed panel stays strictly "open" per OPEN_CHALLENGE_WHERE.
+const ALL_CHALLENGE_WHERE = `
+        se.internal = FALSE
+    AND c.enabled = TRUE`;
+
+// Hard ceiling on the expanded list. A season can accumulate dozens of
+// challenges (production's Season 1 has 58 rows across its events), and
+// the expanded block is still a home-screen widget, not the Challenges
+// screen — the footer's own button goes there for the full list.
+const CHALLENGE_EXPANDED_LIMIT = 40;
+
 // The current active PUBLIC season — the same predicate GET /challenges
 // resolves its default scope with (mobile.js). Null when nothing is
 // running, which is production's state between seasons and is what makes
@@ -222,10 +237,21 @@ async function fetchCurrentSeason(pool) {
   return rows[0] || null;
 }
 
-async function buildChallengesPanel(pool, user) {
+async function buildChallengesPanel(pool, user, opts) {
+  // `expanded` is the in-place "See all" state: same scope, but finished
+  // and out-of-window challenges come too, and the row cap lifts. The
+  // client grows the block past its height cap for this and the same
+  // control collapses it back — nothing is persisted.
+  const expanded = !!(opts && opts.expanded);
+  const scopeWhere = expanded ? ALL_CHALLENGE_WHERE : OPEN_CHALLENGE_WHERE;
+  const rowLimit = expanded ? CHALLENGE_EXPANDED_LIMIT : CHALLENGE_ROW_LIMIT;
+
   const season = await fetchCurrentSeason(pool);
   if (!season) {
-    return { season: null, total: 0, done: 0, points_remaining: null, challenges: [] };
+    return {
+      season: null, total: 0, done: 0, points_remaining: null,
+      challenges: [], expanded,
+    };
   }
 
   // Rows: one statement, per-user aggregates as correlated subqueries so
@@ -247,13 +273,13 @@ async function buildChallengesPanel(pool, user) {
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
        LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
-      WHERE se.season_id = $2 AND ${OPEN_CHALLENGE_WHERE}
+      WHERE se.season_id = $2 AND ${scopeWhere}
       ORDER BY (${DONE_EXPR}) ASC,
                (c.featured IS NOT TRUE) ASC,
                COALESCE(c.featured_order, 2147483647) ASC,
                c.display_order ASC, c.id ASC
       LIMIT $3`,
-    [user.id, season.id, CHALLENGE_ROW_LIMIT]
+    [user.id, season.id, rowLimit]
   );
 
   // Totals over the WHOLE open set, not the page above: `total` drives the
@@ -272,7 +298,7 @@ async function buildChallengesPanel(pool, user) {
        FROM challenges c
        JOIN season_events se ON se.id = c.season_event_id
        LEFT JOIN challenge_templates ct ON ct.id = c.challenge_template_id
-      WHERE se.season_id = $2 AND ${OPEN_CHALLENGE_WHERE}`,
+      WHERE se.season_id = $2 AND ${scopeWhere}`,
     [user.id, season.id]
   );
 
@@ -299,6 +325,7 @@ async function buildChallengesPanel(pool, user) {
     done: totalRows[0]?.done ?? 0,
     points_remaining: pointsRemaining,
     challenges,
+    expanded,
   };
 }
 
@@ -308,7 +335,8 @@ async function buildChallengesPanel(pool, user) {
 // identity would see zero progress; this makes every state visible
 // deterministically regardless of who is looking. Read-only, obviously
 // fake, written nowhere, and a strict no-op outside staging.
-function demoChallengesPanel() {
+function demoChallengesPanel(opts) {
+  const expanded = !!(opts && opts.expanded);
   const rows = [
     {
       id: 900512,
@@ -318,8 +346,9 @@ function demoChallengesPanel() {
       reward: 'Up to 2,100 pts',
       cta: { label: 'Get Started', link: 'https://example.invalid/staging-demo' },
       metric: { kind: 'count', label: 'Apps tested', target: 8 },
-      progress: { done: false, current: 3, target: 8 },
-      earned_points: 600,
+      // Roughly half — the clearest read of a part-filled outlined bar.
+      progress: { done: false, current: 4, target: 8 },
+      earned_points: 800,
     },
     {
       id: 900510,
@@ -355,19 +384,48 @@ function demoChallengesPanel() {
       earned_points: 50,
     },
   ];
-  // `total` is exactly the row budget (4) on purpose, so every one of the
-  // four states — including the DONE row — is on screen for the before/
-  // after captures and the dapp.json check. Rows sort not-done-first, so a
-  // total above the budget would spend the last slot on the "See all N"
-  // link and drop the ✓ row; the OVERFLOW slot is exercised instead by the
-  // real query path, where the boot seed leaves five challenges open (see
-  // seedStagingTopochain in src/db/migrate.js).
+  // Expanding shows the season's FINISHED challenges too — the state the
+  // collapsed panel filters out. Two organiser-closed rows, one of which
+  // the viewer completed, so the ✓-on-a-finished-challenge case is
+  // reviewable from the demo route as well as the seeded one.
+  const finished = [
+    {
+      id: 900514,
+      label: 'FLASH',
+      goal: 'Staging demo challenge — closed: live feedback session',
+      task: 'Joined the live feedback call and left notes.',
+      reward: '500 points',
+      cta: null,
+      metric: null,
+      progress: { done: true, current: null, target: null },
+      earned_points: 500,
+    },
+    {
+      id: 900515,
+      label: 'TECHNICAL',
+      goal: 'Staging demo challenge — closed: stress load round',
+      task: 'The stress-load round has finished.',
+      reward: 'Up to 500 pts',
+      cta: null,
+      metric: null,
+      progress: { done: false, current: null, target: null },
+      earned_points: 0,
+    },
+  ];
+
+  // Collapsed `total` deliberately exceeds the four-slot budget so the
+  // footer reads "See all 6 challenges" and the expand toggle has
+  // something to reveal. Expanded returns the open rows PLUS the finished
+  // ones, which is exactly what the real builder does when it drops the
+  // not-completed filter.
+  const all = expanded ? [...rows, ...finished] : rows;
   return {
     season: { id: 900500, name: 'Staging Demo Season — Topochain' },
-    total: 4,
-    done: 1,
+    total: expanded ? all.length : 6,
+    done: expanded ? 2 : 1,
     points_remaining: null,
-    challenges: rows,
+    challenges: all,
+    expanded,
     demo: true,
   };
 }
@@ -387,16 +445,36 @@ const PANEL_REGISTRY = [
 
 const PANEL_KEYS = new Set(PANEL_REGISTRY.map((p) => p.key));
 
+// Upper bound on a stored drag position (cards above the panel). Nobody has
+// a thousand apps pinned to their home screen; the cap exists so a hostile
+// or buggy client can't park a panel at index 1e9 and so the value stays
+// obviously reasonable in the column.
+const MAX_PANEL_POSITION = 500;
+
 // The viewer's dismissed keys, filtered to the live registry so a key
 // retired from the code stops affecting anything without a migration.
-async function readHidden(pool, userId) {
+async function readPrefs(pool, userId) {
   const { rows } = await pool.query(
-    'SELECT home_panels_hidden FROM users WHERE id = $1',
+    'SELECT home_panels_hidden, home_panel_positions FROM users WHERE id = $1',
     [userId]
   );
-  const raw = rows[0]?.home_panels_hidden;
-  if (!Array.isArray(raw)) return [];
-  return raw.filter((k) => PANEL_KEYS.has(k));
+  const rawHidden = rows[0]?.home_panels_hidden;
+  const hidden = Array.isArray(rawHidden)
+    ? rawHidden.filter((k) => PANEL_KEYS.has(k)) : [];
+
+  // Positions: { key: cardsAbove }. Filtered to the live registry and to
+  // sane integers, so neither a retired key nor a junk value can reach the
+  // client. An absent key means "the default slot, under the whole grid".
+  const rawPos = rows[0]?.home_panel_positions;
+  const positions = {};
+  if (rawPos && typeof rawPos === 'object' && !Array.isArray(rawPos)) {
+    for (const [key, value] of Object.entries(rawPos)) {
+      if (!PANEL_KEYS.has(key)) continue;
+      const n = Number(value);
+      if (Number.isInteger(n) && n >= 0 && n <= MAX_PANEL_POSITION) positions[key] = n;
+    }
+  }
+  return { hidden, positions };
 }
 
 function homePanelRoutes() {
@@ -407,15 +485,20 @@ function homePanelRoutes() {
     if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
     const registry = PANEL_REGISTRY.map((p) => ({ key: p.key, title: p.title }));
     try {
-      const hidden = await readHidden(pool, req.user.id);
+      const { hidden, positions } = await readPrefs(pool, req.user.id);
       const demo = IS_STAGING && req.query.demo === '1';
+      // ?expand=<key> asks one panel for its expanded list (finished
+      // challenges included, row cap lifted). Per-visit UI state, so it
+      // rides on the request rather than being stored.
+      const expandKey = typeof req.query.expand === 'string' ? req.query.expand : '';
       const panels = [];
       for (const panel of PANEL_REGISTRY) {
         if (hidden.includes(panel.key)) continue;
+        const expanded = expandKey === panel.key;
         try {
           const data = demo && panel.demo
-            ? panel.demo()
-            : await panel.build(pool, req.user);
+            ? panel.demo({ expanded })
+            : await panel.build(pool, req.user, { expanded });
           panels.push({ key: panel.key, title: panel.title, ...data });
         } catch (err) {
           // One broken panel must never blank the home screen — log it
@@ -425,7 +508,7 @@ function homePanelRoutes() {
           });
         }
       }
-      return res.json({ registry, hidden, panels });
+      return res.json({ registry, hidden, positions, panels });
     } catch (err) {
       log.error('home-panels', 'GET /api/home-panels failed', {
         userId: req.user.id, message: err.message,
@@ -464,6 +547,44 @@ function homePanelRoutes() {
       return res.json({ hidden: next });
     } catch (err) {
       log.error('home-panels', 'visibility write failed', {
+        userId: req.user.id, key, message: err.message,
+      });
+      return res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Where the panel sits among the app-grid rows, after an iOS-style drag.
+  // `index` counts APP CARDS above the block (see the schema comment on
+  // home_panel_positions for why cards and not rows). jsonb_set with the
+  // create-missing flag keeps this a single statement whether or not the
+  // key is already there.
+  router.post('/api/home-panels/:key/position', homePanelPrefLimiter, async (req, res) => {
+    if (!req.user?.id) return res.status(401).json({ error: 'Not authenticated' });
+    const key = String(req.params.key || '');
+    if (!PANEL_KEYS.has(key)) return res.status(400).json({ error: 'Unknown panel' });
+    const { index } = req.body || {};
+    const n = Number(index);
+    if (!Number.isInteger(n) || n < 0 || n > MAX_PANEL_POSITION) {
+      return res.status(400).json({ error: 'index must be an integer within range' });
+    }
+    try {
+      const { rows } = await pool.query(
+        `UPDATE users
+            SET home_panel_positions =
+                  jsonb_set(COALESCE(home_panel_positions, '{}'::jsonb),
+                            ARRAY[$2::text], to_jsonb($3::int), TRUE)
+          WHERE id = $1
+          RETURNING home_panel_positions`,
+        [req.user.id, key, n]
+      );
+      const raw = rows[0]?.home_panel_positions || {};
+      const positions = {};
+      for (const [k, v] of Object.entries(raw)) {
+        if (PANEL_KEYS.has(k)) positions[k] = Number(v);
+      }
+      return res.json({ positions });
+    } catch (err) {
+      log.error('home-panels', 'position write failed', {
         userId: req.user.id, key, message: err.message,
       });
       return res.status(500).json({ error: 'Internal server error' });

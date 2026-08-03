@@ -92,6 +92,21 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL
 -- "widget" for the iOS home-screen widget's pinned app grid.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
 
+-- Where each home-screen panel sits among the app-grid rows (issue #911) —
+-- an iOS-homescreen-style drag position, one entry per panel key:
+--   { "challenges": 4 }   -- 4 app cards above the block
+-- The value counts APP CARDS above the panel, not rows: the panel is a
+-- col-span-full grid item, so it always breaks onto its own line and the
+-- cards above it fill whatever rows the current breakpoint gives them.
+-- That keeps the stored position correct across breakpoints (a row index
+-- would mean something different at 2 columns than at 5).
+-- An ABSENT key means "the default slot" — directly under the whole grid —
+-- so every existing account keeps today's layout with no backfill. Keys
+-- are validated against the server registry on write, same as
+-- home_panels_hidden above; read and written only by
+-- src/routes/home-panels.js.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panel_positions JSONB NOT NULL DEFAULT '{}';
+
 -- Platform-level user language preference (issue #757). A BCP-47 language
 -- tag ("id", "pt-BR", …) or NULL for "unset/auto — use device language".
 -- Set from Settings → Language via POST /api/me/locale; exposed to apps as
