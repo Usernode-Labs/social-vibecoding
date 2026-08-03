@@ -104,7 +104,7 @@
          slots. They are now rows of the slide-out drawer's status pane
          (#drawer-status-pane below) — same element ids, same renderers,
          just a new parent. The trophy (#leaderboard-btn) became
-         #drawer-row-standings and the admin shield
+         #drawer-row-leaderboard and the admin shield
          (#admin-dashboard-btn) became #drawer-row-admin.
 
          What's left here is navigation + alerting only, in DOM order:
@@ -315,35 +315,19 @@
     </button>
     <!-- Members & visibility used to be a drawer row here; #645 moved it
          into the Dev tab's "+" menu (see AppView._wirePlusMenu). -->
-    <!-- Standings — the merged Kudos + Topochain leaderboard screen. This
-         row replaces BOTH the header trophy (#leaderboard-btn) and the
-         old #drawer-row-topochain-leaderboard: one entry point, two tabs.
-         Keeps the trophy icon the header used. Real anchor so hash
-         navigation drives the screen; the handler in HeaderMenu.init
-         just closes the drawer. -->
-    <a id="drawer-row-standings" href="#leaderboard"
+    <!-- Leaderboard — the one entry point for shared progress: the Kudos
+         leaderboard, the Topochain standings and the season's challenges,
+         three tabs on a single screen. This row replaces the header
+         trophy (#leaderboard-btn), the old
+         #drawer-row-topochain-leaderboard, and the separate Challenges /
+         Topochain-seasons rows that used to sit under it. Keeps the
+         trophy icon the header used. Real anchor so hash navigation
+         drives the screen; the handler in HeaderMenu.init just closes
+         the drawer. -->
+    <a id="drawer-row-leaderboard" href="#leaderboard"
        class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
       <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M16 11V3H8v8M5 7H3v4a2 2 0 002 2h3M19 7h2v4a2 2 0 01-2 2h-3M8 15a4 4 0 008 0h-8z M12 15v3m-3 3h6"/></svg>
-      <span class="text-sm font-medium">Standings</span>
-    </a>
-    <!-- Challenges — hash route handled by App.navigateToChallenges
-         (app-as-SV-chrome migration). Real anchor (like Standings above)
-         so hash navigation drives the screen; the click handler in
-         App.HeaderMenu.init just closes the drawer. -->
-    <a id="drawer-row-challenges" href="#challenges"
-       class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
-      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-      <span class="text-sm font-medium">Challenges</span>
-    </a>
-    <!-- Topochain seasons/events — hash route handled by
-         App.navigateToTopochainSeasons (Task 14, public screens). Stays a
-         screen of its own: it's an event calendar, not a standings table.
-         Sits directly under Challenges so the three competition surfaces
-         (Standings / Challenges / Seasons) read as one group. -->
-    <a id="drawer-row-topochain-seasons" href="#topochain/seasons"
-       class="flex items-center gap-3 px-4 min-h-[44px] border-b border-zinc-100 dark:border-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-50 dark:hover:bg-zinc-800">
-      <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-      <span class="text-sm font-medium">Topochain seasons</span>
+      <span class="text-sm font-medium">Leaderboard</span>
     </a>
     <!-- Profile — web screen (#profile hash route, public/js/profile.js;
          profile-and-settings-to-web migration). Always visible: the row
@@ -461,36 +445,45 @@
     </div>
   </main>
 
-  <!-- Standings screen (hidden by default): the Kudos leaderboard and the
-       Topochain leaderboard merged into one screen with a two-tab strip.
-       Hash routes #leaderboard[/prs|users|history|users/<name>] (Kudos)
-       and #leaderboard/topochain; the legacy #topochain/leaderboard hash
-       aliases onto the latter. Mounted by App.navigateToLeaderboard.
+  <!-- Leaderboard screen (hidden by default): the one place the group's
+       shared progress lives — the Kudos leaderboard, the Topochain
+       standings and the season's challenges, as a three-tab strip.
+       Hash routes #leaderboard[/prs|users|history|users/<name>] (Kudos),
+       #leaderboard/topochain (standings) and #leaderboard/challenges.
+       The legacy #topochain/leaderboard hash aliases onto the standings
+       tab; #challenges and #topochain/seasons alias onto the challenges
+       tab. Mounted by App.navigateToLeaderboard.
 
-       Two panes, one visible at a time, each still owned by its original
-       module: #leaderboard-root by public/js/leaderboard.js (which also
-       renders the tab strip and owns Leaderboard.section) and
-       #topochain-leaderboard-root by public/js/topochain-leaderboard.js.
+       Three panes, one visible at a time, each owned by its own module:
+       #leaderboard-root by public/js/leaderboard.js (which also renders
+       the tab strip and owns Leaderboard.section),
+       #topochain-leaderboard-root by public/js/topochain-leaderboard.js,
+       and #challenges-root by public/js/topochain-challenges.js. The two
+       Topochain-domain panes share one event selection, rendered into
+       #leaderboard-event-bar by public/js/topochain-event-context.js and
+       hidden while the Kudos tab is active.
+
        The wrapper is max-w-5xl for the Topochain table's sake; the Kudos
        pane keeps its narrower max-w-3xl reading column. -->
   <main id="leaderboard-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
     <div class="max-w-5xl mx-auto p-4 w-full">
-      <h2 class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">Standings</h2>
+      <h2 class="text-2xl font-bold text-zinc-900 dark:text-zinc-100 mb-3">Leaderboard</h2>
       <div id="standings-tabs" class="flex gap-2 border-b border-zinc-200 dark:border-zinc-800 mb-4"></div>
+      <div id="leaderboard-event-bar" class="hidden w-full mb-4"></div>
       <div id="leaderboard-root" class="max-w-3xl"></div>
       <div id="topochain-leaderboard-root" class="hidden w-full"></div>
+      <div id="challenges-root" class="hidden w-full"></div>
     </div>
   </main>
 
-  <!-- Challenges screen (app-as-SV-chrome migration): the mobile app's
-       native Challenges tab rendered by public/js/challenges.js from the
-       in-process /challenges-api routes (src/routes/topochain/mobile.js),
-       served from this platform's own database — the external leaderboard
-       deployment it used to proxy is retired. Hash route #challenges;
-       mounted by App.navigateToChallenges. -->
-  <main id="challenges-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
-    <div id="challenges-root" class="max-w-3xl mx-auto p-4"></div>
-  </main>
+  <!-- The Challenges screen used to be its own <main> here
+       (#challenges-screen, app-as-SV-chrome migration), rendered by the
+       now-deleted public/js/challenges.js. It is the third tab of the
+       Leaderboard screen above: #challenges-root lives inside
+       #leaderboard-screen and public/js/topochain-challenges.js renders
+       the merged (public grid + your own contributions) view into it.
+       The legacy #challenges hash still works — the router replaceStates
+       it to #leaderboard/challenges. -->
 
   <!-- Profile screen (profile-and-settings-to-web migration): the mobile
        app's native Profile screen rendered by public/js/profile.js from
@@ -924,20 +917,19 @@
 
   <!-- The Topochain leaderboard used to be its own <main> screen here
        (#topochain-leaderboard-screen, Task 14). The header slim-down
-       merged it into the Standings screen above as the second tab:
+       merged it into the Leaderboard screen above as the second tab:
        #topochain-leaderboard-root now lives inside #leaderboard-screen
        and TopochainLeaderboard renders into it unchanged. The legacy
        #topochain/leaderboard hash still works — the router replaceStates
        it to #leaderboard/topochain. -->
 
-  <!-- Topochain seasons/events screen (Task 14, public screens): the
-       season/event hero + challenge grid, rendered by
-       public/js/topochain-seasons.js from the public /api/v4 reads. Hash
-       route #topochain/seasons; mounted by App.navigateToTopochainSeasons.
-       No auth gate — public page. Ships hidden like its sibling screens. -->
-  <main id="topochain-seasons-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
-    <div id="topochain-seasons-root" class="max-w-5xl mx-auto p-4 w-full"></div>
-  </main>
+  <!-- The Topochain seasons/events screen used to be its own <main> here
+       (#topochain-seasons-screen, Task 14). Its event hero moved up into
+       the Leaderboard screen's shared event bar and its challenge grid
+       became that screen's third tab, so the module (renamed
+       public/js/topochain-challenges.js) now renders into
+       #challenges-root. The legacy #topochain/seasons hash still works —
+       the router replaceStates it to #leaderboard/challenges. -->
 
   <!-- ── Anonymous shell screens (fold-auth-pages-into-SPA) ──────────
        Landing / login / register / waiting were standalone documents
@@ -2253,11 +2245,10 @@
        Kudos.renderButton directly. -->
   <script src="/js/kudos.js"></script>
   <script src="/js/leaderboard.js"></script>
-  <!-- Challenges screen (#challenges hash route — app-as-SV-chrome
-       migration). Loaded before app.js, whose restoreFromHash calls
-       App.navigateToChallenges → Challenges.open(). -->
+  <!-- Shared "which event should this screen open on?" rule, consumed by
+       the event-context module and both Topochain-domain panes. Must load
+       before /js/topochain-event-context.js. -->
   <script src="/js/topochain-events.js"></script>
-  <script src="/js/challenges.js"></script>
   <!-- Profile screen (#profile hash route — profile-and-settings-to-web
        migration). Loaded before app.js, whose restoreFromHash calls
        App.navigateToProfile → Profile.open(). -->
@@ -2266,13 +2257,16 @@
        app.js, whose restoreFromHash calls App.navigateToAdminConsole →
        AdminConsole.open(). -->
   <script src="/js/admin-console.js"></script>
-  <!-- Topochain public screens (Task 14): #topochain/leaderboard and
-       #topochain/seasons hash routes. Loaded before app.js, whose
-       restoreFromHash calls App.navigateToTopochainLeaderboard /
-       App.navigateToTopochainSeasons -> TopochainLeaderboard.open() /
-       TopochainSeasons.open(). -->
+  <!-- Topochain-domain panes of the Leaderboard screen (Task 14, public
+       screens; merged into one screen by the leaderboard merge). The
+       Leaderboard module mounts these lazily when their tab is first
+       shown — #leaderboard/topochain -> TopochainLeaderboard.open(),
+       #leaderboard/challenges -> TopochainChallenges.open() — and both
+       read the event selection from TopochainEventContext, which owns
+       the shared picker + hero. Loaded before app.js. -->
+  <script src="/js/topochain-event-context.js"></script>
   <script src="/js/topochain-leaderboard.js"></script>
-  <script src="/js/topochain-seasons.js"></script>
+  <script src="/js/topochain-challenges.js"></script>
   <!-- Topochain admin console screens (Task 15): the 'topochain' entry
        in AdminConsole.SECTION_MODULES delegates to AdminTopochain.render(),
        which owns its own sub-nav under #admin/topochain/<sub>. Loaded

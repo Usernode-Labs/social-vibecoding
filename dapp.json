@@ -456,7 +456,7 @@
       "allowConsoleErrors": true
     },
     {
-      "name": "Standings screen renders with the Kudos Top-users tab",
+      "name": "Leaderboard screen renders with the Kudos Top-users tab",
       "path": "/leaderboard",
       "expectText": "Top users"
     },
@@ -819,9 +819,9 @@
       "expectSelector": "#drawer-theme-track[role=\"radiogroup\"] [data-theme-mode=\"system\"] ~ #drawer-theme-caret-track #drawer-theme-caret"
     },
     {
-      "name": "Standings drawer row replaces the header trophy",
+      "name": "Leaderboard drawer row replaces the header trophy",
       "path": "/",
-      "expectSelector": "#drawer-row-standings[href=\"#leaderboard\"]"
+      "expectSelector": "#drawer-row-leaderboard[href=\"#leaderboard\"]"
     },
     {
       "name": "Admin & moderation console page renders at #admin (#818)",
@@ -1061,19 +1061,39 @@
       "expectText": "closed by vote"
     },
     {
-      "name": "Legacy #topochain/leaderboard lands on the Standings screen's Topochain tab",
+      "name": "Legacy #topochain/leaderboard lands on the Leaderboard screen's Topochain tab",
       "path": "/#topochain/leaderboard",
       "expectSelector": "#leaderboard-screen:not(.hidden) #topochain-leaderboard-root:not(.hidden) #tc-lb-body"
     },
     {
-      "name": "Standings renders both tabs at #leaderboard",
+      "name": "Leaderboard renders all three tabs at #leaderboard",
       "path": "/#leaderboard",
-      "expectSelector": "#standings-tabs [data-standings-tab=\"topochain\"]"
+      "expectSelector": "#standings-tabs [data-standings-tab=\"challenges\"]"
     },
     {
-      "name": "Topochain seasons screen renders at #topochain/seasons (Task 14)",
+      "name": "Legacy #topochain/seasons lands on the Leaderboard screen's Challenges tab",
       "path": "/#topochain/seasons",
-      "expectSelector": "#topochain-seasons-screen:not(.hidden) #tc-se-grid"
+      "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid"
+    },
+    {
+      "name": "Challenges tab renders at its canonical #leaderboard/challenges route",
+      "path": "/#leaderboard/challenges",
+      "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid"
+    },
+    {
+      "name": "Legacy #challenges lands on the Leaderboard screen's Challenges tab",
+      "path": "/#challenges",
+      "expectSelector": "#leaderboard-screen:not(.hidden) #challenges-root:not(.hidden) #tc-se-grid"
+    },
+    {
+      "name": "The shared event picker renders above the Topochain tab",
+      "path": "/#leaderboard/topochain",
+      "expectSelector": "#leaderboard-event-bar:not(.hidden) #tc-ev-select"
+    },
+    {
+      "name": "Challenge detail overlay is reachable by deep link (?shot=challenge-detail)",
+      "path": "/?shot=challenge-detail#leaderboard/challenges",
+      "expectSelector": "#tc-se-detail-overlay:not(.hidden) #tc-se-detail-panel"
     },
     {
       "name": "Imported proposal mid-build shows the Preview building pill (#866)",

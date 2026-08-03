@@ -124,17 +124,36 @@ test('isCurrent: unparseable dates are not current (never throws)', () => {
 
 const read = (f) => fs.readFileSync(path.join(PUBLIC_JS, f), 'utf8');
 
-test('all three screens resolve their default through TopochainEvents', () => {
-  for (const f of ['topochain-leaderboard.js', 'topochain-seasons.js', 'challenges.js']) {
-    assert.match(read(f), /TopochainEvents\.pickDefault\(/,
-      `${f} must use the shared picker so the screens agree on the period`);
+// Since the leaderboard merge there is exactly ONE consumer of the shared
+// rule: TopochainEventContext, which owns the event selection for both
+// Topochain-domain tabs of the Leaderboard screen. The three per-screen
+// pickers this used to police (topochain-leaderboard.js,
+// topochain-seasons.js, challenges.js) collapsed into it — which is a
+// stronger version of the same guarantee: the panes can no longer disagree
+// about the period because they no longer each resolve one.
+test('the one shared event selection resolves its default through TopochainEvents', () => {
+  assert.match(read('topochain-event-context.js'), /TopochainEvents\.pickDefault\(/,
+    'the event context must use the shared picker');
+  // And no pane may quietly grow a second default-pick of its own again.
+  for (const f of ['topochain-leaderboard.js', 'topochain-challenges.js']) {
+    assert.doesNotMatch(read(f), /TopochainEvents\.pickDefault\(/,
+      `${f} must read the shared selection, not resolve its own`);
   }
 });
 
-test('the leaderboard requires a renderable leaderboard; the others do not', () => {
-  assert.match(read('topochain-leaderboard.js'), /requireLeaderboard:\s*true/);
-  assert.doesNotMatch(read('topochain-seasons.js'), /requireLeaderboard/);
-  assert.doesNotMatch(read('challenges.js'), /requireLeaderboard/);
+test('the shared default does not narrow to leaderboard-rendering events', () => {
+  // The standings pane used to pass requireLeaderboard: true. The selection
+  // is shared with the challenges pane now, and that pane renders fine for
+  // an event whose standings are switched off — narrowing the shared
+  // default would hide challenges for no reason. The standings pane still
+  // has its own per-pane answer (`display_leaderboard === false` copy).
+  // Strip comments: the module header explains in words WHY it doesn't pass
+  // the option, which is documentation, not a usage.
+  assert.doesNotMatch(
+    read('topochain-event-context.js').replace(/\/\/[^\n]*/g, ''),
+    /requireLeaderboard/);
+  assert.match(read('topochain-leaderboard.js'), /display_leaderboard/,
+    'the standings pane still handles a non-public leaderboard itself');
 });
 
 test('a 404 from /leaderboard no longer paints the red error banner', () => {
@@ -147,16 +166,24 @@ test('a 404 from /leaderboard no longer paints the red error banner', () => {
     'a 404 explicitly clears _error so the red banner cannot render');
 });
 
-test('the ended-event caption and placeholder are wired to the fallback flag', () => {
-  const lb = read('topochain-leaderboard.js');
-  assert.match(lb, /_endedFallback/, 'leaderboard tracks whether the fallback fired');
-  assert.match(lb, /Most recent event/, 'picker placeholder changes between events');
-  assert.match(lb, /Nothing is running right now/, 'explanatory caption');
+test('the ended-event caption is wired to the fallback flag', () => {
+  // One caption, in the shared event bar, so both tabs say the same thing.
+  const ctx = read('topochain-event-context.js');
+  assert.match(ctx, /_endedFallback/, 'the event bar tracks whether the fallback fired');
+  assert.match(ctx, /TopochainEvents\.hasEnded\(pick\)/, 'and sets it from the shared rule');
+  assert.match(ctx, /Nothing is running right now/, 'explanatory caption');
   // An explicit pick is not a fallback — the caption must clear.
-  assert.match(lb, /_endedFallback = false/);
-
-  assert.match(read('topochain-seasons.js'), /Nothing is running right now/);
-  assert.match(read('challenges.js'), /Nothing is running right now/);
+  assert.match(ctx, /_endedFallback = false/);
+  // ...but a silent server-resolved write-back is not a pick either way, so
+  // it must NOT clear the caption.
+  const sel = ctx.slice(ctx.indexOf('  select(id, opts) {'), ctx.indexOf('  async _loadDetail()'));
+  assert.match(sel, /if \(!\(opts && opts\.silent\)\) TopochainEventContext\._endedFallback = false;/,
+    'a silent write-back leaves the caption alone');
+  // No pane may render a competing copy of the caption.
+  for (const f of ['topochain-leaderboard.js', 'topochain-challenges.js']) {
+    assert.doesNotMatch(read(f), /Nothing is running right now/,
+      `${f} must not render a second copy of the caption`);
+  }
 });
 
 test('the helper publishes itself onto window (classic-script scoping)', () => {
@@ -182,8 +209,8 @@ test('the shared helper ships to the browser before its consumers', () => {
   const idx = (f) => html.indexOf(`/js/${f}"`);
   const helper = idx('topochain-events.js');
   assert.ok(helper > -1, 'topochain-events.js must be loaded by index.html');
-  for (const f of ['challenges.js', 'profile.js',
-    'topochain-leaderboard.js', 'topochain-seasons.js']) {
+  for (const f of ['profile.js', 'topochain-event-context.js',
+    'topochain-leaderboard.js', 'topochain-challenges.js']) {
     assert.ok(helper < idx(f), `topochain-events.js must load before ${f}`);
   }
   // Offline parity: an asset the SPA needs but the SW doesn't cache is a

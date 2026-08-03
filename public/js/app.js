@@ -16,21 +16,19 @@ const App = {
   // open full-screen), or 'sessions' (a dev session open full-screen).
   // Only meaningful while currentTab === 'dev'.
   currentSubTab: 'forum',
-  // Tracks whether the dedicated #leaderboard-screen (the Standings
-  // screen: Kudos + Topochain tabs) is visible. Sibling state to
-  // `currentApp`: home / app / standings are the three top-level
-  // screens, and they're mutually exclusive. Flipped by
+  // Tracks whether the dedicated #leaderboard-screen (the Leaderboard
+  // screen: Kudos + Topochain + Challenges tabs) is visible. Sibling
+  // state to `currentApp`: home / app / leaderboard are the three
+  // top-level screens, and they're mutually exclusive. Flipped by
   // navigateToLeaderboard() / _exitLeaderboard() / navigateHome().
   //
-  // There is deliberately no separate _inTopochainLeaderboard any more:
-  // the Topochain leaderboard is a TAB of this screen (see
-  // Leaderboard.section), not a screen of its own, so one flag covers
-  // both and the sibling navigate* functions have one fewer exit to
-  // remember.
+  // There is deliberately no separate _inTopochainLeaderboard,
+  // _inChallenges or _inTopochainSeasons any more: the Topochain
+  // standings and the season challenges are TABS of this screen (see
+  // Leaderboard.section), not screens of their own, so one flag covers
+  // all three and the sibling navigate* functions have three fewer
+  // exits to remember.
   _inLeaderboard: false,
-  // Same for the #challenges screen (app-as-SV-chrome migration) — set
-  // by navigateToChallenges() / _exitChallenges() / navigateHome().
-  _inChallenges: false,
   // Same for the #profile screen (profile-and-settings-to-web migration)
   // — set by navigateToProfile() / _exitProfile() / navigateHome().
   _inProfile: false,
@@ -40,10 +38,6 @@ const App = {
   // Same for the #settings screen (settings-modal-to-screen conversion)
   // — set by navigateToSettings() / _exitSettings() / navigateHome().
   _inSettings: false,
-  // Same for the #topochain/seasons screen (Task 14, public screens) —
-  // set by navigateToTopochainSeasons() / _exitTopochainSeasons() /
-  // navigateHome().
-  _inTopochainSeasons: false,
 
   // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -1754,7 +1748,7 @@ const App = {
 
   // Slide-out navigation drawer — available at every viewport width
   // (#122). Since the header slim-down it also carries the theme
-  // selector (first), the build/kudos status pane, Standings and the
+  // selector (first), the build/kudos status pane, Leaderboard and the
   // admin console row, on top of the secondary actions it already held
   // (GitHub, Share, Settings). (Members & visibility moved to the Dev
   // "+" menu — #645.)
@@ -1864,18 +1858,12 @@ const App = {
       // Drawer row actions — each closes the menu after triggering its action.
       document.getElementById('drawer-row-github')
         .addEventListener('click', () => App.HeaderMenu.close());
-      const drawerChallenges = document.getElementById('drawer-row-challenges');
-      if (drawerChallenges) {
-        // Navigation itself rides the anchor's #challenges hash.
-        drawerChallenges.addEventListener('click', () => App.HeaderMenu.close());
-      }
-      // Standings (the merged Kudos + Topochain screen) and Topochain
-      // seasons — same real-anchor idiom as Challenges/Profile above:
-      // navigation rides the anchor's hash, the click handler here just
-      // closes the drawer.
-      document.getElementById('drawer-row-standings')
-        ?.addEventListener('click', () => App.HeaderMenu.close());
-      document.getElementById('drawer-row-topochain-seasons')
+      // Leaderboard (the merged Kudos + Topochain + Challenges screen) —
+      // same real-anchor idiom as Profile below: navigation rides the
+      // anchor's hash, the click handler here just closes the drawer. The
+      // separate Challenges / Topochain-seasons rows that used to sit
+      // beside it are gone; they're tabs of this one screen now.
+      document.getElementById('drawer-row-leaderboard')
         ?.addEventListener('click', () => App.HeaderMenu.close());
       document.getElementById('drawer-row-share')
         .addEventListener('click', () => {
@@ -1920,9 +1908,10 @@ const App = {
       PlatformUI.pullToRefresh(home,
         () => App._refreshOrReload(() => Home.load()));
     }
-    // The Standings screen hosts two panes; refresh whichever is active.
-    // The Topochain pane keeps its own event/page state and its own
-    // fetches, so it must NOT be routed through Leaderboard._cache.
+    // The Leaderboard screen hosts three panes; refresh whichever is
+    // active. The two Topochain panes keep their own event/page state and
+    // their own fetches, so they must NOT be routed through
+    // Leaderboard._cache.
     const lb = document.getElementById('leaderboard-screen');
     if (lb) {
       PlatformUI.pullToRefresh(lb, () => {
@@ -1930,6 +1919,10 @@ const App = {
         if (Leaderboard.section === 'topochain') {
           if (!window.TopochainLeaderboard) return Promise.resolve();
           return TopochainLeaderboard.loadLeaderboard();
+        }
+        if (Leaderboard.section === 'challenges') {
+          if (!window.TopochainChallenges) return Promise.resolve();
+          return TopochainChallenges.loadChallenges();
         }
         Leaderboard._cache.clear();
         return Leaderboard._load();
@@ -2678,11 +2671,9 @@ const App = {
         App.setChromeless(false);
         if (App.currentApp) App.navigateHome();
         else if (App._inLeaderboard) App.navigateHome();
-        else if (App._inChallenges) App.navigateHome();
         else if (App._inProfile) App.navigateHome();
         else if (App._inAdmin) App.navigateHome();
         else if (App._inSettings) App.navigateHome();
-        else if (App._inTopochainSeasons) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -2721,8 +2712,9 @@ const App = {
         // #leaderboard keeps whatever tab was last active (Top PRs on
         // first visit). A third segment on the users tab
         // (#leaderboard/users/<username>) deep-links a user profile
-        // (#60). #leaderboard/topochain selects the Standings screen's
-        // second section instead of a Kudos sub-tab.
+        // (#60). #leaderboard/topochain and #leaderboard/challenges
+        // select the screen's second / third SECTION instead of a Kudos
+        // sub-tab.
         const profileUser = parts[1] === 'users' && parts[2]
           ? decodeURIComponent(parts[2])
           : null;
@@ -2730,8 +2722,17 @@ const App = {
         return;
       }
       if (parts[0] === 'challenges') {
+        // Legacy address of the retired #challenges screen. Challenges are
+        // the Leaderboard screen's third tab now, so this is an ALIAS:
+        // rewrite the address in place so a bookmark self-heals to the
+        // canonical form, then hand off. The replaceState fires BEFORE the
+        // navigate so Leaderboard._syncHash sees a #leaderboard hash and
+        // doesn't skip its own sync.
         App.setChromeless(false);
-        App.navigateToChallenges();
+        try {
+          history.replaceState(null, '', '#leaderboard/challenges');
+        } catch (err) { /* non-fatal: navigation below still works */ }
+        App.navigateToLeaderboard('challenges', null);
         return;
       }
       if (parts[0] === 'profile') {
@@ -2761,22 +2762,20 @@ const App = {
         // #topochain/seasons. Both are public reads under /api/v4 — no
         // auth gate, unlike #admin above.
         //
-        // Seasons is still its own screen. The leaderboard is now the
-        // Standings screen's second tab, so #topochain/leaderboard (and
-        // anything else that isn't 'seasons', including a bare
-        // #topochain) is an ALIAS: rewrite the address in place so a
-        // bookmark self-heals to the canonical form, then hand off. The
-        // replaceState fires before the navigate so Leaderboard._syncHash
-        // sees a #leaderboard hash and doesn't skip its own sync.
+        // Both are now TABS of the Leaderboard screen, so both are
+        // ALIASES: rewrite the address in place so a bookmark self-heals
+        // to the canonical form, then hand off. 'seasons' -> the
+        // challenges tab (its challenge grid; its event hero became that
+        // screen's shared event bar); anything else, including a bare
+        // #topochain, -> the standings tab. The replaceState fires BEFORE
+        // the navigate so Leaderboard._syncHash sees a #leaderboard hash
+        // and doesn't skip its own sync.
         App.setChromeless(false);
-        if (parts[1] === 'seasons') {
-          App.navigateToTopochainSeasons();
-        } else {
-          try {
-            history.replaceState(null, '', '#leaderboard/topochain');
-          } catch (err) { /* non-fatal: navigation below still works */ }
-          App.navigateToLeaderboard('topochain', null);
-        }
+        const _tcSection = parts[1] === 'seasons' ? 'challenges' : 'topochain';
+        try {
+          history.replaceState(null, '', `#leaderboard/${_tcSection}`);
+        } catch (err) { /* non-fatal: navigation below still works */ }
+        App.navigateToLeaderboard(_tcSection, null);
         return;
       }
       if (parts[0] === 'app' && parts[1]) {
@@ -2848,11 +2847,9 @@ const App = {
           tab = 'app';
         }
         if (App._inLeaderboard) App._exitLeaderboard();
-        if (App._inChallenges) App._exitChallenges();
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
-        if (App._inTopochainSeasons) App._exitTopochainSeasons();
         App.setChromeless(chromeless);
         // Stash the validated inner path where renderAppTab / the token
         // refresh read it. Set on EVERY pass (null when absent) so
@@ -2882,11 +2879,9 @@ const App = {
       } else {
         App.setChromeless(false);
         if (App._inLeaderboard) App._exitLeaderboard();
-        if (App._inChallenges) App._exitChallenges();
         if (App._inProfile) App._exitProfile();
         if (App._inAdmin) App._exitAdminConsole();
         if (App._inSettings) App._exitSettings();
-        if (App._inTopochainSeasons) App._exitTopochainSeasons();
         App.setHeaderTitle('dApps');
         Home.load();
       }
@@ -2986,16 +2981,17 @@ const App = {
     if (link && link.parentNode) link.parentNode.removeChild(link);
   },
 
-  // Show the Standings screen. Sibling to navigateToApp/navigateHome —
+  // Show the Leaderboard screen. Sibling to navigateToApp/navigateHome —
   // hides home + app, reveals the dedicated #leaderboard-screen, lets
   // the Leaderboard module render the tab strip + the Kudos pane into
-  // #leaderboard-root (and hand the Topochain pane to
-  // TopochainLeaderboard).
+  // #leaderboard-root (and hand the two Topochain panes to
+  // TopochainLeaderboard / TopochainChallenges).
   //
   // `sub` is the hash's second segment: 'prs' | 'users' | 'history'
-  // select a Kudos sub-tab, and the special value 'topochain' selects
-  // the screen's second SECTION instead. `profileUser` (#60) opens the
-  // per-user PR profile drill-in instead of a plain tab.
+  // select a Kudos sub-tab, and the special values 'topochain' /
+  // 'challenges' select the screen's second / third SECTION instead.
+  // `profileUser` (#60) opens the per-user PR profile drill-in instead of
+  // a plain tab.
   navigateToLeaderboard(sub, profileUser) {
     // Same iframe caveat as navigateHome: no animated snapshot over a
     // live App-tab iframe.
@@ -3004,11 +3000,9 @@ const App = {
       AppView.close();
       App.currentApp = null;
     }
-    if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('leaderboard-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -3021,7 +3015,7 @@ const App = {
     if (_drg) _drg.classList.add('hidden');
     if (_drs) _drs.classList.add('hidden');
     App.DrawerStatus.setAppOpen(false);
-    App.setHeaderTitle('Standings');
+    App.setHeaderTitle('Leaderboard');
     App._inLeaderboard = true;
     // Apply the deep-linked section / sub-view / user profile before
     // open() renders — _setSection and _setSub both validate their value
@@ -3031,8 +3025,9 @@ const App = {
     // re-render in place; open() below dedupes the in-flight load.
     if (profileUser && window.Leaderboard?.openProfile) {
       Leaderboard.openProfile(profileUser);
-    } else if (sub === 'topochain' && window.Leaderboard?._setSection) {
-      Leaderboard._setSection('topochain');
+    } else if ((sub === 'topochain' || sub === 'challenges')
+               && window.Leaderboard?._setSection) {
+      Leaderboard._setSection(sub);
     } else if (sub && window.Leaderboard?._setSub) {
       Leaderboard._setSub(sub);
     }
@@ -3046,49 +3041,15 @@ const App = {
     if (window.Leaderboard?.close) Leaderboard.close();
   },
 
-  // Show the challenges screen (app-as-SV-chrome migration). Sibling to
-  // navigateToLeaderboard — hides home + app, reveals the dedicated
-  // #challenges-screen, lets the Challenges module render itself into
-  // #challenges-root.
-  navigateToChallenges() {
-    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    if (App.currentApp) {
-      AppView.close();
-      App.currentApp = null;
-    }
-    if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inProfile) App._exitProfile();
-    if (App._inAdmin) App._exitAdminConsole();
-    if (App._inSettings) App._exitSettings();
-    if (App._inTopochainSeasons) App._exitTopochainSeasons();
-    const screen = document.getElementById('challenges-screen');
-    PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.add('hidden');
-      document.getElementById('home-screen').classList.add('hidden');
-      const lb = document.getElementById('leaderboard-screen');
-      if (lb) lb.classList.add('hidden');
-      if (screen) screen.classList.remove('hidden');
-    }, { type: fromIframe ? 'none' : 'push' });
-    document.getElementById('back-btn').classList.remove('hidden');
-    const _drg = document.getElementById('drawer-row-github');
-    const _drs = document.getElementById('drawer-row-share');
-    if (_drg) _drg.classList.add('hidden');
-    if (_drs) _drs.classList.add('hidden');
-    App.DrawerStatus.setAppOpen(false);
-    App.setHeaderTitle('Challenges');
-    App._inChallenges = true;
-    if (window.Challenges?.open) Challenges.open();
-  },
-
-  _exitChallenges() {
-    App._inChallenges = false;
-    const screen = document.getElementById('challenges-screen');
-    if (screen) screen.classList.add('hidden');
-    if (window.Challenges?.close) Challenges.close();
-  },
+  // navigateToChallenges / _exitChallenges used to live here (the
+  // app-as-SV-chrome migration's #challenges screen). Challenges are a TAB
+  // of the Leaderboard screen now, so they have no navigate/exit pair of
+  // their own: #challenges aliases onto
+  // navigateToLeaderboard('challenges') in restoreFromHash, and
+  // _exitLeaderboard tears down all three panes.
 
   // Show the profile screen (profile-and-settings-to-web migration).
-  // Sibling to navigateToChallenges — hides home + app, reveals the
+  // Sibling to navigateToLeaderboard — hides home + app, reveals the
   // dedicated #profile-screen, lets the Profile module render itself
   // into #profile-root.
   navigateToProfile() {
@@ -3098,18 +3059,14 @@ const App = {
       App.currentApp = null;
     }
     if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inChallenges) App._exitChallenges();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
       document.getElementById('home-screen').classList.add('hidden');
       const lb = document.getElementById('leaderboard-screen');
       if (lb) lb.classList.add('hidden');
-      const ch = document.getElementById('challenges-screen');
-      if (ch) ch.classList.add('hidden');
       if (screen) screen.classList.remove('hidden');
     }, { type: fromIframe ? 'none' : 'push' });
     document.getElementById('back-btn').classList.remove('hidden');
@@ -3177,18 +3134,14 @@ const App = {
       App.currentApp = null;
     }
     if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('admin-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
       document.getElementById('home-screen').classList.add('hidden');
       const lb = document.getElementById('leaderboard-screen');
       if (lb) lb.classList.add('hidden');
-      const ch = document.getElementById('challenges-screen');
-      if (ch) ch.classList.add('hidden');
       const pf = document.getElementById('profile-screen');
       if (pf) pf.classList.add('hidden');
       if (screen) screen.classList.remove('hidden');
@@ -3238,18 +3191,14 @@ const App = {
       App.currentApp = null;
     }
     if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
-    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     const screen = document.getElementById('settings-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
       document.getElementById('home-screen').classList.add('hidden');
       const lb = document.getElementById('leaderboard-screen');
       if (lb) lb.classList.add('hidden');
-      const ch = document.getElementById('challenges-screen');
-      if (ch) ch.classList.add('hidden');
       const pf = document.getElementById('profile-screen');
       if (pf) pf.classList.add('hidden');
       const ad = document.getElementById('admin-screen');
@@ -3280,55 +3229,15 @@ const App = {
 
   // navigateToTopochainLeaderboard / _exitTopochainLeaderboard used to
   // live here (Task 14, public screens). The Topochain leaderboard is a
-  // TAB of the Standings screen now, so it has no navigate/exit pair of
+  // TAB of the Leaderboard screen now, so it has no navigate/exit pair of
   // its own: #topochain/leaderboard aliases onto
   // navigateToLeaderboard('topochain') in restoreFromHash, and
-  // _exitLeaderboard tears down both panes.
-
-  // Show the Topochain seasons/events screen (Task 14, public screens).
-  // Sibling to navigateToLeaderboard — same shape, no auth gate.
-  navigateToTopochainSeasons() {
-    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
-    if (App.currentApp) {
-      AppView.close();
-      App.currentApp = null;
-    }
-    if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inChallenges) App._exitChallenges();
-    if (App._inProfile) App._exitProfile();
-    if (App._inAdmin) App._exitAdminConsole();
-    if (App._inSettings) App._exitSettings();
-    const screen = document.getElementById('topochain-seasons-screen');
-    PlatformUI.transition(() => {
-      document.getElementById('app-view').classList.add('hidden');
-      document.getElementById('home-screen').classList.add('hidden');
-      const lb = document.getElementById('leaderboard-screen');
-      if (lb) lb.classList.add('hidden');
-      const ch = document.getElementById('challenges-screen');
-      if (ch) ch.classList.add('hidden');
-      const pf = document.getElementById('profile-screen');
-      if (pf) pf.classList.add('hidden');
-      const ad = document.getElementById('admin-screen');
-      if (ad) ad.classList.add('hidden');
-      if (screen) screen.classList.remove('hidden');
-    }, { type: fromIframe ? 'none' : 'push' });
-    document.getElementById('back-btn').classList.remove('hidden');
-    const _drg = document.getElementById('drawer-row-github');
-    const _drs = document.getElementById('drawer-row-share');
-    if (_drg) _drg.classList.add('hidden');
-    if (_drs) _drs.classList.add('hidden');
-    App.DrawerStatus.setAppOpen(false);
-    App.setHeaderTitle('Topochain seasons');
-    App._inTopochainSeasons = true;
-    if (window.TopochainSeasons?.open) TopochainSeasons.open();
-  },
-
-  _exitTopochainSeasons() {
-    App._inTopochainSeasons = false;
-    const screen = document.getElementById('topochain-seasons-screen');
-    if (screen) screen.classList.add('hidden');
-    if (window.TopochainSeasons?.close) TopochainSeasons.close();
-  },
+  // _exitLeaderboard tears down all three panes.
+  //
+  // Same for navigateToTopochainSeasons / _exitTopochainSeasons: the
+  // seasons screen's challenge grid is the Leaderboard screen's third tab
+  // and its event hero is that screen's shared event bar, so
+  // #topochain/seasons aliases onto navigateToLeaderboard('challenges').
 
   // Push a new history entry on real screen transitions (entering an
   // app, switching tabs, going home) so the WebView builds a real
@@ -3665,11 +3574,9 @@ const App = {
     }
     App.currentApp = slug;
     if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     // Real screen navigation. From the home feed the app view expands
     // out of the clicked tile (kit 'zoom-in'); from anywhere else (deep
     // link, history restore, tile off-screen, reduced motion) the kit
@@ -3760,11 +3667,9 @@ const App = {
     AppView.close();
     App.currentApp = null;
     if (App._inLeaderboard) App._exitLeaderboard();
-    if (App._inChallenges) App._exitChallenges();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    if (App._inTopochainSeasons) App._exitTopochainSeasons();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
     // hides the app view and clears its content — exactly once on

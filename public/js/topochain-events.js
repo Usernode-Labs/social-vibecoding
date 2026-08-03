@@ -1,6 +1,6 @@
-// Shared "which event should this screen open on?" rule for the three
-// topochain screens (topochain-leaderboard.js, topochain-seasons.js,
-// challenges.js).
+// Shared "which event should this screen open on?" rule, consumed by
+// topochain-event-context.js — the module that owns the ONE event selection
+// the Leaderboard screen's Topochain and Challenges tabs both read.
 //
 // Why this exists: `GET /api/v4/leaderboard` with no `season_event_id`
 // resolves "current" strictly — internal = FALSE AND is_active = TRUE AND
@@ -17,9 +17,11 @@
 // already filtered to `internal = FALSE` and ordered `starts_at DESC`
 // server-side — so "most recent" is just the first match in list order.
 //
-// Keeping this in one place is the point: all three screens must agree on
-// which event they mean, or the leaderboard and the challenge list silently
-// describe different weeks.
+// Keeping this in one place is the point: the standings and the challenge
+// list must agree on which event they mean, or they silently describe
+// different weeks. Before the leaderboard merge three separate screens each
+// called this helper to stay in step; now one shared selection does, which
+// is the same guarantee enforced structurally.
 'use strict';
 
 const TopochainEvents = {

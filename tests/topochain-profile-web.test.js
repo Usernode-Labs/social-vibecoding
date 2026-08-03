@@ -69,10 +69,13 @@ test('the stale "hidden unless the bridge reports getProfileInfo" comments are g
 });
 
 test('the screen-host comments no longer describe an external leaderboard', () => {
-  // Both screens read from this platform's own database now; the external
-  // deployment they used to proxy is retired.
+  // The screen reads from this platform's own database now; the external
+  // deployment it used to proxy is retired. Anchored on #profile-screen
+  // alone since the leaderboard merge: the sibling #challenges-screen
+  // <main> this used to start from is gone, folded into the Leaderboard
+  // screen's Challenges tab.
   const hosts = indexHtml.slice(
-    indexHtml.indexOf('<main id="challenges-screen"') - 900,
+    indexHtml.indexOf('<main id="profile-screen"') - 900,
     indexHtml.indexOf('<main id="profile-screen"') + 400
   );
   assert.doesNotMatch(hosts, /public leaderboard service/);

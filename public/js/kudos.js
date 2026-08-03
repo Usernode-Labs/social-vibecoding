@@ -429,7 +429,7 @@ const Kudos = {
       }
       const remaining = s.remaining;
       const limit = s.limit;
-      // Click navigates to the Standings screen (Kudos tab). Tooltip
+      // Click navigates to the Leaderboard screen (Kudos tab). Tooltip
       // explains the weekly cap + reset boundary.
       const tip = `${remaining} of ${limit} kudos left this week. Resets Monday 00:00 UTC.`;
       const tone = remaining === 0
