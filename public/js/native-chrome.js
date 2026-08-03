@@ -84,6 +84,7 @@
     _nodeStartKey: null,
     _nodeStartInFlight: null,
     _logoutRunning: false,
+    _sessionWalletRelayAdmitted: true,
 
     _participantId(value) {
       const id = Number(value);
@@ -112,15 +113,17 @@
     },
 
     _setSessionWalletRelayAdmission(admitted) {
+      const next = admitted === true;
+      NativeChrome._sessionWalletRelayAdmitted = next;
       const bridge = window.usernode;
       if (bridge &&
           typeof bridge._setSessionWalletRelayAdmission === 'function') {
-        bridge._setSessionWalletRelayAdmission(admitted === true);
+        bridge._setSessionWalletRelayAdmission(next);
       }
       const walletSheet = window.WalletSheet;
       if (walletSheet &&
           typeof walletSheet._setSessionWalletAdmission === 'function') {
-        walletSheet._setSessionWalletAdmission(admitted === true);
+        walletSheet._setSessionWalletAdmission(next);
       }
     },
 
@@ -402,6 +405,16 @@
         const capabilities = Array.isArray(info.capabilities)
           ? info.capabilities
           : [];
+        const bridge = window.usernode;
+        const conclusiveVersion = Number.isInteger(info.version) &&
+          info.version > 0;
+        if (bridge && bridge.isNative === true && !conclusiveVersion) {
+          // Do not clear the web session from an actually-native shell when
+          // the one cached probe may merely have timed out. Keep this attempt
+          // fail-closed and let the next click perform a fresh probe.
+          NativeChrome._infoPromise = null;
+          throw new Error('Native bridge probe was inconclusive');
+        }
         if (capabilities.includes('beginSessionHandoff')) {
           if (typeof window.usernode.beginSessionHandoff !== 'function') {
             throw new Error('Native session handoff latch is unavailable');
@@ -548,10 +561,28 @@
       // old builds retain their address-only compatibility path.
       window.addEventListener('usernode:auth-status', (e) => {
         const d = e && e.detail;
-        if (!d || d.phase !== 'ready' || !d.address ||
-            NativeChrome._logoutRunning) return;
+        if (!d || NativeChrome._logoutRunning) return;
         const participantId = NativeChrome._webParticipantId();
+        if (!NativeChrome._sessionWalletRelayAdmitted) {
+          // onPageFinished may be the first signal after the privileged bridge
+          // becomes available. Recover the explicit anonymous admission when
+          // there is no web participant; otherwise retry the authoritative
+          // web-session exchange. The event itself admits nothing.
+          if (participantId == null) {
+            NativeChrome.enterAnonymous();
+            return;
+          }
+          // Preserve the normal post-handoff first-run permissions step on
+          // the authenticated recovery path.
+          NativeChrome.runLoginHandoff().then((result) =>
+            result && result.restarting === true
+              ? undefined
+              : NativeChrome.maybeShowFirstRunPermissions()
+          );
+          return;
+        }
         if (participantId == null) return;
+        if (d.phase !== 'ready' || !d.address) return;
         const generation = NativeChrome._handoffGeneration;
         NativeChrome.has('sessionBoundAuthStatus').then((sessionBound) => {
           if (sessionBound) {

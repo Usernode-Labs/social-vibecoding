@@ -1293,6 +1293,8 @@
       // native logout replaces the WebView, so the old document has no
       // timeout or navigation continuation.
       if (nativeTerminal) {
+        // FIXME: if this rejects after web cleanup, add a fail-closed retry UI
+        // without resuming normal work in this old document.
         return NativeChrome.commitNativeLogout();
       }
 

@@ -1472,7 +1472,12 @@
           if (res.status === 401) {
             // Session died while waiting — back to the login screen.
             AuthScreens._stopWaitingPoll();
-            if (window.App) App.user = null;
+            if (window.App) {
+              App.user = null;
+              if (typeof App.enterAnonymous === 'function') {
+                await App.enterAnonymous();
+              }
+            }
             location.hash = '#login';
             return;
           }

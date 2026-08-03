@@ -12,6 +12,10 @@ const appSource = fs.readFileSync(
   path.join(__dirname, '..', 'public', 'js', 'app.js'),
   'utf8'
 );
+const authScreensSource = fs.readFileSync(
+  path.join(__dirname, '..', 'public', 'js', 'auth-screens.js'),
+  'utf8'
+);
 
 function deferred() {
   let resolve;
@@ -205,6 +209,57 @@ test('anonymous auth screens wait for native wallet admission', async () => {
   ]);
 });
 
+test('waiting-session expiry admits anonymous native state before login',
+  async () => {
+    const order = [];
+    let intervalActive = false;
+    const location = {};
+    Object.defineProperty(location, 'hash', {
+      get() { return '#waiting'; },
+      set(value) {
+        order.push(`navigate:${value}`);
+      },
+    });
+    const sandbox = {
+      console: { log() {}, warn() {}, error() {} },
+      App: {
+        user: { id: 7 },
+        async enterAnonymous() {
+          assert.equal(this.user, null);
+          order.push('anonymous-admission');
+        },
+      },
+      document: {
+        addEventListener() {},
+        getElementById() { return { textContent: '' }; },
+      },
+      location,
+      async fetch() {
+        order.push('waiting-session-check');
+        return { status: 401 };
+      },
+      setInterval() {
+        intervalActive = true;
+        return 1;
+      },
+      clearInterval() { intervalActive = false; },
+    };
+    sandbox.window = sandbox;
+    sandbox.globalThis = sandbox;
+    vm.createContext(sandbox);
+    vm.runInContext(authScreensSource, sandbox);
+
+    sandbox.AuthScreens._startWaitingPoll();
+    await settle();
+
+    assert.deepEqual(order, [
+      'waiting-session-check',
+      'anonymous-admission',
+      'navigate:#login',
+    ]);
+    assert.equal(intervalActive, false);
+  });
+
 test('anonymous entry opens local admission only after native acknowledgement',
   async () => {
     const admission = deferred();
@@ -230,6 +285,18 @@ test('failed anonymous native admission stays closed', async () => {
 
   assert.equal(await loaded.NativeChrome.enterAnonymous(), false);
   assert.equal(loaded.calls.walletRelayAdmission.at(-1), false);
+});
+
+test('page-finished auth status retries closed anonymous admission', async () => {
+  const loaded = loadNativeChrome();
+
+  loaded.dispatchWindow('usernode:auth-status', {
+    phase: 'unauthenticated', address: null, participantId: null, epoch: 0,
+  });
+  await settle();
+
+  assert.equal(loaded.calls.enterAnonymousSession, 1);
+  assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, true);
 });
 
 test('a newer login handoff prevents stale anonymous native admission',
@@ -477,6 +544,56 @@ test('native failures do not start and logout invalidates an active handoff', as
   assert.equal(loggingOut.calls.startNode.length, 0);
 });
 
+test('inconclusive native logout probe is discarded so retry re-probes',
+  async () => {
+    let probes = 0;
+    const loaded = loadNativeChrome({
+      getBridgeInfoImpl: async () => {
+        probes += 1;
+        return probes === 1
+          ? { version: 0, capabilities: [] }
+          : { version: 4, capabilities: ['logout'] };
+      },
+    });
+
+    await assert.rejects(
+      loaded.NativeChrome.prepareWebLogout(),
+      /bridge probe was inconclusive/i
+    );
+    assert.equal(loaded.NativeChrome._infoPromise, null);
+
+    assert.equal(await loaded.NativeChrome.prepareWebLogout(), true);
+    assert.equal(probes, 2);
+  });
+
+test('non-ready auth event recovers closed admission through login handoff',
+  async () => {
+    const exchange = deferred();
+    const loaded = loadNativeChrome({
+      fetchImpl: () => exchange.promise,
+    });
+    loaded.sandbox.App.user = { id: 6 };
+    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, false);
+
+    loaded.dispatchWindow('usernode:auth-status', {
+      phase: 'transitioning', address: null, participantId: 5, epoch: 9,
+    });
+    await settle();
+
+    assert.equal(loaded.calls.fetch.length, 1);
+    assert.equal(loaded.calls.startNode.length, 0,
+      'the event alone cannot start/admit while the local gate is closed');
+    exchange.resolve(response({
+      success: true, token: 'token-6', user: { id: 6 },
+    }));
+    await loaded.NativeChrome._handoffPromise;
+
+    assert.deepEqual(plain(loaded.calls.startNode), [{
+      address: 'ut1-6', participantId: 6, epoch: 1,
+    }]);
+    assert.equal(loaded.NativeChrome._sessionWalletRelayAdmitted, true);
+  });
+
 test('auth-status events and concurrent starts stay participant/epoch bound', async () => {
   const start = deferred();
   const loaded = loadNativeChrome({
@@ -484,6 +601,7 @@ test('auth-status events and concurrent starts stay participant/epoch bound', as
   });
   loaded.sandbox.App.user = { id: 6 };
   loaded.NativeChrome._handoffGeneration = 1;
+  loaded.NativeChrome._setSessionWalletRelayAdmission(true);
 
   loaded.dispatchWindow('usernode:auth-status', {
     phase: 'ready', address: 'ut1-wrong', participantId: 7, epoch: 1,
