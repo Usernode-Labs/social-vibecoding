@@ -620,16 +620,14 @@ html.un-kb .un-sheet {
 }
 
 /* ── Side panel / drawer ───────────────────────────────────────────────
-   Presented by unNative.presentPanel(). translateX is JS-owned (spring
-   in, 1:1 drag, momentum dismiss) — no CSS transition on transform, same
-   rule as .un-sheet.
+   Presented by unNative.presentPanel(). translateX is JS-owned (spring in,
+   spring out) — no CSS transition on transform, same rule as .un-sheet.
 
-   `touch-action: pan-y` is load-bearing, not tuning: it hands vertical
-   panning to .un-panel-body's native scrolling while leaving horizontal
-   movement to the kit's pointer handlers, which is exactly the axis split
-   the intent lock in native.js implements. Don't widen it to `none`
-   (kills scrolling) or drop it (the browser starts competing for the
-   horizontal drag).
+   NOT a gesture surface: unlike the sheet there is no drag-to-dismiss and
+   no grabber, so this block deliberately sets NO `touch-action` and NO
+   `user-select` — scrolling and text selection inside the drawer are
+   whatever the page normally does. Adding `touch-action` here would only
+   take capability away.
 
    The keyboard is absorbed as body padding rather than by moving the box
    (as the sheet does with `bottom`): a full-height panel has nowhere to
@@ -646,9 +644,6 @@ html.un-kb .un-sheet {
   max-width: 100vw;
   background: var(--un-panel-bg);
   padding-top: env(safe-area-inset-top, 0px);
-  touch-action: pan-y;
-  user-select: none;
-  -webkit-user-select: none;
   will-change: transform;
 }
 .un-panel[data-un-side="right"] {
@@ -664,18 +659,19 @@ html.un-kb .un-sheet {
   box-shadow: 8px 0 32px rgba(0, 0, 0, 0.22);
   transform: translateX(-100%);
 }
-/* Overscroll surface extension, the .un-sheet::after story on the x axis
-   (issue #789): the panel's displacement goes NEGATIVE on the elastic
-   give past rest (rubberband(raw, 32) in native.js) and on the entrance
-   spring's overshoot, and each one lifts the panel off its screen edge,
-   exposing the dimmed backdrop over the page below. This pseudo-element
-   continues the surface outward so whatever the bounce uncovers is more
-   panel. ABSOLUTELY POSITIONED on purpose: out of flow, so it can never
-   perturb panel.offsetWidth — the value that seeds the entrance spring,
-   the backdrop opacity denominator, the dismissal travel and the release
-   decision, and that watchSize's ResizeObserver watches. Which is also
-   why `.un-panel` must never gain `overflow: hidden`. pointer-events:
-   none keeps taps outside the panel landing on the backdrop. */
+/* Overshoot surface extension, the .un-sheet::after story on the x axis
+   (issue #789). Still needed with no drag gesture: the `sheet` preset is
+   underdamped, so the ENTRANCE spring crosses the rest position before
+   settling — the panel's displacement goes slightly negative on every
+   open, lifting it off its screen edge and exposing the dimmed backdrop
+   over the page below. This pseudo-element continues the surface outward
+   so whatever the bounce uncovers is more panel. ABSOLUTELY POSITIONED on
+   purpose: out of flow, so it can never perturb panel.offsetWidth — the
+   value that seeds the entrance spring, the backdrop opacity denominator
+   and the exit travel, and that watchSize's ResizeObserver watches. Which
+   is also why `.un-panel` must never gain `overflow: hidden`.
+   pointer-events: none keeps taps outside the panel landing on the
+   backdrop. */
 .un-panel::after {
   content: '';
   position: absolute;
@@ -690,24 +686,6 @@ html.un-kb .un-sheet {
 }
 .un-panel[data-un-side="left"]::after {
   right: 100%;
-}
-/* A vertical grabber on the panel's inner (page-facing) edge — the
-   sheet's affordance rotated. Touch platforms only; see presentPanel. */
-.un-panel-grabber {
-  position: absolute;
-  top: 50%;
-  width: 5px;
-  height: 36px;
-  margin-top: -18px;
-  border-radius: var(--un-radius-full);
-  background: var(--un-hairline);
-  pointer-events: none;
-}
-.un-panel[data-un-side="right"] .un-panel-grabber {
-  left: 5px;
-}
-.un-panel[data-un-side="left"] .un-panel-grabber {
-  right: 5px;
 }
 /* The scroller. Deliberately no horizontal padding: full-bleed rows are
    the drawer idiom, and content that wants insets brings its own. */

@@ -1631,24 +1631,26 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   on-screen keyboard up, the card re-centers in the visible strip
   above it and shrinks to fit. Returns `{ dismiss(), el }`.
 - **Side panel / drawer.** `unNative.presentPanel({ side?, content |
-  contentEl, width?, grabber?, onDismiss? })` — a full-height surface
-  that springs in from the **right** edge (`side: 'left'` for the other
-  one) over the same dimmed backdrop, with 1:1 drag-to-dismiss toward
-  its own edge, momentum commit, interruptible springs and elastic give
-  past rest. The navigation-drawer idiom (a hamburger menu, a filter
-  rail): the axis split is the point — a **vertical** drag scrolls the
-  panel's content natively while a **horizontal** one dismisses, decided
-  by the kit's intent lock, and a drag that ends over a row never fires
-  that row's click. Backdrop tap and Escape dismiss. Safe areas (status
-  bar, home indicator, landscape notch) and the on-screen keyboard are
-  handled: content gets keyboard clearance as padding rather than the
-  box moving, since a full-height panel has nowhere to ride up to.
-  Content is laid out **full-bleed** (no horizontal padding of the
-  kit's own) — a `min-h-full` column flex with `mt-auto` on the last
-  block bottom-anchors a footer with no measurement. `width` accepts any
-  CSS length for this one instance; otherwise it is `--un-panel-width`.
-  Returns `{ dismiss(), el }`. Prefer this to a bottom sheet for
-  persistent navigation, and a bottom sheet for transient trays.
+  contentEl, width?, onDismiss? })` — a full-height surface that springs
+  in from the **right** edge (`side: 'left'` for the other one) over the
+  same dimmed backdrop, which dims in step with the slide. The
+  navigation-drawer idiom (a hamburger menu, a filter rail): backdrop
+  tap and Escape dismiss, and the drawer's own content supplies the
+  close button / rows. **Deliberately not draggable, and no grabber
+  pill** — swipe-to-dismiss and its affordance are the *bottom sheet's*
+  idiom, for transient trays you flick away; platform nav drawers are
+  opened by a control and closed by choosing something. Consequently
+  scrolling inside the panel is plain native scrolling with nothing to
+  contend with. Safe areas (status bar, home indicator, landscape
+  notch) and the on-screen keyboard are handled: content gets keyboard
+  clearance as padding rather than the box moving, since a full-height
+  panel has nowhere to ride up to. Content is laid out **full-bleed**
+  (no horizontal padding of the kit's own) — a `min-h-full` column flex
+  with `mt-auto` on the last block bottom-anchors a footer with no
+  measurement. `width` accepts any CSS length for this one instance;
+  otherwise it is `--un-panel-width`. Returns `{ dismiss(), el }`.
+  Prefer this to a bottom sheet for persistent navigation, and a bottom
+  sheet for transient trays.
 - **Action sheet.** `unNative.actionSheet({ title?, actions: [{ label,
   destructive?, handler? }], cancelLabel? })` — iOS-style stack with a
   red destructive action and a separate Cancel card; backdrop cancels.

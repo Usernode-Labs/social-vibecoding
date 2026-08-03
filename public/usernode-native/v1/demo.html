@@ -145,7 +145,7 @@
           <button id="panel-left-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Left panel</button>
           <button id="panel-long-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Long content</button>
         </div>
-        <p id="panel-result" class="text-xs text-zinc-500 mt-2">The nav-drawer idiom: full height, springs in from the edge. Drag it toward its own edge to dismiss — 1:1, with a flick committing by momentum and a drift back cancelling; catch it mid-spring. Pull it the other way and hold: the surface continues past the screen edge, so the bounce never uncovers the dimmed page. "Long content" scrolls VERTICALLY inside the panel while a horizontal drag still dismisses it — and releasing a drag over a row never activates that row. Tap the text field: the content lifts clear of the on-screen keyboard. <code>?un-demo=panel</code> opens the right panel at load.</p>
+        <p id="panel-result" class="text-xs text-zinc-500 mt-2">The nav-drawer idiom: full height, springs in from the edge over the dimmed page. Deliberately NOT draggable — a drawer is opened by a control and closed by the backdrop, Escape, or picking a row; drag-to-dismiss and its grabber pill belong to the bottom sheet. "Long content" scrolls normally inside the panel. Tap the text field: the content lifts clear of the on-screen keyboard. <code>?un-demo=panel</code> opens the right panel at load.</p>
       </section>
 
       <!-- Popover / dropdown menu -->
@@ -632,8 +632,7 @@
             panelResult.textContent = (side === 'left' ? 'Left' : 'Right') + ' panel dismissed.';
           },
         });
-        // Rows behave like nav rows: a tap closes the drawer, and a
-        // horizontal drag that ends over one does NOT reach this handler.
+        // Rows behave like nav rows: a tap closes the drawer.
         content.addEventListener('click', function (e) {
           var row = e.target.closest('[data-panel-row]');
           if (!row) return;

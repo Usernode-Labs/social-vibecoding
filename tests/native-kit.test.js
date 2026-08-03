@@ -28,7 +28,6 @@ const {
   decideSwipeRelease,
   decidePtrRelease,
   decideSheetRelease,
-  decidePanelRelease,
   remeasuredSheetY,
   keyboardInset,
   isTextEntryField,
@@ -213,51 +212,6 @@ test('sheet release: flick dismisses, deep drag dismisses, shallow drag cancels'
   assert.equal(decideSheetRelease({ y: 230, v: -1, sheetHeight: 400 }), false);
 });
 
-// ── Side panel release (unNative.presentPanel) ─────────────────────────
-// The x-axis sibling of the sheet decision. Inputs are sign-normalized by
-// the caller ("displacement toward my own edge"), so one set of cases
-// covers both a right-hand and a left-hand drawer.
-
-test('panel release: flick dismisses, deep drag dismisses, shallow drag cancels', () => {
-  // A short hard flick toward the edge projects past half the panel.
-  assert.equal(decidePanelRelease({ x: 48, v: 1.4, panelWidth: 320 }), true);
-  // Deep slow drag past half the width dismisses on distance alone.
-  assert.equal(decidePanelRelease({ x: 200, v: 0, panelWidth: 320 }), true);
-  // Shallow drag with no momentum stays open.
-  assert.equal(decidePanelRelease({ x: 60, v: 0, panelWidth: 320 }), false);
-  // Dragged past the line, then drifting back toward rest at release:
-  // momentum, not distance, decides — the drawer stays open.
-  assert.equal(decidePanelRelease({ x: 180, v: -1, panelWidth: 320 }), false);
-});
-
-test('panel release: honors an explicit projection horizon override', () => {
-  const flick = { x: 48, v: 1.4, panelWidth: 320 };
-  assert.equal(decidePanelRelease(flick), true);
-  // A near-zero horizon strips the momentum contribution, leaving the
-  // shallow distance — which alone does not commit.
-  assert.equal(decidePanelRelease({ ...flick, horizonMs: 10 }), false);
-});
-
-test('panel release: same projection contract as the sheet, rotated', () => {
-  // Deliberately the identical threshold (half the travel), so the two
-  // surfaces can never drift into feeling different.
-  for (const [d, v] of [[48, 1.4], [200, 0], [60, 0], [180, -1]]) {
-    assert.equal(
-      decidePanelRelease({ x: d, v, panelWidth: 320 }),
-      decideSheetRelease({ y: d, v, sheetHeight: 320 }),
-      `panel and sheet must agree at displacement ${d}, velocity ${v}`
-    );
-  }
-});
-
-test('panel overscroll: dragging past rest is bounded by the same 32px give', () => {
-  // Pulling the drawer INTO the page renders rubberband(raw, 32), which
-  // lifts it off its screen edge — the reason .un-panel::after exists.
-  const hard = rubberband(-500, 32);
-  assert.ok(hard < 0 && hard > -32,
-    `elastic give must lift the panel but stay inside the 32px limit (got ${hard})`);
-});
-
 // ── Sheet re-measure (issue #742) ──────────────────────────────────────
 
 test('remeasuredSheetY: growth mid-entrance shifts the offset by the delta', () => {
@@ -355,10 +309,13 @@ test('native.css: .un-sheet does not clip its overscroll filler', () => {
     'overflow:hidden on .un-sheet would clip the overscroll filler away (issue #789)');
 });
 
-// ── Side panel stylesheet contract ─────────────────────────────────────
-// The drawer's overscroll fix, its axis split and its inset handling all
-// live in CSS, so the guards read the shipped stylesheet — same stance as
-// the sheet's ::after above.
+// ── Side panel contract ────────────────────────────────────────────────
+// The drawer's overshoot fix and its inset handling live in CSS, so the
+// guards read the shipped stylesheet — same stance as the sheet's ::after
+// above. Its NON-draggability is a deliberate design decision (a nav
+// drawer is not a bottom sheet), so that is pinned too: an earlier
+// revision shipped drag-to-dismiss plus a grabber pill and both were
+// removed as un-native.
 
 test('native.css: .un-panel::after extends the panel surface past its edge', () => {
   const block = cssBlock('.un-panel::after');
@@ -378,16 +335,28 @@ test('native.css: .un-panel::after extends the panel surface past its edge', () 
     'a left drawer continues its surface to the LEFT of the screen edge');
 });
 
-test('native.css: .un-panel keeps the axis split and does not clip its filler', () => {
+test('native.css: .un-panel does not clip its filler or restrict input', () => {
   const block = cssBlock('.un-panel');
   assert.ok(!/overflow:\s*hidden/.test(block),
-    'overflow:hidden on .un-panel would clip the overscroll filler away (cf. .un-sheet)');
-  assert.match(block, /touch-action:\s*pan-y/,
-    'pan-y is what hands vertical panning to the content scroller while the kit keeps the horizontal drag — `none` kills scrolling, absent lets the browser compete');
+    'overflow:hidden on .un-panel would clip the overshoot filler away (cf. .un-sheet)');
   assert.match(block, /padding-top:\s*env\(safe-area-inset-top/,
     'rows must clear the status bar / notch');
   assert.ok(!/transition:\s*[^;]*transform/.test(block),
-    'translateX is JS-owned (spring + 1:1 drag) — a CSS transition on transform would fight it');
+    'translateX is JS-owned (entrance/exit springs) — a CSS transition on transform would fight it');
+  // With no drag gesture there is nothing to take capability away for:
+  // both of these only ever existed to serve the removed pointer handling.
+  assert.ok(!/touch-action/.test(block),
+    'a non-draggable drawer must not narrow touch-action — scrolling inside it is plain native scrolling');
+  assert.ok(!/user-select/.test(block),
+    'user-select:none existed only to keep a drag from selecting text; without the drag it just breaks selection');
+});
+
+test('native.css: the drawer ships no grabber affordance', () => {
+  assert.ok(!/un-panel-grabber/.test(NATIVE_CSS),
+    'the grabber pill promises a drag gesture the panel does not have — it belongs to .un-sheet only');
+  // The sheet's own grabber must survive: it DOES drag.
+  assert.ok(/\.un-sheet-grabber\s*\{/.test(NATIVE_CSS),
+    'removing the panel grabber must not take the bottom sheet\'s with it');
 });
 
 test('native.css: the panel body absorbs the keyboard without stacking the safe area', () => {
@@ -414,13 +383,30 @@ test('native.js: presentPanel reaches the public surface', () => {
   assert.match(NATIVE_JS, /function presentPanel\(/, 'the component exists');
   assert.match(NATIVE_JS, /presentPanel:\s*presentPanel/,
     'a component that never lands on global.unNative is unreachable by apps');
-  assert.match(NATIVE_JS, /decidePanelRelease:\s*decidePanelRelease/,
-    'the release helper must be exported on physics for these tests to reach it');
-  // The intent lock must resolve the OTHER way than the sheet's: a
-  // vertical drag belongs to the scroller, not the drawer.
-  const fn = NATIVE_JS.slice(NATIVE_JS.indexOf('function presentPanel('));
-  assert.match(fn.slice(0, 9000), /axis === 'y'\)\s*\{\s*drag = null/,
-    "presentPanel must abandon the drag on a 'y' lock so .un-panel-body scrolls natively");
+});
+
+test('native.js: the drawer carries no drag machinery at all', () => {
+  const at = NATIVE_JS.indexOf('function presentPanel(');
+  // The function body, up to the next top-level component.
+  const fn = NATIVE_JS.slice(at, NATIVE_JS.indexOf('\n  function ', at + 30));
+  for (const [pattern, why] of [
+    [/pointerdown|pointermove|pointerup|pointercancel/, 'pointer handling'],
+    [/lockIntent/, 'an axis intent lock'],
+    [/rubberband/, 'elastic over-drag'],
+    [/gestures\.claim/, 'a gesture-arbiter claim'],
+    [/estimateVelocity|projectDisplacement/, 'release-velocity projection'],
+    [/setPointerCapture/, 'pointer capture'],
+    [/stopPropagation/, 'a click swallow'],
+    [/grabber/, 'a grabber affordance'],
+  ]) {
+    assert.ok(!pattern.test(fn),
+      `presentPanel must not reintroduce ${why} — a nav drawer is closed by the backdrop / Escape / a row, not by swiping`);
+  }
+  // What it DOES keep: springs both ways, and the backdrop riding along.
+  assert.match(fn, /springTo\(0\)/, 'the entrance spring');
+  assert.match(fn, /springTo\(width, teardown\)/, 'the exit spring, then teardown');
+  assert.match(fn, /backdrop\.style\.opacity/, 'the dim rides the slide as one motion');
+  assert.match(fn, /modalStack\.push/, 'Escape dismissal via the shared modal stack');
 });
 
 // ── Pull-to-refresh puck sits BELOW the app header ─────────────────────

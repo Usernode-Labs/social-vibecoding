@@ -65,6 +65,16 @@ test('the adopted node is restored on dismissal, and the handle cleared', () => 
     'when PlatformUI.panel() returns null the class must be undone before falling through');
 });
 
+test('a re-open during the exit spring keeps the drawer in the NEW panel', () => {
+  const body = openBody();
+  // Teardown is deferred behind the exit spring, so tapping ☰ again mid-exit
+  // can adopt the drawer into a second kit panel before the first one's
+  // onDismiss runs. Without this guard that stale teardown appends the node
+  // back to <body> and the freshly-opened panel renders empty.
+  assert.match(body, /App\.HeaderMenu\._panel !== handle\) return/,
+    'onDismiss must no-op when a newer open already took ownership of the node');
+});
+
 test('the hamburger reflects its expanded state on the touch path too', () => {
   const body = openBody();
   // The touch branch returns early, so before this it left the button

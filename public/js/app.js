@@ -1804,20 +1804,31 @@ const App = {
       if (PlatformUI.isTouch()) {
         App.HeaderMenu._renderThemeButtons();
         panel.classList.add('platform-panel-adopted');
+        // Assigned right below; captured here so onDismiss can tell its own
+        // teardown apart from a newer one's (see the guard).
+        let handle = null;
         const kitPanel = PlatformUI.panel({
           contentEl: panel,
           side: 'right',
           onDismiss: () => {
+            // Teardown is deferred behind the exit spring, so a tap on the
+            // hamburger during that window can re-adopt the drawer into a
+            // NEW kit panel before this fires. Restoring it to <body> then
+            // would yank the node straight back out of the panel the user
+            // just opened, leaving an empty drawer. Only the CURRENT
+            // handle's teardown owns the node.
+            if (handle && App.HeaderMenu._panel !== handle) return;
             panel.classList.remove('platform-panel-adopted');
             document.body.appendChild(panel);
             App.HeaderMenu._panel = null;
             // The hamburger's state is not the kit's business, so it is
-            // reset here on EVERY exit path (drag, backdrop, Escape, ✕,
-            // row navigation) — they all route through the kit dismiss.
+            // reset here on EVERY exit path (backdrop, Escape, ✕, row
+            // navigation) — they all route through the kit dismiss.
             btn.setAttribute('aria-expanded', 'false');
             btn.setAttribute('aria-label', 'Open menu');
           },
         });
+        handle = kitPanel;
         if (kitPanel) {
           App.HeaderMenu._panel = kitPanel;
           // The touch path used to return before the aria writes below,

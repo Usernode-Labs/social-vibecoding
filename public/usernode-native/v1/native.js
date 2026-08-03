@@ -45,12 +45,11 @@
  *   unNative.presentPanel(opts)       — side drawer / panel sliding in from
  *                                        the right (or left) edge
  *                                        ({ side?, content | contentEl,
- *                                        width?, grabber?, onDismiss? }):
- *                                        full-height surface, 1:1
- *                                        drag-to-dismiss along x with
- *                                        momentum commit, vertical drags
- *                                        left to the content scroller,
- *                                        backdrop tap / Escape dismiss
+ *                                        width?, onDismiss? }): full-height
+ *                                        surface, spring in/out, backdrop
+ *                                        tap / Escape dismiss. NOT
+ *                                        draggable by design — a nav
+ *                                        drawer is not a bottom sheet
  *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
  *   unNative.alert(opts)              — iOS alert dialog, Promise-based
  *   unNative.popover(opts)            — anchored popover / dropdown menu
@@ -246,16 +245,6 @@
   // Dismiss when the projected landing crosses half the sheet height.
   function decideSheetRelease(input) {
     return projectDisplacement(input.y, input.v, input.horizonMs) >= 0.5 * input.sheetHeight;
-  }
-
-  // Side-panel release decision — the x-axis sibling of
-  // decideSheetRelease. `x` is the panel's displacement from rest toward
-  // its own screen edge (>= 0 when closing), `v` the release velocity in
-  // px/ms (positive = toward the edge). Callers sign-normalize both so one
-  // helper serves a right-hand and a left-hand drawer. Dismiss when the
-  // projected landing crosses half the panel width.
-  function decidePanelRelease(input) {
-    return projectDisplacement(input.x, input.v, input.horizonMs) >= 0.5 * input.panelWidth;
   }
 
   // Top-edge-preserving offset after a presenting/presented bottom-anchored
@@ -563,7 +552,6 @@
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
     decideSheetRelease: decideSheetRelease,
-    decidePanelRelease: decidePanelRelease,
     remeasuredSheetY: remeasuredSheetY,
     KB_MIN_INSET: KB_MIN_INSET,
     keyboardInset: keyboardInset,
@@ -2499,34 +2487,36 @@
 
   /* ────────────────────────────────────────────────────────────────────
    * Side panel / drawer — a full-height surface that springs in from the
-   * right (default) or left edge, with 1:1 drag-to-dismiss along x.
+   * right (default) or left edge, over the shared dimmed backdrop.
    *
-   * The sheet's motion contract, rotated 90°: JS owns translateX, the
-   * backdrop opacity rides position 1:1, release commits by projected
-   * momentum, and a touch mid-spring inherits position + velocity.
+   * DELIBERATELY NOT DRAGGABLE. The platform navigation drawers this
+   * mirrors are not swipe-dismissed surfaces with a grabber affordance —
+   * that idiom belongs to the bottom sheet, where the tray is a transient
+   * thing you flick away. A drawer is opened by a control and closed by
+   * the backdrop, the ✕, Escape, or picking a row. So there is no pointer
+   * handling here at all, which also means: no gesture-arbiter claim to
+   * contend with, no click-swallow to get wrong, and vertical scrolling
+   * inside the panel is plain native scrolling (no `touch-action`
+   * narrowing in native.css). An earlier revision of this component did
+   * ship drag-to-dismiss plus a grabber pill; both were removed as
+   * un-native. Don't reintroduce them without the idiom actually changing.
    *
-   * Two things differ from the sheet, both because a drawer is a
-   * navigation surface rather than a tray:
+   * What remains is the sheet's PRESENTATION contract rotated 90°: JS owns
+   * translateX (spring in, spring out — no CSS transition on transform)
+   * and the backdrop opacity rides the position, so the dim and the slide
+   * are one motion.
    *
-   *  - The intent lock resolves the OTHER way. A 'y' lock abandons the
-   *    drag so `.un-panel-body` scrolls natively (`touch-action: pan-y`
-   *    in native.css is the other half of that); only an 'x' lock takes
-   *    1:1 control of the panel.
-   *  - A completed drag swallows the click that follows it, so releasing
-   *    over a nav row never also activates that row (same idiom as
-   *    attachSwipeActions).
-   *
-   * x is signed by side: `dir` is +1 for a right panel (closing = moving
-   * right, positive translateX) and -1 for a left one, so the physics
-   * below is written once in "displacement toward my own edge" terms and
-   * only render() and the drag delta touch the sign. As with the sheet, x
-   * is allowed to go NEGATIVE (past the rest position, into the page):
-   * the elastic give and the entrance overshoot both render a panel
-   * lifted off its edge, which `.un-panel::after` covers by continuing
-   * the surface outward. Keep the two halves together.
+   * x is signed by side: `dir` is +1 for a right panel (leaving = moving
+   * right, positive translateX) and -1 for a left one, so everything below
+   * is written once in "displacement toward my own edge" terms and only
+   * render() touches the sign. x still goes slightly NEGATIVE (past the
+   * rest position, into the page) because the `sheet` preset is
+   * underdamped and its entrance overshoots — which lifts the panel off
+   * its screen edge, and is what `.un-panel::after` covers by continuing
+   * the surface outward. Keep those two halves together.
    * ──────────────────────────────────────────────────────────────────── */
 
-  // presentPanel({ side?, content | contentEl, width?, grabber?, onDismiss? })
+  // presentPanel({ side?, content | contentEl, width?, onDismiss? })
   // — side is 'right' (default) or 'left'; content is an HTML string,
   // contentEl an Element to adopt; width is any CSS length (sets
   // --un-panel-width for this instance). Returns { dismiss(), el }.
@@ -2544,13 +2534,6 @@
     panel.setAttribute('aria-modal', 'true');
     panel.tabIndex = -1;
     if (opts.width) panel.style.setProperty('--un-panel-width', String(opts.width));
-    // The grabber is a touch affordance: desktop has a pointer and a
-    // backdrop, and a vertical pill there reads as decoration.
-    if (opts.grabber !== false && platform !== 'desktop') {
-      var grabber = document.createElement('div');
-      grabber.className = 'un-panel-grabber';
-      panel.appendChild(grabber);
-    }
     var body = document.createElement('div');
     body.className = 'un-panel-body';
     if (opts.contentEl) body.appendChild(opts.contentEl);
@@ -2562,12 +2545,9 @@
     var width = panel.offsetWidth || 1;
     var x = width; // displacement toward the panel's edge: 0 = presented
     var activeSpring = null;
-    var drag = null;
-    var dragged = false; // a locked drag completed — swallow the next click
     var closed = false;
-    var token = { panel: true };
     var prevFocus = document.activeElement;
-    var entry = { dismissible: true, dismiss: function () { dismiss(0); } };
+    var entry = { dismissible: true, dismiss: function () { dismiss(); } };
     modalStack.push(entry);
 
     function render(val) {
@@ -2576,7 +2556,7 @@
       backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / width)));
     }
 
-    function springTo(to, velocity, onRest) {
+    function springTo(to, onRest) {
       if (activeSpring) activeSpring.stop();
       if (prefersReducedMotion) {
         render(to);
@@ -2584,7 +2564,7 @@
         return;
       }
       activeSpring = spring(function (v) { render(v); }, {
-        from: x, to: to, velocity: velocity || 0, preset: 'sheet',
+        from: x, to: to, preset: 'sheet',
         onRest: function () { activeSpring = null; if (onRest) onRest(); },
       });
     }
@@ -2599,112 +2579,34 @@
       if (opts.onDismiss) opts.onDismiss();
     }
 
-    function dismiss(velocity) {
+    function dismiss() {
       if (closed) return;
       closed = true;
       var i = modalStack.indexOf(entry);
       if (i >= 0) modalStack.splice(i, 1);
-      springTo(width, velocity || 0, teardown);
+      springTo(width, teardown);
     }
 
-    backdrop.addEventListener('click', function () { dismiss(0); });
-
-    function onPointerDown(e) {
-      if (closed || e.button > 0) return;
-      var immediate = !!activeSpring;
-      if (immediate && !gestures.claim(gestureSeq(e), token)) return;
-      var base = x;
-      var seedV = 0;
-      if (activeSpring) {
-        var cur = activeSpring.current();
-        activeSpring.stop();
-        activeSpring = null;
-        base = cur.x;
-        seedV = cur.v;
-        render(base);
-      }
-      drag = {
-        pointerId: e.pointerId,
-        startX: e.clientX,
-        startY: e.clientY,
-        base: base,
-        locked: immediate ? 'x' : null,
-        samples: [{ t: e.timeStamp - 16, x: base - seedV * 16 }, { t: e.timeStamp, x: base }],
-      };
-    }
-
-    function onPointerMove(e) {
-      if (!drag || e.pointerId !== drag.pointerId) return;
-      var dx = e.clientX - drag.startX;
-      var dy = e.clientY - drag.startY;
-      if (!drag.locked) {
-        var axis = lockIntent(dx, dy);
-        // A vertical intent belongs to the content scroller, not the panel.
-        if (axis === 'y') { drag = null; return; }
-        if (axis === 'x') {
-          if (!gestures.claim(gestureSeq(e), token)) { drag = null; return; }
-          drag.locked = 'x';
-          try { panel.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
-        }
-      }
-      if (drag.locked !== 'x') return;
-      // Signed so "raw grows" always means "closing", whichever edge.
-      var raw = drag.base + dx * dir;
-      // 1:1 toward the edge; small elastic give past the rest position.
-      render(raw >= 0 ? raw : rubberband(raw, 32));
-      drag.samples.push({ t: e.timeStamp, x: x });
-      if (drag.samples.length > 24) drag.samples.shift();
-    }
-
-    function onPointerEnd(e) {
-      if (!drag || e.pointerId !== drag.pointerId) return;
-      var wasLocked = drag.locked === 'x';
-      var samples = drag.samples;
-      drag = null;
-      if (!wasLocked || closed) return;
-      // A drag happened: the click this release synthesizes is not a tap.
-      dragged = true;
-      setTimeout(function () { dragged = false; }, 0);
-      // Release-time sample so a held-still dwell decays momentum.
-      samples.push({ t: e.timeStamp, x: x });
-      var v = e.type === 'pointercancel' ? 0 : estimateVelocity(samples);
-      if (decidePanelRelease({ x: x, v: v, panelWidth: width })) dismiss(v);
-      else springTo(0, v);
-    }
-
-    // Releasing a drag over a nav row must not navigate.
-    function onClickCapture(e) {
-      if (!dragged) return;
-      e.stopPropagation();
-      e.preventDefault();
-    }
-
-    panel.addEventListener('pointerdown', onPointerDown);
-    panel.addEventListener('pointermove', onPointerMove);
-    panel.addEventListener('pointerup', onPointerEnd);
-    panel.addEventListener('pointercancel', onPointerEnd);
-    panel.addEventListener('click', onClickCapture, true);
+    backdrop.addEventListener('click', function () { dismiss(); });
 
     // Rotation / viewport resize changes --un-panel-width, which feeds the
-    // backdrop denominator, the dismissal travel and the release decision.
+    // backdrop denominator and the exit travel.
     var unwatch = watchSize(panel, 'offsetWidth', function (newWidth) {
       width = newWidth;
-      if (drag && drag.locked) return; // the finger owns the position 1:1
-      var v = activeSpring ? activeSpring.current().v : 0;
       // An exit spring was aiming at the old width — retarget so the panel
       // fully leaves the screen before teardown.
-      if (closed) springTo(width, v, teardown);
-      else springTo(0, v);
+      if (closed) springTo(width, teardown);
+      else springTo(0);
     });
 
     render(width);
-    springTo(0, 0);
+    springTo(0);
     var auto = body.querySelector('[autofocus]');
     try { (auto || panel).focus({ preventScroll: true }); } catch (e) { /* ignore */ }
 
     return {
       el: panel,
-      dismiss: function () { dismiss(0); },
+      dismiss: dismiss,
     };
   }
 
