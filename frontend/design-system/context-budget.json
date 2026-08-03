@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "phase": "pre-routing",
+  "policy": "Loaded-context ratchets move down mechanically. Upward exceptions are exact, owned, expiring, and never waive the owner ceiling or change bucket membership.",
+  "ownerLock": {
+    "eventId": "9626471f2ea679b95328ba4cfa940dcee1bf59cdfbce6dfab5ffa44decabb76c",
+    "lockedAt": "2026-08-03T11:17:46Z",
+    "postRoutingCeilingBytes": 100000
+  },
+  "authoritySlice": {
+    "startRevision": "49e5e47f89329bfbd999cec2ba6b516d622ee712",
+    "measuredAt": "2026-08-03T11:17:46Z",
+    "alwaysLoadedStartBytes": 17450,
+    "skillActivationStartBytes": 7772,
+    "componentReviewStartBytes": 399030,
+    "componentReviewAcceptedBytes": 399769,
+    "guidanceDeltaBytes": 739
+  },
+  "componentReview": {
+    "routingCaseId": "component-review",
+    "buckets": {
+      "payload": {
+        "startBytes": 346240,
+        "maximumBytes": 346240,
+        "entries": [
+          { "path": "frontend/design-system/catalog.json", "startBytes": 134594 },
+          { "path": "frontend/@/components/ui", "startBytes": 158162 },
+          { "path": "frontend/design-system/exceptions.json", "startBytes": 21326 },
+          { "path": "frontend/design-system.manifest.json", "startBytes": 20966 },
+          { "path": "frontend/design-system/content-guidelines.md", "startBytes": 8318 },
+          { "path": "frontend/registry.json", "startBytes": 2217 },
+          { "path": "frontend/design-system/content-exceptions.json", "startBytes": 657 }
+        ]
+      },
+      "guidance": {
+        "startBytes": 52790,
+        "maximumBytes": 53529,
+        "entries": [
+          { "path": "docs/react-migration.md", "startBytes": 48677 },
+          { "path": "agent-skills/ui-development/references/authority.md", "startBytes": 1566 },
+          { "path": "agent-skills/ui-development/references/evidence.md", "startBytes": 1480 },
+          { "path": "agent-skills/ui-development/references/review.md", "startBytes": 1067 }
+        ]
+      }
+    },
+    "postRoutingRatchetBytes": null
+  },
+  "globalRatchets": {
+    "alwaysLoadedBytes": 17427,
+    "skillActivationBytes": 7772
+  },
+  "exceptions": []
+}

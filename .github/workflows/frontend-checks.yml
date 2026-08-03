@@ -81,6 +81,8 @@ jobs:
           path: ${{ runner.temp }}/harness-fitness.json
           if-no-files-found: error
           retention-days: 30
+      - name: Enforce loaded-context budget
+        run: npm run check:context-budget
       - run: npm run check:harness
       - run: npm run test:harness
       - run: npm run test:agent-battery

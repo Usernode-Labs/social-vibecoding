@@ -27,6 +27,7 @@
       "terms": [
         "agent harness",
         "harness fitness",
+        "context budget",
         "agent skill",
         "agent-skills",
         "workflow resolver",
@@ -44,12 +45,14 @@
         "agent-skills/",
         "tool/",
         "frontend/scripts/check-harness",
+        "frontend/scripts/check-context-budget",
         "frontend/scripts/harness-fingerprint",
         "frontend/scripts/run-agent-battery",
         "frontend/scripts/run-live-agent-battery",
         "frontend/scripts/ui-workflow",
         "frontend/design-system/agent-battery.tasks.json",
-        "frontend/design-system/harness-fitness"
+        "frontend/design-system/harness-fitness",
+        "frontend/design-system/context-budget"
       ],
       "suppresses": [
         "review"
@@ -60,6 +63,8 @@
         "agent-skills/ui-development/SKILL.md",
         "agent-skills/ui-development/workflows.json",
         "frontend/AGENTS.md",
+        "frontend/design-system/context-budget.json",
+        "frontend/scripts/check-context-budget.mjs",
         "frontend/scripts/check-harness-fitness.mjs",
         "frontend/scripts/check-harness-integrity.mjs",
         "frontend/scripts/run-agent-battery.mjs"
@@ -67,13 +72,14 @@
       "checks": [
         "npm run check:harness-integrity",
         "npm run check:harness-fitness",
+        "npm run check:context-budget",
         "npm run test:harness",
         "npm run test:agent-battery"
       ],
       "evidence": [
         "Every harness-owned routing case resolves to the expected workflow without stealing unrelated work.",
         "Supported Claude and Codex adapters resolve the same canonical skills.",
-        "Fitness findings report loaded context and evidence age without weakening blocking integrity."
+        "Fitness findings remain advisory while the separate context budget blocks measured byte-policy violations."
       ],
       "stop": "Stop before recording a new baseline or portability claim without accepted exact-state and matched-runner evidence."
     },
@@ -97,6 +103,8 @@
       "context": [
         "agent-skills/ui-development/references/authority.md",
         "frontend/design-system/authority.json",
+        "frontend/design-system/interface-laws.md",
+        "frontend/design-system/context-budget.json",
         "frontend/design-system/tokens.json",
         "frontend/design-system/catalog.json",
         "frontend/registry.json",
@@ -107,12 +115,14 @@
         "npm run check:design-system",
         "npm run check:registry",
         "npm run check:style-policy",
+        "npm run check:context-budget",
         "npm run check:harness-integrity",
         "npm run test:agent-battery"
       ],
       "evidence": [
         "Generated token CSS, catalog, and CLI registry remain reproducible.",
-        "Every exception is exact, owned, justified, expiring, and count-bounded.",
+        "Every style exception is exact, owned, justified, expiring, and count-bounded.",
+        "Context ratchets are measured, bucket membership is explicit, and the owner ceiling has no exception path.",
         "The deterministic agent battery records complete enforcement."
       ],
       "stop": "Stop for design-system approver review before adding a new token, primitive, relationship category, or exception category."
@@ -428,20 +438,21 @@
       { "id": "content-tests", "step": 9, "units": 1, "priority": 20 },
       { "id": "harness-integrity", "step": 10, "units": 1, "priority": 20 },
       { "id": "harness-fitness", "step": 11, "units": 1, "priority": 10 },
-      { "id": "harness-policy", "step": 12, "units": 1, "priority": 10 },
-      { "id": "harness-tests", "step": 13, "units": 1, "priority": 20 },
-      { "id": "agent-battery", "step": 14, "units": 1, "priority": 20 },
-      { "id": "typecheck", "step": 15, "units": 1, "priority": 20 },
-      { "id": "native-bridge", "step": 16, "units": 2, "priority": 60 },
-      { "id": "build", "step": 17, "units": 2, "priority": 80 },
-      { "id": "service-worker", "step": 18, "units": 2, "priority": 70, "dependsOn": ["build"] },
-      { "id": "browser-matrix", "step": 19, "units": 9, "priority": 100 },
-      { "id": "production-guard", "step": 20, "units": 3, "priority": 75 },
-      { "id": "production-smoke", "step": 21, "units": 2, "priority": 65 },
-      { "id": "cutover-contract", "step": 22, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
-      { "id": "bundle-budget", "step": 23, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
-      { "id": "storybook-tests", "step": 24, "units": 4, "priority": 85 },
-      { "id": "storybook-build", "step": 25, "units": 2, "priority": 55 }
+      { "id": "context-budget", "step": 12, "units": 1, "priority": 20 },
+      { "id": "harness-policy", "step": 13, "units": 1, "priority": 10 },
+      { "id": "harness-tests", "step": 14, "units": 1, "priority": 20 },
+      { "id": "agent-battery", "step": 15, "units": 1, "priority": 20 },
+      { "id": "typecheck", "step": 16, "units": 1, "priority": 20 },
+      { "id": "native-bridge", "step": 17, "units": 2, "priority": 60 },
+      { "id": "build", "step": 18, "units": 2, "priority": 80 },
+      { "id": "service-worker", "step": 19, "units": 2, "priority": 70, "dependsOn": ["build"] },
+      { "id": "browser-matrix", "step": 20, "units": 9, "priority": 100 },
+      { "id": "production-guard", "step": 21, "units": 3, "priority": 75 },
+      { "id": "production-smoke", "step": 22, "units": 2, "priority": 65 },
+      { "id": "cutover-contract", "step": 23, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
+      { "id": "bundle-budget", "step": 24, "units": 1, "priority": 50, "dependsOn": ["service-worker"] },
+      { "id": "storybook-tests", "step": 25, "units": 4, "priority": 85 },
+      { "id": "storybook-build", "step": 26, "units": 2, "priority": 55 }
     ]
   },
   "fullGate": [
@@ -501,6 +512,11 @@
       "cwd": "frontend",
       "command": "npm run check:harness-fitness",
       "ciEvidence": "npm run check:harness-fitness"
+    },
+    {
+      "cwd": "frontend",
+      "command": "npm run check:context-budget",
+      "ciEvidence": "npm run check:context-budget"
     },
     {
       "cwd": "frontend",

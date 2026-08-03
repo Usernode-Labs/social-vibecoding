@@ -16,10 +16,10 @@ This directory is the staged React replacement for the legacy static shell.
 - Use `PlatformIcon` for platform navigation, actions, status, and inline UI
   glyphs. `AppIdentity` is the separate, deliberately larger application
   artwork contract; do not use it as a generic interface icon.
-- Every reusable presentation component needs named state evidence in
-  Storybook before reuse. Every migrated route needs deterministic desktop
-  and mobile browser coverage. Route-only orchestration is evidenced by its
-  fixture-driven browser tests, not a fake Storybook network environment.
+- Reusable presentation components need named Storybook states; migrated routes
+  need deterministic desktop and mobile browser coverage. Route-only
+  orchestration is evidenced by its fixture-driven browser tests, not a fake
+  Storybook network environment.
 - Storybook assertions count only when the test project loads the application
   Vite configuration and compiled production styles. An unstyled render cannot
   prove layout, truncation, contrast, or responsive behavior.
@@ -52,6 +52,7 @@ npm run check:style-policy
 npm run check:harness
 npm run check:harness-integrity
 npm run check:harness-fitness
+npm run check:context-budget
 npm run test:harness
 npm run finalize:slice -- --help
 npm run test:agent-battery
@@ -131,9 +132,9 @@ replace a failed parallel result with an undisclosed serial rerun.
 `check:harness-integrity` validates skill packages, routing cases, context
 paths, package scripts, continuous-integration parity, `.agents`/`.claude`
 adapters, and deterministic agent-battery coverage.
-`check:harness-fitness` always reports loaded-context growth, trigger breadth,
-duplication, and evidence age without blocking the gate. The live-agent
-evaluator is reserved for model changes, measured instruction experiments,
+`check:harness-fitness` keeps qualitative fitness advisory;
+`check:context-budget` alone blocks byte-policy violations. The
+live-agent evaluator is reserved for model changes, measured instruction experiments,
 and prerelease diagnostics. `check:harness` remains the source architecture
 boundary and is not a substitute for harness self-integrity.
 Root `AGENTS.md` owns the private-checkpoint and final-slice discipline. The

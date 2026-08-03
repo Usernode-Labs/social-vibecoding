@@ -47,6 +47,7 @@ test("harness audit selects harness checks without the UI review gate", () => {
   assert.deepEqual(result.classifications, ["harness"])
   assert.ok(result.checks.includes("npm run check:harness-integrity"))
   assert.ok(result.checks.includes("npm run check:harness-fitness"))
+  assert.ok(result.checks.includes("npm run check:context-budget"))
   assert.ok(!result.checks.includes("npm run check:ui"))
 })
 

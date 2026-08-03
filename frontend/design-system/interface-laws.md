@@ -9,18 +9,44 @@ The ratification receipt is Buzz event
 The advising cards live in Claude Design project
 `570c265a-98ed-459d-a142-0a04ae458d58`.
 
+The Quiet Money amendment was owner-locked on 2026-08-03 in Buzz event
+`9626471f2ea679b95328ba4cfa940dcee1bf59cdfbce6dfab5ffa44decabb76c`
+against implementation baseline
+`49e5e47f89329bfbd999cec2ba6b516d622ee712`.
+
 ## 1. Surface role
 
-Choose a surface by user job.
+Every view has one major sheet. Content is printed on that sheet rather than
+stacked into ceremonial Cards. Choose a surface by user job and direction.
 
 | Role | Separation | Do not |
 |---|---|---|
-| Page field | Whitespace and page tone | Wrap a continuous page in Card |
-| Stream row | Divider, whitespace, quiet hover and focus tone | Use Card per row or repeat View/Open actions |
-| Inset section | Recessed semantic tone without shadow | Present it as an independent page |
-| Status surface | Alert with truth, consequence, and owned recovery | Use category Badge as an error |
-| Metric group | Type, alignment, and shared spacing | Use one Card per metric |
-| Raised Card | Restrained ring or shadow for an independent object | Nest Cards or add elevation to fill whitespace |
+| Canvas | Darker page field; nothing prints directly on it | Treat it as a content container |
+| Sheet | One major semantic surface per view | Nest Sheets or use Card as the ceremonial spelling of `div` |
+| Print | Type, alignment, divider, whitespace, and at most one quiet wash | Wrap rows, metrics, or sections in subordinate Cards |
+| Recess | Named input, tab-track, code, or terminal well without elevation | Invent a caller-owned inset recipe or present it as another page |
+| Overlay | Transient layer; the mobile bottom navigation is the one persistent tenant | Add a second persistent overlay role |
+
+Status colour is ink, not another sheet. A Metric is one registered
+definition-list group, never one Card per value. Stream rows use divider,
+whitespace, and quiet interaction tones rather than a Card per row.
+
+The caller rule governs direction at a governed component invocation:
+
+- removing fill, border, ring, radius, or shadow is legal;
+- external layout remains caller-owned;
+- adding or intensifying a persistent fill, border, ring, or shadow is illegal;
+- ephemeral `hover`, `focus`, `focus-visible`, `focus-within`, and `active`
+  modifiers, including group and peer forms, are exempt; attribute and
+  accessibility states are evaluated normally;
+- a bare radius without fill, border, ring, or shadow does not paint a surface;
+- any caller surface recipe repeated more than once is promoted to a named
+  component variant.
+
+This rule applies only to caller-supplied treatment. A primitive's owned root,
+variant, anatomy, and internal state remain the component's responsibility. A
+governed component invoking another governed component is still a caller
+boundary.
 
 ## 2. Radius and spacing
 
@@ -36,7 +62,23 @@ cluster, standard component rhythm, and generous page-section separation.
 Measure governed components before changing token values; do not perform blind
 global utility rewrites.
 
-## 3. Action scale
+Containers own separation. A caller does not add margin to a governed component
+invocation; the parent owns the relationship through `gap`. Macro spacing tokens
+remain in outer layout zones. Radius depth is compared only across painted
+surfaces, not controls, avatars, status dots, or shape primitives.
+
+## 3. Type and target roles
+
+Use 16 CSS pixels for prose and row titles, 14 for controls and functional
+metadata, and 12 only for tertiary non-actionable metadata. Subtitles, alerts,
+actions, and mobile-critical facts never fall into the 12-pixel role.
+
+Compact controls may remain visually compact while coarse pointers receive an
+effective 44 to 48 CSS-pixel target without overlap. Primary mobile navigation
+links are visibly at least 44 CSS pixels high; invisible padding does not make a
+36-pixel icon bar primary navigation.
+
+## 4. Action scale
 
 One view or dialog has at most one filled primary action. Secondary actions use
 outline or quiet fill. Tertiary utilities use ghost treatment. Navigation keeps
@@ -55,7 +97,7 @@ secondary row before the identity truncates; wide screens keep the single-row
 composition. Responsive placement never changes an action's meaning, emphasis,
 or keyboard order.
 
-## 4. Status by consequence
+## 5. Status by consequence
 
 StatusDot owns ambient state. Badge owns category or classification. A progress
 owner presents measurable domain progress. Alert owns consequential feedback
@@ -68,7 +110,7 @@ Neutral StatusDot means absence of consequence. It borrows `--muted`,
 Work rows that combine a category Badge and spinner for Working, Paused, or In
 vote are a counterexample, not precedent.
 
-## 5. Disabled grammar
+## 6. Disabled grammar
 
 Preserve the label and readable foreground contrast. Remove action emphasis,
 including destructive color. Use native `disabled` where supported; otherwise
