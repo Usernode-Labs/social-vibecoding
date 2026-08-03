@@ -713,6 +713,18 @@
       "expectText": "sending unlocks when Claude finishes"
     },
     {
+      "name": "Mid-turn shortcut hint says Ctrl+Enter saves a draft (#920)",
+      "path": "/?shot=busy-drafts#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-shortcut-hint",
+      "expectText": "to save as draft"
+    },
+    {
+      "name": "Stopped composer's shortcut hint still says Ctrl+Enter sends (#920)",
+      "path": "/#app/usernode-2d5619/dev/sessions/990401",
+      "expectSelector": "#dc-shortcut-hint",
+      "expectText": "to send"
+    },
+    {
       "name": "Model selector caption shows what the model is for, not $/MTok (#800)",
       "path": "/#app/usernode-2d5619/dev/sessions/990401",
       "expectSelector": "#dc-model-note:not(.hidden)",
