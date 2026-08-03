@@ -2554,12 +2554,6 @@ const DevChat = {
     // #892: the deterministic stage label moves as phase markers land.
     const phase = details.querySelector('.dc-cc-phase');
     if (phase) phase.textContent = summ.phaseLabel ? `· ${summ.phaseLabel}` : '';
-    // #906: the baseline countdown branches on the phase (wrap-up phases
-    // read "under a minute", terminal phases blank it), so the attribute
-    // has to follow the log as it streams rather than being frozen at
-    // render time — the failure mode the retired cohort gate demonstrated.
-    const eta = details.querySelector('.dc-cc-eta');
-    if (eta) eta.dataset.etaPhase = summ.phaseKey || '';
   },
 
   // Experimental AI progress estimate (opt-in, server-gated). Stores the
@@ -2723,7 +2717,7 @@ const DevChat = {
   _syncElapsedTicker() {
     // #359: the same 1s heartbeat now also drives the AI-estimate
     // count-down span, so the predicate matches either kind of ticking span.
-    const any = document.querySelector('#dc-messages [data-elapsed-since], #dc-messages [data-countdown-to], #dc-messages [data-cohort-since], #dc-messages [data-eta-since]');
+    const any = document.querySelector('#dc-messages [data-elapsed-since], #dc-messages [data-countdown-to], #dc-messages [data-cohort-since]');
     if (any && !DevChat._elapsedTimer) {
       DevChat._elapsedTimer = setInterval(() => DevChat._tickElapsed(), 1000);
     } else if (!any && DevChat._elapsedTimer) {
@@ -2743,10 +2737,7 @@ const DevChat = {
     // #892: the population-context line crosses its 10 min / 30 min
     // thresholds mid-run, so it ticks on the same heartbeat.
     const cohorts = document.querySelectorAll('#dc-messages [data-cohort-since]');
-    // #906: the always-present baseline countdown steps down the ladder
-    // mid-run, so it ticks on the same heartbeat as everything else.
-    const etas = document.querySelectorAll('#dc-messages [data-eta-since]');
-    if (!els.length && !downs.length && !cohorts.length && !etas.length) {
+    if (!els.length && !downs.length && !cohorts.length) {
       if (DevChat._elapsedTimer) {
         clearInterval(DevChat._elapsedTimer);
         DevChat._elapsedTimer = null;
@@ -2768,39 +2759,19 @@ const DevChat = {
         el.textContent = formatCountdown(to, now);
       });
     }
-    // #906: the baseline countdown, and the precedence rule between it and
-    // the AI guess. Precedence is resolved HERE, on every tick, by asking
-    // the sibling estimate span whether it currently holds anything — never
-    // from an attribute stamped at render time. The AI guess lands 60s+ into
-    // a run and is patched straight into that span by _applyEstimate, so a
-    // render-time flag would be permanently wrong (see the cohort gate this
-    // change retires). Reading the DOM at tick time means the baseline
-    // yields the moment a better number exists, and comes back on its own if
-    // the estimator is torn down.
-    if (typeof baselineCountdownText === 'function') {
-      etas.forEach((el) => {
-        const since = parseInt(el.dataset.etaSince, 10);
-        if (!Number.isFinite(since)) return;
-        const row = el.parentNode;
-        const ai = row ? row.querySelector('.dc-cc-estimate') : null;
-        if (ai && ai.textContent.trim()) { el.textContent = ''; return; }
-        el.textContent = baselineCountdownText(Math.max(0, now - since), el.dataset.etaPhase);
-      });
-    }
     if (typeof runCohortHint === 'function') {
       cohorts.forEach((el) => {
         const since = parseInt(el.dataset.cohortSince, 10);
         if (!Number.isFinite(since)) return;
         const elapsed = Math.max(0, now - since);
-        // #906: the visibility rule now lives entirely in the pure helper —
-        // runCohortHint returns '' under ten minutes, where the baseline
-        // countdown is the whole time statement, and long-run context above
-        // it. The retired `data-cohort-gated` flag was computed once per
-        // render from msg._estimate, which is always falsy on first render
-        // and was never refreshed when the guess landed, so the range blurb
-        // sat beside the live AI countdown for the rest of every run.
-        const hint = runCohortHint(elapsed);
-        el.textContent = hint ? ' \u00b7 ' + hint : '';
+        // Visibility rule: with the estimator ON (data-cohort-gated=1) the
+        // hint only appears past 10 min, where it adds context the countdown
+        // alone cannot — before that the countdown is the time statement and
+        // a second one would just compete with it. With the estimator OFF it
+        // shows throughout: it is the only time context that user gets.
+        const gated = el.dataset.cohortGated === '1';
+        el.textContent = (gated && elapsed < 600000)
+          ? '' : ' \u00b7 ' + runCohortHint(elapsed);
       });
     }
   },
@@ -3422,33 +3393,17 @@ const DevChat = {
           // beside it, this cannot be wrong — it is what the user has to
           // look at when the estimate is uncertain.
           const phaseSpan = `<span class="dc-cc-phase">${summ.phaseLabel ? `· ${escapeHtml(summ.phaseLabel)}` : ''}</span>`;
-          // #906: the ALWAYS-PRESENT baseline countdown. Derived from
-          // elapsed time and the measured run-length priors alone, so every
-          // live run shows a concrete time from second zero — with the
-          // estimator off, before the estimator's first 60s tick, and for
-          // users who never opt in. `data-eta-since` is the run's start;
-          // `data-eta-phase` is the machine-readable phase the ticker
-          // branches on (wrap-up / terminal). Which of this and the AI guess
-          // is displayed is decided AT TICK TIME from the sibling estimate
-          // span, never from a flag frozen at render — a render-time flag is
-          // exactly how the old cohort gate went stale.
-          const etaSince = msg._active && msg.created_at
-            ? Math.min(new Date(msg.created_at).getTime(), Date.now()) : NaN;
-          const etaSpan = Number.isFinite(etaSince) && typeof baselineCountdownText === 'function'
-            ? `<span class="dc-cc-eta" title="Estimated from how long similar runs actually take (880 measured runs). It's a typical case, not a promise." data-eta-since="${etaSince}" data-eta-phase="${escapeHtml(summ.phaseKey || '')}">${msg._estimate ? '' : escapeHtml(baselineCountdownText(Date.now() - etaSince, summ.phaseKey))}</span>`
-            : '';
-          // #892: population context. A statement about the measured
-          // distribution of 880 real runs, not a prediction about this one,
-          // so it can never be individually wrong. #906 narrowed it to the
-          // LONG-run thresholds only (runCohortHint returns '' under ten
-          // minutes), so it no longer competes with the countdown and needs
-          // no visibility gate — the retired `data-cohort-gated` attribute
-          // was computed once at render and never refreshed, which is why
-          // the range blurb kept sitting beside a live AI countdown.
+          // #892: population context ("most runs finish in 2–10 min"). A
+          // statement about the measured distribution of 880 real runs, not
+          // a prediction about this one, so it can never be individually
+          // wrong. `data-cohort-gated` carries the visibility rule: with an
+          // AI guess present (estimator ON) it stays hidden until 10 min so
+          // it complements rather than competes with the countdown; with the
+          // estimator OFF it shows throughout as the only time context.
           const cohortSince = msg._active && msg.created_at
             ? new Date(msg.created_at).getTime() : NaN;
           const cohortSpan = Number.isFinite(cohortSince)
-            ? `<span class="dc-cc-cohort" data-cohort-since="${Math.min(cohortSince, Date.now())}"></span>`
+            ? `<span class="dc-cc-cohort" data-cohort-since="${Math.min(cohortSince, Date.now())}" data-cohort-gated="${msg._estimate ? '1' : '0'}"></span>`
             : '';
           // Experimental AI progress estimate: rendered unconditionally
           // (even empty) so _applyEstimate can patch it in place; only
@@ -3461,7 +3416,7 @@ const DevChat = {
           // supplies the ccrun persist-id), not the attached progress row.
           // After the clone marker both carry the flag; keying off `msg`
           // keeps the default aligned with the persisted state's key.
-          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${phaseSpan}${elapsedHtml}${etaSpan}${estimateSpan}${cohortSpan}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
+          return `<details class="dc-cc-attached" data-persist-id="${outerPid}" ${DevChat._ccOpenAttrs(msg)}><summary class="${sumClass}">${iconHtml} ${msg.content}${currentSpan}${stepsSpan}${phaseSpan}${elapsedHtml}${estimateSpan}${cohortSpan}${chevron}${tsSpan}</summary><pre class="dc-cc-attached-log" data-persist-id="${innerPid}">${logText}</pre></details>`;
         }
 
         // Post-turn ccOutput (the markdown summary that the worker

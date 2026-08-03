@@ -1162,24 +1162,7 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   flex-shrink: 0;
 }
 
-/* #906: the always-present baseline countdown. Styled like the step count
-   and stage label — upright, not italic — because it is a deterministic
-   projection from measured run lengths, not a model's guess. It occupies
-   the same slot the AI countdown does (only one of the two is ever
-   non-empty), so the two must read as one readout, not two widgets. */
-.dc-cc-eta {
-  color: var(--text-muted);
-  font-size: 11px;
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-/* When the AI guess takes precedence the ticker blanks this span. It must
-   then occupy no space at all — on a phone it carries flex-basis:100%, so a
-   blank-but-present span would reserve an empty wrapped row. */
-.dc-cc-eta:empty { display: none; }
-
-/* #892: population context (long-run notes only, since #906). Extra-muted:
+/* #892: population context ("most runs finish in 2–10 min"). Extra-muted:
    it is background information about how long runs take in general, not a
    claim about this run, so it must not compete with the countdown. */
 .dc-cc-cohort {
@@ -1219,17 +1202,6 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
      directly, and three muted suffixes on one narrow row is clutter. */
   .dc-cc-cohort { display: none; }
   .dc-cc-attached-summary { flex-wrap: wrap; }
-  /* #906: the baseline countdown is the one time statement a phone user is
-     guaranteed to get (the cohort line is hidden here and the AI estimate
-     only exists for opt-in users), so it wraps onto its own full-width row
-     rather than being dropped or ellipsised. Same order:1 treatment as the
-     AI countdown it alternates with, so the row looks identical either way. */
-  .dc-cc-eta {
-    order: 1;
-    flex-basis: 100%;
-    max-width: 100%;
-    white-space: normal;
-  }
   .dc-cc-estimate {
     /* order:1 sorts the estimate after the (order:0) timer + timestamp
        so the status line stays intact on row 1 and the estimate wraps
