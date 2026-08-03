@@ -343,6 +343,37 @@
         "evidence": "Desktop, narrow open/closed, active route, utility footer, authorization, attention, Node and dark-theme Storybook states; browser integration later proves focus return and iframe continuity."
       }
     },
+    "platform-bottom-navigation": {
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "PlatformBottomNavigation receives exactly three canonical mobile destinations and the current pathname from the shell. It fetches no route, authorization, attention, or platform state."
+      },
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": [
+          "Home",
+          "Work",
+          "Search"
+        ],
+        "requiredStates": [
+          "selected"
+        ],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": [
+          "mechanism-as-content"
+        ]
+      },
+      "accessibility": {
+        "contract": [
+          "Expose one mobile-only navigation landmark named Mobile primary navigation.",
+          "Render exactly three visible links named Home, Work and Search in that order.",
+          "Only the matching destination owns aria-current, and Search preserves the existing Explore route.",
+          "Each link has non-overlapping 48 CSS-pixel reach for coarse pointers.",
+          "The persistent Overlay stays outside Paper and clears the active device safe area."
+        ],
+        "evidence": "Home, Work, Search and dark Storybook states plus actual-route mobile and desktop browser contracts for selection, reach, safe area, theme, persistence and Paper separation."
+      }
+    },
     "home-app-shortcut": {
       "dataBoundary": {
         "kind": "props-only",

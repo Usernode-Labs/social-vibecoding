@@ -164,6 +164,22 @@
   bottom: max(1rem, var(--safe-area-bottom-active));
   left: max(1rem, var(--safe-area-left));
 }
+/* The mobile quick switcher is the sole persistent Overlay. It sits outside
+ * Paper, owns the active bottom/side insets, and reserves enough Paper space
+ * that route content never hides behind it. */
+[data-slot="platform-bottom-navigation"] {
+  bottom: max(0.75rem, var(--safe-area-bottom-active));
+  inset-inline-start: max(0.75rem, var(--safe-area-left));
+  inset-inline-end: max(0.75rem, var(--safe-area-right));
+}
+@media (max-width: 47.999rem) {
+  [data-slot="sidebar-inset"][data-bottom-navigation="true"] {
+    padding-bottom: calc(5rem + var(--safe-area-bottom-active));
+  }
+  [data-slot="external-link-feedback"] {
+    bottom: calc(5rem + max(1rem, var(--safe-area-bottom-active)));
+  }
+}
 @media (min-width: 40rem) {
   [data-slot="external-link-feedback"] {
     left: auto;

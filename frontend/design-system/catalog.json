@@ -2281,6 +2281,74 @@
       }
     },
     {
+      "id": "platform-bottom-navigation",
+      "name": "PlatformBottomNavigation",
+      "tier": "block",
+      "module": "@/components/platform-bottom-navigation.tsx",
+      "export": "PlatformBottomNavigation",
+      "exports": [
+        "PlatformBottomNavigation"
+      ],
+      "owner": "frontend-platform",
+      "maturity": "candidate",
+      "distribution": "shell-internal",
+      "variants": [
+        "HomeSelected",
+        "WorkSelected",
+        "SearchSelected",
+        "Dark"
+      ],
+      "tokens": [
+        "foundation.font.sans",
+        "foundation.radius.base",
+        "semantic.light.*",
+        "semantic.dark.*"
+      ],
+      "accessibility": {
+        "contract": [
+          "Expose one mobile-only navigation landmark named Mobile primary navigation.",
+          "Render exactly three visible links named Home, Work and Search in that order.",
+          "Only the matching destination owns aria-current, and Search preserves the existing Explore route.",
+          "Each link has non-overlapping 48 CSS-pixel reach for coarse pointers.",
+          "The persistent Overlay stays outside Paper and clears the active device safe area."
+        ],
+        "evidence": "Home, Work, Search and dark Storybook states plus actual-route mobile and desktop browser contracts for selection, reach, safe area, theme, persistence and Paper separation."
+      },
+      "dataBoundary": {
+        "kind": "props-only",
+        "contract": "PlatformBottomNavigation receives exactly three canonical mobile destinations and the current pathname from the shell. It fetches no route, authorization, attention, or platform state."
+      },
+      "responsive": [
+        "narrow-mobile",
+        "wide-desktop"
+      ],
+      "deprecation": null,
+      "content": {
+        "layer": "glance",
+        "canonicalTerms": [
+          "Home",
+          "Work",
+          "Search"
+        ],
+        "requiredStates": [
+          "selected"
+        ],
+        "visibleLabelAccessibilityName": "match-or-prefix",
+        "reviewedFailureModes": [
+          "mechanism-as-content"
+        ]
+      },
+      "evidence": {
+        "story": "@/components/platform-bottom-navigation.stories.tsx",
+        "states": [
+          "HomeSelected",
+          "WorkSelected",
+          "SearchSelected",
+          "Dark"
+        ]
+      }
+    },
+    {
       "id": "home-app-shortcut",
       "name": "HomeAppShortcut",
       "tier": "block",

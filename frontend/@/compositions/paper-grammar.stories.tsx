@@ -4,6 +4,10 @@ import { Link } from "react-router-dom"
 import { expect, within } from "storybook/test"
 
 import { PlatformIcon } from "@/components/platform-icon"
+import {
+  PlatformBottomNavigation,
+  type PlatformBottomNavigationItem,
+} from "@/components/platform-bottom-navigation"
 import { StatusDot } from "@/components/status-dot"
 import { StreamRow } from "@/components/stream-row"
 import { Button } from "@/components/ui/button"
@@ -29,9 +33,13 @@ const metrics = [
 ]
 
 const navigation = [
-  { current: true, icon: Home, label: "Home", to: "/" },
-  { current: false, icon: BriefcaseBusiness, label: "Work", to: "/work" },
-  { current: false, icon: Search, label: "Search", to: "/explore" },
+  { id: "home", icon: Home, label: "Home", href: "/", match: (pathname) => pathname === "/" },
+  { id: "work", icon: BriefcaseBusiness, label: "Work", href: "/work", match: (pathname) => pathname === "/work" },
+  { id: "search", icon: Search, label: "Search", href: "/explore", match: (pathname) => pathname === "/explore" },
+] as const satisfies readonly [
+  PlatformBottomNavigationItem,
+  PlatformBottomNavigationItem,
+  PlatformBottomNavigationItem,
 ]
 
 function PaperGrammar() {
@@ -144,25 +152,7 @@ function PaperGrammar() {
         </div>
       </section>
 
-      <nav
-        aria-label="Mobile primary navigation"
-        className="fixed inset-x-3 bottom-3 z-20 flex min-h-14 items-center justify-around rounded-full border bg-paper px-2 text-foreground shadow-md sm:hidden"
-        data-slot="platform-bottom-navigation"
-        data-surface="overlay"
-        data-surface-persistence="persistent"
-      >
-        {navigation.map((item) => (
-          <Link
-            aria-current={item.current ? "page" : undefined}
-            className="flex min-h-11 min-w-20 items-center justify-center gap-2 rounded-full px-3 text-sm text-muted-foreground outline-none aria-[current=page]:bg-muted aria-[current=page]:font-medium aria-[current=page]:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30"
-            key={item.label}
-            to={item.to}
-          >
-            <PlatformIcon icon={item.icon} />
-            <span>{item.label}</span>
-          </Link>
-        ))}
-      </nav>
+      <PlatformBottomNavigation items={navigation} pathname="/" />
     </main>
   )
 }

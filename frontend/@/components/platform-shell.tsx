@@ -1,11 +1,15 @@
 import type { ReactNode } from "react"
-import { Bell, BriefcaseBusiness, Compass, EyeOff, House, MessageCircle, Server, Settings, Shield, Trophy, UserRound } from "lucide-react"
+import { Bell, BriefcaseBusiness, Compass, EyeOff, House, MessageCircle, Search, Server, Settings, Shield, Trophy, UserRound } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import { useLocation } from "react-router-dom"
 
 import { DevCompletionAlerts } from "@/components/dev-completion-alerts"
 import { DevConsoleLayer, DevConsoleProvider } from "@/components/dev-console-provider"
 import { PlatformIcon } from "@/components/platform-icon"
+import {
+  PlatformBottomNavigation,
+  type PlatformBottomNavigationItem,
+} from "@/components/platform-bottom-navigation"
 import { PlatformNavigation, type PlatformNavItem } from "@/components/platform-navigation"
 import { ShellAttentionProvider } from "@/components/platform-menu-trigger"
 import { StatusDot } from "@/components/status-dot"
@@ -25,6 +29,16 @@ import {
 function route(path: string) {
   return (pathname: string) => pathname === path || pathname.startsWith(`${path}/`)
 }
+
+const bottomNavigationItems = [
+  { id: "home", label: "Home", href: "/react/", icon: House, match: (pathname) => pathname === "/" },
+  { id: "work", label: "Work", href: "/react/work", icon: BriefcaseBusiness, match: route("/work") },
+  { id: "search", label: "Search", href: "/react/explore", icon: Search, match: route("/explore") },
+] as const satisfies readonly [
+  PlatformBottomNavigationItem,
+  PlatformBottomNavigationItem,
+  PlatformBottomNavigationItem,
+]
 
 function AdminPreviewBanner() {
   const [previewing, setPreviewing] = useState(() => isAdminPreviewEnabled())
@@ -159,7 +173,7 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
           drawer and Paper while the route owns its chrome and single h1.
           min-h comes from the sidebar wrapper so the inset margins never
           force a scrollbar. */}
-      <SidebarInset className="overflow-hidden">
+      <SidebarInset className="overflow-hidden" data-bottom-navigation="true">
         <AdminPreviewBanner />
         <div
           className="relative flex min-h-0 flex-1 flex-col"
@@ -170,6 +184,7 @@ function PlatformShellContent({ children }: { children: ReactNode }) {
         </div>
         <ExternalLinkFeedback />
       </SidebarInset>
+      <PlatformBottomNavigation items={bottomNavigationItems} pathname={location.pathname} />
     </ShellAttentionProvider>
   )
 }

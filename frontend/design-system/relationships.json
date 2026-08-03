@@ -88,6 +88,26 @@
       "substitutionBoundary": "Do not present hosted-app status, retry affordances or iframe lifecycle messaging in the TopBar. Do not fetch, route or host the iframe in HostedAppStage. Do not put mode switching, Close, card geometry or platform navigation inside FocusedAppFrame."
     },
     {
+      "id": "platform-navigation-and-bottom-navigation",
+      "decision": "keep-distinct",
+      "components": [
+        "platform-navigation",
+        "platform-bottom-navigation"
+      ],
+      "jobs": [
+        {
+          "component": "platform-navigation",
+          "job": "Expose the complete platform information architecture, attention evidence, Node health and utility destinations through the Canvas drawer or desktop sidebar."
+        },
+        {
+          "component": "platform-bottom-navigation",
+          "job": "Switch among Home, Work and Search with persistent one-handed access on narrow screens."
+        }
+      ],
+      "rationale": "Both change global platform scope, but the drawer is a complete map while the bottom Overlay is a deliberately fixed three-destination quick switcher. Combining them would either overload the mobile bar or impoverish the drawer.",
+      "substitutionBoundary": "Share canonical destinations, matchers and PlatformIcon. Never add Activity, Node, utilities, authorization state or attention counts to PlatformBottomNavigation, and never remove those broader jobs from PlatformNavigation."
+    },
+    {
       "id": "button-and-action-link",
       "decision": "keep-distinct",
       "components": [

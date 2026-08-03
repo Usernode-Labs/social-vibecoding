@@ -184,6 +184,22 @@
       }
     },
     {
+      "id": "platform-bottom-navigation",
+      "name": "PlatformBottomNavigation",
+      "tier": "block",
+      "module": "@/components/platform-bottom-navigation.tsx",
+      "export": "PlatformBottomNavigation",
+      "story": {
+        "module": "@/components/platform-bottom-navigation.stories.tsx",
+        "states": [
+          "HomeSelected",
+          "WorkSelected",
+          "SearchSelected",
+          "Dark"
+        ]
+      }
+    },
+    {
       "id": "home-app-shortcut",
       "name": "HomeAppShortcut",
       "tier": "block",
