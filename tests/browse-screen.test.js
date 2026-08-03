@@ -180,16 +180,102 @@ test('visibleApps: filters on Home.matchesQuery over the whole list', () => {
 
 // ── render ───────────────────────────────────────────────────────
 
-test('render: tiles use browse mode — add badges, no actions menu', () => {
+test('render: tiles carry BOTH the add badge and the "…" actions menu', () => {
   const { Browse, nodes } = makeBrowse();
   Browse._apps = [app({ slug: 'fresh' }), app({ slug: 'mine', is_favorited: true })];
   Browse.render();
   const html = nodes['browse-list'].innerHTML;
-  assert.match(html, /card-add-btn/);
-  assert.doesNotMatch(html, /card-menu-btn/);
+  assert.match(html, /card-add-btn/, 'the add badge stays the primary affordance');
+  assert.match(html, /card-menu-btn/, 'same "…" menu the home cards have');
   // Added apps show the ✓ state, fresh ones the + state.
   assert.match(html, /data-slug="mine" data-added="true"|data-added="true"/);
   assert.match(html, /data-added="false"/);
+});
+
+test('render: the two corner controls take opposite corners', () => {
+  const { Browse, nodes } = makeBrowse();
+  Browse._apps = [app({ slug: 'fresh' })];
+  Browse.render();
+  const html = nodes['browse-list'].innerHTML;
+  // Add badge keeps top-right (primary); the menu moves to top-left so
+  // they can't overlap on a 56px tile. The fork tag owns bottom-left.
+  const add = html.match(/class="card-add-btn[^"]*"/)[0];
+  const menu = html.match(/class="card-menu-btn[^"]*"/)[0];
+  assert.match(add, /-top-1\.5 -right-1\.5/);
+  assert.match(menu, /-top-1\.5 -left-1\.5/);
+});
+
+test('render: staging demo tiles get NO menu (their slugs have no DB row)', () => {
+  const { Browse, nodes } = makeBrowse();
+  Browse._apps = [app({ slug: 'staging-demo-featured', demo: true })];
+  Browse.render();
+  const html = nodes['browse-list'].innerHTML;
+  assert.doesNotMatch(html, /card-menu-btn/, 'every action would 404');
+  assert.match(html, /card-add-btn/, 'the (inert) add badge still renders');
+});
+
+test('the menu button routes to Home.openCardMenu with the button as anchor', () => {
+  // Wired by the shared discovery-card wiring, not a reimplementation:
+  // openCardMenu resolves the app from Home._apps (which Browse keeps in
+  // step) and PlatformUI.menu picks the touch/desktop idiom.
+  const wiring = HOME_SRC.slice(
+    HOME_SRC.indexOf('_wireDiscoveryCards(listEl, onChange)'),
+    HOME_SRC.indexOf('async toggleAdded(')
+  );
+  assert.ok(wiring.length > 200, 'located _wireDiscoveryCards');
+  assert.match(wiring, /querySelectorAll\('\.card-menu-btn'\)/);
+  assert.match(wiring, /Home\.openCardMenu\(btn\.dataset\.slug, btn\)/);
+  assert.match(wiring, /e\.stopPropagation\(\)/);
+  // A tap on either corner control must not also open the app.
+  assert.match(wiring, /closest\('\.card-add-btn'\) \|\| e\.target\.closest\('\.card-menu-btn'\)/);
+});
+
+test('a re-render dismisses a menu anchored to a button it is replacing', () => {
+  const src = BROWSE_SRC.slice(BROWSE_SRC.indexOf('render() {'));
+  assert.match(src, /Home\.closeCardMenu\(\)/,
+    'otherwise the popover hangs anchored to a detached node');
+});
+
+test('syncFrom adopts an externally-fetched payload and repaints', () => {
+  // Home.load() is where every card-menu action settles (add/remove,
+  // retry, lock, delete), so this is how those land on the browse grid.
+  const { Browse, nodes } = makeBrowse();
+  Browse._apps = [app({ slug: 'before' })];
+  Browse.render();
+  assert.match(nodes['browse-list'].innerHTML, /data-slug="before"/);
+  Browse.syncFrom([app({ slug: 'after' })]);
+  assert.match(nodes['browse-list'].innerHTML, /data-slug="after"/);
+  assert.doesNotMatch(nodes['browse-list'].innerHTML, /data-slug="before"/);
+  Browse.syncFrom(undefined);
+  assert.match(nodes['browse-list'].innerHTML, /data-slug="after"/, 'garbage is ignored');
+});
+
+test('Home.load hands its fresh payload to an open browse screen', () => {
+  const load = HOME_SRC.slice(
+    HOME_SRC.indexOf('async load() {'),
+    HOME_SRC.indexOf('// ===== Rendering')
+  );
+  assert.ok(load.length > 200, 'located Home.load');
+  assert.match(load, /window\.Browse\?\.isOpen\?\.\(\) \) *\?|window\.Browse\?\.isOpen\?\.\(\)/);
+  assert.match(load, /Browse\.syncFrom\(apps\)/);
+});
+
+test('?shot=card-menu opens the menu on whichever grid is visible', () => {
+  // The captures can't click, so the OPEN menu needs a URL. The helper is
+  // shared with home's grid; the offsetParent guard is what stops a hidden
+  // #app-list from burning the once-only flag during boot on /#apps.
+  const helper = HOME_SRC.slice(
+    HOME_SRC.indexOf('_maybeOpenShotMenu(listEl) {'),
+    HOME_SRC.indexOf('_assertMenuOpaque()')
+  );
+  assert.ok(helper.length > 200, 'located _maybeOpenShotMenu');
+  assert.match(helper, /listEl\.offsetParent === null\) return/);
+  // The flag is claimed only AFTER the visibility check.
+  assert.ok(
+    helper.indexOf('offsetParent === null') < helper.indexOf('_shotMenuDone = true'),
+    'visibility check precedes the once-only claim'
+  );
+  assert.match(BROWSE_SRC, /Home\._maybeOpenShotMenu\(listEl\)/);
 });
 
 test('render: empty result explains itself, with the query when there is one', () => {

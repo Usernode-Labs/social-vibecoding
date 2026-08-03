@@ -6,12 +6,12 @@
 // tiles first, then the platform's usual activity order, each with a
 // per-tile add/remove badge.
 //
-// Deliberately thin: tiles, the added-state predicate, the search matcher
-// and the add/remove write are all Home's (renderAppCard in 'browse' mode,
-// isYours, matchesQuery, _wireDiscoveryCards / toggleAdded), so the two
-// launcher grids cannot drift apart. What this file owns is the screen:
-// its own fetch + cache, its always-visible search field, and the empty
-// states.
+// Deliberately thin: tiles, the added-state predicate, the search matcher,
+// the add/remove write and the "…" actions menu are all Home's
+// (renderAppCard in 'browse' mode, isYours, matchesQuery,
+// _wireDiscoveryCards / toggleAdded / openCardMenu), so the two launcher
+// grids cannot drift apart. What this file owns is the screen: its own
+// fetch + cache, its always-visible search field, and the empty states.
 //
 // Mounted by App.navigateToBrowse (#apps hash route) into the static shell
 // in index.html; PTR is wired once by App._wirePullToRefresh.
@@ -39,6 +39,17 @@ const Browse = {
 
   close() {
     Browse._open = false;
+  },
+
+  // Adopt a fresh /api/apps payload that somebody ELSE fetched, and
+  // repaint. Home.load() calls this while this screen is on top, which is
+  // how the card menu's actions (add/remove, retry, lock, delete — they
+  // all settle through Home.load()) land on the browse grid without this
+  // file knowing anything about them.
+  syncFrom(apps) {
+    if (!Array.isArray(apps)) return;
+    Browse._apps = apps;
+    Browse.render();
   },
 
   // Same endpoint (and same ?demo=1 passthrough) as Home.load: one
@@ -90,12 +101,23 @@ const Browse = {
     const apps = Browse.visibleApps();
     const query = (Browse._query || '').trim();
 
+    // menu: true — every tile carries the same "…" actions menu the home
+    // cards do (top-left, so the add badge keeps the top-right corner).
     listEl.innerHTML = apps
-      .map((a) => Home.renderAppCard(a, { mode: 'browse' }))
+      .map((a) => Home.renderAppCard(a, { mode: 'browse', menu: true }))
       .join('');
     // Re-rendering after every toggle is what flips the badge in place;
     // the listeners go with the markup, so they are re-attached here.
+    // A re-render also has to drop any menu still open against a button
+    // that is about to be replaced, or the popover would hang anchored to
+    // a detached node.
+    Home.closeCardMenu();
     Home._wireDiscoveryCards(listEl, () => Browse.render());
+    // `?shot=card-menu` on this screen opens the menu on the first tile, so
+    // the before/after captures and the dapp.json check can see the opened
+    // menu (a screenshot can never click). Shared with home's grid; the
+    // helper picks whichever grid is actually visible and fires once.
+    Home._maybeOpenShotMenu(listEl);
 
     if (emptyEl) {
       if (apps.length) {

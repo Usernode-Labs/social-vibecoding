@@ -29,6 +29,12 @@ const Home = {
       const { apps } = await res.json();
       Home._apps = apps;
       Home.render();
+      // The #apps browse screen shares this payload and can be the screen
+      // actually on top — its cards run the same "…" menu, whose actions
+      // (add/remove, retry, lock, delete) all settle by calling back into
+      // Home.load(). Without this hand-off the browse grid would keep
+      // rendering pre-action state until the user navigated away.
+      if (window.Browse?.isOpen?.()) Browse.syncFrom(apps);
       // The shortcut probe's heal pass may have run before _apps was
       // populated (it needs the app objects for icon payloads); retry
       // now that they're here. No-op when everything has an icon.
@@ -329,6 +335,13 @@ const Home = {
   // (routes/apps.js demoIconApps, which unshifts them to the front).
   // Fires once per page load — a later re-render (a WS app_update, a
   // search keystroke) must not pop the menu back open under the user.
+  //
+  // Called by BOTH launcher grids that carry the menu: home's #app-list
+  // and the #apps browse screen's #browse-list. Whichever one is actually
+  // on screen wins — a hidden grid has no offsetParent, so it neither
+  // opens a menu the user can't see nor burns the once-only flag. That is
+  // what makes `/?shot=card-menu#apps` land on the browse grid even
+  // though home rendered first during boot.
   _shotMenuDone: false,
 
   _maybeOpenShotMenu(listEl) {
@@ -336,6 +349,7 @@ const Home = {
     let shot = null;
     try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
     if (shot !== 'card-menu') return;
+    if (!listEl || listEl.offsetParent === null) return; // not the visible grid
     Home._shotMenuDone = true;
     // Deferred a frame: the grid was written synchronously just above,
     // and the kit's flip/clamp placement needs the button's settled rect.
@@ -429,9 +443,12 @@ const Home = {
   // ===== Discovery-grid card wiring (featured row, browse screen) =====
   //
   // Shared by Home.renderFindMore and public/js/browse.js: tiles open
-  // the app on a body tap and toggle "Your apps" membership from the
-  // corner badge. No drag, no "…" menu — these grids are not the
-  // user's own ordering.
+  // the app on a body tap, toggle "Your apps" membership from the add
+  // badge, and — where the grid rendered one — open the SAME "…" actions
+  // menu the home cards use (Home.openCardMenu, which resolves the app
+  // from Home._apps and adapts to an action sheet on touch / an anchored
+  // popover on desktop via PlatformUI.menu). No drag: these grids are not
+  // the user's own ordering.
   //
   // `onChange` (optional) is called after a successful toggle so the
   // host can re-render its own grid; home just reloads.
@@ -439,7 +456,7 @@ const Home = {
     if (!listEl) return;
     listEl.querySelectorAll('.app-card').forEach((card) => {
       card.addEventListener('click', (e) => {
-        if (e.target.closest('.card-add-btn')) return;
+        if (e.target.closest('.card-add-btn') || e.target.closest('.card-menu-btn')) return;
         if (card.dataset.demo === 'true') return;
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
         App.navigateToApp(card.dataset.slug);
@@ -449,6 +466,14 @@ const Home = {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         Home.toggleAdded(btn.dataset.slug, btn.dataset.added !== 'true', onChange);
+      });
+    });
+    listEl.querySelectorAll('.card-menu-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Pass the element so the kit popover can toggle closed on a
+        // re-click and manage aria-expanded — same call as the home grid.
+        Home.openCardMenu(btn.dataset.slug, btn);
       });
     });
   },
@@ -758,11 +783,12 @@ const Home = {
     return { kind: 'letter', html: escapeHtml((app.name || '?').charAt(0).toUpperCase()) };
   },
 
-  // `opts.mode` picks the corner control:
-  //   'home' (default) — the "…" actions menu (the user's own grid)
+  // `opts.mode` picks the corner controls:
+  //   'home' (default) — the "…" actions menu alone, top-right.
   //   'featured' / 'browse' — an add/remove badge (`.card-add-btn`,
-  //     ✓ when the app is already in "Your apps"), because a discovery
-  //     grid's one meaningful per-tile action is "keep this".
+  //     ✓ when the app is already in "Your apps") top-right, because a
+  //     discovery grid's primary per-tile action is "keep this", PLUS the
+  //     same "…" menu top-left when `opts.menu` is set.
   // Everything else — icon tile, status dot, users badge, fork tag,
   // click-to-open rule — is shared, so the launcher grids can't drift.
   renderAppCard(app, opts) {
@@ -855,8 +881,24 @@ const Home = {
           ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
           : '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>'
       }</button>`;
-    const menuBadgeHtml = discovery ? addBadgeHtml : `
-      <button class="card-menu-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
+    // The "…" actions menu trigger. One markup, two corners: it owns the
+    // icon's top-RIGHT corner on the home grid (where it is the card's only
+    // badge), and moves to the top-LEFT on a discovery grid so the add
+    // badge keeps the primary right-hand spot and the two never overlap.
+    // (The fork tag sits bottom-left, so top-left is free.)
+    const hamburgerHtml = (corner) => `
+      <button class="card-menu-btn absolute -top-1.5 ${corner} w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
+    // Discovery grids show BOTH: the add/remove badge as the primary
+    // affordance, plus the same "…" menu the home cards have, so an app
+    // you haven't added still offers Fork / build log / admin actions
+    // without a detour through home. `opts.menu` opts a grid in — the
+    // browse screen passes it; the home featured row doesn't (yet).
+    // Staging ?demo=1 tiles never get it: their slugs have no DB row, so
+    // every action in the menu would 404.
+    const wantsMenu = !!(opts && opts.menu) && !app.demo;
+    const menuBadgeHtml = discovery
+      ? `${addBadgeHtml}${wantsMenu ? hamburgerHtml('-left-1.5') : ''}`
+      : hamburgerHtml('-right-1.5');
     const retryHtml = showRetry
       ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
       : '';

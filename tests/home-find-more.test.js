@@ -158,13 +158,27 @@ test('renderFindMore swaps the tile row for a note, never an empty card', () => 
 
 // ── Card mode: discovery tiles carry an add badge, not a "…" menu ──
 
-test('renderAppCard: browse/featured mode swaps the menu for an add badge', () => {
+test('renderAppCard: discovery mode leads with the add badge', () => {
   const Home = makeHome();
   const fresh = app({ slug: 'fresh', name: 'Fresh App' });
   const html = Home.renderAppCard(fresh, { mode: 'featured' });
   assert.match(html, /card-add-btn/);
   assert.match(html, /data-added="false"/);
-  assert.doesNotMatch(html, /card-menu-btn/, 'no actions menu in a discovery grid');
+  // The "…" menu is opt-in per grid (`opts.menu`). The browse screen sets
+  // it; the home featured row currently doesn't, so a featured tile keeps
+  // the single-badge look.
+  assert.doesNotMatch(html, /card-menu-btn/, 'featured row is badge-only');
+  const withMenu = Home.renderAppCard(fresh, { mode: 'browse', menu: true });
+  assert.match(withMenu, /card-menu-btn/, 'browse opts in');
+});
+
+test('renderFindMore renders featured tiles without opting into the menu', () => {
+  const src = HOME_SRC.slice(
+    HOME_SRC.indexOf('renderFindMore(apps) {'),
+    HOME_SRC.indexOf('renderCreateSection(canCreate) {')
+  );
+  assert.match(src, /\{ mode: 'featured' \}/);
+  assert.doesNotMatch(src, /menu: true/);
 });
 
 test('renderAppCard: an already-added app renders the ✓ state', () => {

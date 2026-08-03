@@ -296,9 +296,9 @@
       "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
     },
     {
-      "name": "The #apps browse screen lists every visible app with add badges",
+      "name": "Browse cards carry both the add badge and the \"…\" actions menu",
       "path": "/apps",
-      "expectSelector": "#browse-list .app-card .card-add-btn",
+      "expectSelector": "#browse-list .app-card:has(.card-add-btn):has(.card-menu-btn)",
       "expectText": "All apps"
     },
     {
