@@ -235,6 +235,21 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     }
   }
 
+  // Announce the rebuild BEFORE it starts. Building a preview takes
+  // minutes — cloning the self-app's own database alone runs ~4:45 — and
+  // until now this path posted nothing until it succeeded. Session 2954 is
+  // what that costs: the owner watched a chat sitting on an unfinished
+  // "Building staging preview..." for five minutes with no sign the
+  // platform was already fixing it, sent "continue" to force progress, and
+  // got a second full build turn for work that was already committed.
+  //
+  // Same wording as the live dev-turn path's sendStatus (routes/sessions.js)
+  // so the client's existing status-row rendering and the `stagingBuild`
+  // metadata apply unchanged. `active: true` on the broadcast asks open
+  // tabs to spin this row (there's no in-flight turn for /status to report
+  // when the heal sweep or a preview click drives the rebuild).
+  await announceRebuildStarted({ pool, session, imported });
+
   let stagingResult;
   try {
     stagingResult = await staging.buildAndDeployStaging(config, session, app, commitHash);
@@ -319,6 +334,69 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
 
   log.info('staging-recovery', 'Staging preview rebuilt', { sessionId: session.id, url: stagingResult.stagingUrl, reason });
   return 'built';
+}
+
+// The in-progress half of a background preview rebuild — the row the user
+// sees while the ~5-minute build runs. Its success counterpart is the
+// 'Staging preview rebuilt' row in rebuildSessionStaging; its failure
+// counterpart is recordStagingBootFailure's explanatory row. Every path
+// out of the build therefore lands a row AFTER this one, so it can never
+// be left as the transcript's last word.
+//
+// Best-effort throughout: narration must never be why a rebuild fails.
+const STAGING_REBUILD_IN_PROGRESS = 'Building staging preview...';
+
+async function announceRebuildStarted({ pool, session, imported }) {
+  const { broadcastGlobal, pushSessionUpdate, sendSystemMessage } = require('./ws');
+  const metadata = {
+    stagingBuild: 'running',
+    recovered: true,
+    ...(session.pr_number ? { prNumber: session.pr_number } : {}),
+  };
+  try {
+    if (imported) {
+      // An imported proposal has no dev chat, so the equivalent surface is
+      // the group discussion thread its card links to (#866) — same split
+      // the success note below makes.
+      const label = session.pr_title
+        ? `PR #${session.pr_number} — ${session.pr_title}`
+        : `PR #${session.pr_number}`;
+      await sendSystemMessage(
+        pool, session.app_id,
+        `Rebuilding the staging preview for ${label}...`,
+        'system', metadata, { type: 'session', ref: session.id }
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [session.id, STAGING_REBUILD_IN_PROGRESS, JSON.stringify(metadata)]
+      );
+    }
+  } catch (err) {
+    log.warn('staging-recovery', 'rebuild-started note failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  }
+  try {
+    broadcastGlobal({
+      type: 'session_event', sessionId: session.id, event: 'status',
+      text: imported
+        ? `Rebuilding the staging preview for PR #${session.pr_number}...`
+        : STAGING_REBUILD_IN_PROGRESS,
+      stagingBuild: 'running',
+      // Client-side hint: render this row with the live arc spinner even
+      // though no turn is in flight (public/js/dev-chat.js).
+      active: true,
+    });
+    pushSessionUpdate({
+      action: 'staging_building', sessionId: session.id, appSlug: session.app_slug,
+    });
+  } catch (err) {
+    log.warn('staging-recovery', 'rebuild-started broadcast failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    });
+  }
 }
 
 // #461: record a terminal, gate-passing 'skipped' checks verdict (with its
@@ -477,6 +555,9 @@ module.exports = {
   stagingNeedsRebuild,
   rebuildSessionStaging,
   recheckSessionChecks,
+  // Exported for tests + so the client-facing wording has one owner.
+  STAGING_REBUILD_IN_PROGRESS,
+  announceRebuildStarted,
   // #461: exported so the dev-turn tails (routes/sessions.js) and the
   // post-promote build catch (routes/votes.js) can record an 'error'
   // verdict when their staging build fails, instead of leaving the

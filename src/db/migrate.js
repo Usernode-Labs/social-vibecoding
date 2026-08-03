@@ -5522,6 +5522,216 @@ async function seedStagingRestartRecoveredPills(pool, config) {
       appId, owner: owner.username, sessionId,
     });
   }
+
+  // ── Fixture 3: build turn whose TAIL was interrupted, then finished ──
+  //
+  // The "after" shape of the tail-recovery change, and the reason it
+  // exists: a turn's post-agent tail (PR → preview → cards → wrap-up) used
+  // to die with the process that was running it, leaving a transcript whose
+  // last word was "Building staging preview..." forever. Now the record
+  // survives the restart, the tail resumes, and the rows below the
+  // interrupted point land with `recovered: true`.
+  //
+  // Read the transcript top to bottom: the agent's work, the PR, the
+  // interrupted build line, and then the three rows the resumed tail
+  // supplied. chat_sessions and chat_session_messages are both
+  // staging:private, so without this seed none of it is visible in a
+  // preview.
+  // FIXED id (the 9008xx convention above): the dev-chat route embeds the
+  // session id, so a stable one is what lets a dapp.json test open this
+  // transcript directly instead of only asserting its card title.
+  //
+  // All three fixtures below seed `last_activity_at = NOW()` while their
+  // MESSAGE timestamps stay in the past. That split is deliberate: the
+  // transcript needs a natural shape, but a session whose activity clock is
+  // older than the auto-pause window (5 min) gets paused on the first sweep,
+  // and a paused session renders neither the quick-reply pills nor the
+  // "Propose to group" button — which is most of what these fixtures exist
+  // to show.
+  const tailBranch = 'staging-fixture/restart-recovered-tail';
+  const { rows: existingTail } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, tailBranch]
+  );
+  if (!existingTail.length) {
+    const sessionId = 900820;
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, is_headless,
+          shared_at, created_at, last_activity_at)
+       VALUES
+         ($1, $2, $3, $4, 34, $5, 'active', FALSE,
+          NOW() - INTERVAL '11 minutes', NOW() - INTERVAL '12 minutes', NOW())`,
+      [sessionId, appId, owner.id, tailBranch,
+        '[staging fixture] Staging demo: a turn that finished itself after an update']
+    );
+
+    const rows = [
+      ['user', 'Sort the leaderboard by score', {}, '12 minutes'],
+      ['assistant', "I'll have the coding agent sort the leaderboard by score.", {}, '12 minutes'],
+      ['system', 'Claude Code is running...', {
+        progressLog: [
+          '[claude (mode build)]',
+          'Reading public/js/leaderboard.js',
+          '  ⎿ Read: 210 lines',
+          'Editing public/js/leaderboard.js',
+          '  ⎿ Edit: ok',
+          '[commit]',
+          '[push]',
+          '[done]',
+        ],
+      }, '11 minutes'],
+      // Everything up to here landed before the interruption.
+      ['system', 'PR #34 created', { prNumber: 34 }, '11 minutes'],
+      // The row the transcript used to end on, forever.
+      ['system', 'Building staging preview...', { stagingBuild: 'running' }, '10 minutes'],
+      // ...and what the resumed tail then supplied. `recovered: true` is
+      // the audit marker on every recovery-written row.
+      ['system', 'Claude Code finished', {
+        ccOutput: 'Sorted the leaderboard rows by score descending, with a name tiebreak, '
+          + 'and kept the existing rank badges in sync.',
+        ccOutcome: 'success',
+        durationMs: 214000,
+        recovered: true,
+      }, '6 minutes'],
+      ['system', 'Staging deployed!', {
+        stagingUrl: 'https://staging-demo.invalid/leaderboard',
+        changesReady: true,
+        prNumber: 34,
+        prUrl: 'https://github.invalid/staging-demo/pull/34',
+        recovered: true,
+      }, '5 minutes'],
+      ['assistant', 'Sorted the leaderboard by score — highest first, with ties broken by name. '
+        + "Preview it, or propose it to the group when you're happy with it.", {
+        quickReplies: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
+        recovered: true,
+      }, '5 minutes'],
+    ];
+    for (const [role, content, metadata, ago] of rows) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - make_interval(mins => $5::int))`,
+        [sessionId, role, content, JSON.stringify(metadata), parseInt(ago, 10)]
+      );
+    }
+    log.info('db', 'Staging restart-recovered-tail fixture seeded', {
+      appId, owner: owner.username, sessionId,
+    });
+  }
+
+  // ── Fixture 4: background preview rebuild still running ─────────────
+  //
+  // Pins the in-progress row a self-healing rebuild now posts before it
+  // starts (services/staging-recovery.js announceRebuildStarted). It is
+  // deliberately the LAST row in this transcript — that is the state the
+  // client's _activateTrailingStagingBuild spinner pass is for, and the
+  // state that used to be five minutes of total silence.
+  const rebuildBranch = 'staging-fixture/staging-rebuild-running';
+  const { rows: existingRebuild } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, rebuildBranch]
+  );
+  if (!existingRebuild.length) {
+    const sessionId = 900821;
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, is_headless,
+          shared_at, created_at, last_activity_at)
+       VALUES
+         ($1, $2, $3, $4, 35, $5, 'active', FALSE,
+          NOW() - INTERVAL '8 minutes', NOW() - INTERVAL '9 minutes', NOW())`,
+      [sessionId, appId, owner.id, rebuildBranch,
+        '[staging fixture] Staging demo: preview rebuilding in the background']
+    );
+
+    const rows = [
+      ['user', 'Add a compact mode to the leaderboard', {}, '9 minutes'],
+      ['assistant', "I'll have the coding agent add a compact leaderboard mode.", {}, '9 minutes'],
+      ['system', 'Claude Code finished', {
+        ccOutput: 'Added a compact row density toggle to the leaderboard header.',
+        ccOutcome: 'success',
+        durationMs: 178000,
+      }, '8 minutes'],
+      ['system', 'PR #35 created', { prNumber: 35 }, '8 minutes'],
+      // The rebuild the platform started on its own. No row follows it,
+      // so the client spins this one.
+      ['system', 'Building staging preview...', {
+        stagingBuild: 'running',
+        prNumber: 35,
+        recovered: true,
+      }, '2 minutes'],
+    ];
+    for (const [role, content, metadata, ago] of rows) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - make_interval(mins => $5::int))`,
+        [sessionId, role, content, JSON.stringify(metadata), parseInt(ago, 10)]
+      );
+    }
+    log.info('db', 'Staging staging-rebuild-running fixture seeded', {
+      appId, owner: owner.username, sessionId,
+    });
+  }
+
+  // ── Fixture 5: unresumable turn whose code nonetheless landed ────────
+  //
+  // The honest-wording case. When a tail cannot be resumed at all (the
+  // agent's container is gone) but its commit is already on GitHub, the
+  // breadcrumb reports what landed instead of the blanket "send your
+  // request again" — which would send the user to redo pushed work, and is
+  // exactly what produced a duplicate build turn in the incident that
+  // motivated this. Pairs with code_done pills, not retry pills.
+  const landedBranch = 'staging-fixture/restart-code-landed';
+  const { rows: existingLanded } = await pool.query(
+    'SELECT id FROM chat_sessions WHERE app_id = $1 AND branch_name = $2 LIMIT 1',
+    [appId, landedBranch]
+  );
+  if (!existingLanded.length) {
+    const sessionId = 900822;
+    await pool.query(
+      `INSERT INTO chat_sessions
+         (id, app_id, user_id, branch_name, pr_number, pr_title, status, is_headless,
+          shared_at, created_at, last_activity_at)
+       VALUES
+         ($1, $2, $3, $4, 36, $5, 'active', FALSE,
+          NOW() - INTERVAL '6 minutes', NOW() - INTERVAL '7 minutes', NOW())`,
+      [sessionId, appId, owner.id, landedBranch,
+        '[staging fixture] Staging demo: changes landed, preview rebuilding']
+    );
+
+    const rows = [
+      ['user', 'Show each player\'s rank change since yesterday', {}, '7 minutes'],
+      ['assistant', "I'll have the coding agent add a rank-change indicator.", {}, '7 minutes'],
+      ['system', 'Claude Code is running...', {
+        progressLog: [
+          '[claude (mode build)]',
+          'Editing public/js/leaderboard.js',
+          '  ⎿ Edit: ok',
+          '[commit]',
+          '[push]',
+          '[interrupted]',
+        ],
+      }, '6 minutes'],
+      // Built by recoveryPills.buildCodeLandedBreadcrumb — keep the two in
+      // sync (isCodeLandedBreadcrumb is the matcher that pins the wording).
+      ['system', 'Your changes are committed and pushed to PR #36 — rebuilding the preview now.', {
+        quickReplies: ['Propose it to the group', 'Make a tweak', 'What did it change?'],
+        recovered: true,
+        recoveredReason: 'tail_worker_gone',
+        prNumber: 36,
+      }, '6 minutes'],
+    ];
+    for (const [role, content, metadata, ago] of rows) {
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata, created_at)
+         VALUES ($1, $2, $3, $4, NOW() - make_interval(mins => $5::int))`,
+        [sessionId, role, content, JSON.stringify(metadata), parseInt(ago, 10)]
+      );
+    }
+    log.info('db', 'Staging restart-code-landed fixture seeded', {
+      appId, owner: owner.username, sessionId,
+    });
+  }
 }
 
 

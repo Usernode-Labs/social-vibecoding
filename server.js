@@ -1778,7 +1778,16 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
   //       (no active_turn record). Its output went to a dead pipe and
   //       is unrecoverable; kill it so it can't race the next dispatch.
   if (containerState === 'running') {
-    // Case (c): detached turn with a durable record — resume it.
+    // Case (c): detached turn with a durable record — resume it. This now
+    // covers TWO shapes, distinguished only by `phase`:
+    //   - phase absent  → the exec itself may still be running; the replay
+    //                     follows the journal live before the tail runs.
+    //   - phase 'tail'  → the agent finished cleanly and the PLATFORM side
+    //                     was cut off (session 2954). The journal is
+    //                     complete, so the replay returns immediately and
+    //                     finalizeRecoveredTurn picks the tail up where it
+    //                     stopped, skipping whatever already landed.
+    // Both go down the same path deliberately: the tail is the same tail.
     const activeTurn = session.active_turn || null;
     if (activeTurn && activeTurn.journal) {
       worker.adoptWarmWorker(sessionId, containerName);
@@ -1791,6 +1800,26 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
 
     const busy = await worker.isWorkerExecuting(containerName);
     if (busy === false) {
+      // Nothing is executing and there's no record to resume — normally
+      // an idle warm container, correctly adopted in silence.
+      //
+      // But this branch is ALSO where a lost tail landed before the record
+      // was held across it: the container was idle (the agent really had
+      // finished), so adoption returned here and the chat kept
+      // "Building staging preview..." as its last word forever, with no
+      // spinner, no card and no error. Change 1 makes that unreachable —
+      // this stays as the guard for a record lost some other way (a
+      // clearActiveTurn bug, a journal deleted under us, a pre-upgrade row
+      // written by an older build).
+      const dangling = await findDanglingTail(pool, sessionId);
+      if (dangling) {
+        log.warn('server', 'Adopting warm-idle worker with a DANGLING tail — narrating', {
+          containerName, sessionId, lastRow: dangling.content,
+        });
+        await narrateDanglingTail({ config, pool, session, sessionId, broadcastGlobal });
+        worker.adoptWarmWorker(sessionId, containerName);
+        return;
+      }
       log.info('server', 'Adopting warm-idle worker (no in-flight exec)', {
         containerName, sessionId,
       });
@@ -1849,10 +1878,64 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
     // turn itself can't be replayed — but if it pushed before dying,
     // recoverSessions' staging heal picks the branch up. Clear the
     // record and let the user know.
+    const goneTurn = session.active_turn;
+    const goneTail = (goneTurn && typeof goneTurn.tail === 'object' && goneTurn.tail) || {};
+    // Did the work actually land? A held TAIL record knows: the exec is
+    // over and its seed milestones carry the commit + push outcome. When
+    // it did, "send your request again" is simply wrong — the commit is on
+    // GitHub, and resending buys a duplicate run (see
+    // buildCodeLandedBreadcrumb). Say what landed and repair the preview.
+    const codeLanded = !!goneTail.sha && goneTail.pushOk === true;
     await worker.clearActiveTurn(sessionId);
     // Terminal marker so the dead turn's progress card doesn't stay
     // frozen on its last in-progress line ("Pushing", "Editing …").
     await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
+    if (codeLanded) {
+      const prNumber = goneTail.prNumber || session.pr_number || null;
+      // 'code_done' rather than 'unrecoverable': the useful next steps are
+      // Propose / tweak, not "try that again".
+      const landedPills = recoveryPills.buildRecoveryQuickReplies('code_done');
+      const landedText = recoveryPills.buildCodeLandedBreadcrumb({
+        prNumber, rebuildingPreview: true,
+      });
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [
+          sessionId,
+          landedText,
+          JSON.stringify({
+            ...(landedPills ? { quickReplies: landedPills } : {}),
+            recovered: true,
+            recoveredReason: 'tail_worker_gone',
+            sha: goneTail.sha,
+            ...(prNumber ? { prNumber } : {}),
+          }),
+        ]
+      ).catch(() => {});
+      broadcastGlobal({
+        type: 'session_event', sessionId, event: 'status',
+        text: landedText,
+        quickReplies: landedPills || undefined,
+      });
+      log.warn('server', 'Tail record with a dead worker — code landed, healing preview', {
+        sessionId, sha: String(goneTail.sha).substring(0, 8), prNumber,
+      });
+      // The preview is the only missing artefact, and rebuildSessionStaging
+      // is the shared path that also re-runs the proposal checks. Awaited
+      // (not fire-and-forget) so boot recovery's per-session try/catch owns
+      // the failure, same as recoverSessions' own heal call.
+      try {
+        await stagingRecovery.rebuildSessionStaging({
+          config, pool, session, reason: 'tail_worker_gone',
+        });
+      } catch (err) {
+        log.warn('server', 'Tail-recovery staging rebuild failed', {
+          sessionId, err: err.message,
+        });
+      }
+      return;
+    }
     // #786: pills on the breadcrumb — see the mid-exec branch above.
     const goneP = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
     await pool.query(
@@ -1920,6 +2003,99 @@ async function adoptOrphanWorker(orphan, { config, pool, staging, ghub, broadcas
 // provide one, so the dev-chat progress card never ends frozen on an
 // in-progress label. Best-effort: a session with no progress row is a
 // clean no-op (the WHERE id subquery matches nothing).
+// The status texts a dev turn's TAIL emits before it is finished. If one
+// of these is a session's newest system row and no completion artefact
+// followed it, the tail was cut off: the transcript's last word is
+// "…preview" or "PR #N created" and nothing will ever come after it.
+//
+// Matched loosely (prefix / regex) because the wording is shared with the
+// live path, which owns it — see sendStatus in routes/sessions.js.
+const TAIL_IN_PROGRESS_PATTERNS = [
+  /^Building staging preview/i,
+  /^PR #\d+ created$/i,
+];
+
+// Is session `sessionId`'s transcript sitting on an unfinished tail?
+//
+// "Finished" means the newest system row carries one of the artefacts a
+// completed tail produces — the agent's summary card (ccOutput), the
+// Changes-ready card (stagingUrl / changesReady), an explicit failure
+// (stagingFailed / checkError / turnError) — or an assistant reply came
+// after it (the Mayor's wrap-up, which is always last). Anything else
+// with a tail-in-progress row on top is dangling.
+//
+// Returns the offending row or null. Deliberately cheap: one indexed
+// lookup of the last few rows.
+async function findDanglingTail(pool, sessionId) {
+  let rows;
+  try {
+    ({ rows } = await pool.query(
+      `SELECT role, content, metadata FROM chat_session_messages
+        WHERE session_id = $1 AND role IN ('system', 'assistant')
+        ORDER BY id DESC LIMIT 1`,
+      [sessionId]
+    ));
+  } catch (err) {
+    log.warn('server', 'Dangling-tail probe failed', { sessionId, err: err.message });
+    return null;
+  }
+  const row = rows[0];
+  if (!row || row.role !== 'system') return null;
+  const meta = row.metadata || {};
+  if (meta.ccOutput || meta.stagingUrl || meta.changesReady
+      || meta.stagingFailed || meta.checkError || meta.turnError) {
+    return null;
+  }
+  const content = String(row.content || '');
+  return TAIL_IN_PROGRESS_PATTERNS.some((re) => re.test(content)) ? row : null;
+}
+
+// Close out a dangling tail we cannot resume (no record, no journal): the
+// honest breadcrumb, a terminal progress marker so the card stops reading
+// as in-flight, and a preview heal when the branch carries work.
+//
+// This is the fallback wording, so it can't inspect a milestone map —
+// what it knows comes from the session row. A session with a pr_number
+// pushed successfully (the PR could not exist otherwise), so it earns the
+// "code landed" wording; anything else gets the resend breadcrumb.
+async function narrateDanglingTail({ config, pool, session, sessionId, broadcastGlobal }) {
+  await appendTerminalProgressLine(pool, sessionId, '[interrupted]');
+  const landed = !!session.pr_number;
+  const kind = landed ? 'code_done' : 'unrecoverable';
+  const pills = recoveryPills.buildRecoveryQuickReplies(kind);
+  const text = landed
+    ? recoveryPills.buildCodeLandedBreadcrumb({
+      prNumber: session.pr_number, rebuildingPreview: true,
+    })
+    : recoveryPills.TURN_UNFINISHED_BREADCRUMB;
+  await pool.query(
+    `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+     VALUES ($1, 'system', $2, $3)`,
+    [sessionId, text, JSON.stringify({
+      ...(pills ? { quickReplies: pills } : {}),
+      recovered: true,
+      recoveredReason: 'dangling_tail',
+    })]
+  ).catch(() => {});
+  broadcastGlobal({
+    type: 'session_event', sessionId, event: 'status',
+    text, quickReplies: pills || undefined,
+  });
+  if (!landed) return;
+  // recoverSessions' own sweep would eventually heal the preview, but it
+  // runs before adoption on a cold boot — so heal it here too rather than
+  // leaving the row promising a rebuild that nothing started.
+  try {
+    if (await stagingRecovery.stagingNeedsRebuild(session, { config })) {
+      await stagingRecovery.rebuildSessionStaging({
+        config, pool, session, reason: 'dangling_tail',
+      });
+    }
+  } catch (err) {
+    log.warn('server', 'Dangling-tail staging rebuild failed', { sessionId, err: err.message });
+  }
+}
+
 async function appendTerminalProgressLine(pool, sessionId, line) {
   await pool.query(
     `UPDATE chat_session_messages
@@ -1949,10 +2125,22 @@ async function appendTerminalProgressLine(pool, sessionId, line) {
 // Every persisted row carries metadata.recovered so an operator can find
 // recovery-written rows in SQL — the audit trail that replaces the
 // restart wording the build cards used to carry (#896).
+//
+// `alreadyDone` is the interrupted turn's tail-milestone map
+// (active_turn.tail — written by the live tail as each step landed; see
+// the "Post-agent TAIL" note in services/worker.js). It exists because
+// this function is now also reached for a turn whose EXEC finished
+// cleanly and whose TAIL was cut in half by a restart, so some of the
+// work below has already happened once. Every step it gates is one that
+// is NOT naturally idempotent: a duplicate completion card, a duplicate
+// PR-opened event, a redundant ~5-minute staging rebuild. Absent/empty
+// (a genuine mid-exec recovery) means "nothing landed yet" and the whole
+// tail runs, exactly as before.
 async function finalizeRecoveredTurn({
   config, pool, staging, session, sessionId, result, repoOwner, repoName,
-  emit, containerName, keepWorker, startedAtMs,
+  emit, containerName, keepWorker, startedAtMs, alreadyDone = null,
 }) {
+  const done = alreadyDone && typeof alreadyDone === 'object' ? alreadyDone : {};
   // #183 belt-and-braces: headless rows must never get the interactive
   // post-turn tail (PR on the auto branch + staging + system message) from
   // any recovery transport — resumeHeadlessRuns owns them. adoptOrphanWorker
@@ -1978,6 +2166,15 @@ async function finalizeRecoveredTurn({
   // (buildMayorMessages folds ccOutput rows into the model's context).
   const persistCompletionRow = async (ccText, ccOutcome) => {
     if (!ccText) return;
+    // The interrupted tail already wrote this card — a second one would
+    // duplicate the agent's summary in the transcript AND double-count it
+    // in every later Mayor turn's context (buildMayorMessages folds
+    // ccOutput rows in). The summary still goes to the wrap-up below.
+    if (done.completionRowPosted) {
+      log.info('server', 'Recovered turn: completion card already posted — skipping', { sessionId });
+      summaryParts.unshift(`What the agent did:\n${ccText}`);
+      return;
+    }
     const statusText = ccOutcome === 'success'
       ? 'Claude Code finished'
       : ccOutcome === 'no_changes'
@@ -2117,7 +2314,11 @@ async function finalizeRecoveredTurn({
     });
     // Live-path parity: a freshly opened PR gets its own transcript row,
     // so the recovered turn reads "PR #N created" like any other.
-    if (prResult && prResult.prNumber && wasNewPR) {
+    // `done.prNumber` means the interrupted tail already opened (and
+    // announced) this PR, so it isn't "new" here even though the session
+    // row we were handed may predate that write.
+    const prAnnounced = !!done.prNumber || !!done.prOpenedEventRecorded;
+    if (prResult && prResult.prNumber && wasNewPR && !prAnnounced) {
       await pool.query(
         `INSERT INTO chat_session_messages (session_id, role, content, metadata)
          VALUES ($1, 'system', $2, $3)`,
@@ -2126,12 +2327,66 @@ async function finalizeRecoveredTurn({
       ).catch(() => {});
       emit('status', { text: `PR #${prResult.prNumber} created` });
       summaryParts.push(`Opened PR #${prResult.prNumber}: ${prResult.prUrl}`);
-    } else if (session.pr_number) {
-      summaryParts.push(`Pushed to existing PR #${session.pr_number}.`);
+    } else if (session.pr_number || prResult?.prNumber) {
+      summaryParts.push(`Pushed to existing PR #${session.pr_number || prResult.prNumber}.`);
     }
 
-    emit('status', { text: 'Building staging preview...' });
+    // Live-path parity for a PROMOTED session (sessions.js's post-staging
+    // block): a new commit invalidates the votes cast against the old one.
+    // Recovery used to skip this entirely, which was harmless while an
+    // interrupted tail simply never finished — now that it DOES finish, a
+    // resumed tail must not leave a promoted proposal carrying votes for a
+    // commit nobody reviewed. Gated on the milestone so a reset the live
+    // tail already performed is never re-announced.
+    if (session.status === 'promoted' && done.votesResetFor !== result.sha) {
+      try {
+        await require('./src/services/app-admins')
+          .refreshExplicitApproval(pool, session, session);
+        const { rowCount } = await pool.query(
+          `DELETE FROM pr_votes WHERE session_id = $1`, [sessionId]
+        );
+        if (rowCount > 0) {
+          const { sendSystemMessage, pushVoteUpdate } = require('./src/services/ws');
+          pushVoteUpdate({ sessionId, appSlug: session.app_slug, merged: false });
+          const resetMsg = `Votes reset on PR #${session.pr_number || sessionId} — new commit ${result.sha.substring(0, 8)} pushed.`;
+          await sendSystemMessage(pool, session.app_id, resetMsg, 'system').catch(() => {});
+          await sendSystemMessage(pool, session.app_id, resetMsg, 'system',
+            null, { type: 'session', ref: sessionId }).catch(() => {});
+          summaryParts.push('Group-chat votes were reset for the new commit.');
+          log.info('server', 'Recovered turn: reset PR votes after new commit', {
+            sessionId, commitHash: result.sha.substring(0, 8), votesDropped: rowCount,
+          });
+        }
+      } catch (err) {
+        log.warn('server', 'Recovered turn: vote reset failed (non-fatal)', {
+          sessionId, err: err.message,
+        });
+      }
+    }
+
     const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+
+    // Did the interrupted tail already build a preview for this commit,
+    // and is that container still healthy? Rebuilding one costs minutes
+    // (~4:45 of DB clone on the self-app), so a live preview is reused
+    // rather than replaced. A recorded-but-dead container falls through to
+    // a real rebuild, which is the whole point of this path.
+    let reusedStaging = null;
+    if (done.stagingUrl) {
+      const { rows: liveRows } = await pool.query(
+        `SELECT staging_url, staging_container_id FROM chat_sessions WHERE id = $1`,
+        [sessionId]
+      ).catch(() => ({ rows: [] }));
+      const live = liveRows[0] || null;
+      if (live && live.staging_url === done.stagingUrl) {
+        const needsRebuild = await stagingRecovery
+          .stagingNeedsRebuild({ ...session, ...live }, { config })
+          .catch(() => true);
+        if (!needsRebuild) reusedStaging = live.staging_url;
+      }
+    }
+
+    if (!reusedStaging) emit('status', { text: 'Building staging preview...' });
 
     // #461 parity: pend the checks for the NEW commit before the build
     // starts, so the previous commit's verdict (e.g. a stale 'passing')
@@ -2142,6 +2397,40 @@ async function finalizeRecoveredTurn({
       .catch((err) => log.warn('server', 'Recovered turn: setChecksPending failed (non-fatal)', {
         sessionId, err: err.message,
       }));
+
+    // Preview already up for this commit: skip straight to the
+    // Changes-ready card the interrupted tail never got to post. The
+    // checks capture still re-runs below (setChecksPending just voided the
+    // verdict), so the merge gate resolves either way.
+    if (reusedStaging) {
+      log.info('server', 'Recovered turn: reusing healthy staging preview', {
+        sessionId, url: reusedStaging,
+      });
+      await pool.query(
+        `INSERT INTO chat_session_messages (session_id, role, content, metadata)
+         VALUES ($1, 'system', $2, $3)`,
+        [sessionId, 'Staging deployed!', JSON.stringify({
+          stagingUrl: reusedStaging,
+          changesReady: true,
+          prNumber: prResult?.prNumber || session.pr_number || null,
+          prUrl: prResult?.prUrl || session.pr_url || null,
+          recovered: true,
+        })]
+      ).catch(() => {});
+      emit('staging_ready', {
+        url: reusedStaging,
+        changesReady: true,
+        testingMd: session.testing_md || null,
+        testingPath: session.testing_path || null,
+      });
+      summaryParts.push(`Staging preview is live: ${reusedStaging}`);
+      visuals.captureForSession(config, session, app, result.sha, null, { send: () => {} })
+        .catch((err) => log.warn('server', 'Recovered turn: reused-preview capture failed (non-fatal)', {
+          sessionId, err: err.message,
+        }));
+      // The `finally` below owns worker teardown — don't pre-empt it.
+      return { outcome: 'done', summary: summaryParts.join('\n\n') };
+    }
 
     // #896: staging is a recoverable failure point — the commit, push and
     // PR already landed real-world artefacts. Before this catch, a failed
@@ -2288,8 +2577,17 @@ async function resumeDetachedTurnInner({
     broadcastGlobal({ type: 'session_event', sessionId, event, ...data });
   };
 
+  // The milestone map of an interrupted TAIL (empty for a mid-exec
+  // recovery). Read once here and threaded into finalizeRecoveredTurn so
+  // the tail's non-idempotent steps aren't repeated.
+  const tailDone = (activeTurn && typeof activeTurn.tail === 'object' && activeTurn.tail) || {};
   log.info('server', 'Resuming detached turn from journal', {
     sessionId, containerName, mode: activeTurn.mode, journal: activeTurn.journal,
+    // 'tail' distinguishes "the agent was done, the platform side wasn't"
+    // from a genuine mid-exec resume — the two look identical in the logs
+    // otherwise, and only one of them means a turn lost minutes of work.
+    phase: activeTurn.phase || 'exec',
+    tailDone: Object.keys(tailDone),
   });
   // #896: the same in-flight label a live turn shows — see the note in
   // adoptOrphanWorker. Emit-only (never persisted), as before.
@@ -2519,6 +2817,7 @@ async function resumeDetachedTurnInner({
         // Warm contract: the container outlives the turn.
         keepWorker: true,
         startedAtMs: activeTurn.startedAt ? Date.parse(activeTurn.startedAt) || null : null,
+        alreadyDone: tailDone,
       });
       terminalLine = finalizeOutcome === 'push_failed' ? '[push_failed]' : '[done]';
       wrapUpPillKind = finalizeOutcome === 'push_failed' ? 'push_failed' : 'code_done';
@@ -2533,6 +2832,14 @@ async function resumeDetachedTurnInner({
     // Mayor reply at all, which is exactly what the issue reported.
     // runRecoveredWrapUp never throws: a failed model call degrades to a
     // short static close carrying these pills.
+    // ...unless the interrupted tail already got its wrap-up onto the
+    // transcript (a restart in the seconds between the wrap-up persisting
+    // and the record being released). Re-issuing it would post a second
+    // assistant reply describing the same build.
+    if (wrapUpOutcome && tailDone.wrapUpPosted) {
+      log.info('server', 'Recovered turn: wrap-up already posted — skipping re-issue', { sessionId });
+      wrapUpOutcome = null;
+    }
     if (wrapUpOutcome) {
       const { runRecoveredWrapUp } = require('./src/routes/sessions');
       await runRecoveredWrapUp({
@@ -2774,7 +3081,8 @@ function startSessionAutoPauseSweeper(config) {
     // reap/skip policy lives in services/turn-watchdog.js.
     try {
       const { rows } = await pool.query(
-        `SELECT id, user_id, app_id, active_turn FROM chat_sessions
+        // pr_number: a reaped TAIL row names the PR its work landed on.
+        `SELECT id, user_id, app_id, pr_number, active_turn FROM chat_sessions
          WHERE active_turn IS NOT NULL
          ORDER BY (active_turn->>'startedAt') ASC NULLS FIRST
          LIMIT 20`
@@ -2801,22 +3109,41 @@ function startSessionAutoPauseSweeper(config) {
           continue;
         }
         try {
+          const reapTail = (row.active_turn && typeof row.active_turn.tail === 'object'
+            && row.active_turn.tail) || {};
+          // A reaped TAIL row is a different animal from a reaped exec: the
+          // agent's work is done and (usually) pushed, so the breadcrumb
+          // must not ask for a resend. `phase` in the log tells an operator
+          // which one they're looking at.
+          const reapCodeLanded = !!reapTail.sha && reapTail.pushOk === true;
           log.warn('server', 'Reaping orphaned active_turn', {
             sessionId: row.id, startedAt: row.active_turn?.startedAt || null,
+            phase: row.active_turn?.phase || 'exec', codeLanded: reapCodeLanded,
           });
           await worker.clearActiveTurn(row.id);
           await appendTerminalProgressLine(pool, row.id, '[interrupted]');
-          const msg = recoveryPills.TURN_UNFINISHED_BREADCRUMB;
+          const msg = reapCodeLanded
+            ? recoveryPills.buildCodeLandedBreadcrumb({
+              prNumber: reapTail.prNumber || row.pr_number || null,
+              // Nothing is rebuilding it here — the staging heal sweep owns
+              // that, on its own schedule. Don't promise what this path
+              // isn't doing.
+              rebuildingPreview: false,
+            })
+            : recoveryPills.TURN_UNFINISHED_BREADCRUMB;
           // #786: retry pills on the breadcrumb — no wrap-up will run for
           // a reaped turn, so this row is the pill bar's only source.
-          const reapPills = recoveryPills.buildRecoveryQuickReplies('unrecoverable');
+          const reapPills = recoveryPills.buildRecoveryQuickReplies(
+            reapCodeLanded ? 'code_done' : 'unrecoverable'
+          );
           await pool.query(
             `INSERT INTO chat_session_messages (session_id, role, content, metadata)
              VALUES ($1, 'system', $2, $3)`,
             [row.id, msg, JSON.stringify({
               ...(reapPills ? { quickReplies: reapPills } : {}),
               recovered: true,
-              recoveredReason: 'watchdog_reap',
+              recoveredReason: reapCodeLanded ? 'watchdog_reap_tail' : 'watchdog_reap',
+              ...(reapCodeLanded ? { sha: reapTail.sha } : {}),
             })]
           ).catch(() => {});
           broadcastGlobal({
