@@ -90,24 +90,30 @@ async function firstVisiblePainterOutsideCard(page: Page) {
   return page.locator('[data-slot="app-stage-boundary"]').evaluate((boundary) => {
     const paper = boundary.closest<HTMLElement>('[data-surface="paper"]')
     const card = boundary.querySelector<HTMLElement>('[data-slot="app-stage-card"]')
-    if (!paper || !card) return { painterSlot: null, pointOutsideCard: false, sampled: false }
-    const boundaryStyle = getComputedStyle(boundary)
-    if (Number.parseFloat(boundaryStyle.paddingLeft) <= 0) {
-      return { painterSlot: null, pointOutsideCard: false, sampled: false }
+    const header = boundary.parentElement?.querySelector<HTMLElement>('[data-slot="top-bar"]')
+    if (!paper || !card || !header) {
+      return { mutationSlot: null, painterSlot: null, pointOutsideCard: false, sampled: false }
     }
+    const boundaryStyle = getComputedStyle(boundary)
     const probe = document.createElement("div")
     boundary.append(probe)
     const unpaintedBackground = getComputedStyle(probe).backgroundColor
     probe.remove()
-    const rectangle = boundary.getBoundingClientRect()
-    const x = Math.floor(rectangle.left + 1)
-    const y = Math.floor(rectangle.top + rectangle.height / 2)
+    const boundaryRectangle = boundary.getBoundingClientRect()
+    const headerRectangle = header.getBoundingClientRect()
+    const hasExposedBoundaryGutter = Number.parseFloat(boundaryStyle.paddingLeft) > 0
+    const mutationTarget = hasExposedBoundaryGutter ? boundary : header
+    const x = Math.floor(hasExposedBoundaryGutter ? boundaryRectangle.left + 1 : headerRectangle.left + 1)
+    const y = Math.floor(hasExposedBoundaryGutter
+      ? boundaryRectangle.top + boundaryRectangle.height / 2
+      : headerRectangle.top + 1)
     const hit = document.elementFromPoint(x, y)
     let element = hit
     while (element instanceof HTMLElement) {
       const style = getComputedStyle(element)
       if (style.backgroundImage !== "none" || style.backgroundColor !== unpaintedBackground) {
         return {
+          mutationSlot: mutationTarget.dataset.slot || null,
           painterSlot: element.dataset.surface || element.dataset.slot || element.tagName.toLowerCase(),
           pointOutsideCard: !card.contains(hit),
           sampled: true,
@@ -116,7 +122,12 @@ async function firstVisiblePainterOutsideCard(page: Page) {
       if (element === paper) break
       element = element.parentElement
     }
-    return { painterSlot: null, pointOutsideCard: !card.contains(hit), sampled: true }
+    return {
+      mutationSlot: mutationTarget.dataset.slot || null,
+      painterSlot: null,
+      pointOutsideCard: !card.contains(hit),
+      sampled: true,
+    }
   })
 }
 
@@ -198,8 +209,8 @@ test("prints hosted app chrome and its distinct card on the shell Paper in both 
   for (const dark of [false, true]) {
     await page.goto("/react/")
     await page.locator("html").evaluate((node, nextDark) => node.classList.toggle("dark", nextDark), dark)
-    const ordinaryNavigation = await visibleNavigationSurface(page)
-    const ordinaryNavigationBackground = await ordinaryNavigation.evaluate((node) => getComputedStyle(node).backgroundColor)
+    const ordinaryCanvas = page.locator('[data-slot="sidebar-wrapper"]')
+    const ordinaryCanvasBackground = await ordinaryCanvas.evaluate((node) => getComputedStyle(node).backgroundColor)
     const ordinaryPageBackground = await page.locator('[data-slot="sidebar-inset"]').evaluate((node) => getComputedStyle(node).backgroundColor)
 
     await page.goto("/react/apps/recipebot/open")
@@ -216,8 +227,8 @@ test("prints hosted app chrome and its distinct card on the shell Paper in both 
       containsCard: node.contains(document.querySelector('[data-slot="app-stage-card"]')),
       containsHeader: node.contains(document.querySelector('[data-slot="top-bar"]')),
     }))).toEqual({ containsCard: true, containsHeader: true })
-    const hostedNavigation = await visibleNavigationSurface(page)
-    const hostedNavigationBackground = await hostedNavigation.evaluate((node) => getComputedStyle(node).backgroundColor)
+    const hostedCanvas = page.locator('[data-slot="sidebar-wrapper"]')
+    const hostedCanvasBackground = await hostedCanvas.evaluate((node) => getComputedStyle(node).backgroundColor)
     const hostedPageBackground = await paper.evaluate((node) => getComputedStyle(node).backgroundColor)
     const hostedStageBackground = await hostedStage.evaluate((node) => getComputedStyle(node).backgroundColor)
     const hostedHeaderBackground = await hostedHeader.evaluate((node) => getComputedStyle(node).backgroundColor)
@@ -230,21 +241,21 @@ test("prints hosted app chrome and its distinct card on the shell Paper in both 
       return background
     })
 
-    expect(hostedNavigationBackground).toBe(ordinaryNavigationBackground)
+    expect(hostedCanvasBackground).toBe(ordinaryCanvasBackground)
     expect(hostedPageBackground).toBe(ordinaryPageBackground)
     expect(hostedStageBackground).toBe(unpaintedBackground)
     expect(hostedHeaderBackground).toBe(unpaintedBackground)
     expect(hostedCardBackground).not.toBe(hostedPageBackground)
     const visiblePaper = await firstVisiblePainterOutsideCard(page)
-    if (visiblePaper.sampled) {
-      expect(visiblePaper.pointOutsideCard).toBe(true)
-      expect(visiblePaper.painterSlot).toBe("paper")
-      const boundary = page.locator('[data-slot="app-stage-boundary"]')
-      await boundary.evaluate((node, canvasPaint) => { node.style.backgroundColor = canvasPaint }, hostedNavigationBackground)
-      expect((await firstVisiblePainterOutsideCard(page)).painterSlot).toBe("app-stage-boundary")
-      await boundary.evaluate((node) => { node.style.removeProperty("background-color") })
-      expect((await firstVisiblePainterOutsideCard(page)).painterSlot).toBe("paper")
-    }
+    expect(visiblePaper.sampled).toBe(true)
+    expect(visiblePaper.pointOutsideCard).toBe(true)
+    expect(visiblePaper.painterSlot).toBe("paper")
+    expect(visiblePaper.mutationSlot).not.toBeNull()
+    const mutationTarget = page.locator(`[data-slot="${visiblePaper.mutationSlot}"]`)
+    await mutationTarget.evaluate((node, canvasPaint) => { node.style.backgroundColor = canvasPaint }, hostedCanvasBackground)
+    expect((await firstVisiblePainterOutsideCard(page)).painterSlot).toBe(visiblePaper.mutationSlot)
+    await mutationTarget.evaluate((node) => { node.style.removeProperty("background-color") })
+    expect((await firstVisiblePainterOutsideCard(page)).painterSlot).toBe("paper")
   }
 })
 
