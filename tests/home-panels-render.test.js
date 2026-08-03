@@ -275,8 +275,15 @@ test('render: a numeric row gets a progressbar with truthful aria values', () =>
   assert.match(html, /aria-label="[^"]*3 of 8 Apps tested"/);
   // The bar hugs the row's bottom edge — that's what keeps rows uniform —
   // and is OUTLINED so an empty track still reads as a bar.
-  assert.match(html, /absolute left-2\.5 right-2\.5 bottom-\[3px\] h-\[6px\]/);
-  assert.match(html, /home-panel-bar-track[^"]*border border-zinc-300/);
+  //
+  // left-7 (28px), NOT left-2.5: the bar starts at the goal text's left
+  // edge, to the right of the status glyph, so it measures the row's text
+  // instead of running under the dot. Its right edge stays at the row's
+  // gutter. See the glyph pin below for where 28px comes from.
+  assert.match(html, /absolute left-7 right-2\.5 bottom-\[3px\] h-\[9px\]/);
+  // A FAINT outline: it describes the bar's extent without competing with
+  // the violet fill, which is the actual signal.
+  assert.match(html, /home-panel-bar-track[^"]*border border-zinc-300\/60/);
 });
 
 test('render: a numeric row at zero still renders an (empty) bar', () => {
@@ -292,7 +299,27 @@ test('render: a numeric row at zero still renders an (empty) bar', () => {
   // The 0/5 case is exactly why the track is outlined: with no fill at all,
   // the border + light interior are the only thing distinguishing an empty
   // bar from the row's hairline divider.
-  assert.match(html, /home-panel-bar-track[^"]*border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900/);
+  assert.match(html, /home-panel-bar-track[^"]*border border-zinc-300\/60 dark:border-zinc-600\/60 bg-white dark:bg-zinc-900/);
+});
+
+test('both glyph states occupy the same 10px box the bar aligns to', () => {
+  // The bar's left-7 (28px) is px-2.5 (10) + glyph (10) + gap-2 (8). A ✓
+  // that sized itself intrinsically would shift the goal text and
+  // desynchronise the bar from it on precisely the done rows, so both
+  // glyphs are pinned to w-2.5 here.
+  const rows = ({ done, current }) => renderWith({
+    registry: [], hidden: [], panels: [panel({
+      challenges: [challenge({
+        metric: { kind: 'count', label: 'Kudos', target: 5 },
+        progress: { done, current, target: 5 },
+      })],
+    })],
+  }).html;
+  assert.match(rows({ done: false, current: 0 }), /home-panel-glyph shrink-0 w-2\.5 h-2\.5 rounded-full/);
+  assert.match(rows({ done: true, current: 5 }), /home-panel-glyph shrink-0 w-2\.5 h-2\.5 flex/);
+  // The row's own gutter and gap are the other two terms — if either
+  // moves, left-7 has to move with it.
+  assert.match(rows({ done: false, current: 0 }), /home-panel-row flex items-center gap-2 px-2\.5/);
 });
 
 test('render: the row drops the category, task and CTA — task becomes the tooltip', () => {
@@ -627,6 +654,25 @@ test('the cap is a CSS constant, enforced by flex, and clips rather than grows',
   // No runtime measurement — #922 deleted that mechanism for the width
   // axis and app.css says not to bring it back.
   assert.doesNotMatch(HOME, /alignSections|--home-section-indent/);
+});
+
+test('the width cap is half the home column, left-aligned, on both hosts', () => {
+  const css = read('public/css/app.css');
+  // Half of .home-column's 64rem. Pinning both sides means a change to the
+  // column width fails here rather than silently leaving the widget at
+  // some fraction nobody chose.
+  assert.match(css, /--home-panel-max-w:\s*32rem/);
+  assert.match(css.match(/\.home-column \{[^}]*\}/)[0], /max-width:\s*64rem/);
+  // On the article, so BOTH hosts are covered by one rule: the in-grid
+  // slot and the #home-panels section fallback.
+  assert.match(css.match(/\.home-panel \{[^}]*\}/)[0], /max-width:\s*var\(--home-panel-max-w\)/);
+  // And on the drag slot, so the lift ghost and drop indicator match the
+  // widget's real width instead of the full column.
+  assert.match(css.match(/\.home-panel-slot \{[^}]*\}/)[0], /max-width:\s*var\(--home-panel-max-w\)/);
+  // Left-aligned: the block is a grid member and its left edge has to line
+  // up with the first app icon. Auto side margins would centre it.
+  assert.doesNotMatch(css.match(/\.home-panel \{[^}]*\}/)[0], /margin(-left|-right)?:\s*auto/);
+  assert.doesNotMatch(css.match(/\.home-panel-slot \{[^}]*\}/)[0], /margin(-left|-right)?:\s*auto/);
 });
 
 test('the 14rem cap still matches the app tile it is derived from', () => {

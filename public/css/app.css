@@ -361,15 +361,38 @@ html, body {
    but a widget that merely fits under a ceiling still reads tall. 180px
    against a 224px cap leaves ~44px of headroom, which is also what
    absorbs a larger system text size before the rows list starts to
-   clip. */
+   clip.
+
+   WIDTH CAP — half the home column, and derived from it the same way:
+
+     .home-column  max-width  64rem (1024px)
+                              ------
+                   half        32rem (512px)
+
+   A widget is not a section. The trailing sections ("Featured apps",
+   "Create an app") are full-width because their CONTENT is full-width —
+   a horizontal strip of app tiles, a wide call to action. A challenges
+   row is one short line of text plus two small chips, so stretching it
+   to 1024px left most of the block as empty space with a lonely reward
+   chip pinned to the far right, and the eye had to travel the whole
+   column to connect a goal to its points.
+
+   Left-aligned, not centred: the block is a member of the app grid (it
+   is a col-span-full item inside #app-list), so its left edge must line
+   up with the first column of app icons or the grid reads as broken.
+   max-width on a block-level article does that for free — no auto
+   margins, which would centre it. Below 512px the cap is a no-op and
+   the block is as wide as the phone, which is what a phone wants. */
 :root {
   --home-panel-max-h: 14rem;
+  --home-panel-max-w: 32rem; /* half of .home-column's 64rem */
 }
 
 .home-panel {
   display: flex;
   flex-direction: column;
   max-height: var(--home-panel-max-h);
+  max-width: var(--home-panel-max-w);
 }
 
 /* The rows list must be allowed to SHRINK below its content height —
@@ -436,6 +459,13 @@ html, body {
    own gap-2 so the row below doesn't crowd it. */
 .home-panel-slot {
   margin-bottom: 0.5rem;
+  /* Bounded to the same width as the article it hosts, from the same
+     variable — otherwise the slot stays a full-width col-span-full item
+     and the kit's lift ghost and drop-indicator bar are drawn at 1024px
+     around a 512px widget, which reads as dragging something other than
+     what you grabbed. A grid item defaults to justify-self: stretch, so
+     max-width alone keeps it pinned to the grid's first column. */
+  max-width: var(--home-panel-max-w);
 }
 
 /* The feed body is a full-height flex COLUMN so the trailing sections can

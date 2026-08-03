@@ -353,8 +353,14 @@ const HomePanels = {
     const numeric = !!(c.metric && c.progress && c.progress.target != null);
 
     // A glyph, not a chip: same signal, a fraction of the width.
+    //
+    // Both states occupy the SAME 10px box (w-2.5). That is not cosmetic
+    // symmetry: the goal text's left edge and the progress bar's `left-7`
+    // are both computed from this width (px-2.5 10 + glyph 10 + gap-2 8 =
+    // 28px), so a ✓ that sized itself intrinsically would shift the goal —
+    // and desynchronise the bar from it — on exactly the done rows.
     const glyph = done
-      ? '<span class="home-panel-glyph shrink-0 text-emerald-500 text-xs leading-none" aria-hidden="true">&#10003;</span>'
+      ? '<span class="home-panel-glyph shrink-0 w-2.5 h-2.5 flex items-center justify-center text-emerald-500 text-[11px] leading-none" aria-hidden="true">&#10003;</span>'
       : '<span class="home-panel-glyph shrink-0 w-2.5 h-2.5 rounded-full border border-zinc-300 dark:border-zinc-600" aria-hidden="true"></span>';
 
     // whitespace-nowrap on the chip is load-bearing, not decoration: the
@@ -374,17 +380,26 @@ const HomePanels = {
       const pct = HomePanels.progressPercent(current, target);
       const label = c.metric.label ? ` ${c.metric.label}` : '';
       countHtml = `<span class="shrink-0 whitespace-nowrap text-[11px] tabular-nums text-zinc-500 dark:text-zinc-400">${esc(current)}/${esc(target)}</span>`;
-      // An OUTLINED bar: 1px border plus a light interior (white in light
-      // mode, near-black in dark), so an EMPTY 0/5 track still reads as an
-      // empty bar. A borderless 2px grey fill was indistinguishable from
-      // the row's hairline divider — it looked like a rendering artefact
-      // rather than "none of five done".
+      // An OUTLINED bar: a HAIRLINE border plus a light interior (white in
+      // light mode, near-black in dark), so an EMPTY 0/5 track still reads
+      // as an empty bar. A borderless 2px grey fill was indistinguishable
+      // from the row's hairline divider — it looked like a rendering
+      // artefact rather than "none of five done".
       //
-      // Still absolutely positioned near the row's bottom edge and inset to
-      // the row's own text gutter, so the row keeps its fixed height and
-      // the bar can't be mistaken for a full-bleed rule.
+      // The outline is deliberately FAINT (a /60 alpha on both skins): its
+      // whole job is to describe where the bar's extent is, and at full
+      // zinc-300/600 it competed with the violet fill for attention and
+      // made a mostly-empty bar look like the loud element in the row. The
+      // fill is the signal; the outline is the ruler behind it.
+      //
+      // 9px tall — enough to read as a bar rather than a rule at row
+      // density, still absolutely positioned so the row keeps its fixed
+      // 38px height. It starts at left-7 = 28px, the goal text's own left
+      // edge (see the glyph comment above), so it measures the row's TEXT
+      // rather than running under the status dot, where its empty end used
+      // to read as a stray underline attached to the glyph.
       barHtml = `
-        <span class="home-panel-bar-track absolute left-2.5 right-2.5 bottom-[3px] h-[6px] rounded-full border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-900 overflow-hidden"
+        <span class="home-panel-bar-track absolute left-7 right-2.5 bottom-[3px] h-[9px] rounded-full border border-zinc-300/60 dark:border-zinc-600/60 bg-white dark:bg-zinc-900 overflow-hidden"
               role="progressbar" aria-valuenow="${esc(current)}" aria-valuemin="0" aria-valuemax="${esc(target)}"
               aria-label="${esc(c.goal || 'Challenge')}: ${esc(current)} of ${esc(target)}${esc(label)}">
           <span class="home-panel-bar-fill block h-full bg-violet-500" style="width:${pct}%"></span>
