@@ -1782,7 +1782,7 @@ const App = {
   // plus GitHub + Share. (Members & visibility moved to the Dev "+"
   // menu — #645.)
   HeaderMenu: {
-    _sheet: null,
+    _panel: null,
     open() {
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
@@ -1793,27 +1793,52 @@ const App = {
       // throttled inside AiCredit, so this is cheap on every open —
       // and it must run BEFORE the touch branch below, which returns.
       if (window.AiCredit?.refreshAll) AiCredit.refreshAll();
-      // Touch platforms: present the drawer's rows as a draggable
-      // bottom sheet (kit). The panel element itself is adopted via
-      // contentEl — its row listeners ride along — and is restored to
-      // <body> (off-screen, as usual) when the sheet dismisses.
-      // Desktop keeps the right-side slide-over below.
+      // Touch platforms: present the drawer as a kit side panel — a
+      // right-edge slide-in with 1:1 drag-to-dismiss, matching what
+      // desktop's CSS slide-over already does positionally (it used to
+      // come up from the bottom as a sheet capped at 70vh, which cut the
+      // bottom-anchored footer off). The panel element itself is adopted
+      // via contentEl — its row listeners ride along — and is restored to
+      // <body> (off-screen, as usual) when the panel dismisses. Desktop
+      // keeps the right-side slide-over below.
       if (PlatformUI.isTouch()) {
         App.HeaderMenu._renderThemeButtons();
-        panel.classList.add('platform-sheet-adopted');
-        const sheet = PlatformUI.sheet({
+        panel.classList.add('platform-panel-adopted');
+        // Assigned right below; captured here so onDismiss can tell its own
+        // teardown apart from a newer one's (see the guard).
+        let handle = null;
+        const kitPanel = PlatformUI.panel({
           contentEl: panel,
+          side: 'right',
           onDismiss: () => {
-            panel.classList.remove('platform-sheet-adopted');
+            // Teardown is deferred behind the exit spring, so a tap on the
+            // hamburger during that window can re-adopt the drawer into a
+            // NEW kit panel before this fires. Restoring it to <body> then
+            // would yank the node straight back out of the panel the user
+            // just opened, leaving an empty drawer. Only the CURRENT
+            // handle's teardown owns the node.
+            if (handle && App.HeaderMenu._panel !== handle) return;
+            panel.classList.remove('platform-panel-adopted');
             document.body.appendChild(panel);
-            App.HeaderMenu._sheet = null;
+            App.HeaderMenu._panel = null;
+            // The hamburger's state is not the kit's business, so it is
+            // reset here on EVERY exit path (backdrop, Escape, ✕, row
+            // navigation) — they all route through the kit dismiss.
+            btn.setAttribute('aria-expanded', 'false');
+            btn.setAttribute('aria-label', 'Open menu');
           },
         });
-        if (sheet) {
-          App.HeaderMenu._sheet = sheet;
+        handle = kitPanel;
+        if (kitPanel) {
+          App.HeaderMenu._panel = kitPanel;
+          // The touch path used to return before the aria writes below,
+          // leaving the button reading "Open menu" / collapsed while the
+          // drawer was open.
+          btn.setAttribute('aria-expanded', 'true');
+          btn.setAttribute('aria-label', 'Close menu');
           return;
         }
-        panel.classList.remove('platform-sheet-adopted');
+        panel.classList.remove('platform-panel-adopted');
       }
       overlay.classList.remove('hidden');
       // Force a reflow so the transition fires (element was display:none).
@@ -1840,11 +1865,11 @@ const App = {
     // The caret is moved by writing --theme-caret-index (0|1|2) on the
     // track and letting CSS translate a thirds-width element by
     // index * 100%. Deliberately NOT an offsetLeft measurement: this runs
-    // once from open() BEFORE PlatformUI.sheet resizes the panel from
-    // w-60 to the sheet's full width, so a pixel read here would be stale
-    // the moment the sheet presents. Percentages are correct at both
-    // widths with no re-measure, and the transition in CSS is what makes
-    // the caret slide between segments.
+    // once from open() BEFORE PlatformUI.panel resizes the panel from
+    // w-60 to the kit drawer's --un-panel-width, so a pixel read here
+    // would be stale the moment the panel presents. Percentages are
+    // correct at both widths with no re-measure, and the transition in
+    // CSS is what makes the caret slide between segments.
     _renderThemeButtons() {
       if (!window.Theme) return;
       const current = Theme.get();
@@ -1860,8 +1885,8 @@ const App = {
       }
     },
     close() {
-      if (App.HeaderMenu._sheet) {
-        App.HeaderMenu._sheet.dismiss();
+      if (App.HeaderMenu._panel) {
+        App.HeaderMenu._panel.dismiss();
         return;
       }
       const panel = document.getElementById('header-menu-panel');
@@ -1885,6 +1910,10 @@ const App = {
         .addEventListener('click', () => App.HeaderMenu.close());
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
+          // Adopted into a kit panel: the kit's own modal-stack handler
+          // owns Escape (it dismisses the topmost surface, which may be a
+          // modal opened above the drawer). Don't double-handle it.
+          if (App.HeaderMenu._panel) return;
           const panel = document.getElementById('header-menu-panel');
           if (panel && panel.hasAttribute('data-open')) App.HeaderMenu.close();
         }

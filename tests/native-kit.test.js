@@ -309,6 +309,106 @@ test('native.css: .un-sheet does not clip its overscroll filler', () => {
     'overflow:hidden on .un-sheet would clip the overscroll filler away (issue #789)');
 });
 
+// ── Side panel contract ────────────────────────────────────────────────
+// The drawer's overshoot fix and its inset handling live in CSS, so the
+// guards read the shipped stylesheet — same stance as the sheet's ::after
+// above. Its NON-draggability is a deliberate design decision (a nav
+// drawer is not a bottom sheet), so that is pinned too: an earlier
+// revision shipped drag-to-dismiss plus a grabber pill and both were
+// removed as un-native.
+
+test('native.css: .un-panel::after extends the panel surface past its edge', () => {
+  const block = cssBlock('.un-panel::after');
+  assert.match(block, /content:/, 'a pseudo-element without content never renders');
+  assert.match(block, /position:\s*absolute/,
+    'must be out of flow — in-flow would change panel.offsetWidth, which seeds the spring, the backdrop denominator and the dismissal travel');
+  assert.match(block, /width:\s*\d+vw/,
+    'the filler must be viewport-wide so no bounce depth uncovers the dimmed page');
+  assert.match(block, /background:\s*var\(--un-panel-bg\)/,
+    'the filler must be theme-aware — a literal color breaks dark mode');
+  assert.match(block, /pointer-events:\s*none/,
+    'taps outside the panel must keep reaching the backdrop (which dismisses)');
+  // Anchored outward from the panel's own edge, per side.
+  assert.match(cssBlock('.un-panel[data-un-side="right"]::after'), /left:\s*100%/,
+    'a right drawer continues its surface to the RIGHT of the screen edge');
+  assert.match(cssBlock('.un-panel[data-un-side="left"]::after'), /right:\s*100%/,
+    'a left drawer continues its surface to the LEFT of the screen edge');
+});
+
+test('native.css: .un-panel does not clip its filler or restrict input', () => {
+  const block = cssBlock('.un-panel');
+  assert.ok(!/overflow:\s*hidden/.test(block),
+    'overflow:hidden on .un-panel would clip the overshoot filler away (cf. .un-sheet)');
+  assert.match(block, /padding-top:\s*env\(safe-area-inset-top/,
+    'rows must clear the status bar / notch');
+  assert.ok(!/transition:\s*[^;]*transform/.test(block),
+    'translateX is JS-owned (entrance/exit springs) — a CSS transition on transform would fight it');
+  // With no drag gesture there is nothing to take capability away for:
+  // both of these only ever existed to serve the removed pointer handling.
+  assert.ok(!/touch-action/.test(block),
+    'a non-draggable drawer must not narrow touch-action — scrolling inside it is plain native scrolling');
+  assert.ok(!/user-select/.test(block),
+    'user-select:none existed only to keep a drag from selecting text; without the drag it just breaks selection');
+});
+
+test('native.css: the drawer ships no grabber affordance', () => {
+  assert.ok(!/un-panel-grabber/.test(NATIVE_CSS),
+    'the grabber pill promises a drag gesture the panel does not have — it belongs to .un-sheet only');
+  // The sheet's own grabber must survive: it DOES drag.
+  assert.ok(/\.un-sheet-grabber\s*\{/.test(NATIVE_CSS),
+    'removing the panel grabber must not take the bottom sheet\'s with it');
+});
+
+test('native.css: the panel body absorbs the keyboard without stacking the safe area', () => {
+  const body = cssBlock('.un-panel-body');
+  assert.match(body, /overflow-y:\s*auto/, 'the body is the drawer scroller');
+  assert.match(body, /env\(safe-area-inset-bottom/,
+    'the last row must clear the home indicator');
+  assert.match(body, /var\(--un-kb-inset/,
+    'a full-height panel cannot ride above the keyboard — it pads for it instead');
+  const kb = cssBlock('html.un-kb .un-panel-body');
+  assert.match(kb, /padding-bottom:\s*var\(--un-kb-inset, 0px\)/,
+    'keyboard up: the safe area sits BEHIND the keyboard, so the two insets must not stack');
+});
+
+test('native.css: the drawer ships both theming tokens with a sheet-derived surface', () => {
+  const root = cssBlock(':root');
+  assert.match(root, /--un-panel-bg:\s*var\(--un-sheet-bg\)/,
+    'deriving from --un-sheet-bg is what gives the panel dark mode for free');
+  assert.match(root, /--un-panel-width:\s*min\(/,
+    'the default width must be viewport-bounded so a narrow phone never gets a full-bleed drawer');
+});
+
+test('native.js: presentPanel reaches the public surface', () => {
+  assert.match(NATIVE_JS, /function presentPanel\(/, 'the component exists');
+  assert.match(NATIVE_JS, /presentPanel:\s*presentPanel/,
+    'a component that never lands on global.unNative is unreachable by apps');
+});
+
+test('native.js: the drawer carries no drag machinery at all', () => {
+  const at = NATIVE_JS.indexOf('function presentPanel(');
+  // The function body, up to the next top-level component.
+  const fn = NATIVE_JS.slice(at, NATIVE_JS.indexOf('\n  function ', at + 30));
+  for (const [pattern, why] of [
+    [/pointerdown|pointermove|pointerup|pointercancel/, 'pointer handling'],
+    [/lockIntent/, 'an axis intent lock'],
+    [/rubberband/, 'elastic over-drag'],
+    [/gestures\.claim/, 'a gesture-arbiter claim'],
+    [/estimateVelocity|projectDisplacement/, 'release-velocity projection'],
+    [/setPointerCapture/, 'pointer capture'],
+    [/stopPropagation/, 'a click swallow'],
+    [/grabber/, 'a grabber affordance'],
+  ]) {
+    assert.ok(!pattern.test(fn),
+      `presentPanel must not reintroduce ${why} — a nav drawer is closed by the backdrop / Escape / a row, not by swiping`);
+  }
+  // What it DOES keep: springs both ways, and the backdrop riding along.
+  assert.match(fn, /springTo\(0\)/, 'the entrance spring');
+  assert.match(fn, /springTo\(width, teardown\)/, 'the exit spring, then teardown');
+  assert.match(fn, /backdrop\.style\.opacity/, 'the dim rides the slide as one motion');
+  assert.match(fn, /modalStack\.push/, 'Escape dismissal via the shared modal stack');
+});
+
 // ── Pull-to-refresh puck sits BELOW the app header ─────────────────────
 // The puck used to be anchored to the top of the scroller's PARENT — i.e.
 // the top of the whole shell, header included — at z-index 2, so it was
