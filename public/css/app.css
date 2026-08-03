@@ -3280,6 +3280,48 @@ body.is-view-as-non-admin #view-as-non-admin-banner {
   50%      { opacity: 0.5; }
 }
 
+/* ── Header height invariant ──────────────────────────────
+   The platform shell has two authored top bars — #platform-header
+   (signed in: home, app view, leaderboard, profile, settings, the admin
+   console, …) and #landing-header (the anonymous shell) — and they must
+   be the SAME height on every screen. Both are built the same way:
+
+     py-3 (12px top + bottom) + a 1px `border-b` hairline
+     around a 28px CONTENT ROW  =  53px, plus env(safe-area-inset-top)
+     via .un-safe-top-extend (native.css) on the padding-top.
+
+   Neither header sets its own height — it's a flex row, so the row is
+   `max(child heights)`. That made the height follow whichever child
+   happened to be present, and it varied per screen: 53px on home, 55px
+   inside an app (the App/Dev switch was 30px), 61px on a wide landing
+   screen (the CTAs were 36px at `sm`), and only 45px on the native
+   home screen, where html.in-native-webview hides #header-title (the
+   28px `text-lg` line box that was silently holding the row open).
+
+   So the row is pinned from BOTH directions, in the markup:
+
+   - FLOOR: the lead back-button wrapper (`div.w-5.h-7.shrink-0` — the
+     one child present in every state of both headers) carries `h-7` =
+     28px, which survives the title being display:none. It stays `w-5`:
+     header-layout.js measures it as the title's left side group.
+   - CEILING: no direct child of either header may exceed 28px, and the
+     children that could grow past it state their height OUTRIGHT rather
+     than adding up to it — #app-mode-switch is `h-7` with
+     `items-stretch` segments, the landing CTAs are `h-7 inline-flex
+     items-center`. Padding arithmetic is what broke this twice: the
+     switch's `py-1` segments + `p-0.5` track came to 28px only if you
+     forgot its 1px border (it was 30px), and the bordered "Join
+     waitlist" CTA was 30px next to its borderless 28px siblings for the
+     same reason. Anything new added to a header gets the same 28px
+     budget — declare `h-7` and centre inside it.
+
+   Absolutely-positioned badges (#notifications-badge,
+   #notifications-badge-ai, #dev-console-badge,
+   #header-menu-deploy-dot) are outside flow, contribute no height, and
+   are MEANT to overflow the row — never add overflow:hidden here.
+
+   tests/header-height-parity.test.js pins all of the above. */
+
 /* ── Header title centering ───────────────────────────────
    `#header-title` is in flex flow by default (left-aligned, truncating
    from the right when the right group eats its width). When there's
