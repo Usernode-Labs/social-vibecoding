@@ -5,7 +5,9 @@
 //   - closed-unmerged PR → reopened, promote proceeds;
 //   - reopen refused → 409 with an actionable error, session NOT promoted;
 //   - already-merged PR → 409 (nothing left to vote on);
-//   - open PR / transient GET failure → promote proceeds as before.
+//   - open PR → its immutable head is captured and promotion proceeds;
+//   - transient GET failure → promotion fails closed (nothing can be reviewed
+//     or checked against an unknown revision).
 //
 // Drives the real Express router over HTTP with all collaborators stubbed
 // via require.cache (same pattern as debug-route.test.js for the HTTP
@@ -18,6 +20,8 @@ const assert = require('node:assert/strict');
 const express = require('express');
 
 const { mergeGate } = require('../src/services/active-users');
+const HEAD = 'a'.repeat(40);
+const OLD_HEAD = 'b'.repeat(40);
 
 function stub(id, exports) {
   require.cache[id] = { id, filename: id, loaded: true, exports, paths: [] };
@@ -48,13 +52,14 @@ const sessionRow = {
   repo_url: 'https://github.com/acme/widget', branch_name: 'dev/x-1',
   pr_number: 26, pr_title: 'Native iOS look', pr_url: 'https://github.com/acme/widget/pull/26',
   staging_url: 'https://stage.example', user_id: 3, status: 'active',
+  checks_commit_sha: HEAD,
 };
 
-function promotePool() {
+function promotePool(session = sessionRow) {
   return makeRecordingPool([
-    [/cs\.status = 'active'/, [{ ...sessionRow }]],
+    [/cs\.status = 'active'/, [{ ...session }]],
     [/COUNT\(\*\) AS cnt FROM chat_sessions/i, [{ cnt: '0' }]],
-    [/SET status = 'promoted', promoted_at = NOW\(\)/, []],
+    [/SET status = 'promoted', promoted_at = NOW\(\),[\s\S]*reviewed_head_sha/, []],
   ]);
 }
 
@@ -88,7 +93,7 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
     isEnabled: () => true,
     getPR: async (owner, repo, pr) => {
       getPRCalls.push({ owner, repo, pr });
-      if (!getPRImpl) return { state: 'open', merged: false };
+      if (!getPRImpl) return { state: 'open', merged: false, head: { sha: HEAD } };
       return getPRImpl(owner, repo, pr);
     },
     reopenPR: async (owner, repo, pr) => {
@@ -137,8 +142,8 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
   return { voteRoutes, getPRCalls, reopenCalls, systemMessages, restore };
 }
 
-async function withServer({ getPRImpl, reopenImpl } = {}, fn) {
-  const pool = promotePool();
+async function withServer({ getPRImpl, reopenImpl, session } = {}, fn) {
+  const pool = promotePool(session);
   const ctx = loadVotesRouter({ getPRImpl, reopenImpl, pool });
   const app = express();
   app.use(express.json());
@@ -155,30 +160,47 @@ async function withServer({ getPRImpl, reopenImpl } = {}, fn) {
   }
 }
 
-test('promote: an open PR promotes as before (no reopen call)', async () => {
-  await withServer({ getPRImpl: async () => ({ state: 'open', merged: false }) }, async (ctx) => {
+test('promote: an open PR captures its head and promotes (no reopen call)', async () => {
+  await withServer({ getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }) }, async (ctx) => {
     const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
     assert.equal(r.status, 200);
     const body = await r.json();
     assert.equal(body.ok, true);
     assert.equal(body.prNumber, 26);
     assert.equal(ctx.reopenCalls.length, 0);
-    assert.ok(ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\)/), 'session promoted');
+    assert.ok(ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\),[\s\S]*reviewed_head_sha/),
+      'session promoted with a reviewed head');
+    const update = ctx.pool.queries.find((q) => /reviewed_head_sha/.test(q.sql));
+    assert.equal(update.params[1], HEAD, 'live PR head persisted as the reviewed revision');
+  });
+});
+
+test('promote: retained votes are limited to the newly reviewed revision', async () => {
+  await withServer({
+    session: { ...sessionRow, reviewed_head_sha: OLD_HEAD },
+    getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }),
+  }, async (ctx) => {
+    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(r.status, 200);
+    const deletion = ctx.pool.queries.find((q) => /DELETE FROM pr_votes/.test(q.sql));
+    assert.ok(deletion, 'stale or unbound votes are cleared on re-promotion');
+    assert.match(deletion.sql, /head_sha IS DISTINCT FROM \$2/);
+    assert.deepEqual(deletion.params, [sessionRow.id, HEAD]);
   });
 });
 
 test('promote: a closed-unmerged PR is reopened, then promoted', async () => {
-  await withServer({ getPRImpl: async () => ({ state: 'closed', merged: false }) }, async (ctx) => {
+  await withServer({ getPRImpl: async () => ({ state: 'closed', merged: false, head: { sha: HEAD } }) }, async (ctx) => {
     const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
     assert.equal(r.status, 200);
     assert.deepEqual(ctx.reopenCalls, [{ owner: 'acme', repo: 'widget', pr: 26 }]);
-    assert.ok(ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\)/), 'session promoted');
+    assert.ok(ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\),[\s\S]*reviewed_head_sha/), 'session promoted');
   });
 });
 
 test('promote: a closed PR whose reopen is refused → 409, session NOT promoted', async () => {
   await withServer({
-    getPRImpl: async () => ({ state: 'closed', merged: false }),
+    getPRImpl: async () => ({ state: 'closed', merged: false, head: { sha: HEAD } }),
     reopenImpl: async () => { throw new Error('head branch was deleted'); },
   }, async (ctx) => {
     const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
@@ -201,12 +223,14 @@ test('promote: an already-merged PR → 409 (nothing left to vote on)', async ()
   });
 });
 
-test('promote: a transient PR-state GET failure fails open (promote proceeds)', async () => {
+test('promote: a transient PR-state GET failure fails closed before voting', async () => {
   await withServer({ getPRImpl: async () => { throw new Error('api hiccup'); } }, async (ctx) => {
     const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
-    assert.equal(r.status, 200);
+    assert.equal(r.status, 503);
+    const body = await r.json();
+    assert.match(body.error, /could not verify/i);
     assert.equal(ctx.reopenCalls.length, 0);
-    assert.ok(ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\)/),
-      'a GitHub hiccup must not block promotion');
+    assert.ok(!ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\)/),
+      'an unverified revision never enters voting');
   });
 });

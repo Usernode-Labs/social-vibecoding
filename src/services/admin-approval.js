@@ -8,9 +8,10 @@
 //
 // Semantics:
 //   - `isAppLocked(pool, appId)` — straight column read.
-//   - `hasAdminYesVote(pool, sessionId)` — at least one FULL admin
+//   - `hasAdminYesVote(pool, sessionId, headSha)` — at least one FULL admin
 //     (is_admin = TRUE AND admin_readonly = FALSE) has 'yes' in pr_votes
-//     for this PR. A view-only admin's vote does NOT satisfy the lock
+//     for this PR's current reviewed revision. A view-only admin's vote does
+//     NOT satisfy the lock
 //     (issue #311): the lock exists to require a trusted full admin to
 //     sign off, and a view-only admin is by definition not a privileged
 //     approver.
@@ -28,17 +29,18 @@ async function isAppLocked(pool, appId) {
   return !!rows[0]?.locked;
 }
 
-async function hasAdminYesVote(pool, sessionId) {
+async function hasAdminYesVote(pool, sessionId, headSha = null) {
   const { rows } = await pool.query(
     `SELECT 1
        FROM pr_votes pv
        JOIN users u ON u.id = pv.user_id
       WHERE pv.session_id = $1
         AND pv.vote = 'yes'
+        AND ($2::varchar IS NULL OR pv.head_sha = $2)
         AND u.is_admin = TRUE
         AND u.admin_readonly = FALSE
       LIMIT 1`,
-    [sessionId]
+    [sessionId, headSha]
   );
   return rows.length > 0;
 }

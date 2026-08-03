@@ -82,6 +82,7 @@ const appAccess = require('./src/services/app-access');
 const platformJwt = require('./src/services/platform-jwt');
 const { getPool } = require('./src/db/pool');
 const { trustedProxyClientIp } = require('./src/services/client-ip');
+const { currentVotePredicateSql } = require('./src/services/pr-vote-revision');
 
 const config = loadConfig();
 log.setLevel(config.logLevel);
@@ -3108,7 +3109,10 @@ function startStalePrSweeper(config) {
     notifyMs: config.prStaleNotifyMs, graceMs: config.prStaleGraceMs,
     retentionMs: config.archivedRetentionMs, intervalMs: config.staleSweepIntervalMs,
   });
-  const { checkAndMerge } = require('./src/routes/votes');
+  const {
+    checkAndMerge,
+    reconcilePromotedSweepHead,
+  } = require('./src/routes/votes');
   const issuesModule = require('./src/routes/issues');
   const governance = require('./src/services/governance');
   const appAdmins = require('./src/services/app-admins');
@@ -3128,8 +3132,12 @@ function startStalePrSweeper(config) {
     try {
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug AS app_slug, a.repo_url, a.self_hosted AS app_self_hosted,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no')  AS no_count
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'no'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
            FROM chat_sessions cs JOIN apps a ON a.id = cs.app_id
           WHERE cs.status = 'promoted' AND cs.is_headless = FALSE
             AND (cs.behind_main IS NULL OR cs.behind_main = 0)
@@ -3138,6 +3146,21 @@ function startStalePrSweeper(config) {
       for (const session of rows) {
         if (worker.isInFlight(session.id)) continue;
         try {
+          // Native PR branches can be updated outside Usernode. Refresh their
+          // immutable reviewed revision before any timed governance decision,
+          // including automatic rejection. Imported proposals retain their
+          // existing imported-head synchronization behavior.
+          const sweepRevision = await reconcilePromotedSweepHead({
+            config, pool, session,
+          });
+          if (sweepRevision.blocked) {
+            log.warn('server', 'Window-elapsed sweep skipped: native revision unavailable', {
+              sessionId: session.id,
+              transient: !!sweepRevision.transient,
+              reason: sweepRevision.reason,
+            });
+            continue;
+          }
           // #788: backfill the explicit-approval flag for never-classified
           // rows AND re-verify rows stored TRUE (a flag can go stale once
           // main moves or a sync rewrites the branch); FALSE rows are
@@ -3154,9 +3177,9 @@ function startStalePrSweeper(config) {
             kind: 'pr', id: session.id,
             openedAt: session.promoted_at || session.created_at,
             explicitApproval: !!session.requires_explicit_approval,
-            // #687 Slice 3: keep this pre-filter consistent with the
-            // head-scoped gate checkAndMerge applies to imported rows.
-            headSha: session.source === 'imported' ? (session.imported_pr_head_sha || null) : null,
+            // Count only votes on the current immutable revision for both
+            // imported and native GitHub-backed proposals.
+            headSha: sweepRevision.headSha,
           });
           // Merge takes precedence: a row that just became mergeable should
           // merge, not reject. checkAndMerge re-confirms both gates atomically.

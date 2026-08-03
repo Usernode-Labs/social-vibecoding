@@ -509,7 +509,7 @@ function makePromotePool(sessionRow) {
     if (/SELECT content FROM chat_session_messages/i.test(s)) {
       return { rows: [{ content: 'please ship the bot change' }] };
     }
-    if (/UPDATE chat_sessions SET status = 'promoted'/i.test(s)) {
+    if (/UPDATE chat_sessions[\s\S]*SET status = 'promoted'/i.test(s)) {
       state.promoted = true;
       return { rows: [], rowCount: 1 };
     }

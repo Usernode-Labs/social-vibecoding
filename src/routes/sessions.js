@@ -43,6 +43,10 @@ const debugAccess = require('../services/debug-access');
 // stub gather().
 const statusSvc = require('../services/status');
 const { announceIssueCreated } = require('../services/issue-announce');
+const {
+  reviewedHeadForSession,
+  currentVotePredicateSql,
+} = require('../services/pr-vote-revision');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
@@ -1200,8 +1204,12 @@ function sessionRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'no'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.user_id = $2`,
@@ -1233,7 +1241,10 @@ function sessionRoutes(config) {
           const gov = await governanceSvc.getGovernance(pool, rows[0].app_id);
           const electorate = await governanceSvc.getElectorate(pool, rows[0].app_id, gov);
           const q = electorate.approverIds
-            ? await governanceSvc.qualifiedCounts(pool, 'pr', rows[0].id, electorate.approverIds)
+            ? await governanceSvc.qualifiedCounts(
+              pool, 'pr', rows[0].id, electorate.approverIds,
+              reviewedHeadForSession(rows[0])
+            )
             : { yes: rows[0].yes_count, no: rows[0].no_count };
           const gate = governanceSvc.computeGate(
             gov, electorate.active, q.yes, q.no, rows[0].promoted_at || rows[0].created_at
