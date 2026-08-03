@@ -183,15 +183,29 @@ const Browse = {
     }
   },
 
-  // Featured first (by the admin's featured_order, ascending), then the
-  // server's activity order untouched. Array.prototype.sort is stable, so
-  // the non-featured tail keeps exactly the order /api/apps returned.
+  // Featured first (by the admin's featured_order, ascending), then
+  // everything else by NUMBER OF USERS, most-used first — the directory's
+  // "what are people actually using" ordering. Ties fall back to the order
+  // /api/apps returned (its own activity ranking), which Array.prototype
+  // .sort preserves because it is stable.
+  //
+  // Featured apps keep the admin's order among themselves rather than being
+  // re-sorted by users: that list IS a curation, and reordering it would
+  // silently override the choice made in the admin console.
   // Pure — unit-tested in tests/browse-screen.test.js.
   sortApps(apps) {
-    const rank = (a) => (a && a.featured
+    const featuredRank = (a) => (a && a.featured
       ? (a.featured_order == null ? Number.MAX_SAFE_INTEGER - 1 : a.featured_order)
       : Number.MAX_SAFE_INTEGER);
-    return (apps || []).slice().sort((x, y) => rank(x) - rank(y));
+    const users = (a) => (parseInt(a && a.active_users, 10) || 0);
+    return (apps || []).slice().sort((x, y) => {
+      const fx = featuredRank(x);
+      const fy = featuredRank(y);
+      if (fx !== fy) return fx - fy;
+      // Same bucket. Inside the featured bucket the ranks already differ
+      // (distinct sort_order), so this only orders the non-featured tail.
+      return users(y) - users(x);
+    });
   },
 
   // The rows for the current query. Search covers EVERY visible app here

@@ -277,31 +277,62 @@ html, body {
   padding: 0.25rem 0;
 }
 
+/* Width bound for the home screen's trailing sections (Featured apps,
+   Create an app). Their content is a single card rather than a launcher
+   grid, so letting it stretch the full width of a desktop window leaves
+   one very wide, very short box; this keeps them a readable column,
+   centred, with the heading aligned to the card it labels. */
+.home-section-block {
+  max-width: 48rem; /* Tailwind max-w-3xl */
+  margin-left: auto;
+  margin-right: auto;
+}
+
 /* ── Browse screen rows / boxes ─────────────────────────────
    The #apps screen renders ONE row markup (icon · name+meta · Add
    button) and lets CSS pick the layout: a hairline-divided vertical
    list on a phone, bordered app boxes in a 2/3-column grid on a wide
-   screen — the Apple App Store shape at both sizes. The grid itself is
-   Tailwind responsive classes on #browse-list; the per-row BOX
-   treatment lives here rather than as six stacked `md:dark:` variants
-   per row, so the rule is readable and can't depend on the CDN JIT
-   having generated an unusual variant stack.
+   screen — the Apple App Store shape at both sizes. Only the GRID is
+   Tailwind (responsive classes on #browse-list); every border lives
+   here, which is deliberate and load-bearing:
+
+   Tailwind's `divide-y` compiles to
+     .divide-y > :not([hidden]) ~ :not([hidden]) { border-top-width: 1px;
+                                                   border-bottom-width: 0 }
+   and `md:divide-y-0` zeroes BOTH widths on the same selector. That
+   selector is (0,3,0) and beats a bare `.browse-row` (0,1,0), so mixing
+   the two mechanisms stripped the top AND bottom border from every box
+   except the first child — which is exactly the bug this replaced. The
+   hairline is therefore a sibling rule here, in the same cascade as the
+   box, and #browse-list carries no divide-* utilities at all.
 
    Written as one min-width query matching Tailwind's `md` (768px) —
    keep the two in step if the container's breakpoint ever moves. */
 
-.browse-row { transition: background-color 150ms, border-color 150ms; }
+.browse-row {
+  /* One hairline token per theme so the rules below never need a `.dark`
+     variant (which would out-specify the sibling/hover rules). */
+  --browse-border: var(--border-light);
+  transition: background-color 150ms, border-color 150ms;
+}
+.dark .browse-row { --browse-border: var(--border); }
 .browse-row:hover { background-color: var(--bg-card); }
 
+/* Phone: a single hairline BETWEEN consecutive rows, no box. */
+.browse-row + .browse-row { border-top: 1px solid var(--browse-border); }
+
+/* md+: every row is its own complete box. The sibling selector is listed
+   alongside so this wins over the phone rule at equal specificity rather
+   than relying on source order alone. */
 @media (min-width: 768px) {
-  .browse-row {
-    border: 1px solid var(--border-light);
+  .browse-row,
+  .browse-row + .browse-row {
+    border: 1px solid var(--browse-border);
     border-radius: 0.75rem; /* rounded-xl, matching the icon tiles */
   }
-  .browse-row:hover { border-color: var(--accent-light); }
+  .browse-row:hover,
+  .browse-row + .browse-row:hover { border-color: var(--accent-light); }
 }
-
-.dark .browse-row { border-color: var(--border); }
 
 /* ── App-card "…" actions menu ─────────────────────────────
    Popover built by Home.openCardMenu (appended to <body>, fixed-

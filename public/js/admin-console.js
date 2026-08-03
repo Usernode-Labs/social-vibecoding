@@ -117,7 +117,7 @@ const AdminConsole = {
     { key: 'features', label: 'Submitted features', group: 'Insights' },
 
     { key: 'campaigns', label: 'Maintenance campaigns', group: 'Platform' },
-    // The home screen's "Find more apps" row. NOT the `features` key
+    // The home screen's "Featured apps" row. NOT the `features` key
     // above — that one is "Submitted features" (user feature requests).
     { key: 'featured-apps', label: 'Featured apps', group: 'Platform' },
     { key: 'db-export', label: 'Database export', group: 'Platform' },
@@ -679,7 +679,7 @@ const AdminConsole = {
 
   // ── Featured apps ─────────────────────────────────────────────────────
   //
-  // The admin-curated row under "Find more apps" on every user's home
+  // The admin-curated row under "Featured apps" on every user's home
   // screen (public/js/home.js renderFindMore). One global ordered list:
   // GET /api/admin/featured-apps returns it plus everything still
   // available to add, and PUT rewrites it wholesale from an ordered slug
@@ -707,7 +707,7 @@ const AdminConsole = {
           <button id="admin-featured-refresh" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
         </div>
         <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
-          These apps appear in the &ldquo;Find more apps&rdquo; row on everyone&rsquo;s
+          These apps appear in the &ldquo;Featured apps&rdquo; row on everyone&rsquo;s
           home screen, in this order. Apps a user has already added are left
           out of their row, and an app someone can&rsquo;t see never shows up
           for them. Up to ${AdminConsole.FEATURED_MAX} apps.

@@ -1,5 +1,5 @@
 // Admin featured-apps endpoints — the write side of the home screen's
-// "Find more apps" row.
+// "Featured apps" row.
 //
 //   GET  /api/admin/featured-apps  — read; router-level admin gate ONLY,
 //        so a view-only admin can inspect the list (same stance as

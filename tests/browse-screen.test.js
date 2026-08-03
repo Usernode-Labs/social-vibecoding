@@ -172,11 +172,45 @@ test('sortApps: featured rows lead, ordered by featured_order', () => {
   );
 });
 
-test('sortApps: the non-featured tail keeps the server order exactly', () => {
+test('sortApps: the non-featured tail is ordered by users, most first', () => {
   const { Browse } = makeBrowse();
-  // /api/apps orders by activity; a stable sort must not disturb it.
-  const apps = ['c', 'a', 'b'].map((slug) => app({ slug }));
+  const apps = [
+    app({ slug: 'few', active_users: 2 }),
+    app({ slug: 'many', active_users: 40 }),
+    app({ slug: 'none' }),
+    app({ slug: 'some', active_users: 9 }),
+  ];
+  assert.deepEqual(Browse.sortApps(apps).map((a) => a.slug),
+    ['many', 'some', 'few', 'none']);
+});
+
+test('sortApps: equal user counts fall back to the server order', () => {
+  const { Browse } = makeBrowse();
+  // /api/apps already ranks by activity; a stable sort must not disturb
+  // that among apps the user count can't separate.
+  const apps = ['c', 'a', 'b'].map((slug) => app({ slug, active_users: 5 }));
   assert.deepEqual(Browse.sortApps(apps).map((a) => a.slug), ['c', 'a', 'b']);
+});
+
+test('sortApps: user count never reorders the admin-curated featured list', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'feat-second', featured: true, featured_order: 1, active_users: 99 }),
+    app({ slug: 'feat-first', featured: true, featured_order: 0, active_users: 0 }),
+    app({ slug: 'popular', active_users: 50 }),
+  ];
+  assert.deepEqual(Browse.sortApps(apps).map((a) => a.slug),
+    ['feat-first', 'feat-second', 'popular'],
+    'curation is a choice — users must not silently override it');
+});
+
+test('sortApps: a non-numeric user count is treated as zero', () => {
+  const { Browse } = makeBrowse();
+  const apps = [
+    app({ slug: 'junk', active_users: null }),
+    app({ slug: 'real', active_users: 1 }),
+  ];
+  assert.deepEqual(Browse.sortApps(apps).map((a) => a.slug), ['real', 'junk']);
 });
 
 test('sortApps: a featured row with a NULL order still leads', () => {
@@ -241,16 +275,33 @@ test('renderAppRow: the layout switch is pure CSS on the container', () => {
   // rows pick up a box treatment from .browse-row in app.css. No
   // matchMedia, so nothing re-renders on resize.
   const listTag = INDEX.match(/<div id="browse-list"[^>]*>/)[0];
-  assert.match(listTag, /divide-y/, 'mobile list hairlines');
-  assert.match(listTag, /md:divide-y-0/);
   assert.match(listTag, /md:grid/);
   assert.match(listTag, /md:grid-cols-2/);
   assert.match(listTag, /lg:grid-cols-3/);
   assert.doesNotMatch(BROWSE_SRC, /matchMedia\(/, 'the breakpoint is CSS, not JS');
-  // The box treatment itself.
+
+  // NO divide-* utility on the container. Tailwind's divide-y sets
+  // border-bottom-width: 0 (and md:divide-y-0 zeroes the top too) via
+  // `.divide-y-0 > :not([hidden]) ~ :not([hidden])`, which is (0,3,0) and
+  // beat the (0,1,0) .browse-row box rule — every desktop box but the
+  // FIRST lost its top and bottom edge. Both borders live in one cascade
+  // now; putting a divide utility back here reopens that bug.
+  assert.doesNotMatch(listTag, /divide-/,
+    'the phone hairline is .browse-row + .browse-row in app.css');
+
   const css = read('public/css/app.css');
-  assert.match(css, /@media \(min-width: 768px\) \{\s*\.browse-row \{/);
-  assert.match(css, /\.browse-row \{ transition/);
+  assert.match(css, /\.browse-row \+ \.browse-row \{ border-top: 1px solid/,
+    'phone: a hairline between consecutive rows');
+  // The md block re-states the sibling selector so the full box wins at
+  // equal specificity instead of relying on source order alone.
+  const mdBlock = css.slice(css.indexOf('@media (min-width: 768px)'));
+  const box = mdBlock.slice(0, mdBlock.indexOf('}\n}') + 3);
+  assert.match(box, /\.browse-row,\s*\n\s*\.browse-row \+ \.browse-row \{/);
+  assert.match(box, /border: 1px solid var\(--browse-border\)/);
+  assert.match(box, /border-radius/);
+  // One theme token instead of `.dark` variants, which would out-specify
+  // the sibling and hover rules.
+  assert.match(css, /\.dark \.browse-row \{ --browse-border/);
 });
 
 test('renderAppRow: status pills and the status word ride the row', () => {

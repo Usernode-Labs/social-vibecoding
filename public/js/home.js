@@ -97,7 +97,7 @@ const Home = {
     return (apps || []).filter((a) => Home.matchesQuery(a, query));
   },
 
-  // How many admin-featured tiles the "Find more apps" row shows.
+  // How many admin-featured tiles the "Featured apps" row shows.
   FEATURED_LIMIT: 6,
 
   // The featured row's contents for this viewer: admin-curated apps
@@ -179,7 +179,7 @@ const Home = {
         }).join('');
       } else {
         // Compact inline line, NOT a full-height empty state: the
-        // sections below ("Find more apps", "Create an app") are what
+        // sections below ("Featured apps", "Create an app") are what
         // this user needs to see, and a centered hero would push them
         // off the fold. Most accounts have zero apps here.
         html += `<div class="col-span-full pb-2 text-sm text-zinc-500 dark:text-zinc-400">You haven&rsquo;t added any apps yet — pick one below.</div>`;
@@ -195,7 +195,7 @@ const Home = {
     Home._searchReveal.sync();
   },
 
-  // "Find more apps": one contained card holding the admin-curated
+  // "Featured apps": one contained card holding the admin-curated
   // featured tiles and, as its attached footer row, the way into the
   // #apps browse screen (see the card markup in index.html).
   //

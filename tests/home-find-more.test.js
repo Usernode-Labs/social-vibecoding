@@ -1,12 +1,15 @@
-// "Find more apps" + "Create an app" — the two sections below the home
+// "Featured apps" + "Create an app" — the two sections below the home
 // screen's "Your apps" grid.
 //
-// Find more apps is ONE contained card: the heading, the admin-curated
-// featured tiles (the `featured` / `featured_order` flags GET /api/apps
-// serializes from the featured_apps table) and — as an attached footer
-// row inside the same card — the way into the #apps browse screen.
-// Create an app is the former in-grid "Build your own app" tile, now the
-// page's last section.
+// All three sections share one shape: a .home-section-header, then the
+// content, inside a width-bounded .home-section-block so they read as a
+// consistent stack and don't stretch edge-to-edge on a desktop window.
+//
+// Featured apps' content is ONE contained card: the admin-curated tiles
+// (the `featured` / `featured_order` flags GET /api/apps serializes from
+// the featured_apps table) plus, as an attached footer row inside the same
+// card, the way into the #apps browse screen. Create an app is the former
+// in-grid "Build your own app" tile, now the page's last section.
 //
 // Run with: node --test tests/home-find-more.test.js
 
@@ -204,7 +207,8 @@ test('index.html carries the two new sections inside the home scroller', () => {
     INDEX.indexOf('<main id="browse-screen"')
   );
   assert.ok(main.includes('id="home-find-more"'));
-  assert.ok(main.includes('>Find more apps<'));
+  assert.ok(main.includes('>Featured apps<'), 'the section names itself explicitly');
+  assert.doesNotMatch(main, />Find more apps</, 'the vaguer old heading is gone');
   assert.ok(main.includes('id="home-featured-list"'));
   assert.ok(main.includes('id="home-featured-empty"'));
   assert.ok(main.includes('Browse all apps'));
@@ -213,7 +217,7 @@ test('index.html carries the two new sections inside the home scroller', () => {
   assert.ok(main.includes('id="home-create-body"'));
 });
 
-test('Find more apps is ONE contained card, not a header over a loose grid', () => {
+test('the featured tiles + browse action are ONE contained card', () => {
   const section = INDEX.slice(
     INDEX.indexOf('<section id="home-find-more"'),
     INDEX.indexOf('<section id="home-create-section"')
@@ -225,13 +229,38 @@ test('Find more apps is ONE contained card, not a header over a loose grid', () 
   assert.match(card[0], /rounded-xl/);
   assert.match(card[0], /border/);
   assert.match(card[0], /bg-zinc-50\/70|bg-zinc/);
-  // Heading, tiles and footer all live INSIDE that wrapper. Sliced from
-  // the wrapper onward so the explanatory comment above it (which also
-  // says "Find more apps") can't satisfy these.
+  // Tiles and footer live INSIDE that wrapper. Sliced from the wrapper
+  // onward so the explanatory comment above it can't satisfy these.
   const inner = section.slice(section.indexOf('home-find-more-card'));
-  for (const inside of ['>Find more apps<', 'home-featured-list', 'home-featured-empty', 'home-browse-btn']) {
+  for (const inside of ['home-featured-list', 'home-featured-empty', 'home-browse-btn']) {
     assert.ok(inner.includes(inside), `${inside} is inside the card`);
   }
+  // The HEADING is outside it, so the section matches Your apps / Create
+  // an app rather than burying its label in the card.
+  assert.ok(!inner.includes('>Featured apps<'), 'the heading labels the card from outside');
+  assert.ok(section.indexOf('>Featured apps<') < section.indexOf('home-find-more-card'));
+});
+
+test('both trailing sections share the section shape and a width bound', () => {
+  const main = INDEX.slice(
+    INDEX.indexOf('<main id="home-screen"'),
+    INDEX.indexOf('<main id="browse-screen"')
+  );
+  for (const id of ['home-find-more', 'home-create-section']) {
+    const section = main.slice(main.indexOf(`<section id="${id}"`));
+    const head = section.slice(0, section.indexOf('</section>'));
+    // Width-bounded + centred, so neither card stretches the full width of
+    // a desktop window.
+    assert.match(head, /home-section-block/, `${id} is width-bounded`);
+    // …and the heading uses the same class as "Your apps".
+    assert.match(head, /class="home-section-header"/, `${id} uses the shared heading`);
+    assert.ok(head.indexOf('home-section-block') < head.indexOf('home-section-header'),
+      `${id}: the heading sits inside the bounded block, aligned to its card`);
+  }
+  // The bound itself lives in app.css (one rule, both sections).
+  const css = read('public/css/app.css');
+  assert.match(css, /\.home-section-block \{[^}]*max-width/);
+  assert.match(css, /\.home-section-block \{[^}]*margin-left: auto/);
 });
 
 test('the browse action is an attached footer row of that card', () => {
