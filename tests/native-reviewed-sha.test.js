@@ -347,7 +347,11 @@ test('native head-moved merge returns to review and resets against the new live 
       'old-revision approvals are cleared immediately');
     assert.deepEqual(ctx.pendingCalls, [{ sessionId: session.id, sha: NEW }]);
     assert.equal(ctx.rerunCalls[0].newHead, NEW);
-    assert.ok(ctx.voteUpdates.some((u) => u.headMoved === true));
+    assert.ok(ctx.voteUpdates.some((u) => u.headMoved === true
+      && u.merging === false && u.merged === false),
+      'the un-latch broadcast carries the terminal merging:false + '
+      + 'merged:false shape so self-app tabs drop the "Platform updating…" '
+      + 'banner (no deploy — hence no SHA flip — follows an aborted merge)');
   } finally {
     ctx.restore();
   }
@@ -406,6 +410,8 @@ test('an ambiguous native 409 defers when GitHub cannot verify the live head', a
     assert.equal(ctx.rebuilds.length, 0);
     assert.ok(pool.queries.some((q) => /SET status = 'promoted'/.test(q.sql)),
       'the merge claim is released for a safe retry');
+    assert.ok(ctx.voteUpdates.some((u) => u.merging === false && u.merged === false),
+      'the deferred outcome still un-latches self-app "Platform updating…" banners');
   } finally {
     ctx.restore();
   }

@@ -499,6 +499,10 @@ const App = {
     // refs are ephemeral and must be re-derived on page load.
     fromSha: null,
     since: null,
+    // Session whose merge armed the banner — lets restore / the stuck
+    // timer verify against /api/sessions/:id/status that the merge is
+    // still in flight (see verifyMergeStillInFlight).
+    sessionId: null,
     fastPollTimer: null,
     stuckTimer: null,
     fetchWrapInstalled: false,
@@ -527,6 +531,7 @@ const App = {
       const fromSha = App.loadedPlatformSha || null;
       this.fromSha = fromSha;
       this.since = Date.now();
+      this.sessionId = sessionId || null;
       try {
         sessionStorage.setItem(this.SS_KEY, JSON.stringify({
           fromSha, since: this.since, appSlug: appSlug || null, sessionId: sessionId || null,
@@ -581,11 +586,16 @@ const App = {
       }
       this.fromSha = parsed.fromSha || null;
       this.since = parsed.since || Date.now();
+      this.sessionId = parsed.sessionId || null;
       const elapsed = Date.now() - this.since;
       this.show(elapsed >= this.STUCK_AFTER_MS);
       this.startFastPolling();
       this.armStuckTimer();
       console.log('[platform-updating] banner restored from session', { elapsedMs: elapsed });
+      // The restored merge may have aborted while this tab was
+      // reloading (its merging:false counter-event is gone for good) —
+      // verify before holding the tab read-only until the stuck timer.
+      this.verifyMergeStillInFlight();
     },
 
     observeVersion(info) {
@@ -600,17 +610,18 @@ const App = {
       this.end({ newSha: sha });
     },
 
-    // The merge behind this banner failed before any deploy started
-    // (vote_update { mergeFailed:true }). No new code is coming, so
-    // there's no SHA flip to wait for and no reason to reload — just
-    // clear the latch and lift the write block. Safe when the banner
-    // isn't armed (no-op).
+    // The merge behind this banner ended without merging — failed, head
+    // moved, or deferred (vote_update { merging:false, merged:false }).
+    // No new code is coming, so there's no SHA flip to wait for and no
+    // reason to reload — just clear the latch and lift the write block.
+    // Safe when the banner isn't armed (no-op).
     cancel() {
       if (!this.isActive()) return;
       console.log('[platform-updating] cancelled (merge failed, no deploy)');
       try { sessionStorage.removeItem(this.SS_KEY); } catch {}
       this.fromSha = null;
       this.since = null;
+      this.sessionId = null;
       this.stopFastPolling();
       this.disarmStuckTimer();
       this.hide();
@@ -794,6 +805,7 @@ const App = {
       try { sessionStorage.removeItem(this.SS_KEY); } catch {}
       this.fromSha = null;
       this.since = null;
+      this.sessionId = null;
       this.stopFastPolling();
       this.disarmStuckTimer();
       this.hide();
@@ -855,8 +867,39 @@ const App = {
       this.disarmStuckTimer();
       const remaining = Math.max(0, this.STUCK_AFTER_MS - (Date.now() - this.since));
       this.stuckTimer = setTimeout(() => {
-        if (this.isActive()) this.show(/* stuck */ true);
+        if (!this.isActive()) return;
+        this.show(/* stuck */ true);
+        // A banner this old usually means the merging:false
+        // counter-event was missed (WS drop). If the server says the
+        // merge is no longer in flight, unlatch instead of sitting red
+        // forever.
+        this.verifyMergeStillInFlight();
       }, remaining);
+    },
+
+    // Missed-WS-event recovery: ask the server whether the merge that
+    // armed this banner is still on the merging → merged → deploy path.
+    // The merging:false counter-event un-latches live tabs, but a tab
+    // that was reloading (or whose WS had dropped) when it fired restores the
+    // banner from sessionStorage and would block writes forever — the
+    // dismissal condition (a /api/version SHA flip) never comes for an
+    // aborted merge. 'merged' keeps the banner: the GHA deploy and its
+    // SHA flip are still on the way. Fail-safe on any error or an older
+    // server without `status` in the payload: keep the banner armed.
+    verifyMergeStillInFlight() {
+      const sessionId = this.sessionId;
+      if (sessionId == null) return;
+      fetch(`/api/sessions/${sessionId}/status`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!this.isActive() || this.sessionId !== sessionId) return;
+          const status = data && typeof data.status === 'string' ? data.status : null;
+          if (status && status !== 'merging' && status !== 'merged') {
+            console.log('[platform-updating] merge no longer in flight — unlatching', { status });
+            this.cancel();
+          }
+        })
+        .catch(() => {});
     },
 
     disarmStuckTimer() {
@@ -1643,14 +1686,19 @@ const App = {
         sessionId: data.sessionId,
       });
     }
-    // Counter-event: the self-app merge failed before any deploy, so no
+    // Counter-event: the self-app merge attempt ended without a merge
+    // (failed, head moved since review, revision unverifiable), so no
     // SHA flip is coming — unlatch instead of holding the platform
-    // read-only until the stuck timer. #239: when the auto-resolver is
-    // kicking in (resolving:true rides on the mergeFailed event for
-    // conflict-class failures), immediately re-arm in the non-blocking
-    // resolving state so the banner transitions in place instead of
-    // silently vanishing while the resolver spends 1–2 min on the fix.
-    if (data.mergeFailed && data.selfHosted) {
+    // read-only until the stuck timer. `merging === false` (field
+    // present) + no merge is the terminal shape every abort path
+    // broadcasts; keying on it rather than just `mergeFailed` covers the
+    // head-moved / deferred aborts, which are deliberately not flagged
+    // as failures. #239: when the auto-resolver is kicking in
+    // (resolving:true rides on the mergeFailed event for conflict-class
+    // failures), immediately re-arm in the non-blocking resolving state
+    // so the banner transitions in place instead of silently vanishing
+    // while the resolver spends 1–2 min on the fix.
+    if (data.merging === false && !data.merged && data.selfHosted) {
       App.PlatformUpdating.cancel();
       if (data.resolving) {
         App.PlatformUpdating.beginResolving({
