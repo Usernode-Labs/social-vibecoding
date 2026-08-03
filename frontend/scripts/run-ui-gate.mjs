@@ -7,6 +7,14 @@ import { assertPublishableHistory } from "./slice-boundary.mjs"
 import { classifyGateFailure } from "./ui-gate-failure.mjs"
 import { acquireMachineLease, releaseMachineLease } from "./ui-gate-machine-lease.mjs"
 import { parseGateOptions } from "./ui-gate-options.mjs"
+import {
+  gatePortReservations,
+  inspectGateProcesses,
+} from "./ui-gate-process-inventory.mjs"
+import {
+  createProcessSupervisor,
+  signalExitCode,
+} from "./ui-gate-process-supervisor.mjs"
 import { gateMachineUnits, resolveGateGraph, runGateSchedule } from "./ui-gate-scheduler.mjs"
 import {
   gateResourceEnvironment,
@@ -67,13 +75,18 @@ const startSource = gitSnapshot(repoRoot)
 const stages = []
 let lease = null
 let maxUnitsObserved = 0
+let processPreflight = null
+const supervisor = createProcessSupervisor({
+  graceMs: authority.processLifecycle.terminationGraceMs,
+})
+supervisor.install()
 
 function artifactResult(status, detail = {}) {
   const finishedAt = new Date()
   const endSource = gitSnapshot(repoRoot)
   const sourceStable = startSource.revision === endSource.revision && !endSource.dirty
   const artifact = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     command: options.mode === "serial" ? "npm run check:ui -- --serial" : "npm run check:ui",
     receiptGrade: boundaryRun,
     startedAt: startedAt.toISOString(),
@@ -94,6 +107,7 @@ function artifactResult(status, detail = {}) {
       } : null,
       fromStep: options.fromIndex + 1,
       skipped: [...options.skips].map(([index, reason]) => ({ step: index + 1, reason })),
+      processPreflight,
     },
     source: { start: startSource, end: endSource, stable: sourceStable },
     stages: [...stages].sort((left, right) => left.step - right.step),
@@ -118,28 +132,72 @@ function spawnStage(stage) {
     const child = spawn(gate.command, {
       cwd: gate.cwd === "root" ? repoRoot : frontendRoot,
       shell: true,
+      detached: process.platform !== "win32",
       stdio: ["ignore", "pipe", "pipe"],
       env: childEnvironment,
     })
+    const supervision = supervisor.track(child, {
+      label: stage.id,
+      timeoutMs: gate.timeoutMs,
+      onTerminate: (reason) => {
+        const detail = reason.type === "timeout"
+          ? `after ${reason.timeoutMs}ms`
+          : reason.type === "signal"
+            ? `on ${reason.signal}`
+            : "during runner finalization"
+        console.error(`\n[${stage.step}/${graph.length}] stopping ${stage.id} process group ${detail}`)
+      },
+    })
     let stdout = ""
     let stderr = ""
+    let settled = false
     const append = (current, chunk) => `${current}${chunk}`.slice(-250000)
     child.stdout.setEncoding("utf8")
     child.stderr.setEncoding("utf8")
     child.stdout.on("data", (chunk) => { stdout = append(stdout, chunk) })
     child.stderr.on("data", (chunk) => { stderr = append(stderr, chunk) })
-    child.on("error", (cause) => resolve({ code: 1, stdout, stderr: `${stderr}\n${cause.message}` }))
-    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }))
+    const finish = (run) => {
+      if (settled) return
+      settled = true
+      resolve(run)
+    }
+    child.on("error", (cause) => {
+      const termination = supervision.finish()
+      finish({ code: 1, stdout, stderr: `${stderr}\n${cause.message}`, termination })
+    })
+    child.on("close", (code, signal) => {
+      const termination = supervision.finish()
+      const effectiveCode = termination?.type === "timeout"
+        ? 124
+        : termination?.type === "signal"
+          ? signalExitCode(termination.signal)
+          : termination
+            ? 1
+            : code ?? signalExitCode(signal)
+      finish({ code: effectiveCode, stdout, stderr, termination })
+    })
   }).then((run) => {
     const combinedOutput = `${run.stdout}\n${run.stderr}`
     if (resources.workers) resources.workers.observed = observedWorkers(combinedOutput)
     const summary = run.stdout.trim().split("\n").filter(Boolean).slice(-2).join(" · ")
-    const failure = run.code === 0 ? null : classifyGateFailure({
-      gate,
-      stdout: run.stdout,
-      stderr: run.stderr,
-      override: process.env.UI_GATE_FAILURE_CLASS || "",
-    })
+    const failure = run.code === 0 ? null : run.termination
+      ? {
+          class: run.termination.type === "timeout" ? "timeout" : "interrupted",
+          reason: run.termination.type === "timeout"
+            ? "stage-timeout"
+            : run.termination.type === "signal" ? "runner-signal" : "runner-finalize",
+          message: run.termination.type === "timeout"
+            ? `${stage.id} exceeded its ${run.termination.timeoutMs}ms authority timeout`
+            : run.termination.type === "signal"
+              ? `${stage.id} was stopped by ${run.termination.signal}`
+              : `${stage.id} was stopped during runner finalization`,
+        }
+      : classifyGateFailure({
+          gate,
+          stdout: run.stdout,
+          stderr: run.stderr,
+          override: process.env.UI_GATE_FAILURE_CLASS || "",
+        })
     const stageRecord = {
       id: stage.id,
       step: stage.step,
@@ -154,9 +212,11 @@ function spawnStage(stage) {
       startedAt: stageStartedAt.toISOString(),
       finishedAt: new Date().toISOString(),
       wallTimeMs: Date.now() - stageStartedMs,
+      timeoutMs: gate.timeoutMs,
       exitCode: run.code,
       summary: summary || null,
       resources,
+      ...(run.termination ? { termination: run.termination } : {}),
       ...(failure ? { failure } : {}),
     }
     stages.push(stageRecord)
@@ -195,6 +255,59 @@ async function main() {
     console.error(message)
     artifactResult("failed", {
       failure: { class: "environment", reason: "machine-lease-unavailable", message },
+    })
+    return 1
+  }
+
+  if (supervisor.interruptedSignal) {
+    artifactResult("failed", {
+      failure: {
+        class: "interrupted",
+        reason: "runner-signal",
+        message: `UI gate received ${supervisor.interruptedSignal} before scheduling`,
+      },
+    })
+    return signalExitCode(supervisor.interruptedSignal)
+  }
+
+  try {
+    const reservations = gatePortReservations(graph, process.env, owner, options.mode)
+    processPreflight = inspectGateProcesses({
+      lifecycle: authority.processLifecycle,
+      reservations,
+    })
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : String(cause)
+    console.error(`UI gate process preflight failed: ${message}`)
+    artifactResult("failed", {
+      failure: { class: "environment", reason: "process-inventory-unavailable", message },
+    })
+    return 1
+  }
+
+  if (supervisor.interruptedSignal) {
+    artifactResult("failed", {
+      failure: {
+        class: "interrupted",
+        reason: "runner-signal",
+        message: `UI gate received ${supervisor.interruptedSignal} during process preflight`,
+      },
+    })
+    return signalExitCode(supervisor.interruptedSignal)
+  }
+
+  for (const observation of processPreflight.observations) {
+    const ports = observation.ports.length ? `; ports ${observation.ports.join(", ")}` : ""
+    console.log(`UI gate process observation: ${observation.kind} pid ${observation.pid}, owner ${observation.logicalOwner}, age ${observation.ageMs}ms, CPU ${observation.cpuPercent}% / ${observation.cpuTime}${ports}`)
+  }
+  if (processPreflight.violations.length) {
+    for (const violation of processPreflight.violations) console.error(`UI gate process violation: ${violation.message}`)
+    artifactResult("failed", {
+      failure: {
+        class: "environment",
+        reason: "process-preflight-failed",
+        message: `${processPreflight.violations.length} process lifecycle violation(s) block the UI gate`,
+      },
     })
     return 1
   }
@@ -322,6 +435,7 @@ try {
     console.error(`UI gate could not write its failure artifact: ${artifactCause instanceof Error ? artifactCause.message : artifactCause}`)
   }
 } finally {
+  supervisor.dispose({ terminateActive: true })
   releaseMachineLease(lease)
 }
 process.exitCode = exitCode

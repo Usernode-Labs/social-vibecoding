@@ -5,6 +5,7 @@ import path from "node:path"
 
 import { wipCommitsInPublishRange } from "./slice-boundary.mjs"
 import { wildcardEphemeralListeners } from "./test-loopback-listeners.mjs"
+import { hasUnboundedTestTimeout } from "./ui-gate-process-supervisor.mjs"
 import { gateMachineUnits, resolveGateGraph } from "./ui-gate-scheduler.mjs"
 
 const frontendRoot = process.cwd()
@@ -116,6 +117,48 @@ for (const adapter of [".agents", ".claude"]) {
 const workflows = readJson("agent-skills/ui-development/workflows.json")
 if (workflows.version !== 3) violations.push("workflows.json version must be 3")
 if (!workflows.workflows?.[workflows.fallback]) violations.push("workflows.json fallback must name a workflow")
+const processLifecycle = workflows.processLifecycle
+for (const field of ["triggerEvent", "proof", "owner"]) {
+  if (typeof processLifecycle?.provenance?.[field] !== "string" || !processLifecycle.provenance[field].trim()) {
+    violations.push(`processLifecycle.provenance must name ${field}`)
+  }
+}
+if (processLifecycle?.provenance?.triggerEvent
+  && !/^[a-f0-9]{64}$/.test(processLifecycle.provenance.triggerEvent)) {
+  violations.push("processLifecycle.provenance.triggerEvent must be a Buzz event id")
+}
+if (!Number.isInteger(processLifecycle?.staleAfterMs) || processLifecycle.staleAfterMs < 60_000) {
+  violations.push("processLifecycle.staleAfterMs must be at least one minute")
+}
+if (!Number.isInteger(processLifecycle?.terminationGraceMs) || processLifecycle.terminationGraceMs < 1_000) {
+  violations.push("processLifecycle.terminationGraceMs must be at least one second")
+}
+const registeredServerPorts = new Set()
+for (const server of processLifecycle?.registeredServers || []) {
+  if (!/^[a-z0-9][a-z0-9-]*$/.test(server.id || "")) {
+    violations.push("registered process server must have a kebab-case id")
+  }
+  if (!Number.isInteger(server.port) || server.port < 1 || server.port > 65535) {
+    violations.push(`registered process server ${server.id || "unknown"} must have a valid port`)
+  } else if (registeredServerPorts.has(server.port)) {
+    violations.push(`registered process server port is duplicated: ${server.port}`)
+  } else {
+    registeredServerPorts.add(server.port)
+  }
+  for (const field of ["protocol", "owner", "expectedLifetime", "commandPattern"]) {
+    if (typeof server[field] !== "string" || !server[field].trim()) {
+      violations.push(`registered process server ${server.id || "unknown"} is missing ${field}`)
+    }
+  }
+  if (typeof server.allowDuringGate !== "boolean") {
+    violations.push(`registered process server ${server.id || "unknown"} must declare allowDuringGate`)
+  }
+  try {
+    new RegExp(server.commandPattern, "i")
+  } catch {
+    violations.push(`registered process server ${server.id || "unknown"} has an invalid commandPattern`)
+  }
+}
 
 const frontendPackage = readJson("frontend/package.json")
 const rootPackage = readJson("package.json")
@@ -217,6 +260,12 @@ for (const gate of workflows.fullGate || []) {
   if (!gate.ciEvidence || !ci.includes(gate.ciEvidence)) {
     violations.push(`full gate lacks continuous-integration evidence: ${gate.command}`)
   }
+  if (!Number.isInteger(gate.timeoutMs) || gate.timeoutMs < 1_000) {
+    violations.push(`full gate command needs a bounded timeoutMs: ${gate.command}`)
+  }
+  if (hasUnboundedTestTimeout(gate.command)) {
+    violations.push(`full gate command must not disable test timeouts: ${gate.command}`)
+  }
   for (const port of gate.resources?.ports || []) {
     if (!port.name || typeof port.name !== "string") {
       violations.push(`full gate resource port needs a name: ${gate.command}`)
@@ -231,6 +280,9 @@ for (const gate of workflows.fullGate || []) {
     }
     if (port.commandEnv !== undefined && !/^[A-Z][A-Z0-9_]*$/.test(port.commandEnv)) {
       violations.push(`full gate resource port command environment is invalid: ${gate.command}`)
+    }
+    if (typeof port.protocol !== "string" || !port.protocol.trim()) {
+      violations.push(`full gate resource port must declare its protocol: ${gate.command}`)
     }
     if (fixed) {
       const owner = fixedGatePorts.get(port.default)
@@ -254,6 +306,30 @@ for (const gate of workflows.fullGate || []) {
       violations.push(`full gate worker ownership is invalid: ${gate.command}`)
     }
   }
+  if (gate.resources?.serverReuse !== undefined) {
+    const reuse = gate.resources.serverReuse
+    if (typeof reuse?.allowed !== "boolean" || !/^[A-Z][A-Z0-9_]*$/.test(reuse.commandEnv || "")) {
+      violations.push(`full gate server reuse ownership is invalid: ${gate.command}`)
+    }
+  }
+}
+
+for (const [name, command] of Object.entries(frontendPackage.scripts || {})) {
+  if (hasUnboundedTestTimeout(command)) {
+    violations.push(`frontend package command ${name} must not disable test timeouts`)
+  }
+}
+for (const [name, command] of Object.entries(rootPackage.scripts || {})) {
+  if (hasUnboundedTestTimeout(command)) {
+    violations.push(`root package command ${name} must not disable test timeouts`)
+  }
+}
+const sharedPlaywrightConfig = fs.readFileSync(path.join(repoRoot, "frontend/playwright.config.ts"), "utf8")
+if (!sharedPlaywrightConfig.includes('process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === "true"')) {
+  violations.push("shared Playwright server reuse must require explicit PLAYWRIGHT_REUSE_EXISTING_SERVER=true")
+}
+if (!ci.includes('PLAYWRIGHT_REUSE_EXISTING_SERVER: "true"')) {
+  violations.push("continuous integration must explicitly authorize reuse of its prestarted service-worker preview")
 }
 
 if (!["serial", "parallel"].includes(workflows.gateGraph?.defaultMode)) {

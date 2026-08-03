@@ -20,7 +20,7 @@ test("resolves fixed, overridden, and dynamic resource ownership", () => {
   assert.deepEqual(resolveGateResources({
     ports: [
       { name: "app", default: 4298, overrideEnv: "UI_GATE_E2E_PORT", commandEnv: "PLAYWRIGHT_PORT" },
-      { name: "storybook", allocation: "dynamic" },
+      { name: "storybook", allocation: "dynamic", protocol: "http" },
     ],
     artifacts: [
       { name: "playwright-output", default: ".artifacts/ui-gate/playwright/matrix", commandEnv: "PLAYWRIGHT_OUTPUT_DIR" },
@@ -31,11 +31,12 @@ test("resolves fixed, overridden, and dynamic resource ownership", () => {
       overrideEnv: "UI_GATE_E2E_WORKERS",
       commandEnv: "PLAYWRIGHT_WORKERS",
     },
+    serverReuse: { allowed: false, commandEnv: "PLAYWRIGHT_REUSE_EXISTING_SERVER" },
   }, { UI_GATE_E2E_PORT: "4301" }, "slice-b-gate", "parallel"), {
     owner: "slice-b-gate",
     ports: [
-      { name: "app", effective: 4301, source: "UI_GATE_E2E_PORT", commandEnv: "PLAYWRIGHT_PORT" },
-      { name: "storybook", effective: "dynamic", commandEnv: null },
+      { name: "app", effective: 4301, protocol: "tcp", source: "UI_GATE_E2E_PORT", commandEnv: "PLAYWRIGHT_PORT" },
+      { name: "storybook", effective: "dynamic", protocol: "http", commandEnv: null },
     ],
     artifacts: [{
       name: "playwright-output",
@@ -49,6 +50,11 @@ test("resolves fixed, overridden, and dynamic resource ownership", () => {
       source: "authority-parallel",
       commandEnv: "PLAYWRIGHT_WORKERS",
     },
+    serverReuse: {
+      allowed: false,
+      source: "authority",
+      commandEnv: "PLAYWRIGHT_REUSE_EXISTING_SERVER",
+    },
   })
 })
 
@@ -57,11 +63,13 @@ test("derives only command-facing resource environment", () => {
     ports: [{ name: "app", default: 4298, commandEnv: "PLAYWRIGHT_PORT" }],
     artifacts: [{ name: "playwright-output", default: ".artifacts/ui-gate/playwright/matrix", commandEnv: "PLAYWRIGHT_OUTPUT_DIR" }],
     workers: { serial: "playwright-default", parallel: 8, commandEnv: "PLAYWRIGHT_WORKERS" },
+    serverReuse: { allowed: false, commandEnv: "PLAYWRIGHT_REUSE_EXISTING_SERVER" },
   }, {}, "gate", "parallel")
   assert.deepEqual(gateResourceEnvironment(resources), {
     PLAYWRIGHT_PORT: "4298",
     PLAYWRIGHT_OUTPUT_DIR: ".artifacts/ui-gate/playwright/matrix",
     PLAYWRIGHT_WORKERS: "8",
+    PLAYWRIGHT_REUSE_EXISTING_SERVER: "false",
   })
 })
 

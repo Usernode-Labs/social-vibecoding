@@ -146,9 +146,25 @@ before it becomes the default shell.
 
 ## Local production Dev write scope
 
-Production review remains read-only by default. For a deliberately bounded
-end-to-end Dev exercise, the local Vite host may proxy real writes only for a
-single app:
+Production review remains read-only by default. Start the review server in the
+foreground so the terminal owns its lifetime:
+
+```sh
+SV_API_TARGET=https://social-vibecoding.usernodelabs.org \
+SV_LOCAL_HTTPS=true \
+SV_PRODUCTION_READONLY=true \
+npm run dev -- --host 127.0.0.1 --port 5175
+```
+
+The implementation lead owns this `https://127.0.0.1:5175` process for one
+explicit manual review session. Stop it with Control-C in the same terminal as
+soon as that review ends. If the terminal was lost, resolve the exact listener
+with `lsof -nP -iTCP:5175 -sTCP:LISTEN`; stop only that process identifier, then
+run `kill -TERM <exact-pid>` and rerun the listener check. Do not use a broad
+`killall` or `pkill` command.
+
+For a deliberately bounded end-to-end Dev exercise, the same local Vite host
+may proxy real writes only for a single app:
 
 ```sh
 SV_API_TARGET=https://social-vibecoding.usernodelabs.org \
@@ -162,6 +178,36 @@ manual React verification: non-safe API methods are allowed only for
 `/api/apps/appraise-6945af/*` or a session whose authenticated production
 response confirms `app_slug: appraise-6945af`; all other mutations are stopped
 locally with `403`. Do not combine it with `SV_PRODUCTION_READONLY=true`.
+The same owner, foreground lifetime, and exact-process stop rule apply.
+
+## Development process ownership
+
+Long-running repository commands are foreground-owned unless the table says
+otherwise. The canonical interface gate inventories these process families
+before admission, blocks any process already occupying a reserved gate port,
+and blocks unregistered Vite, Storybook, Playwright, or `node --test` processes
+older than three hours. It reports elapsed time, cumulative and current
+processor cost, listener, protocol, operating-system user, and logical owner.
+It never kills an ambient process merely because it found one.
+
+| Port | Protocol | Owner | Expected lifetime | Start | Stop |
+| --- | --- | --- | --- | --- | --- |
+| 5175 | HTTPS | Implementation lead | One explicit manual production-review session; allowed during the gate | Read-only or single-app recipe above | Control-C, or resolve and stop the exact listener as described above |
+| 6006 | HTTP | Developer running Storybook | Foreground component-review session only; not allowed to become an orphan | `npm run storybook` | Control-C in the owning terminal |
+| 4298 | HTTP | Canonical gate, browser matrix | One bounded gate stage | `npm run check:ui` | Automatic process-group teardown |
+| 4299 | HTTP | Canonical gate, native bridge | One bounded gate stage | `npm run check:ui` | Automatic process-group teardown |
+| 4274 | HTTP | Canonical gate, production review | One bounded gate stage | `npm run check:ui` | Automatic process-group teardown |
+| 4275 | HTTP | Canonical gate, production smoke | One bounded gate stage | `npm run check:ui` | Automatic process-group teardown |
+| 4363 | HTTP | Canonical gate, service-worker preview | One bounded gate stage | `npm run check:ui` | Automatic process-group teardown |
+
+Storybook tests allocate an HTTP port dynamically and remain owned by their
+bounded gate stage. Browser tests reject an ambient server by default. A
+caller may set `PLAYWRIGHT_REUSE_EXISTING_SERVER=true` only when it started,
+owns, and stops that exact server; continuous integration uses this exception
+for its explicit service-worker preview. Never pass `--test-timeout=0` to a
+governed test command. Every gate stage has an authority timeout, receives
+`SIGTERM` as a complete process group at that boundary, and receives `SIGKILL`
+only if the group survives the five-second grace period.
 
 ## Current migration state
 

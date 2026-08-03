@@ -102,6 +102,7 @@ jobs:
         env:
           CI: ""
           PLAYWRIGHT_PORT: "4363"
+          PLAYWRIGHT_REUSE_EXISTING_SERVER: "true"
         run: |
           set -euo pipefail
           SV_SW_CONTRACT_TEST=true npm run preview -- --host 127.0.0.1 --port "$PLAYWRIGHT_PORT" > /tmp/react-shell-preview.log 2>&1 &
@@ -117,8 +118,8 @@ jobs:
             fi
             sleep 1
           done
-          # Empty CI makes the shared Playwright config reuse the already
-          # running production preview instead of starting a Vite dev server.
+          # This step alone explicitly reuses its owned production preview;
+          # the shared Playwright config rejects ambient servers by default.
           npx playwright test tests/react-service-worker.spec.ts --project=desktop --workers=1
       - run: npm run test:e2e
       - run: npm run test:production-guard

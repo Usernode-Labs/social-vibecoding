@@ -34,12 +34,18 @@ export function resolveGateResources(
   mode = "serial",
 ) {
   const ports = (resources.ports || []).map((port) => {
-    if (port.allocation === "dynamic") return { name: port.name, effective: "dynamic", commandEnv: port.commandEnv || null }
+    if (port.allocation === "dynamic") return {
+      name: port.name,
+      effective: "dynamic",
+      protocol: port.protocol || "tcp",
+      commandEnv: port.commandEnv || null,
+    }
     const override = port.overrideEnv ? environment[port.overrideEnv] : null
     const effective = positiveInteger(override || port.default, `${port.name} port`)
     return {
       name: port.name,
       effective,
+      protocol: port.protocol || "tcp",
       source: override ? port.overrideEnv : "authority-default",
       commandEnv: port.commandEnv || null,
     }
@@ -72,11 +78,17 @@ export function resolveGateResources(
       }
     }
   }
+  const serverReuse = resources.serverReuse ? {
+    allowed: resources.serverReuse.allowed === true,
+    source: "authority",
+    commandEnv: resources.serverReuse.commandEnv || null,
+  } : null
   return {
     owner,
     ports,
     artifacts,
     workers,
+    serverReuse,
   }
 }
 
@@ -93,6 +105,10 @@ export function gateResourceEnvironment(resolvedResources) {
   const workers = resolvedResources.workers
   if (workers?.commandEnv && Number.isInteger(workers.requested)) {
     environment[workers.commandEnv] = String(workers.requested)
+  }
+  const serverReuse = resolvedResources.serverReuse
+  if (serverReuse?.commandEnv) {
+    environment[serverReuse.commandEnv] = String(serverReuse.allowed)
   }
   return environment
 }
@@ -115,6 +131,7 @@ export function machineSnapshot() {
   return {
     availableParallelism: os.availableParallelism(),
     totalMemoryBytes: os.totalmem(),
+    loadAverage: os.loadavg(),
     platform: process.platform,
     architecture: process.arch,
   }

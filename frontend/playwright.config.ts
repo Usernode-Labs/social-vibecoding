@@ -6,6 +6,7 @@ const outputDir = process.env.PLAYWRIGHT_OUTPUT_DIR || "test-results"
 const workers = process.env.PLAYWRIGHT_WORKERS
   ? Number(process.env.PLAYWRIGHT_WORKERS)
   : undefined
+const reuseExistingServer = process.env.PLAYWRIGHT_REUSE_EXISTING_SERVER === "true"
 
 export default defineConfig({
   testDir: "./tests",
@@ -21,6 +22,6 @@ export default defineConfig({
   webServer: {
     command: `npm run dev -- --host 127.0.0.1 --port ${port}`,
     url: `${baseURL}/react/`,
-    reuseExistingServer: !process.env.CI,
+    reuseExistingServer,
   },
 })

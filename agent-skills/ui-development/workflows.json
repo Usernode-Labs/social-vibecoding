@@ -426,6 +426,26 @@
       "forbidden": ["harness"]
     }
   ],
+  "processLifecycle": {
+    "provenance": {
+      "triggerEvent": "55913340cdd84ec5edfd1d10798d5185ec09b7a86d54bd7387cb1294013ff124",
+      "proof": "npm run test:harness and one clean exact-commit npm run check:ui",
+      "owner": "lead-codex"
+    },
+    "staleAfterMs": 10800000,
+    "terminationGraceMs": 5000,
+    "registeredServers": [
+      {
+        "id": "manual-production-review",
+        "port": 5175,
+        "protocol": "https",
+        "owner": "implementation-lead",
+        "expectedLifetime": "explicit manual review session",
+        "allowDuringGate": true,
+        "commandPattern": "node_modules/\\.bin/vite.*--port 5175"
+      }
+    ]
+  },
   "gateGraph": {
     "defaultMode": "parallel",
     "machineUnits": {
@@ -468,104 +488,123 @@
       "cwd": "root",
       "command": "npm test",
       "ciEvidence": "name: Run authoritative root suite",
+      "timeoutMs": 300000,
       "kind": "test"
     },
     {
       "cwd": "frontend",
       "command": "npm run lint",
-      "ciEvidence": "npm run lint"
+      "ciEvidence": "npm run lint",
+      "timeoutMs": 300000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:tokens",
-      "ciEvidence": "npm run check:tokens"
+      "ciEvidence": "npm run check:tokens",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:design-system",
-      "ciEvidence": "npm run check:design-system"
+      "ciEvidence": "npm run check:design-system",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:relationships",
-      "ciEvidence": "npm run check:relationships"
+      "ciEvidence": "npm run check:relationships",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:registry",
-      "ciEvidence": "npm run check:registry"
+      "ciEvidence": "npm run check:registry",
+      "timeoutMs": 300000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:style-policy",
-      "ciEvidence": "npm run check:style-policy"
+      "ciEvidence": "npm run check:style-policy",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:interface-laws",
-      "ciEvidence": "npm run check:interface-laws"
+      "ciEvidence": "npm run check:interface-laws",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:content",
-      "ciEvidence": "npm run check:content"
+      "ciEvidence": "npm run check:content",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run test:content",
       "ciEvidence": "npm run test:content",
+      "timeoutMs": 120000,
       "kind": "test"
     },
     {
       "cwd": "frontend",
       "command": "npm run check:harness-integrity",
-      "ciEvidence": "npm run check:harness-integrity"
+      "ciEvidence": "npm run check:harness-integrity",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:harness-fitness",
-      "ciEvidence": "npm run check:harness-fitness"
+      "ciEvidence": "npm run check:harness-fitness",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:progressive-context",
-      "ciEvidence": "npm run check:progressive-context"
+      "ciEvidence": "npm run check:progressive-context",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:context-budget",
-      "ciEvidence": "npm run check:context-budget"
+      "ciEvidence": "npm run check:context-budget",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:harness",
-      "ciEvidence": "npm run check:harness"
+      "ciEvidence": "npm run check:harness",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run test:harness",
       "ciEvidence": "npm run test:harness",
+      "timeoutMs": 300000,
       "kind": "test"
     },
     {
       "cwd": "frontend",
       "command": "npm run test:agent-battery",
       "ciEvidence": "npm run test:agent-battery",
+      "timeoutMs": 300000,
       "kind": "test"
     },
     {
       "cwd": "frontend",
       "command": "npm run typecheck",
-      "ciEvidence": "npm run typecheck"
+      "ciEvidence": "npm run typecheck",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run test:native-bridge-contract",
       "ciEvidence": "npm run test:native-bridge-contract",
+      "timeoutMs": 300000,
       "kind": "test",
       "resources": {
         "ports": [
-          { "name": "native-bridge-server", "default": 4299, "overrideEnv": "UI_GATE_NATIVE_PORT", "commandEnv": "PLAYWRIGHT_PORT" }
+          { "name": "native-bridge-server", "default": 4299, "protocol": "http", "overrideEnv": "UI_GATE_NATIVE_PORT", "commandEnv": "PLAYWRIGHT_PORT" }
         ],
         "artifacts": [
           { "name": "native-bridge-output", "default": ".artifacts/ui-gate/playwright/native-bridge", "commandEnv": "PLAYWRIGHT_OUTPUT_DIR" }
@@ -575,103 +614,116 @@
           "parallel": 1,
           "overrideEnv": "UI_GATE_NATIVE_WORKERS",
           "commandEnv": "PLAYWRIGHT_WORKERS"
-        }
+        },
+        "serverReuse": { "allowed": false, "commandEnv": "PLAYWRIGHT_REUSE_EXISTING_SERVER" }
       }
     },
     {
       "cwd": "frontend",
       "command": "npm run build",
       "ciEvidence": "name: Build immutable React shell",
+      "timeoutMs": 300000,
       "kind": "build"
     },
     {
       "cwd": "frontend",
       "command": "npm run test:service-worker-contract",
       "ciEvidence": "react-service-worker.spec.ts",
+      "timeoutMs": 300000,
       "kind": "test",
       "resources": {
         "ports": [
-          { "name": "production-preview", "default": 4363, "overrideEnv": "UI_GATE_SERVICE_WORKER_PORT", "commandEnv": "PLAYWRIGHT_SW_PORT" }
+          { "name": "production-preview", "default": 4363, "protocol": "http", "overrideEnv": "UI_GATE_SERVICE_WORKER_PORT", "commandEnv": "PLAYWRIGHT_SW_PORT" }
         ],
         "artifacts": [
           { "name": "service-worker-output", "default": ".artifacts/ui-gate/playwright/service-worker", "commandEnv": "PLAYWRIGHT_OUTPUT_DIR" }
         ],
-        "workers": 1
+        "workers": 1,
+        "serverReuse": { "allowed": false, "commandEnv": "PLAYWRIGHT_REUSE_EXISTING_SERVER" }
       }
     },
     {
       "cwd": "frontend",
       "command": "npm run test:e2e",
       "ciEvidence": "npm run test:e2e",
+      "timeoutMs": 1200000,
       "kind": "test",
       "resources": {
         "ports": [
-          { "name": "browser-matrix-server", "default": 4298, "overrideEnv": "UI_GATE_E2E_PORT", "commandEnv": "PLAYWRIGHT_PORT" }
+          { "name": "browser-matrix-server", "default": 4298, "protocol": "http", "overrideEnv": "UI_GATE_E2E_PORT", "commandEnv": "PLAYWRIGHT_PORT" }
         ],
         "artifacts": [
           { "name": "browser-matrix-output", "default": ".artifacts/ui-gate/playwright/browser-matrix", "commandEnv": "PLAYWRIGHT_OUTPUT_DIR" }
         ],
         "workers": {
           "serial": "playwright-default",
-          "parallel": 8,
+          "parallel": 2,
           "overrideEnv": "UI_GATE_E2E_WORKERS",
           "commandEnv": "PLAYWRIGHT_WORKERS"
-        }
+        },
+        "serverReuse": { "allowed": false, "commandEnv": "PLAYWRIGHT_REUSE_EXISTING_SERVER" }
       }
     },
     {
       "cwd": "frontend",
       "command": "npm run test:production-guard",
       "ciEvidence": "npm run test:production-guard",
+      "timeoutMs": 600000,
       "kind": "test",
       "resources": {
         "ports": [
-          { "name": "production-review-server", "default": 4274 }
+          { "name": "production-review-server", "default": 4274, "protocol": "http" }
         ],
         "artifacts": [
           { "name": "production-review-output", "default": ".artifacts/ui-gate/playwright/production-review", "commandEnv": "PLAYWRIGHT_OUTPUT_DIR" }
         ],
         "workers": {
           "serial": "playwright-default",
-          "parallel": 2,
+          "parallel": 1,
           "overrideEnv": "UI_GATE_PRODUCTION_GUARD_WORKERS",
           "commandEnv": "PLAYWRIGHT_WORKERS"
-        }
+        },
+        "serverReuse": { "allowed": false, "commandEnv": "PLAYWRIGHT_REUSE_EXISTING_SERVER" }
       }
     },
     {
       "cwd": "frontend",
       "command": "npm run test:production-smoke",
       "ciEvidence": "npm run test:production-smoke",
+      "timeoutMs": 300000,
       "kind": "test",
       "resources": {
         "ports": [
-          { "name": "production-smoke-server", "default": 4275 }
+          { "name": "production-smoke-server", "default": 4275, "protocol": "http" }
         ],
         "artifacts": [
           { "name": "production-smoke-output", "default": ".artifacts/ui-gate/playwright/production-smoke", "commandEnv": "PLAYWRIGHT_OUTPUT_DIR" }
         ],
-        "workers": 1
+        "workers": 1,
+        "serverReuse": { "allowed": false, "commandEnv": "PLAYWRIGHT_REUSE_EXISTING_SERVER" }
       }
     },
     {
       "cwd": "frontend",
       "command": "npm run check:cutover-contract",
-      "ciEvidence": "npm run check:cutover-contract"
+      "ciEvidence": "npm run check:cutover-contract",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run check:bundle",
-      "ciEvidence": "npm run check:bundle"
+      "ciEvidence": "npm run check:bundle",
+      "timeoutMs": 120000
     },
     {
       "cwd": "frontend",
       "command": "npm run test:storybook",
       "ciEvidence": "npm run test:storybook",
+      "timeoutMs": 600000,
       "kind": "test",
       "resources": {
         "ports": [
-          { "name": "storybook-browser-server", "allocation": "dynamic" }
+          { "name": "storybook-browser-server", "allocation": "dynamic", "protocol": "http" }
         ],
         "workers": "vitest-default"
       }
@@ -680,6 +732,7 @@
       "cwd": "frontend",
       "command": "npm run check:storybook-build",
       "ciEvidence": "npm run check:storybook-build",
+      "timeoutMs": 600000,
       "kind": "build"
     }
   ]
