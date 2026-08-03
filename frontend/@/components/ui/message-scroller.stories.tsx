@@ -25,7 +25,7 @@ const messages = Array.from({ length: 12 }, (_, index) => `Message ${index + 1}:
 export const Conversation: Story = {
   render: () => (
     <MessageScrollerProvider>
-      <MessageScroller aria-label="Conversation" className="rounded-2xl border bg-card">
+      <MessageScroller aria-label="Conversation" className="rounded-2xl" surface="container">
         <MessageScrollerViewport>
           <MessageScrollerContent className="gap-3 p-4">
             {messages.map((message, index) => (
@@ -46,7 +46,7 @@ export const Conversation: Story = {
 export const Empty: Story = {
   render: () => (
     <MessageScrollerProvider>
-      <MessageScroller aria-label="Empty conversation" className="rounded-2xl border bg-card">
+      <MessageScroller aria-label="Empty conversation" className="rounded-2xl" surface="container">
         <MessageScrollerViewport><MessageScrollerContent className="items-center justify-center p-4 text-sm text-muted-foreground">No messages yet.</MessageScrollerContent></MessageScrollerViewport>
       </MessageScroller>
     </MessageScrollerProvider>

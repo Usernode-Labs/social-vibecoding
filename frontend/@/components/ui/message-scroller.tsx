@@ -18,16 +18,21 @@ function MessageScrollerProvider(
 
 function MessageScroller({
   className,
+  surface,
   ...props
-}: React.ComponentProps<typeof MessageScrollerPrimitive.Root>) {
+}: React.ComponentProps<typeof MessageScrollerPrimitive.Root> & {
+  surface?: "container"
+}) {
   return (
     <MessageScrollerPrimitive.Root
       data-slot="message-scroller"
       className={cn(
         "group/message-scroller relative flex size-full min-h-0 flex-col overflow-hidden",
+        surface === "container" && "border bg-container",
         className
       )}
       {...props}
+      data-surface={surface}
     />
   )
 }

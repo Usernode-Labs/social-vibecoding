@@ -36,7 +36,7 @@ and the RESEARCH specification files.
   not patterns to paste.
 
 **Why it is useful anyway.** Several elements are pixel demonstrations of already-ratified
-direction: the elevated-pill-on-recessed-track segmented control (Law 3 amendment), tinted
+direction: the nested-Container segmented control (Law 4), tinted
 status banners with a cap column (Law 4 / Family B), the gold tier pill and tick-mark
 meter (the Challenges "Monthly Millionaire" blueprint, PI-01 lane), and a
 lighter-not-brighter dark inversion.

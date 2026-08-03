@@ -339,7 +339,7 @@ export function DevComposer({
         onSend={(id) => void sendSavedDraft(id)}
         streaming={streaming}
       />
-      {suggestions.length ? <section aria-labelledby="builder-questions-heading" className="flex flex-col gap-3 rounded-xl border bg-card p-3">
+      {suggestions.length ? <section aria-labelledby="builder-questions-heading" className="flex flex-col gap-3 rounded-xl border bg-container p-3" data-surface="container">
         <div>
           <h3 className="text-sm font-medium" id="builder-questions-heading">Builder needs your input</h3>
           <p className="text-sm text-muted-foreground sm:text-xs">

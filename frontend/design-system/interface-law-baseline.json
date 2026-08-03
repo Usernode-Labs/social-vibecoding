@@ -42,8 +42,6 @@
     { "rule": "no-caller-margin", "file": "@/features/dev/dev-board.tsx", "match": "mt-2" },
     { "rule": "use-owned-primitive", "file": "@/features/dev/dev-composer.tsx", "match": "<input>" },
     { "rule": "no-caller-margin", "file": "@/features/dev/dev-composer.tsx", "match": "ml-auto" },
-    { "rule": "caller-surface-direction", "file": "@/features/dev/group-discussion.tsx", "match": "border" },
-    { "rule": "caller-surface-direction", "file": "@/features/dev/group-discussion.tsx", "match": "bg-card" },
     { "rule": "no-caller-margin", "file": "@/features/dev/group-discussion.tsx", "match": "mt-0.5" },
     { "rule": "use-owned-primitive", "file": "@/features/dev/group-discussion.tsx", "match": "<input>" },
     { "rule": "no-caller-margin", "file": "@/features/platform/status.tsx", "match": "mt-1" }

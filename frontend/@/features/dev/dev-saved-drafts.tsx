@@ -26,7 +26,7 @@ export function DevSavedDraftsView({
   if (!drafts.length) return null
 
   return (
-    <section aria-labelledby="saved-dev-drafts-heading" className="overflow-hidden rounded-xl border bg-card">
+    <section aria-labelledby="saved-dev-drafts-heading" className="overflow-hidden rounded-xl border bg-container" data-surface="container">
       <header className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
         <div className="flex items-center gap-2">
           <h3 className="text-sm font-medium" id="saved-dev-drafts-heading">Saved drafts</h3>

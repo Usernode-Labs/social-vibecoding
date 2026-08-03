@@ -258,7 +258,7 @@ function DiscussionMessage({
 /** Reusable transcript presentation; route ownership stays with GroupDiscussion. */
 export function GroupDiscussionTranscript({ currentUserId, emptyDescription = "Start the conversation below.", messages, onEdit, onMarkRead, onReact, onReply, slug, writable = false }: { currentUserId?: number | string | null; emptyDescription?: string; messages: GroupChatMessage[]; onEdit?: (messageId: number | string, content: string) => void; onMarkRead?: (messageId: number | string) => void; onReact?: (messageId: number | string, emoji: string) => void; onReply?: (target: GroupChatReplyTarget) => void; slug: string; writable?: boolean }) {
   if (!messages.length) return <Empty><EmptyHeader><EmptyMedia variant="icon"><PlatformIcon icon={MessagesSquare} /></EmptyMedia><EmptyTitle>No discussion yet</EmptyTitle><EmptyDescription>{emptyDescription}</EmptyDescription></EmptyHeader></Empty>
-  return <MessageScrollerProvider><MessageScroller aria-label="App discussion messages" className="min-h-80 max-h-[60dvh] rounded-xl border bg-card">
+  return <MessageScrollerProvider><MessageScroller aria-label="App discussion messages" className="min-h-80 max-h-[60dvh] rounded-xl" surface="container">
     <MessageScrollerViewport><MessageScrollerContent className="gap-5 p-4 pb-7 sm:p-6 sm:pb-8">
       {messages.map((message) => <MessageScrollerItem key={message.id}><DiscussionMessage currentUserId={currentUserId} message={message} onEdit={onEdit} onMarkRead={onMarkRead} onReact={onReact} onReply={onReply} slug={slug} writable={writable} /></MessageScrollerItem>)}
     </MessageScrollerContent></MessageScrollerViewport>
