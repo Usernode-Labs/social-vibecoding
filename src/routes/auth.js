@@ -17,6 +17,12 @@ const {
 
 const SESSION_DAYS = 7;
 
+// Staging mock data (#555): llm_usage is staging:private, so in a
+// prod-cloned staging DB every viewer's AI-credit row would render a
+// pristine "$20.00 of $20.00 left" and a reviewer couldn't tell that from
+// broken. See the ?demo=1 branch on GET /api/me/ai-budget below.
+const IS_STAGING = process.env.USERNODE_ENV === 'staging';
+
 // View-only admin role (issue #311). Builds the role-related fields every
 // auth response returns to the client from the raw `is_admin` /
 // `admin_readonly` columns: `isAdmin` (the visibility tier, unchanged),
@@ -267,6 +273,41 @@ function authRoutes(config) {
   // #30 BYOK: set / replace the user's Anthropic key. We verify with a
   // cheap 1-token ping before persisting so we never save a key that
   // the Anthropic API would reject at runtime.
+  // --------------------------------------------------------------
+  // GET /api/me/ai-budget — the drawer's "AI credit" row (#555).
+  //
+  // Strictly me-scoped, so it must stay OUT of PUBLIC_PATHS in
+  // middleware/auth.js. Deliberately carries NO global spend or global
+  // cap: services/status.js redact() treats those as admin-only, and
+  // this is the one endpoint every signed-in user polls.
+  // --------------------------------------------------------------
+  router.get('/api/me/ai-budget', async (req, res) => {
+    if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+    // Staging mock data: obviously-fake, read-only, written nowhere, and
+    // a strict no-op in production. Gives the row a partial-spend state
+    // (plus BYOK spillover) so a reviewer sees the real layout.
+    if (IS_STAGING && req.query.demo === '1') {
+      const reset = new Date();
+      reset.setUTCHours(24, 0, 0, 0);
+      return res.json({
+        limitCents: 2000,
+        spentCents: 1360,
+        remainingCents: 640,
+        byokCents: 450,
+        hasByokKey: true,
+        resetsAt: reset.toISOString(),
+        demo: true,
+      });
+    }
+    try {
+      const limits = require('../services/limits');
+      res.json(await limits.getBudgetSnapshot(pool, req.user.id));
+    } catch (err) {
+      log.error('limits', 'ai-budget read failed', { userId: req.user.id, err: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
   router.post('/api/me/api-key', async (req, res) => {
     if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
     const { key } = req.body || {};

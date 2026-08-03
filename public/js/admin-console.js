@@ -1336,10 +1336,126 @@ const AdminConsole = {
           ${canWrite ? '<button id="admin-save-limits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>' : ''}
         </div>
         <p id="admin-limits-status" class="text-xs mt-2 hidden"></p>
+      </div>
+
+      <!-- Anthropic credits (#555). Anthropic's API publishes billed
+           spend, never a balance, so the drawer's "Anthropic credits"
+           row is derived: the balance recorded here minus cost_report
+           spend since the as-of date. Re-record both after every
+           top-up. View-only admins see the values, disabled. -->
+      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800 mt-4">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">Anthropic credits</h2>
+          <span class="text-xs text-zinc-500">shown in the menu’s status area</span>
+        </div>
+        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+          Anthropic doesn’t publish a remaining-credit figure, only what it has
+          billed. Record the balance and the date it was correct, and the platform
+          subtracts billed spend since then. Re-record both after every top-up.
+        </p>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+          <label class="block">
+            <span class="text-xs uppercase tracking-wide text-zinc-500">Credit balance</span>
+            <div class="relative mt-1">
+              <span class="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-500 pointer-events-none">$</span>
+              <input id="admin-credit-balance" type="number" min="0" step="0.01" inputmode="decimal" ${dis}
+                class="w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 pl-6 pr-3 py-2 text-sm font-mono disabled:opacity-60"
+                placeholder="5000.00">
+            </div>
+          </label>
+          <label class="block">
+            <span class="text-xs uppercase tracking-wide text-zinc-500" title="The date that balance was correct">As of</span>
+            <input id="admin-credit-as-of" type="date" ${dis}
+              class="mt-1 w-full rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 px-3 py-2 text-sm font-mono disabled:opacity-60">
+          </label>
+        </div>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p id="admin-credit-derived" class="text-xs text-zinc-500"></p>
+          ${canWrite ? '<button id="admin-save-credits-btn" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-4 py-2 text-sm font-medium text-white transition-colors">Save</button>' : ''}
+        </div>
+        <p id="admin-credits-status" class="text-xs mt-2 hidden"></p>
       </div>`;
     document.getElementById('admin-save-limits-btn')
       ?.addEventListener('click', () => AdminConsole.saveLimits());
+    document.getElementById('admin-save-credits-btn')
+      ?.addEventListener('click', () => AdminConsole.saveAnthropicCredits());
     AdminConsole.loadLimits();
+    AdminConsole.loadAnthropicCredits();
+  },
+
+  async loadAnthropicCredits() {
+    const { data } = await AdminConsole.fetchJson('/api/admin/anthropic-credits');
+    if (!data || typeof data !== 'object') return;
+    AdminConsole._fillAnthropicCredits(data);
+  },
+
+  _fillAnthropicCredits(data) {
+    const bal = document.getElementById('admin-credit-balance');
+    const asOf = document.getElementById('admin-credit-as-of');
+    const derived = document.getElementById('admin-credit-derived');
+    if (!bal) return;
+    if (data.configured) {
+      bal.value = AdminConsole.centsToDollars(data.balanceCents);
+      asOf.value = data.asOf || '';
+    }
+    if (!derived) return;
+    // Echo back what the drawer will show, so an admin can confirm the
+    // admin key is actually working without opening the menu.
+    if (!data.configured) {
+      derived.textContent = 'Nothing recorded yet — the status row reads “Not set up”.';
+    } else if (typeof data.remainingCents !== 'number') {
+      derived.textContent = 'Couldn’t reach Anthropic to compute the remaining credit'
+        + (data.error ? ` (${data.error})` : '') + '.';
+    } else {
+      const src = data.source === 'anthropic'
+        ? 'from Anthropic’s billed cost report'
+        : 'estimated from platform spend records (no ANTHROPIC_ADMIN_KEY configured)';
+      derived.textContent = `$${AdminConsole.centsToDollars(data.remainingCents)} remaining — `
+        + `$${AdminConsole.centsToDollars(data.spentCents)} spent since ${data.asOf}, ${src}.`
+        + (data.stale ? ' Showing a cached figure; the last refresh failed.' : '');
+    }
+  },
+
+  async saveAnthropicCredits() {
+    const status = document.getElementById('admin-credits-status');
+    status.classList.add('hidden');
+    let body;
+    try {
+      const cents = AdminConsole.parseDollarsToCents('Credit balance',
+        document.getElementById('admin-credit-balance').value.trim());
+      const asOf = document.getElementById('admin-credit-as-of').value.trim();
+      if (cents === null) throw new Error('Enter the credit balance.');
+      if (!asOf) throw new Error('Enter the date that balance was correct.');
+      body = { balanceCents: cents, asOf };
+    } catch (err) {
+      status.textContent = err.message;
+      status.className = 'text-xs mt-2 text-red-400';
+      status.classList.remove('hidden');
+      return;
+    }
+    try {
+      const res = await fetch('/api/admin/anthropic-credits', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Save failed (${res.status})`);
+      AdminConsole._fillAnthropicCredits(data);
+      status.textContent = 'Saved.';
+      status.className = 'text-xs mt-2 text-emerald-400';
+      status.classList.remove('hidden');
+      // Repaint the drawer row immediately rather than waiting out its
+      // own five-minute throttle.
+      if (window.AiCredit?.AnthropicCredits) {
+        AiCredit.AnthropicCredits.state = data;
+        AiCredit.AnthropicCredits._render();
+      }
+    } catch (err) {
+      status.textContent = err.message;
+      status.className = 'text-xs mt-2 text-red-400';
+      status.classList.remove('hidden');
+    }
   },
 
   async loadLimits() {

@@ -79,6 +79,7 @@ const SHELL_ASSETS = [
   '/js/header-layout.js',
   '/js/home.js',
   '/js/kudos.js',
+  '/js/ai-credit.js',
   '/js/leaderboard.js',
   '/js/merge-status.js',
   '/js/native-chrome.js',

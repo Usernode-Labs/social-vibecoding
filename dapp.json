@@ -30,6 +30,12 @@
       "description": "Platform-wide fallback Claude key. Users can override with their own via BYOK; if neither is set, Mayor-driven flows are unavailable. Already optional, so no staging fallback needed — staging just inherits the unset state."
     },
     {
+      "key": "ANTHROPIC_ADMIN_KEY",
+      "required": false,
+      "private": true,
+      "description": "Anthropic ADMIN API key (`sk-ant-admin…`) — NOT the same credential as ANTHROPIC_API_KEY above, and not interchangeable with it. Used read-only for GET /v1/organizations/cost_report, which backs the \"Anthropic credits\" row in the hamburger status area (#555). Optional: with it unset, that row falls back to an estimate derived from the platform's own spend ledgers and says so. No staging_default — staging inherits the unset state, which is exactly the fallback path a reviewer should see."
+    },
+    {
       "key": "ADMIN_USERNAME",
       "required": true,
       "default": "admin",
@@ -1119,6 +1125,21 @@
       "name": "Native kit: pull-to-refresh builds its clipped puck layer (the puck hangs below the header, never over it)",
       "path": "/usernode-native/v1/demo.html?un-platform=ios",
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"
+    },
+    {
+      "name": "Hamburger status area shows the viewer's own AI credit (#555)",
+      "path": "/?shot=menu&demo=1",
+      "expectSelector": "#drawer-row-ai-budget .ai-budget-pill"
+    },
+    {
+      "name": "Hamburger status area shows the org's remaining Anthropic credits to admins (#555)",
+      "path": "/?shot=menu&demo=1",
+      "expectSelector": "#drawer-row-anthropic-credits .anthropic-credits-pill"
+    },
+    {
+      "name": "The admin console's Limits section offers the Anthropic credit balance fields (#555)",
+      "path": "/#admin/limits",
+      "expectSelector": "#admin-credit-balance"
     },
     {
       "name": "Preview overlay opens on a neutral loading state, not a 20-60s rebuild promise (#816)",

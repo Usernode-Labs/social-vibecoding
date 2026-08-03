@@ -214,6 +214,12 @@ const App = {
     // Monday-UTC rollover). Refreshes opportunistically on every
     // successful give + on the leaderboard screen mount.
     if (window.Kudos?.Budget?.init) Kudos.Budget.init();
+    // AI-credit status rows (#555), same boot shape as the kudos badge:
+    // the viewer's own daily allowance for everyone, and the org's
+    // remaining Anthropic credit for admins. Both refresh again on every
+    // drawer open (App.HeaderMenu.open), throttled inside the module.
+    if (window.AiCredit?.Budget?.init) AiCredit.Budget.init();
+    if (window.AiCredit?.AnthropicCredits?.init) AiCredit.AnthropicCredits.init();
     // Session-gated boot fetches (notifications bell, work drawer)
     // defer to this event instead of firing a guaranteed 401 on an
     // anonymous document load.
@@ -221,6 +227,7 @@ const App = {
       detail: { user: App.user },
     }));
     App.restoreFromHash();
+    App._applyMenuShot();
 
     // Re-poll the platform version every 10s so the header pill flips to
     // its "deploying" state within seconds of the deploy workflow signaling
@@ -252,10 +259,34 @@ const App = {
   // The "View as non-admin" preview reloads the page after masking
   // `App.user.isAdmin` (see settings.js), so this boot-time read is all
   // that's needed to make the row disappear in preview mode too.
+  // Screenshot-state deep link `?shot=menu` (#555): opens the slide-out
+  // drawer at boot so the status pane — which is only reachable by
+  // TAPPING the hamburger — is visible to the before/after screenshots,
+  // the "Test this change" button and the dapp.json checks. Pure UI
+  // state, no writes, so it is deliberately NOT env-gated: an
+  // IS_STAGING-only link would starve the production "before" shot
+  // forever, while an ungated one starts working the moment it ships.
+  _applyMenuShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'menu') return;
+    // One tick after restoreFromHash so the screen it navigated to has
+    // painted and the drawer opens over a settled shell. The rows' own
+    // fetches repaint their pills in place whenever they land.
+    setTimeout(() => {
+      try { App.HeaderMenu.open(); } catch (err) { /* ignore */ }
+    }, 50);
+  },
+
   renderAdminButton() {
     const btn = document.getElementById('drawer-row-admin');
-    if (!btn) return;
-    btn.classList.toggle('hidden', !App.user?.isAdmin);
+    if (btn) btn.classList.toggle('hidden', !App.user?.isAdmin);
+    // #555: the status pane's "Anthropic credits" row has exactly the
+    // same audience as the console row above — full admins AND view-only
+    // admins — so one function owns both rather than two places drifting
+    // apart on which flag gates admin visibility.
+    const credits = document.getElementById('drawer-row-anthropic-credits');
+    if (credits) credits.classList.toggle('hidden', !App.user?.isAdmin);
   },
 
   // Navigate to the full-page admin console (#818): the #admin hash route
@@ -1765,6 +1796,11 @@ const App = {
       const overlay = document.getElementById('header-menu-overlay');
       const btn = document.getElementById('header-menu-btn');
       if (!panel) return;
+      // #555: the AI-credit rows only ever render in this drawer, so
+      // opening it is exactly when their numbers matter. Both refreshes
+      // are throttled inside AiCredit, so this is cheap on every open —
+      // and it must run BEFORE the touch branch below, which returns.
+      if (window.AiCredit?.refreshAll) AiCredit.refreshAll();
       // Touch platforms: present the drawer's rows as a draggable
       // bottom sheet (kit). The panel element itself is adopted via
       // contentEl — its row listeners ride along — and is restored to
