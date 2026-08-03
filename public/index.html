@@ -85,9 +85,20 @@
          back-btn.
        - The title's default state is flow mode (left-aligned). JS
          upgrades to centered after measurement, so first paint is safe
-         even if the JS is slow to run. -->
+         even if the JS is slow to run.
+
+       HEADER HEIGHT INVARIANT (see the matching block in
+       public/css/app.css): this bar is `py-3` + a 1px hairline around a
+       28px content row, so it is 53px + safe-area on EVERY screen. The
+       row height must not depend on which children happen to be
+       present — the `h-7` on the back-btn wrapper below is the floor
+       (it survives #header-title being display:none in the native
+       WebView), and no direct child may exceed 28px (the ceiling). -->
   <header id="platform-header" class="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-    <div class="w-5 shrink-0">
+    <!-- 20px wide (never changes — header-layout.js measures this as the
+         title's left side group), 28px tall (the header's content-row
+         floor), with the 20px icon centred inside it. -->
+    <div class="w-5 h-7 shrink-0 flex items-center">
       <button id="back-btn" class="text-zinc-400 hover:text-zinc-100 hidden" aria-label="Home">
         <svg id="back-icon-home" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1h-2z"/></svg>
         <svg id="back-icon-arrow" class="w-5 h-5 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
@@ -124,13 +135,24 @@
 
          Visibility is owned by App.DrawerStatus.setAppOpen() — shown
          only while an app is open, and never for the self-hosted
-         platform row (whose App mode has no iframe target). Kept at
-         28px tall so the header's height — and the `top-14` anchoring
-         of #notifications-panel / #work-drawer-panel — is unchanged. -->
+         platform row (whose App mode has no iframe target).
+
+         `h-7` is load-bearing, not decoration: this control is the only
+         thing that appears in the header when an app opens, so its
+         height IS the header's height there. It used to be sized by its
+         segments' `py-1` (24px) plus `p-0.5` (4px) plus its 1px border
+         top and bottom = 30px, which quietly made the in-app header 2px
+         taller than every other screen's. Pinned to the header's 28px
+         content row instead; the segments stretch to fill it
+         (`items-stretch` + `flex items-center` on each, no vertical
+         padding of their own) so the tap area still spans the track and
+         the labels stay centred. Keep it 28px — the header's height and
+         the `top-14` anchoring of #notifications-panel /
+         #work-drawer-panel both depend on it. -->
     <div id="app-mode-switch" role="radiogroup" aria-label="App mode"
-         class="hidden relative flex items-center p-0.5 mr-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium">
-      <button type="button" role="radio" aria-checked="false" data-tab="app" class="app-mode-seg rounded-md px-2.5 py-1 transition-colors">App</button>
-      <button type="button" role="radio" aria-checked="false" data-tab="dev" class="app-mode-seg rounded-md px-2.5 py-1 transition-colors">Dev</button>
+         class="hidden relative flex items-stretch h-7 p-0.5 mr-3 rounded-lg bg-zinc-100 dark:bg-zinc-800 border border-zinc-300 dark:border-zinc-700 text-xs font-medium">
+      <button type="button" role="radio" aria-checked="false" data-tab="app" class="app-mode-seg flex items-center rounded-md px-2.5 transition-colors">App</button>
+      <button type="button" role="radio" aria-checked="false" data-tab="dev" class="app-mode-seg flex items-center rounded-md px-2.5 transition-colors">Dev</button>
     </div>
     <button id="dev-console-btn" class="hidden relative text-zinc-400 hover:text-zinc-200 mr-2" aria-label="Open developer console">
       <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l3 3-3 3m5 0h3M4 6h16a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V7a1 1 0 011-1z"/></svg>
@@ -971,11 +993,17 @@
        up without backing out first. -->
   <main id="auth-landing-screen" class="hidden fixed inset-0 z-40 bg-white dark:bg-zinc-950 flex flex-col">
     <!-- Mirrors #platform-header's shape (height, padding, hairline,
-         safe-area) so both shells read identically. The 20px back-button
-         wrapper is fixed-width on purpose: toggling the button's `hidden`
-         must not shift the title. -->
+         safe-area) so both shells read identically — same HEADER HEIGHT
+         INVARIANT: `py-3` + 1px hairline around a 28px content row, i.e.
+         53px + safe-area, with `h-7` on the back-button wrapper as the
+         floor and nothing inside allowed to exceed 28px. The CTAs below
+         used to break that twice over — `sm:py-2 sm:text-sm` made them
+         36px at `sm` and up (a 61px bar), and the bordered one was still
+         30px at `py-1.5` — so they now declare `h-7` outright. The
+         20px back-button wrapper is fixed-WIDTH on purpose too: toggling
+         the button's `hidden` must not shift the title. -->
     <header id="landing-header" class="un-safe-top-extend relative flex items-center gap-3 px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 shrink-0">
-      <div class="w-5 shrink-0">
+      <div class="w-5 h-7 shrink-0 flex items-center">
         <button id="landing-back-btn" type="button" class="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-100 hidden" aria-label="Back to apps">
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
         </button>
@@ -987,13 +1015,22 @@
         <!-- Two entry points only (issue: landing simplification). Account
              creation is deferred: it happens at the end of the waitlist
              journey, or when a gated app below routes to #signup. -->
+        <!-- `h-7 inline-flex items-center` — pinned to the header's 28px
+             content row, exactly like #app-mode-switch, rather than sized by
+             padding. Padding-sizing is what broke this bar twice over: the
+             `sm:py-2 sm:text-sm` bump these used to carry made them 36px (a
+             61px bar on desktop), and even at `py-1.5` the BORDERED "Join
+             waitlist" was 30px against its borderless siblings' 28px,
+             because the 1px border top and bottom is part of the box. An
+             explicit height is immune to both. `sm:px-5` still gives them
+             desktop presence horizontally, which costs no height. -->
         <div id="landing-header-ctas" class="flex items-center gap-2">
-          <a href="#login" id="landing-signin-cta" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs sm:px-5 sm:py-2 sm:text-sm font-medium transition-colors text-white">Sign in</a>
-          <a href="#waitlist" id="landing-waitlist-cta" class="rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 py-1.5 text-xs sm:px-5 sm:py-2 sm:text-sm font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</a>
+          <a href="#login" id="landing-signin-cta" class="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white">Sign in</a>
+          <a href="#waitlist" id="landing-waitlist-cta" class="h-7 inline-flex items-center rounded-lg border border-zinc-300 dark:border-zinc-700 px-3 text-xs sm:px-5 font-medium text-zinc-700 dark:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-900 transition-colors">Join waitlist</a>
         </div>
         <!-- Shown instead of the CTAs when a (waiting-room) session exists. -->
         <div id="landing-back-to-waiting" class="hidden">
-          <a href="#waiting" class="rounded-lg bg-violet-600 hover:bg-violet-500 px-3 py-1.5 text-xs sm:px-5 sm:py-2 sm:text-sm font-medium transition-colors text-white">Your queue status</a>
+          <a href="#waiting" class="h-7 inline-flex items-center rounded-lg bg-violet-600 hover:bg-violet-500 px-3 text-xs sm:px-5 font-medium transition-colors text-white">Your queue status</a>
         </div>
       </div>
     </header>
