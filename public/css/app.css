@@ -303,31 +303,27 @@ html, body {
   padding: 0.25rem 0;
 }
 
-/* Width bound for the BOX in each of the home screen's trailing sections
-   (Featured apps, Create an app). Their content is a single card rather
-   than a launcher grid, so letting it stretch the full width of a desktop
-   window leaves one very wide, very short box; this keeps them a readable
-   column.
+/* The home screen's content column: everything in the feed — the search
+   bar, the "Your apps" grid, and the trailing Featured / Create sections —
+   is capped at 1024px and centred in the viewport, so a wide desktop
+   window reads as one column instead of a grid stretched edge to edge.
 
-   LEFT-ALIGNED, and indented to line up with the leftmost APP ICON in the
-   "Your apps" grid above — the visible left edge of the first app, which is
-   what the eye actually reads as the start of the row. The .app-card box
-   itself begins at the scroller's 12px gutter, but its icon is centred in
-   the grid cell, so the icon sits ~90px further right on a wide window; a
-   card aligned to the gutter looked misaligned against it.
+   The cap INCLUDES each block's own horizontal gutter (the px-3 / p-3 the
+   children carry), which is why the search bar's padding lives on its
+   inner .home-column rather than on the full-bleed bar: both columns then
+   have identical content edges. Below 1024px this is a no-op and the
+   gutters are the only horizontal padding, which is what a phone wants.
 
-   That offset is a function of the cell width, so it cannot be a constant:
-   Home.alignSections() measures the icon each render (and on resize) and
-   publishes --home-section-indent on #home-body. The 0px fallback keeps
-   this rule honest on its own — an empty "Your apps" grid has no icon to
-   align to, and then the gutter IS the right answer.
-
-   Do NOT add auto side margins (that centres the box, breaking the
-   alignment) and do NOT hard-code the indent (it differs per breakpoint).
-   The headings stay full-width on the gutter — only the box moves. */
-.home-section-block {
-  max-width: 48rem; /* Tailwind max-w-3xl */
-  margin-left: var(--home-section-indent, 0px);
+   Inside the column the trailing sections' boxes are FULL WIDTH — they
+   used to be narrower and indented to line up with the leftmost app icon,
+   a measured offset that existed only because the column itself was
+   unbounded. Centring the column is the better answer, so don't
+   re-introduce a per-box width bound. */
+.home-column {
+  width: 100%;
+  max-width: 64rem; /* 1024px */
+  margin-left: auto;
+  margin-right: auto;
 }
 
 /* ── Browse screen rows / boxes ─────────────────────────────
