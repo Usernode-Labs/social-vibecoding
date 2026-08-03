@@ -1212,6 +1212,21 @@
       "expectSelector": ".un-ptr-layer > .un-ptr-puck"
     },
     {
+      "name": "Native kit: side panel presents from the right edge with a scrollable body",
+      "path": "/usernode-native/v1/demo.html?un-platform=ios&un-demo=panel",
+      "expectSelector": ".un-panel[data-un-side=\"right\"] > .un-panel-body"
+    },
+    {
+      "name": "Hamburger menu opens as a right-side panel on touch, not a bottom sheet",
+      "path": "/?shot=menu&un-platform=ios",
+      "expectSelector": ".un-panel[data-un-side=\"right\"] #header-menu-panel.platform-panel-adopted #header-menu-rows"
+    },
+    {
+      "name": "The drawer footer is reachable without scrolling in the panel",
+      "path": "/?shot=menu&un-platform=ios",
+      "expectSelector": ".un-panel #header-menu-rows > #drawer-footer.mt-auto > #drawer-row-share:last-child"
+    },
+    {
       "name": "Hamburger status area shows the viewer's own AI credit (#555)",
       "path": "/?shot=menu&demo=1",
       "expectSelector": "#drawer-row-ai-budget .ai-budget-meter"

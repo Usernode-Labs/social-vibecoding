@@ -772,7 +772,7 @@ async function reopenPR(owner, repo, prNumber) {
 }
 
 // #687 Slice 4: distinct "head moved" outcome. When a `sha` is passed to
-// mergePR (imported PRs pin the exact reviewed commit) GitHub returns 409
+// mergePR (proposal callers pin the exact reviewed commit) GitHub returns 409
 // if the PR head has moved since — someone pushed between the vote and the
 // merge. checkAndMerge treats this NOT as a proposal error but as "wait for
 // the sync poller to pick up the new head (reset votes/checks) and retry on
@@ -788,8 +788,8 @@ class HeadMovedError extends Error {
 // Merge a PR (squash). `sha`, when provided, is forwarded to GitHub's merge
 // API as the expected head commit: GitHub refuses (409) if the current head
 // differs, guaranteeing we merge EXACTLY the reviewed commit and never
-// something newer that pushed in after the vote. Native callers pass no
-// `sha` and keep the prior unconditional-squash behaviour byte-for-byte.
+// something newer that pushed in after the vote. Native and imported proposal
+// callers both pass their revision-specific reviewed SHA.
 // A 409 raised specifically by the sha mismatch is re-thrown as a
 // HeadMovedError so the caller can distinguish it from other merge failures.
 async function mergePR(owner, repo, prNumber, sha = null) {
@@ -807,8 +807,8 @@ async function mergePR(owner, repo, prNumber, sha = null) {
   } catch (err) {
     // GitHub returns 409 both for "head changed" (our sha no longer matches)
     // and for "not mergeable" (base moved / conflicts). When we pinned a sha
-    // and hit a 409, surface it as the head-moved sentinel so imported merges
-    // defer to the sync poller instead of erroring the proposal.
+    // and hit a 409, surface it as the head-moved sentinel so proposal callers
+    // can refresh the live revision instead of erroring the proposal.
     if (sha && err && err.status === 409) {
       log.info('github', 'PR merge refused — head moved since reviewed commit', {
         repo: `${owner}/${repo}`, pr: prNumber, pinnedSha: sha,

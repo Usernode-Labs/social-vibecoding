@@ -43,6 +43,10 @@ const debugAccess = require('../services/debug-access');
 // stub gather().
 const statusSvc = require('../services/status');
 const { announceIssueCreated } = require('../services/issue-announce');
+const {
+  reviewedHeadForSession,
+  currentVotePredicateSql,
+} = require('../services/pr-vote-revision');
 const notifications = require('../services/notifications');
 // runSyncMain + persistBehindMain now live in services/sync-main.js so
 // the conflict-resolver can drive a sync turn without a route-requires-
@@ -1200,8 +1204,12 @@ function sessionRoutes(config) {
     try {
       const { rows } = await pool.query(
         `SELECT cs.*, a.slug as app_slug, a.name as app_name,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
-                (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no') AS no_count
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+                (SELECT COUNT(*)::int FROM pr_votes pv
+                  WHERE pv.session_id = cs.id AND pv.vote = 'no'
+                    AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
          FROM chat_sessions cs
          JOIN apps a ON cs.app_id = a.id
          WHERE cs.id = $1 AND cs.user_id = $2`,
@@ -1233,7 +1241,10 @@ function sessionRoutes(config) {
           const gov = await governanceSvc.getGovernance(pool, rows[0].app_id);
           const electorate = await governanceSvc.getElectorate(pool, rows[0].app_id, gov);
           const q = electorate.approverIds
-            ? await governanceSvc.qualifiedCounts(pool, 'pr', rows[0].id, electorate.approverIds)
+            ? await governanceSvc.qualifiedCounts(
+              pool, 'pr', rows[0].id, electorate.approverIds,
+              reviewedHeadForSession(rows[0])
+            )
             : { yes: rows[0].yes_count, no: rows[0].no_count };
           const gate = governanceSvc.computeGate(
             gov, electorate.active, q.yes, q.no, rows[0].promoted_at || rows[0].created_at
@@ -3935,17 +3946,33 @@ function sessionRoutes(config) {
     // missed-WS-event safety net.
     const { isResolving } = require('../services/conflict-resolver');
 
+    // Merge lifecycle status ('promoted' | 'merging' | 'merged' | …).
+    // The self-app "Platform updating…" banner's restore path verifies
+    // against this that the merge behind a restored banner is still in
+    // flight — a banner re-armed from sessionStorage after the merge
+    // aborted (head moved, revision unverifiable) has no SHA flip coming
+    // and would otherwise hold the tab read-only until the stuck timer.
+    let mergeStatus = null;
+    try {
+      const { rows } = await pool.query(
+        `SELECT status FROM chat_sessions WHERE id = $1`,
+        [sessionId]
+      );
+      mergeStatus = rows[0]?.status || null;
+    } catch {}
+
     // #252: in-flight sync-with-main state ({ phase, startedAt } |
     // null) — the dev-chat sync banner's reload recovery and poll
     // fallback read this the same way the resolving banner reads
     // `resolving`.
-    // Keys: busy, progress, phase, stopping, estimate (+ resolving, sync).
-    // `estimate` is { text, remainingSeconds, estimatedAt } | null — see
-    // workerProgress.setEstimate / clearEstimate.
+    // Keys: busy, progress, phase, stopping, estimate (+ resolving, sync,
+    // status). `estimate` is { text, remainingSeconds, estimatedAt } |
+    // null — see workerProgress.setEstimate / clearEstimate.
     res.json({
       busy, progress, phase, stopping, estimate,
       resolving: isResolving(sessionId),
       sync: syncMainSvc.getSyncState(sessionId),
+      status: mergeStatus,
     });
   });
 

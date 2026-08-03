@@ -909,6 +909,10 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS source               TEXT;
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_head_sha VARCHAR(40);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_author   VARCHAR(255);
+-- Exact revision approved for a native proposal. Imported proposals keep
+-- imported_pr_head_sha as their existing source of truth; native votes,
+-- checks, and merges are bound to this live GitHub PR head instead.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS reviewed_head_sha     VARCHAR(40);
 -- source = 'maintenance' marks proposals opened by a fleet maintenance
 -- campaign (services/fleet-maintenance.js): platform-authored PRs fanned
 -- out to child apps after a maintenance_campaign governance vote passes.
@@ -1269,13 +1273,11 @@ CREATE TABLE IF NOT EXISTS pr_votes (
 -- User-first scan for the "My history" view (GET /api/me/history).
 CREATE INDEX IF NOT EXISTS idx_pr_votes_user ON pr_votes (user_id, created_at DESC);
 
--- #687 Slice 3: revision-scoped approvals for IMPORTED PR proposals. A
--- vote cast on an imported proposal is stamped with the PR head commit it
--- was cast against (imported_pr_head_sha at the time), so a later push that
--- moves the head can re-open approval and the merge gate counts only the
--- approvals matching the CURRENT head. NULL for native proposals (whose
--- branch the platform owns) — the gate applies no head filter there, so
--- their counting is byte-for-byte unchanged. Append-only; safe on re-boot.
+-- Revision-scoped approvals for every GitHub PR proposal. Imported proposals
+-- use imported_pr_head_sha; native proposals use reviewed_head_sha. A later
+-- push re-opens approval and the merge gate counts only votes cast against
+-- the current reviewed revision. NULL remains valid for historical rows until
+-- their next promote, vote, or merge reconciliation. Append-only; safe on boot.
 ALTER TABLE pr_votes ADD COLUMN IF NOT EXISTS head_sha VARCHAR(40);
 
 -- Community-voted "priority" + "assigned person" on issues and PR

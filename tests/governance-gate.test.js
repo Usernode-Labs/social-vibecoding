@@ -256,7 +256,11 @@ test('qualifiedCountsBatch: per-id counts restricted to the electorate', async (
   ];
   const pool = {
     query: async (sql, params) => {
-      assert.match(sql, /GROUP BY session_id/);
+      assert.match(sql, /GROUP BY pv\.session_id/);
+      assert.match(sql, /JOIN chat_sessions cs/,
+        'PR batch counts resolve each proposal\'s current reviewed head');
+      assert.match(sql, /pv\.head_sha/,
+        'stale-revision approver votes are excluded from batch tallies');
       assert.deepEqual(params[0], [1, 2, 3]);
       assert.deepEqual(params[1], [10, 11]);
       return { rows };

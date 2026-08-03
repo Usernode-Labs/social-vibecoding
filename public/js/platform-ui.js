@@ -8,7 +8,7 @@
 //   alert   → window.alert
 //   confirm → window.confirm
 //   prompt  → window.prompt
-//   actionSheet / sheet / modal → null (callers keep their legacy
+//   actionSheet / sheet / panel / modal → null (callers keep their legacy
 //   DOM path and must branch on the return / isTouch()).
 //
 // Adaptive rule (spec decision): touch platforms get action sheets and
@@ -147,6 +147,15 @@
       const un = kit();
       if (!un || typeof un.presentSheet !== 'function') return null;
       return un.presentSheet(opts || {});
+    },
+
+    /** Side drawer / panel sliding in from an edge ({ side, contentEl,
+        width?, onDismiss }). Returns the kit handle { dismiss, el } or
+        null when unavailable (caller keeps its legacy panel). */
+    panel(opts) {
+      const un = kit();
+      if (!un || typeof un.presentPanel !== 'function') return null;
+      return un.presentPanel(opts || {});
     },
 
     /** Centered modal card. Returns the kit handle or null. */

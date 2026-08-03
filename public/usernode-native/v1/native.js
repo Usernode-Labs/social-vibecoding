@@ -42,6 +42,14 @@
  *                                        re-measured and the entrance
  *                                        spring retargeted — no pop-in)
  *   unNative.presentModal(opts)       — centered modal card, arbitrary content
+ *   unNative.presentPanel(opts)       — side drawer / panel sliding in from
+ *                                        the right (or left) edge
+ *                                        ({ side?, content | contentEl,
+ *                                        width?, onDismiss? }): full-height
+ *                                        surface, spring in/out, backdrop
+ *                                        tap / Escape dismiss. NOT
+ *                                        draggable by design — a nav
+ *                                        drawer is not a bottom sheet
  *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
  *   unNative.alert(opts)              — iOS alert dialog, Promise-based
  *   unNative.popover(opts)            — anchored popover / dropdown menu
@@ -2207,20 +2215,22 @@
    * halves together: don't clamp y here, and don't drop that rule.
    * ──────────────────────────────────────────────────────────────────── */
 
-  // Watch an overlay's border-box height while it is presented (issue
-  // #742): content rendered AFTER present (fill from state, async fetch)
-  // changes the height the entrance spring and backdrop math were seeded
-  // with. Calls onChange(newHeight, oldHeight) on material (≥1px) changes.
+  // Watch one border-box dimension of an overlay while it is presented
+  // (issue #742): content rendered AFTER present (fill from state, async
+  // fetch) changes the height the entrance spring and backdrop math were
+  // seeded with, and a rotation changes a side panel's width. `prop` is
+  // 'offsetHeight' (bottom sheet) or 'offsetWidth' (side panel). Calls
+  // onChange(newValue, oldValue) on material (≥1px) changes.
   // ResizeObserver fires after layout and BEFORE paint, so the common
   // present-then-render-synchronously pattern retargets before a frame at
   // the wrong offset is ever painted; transforms don't affect layout, so
-  // the per-frame translateY writes can't re-trigger it. Where RO is
+  // the per-frame translate writes can't re-trigger it. Where RO is
   // missing, a single first-rAF re-measure covers the same pattern.
   // Returns a disconnect function.
-  function watchHeight(el, onChange) {
-    var last = el.offsetHeight || 1;
+  function watchSize(el, prop, onChange) {
+    var last = el[prop] || 1;
     function check() {
-      var h = el.offsetHeight || 1;
+      var h = el[prop] || 1;
       if (Math.abs(h - last) < 1) return;
       var prev = last;
       last = h;
@@ -2360,7 +2370,7 @@
     // so refreshing it keeps them all consistent; the offset shift keeps
     // the top edge visually continuous so growth springs up (a full
     // slide-up on the first-open repro) instead of popping in.
-    var unwatch = watchHeight(sheet, function (newHeight, oldHeight) {
+    var unwatch = watchSize(sheet, 'offsetHeight', function (newHeight, oldHeight) {
       height = newHeight;
       if (drag && drag.locked) return; // the finger owns the position 1:1
       var v = activeSpring ? activeSpring.current().v : 0;
@@ -2473,6 +2483,131 @@
     });
 
     return { el: card, dismiss: dismiss };
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   * Side panel / drawer — a full-height surface that springs in from the
+   * right (default) or left edge, over the shared dimmed backdrop.
+   *
+   * DELIBERATELY NOT DRAGGABLE. The platform navigation drawers this
+   * mirrors are not swipe-dismissed surfaces with a grabber affordance —
+   * that idiom belongs to the bottom sheet, where the tray is a transient
+   * thing you flick away. A drawer is opened by a control and closed by
+   * the backdrop, the ✕, Escape, or picking a row. So there is no pointer
+   * handling here at all, which also means: no gesture-arbiter claim to
+   * contend with, no click-swallow to get wrong, and vertical scrolling
+   * inside the panel is plain native scrolling (no `touch-action`
+   * narrowing in native.css). An earlier revision of this component did
+   * ship drag-to-dismiss plus a grabber pill; both were removed as
+   * un-native. Don't reintroduce them without the idiom actually changing.
+   *
+   * What remains is the sheet's PRESENTATION contract rotated 90°: JS owns
+   * translateX (spring in, spring out — no CSS transition on transform)
+   * and the backdrop opacity rides the position, so the dim and the slide
+   * are one motion.
+   *
+   * x is signed by side: `dir` is +1 for a right panel (leaving = moving
+   * right, positive translateX) and -1 for a left one, so everything below
+   * is written once in "displacement toward my own edge" terms and only
+   * render() touches the sign. x still goes slightly NEGATIVE (past the
+   * rest position, into the page) because the `sheet` preset is
+   * underdamped and its entrance overshoots — which lifts the panel off
+   * its screen edge, and is what `.un-panel::after` covers by continuing
+   * the surface outward. Keep those two halves together.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  // presentPanel({ side?, content | contentEl, width?, onDismiss? })
+  // — side is 'right' (default) or 'left'; content is an HTML string,
+  // contentEl an Element to adopt; width is any CSS length (sets
+  // --un-panel-width for this instance). Returns { dismiss(), el }.
+  function presentPanel(options) {
+    var opts = options || {};
+    var side = opts.side === 'left' ? 'left' : 'right';
+    var dir = side === 'right' ? 1 : -1;
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'un-backdrop';
+    var panel = document.createElement('div');
+    panel.className = 'un-panel';
+    panel.setAttribute('data-un-side', side);
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.tabIndex = -1;
+    if (opts.width) panel.style.setProperty('--un-panel-width', String(opts.width));
+    var body = document.createElement('div');
+    body.className = 'un-panel-body';
+    if (opts.contentEl) body.appendChild(opts.contentEl);
+    else if (opts.content != null) body.innerHTML = opts.content;
+    panel.appendChild(body);
+    document.body.appendChild(backdrop);
+    document.body.appendChild(panel);
+
+    var width = panel.offsetWidth || 1;
+    var x = width; // displacement toward the panel's edge: 0 = presented
+    var activeSpring = null;
+    var closed = false;
+    var prevFocus = document.activeElement;
+    var entry = { dismissible: true, dismiss: function () { dismiss(); } };
+    modalStack.push(entry);
+
+    function render(val) {
+      x = val;
+      panel.style.transform = 'translateX(' + (val * dir) + 'px)';
+      backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / width)));
+    }
+
+    function springTo(to, onRest) {
+      if (activeSpring) activeSpring.stop();
+      if (prefersReducedMotion) {
+        render(to);
+        if (onRest) onRest();
+        return;
+      }
+      activeSpring = spring(function (v) { render(v); }, {
+        from: x, to: to, preset: 'sheet',
+        onRest: function () { activeSpring = null; if (onRest) onRest(); },
+      });
+    }
+
+    function teardown() {
+      if (unwatch) unwatch();
+      if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
+      if (prevFocus && typeof prevFocus.focus === 'function') {
+        try { prevFocus.focus(); } catch (e) { /* ignore */ }
+      }
+      if (opts.onDismiss) opts.onDismiss();
+    }
+
+    function dismiss() {
+      if (closed) return;
+      closed = true;
+      var i = modalStack.indexOf(entry);
+      if (i >= 0) modalStack.splice(i, 1);
+      springTo(width, teardown);
+    }
+
+    backdrop.addEventListener('click', function () { dismiss(); });
+
+    // Rotation / viewport resize changes --un-panel-width, which feeds the
+    // backdrop denominator and the exit travel.
+    var unwatch = watchSize(panel, 'offsetWidth', function (newWidth) {
+      width = newWidth;
+      // An exit spring was aiming at the old width — retarget so the panel
+      // fully leaves the screen before teardown.
+      if (closed) springTo(width, teardown);
+      else springTo(0);
+    });
+
+    render(width);
+    springTo(0);
+    var auto = body.querySelector('[autofocus]');
+    try { (auto || panel).focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+
+    return {
+      el: panel,
+      dismiss: dismiss,
+    };
   }
 
   /* ────────────────────────────────────────────────────────────────────
@@ -3456,6 +3591,7 @@
     transition: transition,
     presentSheet: presentSheet,
     presentModal: presentModal,
+    presentPanel: presentPanel,
     actionSheet: actionSheet,
     popover: popover,
     menu: menu,

@@ -103,10 +103,36 @@
   margin: 0 !important;
 }
 
-/* Panels adopted into kit bottom sheets on touch (header drawer,
-   notifications, work drawer, dev console). Their legacy classes pin
-   them as fixed dropdown/slide-over chrome; while riding inside a
-   sheet the sheet owns position, size and surface. */
+/* The header drawer riding inside a kit SIDE PANEL on touch
+   (unNative.presentPanel via App.HeaderMenu.open). Same neutralisation
+   of the legacy fixed slide-over chrome as .platform-sheet-adopted
+   below, but sized for a full-height drawer: it FILLS the kit panel
+   rather than being capped, which is what lets #drawer-footer's
+   `mt-auto` hug the bottom of the screen instead of being pushed past
+   a 70vh cut-off. Deliberately no max-height here. */
+.platform-panel-adopted {
+  position: static !important;
+  inset: auto !important;
+  transform: none !important;
+  transition: none !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  max-height: none !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  display: flex !important;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Panels adopted into kit bottom sheets on touch (notifications, work
+   drawer, dev console — the header drawer moved to the side panel
+   above). Their legacy classes pin them as fixed dropdown/slide-over
+   chrome; while riding inside a sheet the sheet owns position, size and
+   surface. */
 .platform-sheet-adopted {
   position: static !important;
   inset: auto !important;
@@ -3661,9 +3687,9 @@ a.drawer-ver--fork:hover {
    App.HeaderMenu._renderThemeButtons writes on the track. A
    thirds-width element translated by index * 100% lands centred under
    segment N at ANY track width — which matters because the panel is
-   15rem as a desktop slide-over and full-viewport as a touch sheet, and
-   the index is written before the sheet resizes it. Never replace this
-   with an offsetLeft measurement. */
+   15rem as a desktop slide-over and --un-panel-width as a touch side
+   drawer, and the index is written before the kit panel resizes it.
+   Never replace this with an offsetLeft measurement. */
 #drawer-theme-track {
   --theme-caret-index: 0;
 }

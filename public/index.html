@@ -216,7 +216,11 @@
 
   <!-- Slide-out navigation drawer (all viewport widths — #122).
        Overlay dims the page; panel slides in from the right. Both are
-       controlled by HeaderMenu.open() / HeaderMenu.close() in app.js. -->
+       controlled by HeaderMenu.open() / HeaderMenu.close() in app.js.
+       On touch the panel below is ADOPTED into a kit side drawer
+       (unNative.presentPanel — drag-to-dismiss), which supplies its own
+       backdrop; the overlay here and the CSS transform transition are
+       the desktop / kit-missing path. -->
   <div id="header-menu-overlay" class="hidden fixed inset-0 z-40 bg-black/40" aria-hidden="true"></div>
   <div id="header-menu-panel" role="dialog" aria-label="Navigation menu"
        class="fixed top-0 right-0 bottom-0 z-50 w-60 max-w-[85vw] flex flex-col
@@ -232,14 +236,15 @@
          footer block at its end can be bottom-anchored with `mt-auto`:
          when the rows above are short the free space collects above the
          footer and it hugs the bottom of the panel; when they overflow
-         (touch sheet capped at 70vh by .platform-sheet-adopted, or a
-         short viewport) there is no free space and the footer simply
+         (a short viewport) there is no free space and the footer simply
          sits at the end of the scroll. One rule, both behaviours, no
-         measurement.
+         measurement. On touch the panel fills a full-height kit side
+         drawer (.platform-panel-adopted), so the footer sits at the
+         bottom of the screen there too.
 
          The theme selector and the status pane are first in DOM order
          rather than pinned outside the scroller: pinning blocks above
-         the list would leave the touch sheet almost no room for the
+         the list would leave a short viewport almost no room for the
          navigation rows. Being first means they're on screen the moment
          the drawer opens at any realistic viewport. -->
     <div id="header-menu-rows" class="flex-1 min-h-0 overflow-y-auto flex flex-col">

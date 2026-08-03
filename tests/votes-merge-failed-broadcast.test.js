@@ -121,6 +121,7 @@ const session = {
   id: 7, app_id: 5, app_slug: 'widget', app_self_hosted: true,
   repo_url: 'https://github.com/acme/widget', pr_number: 12,
   pr_title: 'Widget tweak', user_id: 3, behind_main: 0,
+  reviewed_head_sha: 'a'.repeat(40),
 };
 
 const pool = () => makePool([

@@ -503,6 +503,10 @@ const App = {
     // refs are ephemeral and must be re-derived on page load.
     fromSha: null,
     since: null,
+    // Session whose merge armed the banner — lets restore / the stuck
+    // timer verify against /api/sessions/:id/status that the merge is
+    // still in flight (see verifyMergeStillInFlight).
+    sessionId: null,
     fastPollTimer: null,
     stuckTimer: null,
     fetchWrapInstalled: false,
@@ -531,6 +535,7 @@ const App = {
       const fromSha = App.loadedPlatformSha || null;
       this.fromSha = fromSha;
       this.since = Date.now();
+      this.sessionId = sessionId || null;
       try {
         sessionStorage.setItem(this.SS_KEY, JSON.stringify({
           fromSha, since: this.since, appSlug: appSlug || null, sessionId: sessionId || null,
@@ -585,11 +590,16 @@ const App = {
       }
       this.fromSha = parsed.fromSha || null;
       this.since = parsed.since || Date.now();
+      this.sessionId = parsed.sessionId || null;
       const elapsed = Date.now() - this.since;
       this.show(elapsed >= this.STUCK_AFTER_MS);
       this.startFastPolling();
       this.armStuckTimer();
       console.log('[platform-updating] banner restored from session', { elapsedMs: elapsed });
+      // The restored merge may have aborted while this tab was
+      // reloading (its merging:false counter-event is gone for good) —
+      // verify before holding the tab read-only until the stuck timer.
+      this.verifyMergeStillInFlight();
     },
 
     observeVersion(info) {
@@ -604,17 +614,18 @@ const App = {
       this.end({ newSha: sha });
     },
 
-    // The merge behind this banner failed before any deploy started
-    // (vote_update { mergeFailed:true }). No new code is coming, so
-    // there's no SHA flip to wait for and no reason to reload — just
-    // clear the latch and lift the write block. Safe when the banner
-    // isn't armed (no-op).
+    // The merge behind this banner ended without merging — failed, head
+    // moved, or deferred (vote_update { merging:false, merged:false }).
+    // No new code is coming, so there's no SHA flip to wait for and no
+    // reason to reload — just clear the latch and lift the write block.
+    // Safe when the banner isn't armed (no-op).
     cancel() {
       if (!this.isActive()) return;
       console.log('[platform-updating] cancelled (merge failed, no deploy)');
       try { sessionStorage.removeItem(this.SS_KEY); } catch {}
       this.fromSha = null;
       this.since = null;
+      this.sessionId = null;
       this.stopFastPolling();
       this.disarmStuckTimer();
       this.hide();
@@ -798,6 +809,7 @@ const App = {
       try { sessionStorage.removeItem(this.SS_KEY); } catch {}
       this.fromSha = null;
       this.since = null;
+      this.sessionId = null;
       this.stopFastPolling();
       this.disarmStuckTimer();
       this.hide();
@@ -859,8 +871,39 @@ const App = {
       this.disarmStuckTimer();
       const remaining = Math.max(0, this.STUCK_AFTER_MS - (Date.now() - this.since));
       this.stuckTimer = setTimeout(() => {
-        if (this.isActive()) this.show(/* stuck */ true);
+        if (!this.isActive()) return;
+        this.show(/* stuck */ true);
+        // A banner this old usually means the merging:false
+        // counter-event was missed (WS drop). If the server says the
+        // merge is no longer in flight, unlatch instead of sitting red
+        // forever.
+        this.verifyMergeStillInFlight();
       }, remaining);
+    },
+
+    // Missed-WS-event recovery: ask the server whether the merge that
+    // armed this banner is still on the merging → merged → deploy path.
+    // The merging:false counter-event un-latches live tabs, but a tab
+    // that was reloading (or whose WS had dropped) when it fired restores the
+    // banner from sessionStorage and would block writes forever — the
+    // dismissal condition (a /api/version SHA flip) never comes for an
+    // aborted merge. 'merged' keeps the banner: the GHA deploy and its
+    // SHA flip are still on the way. Fail-safe on any error or an older
+    // server without `status` in the payload: keep the banner armed.
+    verifyMergeStillInFlight() {
+      const sessionId = this.sessionId;
+      if (sessionId == null) return;
+      fetch(`/api/sessions/${sessionId}/status`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((data) => {
+          if (!this.isActive() || this.sessionId !== sessionId) return;
+          const status = data && typeof data.status === 'string' ? data.status : null;
+          if (status && status !== 'merging' && status !== 'merged') {
+            console.log('[platform-updating] merge no longer in flight — unlatching', { status });
+            this.cancel();
+          }
+        })
+        .catch(() => {});
     },
 
     disarmStuckTimer() {
@@ -1647,14 +1690,19 @@ const App = {
         sessionId: data.sessionId,
       });
     }
-    // Counter-event: the self-app merge failed before any deploy, so no
+    // Counter-event: the self-app merge attempt ended without a merge
+    // (failed, head moved since review, revision unverifiable), so no
     // SHA flip is coming — unlatch instead of holding the platform
-    // read-only until the stuck timer. #239: when the auto-resolver is
-    // kicking in (resolving:true rides on the mergeFailed event for
-    // conflict-class failures), immediately re-arm in the non-blocking
-    // resolving state so the banner transitions in place instead of
-    // silently vanishing while the resolver spends 1–2 min on the fix.
-    if (data.mergeFailed && data.selfHosted) {
+    // read-only until the stuck timer. `merging === false` (field
+    // present) + no merge is the terminal shape every abort path
+    // broadcasts; keying on it rather than just `mergeFailed` covers the
+    // head-moved / deferred aborts, which are deliberately not flagged
+    // as failures. #239: when the auto-resolver is kicking in
+    // (resolving:true rides on the mergeFailed event for conflict-class
+    // failures), immediately re-arm in the non-blocking resolving state
+    // so the banner transitions in place instead of silently vanishing
+    // while the resolver spends 1–2 min on the fix.
+    if (data.merging === false && !data.merged && data.selfHosted) {
       App.PlatformUpdating.cancel();
       if (data.resolving) {
         App.PlatformUpdating.beginResolving({
@@ -1786,7 +1834,7 @@ const App = {
   // plus GitHub + Share. (Members & visibility moved to the Dev "+"
   // menu — #645.)
   HeaderMenu: {
-    _sheet: null,
+    _panel: null,
     open() {
       const panel = document.getElementById('header-menu-panel');
       const overlay = document.getElementById('header-menu-overlay');
@@ -1797,27 +1845,52 @@ const App = {
       // throttled inside AiCredit, so this is cheap on every open —
       // and it must run BEFORE the touch branch below, which returns.
       if (window.AiCredit?.refreshAll) AiCredit.refreshAll();
-      // Touch platforms: present the drawer's rows as a draggable
-      // bottom sheet (kit). The panel element itself is adopted via
-      // contentEl — its row listeners ride along — and is restored to
-      // <body> (off-screen, as usual) when the sheet dismisses.
-      // Desktop keeps the right-side slide-over below.
+      // Touch platforms: present the drawer as a kit side panel — a
+      // right-edge slide-in with 1:1 drag-to-dismiss, matching what
+      // desktop's CSS slide-over already does positionally (it used to
+      // come up from the bottom as a sheet capped at 70vh, which cut the
+      // bottom-anchored footer off). The panel element itself is adopted
+      // via contentEl — its row listeners ride along — and is restored to
+      // <body> (off-screen, as usual) when the panel dismisses. Desktop
+      // keeps the right-side slide-over below.
       if (PlatformUI.isTouch()) {
         App.HeaderMenu._renderThemeButtons();
-        panel.classList.add('platform-sheet-adopted');
-        const sheet = PlatformUI.sheet({
+        panel.classList.add('platform-panel-adopted');
+        // Assigned right below; captured here so onDismiss can tell its own
+        // teardown apart from a newer one's (see the guard).
+        let handle = null;
+        const kitPanel = PlatformUI.panel({
           contentEl: panel,
+          side: 'right',
           onDismiss: () => {
-            panel.classList.remove('platform-sheet-adopted');
+            // Teardown is deferred behind the exit spring, so a tap on the
+            // hamburger during that window can re-adopt the drawer into a
+            // NEW kit panel before this fires. Restoring it to <body> then
+            // would yank the node straight back out of the panel the user
+            // just opened, leaving an empty drawer. Only the CURRENT
+            // handle's teardown owns the node.
+            if (handle && App.HeaderMenu._panel !== handle) return;
+            panel.classList.remove('platform-panel-adopted');
             document.body.appendChild(panel);
-            App.HeaderMenu._sheet = null;
+            App.HeaderMenu._panel = null;
+            // The hamburger's state is not the kit's business, so it is
+            // reset here on EVERY exit path (backdrop, Escape, ✕, row
+            // navigation) — they all route through the kit dismiss.
+            btn.setAttribute('aria-expanded', 'false');
+            btn.setAttribute('aria-label', 'Open menu');
           },
         });
-        if (sheet) {
-          App.HeaderMenu._sheet = sheet;
+        handle = kitPanel;
+        if (kitPanel) {
+          App.HeaderMenu._panel = kitPanel;
+          // The touch path used to return before the aria writes below,
+          // leaving the button reading "Open menu" / collapsed while the
+          // drawer was open.
+          btn.setAttribute('aria-expanded', 'true');
+          btn.setAttribute('aria-label', 'Close menu');
           return;
         }
-        panel.classList.remove('platform-sheet-adopted');
+        panel.classList.remove('platform-panel-adopted');
       }
       overlay.classList.remove('hidden');
       // Force a reflow so the transition fires (element was display:none).
@@ -1844,11 +1917,11 @@ const App = {
     // The caret is moved by writing --theme-caret-index (0|1|2) on the
     // track and letting CSS translate a thirds-width element by
     // index * 100%. Deliberately NOT an offsetLeft measurement: this runs
-    // once from open() BEFORE PlatformUI.sheet resizes the panel from
-    // w-60 to the sheet's full width, so a pixel read here would be stale
-    // the moment the sheet presents. Percentages are correct at both
-    // widths with no re-measure, and the transition in CSS is what makes
-    // the caret slide between segments.
+    // once from open() BEFORE PlatformUI.panel resizes the panel from
+    // w-60 to the kit drawer's --un-panel-width, so a pixel read here
+    // would be stale the moment the panel presents. Percentages are
+    // correct at both widths with no re-measure, and the transition in
+    // CSS is what makes the caret slide between segments.
     _renderThemeButtons() {
       if (!window.Theme) return;
       const current = Theme.get();
@@ -1864,8 +1937,8 @@ const App = {
       }
     },
     close() {
-      if (App.HeaderMenu._sheet) {
-        App.HeaderMenu._sheet.dismiss();
+      if (App.HeaderMenu._panel) {
+        App.HeaderMenu._panel.dismiss();
         return;
       }
       const panel = document.getElementById('header-menu-panel');
@@ -1889,6 +1962,10 @@ const App = {
         .addEventListener('click', () => App.HeaderMenu.close());
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
+          // Adopted into a kit panel: the kit's own modal-stack handler
+          // owns Escape (it dismisses the topmost surface, which may be a
+          // modal opened above the drawer). Don't double-handle it.
+          if (App.HeaderMenu._panel) return;
           const panel = document.getElementById('header-menu-panel');
           if (panel && panel.hasAttribute('data-open')) App.HeaderMenu.close();
         }

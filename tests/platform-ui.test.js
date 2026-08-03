@@ -79,11 +79,14 @@ test('kit absent: prompt falls back to window.prompt', async () => {
   assert.equal(calls.prompts.length, 1);
 });
 
-test('kit absent: sheets/modals return null, actionSheet resolves null, gestures null', async () => {
+test('kit absent: sheets/panels/modals return null, actionSheet resolves null, gestures null', async () => {
   const { PlatformUI } = makeSandbox();
   assert.equal(PlatformUI.hasKit(), false);
   assert.equal(PlatformUI.isTouch(), false);
   assert.equal(PlatformUI.sheet({}), null);
+  // Null is what makes App.HeaderMenu fall back to the legacy CSS
+  // slide-over instead of opening nothing.
+  assert.equal(PlatformUI.panel({}), null);
   assert.equal(PlatformUI.modal({}), null);
   assert.equal(await PlatformUI.actionSheet({ actions: [] }), null);
   assert.equal(PlatformUI.gestures(), null);
@@ -128,7 +131,10 @@ test('kit absent: swipeActions / pullToRefresh / attachScreenFx are inert, never
 // ── 2. Kit delegation ──────────────────────────────────────────────────
 
 function stubKit() {
-  const seen = { toasts: [], alerts: [], sheets: [], modals: [], actionSheets: [], transitions: [] };
+  const seen = {
+    toasts: [], alerts: [], sheets: [], panels: [], modals: [],
+    actionSheets: [], transitions: [],
+  };
   const kit = {
     platform: 'ios',
     toast: (msg, opts) => { seen.toasts.push([msg, opts]); return { dismiss() {}, el: {} }; },
@@ -140,6 +146,7 @@ function stubKit() {
     },
     actionSheet: (opts) => { seen.actionSheets.push(opts); return Promise.resolve(null); },
     presentSheet: (opts) => { seen.sheets.push(opts); return { dismiss() {}, el: {} }; },
+    presentPanel: (opts) => { seen.panels.push(opts); return { dismiss() {}, el: {} }; },
     presentModal: (opts) => { seen.modals.push(opts); return { dismiss() {}, el: {} }; },
     transition: (fn, opts) => { seen.transitions.push(opts); fn(); },
     gestures: { claim: () => true, owner: () => null, release: () => {} },
@@ -163,6 +170,25 @@ test('kit present: isTouch reflects the kit platform', () => {
   kit.platform = 'desktop';
   const desk = makeSandbox({ kit });
   assert.equal(desk.PlatformUI.isTouch(), false);
+});
+
+test('kit present: panel delegates to unNative.presentPanel, options untouched', () => {
+  const { kit, seen } = stubKit();
+  const { PlatformUI } = makeSandbox({ kit });
+  const contentEl = { adopted: true };
+  const onDismiss = () => {};
+  const h = PlatformUI.panel({ contentEl, side: 'right', onDismiss });
+  assert.ok(h && typeof h.dismiss === 'function');
+  assert.equal(seen.panels.length, 1);
+  // The side is what the hamburger drawer's whole change hinges on, and
+  // contentEl is the adoption seam — neither may be rewritten in transit.
+  assert.equal(seen.panels[0].side, 'right');
+  assert.equal(seen.panels[0].contentEl, contentEl);
+  assert.equal(seen.panels[0].onDismiss, onDismiss);
+  // A kit that predates presentPanel degrades to the legacy path.
+  delete kit.presentPanel;
+  const { PlatformUI: P2 } = makeSandbox({ kit });
+  assert.equal(P2.panel({ contentEl }), null);
 });
 
 test('kit present: confirm maps the tapped button onto a boolean', async () => {
