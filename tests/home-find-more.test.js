@@ -1,0 +1,253 @@
+// "Find more apps" + "Create an app" — the two sections below the home
+// screen's "Your apps" grid.
+//
+// Find more apps is the admin-curated featured row (the `featured` /
+// `featured_order` flags GET /api/apps serializes from the featured_apps
+// table) plus the button into the #apps browse screen. Create an app is
+// the former in-grid "Your app here" tile, now the page's last section.
+//
+// Run with: node --test tests/home-find-more.test.js
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const vm = require('node:vm');
+
+const read = (rel) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
+const HOME_SRC = read('public/js/home.js');
+const INDEX = read('public/index.html');
+const SCHEMA = read('src/db/schema.sql');
+const APPS_ROUTE = read('src/routes/apps.js');
+
+function makeHome() {
+  const sandbox = {
+    console,
+    App: { user: { id: 1, canCreateApps: true } },
+    document: {
+      getElementById: () => null,
+      querySelector: () => null,
+      querySelectorAll: () => ({ forEach: () => {} }),
+      // escapeHtml() round-trips through textContent → innerHTML.
+      createElement: () => {
+        let t = '';
+        return {
+          classList: { add() {} },
+          dataset: {},
+          set textContent(v) { t = String(v); },
+          get innerHTML() {
+            return t.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+          },
+        };
+      },
+      body: { appendChild: () => {} },
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    },
+    fetch: async () => ({ ok: true, json: async () => ({}) }),
+    setTimeout, clearTimeout, setInterval, clearInterval,
+    URLSearchParams,
+    location: { search: '' },
+    addEventListener: () => {},
+    removeEventListener: () => {},
+  };
+  sandbox.window = sandbox;
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  vm.runInContext(`${HOME_SRC}\n;globalThis.__Home = Home;`, sandbox);
+  return sandbox.__Home;
+}
+
+const app = (over) => ({
+  slug: 'some-app',
+  name: 'Some App',
+  status: 'running',
+  is_collaborator: false,
+  is_favorited: false,
+  favorite_order: null,
+  featured: false,
+  featured_order: null,
+  ...over,
+});
+
+// ── featuredApps selection ────────────────────────────────────────
+
+test('featuredApps: only featured rows, ordered by featured_order', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'plain' }),
+    app({ slug: 'third', featured: true, featured_order: 2 }),
+    app({ slug: 'first', featured: true, featured_order: 0 }),
+    app({ slug: 'second', featured: true, featured_order: 1 }),
+  ];
+  assert.deepEqual(
+    Home.featuredApps(apps).map((a) => a.slug),
+    ['first', 'second', 'third']
+  );
+});
+
+test('featuredApps: apps already in "Your apps" are left out', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'member', featured: true, featured_order: 0, is_collaborator: true }),
+    app({ slug: 'added', featured: true, featured_order: 1, is_favorited: true }),
+    app({ slug: 'fresh', featured: true, featured_order: 2 }),
+  ];
+  assert.deepEqual(Home.featuredApps(apps).map((a) => a.slug), ['fresh'],
+    'no point re-offering what the user already keeps');
+});
+
+test('featuredApps: a hidden member app IS offered again (#618)', () => {
+  const Home = makeHome();
+  // your_apps_hidden means they took it OFF their home screen, so it is
+  // no longer "theirs" for this purpose — isYours() is the single source.
+  const apps = [app({
+    slug: 'hidden', featured: true, featured_order: 0,
+    is_collaborator: true, your_apps_hidden: true,
+  })];
+  assert.deepEqual(Home.featuredApps(apps).map((a) => a.slug), ['hidden']);
+});
+
+test('featuredApps: NULL featured_order sorts after explicit ones', () => {
+  const Home = makeHome();
+  const apps = [
+    app({ slug: 'null-order', featured: true, featured_order: null }),
+    app({ slug: 'zero', featured: true, featured_order: 0 }),
+  ];
+  assert.deepEqual(Home.featuredApps(apps).map((a) => a.slug), ['zero', 'null-order']);
+});
+
+test('featuredApps: capped at FEATURED_LIMIT', () => {
+  const Home = makeHome();
+  const apps = Array.from({ length: 20 }, (_, i) => app({
+    slug: `f${i}`, featured: true, featured_order: i,
+  }));
+  assert.equal(Home.FEATURED_LIMIT, 6);
+  assert.equal(Home.featuredApps(apps).length, 6);
+  assert.deepEqual(Home.featuredApps(apps).map((a) => a.slug),
+    ['f0', 'f1', 'f2', 'f3', 'f4', 'f5'], 'takes the top of the admin order');
+});
+
+test('featuredApps: empty / missing input is safe', () => {
+  const Home = makeHome();
+  assert.equal(Home.featuredApps([]).length, 0);
+  assert.equal(Home.featuredApps(undefined).length, 0);
+  assert.equal(Home.featuredApps([app()]).length, 0, 'nothing featured');
+});
+
+// ── The row hides itself when there is nothing to show ───────────
+
+test('renderFindMore hides the tile row but keeps the browse button', () => {
+  const src = HOME_SRC.slice(
+    HOME_SRC.indexOf('renderFindMore(apps) {'),
+    HOME_SRC.indexOf('renderCreateSection(canCreate) {')
+  );
+  assert.ok(src.length > 200, 'located renderFindMore');
+  assert.match(src, /listEl\.classList\.toggle\('hidden', featured\.length === 0\)/);
+  // The button is static markup and always present — it is the discovery
+  // path, so it must not depend on curation existing.
+  assert.match(src, /home-browse-btn/);
+  assert.match(src, /location\.hash = '#apps'/);
+});
+
+// ── Card mode: discovery tiles carry an add badge, not a "…" menu ──
+
+test('renderAppCard: browse/featured mode swaps the menu for an add badge', () => {
+  const Home = makeHome();
+  const fresh = app({ slug: 'fresh', name: 'Fresh App' });
+  const html = Home.renderAppCard(fresh, { mode: 'featured' });
+  assert.match(html, /card-add-btn/);
+  assert.match(html, /data-added="false"/);
+  assert.doesNotMatch(html, /card-menu-btn/, 'no actions menu in a discovery grid');
+});
+
+test('renderAppCard: an already-added app renders the ✓ state', () => {
+  const Home = makeHome();
+  const added = app({ slug: 'mine', is_favorited: true });
+  const html = Home.renderAppCard(added, { mode: 'browse' });
+  assert.match(html, /data-added="true"/);
+  assert.match(html, /Remove mine from Your apps|Remove Some App from Your apps/);
+});
+
+test('renderAppCard: home mode is unchanged (default, menu badge)', () => {
+  const Home = makeHome();
+  const html = Home.renderAppCard(app({ slug: 'mine', is_collaborator: true }));
+  assert.match(html, /card-menu-btn/);
+  assert.doesNotMatch(html, /card-add-btn/);
+});
+
+// ── index.html section shells ────────────────────────────────────
+
+test('index.html carries the two new sections inside the home scroller', () => {
+  const main = INDEX.slice(
+    INDEX.indexOf('<main id="home-screen"'),
+    INDEX.indexOf('<main id="browse-screen"')
+  );
+  assert.ok(main.includes('id="home-find-more"'));
+  assert.ok(main.includes('>Find more apps<'));
+  assert.ok(main.includes('id="home-featured-list"'));
+  assert.ok(main.includes('Browse all apps'));
+  assert.ok(main.includes('id="home-create-section"'));
+  assert.ok(main.includes('>Create an app<'));
+  assert.ok(main.includes('id="home-create-body"'));
+});
+
+test('the create tile is no longer rendered inside #app-list', () => {
+  const render = HOME_SRC.slice(
+    HOME_SRC.indexOf('\n  render() {'),
+    HOME_SRC.indexOf('\n  renderFindMore(')
+  );
+  assert.doesNotMatch(render, /renderCreateTile/,
+    'the create tile lives in its own section now');
+  // It is still rendered — just from the section renderer.
+  assert.match(HOME_SRC, /host\.innerHTML = Home\.renderCreateTile\(\)/);
+});
+
+test('non-creators get the ask-an-admin hint in the create section', () => {
+  const src = HOME_SRC.slice(HOME_SRC.indexOf('renderCreateSection(canCreate) {'));
+  assert.match(src, /CREATE_DISABLED_HINT/);
+  assert.match(HOME_SRC, /Ask an admin to enable app creation/);
+});
+
+// ── Server side: the featured flags this row is built from ────────
+
+test('schema declares featured_apps with a cascading app FK', () => {
+  assert.match(SCHEMA, /CREATE TABLE IF NOT EXISTS featured_apps/);
+  const block = SCHEMA.slice(
+    SCHEMA.indexOf('CREATE TABLE IF NOT EXISTS featured_apps'),
+    SCHEMA.indexOf('CREATE INDEX IF NOT EXISTS idx_featured_apps_order')
+  );
+  assert.match(block, /app_id\s+INTEGER PRIMARY KEY REFERENCES apps\(id\) ON DELETE CASCADE/);
+  assert.match(block, /sort_order\s+INTEGER NOT NULL/);
+  assert.match(block, /created_by\s+INTEGER REFERENCES users\(id\) ON DELETE SET NULL/);
+  // Curation is public information — it is on every user's home screen.
+  assert.doesNotMatch(block, /staging:private/);
+});
+
+test('GET /api/apps joins featured_apps and serializes both flags', () => {
+  assert.match(APPS_ROUTE, /LEFT JOIN featured_apps fa ON fa\.app_id = a\.id/);
+  assert.match(APPS_ROUTE, /\(fa\.app_id IS NOT NULL\) AS featured/);
+  assert.match(APPS_ROUTE, /fa\.sort_order AS featured_order/);
+  assert.match(APPS_ROUTE, /featured: !!a\.featured/);
+  assert.match(APPS_ROUTE, /featured_order: a\.featured_order \?\? null/);
+});
+
+test('staging seeds featured rows both ways (boot seed + ?demo=1 tiles)', () => {
+  // featured_apps is new, so a prod-cloned staging DB has no rows: the
+  // home row, the browse ordering and the admin list would all be empty
+  // in every PR preview without these.
+  const migrate = read('src/db/migrate.js');
+  assert.match(migrate, /async function seedStagingFeaturedApps\(pool\)/);
+  assert.match(migrate, /await seedStagingFeaturedApps\(pool\)/);
+  const seed = migrate.slice(
+    migrate.indexOf('async function seedStagingFeaturedApps(pool)'),
+    migrate.indexOf('// Per-user app-quota fixtures')
+  );
+  assert.match(seed, /USERNODE_ENV !== 'staging'/, 'no-op outside staging');
+  assert.match(seed, /INSERT INTO featured_apps/);
+  assert.match(seed, /ON CONFLICT \(app_id\) DO NOTHING/, 'idempotent across rebuilds');
+  assert.match(seed, /NULL/, 'created_by never references a real user');
+  // Request-time demo tiles for the ?demo=1 path.
+  assert.match(APPS_ROUTE, /staging-demo-featured/);
+  assert.match(APPS_ROUTE, /featured: true/);
+});

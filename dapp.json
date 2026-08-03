@@ -274,6 +274,38 @@
   ],
   "tests": [
     {
+      "name": "Home carries a \"Find more apps\" section below Your apps",
+      "path": "/",
+      "expectText": "Find more apps"
+    },
+    {
+      "name": "Home ends with the \"Create an app\" section (create tile out of the grid)",
+      "path": "/",
+      "expectSelector": "#home-create-section #home-create-body .home-create-btn",
+      "expectText": "Create an app"
+    },
+    {
+      "name": "The featured row renders admin-curated tiles (staging seed + ?demo=1)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-featured-list .app-card"
+    },
+    {
+      "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
+      "path": "/?shot=home-search",
+      "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
+    },
+    {
+      "name": "The #apps browse screen lists every visible app with add badges",
+      "path": "/apps",
+      "expectSelector": "#browse-list .app-card .card-add-btn",
+      "expectText": "All apps"
+    },
+    {
+      "name": "Admins get a Featured apps console section",
+      "path": "/admin/featured-apps",
+      "expectText": "Featured apps"
+    },
+    {
       "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
       "path": "/?shot=secrets#app/usernode-2d5619/dev",
       "expectSelector": "#app-secrets-list code"

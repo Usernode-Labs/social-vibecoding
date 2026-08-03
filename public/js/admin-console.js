@@ -117,6 +117,9 @@ const AdminConsole = {
     { key: 'features', label: 'Submitted features', group: 'Insights' },
 
     { key: 'campaigns', label: 'Maintenance campaigns', group: 'Platform' },
+    // The home screen's "Find more apps" row. NOT the `features` key
+    // above — that one is "Submitted features" (user feature requests).
+    { key: 'featured-apps', label: 'Featured apps', group: 'Platform' },
     { key: 'db-export', label: 'Database export', group: 'Platform' },
     // Topochain (Task 15, migration plan Global Constraint #8): ONE
     // section, its own sub-nav under #admin/topochain/<sub> — see
@@ -653,6 +656,7 @@ const AdminConsole = {
       case 'codes': return AdminConsole.renderCodesSection(host);
       case 'limits': return AdminConsole.renderLimitsSection(host);
       case 'features': return AdminConsole.renderFeaturesSection(host);
+      case 'featured-apps': return AdminConsole.renderFeaturedAppsSection(host);
       case 'rollover': return AdminConsole.renderRolloverSection(host);
       case 'staging-reap': return AdminConsole.renderStalePreviewsSection(host);
       case 'db-export': return AdminConsole.renderDbExportSection(host);
@@ -672,6 +676,210 @@ const AdminConsole = {
   // #admin/campaigns/<id> — reading location.hash directly and writing it
   // back with replaceState, the same pattern leaderboard.js uses for its
   // own tab state, so this file never needs general multi-level routing.
+
+  // ── Featured apps ─────────────────────────────────────────────────────
+  //
+  // The admin-curated row under "Find more apps" on every user's home
+  // screen (public/js/home.js renderFindMore). One global ordered list:
+  // GET /api/admin/featured-apps returns it plus everything still
+  // available to add, and PUT rewrites it wholesale from an ordered slug
+  // array — so the ↑/↓/Remove controls only ever reorder a local array
+  // and Save persists it in one request.
+  //
+  // Featuring a view-private app is safe: the home row is derived from
+  // GET /api/apps, which is visibility-filtered per viewer, so people who
+  // can't see the app simply don't get the tile.
+  //
+  // View-only admins get the list read-only (the controls are omitted);
+  // requireAdminWrite on the PUT is the real boundary.
+  _featured: null,   // ordered slugs pending save
+  _featuredMeta: {}, // slug -> { name, status, icon_emoji, icon_url }
+  _featuredAvailable: [],
+  _featuredDirty: false,
+  FEATURED_MAX: 12,
+
+  renderFeaturedAppsSection(host) {
+    const canWrite = AdminConsole.canWrite();
+    host.innerHTML = `
+      <div class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg font-semibold">Featured apps</h2>
+          <button id="admin-featured-refresh" class="text-xs text-zinc-400 hover:text-violet-400">Refresh</button>
+        </div>
+        <p class="text-sm text-zinc-600 dark:text-zinc-400 mb-3">
+          These apps appear in the &ldquo;Find more apps&rdquo; row on everyone&rsquo;s
+          home screen, in this order. Apps a user has already added are left
+          out of their row, and an app someone can&rsquo;t see never shows up
+          for them. Up to ${AdminConsole.FEATURED_MAX} apps.
+        </p>
+        <div id="admin-featured-list" class="space-y-2 mb-3">
+          <p class="text-sm text-zinc-500">Loading&hellip;</p>
+        </div>
+        ${canWrite ? `
+        <div class="flex flex-wrap items-center gap-2 pt-3 border-t border-zinc-200 dark:border-zinc-800">
+          <select id="admin-featured-picker" class="rounded-md border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-950 px-2 py-1.5 text-sm max-w-[16rem]">
+            <option value="">Add an app…</option>
+          </select>
+          <button id="admin-featured-add" class="px-3 py-1.5 rounded-md bg-zinc-200 dark:bg-zinc-800 hover:bg-zinc-300 dark:hover:bg-zinc-700 text-sm">Add</button>
+          <span class="flex-1"></span>
+          <button id="admin-featured-save" class="px-3 py-1.5 rounded-md bg-violet-600 hover:bg-violet-500 text-white text-sm disabled:opacity-50" disabled>Save</button>
+        </div>
+        <p id="admin-featured-status" class="mt-2 text-xs text-zinc-500"></p>
+        ` : `
+        <p class="pt-3 border-t border-zinc-200 dark:border-zinc-800 text-xs text-zinc-500">
+          View-only admin — the list is read-only here.
+        </p>`}
+      </div>`;
+
+    host.querySelector('#admin-featured-refresh')
+      ?.addEventListener('click', () => AdminConsole._loadFeaturedApps());
+    host.querySelector('#admin-featured-add')
+      ?.addEventListener('click', () => {
+        const sel = document.getElementById('admin-featured-picker');
+        const slug = sel && sel.value;
+        if (!slug) return;
+        if (AdminConsole._featured.length >= AdminConsole.FEATURED_MAX) {
+          AdminConsole._setFeaturedStatus(`At most ${AdminConsole.FEATURED_MAX} apps.`);
+          return;
+        }
+        AdminConsole._featured.push(slug);
+        AdminConsole._featuredDirty = true;
+        AdminConsole._renderFeaturedList();
+      });
+    host.querySelector('#admin-featured-save')
+      ?.addEventListener('click', () => AdminConsole._saveFeaturedApps());
+
+    AdminConsole._loadFeaturedApps();
+  },
+
+  async _loadFeaturedApps() {
+    const listEl = document.getElementById('admin-featured-list');
+    try {
+      const res = await fetch('/api/admin/featured-apps');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      AdminConsole._featured = (data.featured || []).map((a) => a.slug);
+      AdminConsole._featuredAvailable = data.available || [];
+      AdminConsole._featuredMeta = {};
+      for (const a of [...(data.featured || []), ...(data.available || [])]) {
+        AdminConsole._featuredMeta[a.slug] = a;
+      }
+      AdminConsole._featuredDirty = false;
+      AdminConsole._renderFeaturedList();
+    } catch (err) {
+      if (listEl) {
+        listEl.innerHTML = `<p class="text-sm text-red-400">Failed to load featured apps (${AdminConsole.esc(err.message)})</p>`;
+      }
+    }
+  },
+
+  // Tiny icon preview so a row is recognisable at a glance: the same
+  // priority as the home tile (custom image > emoji > first letter).
+  _featuredIconHtml(meta) {
+    if (meta && meta.icon_url) {
+      return `<img src="${AdminConsole.esc(meta.icon_url)}" alt="" class="w-7 h-7 rounded-md object-cover shrink-0">`;
+    }
+    if (meta && meta.icon_emoji) {
+      return `<span class="w-7 h-7 rounded-md bg-violet-500/10 flex items-center justify-center text-base shrink-0" aria-hidden="true">${AdminConsole.esc(meta.icon_emoji)}</span>`;
+    }
+    const letter = ((meta && meta.name) || '?').charAt(0).toUpperCase();
+    return `<span class="w-7 h-7 rounded-md bg-violet-500/10 flex items-center justify-center text-xs font-bold shrink-0">${AdminConsole.esc(letter)}</span>`;
+  },
+
+  _renderFeaturedList() {
+    const listEl = document.getElementById('admin-featured-list');
+    if (!listEl) return;
+    const canWrite = AdminConsole.canWrite();
+    const slugs = AdminConsole._featured || [];
+    if (!slugs.length) {
+      listEl.innerHTML = '<p class="text-sm text-zinc-500">No featured apps — the home row is hidden for everyone.</p>';
+    } else {
+      listEl.innerHTML = slugs.map((slug, i) => {
+        const meta = AdminConsole._featuredMeta[slug] || { name: slug };
+        return `
+        <div class="flex items-center gap-2 rounded-md bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 px-2 py-1.5" data-featured-row="${AdminConsole.esc(slug)}">
+          <span class="w-5 text-xs text-zinc-400 tabular-nums">${i + 1}</span>
+          ${AdminConsole._featuredIconHtml(meta)}
+          <span class="min-w-0 flex-1">
+            <span class="block text-sm font-medium truncate">${AdminConsole.esc(meta.name || slug)}</span>
+            <span class="block text-[11px] text-zinc-400 truncate">${AdminConsole.esc(slug)}</span>
+          </span>
+          ${canWrite ? `
+          <button data-featured-up="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-zinc-500 hover:text-violet-400 disabled:opacity-30" title="Move up" aria-label="Move ${AdminConsole.esc(meta.name || slug)} up"${i === 0 ? ' disabled' : ''}>&uarr;</button>
+          <button data-featured-down="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-zinc-500 hover:text-violet-400 disabled:opacity-30" title="Move down" aria-label="Move ${AdminConsole.esc(meta.name || slug)} down"${i === slugs.length - 1 ? ' disabled' : ''}>&darr;</button>
+          <button data-featured-remove="${AdminConsole.esc(slug)}" class="px-1.5 py-0.5 text-xs rounded text-zinc-500 hover:text-red-400" title="Remove" aria-label="Remove ${AdminConsole.esc(meta.name || slug)}">&times;</button>
+          ` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    if (canWrite) {
+      listEl.querySelectorAll('[data-featured-up]').forEach((b) => {
+        b.addEventListener('click', () => AdminConsole._moveFeatured(b.dataset.featuredUp, -1));
+      });
+      listEl.querySelectorAll('[data-featured-down]').forEach((b) => {
+        b.addEventListener('click', () => AdminConsole._moveFeatured(b.dataset.featuredDown, 1));
+      });
+      listEl.querySelectorAll('[data-featured-remove]').forEach((b) => {
+        b.addEventListener('click', () => {
+          AdminConsole._featured = AdminConsole._featured.filter((s) => s !== b.dataset.featuredRemove);
+          AdminConsole._featuredDirty = true;
+          AdminConsole._renderFeaturedList();
+        });
+      });
+      // Picker holds everything not currently in the list — including
+      // rows the admin just removed but hasn't saved yet, so an
+      // accidental removal is undoable without a reload.
+      const picker = document.getElementById('admin-featured-picker');
+      if (picker) {
+        const chosen = new Set(slugs);
+        const pool = Object.values(AdminConsole._featuredMeta)
+          .filter((a) => !chosen.has(a.slug))
+          .sort((x, y) => String(x.name || x.slug).toLowerCase()
+            .localeCompare(String(y.name || y.slug).toLowerCase()));
+        picker.innerHTML = '<option value="">Add an app…</option>'
+          + pool.map((a) => `<option value="${AdminConsole.esc(a.slug)}">${AdminConsole.esc(a.name || a.slug)}</option>`).join('');
+      }
+      const save = document.getElementById('admin-featured-save');
+      if (save) save.disabled = !AdminConsole._featuredDirty;
+    }
+  },
+
+  _moveFeatured(slug, delta) {
+    const arr = AdminConsole._featured || [];
+    const i = arr.indexOf(slug);
+    const j = i + delta;
+    if (i < 0 || j < 0 || j >= arr.length) return;
+    arr.splice(j, 0, arr.splice(i, 1)[0]);
+    AdminConsole._featuredDirty = true;
+    AdminConsole._renderFeaturedList();
+  },
+
+  _setFeaturedStatus(msg) {
+    const el = document.getElementById('admin-featured-status');
+    if (el) el.textContent = msg || '';
+  },
+
+  async _saveFeaturedApps() {
+    const btn = document.getElementById('admin-featured-save');
+    if (btn) btn.disabled = true;
+    AdminConsole._setFeaturedStatus('Saving…');
+    try {
+      const res = await fetch('/api/admin/featured-apps', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ slugs: AdminConsole._featured || [] }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      AdminConsole._featuredDirty = false;
+      AdminConsole._setFeaturedStatus('Saved — live on every home screen.');
+      AdminConsole._loadFeaturedApps();
+    } catch (err) {
+      AdminConsole._setFeaturedStatus(`Save failed: ${err.message}`);
+      if (btn) btn.disabled = false;
+    }
+  },
 
   // ── Container rollover ────────────────────────────────────────────────
   //

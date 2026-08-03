@@ -1719,6 +1719,30 @@ ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS sort_order INTEGER;
 -- src/routes/apps.js).
 ALTER TABLE app_favorites ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Admin-curated "Find more apps" row on the home screen. Global (one
+-- ordered list for everyone — no per-user targeting), display-only, and
+-- zero effect on access: the row is derived client-side from the
+-- `featured` / `featured_order` flags GET /api/apps already serializes
+-- per viewer, so a featured VIEW-PRIVATE app is simply absent for
+-- someone who can't see it — the visibility filter in that query is the
+-- only gate needed.
+--
+-- A table rather than a platform_settings blob so app deletion cascades
+-- and the admin console can join names/icons directly.
+-- Deliberately NOT staging:private: curation is public information (the
+-- row is on every user's home screen). Rows don't exist in prod yet, so
+-- a staging clone starts empty — src/db/migrate.js seeds a few under
+-- IS_STAGING so PR previews can review the row at all.
+-- Written only by PUT /api/admin/featured-apps (full-rewrite, admin
+-- only); read by the LEFT JOIN in GET /api/apps.
+CREATE TABLE IF NOT EXISTS featured_apps (
+  app_id      INTEGER PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE,
+  sort_order  INTEGER NOT NULL DEFAULT 0,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  created_by  INTEGER REFERENCES users(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS idx_featured_apps_order ON featured_apps(sort_order);
+
 -- Append-only product-analytics event log. The long-term source of truth
 -- behind the admin /dashboard (growth, retention, and the dapp-usage /
 -- PR-promotion funnels). Rows are written fire-and-forget at action sites

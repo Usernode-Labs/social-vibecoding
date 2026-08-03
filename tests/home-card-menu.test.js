@@ -698,7 +698,9 @@ test('widget section: tiles in registry order, each with a remove button', () =>
   const empty = Home.renderWidgetSection();
   assert.match(empty, /id="widget-strip"/);
   assert.doesNotMatch(empty, /widget-tile /);
-  assert.match(empty, /Drag an app card here/);
+  // The hint names "Your apps" as the drag source now: the home grid holds
+  // that one section (every other app moved to the #apps browse screen).
+  assert.match(empty, /Drag a card from Your apps here/);
 });
 
 test('widget section: help icon toggles the add-widget instructions', () => {

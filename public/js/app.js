@@ -38,6 +38,10 @@ const App = {
   // Same for the #settings screen (settings-modal-to-screen conversion)
   // — set by navigateToSettings() / _exitSettings() / navigateHome().
   _inSettings: false,
+  // Same for the #apps browse screen (home-screen split: home is "Your
+  // apps" only, every other app lives there) — set by
+  // navigateToBrowse() / _exitBrowse() / navigateHome().
+  _inBrowse: false,
 
   // Chromeless full-screen mode (#app/<slug>/full): the App tab with the
   // platform header + tab bar hidden, so the embedded app fills the
@@ -1936,6 +1940,13 @@ const App = {
       PlatformUI.pullToRefresh(home,
         () => App._refreshOrReload(() => Home.load()));
     }
+    // The #apps browse screen (home-screen split). Its own scroller and
+    // its own fetch, so it must not be routed through Home.load().
+    const browse = document.getElementById('browse-screen');
+    if (browse) {
+      PlatformUI.pullToRefresh(browse,
+        () => App._refreshOrReload(() => (window.Browse ? Browse._load() : Promise.resolve())));
+    }
     // The Leaderboard screen hosts three panes; refresh whichever is
     // active. The two Topochain panes keep their own event/page state and
     // their own fetches, so they must NOT be routed through
@@ -2702,6 +2713,7 @@ const App = {
         else if (App._inProfile) App.navigateHome();
         else if (App._inAdmin) App.navigateHome();
         else if (App._inSettings) App.navigateHome();
+        else if (App._inBrowse) App.navigateHome();
         else {
           // Already on home (no app, no leaderboard). Don't call
           // navigateHome() — that would pushState, AppView.close(),
@@ -2766,6 +2778,15 @@ const App = {
       if (parts[0] === 'profile') {
         App.setChromeless(false);
         App.navigateToProfile();
+        return;
+      }
+      if (parts[0] === 'apps') {
+        // Browse-all-apps screen (home-screen split). No gate: the grid
+        // is the visibility-filtered /api/apps payload, and the
+        // anonymous-shell branch above already handled a signed-out
+        // visitor.
+        App.setChromeless(false);
+        App.navigateToBrowse();
         return;
       }
       if (parts[0] === 'admin') {
@@ -3031,10 +3052,13 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('leaderboard-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
       document.getElementById('home-screen').classList.add('hidden');
+      const br = document.getElementById('browse-screen');
+      if (br) br.classList.add('hidden');
       if (screen) screen.classList.remove('hidden');
     }, { type: fromIframe ? 'none' : 'push' });
     document.getElementById('back-btn').classList.remove('hidden');
@@ -3089,12 +3113,15 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('profile-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
       document.getElementById('home-screen').classList.add('hidden');
       const lb = document.getElementById('leaderboard-screen');
       if (lb) lb.classList.add('hidden');
+      const br = document.getElementById('browse-screen');
+      if (br) br.classList.add('hidden');
       if (screen) screen.classList.remove('hidden');
     }, { type: fromIframe ? 'none' : 'push' });
     document.getElementById('back-btn').classList.remove('hidden');
@@ -3113,6 +3140,58 @@ const App = {
     const screen = document.getElementById('profile-screen');
     if (screen) screen.classList.add('hidden');
     if (window.Profile?.close) Profile.close();
+  },
+
+  // Show the browse-all-apps screen (#apps). Sibling to
+  // navigateToProfile — hides home + app, reveals #browse-screen, lets
+  // the Browse module (public/js/browse.js) render into #browse-list.
+  //
+  // No permission gate: the grid is built from GET /api/apps, which is
+  // already visibility-filtered per viewer, and restoreFromHash's
+  // anonymous-shell branch bounced a signed-out visitor to login before
+  // this can run. The header's back button goes home; the browser/OS back
+  // gesture returns here from an app opened out of this grid, because the
+  // screen has its own hash entry.
+  navigateToBrowse() {
+    const fromIframe = !!(App.currentApp && App.currentTab === 'app');
+    if (App.currentApp) {
+      AppView.close();
+      App.currentApp = null;
+    }
+    if (App._inLeaderboard) App._exitLeaderboard();
+    if (App._inProfile) App._exitProfile();
+    if (App._inAdmin) App._exitAdminConsole();
+    if (App._inSettings) App._exitSettings();
+    const screen = document.getElementById('browse-screen');
+    PlatformUI.transition(() => {
+      document.getElementById('app-view').classList.add('hidden');
+      document.getElementById('home-screen').classList.add('hidden');
+      const lb = document.getElementById('leaderboard-screen');
+      if (lb) lb.classList.add('hidden');
+      const pf = document.getElementById('profile-screen');
+      if (pf) pf.classList.add('hidden');
+      const ad = document.getElementById('admin-screen');
+      if (ad) ad.classList.add('hidden');
+      const st = document.getElementById('settings-screen');
+      if (st) st.classList.add('hidden');
+      if (screen) screen.classList.remove('hidden');
+    }, { type: fromIframe ? 'none' : 'push' });
+    document.getElementById('back-btn').classList.remove('hidden');
+    const _drg = document.getElementById('drawer-row-github');
+    const _drs = document.getElementById('drawer-row-share');
+    if (_drg) _drg.classList.add('hidden');
+    if (_drs) _drs.classList.add('hidden');
+    App.DrawerStatus.setAppOpen(false);
+    App.setHeaderTitle('All apps');
+    App._inBrowse = true;
+    if (window.Browse?.open) Browse.open();
+  },
+
+  _exitBrowse() {
+    App._inBrowse = false;
+    const screen = document.getElementById('browse-screen');
+    if (screen) screen.classList.add('hidden');
+    if (window.Browse?.close) Browse.close();
   },
 
   // Sections of the admin console that were PUBLIC pages before #860
@@ -3164,6 +3243,7 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('admin-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -3172,6 +3252,8 @@ const App = {
       if (lb) lb.classList.add('hidden');
       const pf = document.getElementById('profile-screen');
       if (pf) pf.classList.add('hidden');
+      const br = document.getElementById('browse-screen');
+      if (br) br.classList.add('hidden');
       if (screen) screen.classList.remove('hidden');
     }, { type: fromIframe ? 'none' : 'push' });
     document.getElementById('back-btn').classList.remove('hidden');
@@ -3221,6 +3303,7 @@ const App = {
     if (App._inLeaderboard) App._exitLeaderboard();
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
+    if (App._inBrowse) App._exitBrowse();
     const screen = document.getElementById('settings-screen');
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.add('hidden');
@@ -3231,6 +3314,8 @@ const App = {
       if (pf) pf.classList.add('hidden');
       const ad = document.getElementById('admin-screen');
       if (ad) ad.classList.add('hidden');
+      const br = document.getElementById('browse-screen');
+      if (br) br.classList.add('hidden');
       if (screen) screen.classList.remove('hidden');
     }, { type: fromIframe ? 'none' : 'push' });
     document.getElementById('back-btn').classList.remove('hidden');
@@ -3583,13 +3668,33 @@ const App = {
   // filtered-away tile yields no element / a 0×0 rect, which the kit
   // rejects — so the old home-visible checks live in the kit now.
   //
-  // Scoped to #app-list: the anonymous landing directory (#landing-apps)
-  // renders `.app-card[data-slug]` tiles too, and after a reload-free
-  // login both grids live in this one document.
+  // Scoped to the two authed launcher grids — #app-list (home's "Your
+  // apps"), #home-featured-list (home's featured row) and #browse-list
+  // (the #apps browse screen). NOT the anonymous landing directory
+  // (#landing-apps), which renders `.app-card[data-slug]` tiles too and
+  // lives in this same document after a reload-free login.
+  //
+  // Whichever grid the tap came from is the one whose tile is on screen,
+  // so a single query across all three lands on the right rect.
   _tileFor(slug) {
     try {
-      return document.querySelector(`#app-list .app-card[data-slug="${CSS.escape(slug)}"]`);
+      const sel = CSS.escape(slug);
+      return document.querySelector(
+        `#app-list .app-card[data-slug="${sel}"], `
+        + `#home-featured-list .app-card[data-slug="${sel}"], `
+        + `#browse-list .app-card[data-slug="${sel}"]`
+      );
     } catch { return null; }
+  },
+
+  // The screen the app view is expanding OUT of — home normally, the
+  // browse screen when the tap came from there. The kit needs it twice:
+  // as `outEl` (hidden for the synchronous pre-paint measurement so the
+  // flex-sibling split doesn't skew the destination rect) and in `after`
+  // (concealed once the zoom lands). Getting this wrong leaves the
+  // outgoing grid painted behind the opened app.
+  _departingScreen() {
+    return document.getElementById(App._inBrowse ? 'browse-screen' : 'home-screen');
   },
 
   async navigateToApp(slug, tab, ref, subTab) {
@@ -3605,13 +3710,15 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
-    // Real screen navigation. From the home feed the app view expands
-    // out of the clicked tile (kit 'zoom-in'); from anywhere else (deep
-    // link, history restore, tile off-screen, reduced motion) the kit
-    // falls back to its native push. The app iframe isn't mounted yet
-    // at this point (app-content is empty), so neither path animates
-    // over a live iframe on the way in. Home stays visible beneath the
-    // zoom (fn reveals, `after` conceals — kit contract).
+    // Real screen navigation. From a launcher grid (home's "Your apps" /
+    // featured row, or the #apps browse screen) the app view expands out
+    // of the clicked tile (kit 'zoom-in'); from anywhere else (deep link,
+    // history restore, tile off-screen, reduced motion) the kit falls
+    // back to its native push. The app iframe isn't mounted yet at this
+    // point (app-content is empty), so neither path animates over a live
+    // iframe on the way in. The departing screen stays visible beneath
+    // the zoom (fn reveals, `after` conceals — kit contract).
+    const departing = App._departingScreen();
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.remove('hidden');
     }, {
@@ -3621,9 +3728,9 @@ const App = {
       // The outgoing screen: the kit hides it while measuring the
       // destination so the flex-sibling split doesn't skew the target
       // rect (see the comment block above).
-      outEl: document.getElementById('home-screen'),
+      outEl: departing,
       fallback: 'push',
-      after: () => document.getElementById('home-screen').classList.add('hidden'),
+      after: () => { if (departing) departing.classList.add('hidden'); },
     });
     document.getElementById('back-btn').classList.remove('hidden');
     // Intentionally NOT setting the header to `slug` here. Slugs are
@@ -3698,6 +3805,7 @@ const App = {
     if (App._inProfile) App._exitProfile();
     if (App._inAdmin) App._exitAdminConsole();
     if (App._inSettings) App._exitSettings();
+    if (App._inBrowse) App._exitBrowse();
     // Preferred: shrink the app view back into its home tile (kit
     // 'zoom-out': fn reveals home beneath the pinned overlay, `after`
     // hides the app view and clears its content — exactly once on

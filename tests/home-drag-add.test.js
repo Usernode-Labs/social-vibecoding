@@ -1,10 +1,17 @@
-// Issue #746: drag apps from "All Apps" into "Your apps" (and back
-// out) on the home screen. The kit drag now matches every app card in
-// the sectioned view; these tests pin the pure drop classification
-// (canDropCard / classifyCardDrop / buildYoursOrder) and the
-// _onKitCardDrop → _persistYoursDrop pipeline: optimistic Home._apps
-// updates, the favorite-POST-before-order-PUT sequencing (#618 hidden
-// rows), and the failure revert.
+// Home-screen card drag. The home grid holds ONE section now ("Your
+// apps" — every other app moved to the #apps browse screen), which
+// retires the cross-section add / remove drops issue #746 introduced:
+// there is no second section to drag into or out of, so every drop is a
+// reorder and removal is the card menu's "Remove from Your apps" (or the
+// browse screen's ✓ badge).
+//
+// These tests pin the pure drop classification (canDropCard /
+// classifyCardDrop / buildYoursOrder) and the _onKitCardDrop →
+// _persistYoursDrop pipeline: optimistic Home._apps updates, the
+// order-PUT-only wire traffic, and the failure revert. The
+// favorite-POST-before-order-PUT sequencing (#618 hidden rows) is still
+// covered — the legacy pointer path's remove-by-drag passes 'remove'
+// straight to _persistYoursDrop.
 //
 // home.js is a plain browser script (`const Home = {…}`); we load it
 // into a vm context with stubbed globals and call the helpers
@@ -94,63 +101,45 @@ const app = (over) => ({
 
 // ── canDropCard ───────────────────────────────────────────────────
 
-test('canDropCard: yours cards may drop anywhere (reorder or remove)', () => {
+test('canDropCard: every in-grid slot is a legal reorder target now', () => {
   const { Home } = makeHome();
+  // One section = nothing meaningless to veto, for either flag value.
   assert.equal(Home.canDropCard(true, 0, 3), true, 'reorder to head');
   assert.equal(Home.canDropCard(true, 2, 3), true, 'reorder within');
-  assert.equal(Home.canDropCard(true, 3, 3), true, 'past the boundary = removal');
-  assert.equal(Home.canDropCard(true, 7, 3), true, 'deep in All Apps = removal');
-});
-
-test('canDropCard: All Apps cards may only enter the yours range', () => {
-  const { Home } = makeHome();
-  assert.equal(Home.canDropCard(false, 0, 3), true, 'add at head');
-  assert.equal(Home.canDropCard(false, 3, 3), true, 'boundary = append to yours');
-  assert.equal(Home.canDropCard(false, 4, 3), false, 'All Apps is not reorderable');
-  assert.equal(Home.canDropCard(false, 1, 0), false, 'empty yours: only slot 0');
-  assert.equal(Home.canDropCard(false, 0, 0), true, 'empty yours: first favorite');
+  assert.equal(Home.canDropCard(true, 3, 3), true, 'trailing slot');
+  assert.equal(Home.canDropCard(false, 4, 3), true, 'no cross-section veto left');
+  assert.equal(Home.canDropCard(false, 0, 0), true, 'empty section');
 });
 
 // ── classifyCardDrop ──────────────────────────────────────────────
 
-test('classifyCardDrop: within-yours moves are reorders', () => {
+test('classifyCardDrop: within-section moves are reorders', () => {
   const { Home } = makeHome();
   const d = Home.classifyCardDrop(1, 2, 3);
   assert.equal(d.kind, 'reorder');
   assert.equal(d.index, 2);
-  // to === yoursCount-1 via the section-boundary gap is still a
-  // reorder-to-end (the kit's gap>from adjustment already ran).
   const end = Home.classifyCardDrop(0, 2, 3);
   assert.equal(end.kind, 'reorder');
   assert.equal(end.index, 2);
 });
 
-test('classifyCardDrop: All Apps card into the yours range is an add', () => {
+test('classifyCardDrop: never classifies an add or a remove any more', () => {
   const { Home } = makeHome();
-  const head = Home.classifyCardDrop(4, 0, 3);
-  assert.equal(head.kind, 'add');
-  assert.equal(head.index, 0);
-  const mid = Home.classifyCardDrop(5, 1, 3);
-  assert.equal(mid.kind, 'add');
-  assert.equal(mid.index, 1);
-  const append = Home.classifyCardDrop(3, 3, 3);
-  assert.equal(append.kind, 'add');
-  assert.equal(append.index, 3, 'boundary drop appends to the end of yours');
+  // The exact drops that used to mean "add from All Apps" / "remove by
+  // dragging out" — All Apps is gone, so all of them are reorders.
+  for (const [from, to, count] of [[4, 0, 3], [5, 1, 3], [3, 3, 3], [1, 3, 3], [2, 6, 3]]) {
+    assert.equal(Home.classifyCardDrop(from, to, count).kind, 'reorder',
+      `drop ${from}→${to} of ${count}`);
+  }
 });
 
-test('classifyCardDrop: empty yours — the only add lands at index 0', () => {
+test('classifyCardDrop: clamps a drop past the last card to the end', () => {
   const { Home } = makeHome();
-  const d = Home.classifyCardDrop(2, 0, 0);
-  assert.equal(d.kind, 'add');
-  assert.equal(d.index, 0);
-});
-
-test('classifyCardDrop: yours card dropped past the boundary is a remove', () => {
-  const { Home } = makeHome();
-  const d = Home.classifyCardDrop(1, 3, 3);
-  assert.equal(d.kind, 'remove');
-  assert.equal(d.index, null);
-  assert.equal(Home.classifyCardDrop(2, 6, 3).kind, 'remove');
+  assert.equal(Home.classifyCardDrop(0, 9, 3).index, 2, 'appends, never out of range');
+  assert.equal(Home.classifyCardDrop(1, 3, 3).index, 2);
+  // Degenerate inputs must still produce a usable index.
+  assert.equal(Home.classifyCardDrop(0, 0, 0).index, 0, 'empty section');
+  assert.equal(Home.classifyCardDrop(0, 2, null).index, 2, 'no count known');
 });
 
 // ── buildYoursOrder ───────────────────────────────────────────────
@@ -220,58 +209,37 @@ test('_persistYoursDrop failure: error toast + reload to server truth', async ()
 
 // ── _onKitCardDrop (integration over the pieces above) ───────────
 
-test('_onKitCardDrop add: optimistic flags + contiguous local order + persisted order', async () => {
+test('_onKitCardDrop never adds: no favorite POST for any drop', async () => {
   const { Home, fetchCalls } = makeHome();
   const mine = app({ slug: 'mine', is_collaborator: true });
-  const other = app({ slug: 'other' });
-  Home._apps = [mine, other];
-  // Matched-card indices: [mine(yours)][other(rest)] — drop other at 0.
-  Home._onKitCardDrop(1, 0, { dataset: { slug: 'other' } }, 1);
-  assert.equal(other.is_favorited, true);
-  assert.equal(other.favorite_order, 0);
+  const also = app({ slug: 'also', is_collaborator: true });
+  Home._apps = [mine, also];
+  // The drop that used to mean "add from All Apps" (from past the
+  // boundary) is now just a reorder: membership is never touched.
+  Home._onKitCardDrop(1, 0, { dataset: { slug: 'also' } }, 2);
+  assert.equal(also.is_favorited, false, 'membership flags untouched');
+  assert.equal(also.favorite_order, 0);
   assert.equal(mine.favorite_order, 1, 'never-dragged member gets an explicit slot too');
   assert.equal(Home._rerenderPending, true, 're-render deferred to onSettle');
   await flush();
-  assert.deepEqual(fetchCalls.map((c) => c.method), ['POST', 'PUT']);
-  assert.deepEqual(fetchCalls[1].body, { order: ['other', 'mine'] });
+  assert.deepEqual(fetchCalls.map((c) => c.method), ['PUT'], 'order PUT only');
+  assert.deepEqual(fetchCalls[0].body, { order: ['also', 'mine'] });
 });
 
-test('_onKitCardDrop add: un-hides a hidden member app (#618)', async () => {
-  const { Home, fetchCalls } = makeHome();
-  const hidden = app({ slug: 'hidden', is_collaborator: true, your_apps_hidden: true });
-  Home._apps = [hidden];
-  Home._onKitCardDrop(0, 0, { dataset: { slug: 'hidden' } }, 0);
-  assert.equal(hidden.is_favorited, true);
-  assert.equal(hidden.your_apps_hidden, false);
-  assert.equal(hidden.favorite_order, 0);
-  await flush();
-  assert.deepEqual(fetchCalls[0].body, { favorited: true });
-});
-
-test('_onKitCardDrop remove: member app flips to hidden, favorite cleared', async () => {
+test('_onKitCardDrop never removes: dragging to the far end keeps the app', async () => {
   const { Home, fetchCalls } = makeHome();
   const mine = app({ slug: 'mine', is_collaborator: true, favorite_order: 0 });
-  const other = app({ slug: 'other' });
+  const other = app({ slug: 'other', is_collaborator: true, favorite_order: 1 });
   Home._apps = [mine, other];
-  Home._onKitCardDrop(0, 1, { dataset: { slug: 'mine' } }, 1);
-  assert.equal(mine.is_favorited, false);
-  assert.equal(mine.your_apps_hidden, true, 'member removal is a display opt-out, not a delete');
-  assert.equal(mine.favorite_order, null);
-  assert.equal(Home._rerenderPending, true);
+  // Used to be "dragged out = remove". Removal is the card menu's job
+  // now, so this is a reorder to the end and nothing is un-favorited.
+  Home._onKitCardDrop(0, 5, { dataset: { slug: 'mine' } }, 2);
+  assert.equal(mine.is_favorited, false, 'no favorite flag written');
+  assert.equal(mine.your_apps_hidden, false, 'never hidden by a drag');
+  assert.equal(mine.favorite_order, 1, 'clamped to the end of the section');
   await flush();
-  assert.equal(fetchCalls.length, 1);
-  assert.deepEqual(fetchCalls[0].body, { favorited: false });
-});
-
-test('_onKitCardDrop remove: plain favorite just unfavorites', async () => {
-  const { Home, fetchCalls } = makeHome();
-  const fav = app({ slug: 'fav', is_favorited: true, favorite_order: 0 });
-  Home._apps = [fav];
-  Home._onKitCardDrop(0, 1, { dataset: { slug: 'fav' } }, 1);
-  assert.equal(fav.is_favorited, false);
-  assert.equal(fav.your_apps_hidden, false, 'non-member never gets a hidden flag');
-  await flush();
-  assert.deepEqual(fetchCalls[0].body, { favorited: false });
+  assert.deepEqual(fetchCalls.map((c) => c.method), ['PUT']);
+  assert.deepEqual(fetchCalls[0].body, { order: ['other', 'mine'] });
 });
 
 test('_onKitCardDrop reorder: reorders locally and PUTs the new order only', async () => {

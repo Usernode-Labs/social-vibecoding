@@ -91,6 +91,26 @@ const Home = {
     return (apps || []).filter((a) => Home.matchesQuery(a, query));
   },
 
+  // How many admin-featured tiles the "Find more apps" row shows.
+  FEATURED_LIMIT: 6,
+
+  // The featured row's contents for this viewer: admin-curated apps
+  // (the `featured` flag served by GET /api/apps) that are NOT already
+  // in "Your apps" — those are one screen-section up, so repeating
+  // them would be noise. Ordered by the admin's featured_order
+  // (ascending, NULLs last) and capped at FEATURED_LIMIT.
+  // Pure — unit-tested in tests/home-find-more.test.js.
+  featuredApps(apps) {
+    return (apps || [])
+      .filter((a) => a && a.featured && !Home.isYours(a))
+      .sort((x, y) => {
+        const xo = x.featured_order == null ? Infinity : x.featured_order;
+        const yo = y.featured_order == null ? Infinity : y.featured_order;
+        return xo - yo;
+      })
+      .slice(0, Home.FEATURED_LIMIT);
+  },
+
   render() {
     // Same deferral as load(): a search keystroke must not yank the
     // grid out from under an in-flight drag either.
@@ -99,68 +119,48 @@ const Home = {
       return;
     }
     const listEl = document.getElementById('app-list');
-    const emptyEl = document.getElementById('empty-state');
-    if (!listEl || !emptyEl) return;
+    if (!listEl) return;
     const canCreate = Home.canCreate();
     const apps = Home._apps || [];
     Home._wireSearch();
-    // Nothing to search through with zero apps — hide the bar so the
-    // empty state stays centered and uncluttered.
-    const searchBar = document.getElementById('home-search-bar');
-    if (searchBar) searchBar.classList.toggle('hidden', apps.length === 0);
 
-    if (apps.length === 0) {
-      listEl.innerHTML = '';
-      emptyEl.classList.remove('hidden');
-      // Toggle the empty-state CTA vs. a "ask an admin" hint based on
-      // whether this user is allowed to create. The static HTML in
-      // index.html holds both children — we just flip visibility.
-      Home.applyEmptyStateForPermissions(canCreate);
-      // Only wire the create button when it's actually visible.
-      // Wiring it for non-permitted users would do nothing because
-      // the button is hidden, but skipping the call keeps the DOM
-      // free of dangling listeners.
-      if (canCreate) Home.wireCreateButtons();
-      return;
-    }
-
-    emptyEl.classList.add('hidden');
     const query = (Home._query || '').trim();
+    // Home is "Your apps" only now — every other app lives on the
+    // #apps browse screen (public/js/browse.js), so the old All Apps
+    // section and its drag-to-add gesture are gone.
+    const { yours } = Home.partitionApps(apps);
     let html = '';
     let canDragYours = false;
-    // Non-null only in the sectioned view: the count of "Your apps"
-    // cards, i.e. the boundary index the kit drag classifies drops
-    // against (add / remove / reorder). null = drag fully disabled
-    // (search results are a flat, unowned ordering).
+    // Non-null only in the un-queried view: the count of "Your apps"
+    // cards. null = drag fully disabled (search results are a flat,
+    // transient ordering that must not be persisted as a reorder).
     let yoursCount = null;
 
     if (query) {
-      // Active search: one flat grid of matches. The proposals /
-      // sessions strips, section headers, create tile and drag
-      // affordance all step aside until the query clears — reorder
-      // is only meaningful against the sectioned view.
-      const matches = Home.filterApps(apps, query);
+      // Active search over YOUR apps: one flat grid of matches. Section
+      // header, widget strip and drag affordance all step aside until
+      // the query clears — reorder is only meaningful against the
+      // canonical ordering.
+      const matches = Home.filterApps(yours, query);
       if (!matches.length) {
-        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo;</div>`;
+        html = `<div class="col-span-full py-10 text-center text-sm text-zinc-500 dark:text-zinc-400">No apps match &ldquo;${escapeHtml(query)}&rdquo; — try <span class="text-violet-500">Browse all apps</span> below.</div>`;
       } else {
         html = `<div class="home-section-header col-span-full">${matches.length} result${matches.length === 1 ? '' : 's'}</div>`;
-        html += matches.map(Home.renderAppCard).join('');
+        html += matches.map((a) => Home.renderAppCard(a)).join('');
       }
     } else {
-      const { yours, rest } = Home.partitionApps(apps);
       yoursCount = yours.length;
       // Legacy-path gate only: reordering is meaningless with a single
-      // card. The kit path drags every card in the sectioned view
-      // (issue #746 — All Apps cards drag INTO "Your apps", yours
-      // cards drag out), so it ignores this.
+      // card. The kit path drags every card in the section, so it
+      // ignores this.
       canDragYours = yours.length >= 2;
       const kitDrag = Home._useKitReorder();
       // iOS-in-app only: mirror of the homescreen widget's pinned grid,
       // manageable in place (drag in / reorder / ✕). Empty string
       // everywhere else — see _widgetUiActive.
       html = Home.renderWidgetSection();
+      html += '<div class="home-section-header col-span-full">Your apps</div>';
       if (yours.length) {
-        html += '<div class="home-section-header col-span-full">Your apps</div>';
         // Tag the cards at render time: data-yours drives both the
         // drag wiring's selector and the drop classification;
         // cursor-grab replaces cursor-pointer as the discoverability
@@ -171,23 +171,142 @@ const Home = {
           if (kitDrag || canDragYours) card = card.replace('cursor-pointer', 'cursor-grab');
           return card;
         }).join('');
-        html += '<div class="home-section-header col-span-full mt-2">All Apps</div>';
+      } else {
+        // Compact inline line, NOT a full-height empty state: the
+        // sections below ("Find more apps", "Create an app") are what
+        // this user needs to see, and a centered hero would push them
+        // off the fold. Most accounts have zero apps here.
+        html += `<div class="col-span-full pb-2 text-sm text-zinc-500 dark:text-zinc-400">You haven&rsquo;t added any apps yet — pick one below.</div>`;
       }
-      html += rest.map((a) => {
-        let card = Home.renderAppCard(a);
-        // Kit path: All Apps cards are drag-to-add candidates (demo
-        // tiles excluded — they're inert, see renderAppCard).
-        if (kitDrag && !a.demo) card = card.replace('cursor-pointer', 'cursor-grab');
-        return card;
-      }).join('');
-      html += canCreate ? Home.renderCreateTile() : '';
     }
 
     listEl.innerHTML = html;
-    if (!query && canCreate) Home.wireCreateButtons();
     Home._wireCards(listEl, canDragYours, yoursCount);
     Home._wireWidgetStrip(listEl);
+    Home.renderFindMore(apps);
+    Home.renderCreateSection(canCreate);
     Home._maybeOpenShotMenu(listEl);
+    Home._searchReveal.sync();
+  },
+
+  // "Find more apps": the admin-curated featured row plus the button
+  // into the #apps browse screen. The button always renders (it is the
+  // discovery path); the tile row hides itself when this viewer has
+  // nothing left to be shown.
+  renderFindMore(apps) {
+    const listEl = document.getElementById('home-featured-list');
+    if (!listEl) return;
+    const featured = Home.featuredApps(apps);
+    listEl.innerHTML = featured
+      .map((a) => Home.renderAppCard(a, { mode: 'featured' }))
+      .join('');
+    listEl.classList.toggle('hidden', featured.length === 0);
+    Home._wireDiscoveryCards(listEl);
+    const btn = document.getElementById('home-browse-btn');
+    if (btn && !btn.dataset.wired) {
+      btn.dataset.wired = '1';
+      // Route through the hash so the browse screen gets a real history
+      // entry (the OS/browser back gesture returns here).
+      btn.addEventListener('click', () => { location.hash = '#apps'; });
+    }
+  },
+
+  // "Create an app": the former in-grid tile, now the page's trailing
+  // section. Non-creators get the same "ask an admin" hint the old
+  // empty state showed.
+  renderCreateSection(canCreate) {
+    const host = document.getElementById('home-create-body');
+    if (!host) return;
+    if (canCreate) {
+      host.innerHTML = Home.renderCreateTile();
+      Home.wireCreateButtons();
+    } else {
+      host.innerHTML = `<p class="home-create-disabled-hint text-sm text-zinc-400 dark:text-zinc-500 max-w-sm">${escapeHtml(Home.CREATE_DISABLED_HINT)}</p>`;
+    }
+  },
+
+  // ===== Hidden search bar (pull-to-reveal) =====
+  //
+  // The bar is the first child INSIDE #home-screen and is not sticky,
+  // so it occupies real scroll space above the content. Parking the
+  // scroller at scrollTop = barHeight hides it; a slight pull down (a
+  // scroll up on desktop) reveals it. Past that, scrollTop is 0 and
+  // the kit's attachPullToRefresh — which only engages from a resting
+  // scrollTop of 0 — arms the refresh. No new gesture code: the two
+  // stages compose for free.
+  _searchReveal: {
+    _pinned: false,
+    _scrollWired: false,
+    _rafPending: false,
+
+    screenEl() { return document.getElementById('home-screen'); },
+    barEl() { return document.getElementById('home-search-bar'); },
+
+    // Screenshot-state deep link (?shot=home-search): the revealed bar
+    // is otherwise interaction-only, so before/after captures and
+    // dapp.json tests could never see it. Pure UI state — no writes,
+    // no env gate — so it works in production the moment it ships.
+    shotRevealed() {
+      try {
+        return new URLSearchParams(location.search).get('shot') === 'home-search';
+      } catch (err) { return false; }
+    },
+
+    // Focused, mid-query, or deep-linked: leave the bar wherever the
+    // user put it. Anything else may be tucked away on the next render.
+    isPinned() {
+      if (Home._searchReveal._pinned) return true;
+      if ((Home._query || '').trim()) return true;
+      return Home._searchReveal.shotRevealed();
+    },
+
+    pin() { Home._searchReveal._pinned = true; },
+    unpin() {
+      Home._searchReveal._pinned = false;
+      Home._searchReveal.sync();
+    },
+
+    // Stamp the current state on the bar so tests / screenshot checks
+    // can assert it without measuring scroll offsets.
+    mark() {
+      const screen = Home._searchReveal.screenEl();
+      const bar = Home._searchReveal.barEl();
+      if (!screen || !bar) return;
+      const h = bar.offsetHeight || 0;
+      // Half the bar showing already reads as "revealed".
+      const revealed = !h || screen.scrollTop < h / 2;
+      bar.dataset.revealed = revealed ? 'true' : 'false';
+    },
+
+    // Called after every render. Tucks the bar away unless it is
+    // pinned — and never yanks a user who has scrolled DOWN past it,
+    // which is what makes WS-driven re-renders safe.
+    sync() {
+      const screen = Home._searchReveal.screenEl();
+      const bar = Home._searchReveal.barEl();
+      if (!screen || !bar) return;
+      Home._searchReveal._wireScroll(screen);
+      const h = bar.offsetHeight || 0;
+      if (!Home._searchReveal.isPinned() && h && screen.scrollTop < h) {
+        screen.scrollTop = h;
+      }
+      Home._searchReveal.mark();
+    },
+
+    _wireScroll(screen) {
+      if (Home._searchReveal._scrollWired) return;
+      Home._searchReveal._scrollWired = true;
+      screen.addEventListener('scroll', () => {
+        if (Home._searchReveal._rafPending) return;
+        Home._searchReveal._rafPending = true;
+        const run = () => {
+          Home._searchReveal._rafPending = false;
+          Home._searchReveal.mark();
+        };
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run);
+        else setTimeout(run, 16);
+      }, { passive: true });
+    },
   },
 
   // Screenshot-state deep link (`?shot=card-menu`, #847): the card's "…"
@@ -269,8 +388,18 @@ const Home = {
       Home.render();
     };
     input.addEventListener('input', () => {
+      // Typing pins the bar open — a re-render must never scroll the
+      // field the user is typing into off the top of the screen.
+      Home._searchReveal.pin();
       clearTimeout(Home._searchDebounce);
       Home._searchDebounce = setTimeout(apply, 100);
+    });
+    input.addEventListener('focus', () => Home._searchReveal.pin());
+    // Leaving an empty field releases the pin, so the next render (or a
+    // scroll down) can tuck the bar away again. A field with text in it
+    // stays pinned by isPinned()'s query check.
+    input.addEventListener('blur', () => {
+      if (!input.value) Home._searchReveal.unpin();
     });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && input.value) {
@@ -287,6 +416,68 @@ const Home = {
         apply();
         input.focus();
       });
+    }
+  },
+
+  // ===== Discovery-grid card wiring (featured row, browse screen) =====
+  //
+  // Shared by Home.renderFindMore and public/js/browse.js: tiles open
+  // the app on a body tap and toggle "Your apps" membership from the
+  // corner badge. No drag, no "…" menu — these grids are not the
+  // user's own ordering.
+  //
+  // `onChange` (optional) is called after a successful toggle so the
+  // host can re-render its own grid; home just reloads.
+  _wireDiscoveryCards(listEl, onChange) {
+    if (!listEl) return;
+    listEl.querySelectorAll('.app-card').forEach((card) => {
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('.card-add-btn')) return;
+        if (card.dataset.demo === 'true') return;
+        if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
+        App.navigateToApp(card.dataset.slug);
+      });
+    });
+    listEl.querySelectorAll('.card-add-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Home.toggleAdded(btn.dataset.slug, btn.dataset.added !== 'true', onChange);
+      });
+    });
+  },
+
+  // Add / remove one app from "Your apps" from a discovery grid.
+  // Same endpoint and same semantics as the card menu's entry
+  // (_menuToggleFavorite): for a member, favorited=false writes the
+  // per-user `hidden` opt-out rather than dropping membership.
+  //
+  // Optimistic: flip the flags on the cached app object, let the caller
+  // re-render, and revert to server truth by reloading on failure.
+  async toggleAdded(slug, desired, onChange) {
+    const app = (Home._apps || []).find((a) => a.slug === slug);
+    // Staging ?demo=1 tiles have no DB row — a POST would 404.
+    if (!app || app.demo) return;
+    const prev = { is_favorited: app.is_favorited, your_apps_hidden: app.your_apps_hidden };
+    app.is_favorited = desired;
+    if (app.is_collaborator) app.your_apps_hidden = !desired;
+    if (typeof onChange === 'function') onChange();
+    try {
+      const res = await fetch(`/api/apps/${slug}/favorite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ favorited: desired }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || `HTTP ${res.status}`);
+      }
+      PlatformUI.toast(desired ? 'Added to Your apps' : 'Removed from Your apps');
+    } catch (err) {
+      app.is_favorited = prev.is_favorited;
+      app.your_apps_hidden = prev.your_apps_hidden;
+      PlatformUI.toast(`Update failed: ${err.message}`);
+      await Home.load();
+      if (typeof onChange === 'function') onChange();
     }
   },
 
@@ -351,19 +542,19 @@ const Home = {
       }
     });
 
-    // Kit drag on every app card in the sectioned view, in the kit's
-    // grid (displacement) mode: long-press lifts a floating ghost that
-    // tracks the finger on both axes, the real card stays in the grid
-    // as a dashed drop slot, siblings FLIP aside as the slot moves, and
-    // drops are cell-accurate (XY hit-testing, not row-only). Edge
-    // auto-scroll, springs, and the gesture arbiter come from the kit.
-    // Indices span the whole matched list, so canDropCard vetoes the
-    // meaningless slots (All Apps isn't reorderable) and _onKitCardDrop
-    // classifies the rest against the yoursCount boundary: reorder
-    // within "Your apps", add from All Apps (issue #746), or remove by
-    // dragging out. onLift/onSettle hold _dragActive so a WS-driven
-    // Home.load() can't replace the grid under the gesture (the legacy
-    // path's guard, now shared).
+    // Kit drag on every app card, in the kit's grid (displacement)
+    // mode: long-press lifts a floating ghost that tracks the finger on
+    // both axes, the real card stays in the grid as a dashed drop slot,
+    // siblings FLIP aside as the slot moves, and drops are cell-accurate
+    // (XY hit-testing, not row-only). Edge auto-scroll, springs, and the
+    // gesture arbiter come from the kit.
+    // The grid holds ONE section now ("Your apps" — every other app
+    // moved to the #apps browse screen), so every drop is a reorder:
+    // canDropCard vetoes nothing and _onKitCardDrop always persists an
+    // order. Removing an app is the card menu's "Remove from Your apps"
+    // (or the browse screen's ✓ badge). onLift/onSettle hold
+    // _dragActive so a WS-driven Home.load() can't replace the grid
+    // under the gesture (the legacy path's guard, now shared).
     if (Home._useKitReorder() && yoursCount != null) {
       if (Home._reorderHandle) { try { Home._reorderHandle.detach(); } catch {} }
       Home._reorderHandle = window.unNative.attachReorder(listEl, {
@@ -560,7 +751,16 @@ const Home = {
     return { kind: 'letter', html: escapeHtml((app.name || '?').charAt(0).toUpperCase()) };
   },
 
-  renderAppCard(app) {
+  // `opts.mode` picks the corner control:
+  //   'home' (default) — the "…" actions menu (the user's own grid)
+  //   'featured' / 'browse' — an add/remove badge (`.card-add-btn`,
+  //     ✓ when the app is already in "Your apps"), because a discovery
+  //     grid's one meaningful per-tile action is "keep this".
+  // Everything else — icon tile, status dot, users badge, fork tag,
+  // click-to-open rule — is shared, so the launcher grids can't drift.
+  renderAppCard(app, opts) {
+    const mode = (opts && opts.mode) || 'home';
+    const discovery = mode === 'featured' || mode === 'browse';
     const isAwaiting = app.status === 'awaiting_secrets';
     // The status dot is the home tile's single signal for "this app
     // is doing something right now" — so an in-flight redeploy on an
@@ -626,9 +826,29 @@ const Home = {
     // exception: the card's primary recovery action pins to the
     // card's top-right corner (creator-or-full-admin, same gate as
     // before — view-only admins excluded, issue #311).
-    const showRetry = isError && (App.user?.canAdminWrite || App.user?.id === app.created_by);
+    const showRetry = !discovery && isError
+      && (App.user?.canAdminWrite || App.user?.id === app.created_by);
     const isLocked = !!app.locked;
-    const menuBadgeHtml = `
+    // Discovery grids swap the hamburger for the add/remove badge: a ✓
+    // when the app is already in "Your apps", a + when it isn't. The
+    // added state derives from the same isYours() predicate the home
+    // grid partitions on, so the two can never disagree.
+    const isAdded = Home.isYours(app);
+    const addBadgeHtml = `
+      <button class="card-add-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full border shadow-sm transition-colors ${
+        isAdded
+          ? 'bg-emerald-500 border-emerald-500 text-white'
+          : 'bg-white dark:bg-zinc-800 border-zinc-200 dark:border-zinc-600 text-violet-600 dark:text-violet-400 hover:border-violet-400'
+      }" data-slug="${app.slug}" data-added="${isAdded}" title="${
+        isAdded ? 'Added — tap to remove from Your apps' : 'Add to Your apps'
+      }" aria-label="${
+        isAdded ? `Remove ${escapeHtml(app.name)} from Your apps` : `Add ${escapeHtml(app.name)} to Your apps`
+      }" aria-pressed="${isAdded}">${
+        isAdded
+          ? '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>'
+          : '<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="3" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>'
+      }</button>`;
+    const menuBadgeHtml = discovery ? addBadgeHtml : `
       <button class="card-menu-btn absolute -top-1.5 -right-1.5 w-6 h-6 flex items-center justify-center rounded-full bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-600 shadow-sm text-zinc-500 dark:text-zinc-300 hover:text-zinc-700 dark:hover:text-zinc-100 hover:border-zinc-300 dark:hover:border-zinc-500 transition-colors" data-slug="${app.slug}" title="App actions" aria-label="App actions" aria-haspopup="menu"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16"/></svg></button>`;
     const retryHtml = showRetry
       ? `<button class="retry-btn absolute top-2 right-2 text-xs text-emerald-500 hover:text-emerald-400 px-2 py-0.5 rounded-md hover:bg-emerald-500/10 transition-colors" data-slug="${app.slug}">Retry</button>`
@@ -727,8 +947,8 @@ const Home = {
     const items = Home._widgetItems;
     const tiles = items.map((it) => Home.renderWidgetTile(it)).join('');
     const hint = items.length
-      ? 'Drag tiles to reorder. Drag app cards here to add them.'
-      : 'Drag an app card here (or use its menu) to add it to the Usernode widget on your home screen.';
+      ? 'Drag tiles to reorder. Drag cards from Your apps here to add them.'
+      : 'Drag a card from Your apps here (or use its menu) to add it to the Usernode widget on your home screen.';
     const helpPanel = Home._widgetHelpVisible
       ? `
       <div id="widget-help-panel" class="w-full text-[0.7rem] leading-relaxed text-zinc-600 dark:text-zinc-300 rounded-lg bg-violet-500/5 dark:bg-violet-500/10 border border-violet-500/20 px-3 py-2">
@@ -1889,38 +2109,38 @@ const Home = {
     return !legacy && !!(window.unNative && typeof window.unNative.attachReorder === 'function');
   },
 
-  // ===== Cross-section drop classification (issue #746) =====
+  // ===== Drop classification =====
   //
-  // The kit drag matches EVERY app card, so its indices span both
-  // sections: 0..yoursCount-1 are "Your apps" cards, yoursCount.. are
-  // All Apps. `to` is the kit's post-removal insertion index.
+  // The home grid is "Your apps" only now (every other app lives on the
+  // #apps browse screen), so there is no second section to drag into or
+  // out of: the old cross-section add / remove drops (issue #746) have
+  // no target left, and removal is the card menu's "Remove from Your
+  // apps" (or the browse screen's ✓ badge) instead.
   //
-  // canDropCard vetoes the slots that mean nothing: an All Apps card
-  // may land anywhere in the Your-apps range (to === yoursCount is
-  // "append to the end of the section" — the only meaningful reading,
-  // since All Apps itself isn't reorderable), but not deeper into All
-  // Apps. A yours card may go anywhere: inside the section it's a
-  // reorder, past the boundary it's a removal (drop position within
-  // All Apps is ignored — that section keeps its activity order).
-  canDropCard(isYours, to, yoursCount) {
-    return isYours || to <= yoursCount;
+  // Both helpers are kept — rather than inlined — because they are the
+  // unit-tested seam for this behaviour (tests/home-drag-add.test.js).
+  //
+  // Every in-grid slot is now a legal reorder target.
+  canDropCard(_isYours, _to, _yoursCount) {
+    return true;
   },
 
-  // Pure classifier for a completed kit drop, unit-tested in
-  // tests/home-drag-add.test.js. Note the boundary asymmetry: a yours
-  // card arriving at to === yoursCount-1 via the section-boundary gap
-  // is still a reorder (the kit's gap>from adjustment already
-  // subtracted one), while to >= yoursCount is only reachable by
-  // dropping genuinely inside All Apps.
+  // Pure classifier for a completed kit drop: always a reorder within
+  // "Your apps", clamped to the section so a drop past the last card
+  // appends rather than writing an out-of-range index.
   classifyCardDrop(from, to, yoursCount) {
-    if (from >= yoursCount) return { kind: 'add', index: Math.min(to, yoursCount) };
-    if (to >= yoursCount) return { kind: 'remove', index: null };
-    return { kind: 'reorder', index: to };
+    // yoursCount == null means the caller doesn't know the section size
+    // (drag is disabled in that view anyway) — take `to` as given rather
+    // than clamping against a number we don't have.
+    if (yoursCount == null) return { kind: 'reorder', index: Math.max(0, to) };
+    const last = Math.max(0, yoursCount - 1);
+    return { kind: 'reorder', index: Math.max(0, Math.min(to, last)) };
   },
 
   // Pure builder for the new "Your apps" slug order after a drop:
-  // moves (or inserts) `slug` to `index` within `yoursSlugs`. Shared
-  // by adds (slug absent from the list) and reorders (slug present).
+  // moves `slug` to `index` within `yoursSlugs`. (It also tolerates a
+  // slug absent from the list — it inserts in that case — which is why
+  // it needs no change now that only reorders reach it.)
   buildYoursOrder(yoursSlugs, slug, index) {
     const order = (yoursSlugs || []).filter((s) => s !== slug);
     order.splice(Math.max(0, Math.min(index, order.length)), 0, slug);
@@ -1937,24 +2157,10 @@ const Home = {
     const slug = item?.dataset?.slug;
     const app = (Home._apps || []).find((a) => a.slug === slug);
     if (!app) return;
-    if (drop.kind === 'remove') {
-      app.is_favorited = false;
-      if (app.is_collaborator) app.your_apps_hidden = true;
-      app.favorite_order = null;
-      Home._rerenderPending = true;
-      Home._persistYoursDrop('remove', app, null);
-      return;
-    }
-    if (drop.kind === 'add') {
-      app.is_favorited = true;
-      if (app.is_collaborator) app.your_apps_hidden = false;
-    }
-    // New section order: current yours slugs with the dragged one at
-    // its drop index (buildYoursOrder tolerates the flag flip above
-    // having already pulled an added app into the partition — it
-    // extracts the slug before inserting). Mirror the server's
-    // contiguous sort_order rewrite locally so the deferred re-render
-    // agrees with what PUT /api/favorites/order is about to persist.
+    // New section order: current yours slugs with the dragged one at its
+    // drop index. Mirror the server's contiguous sort_order rewrite
+    // locally so the deferred re-render agrees with what
+    // PUT /api/favorites/order is about to persist.
     const yoursSlugs = Home.partitionApps(Home._apps).yours.map((a) => a.slug);
     const order = Home.buildYoursOrder(yoursSlugs, slug, drop.index);
     order.forEach((s, i) => {
@@ -1965,10 +2171,10 @@ const Home = {
     Home._persistYoursDrop(drop.kind, app, order);
   },
 
-  // Persist a classified drop. Adds POST the favorite BEFORE the order
-  // PUT — the order upsert alone would leave a member's hidden=TRUE
-  // opt-out row hidden (#618), while the favorite endpoint's upsert
-  // clears it. Reorders skip the POST (membership is unchanged).
+  // Persist a classified drop. Reorders (the only kind the home grid
+  // produces now) skip the favorite POST — membership is unchanged. The
+  // non-reorder branch is retained for the legacy pointer path's
+  // remove-by-drag, which passes 'remove'.
   async _persistYoursDrop(kind, app, order) {
     try {
       if (kind !== 'reorder') {
@@ -2557,24 +2763,11 @@ const Home = {
   // without. Toggle the CTA button on/off in place rather than
   // rebuilding the static DOM, so the surrounding "No apps yet"
   // copy stays put.
-  applyEmptyStateForPermissions(canCreate) {
-    const emptyEl = document.getElementById('empty-state');
-    if (!emptyEl) return;
-    const btn = emptyEl.querySelector('.home-create-btn');
-    let hint = emptyEl.querySelector('.home-create-disabled-hint');
-    if (canCreate) {
-      if (btn) btn.classList.remove('hidden');
-      if (hint) hint.remove();
-    } else {
-      if (btn) btn.classList.add('hidden');
-      if (!hint) {
-        hint = document.createElement('p');
-        hint.className = 'home-create-disabled-hint text-sm text-zinc-400 dark:text-zinc-500 max-w-sm text-center';
-        hint.textContent = 'Ask an admin to enable app creation for your account.';
-        emptyEl.appendChild(hint);
-      }
-    }
-  },
+  // Shown in the "Create an app" section (Home.renderCreateSection)
+  // instead of the create tile when this account has no app quota.
+  // Kept as a constant so both that renderer and any future surface
+  // word it the same way.
+  CREATE_DISABLED_HINT: 'Ask an admin to enable app creation for your account.',
 
   // Idempotent click-wiring for every `.home-create-btn` currently
   // mounted (the empty-state CTA, the per-tile placeholder pill,
