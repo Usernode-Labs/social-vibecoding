@@ -42,6 +42,15 @@
  *                                        re-measured and the entrance
  *                                        spring retargeted — no pop-in)
  *   unNative.presentModal(opts)       — centered modal card, arbitrary content
+ *   unNative.presentPanel(opts)       — side drawer / panel sliding in from
+ *                                        the right (or left) edge
+ *                                        ({ side?, content | contentEl,
+ *                                        width?, grabber?, onDismiss? }):
+ *                                        full-height surface, 1:1
+ *                                        drag-to-dismiss along x with
+ *                                        momentum commit, vertical drags
+ *                                        left to the content scroller,
+ *                                        backdrop tap / Escape dismiss
  *   unNative.actionSheet(opts)        — iOS action sheet, Promise-based
  *   unNative.alert(opts)              — iOS alert dialog, Promise-based
  *   unNative.popover(opts)            — anchored popover / dropdown menu
@@ -237,6 +246,16 @@
   // Dismiss when the projected landing crosses half the sheet height.
   function decideSheetRelease(input) {
     return projectDisplacement(input.y, input.v, input.horizonMs) >= 0.5 * input.sheetHeight;
+  }
+
+  // Side-panel release decision — the x-axis sibling of
+  // decideSheetRelease. `x` is the panel's displacement from rest toward
+  // its own screen edge (>= 0 when closing), `v` the release velocity in
+  // px/ms (positive = toward the edge). Callers sign-normalize both so one
+  // helper serves a right-hand and a left-hand drawer. Dismiss when the
+  // projected landing crosses half the panel width.
+  function decidePanelRelease(input) {
+    return projectDisplacement(input.x, input.v, input.horizonMs) >= 0.5 * input.panelWidth;
   }
 
   // Top-edge-preserving offset after a presenting/presented bottom-anchored
@@ -544,6 +563,7 @@
     decideSwipeRelease: decideSwipeRelease,
     decidePtrRelease: decidePtrRelease,
     decideSheetRelease: decideSheetRelease,
+    decidePanelRelease: decidePanelRelease,
     remeasuredSheetY: remeasuredSheetY,
     KB_MIN_INSET: KB_MIN_INSET,
     keyboardInset: keyboardInset,
@@ -2207,20 +2227,22 @@
    * halves together: don't clamp y here, and don't drop that rule.
    * ──────────────────────────────────────────────────────────────────── */
 
-  // Watch an overlay's border-box height while it is presented (issue
-  // #742): content rendered AFTER present (fill from state, async fetch)
-  // changes the height the entrance spring and backdrop math were seeded
-  // with. Calls onChange(newHeight, oldHeight) on material (≥1px) changes.
+  // Watch one border-box dimension of an overlay while it is presented
+  // (issue #742): content rendered AFTER present (fill from state, async
+  // fetch) changes the height the entrance spring and backdrop math were
+  // seeded with, and a rotation changes a side panel's width. `prop` is
+  // 'offsetHeight' (bottom sheet) or 'offsetWidth' (side panel). Calls
+  // onChange(newValue, oldValue) on material (≥1px) changes.
   // ResizeObserver fires after layout and BEFORE paint, so the common
   // present-then-render-synchronously pattern retargets before a frame at
   // the wrong offset is ever painted; transforms don't affect layout, so
-  // the per-frame translateY writes can't re-trigger it. Where RO is
+  // the per-frame translate writes can't re-trigger it. Where RO is
   // missing, a single first-rAF re-measure covers the same pattern.
   // Returns a disconnect function.
-  function watchHeight(el, onChange) {
-    var last = el.offsetHeight || 1;
+  function watchSize(el, prop, onChange) {
+    var last = el[prop] || 1;
     function check() {
-      var h = el.offsetHeight || 1;
+      var h = el[prop] || 1;
       if (Math.abs(h - last) < 1) return;
       var prev = last;
       last = h;
@@ -2360,7 +2382,7 @@
     // so refreshing it keeps them all consistent; the offset shift keeps
     // the top edge visually continuous so growth springs up (a full
     // slide-up on the first-open repro) instead of popping in.
-    var unwatch = watchHeight(sheet, function (newHeight, oldHeight) {
+    var unwatch = watchSize(sheet, 'offsetHeight', function (newHeight, oldHeight) {
       height = newHeight;
       if (drag && drag.locked) return; // the finger owns the position 1:1
       var v = activeSpring ? activeSpring.current().v : 0;
@@ -2473,6 +2495,217 @@
     });
 
     return { el: card, dismiss: dismiss };
+  }
+
+  /* ────────────────────────────────────────────────────────────────────
+   * Side panel / drawer — a full-height surface that springs in from the
+   * right (default) or left edge, with 1:1 drag-to-dismiss along x.
+   *
+   * The sheet's motion contract, rotated 90°: JS owns translateX, the
+   * backdrop opacity rides position 1:1, release commits by projected
+   * momentum, and a touch mid-spring inherits position + velocity.
+   *
+   * Two things differ from the sheet, both because a drawer is a
+   * navigation surface rather than a tray:
+   *
+   *  - The intent lock resolves the OTHER way. A 'y' lock abandons the
+   *    drag so `.un-panel-body` scrolls natively (`touch-action: pan-y`
+   *    in native.css is the other half of that); only an 'x' lock takes
+   *    1:1 control of the panel.
+   *  - A completed drag swallows the click that follows it, so releasing
+   *    over a nav row never also activates that row (same idiom as
+   *    attachSwipeActions).
+   *
+   * x is signed by side: `dir` is +1 for a right panel (closing = moving
+   * right, positive translateX) and -1 for a left one, so the physics
+   * below is written once in "displacement toward my own edge" terms and
+   * only render() and the drag delta touch the sign. As with the sheet, x
+   * is allowed to go NEGATIVE (past the rest position, into the page):
+   * the elastic give and the entrance overshoot both render a panel
+   * lifted off its edge, which `.un-panel::after` covers by continuing
+   * the surface outward. Keep the two halves together.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  // presentPanel({ side?, content | contentEl, width?, grabber?, onDismiss? })
+  // — side is 'right' (default) or 'left'; content is an HTML string,
+  // contentEl an Element to adopt; width is any CSS length (sets
+  // --un-panel-width for this instance). Returns { dismiss(), el }.
+  function presentPanel(options) {
+    var opts = options || {};
+    var side = opts.side === 'left' ? 'left' : 'right';
+    var dir = side === 'right' ? 1 : -1;
+
+    var backdrop = document.createElement('div');
+    backdrop.className = 'un-backdrop';
+    var panel = document.createElement('div');
+    panel.className = 'un-panel';
+    panel.setAttribute('data-un-side', side);
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-modal', 'true');
+    panel.tabIndex = -1;
+    if (opts.width) panel.style.setProperty('--un-panel-width', String(opts.width));
+    // The grabber is a touch affordance: desktop has a pointer and a
+    // backdrop, and a vertical pill there reads as decoration.
+    if (opts.grabber !== false && platform !== 'desktop') {
+      var grabber = document.createElement('div');
+      grabber.className = 'un-panel-grabber';
+      panel.appendChild(grabber);
+    }
+    var body = document.createElement('div');
+    body.className = 'un-panel-body';
+    if (opts.contentEl) body.appendChild(opts.contentEl);
+    else if (opts.content != null) body.innerHTML = opts.content;
+    panel.appendChild(body);
+    document.body.appendChild(backdrop);
+    document.body.appendChild(panel);
+
+    var width = panel.offsetWidth || 1;
+    var x = width; // displacement toward the panel's edge: 0 = presented
+    var activeSpring = null;
+    var drag = null;
+    var dragged = false; // a locked drag completed — swallow the next click
+    var closed = false;
+    var token = { panel: true };
+    var prevFocus = document.activeElement;
+    var entry = { dismissible: true, dismiss: function () { dismiss(0); } };
+    modalStack.push(entry);
+
+    function render(val) {
+      x = val;
+      panel.style.transform = 'translateX(' + (val * dir) + 'px)';
+      backdrop.style.opacity = String(Math.max(0, Math.min(1, 1 - val / width)));
+    }
+
+    function springTo(to, velocity, onRest) {
+      if (activeSpring) activeSpring.stop();
+      if (prefersReducedMotion) {
+        render(to);
+        if (onRest) onRest();
+        return;
+      }
+      activeSpring = spring(function (v) { render(v); }, {
+        from: x, to: to, velocity: velocity || 0, preset: 'sheet',
+        onRest: function () { activeSpring = null; if (onRest) onRest(); },
+      });
+    }
+
+    function teardown() {
+      if (unwatch) unwatch();
+      if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+      if (panel.parentNode) panel.parentNode.removeChild(panel);
+      if (prevFocus && typeof prevFocus.focus === 'function') {
+        try { prevFocus.focus(); } catch (e) { /* ignore */ }
+      }
+      if (opts.onDismiss) opts.onDismiss();
+    }
+
+    function dismiss(velocity) {
+      if (closed) return;
+      closed = true;
+      var i = modalStack.indexOf(entry);
+      if (i >= 0) modalStack.splice(i, 1);
+      springTo(width, velocity || 0, teardown);
+    }
+
+    backdrop.addEventListener('click', function () { dismiss(0); });
+
+    function onPointerDown(e) {
+      if (closed || e.button > 0) return;
+      var immediate = !!activeSpring;
+      if (immediate && !gestures.claim(gestureSeq(e), token)) return;
+      var base = x;
+      var seedV = 0;
+      if (activeSpring) {
+        var cur = activeSpring.current();
+        activeSpring.stop();
+        activeSpring = null;
+        base = cur.x;
+        seedV = cur.v;
+        render(base);
+      }
+      drag = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        base: base,
+        locked: immediate ? 'x' : null,
+        samples: [{ t: e.timeStamp - 16, x: base - seedV * 16 }, { t: e.timeStamp, x: base }],
+      };
+    }
+
+    function onPointerMove(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      var dx = e.clientX - drag.startX;
+      var dy = e.clientY - drag.startY;
+      if (!drag.locked) {
+        var axis = lockIntent(dx, dy);
+        // A vertical intent belongs to the content scroller, not the panel.
+        if (axis === 'y') { drag = null; return; }
+        if (axis === 'x') {
+          if (!gestures.claim(gestureSeq(e), token)) { drag = null; return; }
+          drag.locked = 'x';
+          try { panel.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        }
+      }
+      if (drag.locked !== 'x') return;
+      // Signed so "raw grows" always means "closing", whichever edge.
+      var raw = drag.base + dx * dir;
+      // 1:1 toward the edge; small elastic give past the rest position.
+      render(raw >= 0 ? raw : rubberband(raw, 32));
+      drag.samples.push({ t: e.timeStamp, x: x });
+      if (drag.samples.length > 24) drag.samples.shift();
+    }
+
+    function onPointerEnd(e) {
+      if (!drag || e.pointerId !== drag.pointerId) return;
+      var wasLocked = drag.locked === 'x';
+      var samples = drag.samples;
+      drag = null;
+      if (!wasLocked || closed) return;
+      // A drag happened: the click this release synthesizes is not a tap.
+      dragged = true;
+      setTimeout(function () { dragged = false; }, 0);
+      // Release-time sample so a held-still dwell decays momentum.
+      samples.push({ t: e.timeStamp, x: x });
+      var v = e.type === 'pointercancel' ? 0 : estimateVelocity(samples);
+      if (decidePanelRelease({ x: x, v: v, panelWidth: width })) dismiss(v);
+      else springTo(0, v);
+    }
+
+    // Releasing a drag over a nav row must not navigate.
+    function onClickCapture(e) {
+      if (!dragged) return;
+      e.stopPropagation();
+      e.preventDefault();
+    }
+
+    panel.addEventListener('pointerdown', onPointerDown);
+    panel.addEventListener('pointermove', onPointerMove);
+    panel.addEventListener('pointerup', onPointerEnd);
+    panel.addEventListener('pointercancel', onPointerEnd);
+    panel.addEventListener('click', onClickCapture, true);
+
+    // Rotation / viewport resize changes --un-panel-width, which feeds the
+    // backdrop denominator, the dismissal travel and the release decision.
+    var unwatch = watchSize(panel, 'offsetWidth', function (newWidth) {
+      width = newWidth;
+      if (drag && drag.locked) return; // the finger owns the position 1:1
+      var v = activeSpring ? activeSpring.current().v : 0;
+      // An exit spring was aiming at the old width — retarget so the panel
+      // fully leaves the screen before teardown.
+      if (closed) springTo(width, v, teardown);
+      else springTo(0, v);
+    });
+
+    render(width);
+    springTo(0, 0);
+    var auto = body.querySelector('[autofocus]');
+    try { (auto || panel).focus({ preventScroll: true }); } catch (e) { /* ignore */ }
+
+    return {
+      el: panel,
+      dismiss: function () { dismiss(0); },
+    };
   }
 
   /* ────────────────────────────────────────────────────────────────────
@@ -3456,6 +3689,7 @@
     transition: transition,
     presentSheet: presentSheet,
     presentModal: presentModal,
+    presentPanel: presentPanel,
     actionSheet: actionSheet,
     popover: popover,
     menu: menu,

@@ -137,6 +137,17 @@
         <p id="dialog-result" class="text-xs text-zinc-500 mt-2">Sheet: drag it down (or flick) to dismiss — catch it mid-spring. On a phone, tap the sheet's text field: the sheet (and the modal/alert) rides above the on-screen keyboard. Action sheet &amp; alert resolve a Promise with your choice. Modal: centered card, backdrop tap or Escape dismisses.</p>
       </section>
 
+      <!-- Side panels / drawers -->
+      <section>
+        <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Side panels</h2>
+        <div class="flex flex-wrap items-center gap-3">
+          <button id="panel-right-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium text-white" style="background:var(--un-accent)">Right panel</button>
+          <button id="panel-left-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Left panel</button>
+          <button id="panel-long-btn" class="px-4 py-2.5 rounded-lg text-sm font-medium border border-zinc-300 dark:border-zinc-700">Long content</button>
+        </div>
+        <p id="panel-result" class="text-xs text-zinc-500 mt-2">The nav-drawer idiom: full height, springs in from the edge. Drag it toward its own edge to dismiss — 1:1, with a flick committing by momentum and a drift back cancelling; catch it mid-spring. Pull it the other way and hold: the surface continues past the screen edge, so the bounce never uncovers the dimmed page. "Long content" scrolls VERTICALLY inside the panel while a horizontal drag still dismisses it — and releasing a drag over a row never activates that row. Tap the text field: the content lifts clear of the on-screen keyboard. <code>?un-demo=panel</code> opens the right panel at load.</p>
+      </section>
+
       <!-- Popover / dropdown menu -->
       <section>
         <h2 class="text-xs uppercase tracking-wide text-zinc-500 mb-3">Popover / dropdown menu</h2>
@@ -584,6 +595,74 @@
           inner.querySelector('button').addEventListener('click', function () { locked.dismiss(); });
         });
       });
+
+      // ── Side panels / drawers ──────────────────────────────────────
+      // Full-bleed rows: .un-panel-body ships no horizontal padding on
+      // purpose, so drawer content brings its own per-row insets.
+      var panelResult = document.getElementById('panel-result');
+
+      function panelRows(n, label) {
+        var html = '';
+        for (var i = 1; i <= n; i++) {
+          html += '<a href="#" data-panel-row="' + i + '" class="flex items-center gap-3 px-4 py-3 text-sm ' +
+            'border-b border-zinc-200 dark:border-zinc-800">' + label + ' ' + i + '</a>';
+        }
+        return html;
+      }
+
+      function openPanel(side, rowCount) {
+        var content = document.createElement('div');
+        content.className = 'flex flex-col min-h-full';
+        content.innerHTML =
+          '<div class="px-4 py-3 text-base font-semibold border-b border-zinc-200 dark:border-zinc-800">' +
+          (side === 'left' ? 'Left' : 'Right') + ' panel</div>' +
+          panelRows(rowCount, 'Row') +
+          // mt-auto in a min-h-full column flex: the footer hugs the panel
+          // bottom when the rows are short and falls to the end of the
+          // scroll when they overflow. No measurement.
+          '<div class="mt-auto px-4 py-3 border-t border-zinc-200 dark:border-zinc-800">' +
+          '<label class="block text-xs font-medium text-zinc-500 mb-1" for="panel-demo-field">Search</label>' +
+          '<input id="panel-demo-field" type="text" placeholder="Tap to type" ' +
+          'class="w-full px-3 py-2 text-sm rounded-lg border border-zinc-300 dark:border-zinc-700 bg-transparent">' +
+          '</div>';
+        var handle = unNative.presentPanel({
+          side: side,
+          contentEl: content,
+          onDismiss: function () {
+            panelResult.textContent = (side === 'left' ? 'Left' : 'Right') + ' panel dismissed.';
+          },
+        });
+        // Rows behave like nav rows: a tap closes the drawer, and a
+        // horizontal drag that ends over one does NOT reach this handler.
+        content.addEventListener('click', function (e) {
+          var row = e.target.closest('[data-panel-row]');
+          if (!row) return;
+          e.preventDefault();
+          handle.dismiss();
+          unNative.toast('Row ' + row.getAttribute('data-panel-row') + ' tapped');
+        });
+        return handle;
+      }
+
+      document.getElementById('panel-right-btn').addEventListener('click', function () {
+        openPanel('right', 5);
+      });
+      document.getElementById('panel-left-btn').addEventListener('click', function () {
+        openPanel('left', 5);
+      });
+      document.getElementById('panel-long-btn').addEventListener('click', function () {
+        openPanel('right', 30);
+      });
+
+      // Screenshot-state deep link: ?un-demo=panel presents the right
+      // panel at load, so the surface is reachable by plain navigation
+      // (capture frames and dapp.json checks can only navigate, never
+      // tap). Pure UI state — no writes, no env gate.
+      try {
+        if (new URLSearchParams(window.location.search).get('un-demo') === 'panel') {
+          openPanel('right', 5);
+        }
+      } catch (e) { /* no URL API — nothing to open */ }
 
       // ── Toasts ─────────────────────────────────────────────────────
       var toastCount = 0;
