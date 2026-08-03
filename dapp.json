@@ -291,6 +291,16 @@
       "expectSelector": "#home-featured-list .app-card"
     },
     {
+      "name": "Home feed sits in the 1024px centred column, featured card full width in it",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-column #home-find-more > .home-find-more-card"
+    },
+    {
+      "name": "Create-an-app box is a full-width child of its section in that column",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-column #home-create-section > #home-create-body .home-create-btn"
+    },
+    {
       "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
       "path": "/?shot=home-search",
       "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
