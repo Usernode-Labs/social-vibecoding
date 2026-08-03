@@ -122,6 +122,7 @@ const session = {
   id: 7, app_id: 5, app_slug: 'whiteboard', app_self_hosted: false,
   repo_url: 'https://github.com/acme/whiteboard', pr_number: 52,
   pr_title: 'Premium brushes', user_id: 3, behind_main: 0,
+  reviewed_head_sha: 'a'.repeat(40),
 };
 
 // The apps row must exist + be non-self-hosted so the rebuild branch runs.

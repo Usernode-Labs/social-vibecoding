@@ -2,6 +2,7 @@ const log = require('./logger');
 const github = require('./github');
 const limits = require('./limits');
 const { runSyncMain, persistConflictState } = require('./sync-main');
+const { currentVotePredicateSql } = require('./pr-vote-revision');
 
 const { getPool } = require('../db/pool');
 
@@ -246,8 +247,12 @@ async function drainApp(config, appId, excludeId) {
               ((cs.behind_main IS NULL OR cs.behind_main = 0)
                 AND COALESCE(cs.merge_conflict_state, 'clean') NOT IN ('conflict', 'failed', 'resolving')
                 AND COALESCE(cs.check_state, '') IN ('passing', 'skipped')) AS unblocked,
-              (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'yes') AS yes_count,
-              (SELECT COUNT(*)::int FROM pr_votes WHERE session_id = cs.id AND vote = 'no')  AS no_count
+              (SELECT COUNT(*)::int FROM pr_votes pv
+                WHERE pv.session_id = cs.id AND pv.vote = 'yes'
+                  AND ${currentVotePredicateSql('pv', 'cs')}) AS yes_count,
+              (SELECT COUNT(*)::int FROM pr_votes pv
+                WHERE pv.session_id = cs.id AND pv.vote = 'no'
+                  AND ${currentVotePredicateSql('pv', 'cs')}) AS no_count
        FROM chat_sessions cs
        WHERE cs.app_id = $1 AND cs.status = 'promoted' AND cs.id != $2
          AND NOT (cs.id = ANY($3::int[]))`,

@@ -82,7 +82,7 @@ test('all secret-declaration session lifecycle mutations enforce the CLI credent
 
   guardedBefore(
     routeSlice(votes, "router.post('/api/sessions/:id/vote'", "router.get('/api/sessions/:id/votes'"),
-    'isCliCredentialManagementSession(req, session)', 'INSERT INTO pr_votes', 'vote'
+    'isCliCredentialManagementSession(req, session)', 'recordVote({', 'vote'
   );
   guardedBefore(
     routeSlice(votes, "router.post('/api/sessions/:id/undo'", "router.post('/api/sessions/:id/admin-merge'"),

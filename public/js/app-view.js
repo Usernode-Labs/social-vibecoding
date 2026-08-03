@@ -8267,10 +8267,20 @@ const AppView = {
     const adminMerge = canForceMerge
       ? `<button class="gc-vote-btn gc-vote-btn-admin" title="${pr.requires_explicit_approval ? 'Admin: merge this admins-changing PR right now, bypassing the vote' : 'Admin: merge this PR right now, bypassing the vote majority'}" onclick="AppView.castAdminMerge(${pr.id})">Admin merge</button>`
       : '';
+    // Native votes carry the exact revision rendered with this card. If the
+    // PR moves before the click reaches the server, the server rejects the
+    // stale action and asks for a refresh instead of applying it to unseen
+    // code. Imported proposals retain their existing vote flow.
+    const nativeHead = pr.source !== 'imported'
+      && typeof pr.reviewed_head_sha === 'string'
+      && /^[0-9a-f]{40}$/i.test(pr.reviewed_head_sha)
+      ? pr.reviewed_head_sha.toLowerCase()
+      : null;
+    const revisionArg = nativeHead ? `, '${nativeHead}'` : '';
     const yesT = AppView._voteBtnTally(pr.qualified_yes_count, pr.yes_count, pr.approval_policy, 'Yes');
     const noT = AppView._voteBtnTally(pr.qualified_no_count, pr.no_count, pr.approval_policy, 'No');
-    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes')">Yes (${yesT.label})</button>`;
-    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no')">No (${noT.label})</button>`;
+    const yesBtn = `<button class="gc-vote-btn gc-vote-btn-yes${pr.my_vote === 'yes' ? ' gc-vote-active' : ''}"${yesT.title} onclick="AppView.castVote(${pr.id}, 'yes'${revisionArg})">Yes (${yesT.label})</button>`;
+    const noBtn = `<button class="gc-vote-btn gc-vote-btn-no${pr.my_vote === 'no' ? ' gc-vote-active' : ''}"${noT.title} onclick="AppView.castVote(${pr.id}, 'no'${revisionArg})">No (${noT.label})</button>`;
     return preview + retryPreview + yesBtn + noBtn + adminMerge;
   },
 
@@ -8364,7 +8374,7 @@ const AppView = {
 
 
   _voteInFlight: new Set(),
-  async castVote(sessionId, vote) {
+  async castVote(sessionId, vote, expectedHeadSha = null) {
     // Guard against double-click / mashing: one in-flight vote per session.
     // The server is now idempotent on an unchanged vote (won't re-post
     // to chat or re-enter checkAndMerge), but blocking here still avoids
@@ -8376,13 +8386,18 @@ const AppView = {
       const res = await fetch(`/api/sessions/${sessionId}/vote`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ vote }),
+        body: JSON.stringify({ vote, expectedHeadSha }),
       });
+      const data = await res.json().catch(() => ({}));
       AppView.refreshDevData('vote');
+      if (!res.ok) {
+        PlatformUI.toast(data.error || `Vote failed (HTTP ${res.status}).`);
+        return;
+      }
       // Only refresh notifications once the backend confirms the vote — the
       // server clears this PR's nudge as a side effect, so re-pull to drop it
       // from the unread badge. Never optimistic: skip on a non-ok response.
-      if (res.ok) window.Notifications?.refresh?.();
+      window.Notifications?.refresh?.();
     } catch {}
     finally {
       AppView._voteInFlight.delete(key);

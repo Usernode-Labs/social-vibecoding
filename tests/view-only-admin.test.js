@@ -259,6 +259,20 @@ test('admin-approval (PR): a full admin yes-vote satisfies, a view-only one does
   assert.equal(await adminApproval.hasAdminYesVote(viewYes, 1), false);
 });
 
+test('admin-approval (PR): the locked-app gate is scoped to the reviewed head', async () => {
+  const head = 'a'.repeat(40);
+  let captured = null;
+  const pool = {
+    async query(sql, params) {
+      captured = { sql, params };
+      return { rows: [] };
+    },
+  };
+  await adminApproval.hasAdminYesVote(pool, 9, head);
+  assert.match(captured.sql, /pv\.head_sha = \$2/);
+  assert.deepEqual(captured.params, [9, head]);
+});
+
 test('admin-approval (issue): a full admin up-vote satisfies, a view-only one does not', async () => {
   const fullUp = approvalPool([{ vote: 'up', is_admin: true, admin_readonly: false }], 'up');
   assert.equal(await adminApproval.hasAdminUpVote(fullUp, 1), true);
