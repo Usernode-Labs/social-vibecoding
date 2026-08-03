@@ -354,9 +354,29 @@ const Home = {
     // Deferred a frame: the grid was written synchronously just above,
     // and the kit's flip/clamp placement needs the button's settled rect.
     requestAnimationFrame(() => {
+      // Prefer the grid's own "…" trigger: a real anchor element is what
+      // lets the desktop popover toggle closed on a re-click.
       const btn = listEl.querySelector('.card-menu-btn');
-      if (!btn || !btn.dataset.slug) return;
-      Home.openCardMenu(btn.dataset.slug, btn);
+      let slug = btn && btn.dataset.slug;
+      let anchor = btn;
+      // #929: a fresh checks database has an EMPTY "Your apps" grid, so
+      // that selector finds nothing and the link used to open no menu at
+      // all — which is how the touch idiom (a kit action sheet, the thing
+      // that actually broke) went two releases without a check. Fall back
+      // to the featured row's first tile, anchored to the card itself:
+      // the same call a long-press makes.
+      if (!slug) {
+        const featured = document.getElementById('home-featured-list');
+        const card = featured && featured.offsetParent !== null
+          ? featured.querySelector('.app-card[data-slug]')
+          : null;
+        if (card) {
+          slug = card.dataset.slug;
+          anchor = card.getBoundingClientRect();
+        }
+      }
+      if (!slug) return;
+      Home.openCardMenu(slug, anchor);
       requestAnimationFrame(() => Home._assertMenuOpaque());
     });
   },

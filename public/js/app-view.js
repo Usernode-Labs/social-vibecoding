@@ -420,6 +420,18 @@ const AppView = {
       // links paint each loader state directly. Pure UI state (no fetch, no
       // write, no container), so they render identically in every
       // environment and the "before" side of a capture works too.
+      // #929: the dev screen's "+" menu is the other surface that broke on
+      // mobile, and it was untestable for the same reason as the secrets
+      // modal — it only exists after a tap. This link taps the button
+      // itself, so whichever idiom the platform picks (kit action sheet on
+      // touch, the anchored #dev-plus-menu dropdown on desktop) is the one
+      // a check sees. Pure UI state, no writes, not env-gated.
+      if (shot === 'plus-menu') {
+        setTimeout(() => {
+          if (!String(location.hash || '').includes(`app/${slug}`)) return;
+          document.getElementById('dev-plus-btn')?.click();
+        }, 300);
+      }
       if (shot === 'preview-loading' || shot === 'preview-rebuilding') {
         setTimeout(() => {
           // Gate on the ROUTE, not on appData: the dev tab clears appData
