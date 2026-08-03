@@ -58,6 +58,8 @@ async function migrate(config) {
   await seedStagingAppAdminsPanel(pool);
   await seedStagingReadonlyDevTab(pool);
   await seedStagingYourApps(pool, config);
+  // Must run AFTER seedStagingYourApps — it features that fixture's apps.
+  await seedStagingFeaturedApps(pool);
   await seedStagingAppQuotaUsers(pool);
   await seedStagingViewOnlyAdmin(pool);
   await seedStagingWalletUsers(pool);
@@ -3701,6 +3703,70 @@ async function seedStagingYourApps(pool, config) {
     log.info('db', 'Staging your-apps fixtures seeded', { viewers: viewerRows.length });
   } catch (err) {
     log.warn('db', 'Staging your-apps seeding failed', { message: err.message });
+  }
+}
+
+// Home screen's "Find more apps" row + the #admin/featured-apps section.
+// `featured_apps` is created by this change, so it does not exist in the
+// production database a staging clone starts from — the row, the browse
+// screen's featured-first ordering and the admin list would all render
+// empty in every PR preview.
+//
+// Candidate order: the demo apps seedStagingYourApps creates first (named
+// "Staging demo …", so an obviously-fake row leads the preview), then any
+// real cloned public app as a fallback — that second source is what keeps
+// the row populated when the fixture seed above couldn't run (it needs
+// prod-cloned users, which a fresh local DB doesn't have). Either way the
+// row renders on a plain `/` visit with no ?demo=1; the request-time demo
+// tiles in routes/apps.js demoIconApps cover the ?demo=1 path.
+//
+// Chess Arena (900040) is deliberately NOT a candidate: seedStagingYourApps
+// favorites it for every capture identity, so leaving it out exercises the
+// "already in Your apps → left out of the featured row" branch. The browse
+// screen still lists it, with a ✓ badge.
+//
+// created_by is NULL — seeds must never reference real users.
+// Strictly a no-op outside staging.
+async function seedStagingFeaturedApps(pool) {
+  if (process.env.USERNODE_ENV !== 'staging') return;
+
+  const FEATURED_SEED_COUNT = 3;
+  try {
+    // Bail if an earlier boot (or an admin, on a long-lived preview)
+    // already curated the list — re-seeding would fight their ordering.
+    const { rows: existing } = await pool.query('SELECT 1 FROM featured_apps LIMIT 1');
+    if (existing.length) {
+      log.info('db', 'Staging featured-apps already populated — seed skipped');
+      return;
+    }
+    const { rows: candidates } = await pool.query(
+      `SELECT id FROM (
+         SELECT id, 0 AS tier, id AS tiebreak FROM apps
+          WHERE id IN (900041, 900042, 900043)
+         UNION ALL
+         SELECT id, 1 AS tier, id AS tiebreak FROM apps
+          WHERE NOT self_hosted
+            AND view_visibility = 'public'
+            AND status = 'running'
+            AND id NOT IN (900040, 900041, 900042, 900043)
+       ) c
+       ORDER BY tier ASC, tiebreak ASC
+       LIMIT $1`,
+      [FEATURED_SEED_COUNT]
+    );
+    for (let i = 0; i < candidates.length; i += 1) {
+      // ON CONFLICT keeps this idempotent across the per-push container
+      // rebuilds that re-run this whole file.
+      await pool.query(
+        `INSERT INTO featured_apps (app_id, sort_order, created_by)
+         VALUES ($1, $2, NULL)
+         ON CONFLICT (app_id) DO NOTHING`,
+        [candidates[i].id, i]
+      );
+    }
+    log.info('db', 'Staging featured-apps fixtures seeded', { rows: candidates.length });
+  } catch (err) {
+    log.warn('db', 'Staging featured-apps seeding failed', { message: err.message });
   }
 }
 

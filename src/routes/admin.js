@@ -661,6 +661,124 @@ function adminRoutes(config) {
     }
   });
 
+  // ── Featured apps ──────────────────────────────────────────
+  //
+  // The admin-curated row under "Find more apps" on every user's home
+  // screen. One global ordered list (no per-user targeting); the
+  // `featured_apps` table is read by the LEFT JOIN in GET /api/apps, so
+  // per-viewer visibility filtering is inherited for free — featuring a
+  // view-private app shows it only to people who could already see it.
+  //
+  // The self-hosted platform row is excluded on both sides: it is hidden
+  // from non-admin listings anyway (see GET /api/apps), so featuring it
+  // would be a no-op for everyone the row is meant for.
+  const FEATURED_MAX = 12;
+
+  // Pure read — router-level adminMiddleware only, NO requireAdminWrite,
+  // so view-only admins can inspect the list (same stance as /limits and
+  // /overview above). Returns the current list in display order plus
+  // every app still available to add, so the section renders from one
+  // round trip.
+  router.get('/api/admin/featured-apps', async (_req, res) => {
+    try {
+      const { rows: featured } = await pool.query(
+        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id, fa.sort_order
+           FROM featured_apps fa
+           JOIN apps a ON a.id = fa.app_id
+          WHERE NOT a.self_hosted
+          ORDER BY fa.sort_order ASC, a.name ASC`
+      );
+      const { rows: available } = await pool.query(
+        `SELECT a.slug, a.name, a.status, a.icon_emoji, a.icon_image_id
+           FROM apps a
+          WHERE NOT a.self_hosted
+            AND NOT EXISTS (SELECT 1 FROM featured_apps f WHERE f.app_id = a.id)
+          ORDER BY LOWER(a.name) ASC`
+      );
+      // Server-built icon URL so the client never assembles ids into
+      // paths (same rule as the /api/apps serializer).
+      const shape = (r) => ({
+        slug: r.slug,
+        name: r.name,
+        status: r.status,
+        icon_emoji: r.icon_emoji || null,
+        icon_url: r.icon_image_id ? `/app-icons/${r.icon_image_id}` : null,
+        sort_order: r.sort_order ?? null,
+      });
+      res.json({ featured: featured.map(shape), available: available.map(shape) });
+    } catch (err) {
+      log.error('admin', 'Read featured apps failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // Full rewrite of the list from an ordered slug array — the same idiom
+  // as PUT /api/favorites/order in routes/apps.js. A full rewrite (rather
+  // than add/remove deltas) is what makes the client's reorder controls
+  // trivially correct: the array IS the display order.
+  router.put('/api/admin/featured-apps', requireAdminWrite, async (req, res) => {
+    const { slugs } = req.body || {};
+    if (!Array.isArray(slugs)) {
+      return res.status(400).json({ error: 'slugs must be an array' });
+    }
+    if (slugs.length > FEATURED_MAX) {
+      return res.status(400).json({ error: `At most ${FEATURED_MAX} featured apps` });
+    }
+    if (slugs.some((s) => typeof s !== 'string' || !s.trim())) {
+      return res.status(400).json({ error: 'slugs must be non-empty strings' });
+    }
+    const seen = new Set();
+    for (const s of slugs) {
+      if (seen.has(s)) return res.status(400).json({ error: `Duplicate slug: ${s}` });
+      seen.add(s);
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      // Resolve every slug up front so an unknown / self-hosted one is a
+      // 400 naming the offender rather than a silently shorter list.
+      const ids = [];
+      for (const slug of slugs) {
+        const { rows } = await client.query(
+          'SELECT id, self_hosted FROM apps WHERE slug = $1',
+          [slug]
+        );
+        if (!rows.length) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `Unknown app: ${slug}` });
+        }
+        if (rows[0].self_hosted) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: `The platform app cannot be featured: ${slug}` });
+        }
+        ids.push(rows[0].id);
+      }
+      await client.query('DELETE FROM featured_apps');
+      for (let i = 0; i < ids.length; i += 1) {
+        await client.query(
+          `INSERT INTO featured_apps (app_id, sort_order, created_by)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (app_id) DO UPDATE
+             SET sort_order = EXCLUDED.sort_order, created_by = EXCLUDED.created_by`,
+          [ids[i], i, req.user.id]
+        );
+      }
+      await client.query('COMMIT');
+      log.info('admin', 'Featured apps updated', {
+        by: req.user.username,
+        count: slugs.length,
+      });
+      res.json({ ok: true, slugs });
+    } catch (err) {
+      try { await client.query('ROLLBACK'); } catch { /* already rolled back */ }
+      log.error('admin', 'Update featured apps failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    } finally {
+      client.release();
+    }
+  });
+
   // ── Anthropic credits (#555) ───────────────────────────────
   //
   // The organisation's remaining Anthropic credit, for the drawer's

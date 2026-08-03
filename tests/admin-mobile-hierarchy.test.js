@@ -121,7 +121,9 @@ test('route() picks the transition direction from the level change', () => {
 
 test('the header back button defers to the console, then goes home', () => {
   const handler = appJs.slice(appJs.indexOf("document.getElementById('back-btn').addEventListener"));
-  const body = handler.slice(0, 400);
+  // Wide enough for every screen hook the handler chains (admin, settings,
+  // browse) plus the navigateHome fallthrough below them.
+  const body = handler.slice(0, 800);
   assert.match(body, /App\._inAdmin && window\.AdminConsole\?\.handleBack\?\.\(\)/,
     'the console only gets a say while the admin screen is actually mounted');
   assert.match(body, /App\.navigateHome\(\)/,

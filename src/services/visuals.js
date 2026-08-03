@@ -174,8 +174,16 @@ function withToken(url, token) {
 // `path: /admin/analytics` normalises straight into the fragment. Their
 // OLD pathnames still work too — they fall through untouched and hit the
 // client-side redirect stubs — just with one extra hop.
+//
+// 'apps' (plural) is the browse-all-apps screen and its per-app detail
+// page (`#apps`, `#apps/<slug>`). There is no server page at that
+// pathname, so before it was listed here a `path: /apps` silently loaded
+// index.html with an empty hash and captured the home screen — the exact
+// failure mode this whole function exists to prevent. It is distinct from
+// the singular 'app' (the app-view route) and must be its own entry: the
+// first path segment is matched exactly, not by prefix.
 const SELF_APP_HASH_ROUTES = new Set([
-  'app', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin',
+  'app', 'apps', 'leaderboard', 'group-chat', 'individual-chat', 'create', 'admin',
 ]);
 function selfAppHashPath(p) {
   const path = typeof p === 'string' ? p : '/';

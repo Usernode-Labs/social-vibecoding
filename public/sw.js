@@ -63,6 +63,7 @@ const SHELL_ASSETS = [
   '/js/admin-gallery.js',
   '/js/admin-campaigns.js',
   '/js/app-secrets.js',
+  '/js/browse.js',
   '/js/platform-ui.js',
   '/js/app-view.js',
   '/js/app.js',

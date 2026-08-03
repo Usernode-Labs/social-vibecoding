@@ -530,27 +530,114 @@
        that Home.render() appends after the tiles uses `col-span-full`
        so it spans the full grid row at every breakpoint. -->
   <main id="home-screen" class="flex-1 overflow-y-auto" style="position:relative">
-    <!-- Sticky search bar. Deliberately OUTSIDE #app-list: Home.render()
-         wholesale-replaces the grid's innerHTML on every WS app event
-         and every keystroke, and the input must keep its focus/caret
-         through those re-renders. Wired once by Home._wireSearch();
-         hidden by render() while the user has zero visible apps. -->
-    <div id="home-search-bar" class="hidden sticky top-0 z-20 px-3 pt-3 pb-2 bg-white dark:bg-zinc-950">
+    <!-- Hidden-until-pulled search bar (iOS idiom). Deliberately the FIRST
+         child of the scroller and NOT sticky: it occupies real scroll space
+         above the content, so Home._searchReveal can park the scroller at
+         scrollTop = <bar height> and a slight pull down (a scroll up on
+         desktop) slides it into view. Keep pulling once it is fully shown
+         and the kit's pull-to-refresh takes over — attachPullToRefresh only
+         engages from scrollTop 0, so the two stages compose with no extra
+         gesture code.
+         Still OUTSIDE #app-list: Home.render() wholesale-replaces the
+         grid's innerHTML on every WS app event and every keystroke, and the
+         input must keep its focus/caret through those re-renders. Wired
+         once by Home._wireSearch(). -->
+    <div id="home-search-bar" data-revealed="false" class="px-3 pt-3 pb-2 bg-white dark:bg-zinc-950">
       <div class="relative max-w-xl">
         <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-        <input id="home-search-input" type="text" autocomplete="off" placeholder="Search apps…" aria-label="Search apps"
+        <input id="home-search-input" type="text" autocomplete="off" placeholder="Search your apps…" aria-label="Search your apps"
                class="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600" />
         <button id="home-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none" title="Clear search" aria-label="Clear search">&times;</button>
       </div>
     </div>
-    <div id="app-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 p-3 pt-2"></div>
-    <div id="empty-state" class="hidden flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 p-8">
-      <p class="text-lg mb-4">No apps yet</p>
-      <button class="home-create-btn inline-flex items-center gap-2 rounded-full border border-violet-500 dark:border-violet-400 px-5 py-2.5 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-950 transition-colors">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2.5"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4"/></svg>
-        Create your first app
-      </button>
+    <!-- min-height:100% guarantees the scroller can always be scrolled by at
+         least the search bar's height, even with an empty "Your apps" — a
+         short page would otherwise leave the bar permanently on screen. -->
+    <div id="home-body" style="min-height:100%">
+      <div id="app-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2 p-3 pt-2"></div>
+
+      <!-- Find more apps: admin-curated featured tiles + the way into the
+           #apps browse screen. Populated by Home.renderFindMore(). -->
+      <!-- Featured apps: same section shape as "Your apps" above and
+           "Create an app" below — a .home-section-header, then the
+           content — so the three read as one consistent stack. The
+           heading sits OUTSIDE the card for that reason.
+
+           The heading is a plain full-width child of the section, on the
+           scroller's gutter; only the CARD is wrapped in
+           .home-section-block, which bounds its width AND indents it to
+           line up with the leftmost app icon in the grid above (a measured
+           offset — see Home.alignSections and app.css). Don't move the
+           heading inside the block: it would inherit the indent. -->
+      <section id="home-find-more" class="px-3 pb-3">
+        <div class="home-section-header">Featured apps</div>
+        <div class="home-section-block">
+          <!-- ONE contained card: the featured tiles and the browse action
+               sit on the same rounded surface, with the browse row as the
+               card's footer — separated by a hairline rather than a gap, so
+               it stays visibly attached (and is the whole reason the footer
+               is a full-width row rather than a floating pill). -->
+          <div class="home-find-more-card rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden">
+            <div class="px-3 pt-3">
+              <div id="home-featured-list" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 pb-3"></div>
+              <!-- Shown in place of the tiles when nothing is left to feature,
+                   so the card never collapses to a bare footer. -->
+              <p id="home-featured-empty" class="hidden pb-3 text-sm text-zinc-500 dark:text-zinc-400">
+                Nothing featured right now — browse the full directory to find apps to add.
+              </p>
+            </div>
+            <button type="button" id="home-browse-btn" class="w-full flex items-center justify-between gap-2 px-3 py-3 border-t border-zinc-200 dark:border-zinc-800 text-sm font-medium text-violet-600 dark:text-violet-400 hover:bg-violet-500/[0.06] dark:hover:bg-violet-500/10 transition-colors">
+              <span class="flex items-center gap-2">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+                Browse all apps
+              </span>
+              <svg class="w-4 h-4 shrink-0 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7"/></svg>
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Create an app: the former in-grid create tile ("Build your own
+           app"), now its own trailing section. Home.renderCreateSection()
+           fills it with either that tile or the "ask an admin" hint.
+           Same heading-outside / .home-section-block-around-the-box split
+           as the featured section above. -->
+      <section id="home-create-section" class="px-3 pb-4">
+        <div class="home-section-header">Create an app</div>
+        <div class="home-section-block">
+          <div id="home-create-body"></div>
+        </div>
+      </section>
     </div>
+  </main>
+
+  <!-- Browse-all-apps screen (#apps). Sibling of #home-screen: every app
+       this viewer may see, featured first, with per-tile add/remove badges.
+       Owned by public/js/browse.js; mounted by App.navigateToBrowse. -->
+  <main id="browse-screen" class="hidden flex-1 overflow-y-auto" style="position:relative">
+    <div id="browse-search-bar" class="sticky top-0 z-20 px-3 pt-3 pb-2 bg-white dark:bg-zinc-950">
+      <div class="relative max-w-xl">
+        <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        <input id="browse-search-input" type="text" autocomplete="off" placeholder="Search all apps…" aria-label="Search all apps"
+               class="w-full rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 pl-9 pr-9 py-2 text-sm text-zinc-800 dark:text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-violet-400 dark:focus:border-violet-600" />
+        <button id="browse-search-clear" class="hidden absolute right-2 top-1/2 -translate-y-1/2 w-5 h-5 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 hover:bg-zinc-500/10 text-base leading-none" title="Clear search" aria-label="Clear search">&times;</button>
+      </div>
+    </div>
+    <!-- Level 1: the app-store list. ONE row markup, two layouts, and the
+         switch is pure CSS — no matchMedia, no re-render on resize.
+         Narrow: a hairline-divided vertical list of full-width rows (the
+         App Store idiom). md and up: a 2/3-column grid whose rows pick up
+         a bordered-box treatment from .browse-row in app.css. -->
+    <div id="browse-list-level">
+      <!-- Grid only. Every border — the phone hairline AND the desktop box —
+           is .browse-row in app.css; a divide-* utility here would win the
+           cascade against it and strip the boxes' top/bottom edges. -->
+      <div id="browse-list" class="md:grid md:grid-cols-2 lg:grid-cols-3 md:gap-3 md:p-3"></div>
+      <div id="browse-empty" class="hidden px-3 pb-8 text-sm text-zinc-500 dark:text-zinc-400"></div>
+    </div>
+    <!-- Level 2: the per-app detail page (#apps/<slug>). Absorbs what the
+         browse rows' "…" menu used to offer — see Browse._renderDetail. -->
+    <div id="browse-detail" class="hidden max-w-2xl mx-auto p-4"></div>
   </main>
 
   <!-- Leaderboard screen (hidden by default): the one place the group's
@@ -2430,6 +2517,10 @@
        button on ScreenshotSelect.isSupported(). -->
   <script src="/js/screenshot-select.js"></script>
   <script src="/js/home.js"></script>
+  <!-- Browse-all-apps screen (#apps). After home.js: it reuses
+       Home.renderAppCard / Home.isYours / Home.matchesQuery so the two
+       launcher grids can't drift apart. -->
+  <script src="/js/browse.js"></script>
   <!-- Anonymous shell screens (fold-auth-pages-into-SPA): landing /
        login / register / waiting logic. Must load before app.js so
        window.AuthScreens exists when App.init routes the boot. -->
