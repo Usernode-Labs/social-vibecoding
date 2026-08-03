@@ -113,13 +113,22 @@ function makeBrowse(opts = {}) {
       addEventListener: () => {},
       removeEventListener: () => {},
     },
+    // Dispatches on the URL so each endpoint answers its REAL envelope —
+    // notably GET /api/apps/:slug, which responds `{ app: … }` (a bare app
+    // object here is what let the _fetchDetail envelope bug hide), and the
+    // contributors read, which the detail page now also fires.
     fetch: async (url, init) => {
       fetchCalls.push({ url, method: init?.method || 'GET', body: init?.body && JSON.parse(init.body) });
-      return {
-        ok: opts.fetchOk !== false,
-        status: opts.fetchOk === false ? 500 : 200,
-        json: async () => ({ apps: opts.apps || [] }),
+      const ok = opts.fetchOk !== false;
+      const json = async () => {
+        if (/\/contributors/.test(url)) {
+          const items = opts.contributors || [];
+          return { slug: 'x', total: opts.contribTotal ?? items.length, contributors: items };
+        }
+        if (/^\/api\/apps\/[^/?]+$/.test(url)) return { app: opts.coldApp || null };
+        return { apps: opts.apps || [] };
       };
+      return { ok, status: ok ? 200 : 500, json };
     },
     setTimeout, clearTimeout, setInterval, clearInterval,
     URLSearchParams,
@@ -830,4 +839,260 @@ test('the browse scroller gets its own pull-to-refresh', () => {
   // Routed through _refreshOrReload like every other screen, so a pull
   // also recovers from a platform redeploy.
   assert.match(fn, /App\._refreshOrReload\(\(\) => \(window\.Browse \? Browse\._load\(\)/);
+});
+
+// ── Contributors section (#919) ────────────────────────────────────────
+//
+// The card is rendered by a PURE function of (cache entry, expanded flag),
+// so every state is pinned here without a DOM or a fetch — the same
+// discipline sortApps / metaLine / renderAppRow already follow.
+
+const contrib = (over) => ({
+  user_id: 10,
+  username: 'alice',
+  merged_count: 7,
+  votes_count: 12,
+  is_creator: false,
+  is_member: false,
+  ...over,
+});
+
+const ready = (items, total) => ({
+  state: 'ready',
+  items,
+  total: total == null ? items.length : total,
+});
+
+test('contributors: the heading paints while loading so the page cannot jump', () => {
+  const { Browse } = makeBrowse();
+  const html = Browse.contributorsSectionHtml({ state: 'loading', items: [], total: 0 }, {});
+  assert.match(html, /id="browse-detail-contributors"/);
+  assert.match(html, /Contributors/);
+  assert.match(html, /Loading contributors/);
+  // No count chip until there is a real number to show.
+  assert.doesNotMatch(html, /·\s*0/);
+  assert.doesNotMatch(html, /browse-contrib-row/);
+});
+
+test('contributors: a ready row carries rank, avatar, @username, meta and the merged pill', () => {
+  const { Browse } = makeBrowse();
+  const html = Browse.contributorsSectionHtml(
+    ready([contrib({ username: 'alice', merged_count: 12, votes_count: 30, is_creator: true })]),
+    {}
+  );
+  assert.match(html, /Contributors<span[^>]*>\s*·\s*1<\/span>/, 'the total rides the heading');
+  assert.match(html, /browse-contrib-row[^>]*data-username="alice"/);
+  assert.match(html, />1<\/div>/, 'rank number');
+  assert.match(html, /rounded-full[^>]*>A</, 'initial-avatar circle');
+  assert.match(html, /@alice/);
+  assert.match(html, /Creator · 30 votes/, 'role then vote count');
+  assert.match(html, /12 merged/);
+  assert.match(html, /violet/, 'a non-zero count gets the violet pill');
+});
+
+test('contributors: creator wins over member on the role label', () => {
+  const { Browse } = makeBrowse();
+  const html = Browse.contributorsSectionHtml(
+    ready([contrib({ is_creator: true, is_member: true, votes_count: 0 })]), {}
+  );
+  assert.match(html, /Creator/);
+  assert.doesNotMatch(html, /Member/, 'the creator is always a member too — saying both is noise');
+});
+
+test('contributors: a zero-merge row keeps a muted pill, and zero votes drop the meta line', () => {
+  const { Browse } = makeBrowse();
+  const html = Browse.contributorsSectionHtml(
+    ready([contrib({ username: 'lurker', merged_count: 0, votes_count: 0 })]), {}
+  );
+  assert.match(html, /0 merged/, 'the row still shows a count so the column stays aligned');
+  assert.match(html, /bg-zinc-100/, 'muted rather than violet at zero');
+  assert.doesNotMatch(html, /votes/, 'no vote fragment at zero');
+  // A votes-only contributor DOES get the fragment.
+  const votesOnly = Browse.contributorsSectionHtml(
+    ready([contrib({ merged_count: 0, votes_count: 19 })]), {}
+  );
+  assert.match(votesOnly, /19 votes/);
+  assert.match(votesOnly, /0 merged/);
+});
+
+test('contributors: one vote is singular', () => {
+  const { Browse } = makeBrowse();
+  const html = Browse.contributorsSectionHtml(ready([contrib({ votes_count: 1 })]), {});
+  assert.match(html, /1 vote(?!s)/);
+});
+
+test('contributors: the list folds at 5 with a Show-all toggle, and expands in place', () => {
+  const { Browse } = makeBrowse();
+  const seven = Array.from({ length: 7 }, (_, i) =>
+    contrib({ user_id: i, username: `u${i}`, merged_count: 7 - i }));
+
+  const folded = Browse.contributorsSectionHtml(ready(seven), {});
+  assert.equal((folded.match(/browse-contrib-row/g) || []).length, 5, 'top 5 only');
+  assert.match(folded, /id="browse-contrib-toggle"[\s\S]*?Show all 7 contributors/);
+  assert.doesNotMatch(folded, /data-username="u5"/);
+
+  const open = Browse.contributorsSectionHtml(ready(seven), { expanded: true });
+  assert.equal((open.match(/browse-contrib-row/g) || []).length, 7);
+  assert.match(open, /Show fewer/);
+  assert.match(open, /data-username="u6"/);
+});
+
+test('contributors: exactly 5 rows need no toggle', () => {
+  const { Browse } = makeBrowse();
+  const five = Array.from({ length: 5 }, (_, i) => contrib({ user_id: i, username: `u${i}` }));
+  const html = Browse.contributorsSectionHtml(ready(five), {});
+  assert.equal((html.match(/browse-contrib-row/g) || []).length, 5);
+  assert.doesNotMatch(html, /browse-contrib-toggle/);
+});
+
+test('contributors: a server-capped list quotes the true total but cannot reveal more locally', () => {
+  const { Browse } = makeBrowse();
+  // 6 rows arrived, the app really has 40 — the label says 40, and the
+  // toggle can still only unfold what is in hand.
+  const six = Array.from({ length: 6 }, (_, i) => contrib({ user_id: i, username: `u${i}` }));
+  const html = Browse.contributorsSectionHtml(ready(six, 40), { expanded: true });
+  assert.match(html, /·\s*40<\/span>/);
+  assert.equal((html.match(/browse-contrib-row/g) || []).length, 6);
+});
+
+test('contributors: empty and error states each render their own copy', () => {
+  const { Browse } = makeBrowse();
+  const empty = Browse.contributorsSectionHtml(ready([]), {});
+  assert.match(empty, /No contributors yet/);
+  assert.match(empty, /id="browse-detail-contributors"/, 'the card is kept, not hidden');
+  assert.doesNotMatch(empty, /browse-contrib-row/);
+
+  const errored = Browse.contributorsSectionHtml({ state: 'error', items: [], total: 0 }, {});
+  assert.match(errored, /load contributors/);
+  assert.doesNotMatch(errored, /browse-contrib-row/);
+});
+
+test('contributors: a username is escaped in both text and attribute position', () => {
+  const { Browse } = makeBrowse();
+  const html = Browse.contributorsSectionHtml(
+    ready([contrib({ username: '"><img src=x>&' })]), {}
+  );
+  assert.doesNotMatch(html, /<img/, 'no injected markup');
+  assert.match(html, /&quot;/, 'the quote cannot break out of data-username');
+  assert.match(html, /&amp;/);
+});
+
+test('contributors: a missing entry renders the loading card, never a crash', () => {
+  const { Browse } = makeBrowse();
+  assert.match(Browse.contributorsSectionHtml(undefined, {}), /Loading contributors/);
+  assert.match(Browse.contributorsSectionHtml({ state: 'ready' }, {}), /No contributors yet/);
+});
+
+test('the detail page mounts the contributors card BELOW the action rows', async () => {
+  const { Browse, Home, nodes } = makeBrowse({
+    contributors: [contrib({ username: 'alice' })],
+  });
+  Home.menuItemsFor = () => ([{ key: 'fork', label: 'Fork this app', run: () => {} }]);
+  Browse._apps = [app({ slug: 'detail-me', name: 'Detail Me' })];
+  Browse.showDetail('detail-me');
+  let html = nodes['browse-detail'].innerHTML;
+  assert.match(html, /Loading contributors/, 'first paint is the loading card');
+  assert.match(html, /Fork this app/, 'the rest of the page is untouched');
+  await flush(); await flush();
+  html = nodes['browse-detail'].innerHTML;
+  assert.match(html, /@alice/);
+  assert.ok(html.indexOf('browse-detail-action') < html.indexOf('browse-detail-contributors'),
+    'the action rows stay above — the page’s primary navigation is not pushed down');
+  assert.ok(html.indexOf('browse-detail-open') < html.indexOf('browse-detail-contributors'));
+});
+
+test('the detail page reads contributors once, and a repaint does NOT refetch', async () => {
+  const { Browse, Home, fetchCalls } = makeBrowse({ contributors: [contrib()] });
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'once' })];
+  Browse.showDetail('once');
+  await flush(); await flush();
+  const url = '/api/apps/once/contributors';
+  assert.equal(fetchCalls.filter((c) => c.url === url).length, 1);
+  // syncFrom repaints on every /api/apps refresh, and the fold toggle
+  // repaints too — neither may re-read.
+  Browse.syncFrom([app({ slug: 'once' })]);
+  Browse.render();
+  await flush();
+  assert.equal(fetchCalls.filter((c) => c.url === url).length, 1, 'served from the cache');
+});
+
+test('the contributors read carries the ?demo=1 passthrough', async () => {
+  const { Browse, Home, fetchCalls } = makeBrowse({ search: '?demo=1' });
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'demoed' })];
+  Browse.showDetail('demoed');
+  await flush(); await flush();
+  assert.ok(fetchCalls.some((c) => c.url === '/api/apps/demoed/contributors?demo=1'),
+    'staging demo rows have to reach the detail page too');
+});
+
+test('a failed contributors read degrades to the error card, not a broken page', async () => {
+  const { Browse, Home, nodes } = makeBrowse({ fetchOk: false });
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'sad' })];
+  Browse.showDetail('sad');
+  await flush(); await flush();
+  const html = nodes['browse-detail'].innerHTML;
+  assert.match(html, /load contributors/);
+  assert.match(html, /id="browse-detail-open"/, 'the rest of the detail page still renders');
+});
+
+test('every level change resets the expanded fold', () => {
+  const { Browse, Home } = makeBrowse();
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'a' }), app({ slug: 'b' })];
+  for (const enter of [
+    () => Browse.showDetail('b'),
+    () => { Browse._slug = null; Browse.route('b'); },
+    () => Browse.showList(),
+    () => Browse.open('b'),
+  ]) {
+    Browse._contribExpanded = true;
+    enter();
+    assert.equal(Browse._contribExpanded, false,
+      'a new page must never inherit the previous one’s fold state');
+  }
+});
+
+test('leaving the screen drops the contributor cache so counts are re-read', async () => {
+  const { Browse, Home, fetchCalls } = makeBrowse({ contributors: [contrib()] });
+  Home.menuItemsFor = () => [];
+  Browse._apps = [app({ slug: 'again' })];
+  Browse.showDetail('again');
+  await flush(); await flush();
+  Browse.close();
+  assert.equal(Browse._contrib.size, 0);
+  Browse._open = true;
+  Browse._apps = [app({ slug: 'again' })];
+  Browse.showDetail('again');
+  await flush(); await flush();
+  assert.equal(fetchCalls.filter((c) => c.url === '/api/apps/again/contributors').length, 2,
+    'merges land while the user is away — a fresh visit re-reads');
+});
+
+test('a contributor row routes to the existing leaderboard profile hash', () => {
+  // The row is a hash link, so this screen owns no profile rendering; the
+  // route is the one app.js already handles (#leaderboard/users/<name>).
+  const fn = BROWSE_SRC.slice(BROWSE_SRC.indexOf('browse-contrib-row\')'));
+  assert.match(fn, /#leaderboard\/users\/\$\{encodeURIComponent\(who\)\}/);
+  assert.match(APP_SRC, /parts\[1\] === 'users' && parts\[2\]/,
+    'app.js still routes the third segment as a profile username');
+});
+
+test('the cold deep-link fetch unwraps the { app } envelope the route sends', async () => {
+  // Regression: reading the response as a BARE app row made every cold
+  // deep link fall through to the "isn't available" state whenever the
+  // concurrent /api/apps list didn't happen to carry the slug.
+  const { Browse, Home, nodes } = makeBrowse({
+    apps: [],
+    coldApp: { slug: 'cold-app', name: 'Cold App', status: 'running' },
+  });
+  Home.menuItemsFor = () => [];
+  Browse._slug = 'cold-app';
+  Browse.render();
+  await flush(); await flush(); await flush();
+  assert.match(nodes['browse-detail'].innerHTML, /Cold App/, 'the app painted');
+  assert.doesNotMatch(nodes['browse-detail'].innerHTML, /isn&rsquo;t available/);
+  assert.equal(Browse._detailMissing, false);
 });

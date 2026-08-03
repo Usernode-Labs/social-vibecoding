@@ -280,6 +280,12 @@
       "expectSelector": "#browse-detail #browse-detail-open"
     },
     {
+      "name": "App details shows the ranked Contributors section (?demo=1)",
+      "path": "/?demo=1&shot=browse-detail#apps",
+      "expectSelector": "#browse-detail-contributors .browse-contrib-row",
+      "expectText": "staging-demo-lead"
+    },
+    {
       "name": "Home ends with the \"Create an app\" section (create tile out of the grid)",
       "path": "/",
       "expectSelector": "#home-create-section #home-create-body .home-create-btn",
