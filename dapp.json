@@ -397,6 +397,35 @@
       "expectText": "Revise the spec"
     },
     {
+      "name": "An interrupted turn's tail finishes itself: Changes-ready card lands",
+      "path": "/#app/usernode-2d5619/dev/sessions/900820",
+      "expectSelector": "#dc-pr-card .dc-pr-card-actions .dc-pr-btn-promote",
+      "expectText": "Staging deployed!"
+    },
+    {
+      "name": "A tail-recovered turn still gets its wrap-up pills",
+      "path": "/#app/usernode-2d5619/dev/sessions/900820",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Propose it to the group"
+    },
+    {
+      "name": "A background preview rebuild shows a spinning in-progress row",
+      "path": "/#app/usernode-2d5619/dev/sessions/900821",
+      "expectSelector": ".dc-status-line .dc-status-spinner-arc",
+      "expectText": "Building staging preview"
+    },
+    {
+      "name": "An unresumable turn whose code landed says so instead of asking for a resend",
+      "path": "/#app/usernode-2d5619/dev/sessions/900822",
+      "expectText": "committed and pushed to PR #36"
+    },
+    {
+      "name": "The code-landed breadcrumb offers Propose, not \"Try that again\"",
+      "path": "/#app/usernode-2d5619/dev/sessions/900822",
+      "expectSelector": "#dc-quick-replies.dc-quick-replies-active .dc-quick-pill",
+      "expectText": "Propose it to the group"
+    },
+    {
       "name": "Estimator-off run under 10 min shows NO side text (#906)",
       "path": "/#app/usernode-2d5619/dev/sessions/900810",
       "expectSelector": ".dc-cc-attached-summary .dc-cc-cohort",

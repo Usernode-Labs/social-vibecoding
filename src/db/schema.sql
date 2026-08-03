@@ -929,6 +929,33 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS reviewed_head_sha     VARCHAR
 --                   journal file (in the CC volume) instead of killing the
 --                   still-running in-container claude. NULL = no turn in
 --                   flight.
+--
+--                   Two further keys cover the POST-AGENT TAIL — the
+--                   minutes-long platform-side stretch after the agent
+--                   exits (push heal → PR → staging build → cards →
+--                   Mayor wrap-up). A `holdTurnRecord` caller keeps the
+--                   record alive across it instead of clearing it at exec
+--                   end, so a restart mid-tail is resumable rather than
+--                   silently dropped (the incident: a turn's chat froze on
+--                   "Building staging preview..." forever because a
+--                   self-app deploy replaced the process mid-build):
+--                     phase — 'tail' once the exec is over and the tail
+--                             owns the record. Absent means the exec may
+--                             still be running. server.js's adoption
+--                             branches read it to log which shape they
+--                             resumed; both go down the same resume path.
+--                     tail  — milestone map of what the tail ALREADY did,
+--                             so a resumed tail repeats none of the steps
+--                             that aren't idempotent:
+--                             { sha, pushOk, prNumber,
+--                               prOpenedEventRecorded, stagingUrl,
+--                               votesResetFor, completionRowPosted,
+--                               wrapUpPosted }.
+--                             finalizeRecoveredTurn takes it as
+--                             `alreadyDone`. Written with jsonb_set
+--                             merges guarded on `active_turn IS NOT NULL`,
+--                             so a late stamp can never resurrect a
+--                             released record.
 --   headless_step = where the headless auto-session loop last checkpointed:
 --                   'planning' (Mayor phase-1) | 'cc_running' (CC turn
 --                   dispatched) | 'wrapping' (Mayor phase-2). Lets

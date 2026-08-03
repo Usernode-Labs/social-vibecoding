@@ -174,12 +174,21 @@ test('server.js has the stale active_turn watchdog pass', () => {
   // #896: the reaped-turn message is the shared TURN_UNFINISHED_BREADCRUMB
   // now — one wording for every unresumable shape, with the shape kept in
   // metadata.recoveredReason instead of in the text the user reads.
+  //
+  // ...with ONE exception: a reaped TAIL row (the agent finished, the
+  // platform-side wrap-up didn't) knows the commit is already pushed, so
+  // asking for a resend would send the user to redo landed work. It gets
+  // the code-landed wording instead.
   assert.ok(
-    /const msg = recoveryPills\.TURN_UNFINISHED_BREADCRUMB/.test(serverSrc),
-    'watchdog must post the retry system message'
+    /: recoveryPills\.TURN_UNFINISHED_BREADCRUMB/.test(serverSrc),
+    'watchdog must post the retry system message for an unresumable exec'
   );
   assert.ok(
-    /recoveredReason: 'watchdog_reap'/.test(serverSrc),
+    /recoveryPills\.buildCodeLandedBreadcrumb\(/.test(serverSrc),
+    'a reaped tail whose commit landed must not ask for a resend'
+  );
+  assert.ok(
+    /recoveredReason: reapCodeLanded \? 'watchdog_reap_tail' : 'watchdog_reap'/.test(serverSrc),
     'the reap is still distinguishable from other recoveries in SQL'
   );
 });

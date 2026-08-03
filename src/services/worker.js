@@ -462,6 +462,113 @@ async function clearActiveTurn(sessionId) {
 }
 
 // ──────────────────────────────────────────────────────────────────────
+// Post-agent TAIL: keeping the turn record alive past the exec
+// ──────────────────────────────────────────────────────────────────────
+//
+// A dispatch turn has TWO halves and only the first one used to be
+// durable:
+//
+//   1. the exec — `claude` running in the worker, journalled to disk;
+//   2. the TAIL — everything the platform does afterwards: heal the
+//      push, open/update the PR, build the staging preview, capture
+//      visuals, post the "Claude Code finished" card, and re-issue the
+//      Mayor's wrap-up.
+//
+// The tail is minutes long (a self-app staging build alone spends ~4:45
+// cloning the platform DB) and ran with `active_turn` ALREADY cleared,
+// so a restart inside it was invisible to boot adoption: the container
+// had no live exec, adoptOrphanWorker took its warm-idle branch, and the
+// chat froze on "Building staging preview..." forever (session 2954).
+//
+// So callers that own a tail pass `holdTurnRecord: true` to
+// execInWorker. Instead of clearing the record when the journal is
+// consumed, it stamps `phase: 'tail'` and KEEPS the journal file — which
+// is exactly what resumeDetachedTurn needs to replay the turn and run
+// finalizeRecoveredTurn on the next boot. The caller then calls
+// finishTurn() in its own `finally`, once the tail is genuinely over.
+//
+// `tail` on the record is the milestone map: which tail steps already
+// landed, so a resumed tail redoes none of them (see noteTailMilestone).
+const TURN_PHASE_TAIL = 'tail';
+
+async function markTurnTail(sessionId, milestones = {}) {
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  try {
+    await pool.query(
+      `UPDATE chat_sessions
+          SET active_turn = jsonb_set(
+                jsonb_set(
+                  jsonb_set(active_turn, '{phase}', $2::jsonb, true),
+                  '{tailStartedAt}', $3::jsonb, true),
+                '{tail}', COALESCE(active_turn->'tail', '{}'::jsonb) || $4::jsonb, true)
+        WHERE id = $1 AND active_turn IS NOT NULL`,
+      [
+        sessionId,
+        JSON.stringify(TURN_PHASE_TAIL),
+        JSON.stringify(new Date().toISOString()),
+        JSON.stringify(milestones || {}),
+      ]
+    );
+  } catch (err) {
+    log.warn('worker', 'Failed to mark active_turn tail', { sessionId, err: err.message });
+  }
+}
+
+// Record ONE tail milestone on the held record (merge, never replace).
+// Best-effort by design: a failed stamp costs a repeated step on the
+// (rare) resume path, never a failed turn. No-op when the record is
+// already gone — a stamp arriving after finishTurn must not resurrect it
+// (the `active_turn IS NOT NULL` guard).
+async function noteTailMilestone(sessionId, milestones) {
+  if (!milestones || typeof milestones !== 'object') return;
+  const pool = _getPoolSafe();
+  if (!pool) return;
+  try {
+    await pool.query(
+      `UPDATE chat_sessions
+          SET active_turn = jsonb_set(
+                active_turn, '{tail}',
+                COALESCE(active_turn->'tail', '{}'::jsonb) || $2::jsonb, true)
+        WHERE id = $1 AND active_turn IS NOT NULL`,
+      [sessionId, JSON.stringify(milestones)]
+    );
+  } catch (err) {
+    log.warn('worker', 'Failed to note tail milestone', { sessionId, err: err.message });
+  }
+}
+
+// End of the whole turn (exec + tail): drop the durable record and the
+// journal it pointed at. This is what execInWorker's `finally` does for
+// callers that DON'T hold the record; holders call it themselves when
+// their tail finishes (or dies). Idempotent — safe to call twice, and
+// safe to call for a turn that never held a record.
+// Is this active_turn record a held TAIL (the exec is over, the platform
+// side is not)? Pure so server.js's adoption branches and their tests can
+// classify a row without a pool. Tolerates a string-encoded jsonb column.
+function isTailPhase(activeTurn) {
+  if (!activeTurn) return false;
+  let rec = activeTurn;
+  if (typeof rec === 'string') {
+    try { rec = JSON.parse(rec); } catch { return false; }
+  }
+  return !!rec && rec.phase === TURN_PHASE_TAIL;
+}
+
+async function finishTurn(sessionId, { journal = null } = {}) {
+  const journalPath = journal || _registryGet(sessionId)?.finishedJournal || null;
+  if (journalPath) {
+    const containerName = _registryGet(sessionId)?.containerName
+      || workerContainerName(sessionId);
+    docker.execFileAsync('docker', [
+      'exec', containerName, 'rm', '-f', journalPath,
+    ], { timeout: 5000 }).catch(() => {});
+  }
+  _registryUpsert(sessionId, { finishedJournal: null });
+  await clearActiveTurn(sessionId);
+}
+
+// ──────────────────────────────────────────────────────────────────────
 // Warm-worker registry
 // ──────────────────────────────────────────────────────────────────────
 //
@@ -857,6 +964,14 @@ async function execInWorker(sessionId, {
   // PROD_DEBUG_JWT so the usernode-debug CLI can call the platform's
   // read-only prod-debug internal API. Build/scout only, never sync.
   prodDebug = false,
+  // When true the caller owns a post-agent TAIL (PR → staging → cards →
+  // wrap-up) and takes over the turn record's lifetime: this function
+  // stamps `phase: 'tail'` instead of clearing it, and leaves the journal
+  // on disk so a restart mid-tail can replay the turn. The caller MUST
+  // call finishTurn(sessionId) in its own `finally`. See the
+  // "Post-agent TAIL" note above. Default false — the sync path and any
+  // future tail-less caller keep the original clear-on-exit behaviour.
+  holdTurnRecord = false,
   // Legacy callback: the attached transport used to hand the host-side
   // `docker exec` child to the route handler for SIGTERM-based stops.
   // The detached transport has no such child — stops go through
@@ -1006,6 +1121,9 @@ async function execInWorker(sessionId, {
     byok: !!anthropicApiKey,
   });
 
+  // Visible to the `finally` below, which stamps the tail's seed
+  // milestones (sha / pushOk) from whatever the exec established.
+  let execState = null;
   try {
     // Dispatch. `docker exec -d` returns as soon as the exec is created;
     // secrets travel via the docker CLI's env (bare `-e KEY`), same as
@@ -1021,13 +1139,18 @@ async function execInWorker(sessionId, {
     }
 
     const state = newWatchState();
+    execState = state;
     const progress = typeof onProgress === 'function' ? onProgress : () => {};
     await _consumeJournal(containerName, journal, progress, state, { sessionId });
 
     // Successful, complete turns don't need their journal anymore; failed
     // or markerless ones keep it on disk for debugging (the next turn's
     // wrapper rm's it).
-    if (state.execExitSeen && !state.fatalError) {
+    //
+    // A tail-holding caller keeps it either way until finishTurn: it is
+    // the only copy of what the turn did, and the boot-adoption resume
+    // replays it to rebuild `result` before running the tail.
+    if (!holdTurnRecord && state.execExitSeen && !state.fatalError) {
       docker.execFileAsync('docker', [
         'exec', containerName, 'rm', '-f', journal,
       ], { timeout: 5000 }).catch(() => {});
@@ -1037,8 +1160,21 @@ async function execInWorker(sessionId, {
     _registryUpsert(sessionId, {
       inFlight: false, lastUsedMs: Date.now(), activeTurnMode: null,
       journal: null, stopRequestedAt: null,
+      // Remembered for finishTurn so the caller's `finally` doesn't have
+      // to thread the journal path back through its own scope.
+      ...(holdTurnRecord ? { finishedJournal: journal } : {}),
     });
-    await clearActiveTurn(sessionId);
+    if (holdTurnRecord) {
+      // Hand the record to the tail rather than dropping it. Seed the
+      // milestone map with what the exec itself established, so a resume
+      // knows whether the commit is already on GitHub without having to
+      // re-derive it from a dead worker.
+      await markTurnTail(sessionId, execState
+        ? { sha: execState.sha || null, pushOk: execState.pushOk === true }
+        : {});
+    } else {
+      await clearActiveTurn(sessionId);
+    }
   }
 }
 
@@ -1815,6 +1951,12 @@ module.exports = {
   syncUserAgentFiles,
   resumeTurnFromJournal,
   clearActiveTurn,
+  // post-agent tail lifecycle (holdTurnRecord callers)
+  TURN_PHASE_TAIL,
+  markTurnTail,
+  noteTailMilestone,
+  finishTurn,
+  isTailPhase,
   evictWorker,
   warmRegistrySnapshot,
   adoptWarmWorker,

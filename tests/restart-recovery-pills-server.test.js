@@ -231,8 +231,13 @@ test('the recovered scout tails carry spec_done / unrecoverable pills', () => {
 
 test('the failed-resume and watchdog-reap breadcrumbs carry retry pills', () => {
   assert.match(SERVER_SRC, /const failedPills = recoveryPills\.buildRecoveryQuickReplies\('unrecoverable'\)/);
-  assert.match(SERVER_SRC, /const reapPills = recoveryPills\.buildRecoveryQuickReplies\('unrecoverable'\)/);
+  // The reap picks its set from whether the turn's code landed: a reaped
+  // TAIL offers Propose/tweak, a reaped exec offers "try that again".
+  assert.match(SERVER_SRC,
+    /const reapPills = recoveryPills\.buildRecoveryQuickReplies\(\s*reapCodeLanded \? 'code_done' : 'unrecoverable'\s*\)/);
   assert.match(SERVER_SRC, /const goneP = recoveryPills\.buildRecoveryQuickReplies\('unrecoverable'\)/);
+  assert.match(SERVER_SRC, /const landedPills = recoveryPills\.buildRecoveryQuickReplies\('code_done'\)/,
+    'a dead-worker tail whose commit landed gets code_done pills, not retry pills');
 });
 
 test('the backfill sweep is chained post-listen onto the recovery block', () => {

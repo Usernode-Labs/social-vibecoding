@@ -85,6 +85,11 @@ function loadSessions(mockPool, overrides = {}) {
     execInWorker: async () => ({ lastResultText: '' }),
     resumeTurnFromJournal: async () => ({}),
     clearActiveTurn: async () => {},
+    // Tail lifecycle (the dispatch tools hold the durable turn record
+    // across their post-agent tail and release it in a finally).
+    finishTurn: async () => {},
+    markTurnTail: async () => {},
+    noteTailMilestone: async () => {},
     stopTurn: async () => false,
     ...(overrides.worker || {}),
   };

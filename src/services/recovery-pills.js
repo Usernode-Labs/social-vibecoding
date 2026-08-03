@@ -116,6 +116,35 @@ const SCOUT_NO_SPEC_BREADCRUMB =
 const TURN_UNFINISHED_BREADCRUMB =
   "That coding turn didn't finish — please send your request again.";
 
+// The breadcrumb for a turn that couldn't be resumed BUT whose code
+// already landed: the agent committed and the branch is on GitHub, only
+// the platform-side wrap-up (preview, cards) was lost. Asking for a
+// resend here — which TURN_UNFINISHED_BREADCRUMB does — tells the user to
+// redo work that is already safely pushed, and invites a duplicate run
+// (session 2954's "continue" cost a full second build turn that produced
+// no new commit). So this wording reports what landed and what is being
+// repaired instead.
+//
+// `prNumber` is optional: a tail can die after the push but before the PR
+// exists, and naming a PR that isn't there would be worse than vague.
+// Per #896 the platform restart itself stays out of the wording — the
+// user can't act on it — and lives in metadata.recovered / the logs.
+function buildCodeLandedBreadcrumb({ prNumber = null, rebuildingPreview = true } = {}) {
+  const where = prNumber ? `pushed to PR #${prNumber}` : 'pushed to your branch';
+  return rebuildingPreview
+    ? `Your changes are committed and ${where} — rebuilding the preview now.`
+    : `Your changes are committed and ${where}.`;
+}
+
+// Every wording buildCodeLandedBreadcrumb can produce, as a matcher —
+// the boot backfill's "did I already post this?" test needs to recognise
+// its own row, and it has no access to the prNumber that shaped it.
+function isCodeLandedBreadcrumb(content) {
+  if (typeof content !== 'string') return false;
+  return /^Your changes are committed and pushed to (PR #\d+|your branch)( — rebuilding the preview now)?\.$/
+    .test(content);
+}
+
 // Build the pill list for one recovery kind.
 //
 //   kind — a RECOVERY_PILLS key.
@@ -231,6 +260,8 @@ module.exports = {
   isUnansweredBreadcrumb,
   SCOUT_NO_SPEC_BREADCRUMB,
   TURN_UNFINISHED_BREADCRUMB,
+  buildCodeLandedBreadcrumb,
+  isCodeLandedBreadcrumb,
   buildRecoveryQuickReplies,
   classifyMissingPills,
   backfillKindForSession,
