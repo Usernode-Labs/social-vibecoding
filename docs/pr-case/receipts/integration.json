@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "main-integration-2026-08-04",
+  "originReceiptEventId": "fcad73b4c3c9735cddc8939374162ea101f0dffbadf7454fc85a87baf656755d",
+  "revisions": {
+    "base": "92b1fb50d5265af56db86c7ba74867629a45091f",
+    "merge": "1a3ac7692ecfabd673182e8f255f982481cf6db3",
+    "verified": "51c95ab2e45b99259b947205762a78e5dab7f6e8"
+  },
+  "source": {
+    "start": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+    "end": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+    "stable": true,
+    "cleanStart": true,
+    "cleanEnd": true
+  },
+  "result": {
+    "status": "passed",
+    "passed": 28,
+    "skipped": 0,
+    "omitted": 0,
+    "receiptGrade": true
+  },
+  "verification": {
+    "serverTestFiles": 402,
+    "serverTestsPassed": 5492,
+    "browserTestsPassed": 812,
+    "browserDeclaredSkips": 60
+  },
+  "stageIds": [
+    "root-suite",
+    "lint",
+    "tokens",
+    "design-system",
+    "relationships",
+    "registry",
+    "style-policy",
+    "interface-laws",
+    "content",
+    "content-tests",
+    "harness-integrity",
+    "harness-fitness",
+    "progressive-context",
+    "context-budget",
+    "harness-policy",
+    "harness-tests",
+    "agent-battery",
+    "typecheck",
+    "native-bridge",
+    "build",
+    "service-worker",
+    "browser-matrix",
+    "production-guard",
+    "production-smoke",
+    "cutover-contract",
+    "bundle-budget",
+    "storybook-tests",
+    "storybook-build"
+  ],
+  "artifactSha256": "b403c125784b79b885bb8c2a49ac70135c803069b461924ff595d7cc2c643810",
+  "contextCorrection": {
+    "regressedAlwaysLoadedBytes": 22445,
+    "alwaysLoadedRatchetBytes": 17427,
+    "routedGuidanceBytes": 5018
+  },
+  "failedExactHeads": [
+    {
+      "revision": "1a3ac7692ecfabd673182e8f255f982481cf6db3",
+      "caught": [
+        "eight ephemeral test listeners without explicit loopback binding",
+        "one service-worker cache-version assumption"
+      ],
+      "artifactSha256": "b8d6363816e33f7923369fed32e90325b5b8f26598b59cca804ca506ccca2be2"
+    },
+    {
+      "revision": "731921cf158ab1392881e0861135986f61d30611",
+      "caught": [
+        "always-loaded context measured 22445 bytes against a 17427-byte ratchet"
+      ],
+      "artifactSha256": "fa72a106a35599cf2cc6cc94ebef419f1493844e5d807ef14684679cc9d1dab0"
+    },
+    {
+      "revision": "eb2a8059402d5e3db28ded64a5e0beafa59feb4d",
+      "caught": [
+        "two tests bypassed routed guidance and read the always-loaded prompt directly"
+      ],
+      "artifactSha256": "5a0af4d1d8de4e5d914833dfa7e3bb28243357f6183d0838f94365ccc547c386"
+    }
+  ]
+}

@@ -1,0 +1,651 @@
+{
+  "schemaVersion": 2,
+  "generatedFrom": {
+    "comparisonBaseRevision": "92b1fb50d5265af56db86c7ba74867629a45091f",
+    "comparisonBranchRevision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+    "projectionAuthority": {
+      "tokenHarness": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+      "contextHarness": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+      "capture": "sha256:08d47a72c517d89c3363c38c53fd8471ee994d0e84d4f9bb2c0bfa9473da1637"
+    }
+  },
+  "facts": {
+    "revisions": {
+      "base": "92b1fb50d5265af56db86c7ba74867629a45091f",
+      "branch": "51c95ab2e45b99259b947205762a78e5dab7f6e8"
+    },
+    "base": {
+      "tailwindHtmlPages": 2,
+      "tailwindRuntimeFiles": 3,
+      "rootNodeTestFiles": 399,
+      "componentStoryFiles": 0,
+      "scripts": 3,
+      "hasCentralPalette": true,
+      "centralPaletteCssFiles": 1
+    },
+    "branch": {
+      "rootNodeTestFiles": 402,
+      "retainedBaseTestFiles": 399,
+      "removedBaseTestFiles": 0,
+      "storyFiles": 97,
+      "checkScripts": 19,
+      "catalogComponents": 77,
+      "catalogTiers": {
+        "element": 34,
+        "block": 28,
+        "feature": 15
+      },
+      "catalogTierCount": 3,
+      "branchOnlyCommits": 153,
+      "provenanceCommits": 29,
+      "provenanceEvents": 21
+    },
+    "laws": {
+      "physicalLines": 137,
+      "nonblankLines": 110,
+      "bytes": 7433
+    },
+    "context": {
+      "alwaysLoadedBytes": 17378,
+      "alwaysLoadedRatchetBytes": 17427,
+      "componentReviewBytes": 21260,
+      "componentReviewRatchetBytes": 21268,
+      "ownerCeilingBytes": 100000
+    },
+    "gate": {
+      "stages": 28,
+      "passed": 28,
+      "skipped": 0,
+      "omitted": 0,
+      "receiptGrade": true,
+      "sourceStart": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sourceEnd": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "cleanStart": true,
+      "cleanEnd": true,
+      "failedExactHeads": 3,
+      "serverTestsPassed": 5492,
+      "browserTestsPassed": 812,
+      "browserDeclaredSkips": 60,
+      "artifactSha256": "b403c125784b79b885bb8c2a49ac70135c803069b461924ff595d7cc2c643810",
+      "integrationAlwaysLoadedBytes": 22445,
+      "integrationAlwaysLoadedRatchetBytes": 17427,
+      "routedGuidanceBytes": 5018
+    },
+    "capture": {
+      "images": 4,
+      "width": 1280,
+      "height": 720,
+      "themes": 2
+    },
+    "guardedInvalidMutations": 7,
+    "canonicalTokenSources": 1,
+    "tokenDemo": {
+      "validEdit": "semantic.light.primary -> oklch(0.32 0.08 255)",
+      "propagatedLine": "--primary: oklch(0.32 0.08 255);",
+      "invalidEdit": "semantic.light.paper -> oklch(0.94 0 0)",
+      "rejection": "Error: semantic.light Canvas to Paper lightness step -0.010 is below 0.020",
+      "canonicalSha256": "2b2c6f6fc2ccef641a149d3949fd18ca7f5df6dd343db56b61bd08dc8ed1556b",
+      "temporaryWorkingDirectory": true
+    }
+  },
+  "claims": [
+    {
+      "id": "R1",
+      "slideId": "main-partial-centralization",
+      "statement": "Pinned main centralizes its platform palette in one CSS file, while 2 HTML pages still load the browser compiler.",
+      "metrics": [
+        {
+          "id": "centralPaletteFiles",
+          "value": 1,
+          "unit": "CSS files",
+          "revision": "92b1fb50d5265af56db86c7ba74867629a45091f",
+          "scope": "pinned main palette definition"
+        },
+        {
+          "id": "browserCompilerHtmlPages",
+          "value": 2,
+          "unit": "HTML files",
+          "revision": "92b1fb50d5265af56db86c7ba74867629a45091f",
+          "scope": "pinned main"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R1 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "public/css/app.css",
+        "public/index.html",
+        "public/usernode-native/v1/demo.html"
+      ]
+    },
+    {
+      "id": "R2",
+      "slideId": "token-authority-demo",
+      "statement": "A temporary-directory token generation propagates one valid edit and refuses an inverted Canvas-to-Paper ladder.",
+      "metrics": [
+        {
+          "id": "guardedInvalidMutations",
+          "value": 7,
+          "unit": "guarded mutations",
+          "revision": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+          "scope": "D1 token check"
+        },
+        {
+          "id": "validPrimaryLightness",
+          "value": 0.32,
+          "unit": "OKLCH lightness",
+          "revision": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+          "scope": "temporary generator"
+        },
+        {
+          "id": "validPrimaryChroma",
+          "value": 0.08,
+          "unit": "OKLCH chroma",
+          "revision": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+          "scope": "temporary generator"
+        },
+        {
+          "id": "validPrimaryHue",
+          "value": 255,
+          "unit": "degrees",
+          "revision": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+          "scope": "temporary generator"
+        },
+        {
+          "id": "invalidPaperLightness",
+          "value": 0.94,
+          "unit": "OKLCH lightness",
+          "revision": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+          "scope": "temporary generator"
+        },
+        {
+          "id": "rejectedLightnessStep",
+          "value": -0.01,
+          "unit": "OKLCH lightness",
+          "revision": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+          "scope": "temporary generator"
+        },
+        {
+          "id": "minimumLightnessStep",
+          "value": 0.02,
+          "unit": "OKLCH lightness",
+          "revision": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+          "scope": "temporary generator"
+        },
+        {
+          "id": "temporaryWorkingDirectory",
+          "value": true,
+          "unit": "boolean",
+          "revision": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+          "scope": "temporary generator"
+        },
+        {
+          "id": "canonicalTokenSha256",
+          "value": "2b2c6f6fc2ccef641a149d3949fd18ca7f5df6dd343db56b61bd08dc8ed1556b",
+          "unit": "SHA-256 digest",
+          "revision": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+          "scope": "token authority"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R2 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "frontend/design-system/tokens.json",
+        "frontend/scripts/check-design-tokens.mjs",
+        "frontend/scripts/design-token-tools.mjs"
+      ]
+    },
+    {
+      "id": "R3",
+      "slideId": "verification-files",
+      "statement": "The integrated branch retains all 399 pinned-main root Node test files, adds 3, and passes 5492 root tests.",
+      "metrics": [
+        {
+          "id": "baseRootNodeTestFiles",
+          "value": 399,
+          "unit": "root Node test files",
+          "revision": "92b1fb50d5265af56db86c7ba74867629a45091f",
+          "scope": "pinned main"
+        },
+        {
+          "id": "branchRootNodeTestFiles",
+          "value": 402,
+          "unit": "root Node test files",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integrated branch"
+        },
+        {
+          "id": "retainedBaseRootNodeTestFiles",
+          "value": 399,
+          "unit": "root Node test files",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "base-path retention"
+        },
+        {
+          "id": "removedBaseRootNodeTestFiles",
+          "value": 0,
+          "unit": "root Node test files",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "base-path retention"
+        },
+        {
+          "id": "rootTestsPassed",
+          "value": 5492,
+          "unit": "root tests",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R3 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "tests/",
+        "docs/pr-case/receipts/integration.json"
+      ]
+    },
+    {
+      "id": "R4",
+      "slideId": "verification-category",
+      "statement": "The branch carries 97 Storybook story files and a 28-stage receipt-grade gate.",
+      "metrics": [
+        {
+          "id": "storybookStoryFiles",
+          "value": 97,
+          "unit": "Storybook story files",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integrated branch"
+        },
+        {
+          "id": "gateStages",
+          "value": 28,
+          "unit": "gate stages",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "receiptGrade",
+          "value": true,
+          "unit": "boolean",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R4 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "frontend/@/",
+        "docs/pr-case/receipts/integration.json"
+      ]
+    },
+    {
+      "id": "R5",
+      "slideId": "surface-grammar",
+      "statement": "77 catalog entries expose the component inventory across 3 explicit tiers.",
+      "metrics": [
+        {
+          "id": "catalogComponents",
+          "value": 77,
+          "unit": "catalog entries",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integrated branch"
+        },
+        {
+          "id": "catalogTiers",
+          "value": 3,
+          "unit": "catalog tiers",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integrated branch"
+        },
+        {
+          "id": "elementTierComponents",
+          "value": 34,
+          "unit": "catalog entries",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "element tier"
+        },
+        {
+          "id": "blockTierComponents",
+          "value": 28,
+          "unit": "catalog entries",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "block tier"
+        },
+        {
+          "id": "featureTierComponents",
+          "value": 15,
+          "unit": "catalog entries",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "feature tier"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R5 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "frontend/design-system/catalog.json",
+        "frontend/design-system/interface-laws.md"
+      ]
+    },
+    {
+      "id": "R6",
+      "slideId": "legacy-interface-loop",
+      "statement": "Pinned main has 399 root Node test files and zero component-isolated Storybook files.",
+      "metrics": [
+        {
+          "id": "baseRootNodeTestFiles",
+          "value": 399,
+          "unit": "root Node test files",
+          "revision": "92b1fb50d5265af56db86c7ba74867629a45091f",
+          "scope": "pinned main"
+        },
+        {
+          "id": "baseComponentStoryFiles",
+          "value": 0,
+          "unit": "Storybook story files",
+          "revision": "92b1fb50d5265af56db86c7ba74867629a45091f",
+          "scope": "pinned main"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R6 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "tests/",
+        "frontend/design-system/"
+      ]
+    },
+    {
+      "id": "R7",
+      "slideId": "lean-mechanical-loop",
+      "statement": "Component-review context is 21260 bytes under a 21268-byte ratchet and 100000-byte owner ceiling.",
+      "metrics": [
+        {
+          "id": "alwaysLoadedBytes",
+          "value": 17378,
+          "unit": "bytes",
+          "revision": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+          "scope": "current projection"
+        },
+        {
+          "id": "alwaysLoadedRatchetBytes",
+          "value": 17427,
+          "unit": "bytes",
+          "revision": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+          "scope": "current projection"
+        },
+        {
+          "id": "componentReviewBytes",
+          "value": 21260,
+          "unit": "bytes",
+          "revision": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+          "scope": "current projection"
+        },
+        {
+          "id": "componentReviewRatchetBytes",
+          "value": 21268,
+          "unit": "bytes",
+          "revision": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+          "scope": "current projection"
+        },
+        {
+          "id": "ownerCeilingBytes",
+          "value": 100000,
+          "unit": "bytes",
+          "revision": "sha256:e8c4526c93ee95d9de3e9b4070d21dbd04190101cb43abeb519af1dd66fc0ac3",
+          "scope": "owner policy"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R7 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "frontend/design-system/context-budget.json",
+        "frontend/scripts/check-progressive-context.mjs",
+        "frontend/scripts/check-context-budget.mjs"
+      ]
+    },
+    {
+      "id": "R8",
+      "slideId": "harness-integrity",
+      "statement": "28 of 28 gate stages passed at one clean immutable source revision.",
+      "metrics": [
+        {
+          "id": "passedGateStages",
+          "value": 28,
+          "unit": "gate stages",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "totalGateStages",
+          "value": 28,
+          "unit": "gate stages",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "skippedGateStages",
+          "value": 0,
+          "unit": "gate stages",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "omittedGateStages",
+          "value": 0,
+          "unit": "gate stages",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "sourceStable",
+          "value": true,
+          "unit": "boolean",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "cleanStart",
+          "value": true,
+          "unit": "boolean",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "cleanEnd",
+          "value": true,
+          "unit": "boolean",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "receiptGrade",
+          "value": true,
+          "unit": "boolean",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "fullArtifactSha256",
+          "value": "b403c125784b79b885bb8c2a49ac70135c803069b461924ff595d7cc2c643810",
+          "unit": "SHA-256 digest",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "local artifact when present"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R8 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "docs/pr-case/receipts/integration.json"
+      ]
+    },
+    {
+      "id": "R9",
+      "slideId": "regression-caught",
+      "statement": "3 preserved exact-head failures caught integration defects before the clean 28-stage receipt.",
+      "metrics": [
+        {
+          "id": "preservedFailedArtifacts",
+          "value": 3,
+          "unit": "failed gate artifacts",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "regressedAlwaysLoadedBytes",
+          "value": 22445,
+          "unit": "bytes",
+          "revision": "731921cf158ab1392881e0861135986f61d30611",
+          "scope": "failed exact head"
+        },
+        {
+          "id": "alwaysLoadedRatchetBytes",
+          "value": 17427,
+          "unit": "bytes",
+          "revision": "731921cf158ab1392881e0861135986f61d30611",
+          "scope": "failed exact head"
+        },
+        {
+          "id": "routedGuidanceBytes",
+          "value": 5018,
+          "unit": "bytes",
+          "revision": "eb2a8059402d5e3db28ded64a5e0beafa59feb4d",
+          "scope": "corrected exact head"
+        },
+        {
+          "id": "cleanGateStages",
+          "value": 28,
+          "unit": "gate stages",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R9 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "docs/pr-case/receipts/integration.json"
+      ]
+    },
+    {
+      "id": "R10",
+      "slideId": "costs-honestly",
+      "statement": "19 check-prefixed package scripts and a 28-stage gate are maintained infrastructure.",
+      "metrics": [
+        {
+          "id": "checkPrefixedScriptNames",
+          "value": 19,
+          "unit": "package script names",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integrated branch"
+        },
+        {
+          "id": "gateStages",
+          "value": 28,
+          "unit": "gate stages",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integration receipt"
+        },
+        {
+          "id": "canonicalTokenSources",
+          "value": 1,
+          "unit": "token source files",
+          "revision": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
+          "scope": "pinned design-system authority"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R10 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "frontend/package.json",
+        "agent-skills/ui-development/workflows.json"
+      ]
+    },
+    {
+      "id": "R11",
+      "slideId": "review-the-system",
+      "statement": "29 of 153 branch commits carry both task and origin-event trailers, pointing to 21 distinct events.",
+      "metrics": [
+        {
+          "id": "branchOnlyCommits",
+          "value": 153,
+          "unit": "commits",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "base-to-branch range"
+        },
+        {
+          "id": "provenanceCommits",
+          "value": 29,
+          "unit": "commits",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "valid trailer grammar"
+        },
+        {
+          "id": "distinctOriginEvents",
+          "value": 21,
+          "unit": "event identifiers",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "valid 64-hex origins"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R11 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "docs/commit-grammar.md",
+        ".githooks/commit-msg"
+      ]
+    },
+    {
+      "id": "R12",
+      "slideId": "compatibility-evidence",
+      "statement": "Four pinned Home captures compare current main and the integrated branch under one deterministic data fixture in light and dark themes.",
+      "metrics": [
+        {
+          "id": "captureImages",
+          "value": 4,
+          "unit": "capture images",
+          "revision": "sha256:08d47a72c517d89c3363c38c53fd8471ee994d0e84d4f9bb2c0bfa9473da1637",
+          "scope": "capture manifest"
+        },
+        {
+          "id": "captureWidth",
+          "value": 1280,
+          "unit": "pixels",
+          "revision": "sha256:08d47a72c517d89c3363c38c53fd8471ee994d0e84d4f9bb2c0bfa9473da1637",
+          "scope": "capture viewport"
+        },
+        {
+          "id": "captureHeight",
+          "value": 720,
+          "unit": "pixels",
+          "revision": "sha256:08d47a72c517d89c3363c38c53fd8471ee994d0e84d4f9bb2c0bfa9473da1637",
+          "scope": "capture viewport"
+        },
+        {
+          "id": "captureThemes",
+          "value": 2,
+          "unit": "themes",
+          "revision": "sha256:08d47a72c517d89c3363c38c53fd8471ee994d0e84d4f9bb2c0bfa9473da1637",
+          "scope": "capture manifest"
+        },
+        {
+          "id": "baseRootNodeTestFiles",
+          "value": 399,
+          "unit": "root Node test files",
+          "revision": "92b1fb50d5265af56db86c7ba74867629a45091f",
+          "scope": "pinned main"
+        },
+        {
+          "id": "branchRootNodeTestFiles",
+          "value": 402,
+          "unit": "root Node test files",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "integrated branch"
+        },
+        {
+          "id": "retainedBaseRootNodeTestFiles",
+          "value": 399,
+          "unit": "root Node test files",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "base-path retention"
+        },
+        {
+          "id": "removedBaseRootNodeTestFiles",
+          "value": 0,
+          "unit": "root Node test files",
+          "revision": "51c95ab2e45b99259b947205762a78e5dab7f6e8",
+          "scope": "base-path retention"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R12 --base 92b1fb50d5265af56db86c7ba74867629a45091f --branch 51c95ab2e45b99259b947205762a78e5dab7f6e8",
+      "sources": [
+        "docs/pr-case/capture-manifest.json",
+        "docs/pr-case/images/"
+      ]
+    }
+  ]
+}

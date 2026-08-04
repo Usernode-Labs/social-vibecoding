@@ -1,0 +1,208 @@
+{
+  "schemaVersion": 1,
+  "revisions": {
+    "base": "92b1fb50d5265af56db86c7ba74867629a45091f",
+    "branch": "51c95ab2e45b99259b947205762a78e5dab7f6e8"
+  },
+  "viewport": {
+    "width": 1280,
+    "height": 720,
+    "deviceScaleFactor": 1
+  },
+  "environment": {
+    "locale": "en-US",
+    "timezone": "UTC",
+    "serviceWorkers": "blocked"
+  },
+  "runtime": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "node": "v24.11.0",
+    "playwright": "1.62.0",
+    "chromium": "151.0.7922.34"
+  },
+  "legacyPathsVerifiedUnchangedBetweenRevisions": [
+    "public/index.html",
+    "public/css/app.css",
+    "public/js/app.js",
+    "public/js/home.js",
+    "public/js/theme.js",
+    "public/js/browse.js",
+    "public/usernode-native/v1/native.css",
+    "public/usernode-native/v1/native.js"
+  ],
+  "networkPolicy": {
+    "tailwindBrowserCompiler": "frozen-fixture",
+    "applicationProgrammingInterface": "deterministic-fixture",
+    "serviceWorkers": "blocked",
+    "blockedExternalPrefixes": [
+      "https://cdn.jsdelivr.net/",
+      "https://raw.githubusercontent.com/"
+    ]
+  },
+  "fixture": {
+    "authMe": {
+      "user": {
+        "id": 7,
+        "username": "ava",
+        "canAdminWrite": true,
+        "isAdmin": false
+      }
+    },
+    "apps": {
+      "apps": [
+        {
+          "id": "recipebot",
+          "slug": "recipebot",
+          "name": "RecipeBot",
+          "status": "running",
+          "tagline": "Find a recipe for what you have at home",
+          "description": null,
+          "active_users": 24,
+          "is_favorited": true,
+          "is_collaborator": true,
+          "your_apps_hidden": false,
+          "favorite_order": 0,
+          "open_prs": 0,
+          "active_sessions": 0,
+          "open_issues": 0,
+          "icon_url": null
+        },
+        {
+          "id": "game-corner",
+          "slug": "game-corner",
+          "name": "Game Corner",
+          "status": "building",
+          "tagline": "A daily puzzle for the community",
+          "description": null,
+          "active_users": 8,
+          "is_favorited": false,
+          "is_collaborator": false,
+          "your_apps_hidden": false,
+          "favorite_order": null,
+          "open_prs": 0,
+          "active_sessions": 0,
+          "open_issues": 0,
+          "icon_url": null
+        },
+        {
+          "id": "pantry-planner",
+          "slug": "pantry-planner",
+          "name": "Pantry Planner",
+          "status": "running",
+          "tagline": "Keep ingredients organised",
+          "description": null,
+          "active_users": 6,
+          "is_favorited": true,
+          "is_collaborator": false,
+          "your_apps_hidden": false,
+          "favorite_order": 1,
+          "open_prs": 0,
+          "active_sessions": 0,
+          "open_issues": 0,
+          "icon_url": null
+        }
+      ]
+    },
+    "notifications": {
+      "notifications": [],
+      "unread": 0,
+      "pendingInvites": [],
+      "hasMore": false,
+      "nextBefore": null
+    },
+    "version": {
+      "sha": "51c95ab2e45b99259b947205762a78e5dab7f6e8"
+    },
+    "nodeStatus": {
+      "status": "synced"
+    },
+    "nodeStatusFull": {
+      "status": "synced",
+      "node": {
+        "status": "running"
+      }
+    },
+    "models": {
+      "models": [],
+      "default": ""
+    },
+    "kudosBudget": {
+      "remaining": 8,
+      "limit": 10,
+      "spent": 2
+    },
+    "aiBudget": {
+      "limitCents": 500,
+      "remainingCents": 500,
+      "spentCents": 0,
+      "byokCents": 0
+    },
+    "activeSessions": {
+      "sessions": []
+    },
+    "proposals": {
+      "proposals": [],
+      "governance": []
+    },
+    "wallet": {
+      "error": "not available in fixture"
+    },
+    "health": {
+      "status": "ok"
+    }
+  },
+  "fixtureSha256": "9d860983e9a9fbc136bbfa1326180c16a138ea398863470de0d0d51383c41205",
+  "tailwindPlaySha256": "176e894661aa9cdc9a5cba6c720044cbbf7b8bd80d1c9a142a7c24b1b6c50d15",
+  "tailwindPlayGzipSha256": "82fecbacf66585efc059055066962ef8f9869111bb92d0e6dfd90b7efab8d16c",
+  "captures": [
+    {
+      "file": "images/home-before-light.png",
+      "sha256": "f81e4f4e4bb44ba1a5ce5e328a8294a4dc6284bed37caed840f070519f647c5e",
+      "width": 1280,
+      "height": 720,
+      "theme": "light",
+      "bodyFontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "rasterBoundary": {
+        "maxChannelDelta": 40,
+        "maxChangedPixelRatio": 0.001
+      }
+    },
+    {
+      "file": "images/home-after-light.png",
+      "sha256": "79074808fbc83bd5d9c85a82f130cd1a296e8c31ae9e2141a20c61cf225ea2d7",
+      "width": 1280,
+      "height": 720,
+      "theme": "light",
+      "bodyFontFamily": "\"Geist Variable\", sans-serif",
+      "rasterBoundary": {
+        "maxChannelDelta": 40,
+        "maxChangedPixelRatio": 0.001
+      }
+    },
+    {
+      "file": "images/home-before-dark.png",
+      "sha256": "24e8990740bf559fe93c295eb692a661317f1945da44de2db163bd41b6adef79",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "bodyFontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
+      "rasterBoundary": {
+        "maxChannelDelta": 40,
+        "maxChangedPixelRatio": 0.001
+      }
+    },
+    {
+      "file": "images/home-after-dark.png",
+      "sha256": "ea915bbf5af3da0a5f68834a81d5100789a84a8e3b8db265c89a8081a3a775f3",
+      "width": 1280,
+      "height": 720,
+      "theme": "dark",
+      "bodyFontFamily": "\"Geist Variable\", sans-serif",
+      "rasterBoundary": {
+        "maxChannelDelta": 40,
+        "maxChangedPixelRatio": 0.001
+      }
+    }
+  ]
+}

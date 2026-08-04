@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
 import ts from "typescript"
@@ -493,6 +494,26 @@ try {
   checkNavigationLedger()
 } catch (error) {
   violations.push(error.message)
+}
+
+try {
+  execFileSync(process.execPath, [path.join(frontendRoot, "scripts", "generate-pr-case.mjs"), "--check"], {
+    cwd: frontendRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+} catch (error) {
+  violations.push(`pull-request case projection is stale: ${error.stderr?.trim() || error.message}`)
+}
+
+try {
+  execFileSync(process.execPath, [path.join(frontendRoot, "scripts", "verify-pr-case-claims.mjs")], {
+    cwd: frontendRoot,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+} catch (error) {
+  violations.push(`pull-request case reproduce command drifted: ${error.stderr?.trim() || error.message}`)
 }
 
 if (violations.length) {

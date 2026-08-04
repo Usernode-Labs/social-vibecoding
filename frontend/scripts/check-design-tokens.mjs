@@ -40,7 +40,10 @@ try {
   expectRejected("Sidebar outside Canvas", (semantic) => {
     semantic.light.sidebar.$value = { colorSpace: "oklch", components: [0.985, 0, 0] }
   })
-  console.log("Design-token check passed: canonical DTCG tokens and generated CSS agree.")
+  expectRejected("inverted Canvas to Paper ladder", (semantic) => {
+    semantic.light.paper.$value.components = [0.94, 0, 0]
+  })
+  console.log("Design-token check passed: canonical DTCG tokens and generated CSS agree; 7 guarded invalid mutations were refused.")
 } catch (error) {
   console.error(`Design-token check failed:\n\n- ${error.message}`)
   process.exit(1)

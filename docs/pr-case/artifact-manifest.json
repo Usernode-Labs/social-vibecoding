@@ -1,0 +1,276 @@
+{
+  "schemaVersion": 1,
+  "revisions": {
+    "base": "92b1fb50d5265af56db86c7ba74867629a45091f",
+    "branch": "51c95ab2e45b99259b947205762a78e5dab7f6e8"
+  },
+  "viewport": {
+    "width": 1600,
+    "height": 900,
+    "deviceScaleFactor": 1
+  },
+  "artifacts": [
+    {
+      "file": "index.html",
+      "kind": "self-contained-html",
+      "bytes": 216136,
+      "sha256": "e92e1164acd7699df8f792b4f083b7fa2547d04c23230ad6390ca49c2329e190"
+    },
+    {
+      "file": "README.md",
+      "kind": "artifact-documentation",
+      "bytes": 1033,
+      "sha256": "b203f03be3dc6c3005ae371b90a6ac4935797d89ae5eeccf4ac0c99562906286"
+    },
+    {
+      "file": "claims.json",
+      "kind": "claim-manifest",
+      "bytes": 22858,
+      "sha256": "e940119b2dae5db7cf666bcecc4ae5c1dce7d1fed72e319932e7163420cc526d"
+    },
+    {
+      "file": "capture-manifest.json",
+      "kind": "capture-manifest",
+      "bytes": 5705,
+      "sha256": "08d47a72c517d89c3363c38c53fd8471ee994d0e84d4f9bb2c0bfa9473da1637"
+    },
+    {
+      "file": "capture-fixtures/README.md",
+      "kind": "capture-fixture-documentation",
+      "bytes": 587,
+      "sha256": "0ab0ad425dd8352c7dea988a44dd9b74086f32513286c4b310bcb848e41fa4e4"
+    },
+    {
+      "file": "capture-fixtures/tailwind-play-2026-08-04.js.gz",
+      "kind": "capture-fixture",
+      "bytes": 123134,
+      "sha256": "82fecbacf66585efc059055066962ef8f9869111bb92d0e6dfd90b7efab8d16c"
+    },
+    {
+      "file": "receipts/integration.json",
+      "kind": "sanitized-gate-receipt",
+      "bytes": 2555,
+      "sha256": "0f556411397bed7b88374db7ca6938738144552a303e382f3ea909a7b96aae78"
+    },
+    {
+      "file": "pr-case.pdf",
+      "kind": "portable-document",
+      "bytes": 745861,
+      "sha256": "74564008424ce0933dc7339767e1596a3d5611c6df953a0b07f13393191a831d",
+      "pages": 15,
+      "aspectRatio": 1.7774617845716316
+    },
+    {
+      "file": "images/home-before-light.png",
+      "kind": "capture-image",
+      "bytes": 33456,
+      "sha256": "f81e4f4e4bb44ba1a5ce5e328a8294a4dc6284bed37caed840f070519f647c5e",
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "file": "images/home-after-light.png",
+      "kind": "capture-image",
+      "bytes": 34304,
+      "sha256": "79074808fbc83bd5d9c85a82f130cd1a296e8c31ae9e2141a20c61cf225ea2d7",
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "file": "images/home-before-dark.png",
+      "kind": "capture-image",
+      "bytes": 33628,
+      "sha256": "24e8990740bf559fe93c295eb692a661317f1945da44de2db163bd41b6adef79",
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "file": "images/home-after-dark.png",
+      "kind": "capture-image",
+      "bytes": 34310,
+      "sha256": "ea915bbf5af3da0a5f68834a81d5100789a84a8e3b8db265c89a8081a3a775f3",
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "file": "slides/01-main-partial-centralization.png",
+      "kind": "slide-image",
+      "bytes": 97142,
+      "sha256": "e616aec942bb972422ed7eb93ed43def60e56c7949b1eb4cf0530787371f1b5a",
+      "slideId": "main-partial-centralization",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/02-token-authority-demo.png",
+      "kind": "slide-image",
+      "bytes": 119641,
+      "sha256": "d5e06ec443a13cd17600d3dd5471530e7f205c7f0f0016456e966806a906b8d2",
+      "slideId": "token-authority-demo",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/03-verification-files.png",
+      "kind": "slide-image",
+      "bytes": 92666,
+      "sha256": "7b7e9235998ed16fe55d5eb036ff46f17aa2c3aa275a0e0167321dfb886c1244",
+      "slideId": "verification-files",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/04-verification-category.png",
+      "kind": "slide-image",
+      "bytes": 98831,
+      "sha256": "56248f42c6ad7fb4d40bbab07f3148045a99986b2df3b30ea70cd554c4070a1a",
+      "slideId": "verification-category",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/05-surface-grammar.png",
+      "kind": "slide-image",
+      "bytes": 82193,
+      "sha256": "70ef4914ed1c1308c7e159e3e4414aa7d00f243ba1db387b1e68449a96d6a612",
+      "slideId": "surface-grammar",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/06-legacy-interface-loop.png",
+      "kind": "slide-image",
+      "bytes": 106595,
+      "sha256": "b1108859fad0bbef44c8247b8495e83b7dcc3b6647115aecec26c3b03fc9da59",
+      "slideId": "legacy-interface-loop",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/07-lean-mechanical-loop.png",
+      "kind": "slide-image",
+      "bytes": 126294,
+      "sha256": "1c18b60c743aede8da5fbb5a29d83c25244232cb1c00f16e68ab69ba444b87ea",
+      "slideId": "lean-mechanical-loop",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/08-harness-integrity.png",
+      "kind": "slide-image",
+      "bytes": 80762,
+      "sha256": "fcefa865d69236f7f19275ff2a3fbdc40c79d0d6410a24f5e6dfae3b0c175206",
+      "slideId": "harness-integrity",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/09-regression-caught.png",
+      "kind": "slide-image",
+      "bytes": 104372,
+      "sha256": "effbfd77ae7587146ab1f83475d4fc7ec1e906c6f4d7c5a622946d92cfcb12fc",
+      "slideId": "regression-caught",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/10-costs-honestly.png",
+      "kind": "slide-image",
+      "bytes": 89486,
+      "sha256": "01841ef0e8c8a593d143f2a58c44539becc62a9b0832037ad25c9b7df09fbcf1",
+      "slideId": "costs-honestly",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/11-review-the-system.png",
+      "kind": "slide-image",
+      "bytes": 97173,
+      "sha256": "9109562aad40514f73e83c0b3f6333322d8ee4e1283f3931ceb056e11297e506",
+      "slideId": "review-the-system",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/12-compatibility-evidence.png",
+      "kind": "slide-image",
+      "bytes": 94686,
+      "sha256": "6e7eee1e1f13905865b08fa046eb0d0ab636e9b5ea3fdff60f76655f885c1b2e",
+      "slideId": "compatibility-evidence",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/13-appendix-1.png",
+      "kind": "slide-image",
+      "bytes": 134573,
+      "sha256": "0600776715c544d8f8f298208af4983a18c0bde67606f2e66e95bf49848ce4b8",
+      "slideId": "appendix-1",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/14-appendix-2.png",
+      "kind": "slide-image",
+      "bytes": 126811,
+      "sha256": "d9c3f698c7fc6a36201d48a2e7c21e4159c47b62cf053d37b6a90f2d5bc43579",
+      "slideId": "appendix-2",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/15-appendix-3.png",
+      "kind": "slide-image",
+      "bytes": 113748,
+      "sha256": "45ebf3e0042a43fa1a8d538c12775899fd50a4f162d4a6faa8daf231b6a17e6c",
+      "slideId": "appendix-3",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "images/pr-case-token-authority.png",
+      "kind": "pull-request-image",
+      "bytes": 119641,
+      "sha256": "d5e06ec443a13cd17600d3dd5471530e7f205c7f0f0016456e966806a906b8d2",
+      "slideId": "token-authority-demo",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "images/pr-case-live-loop.png",
+      "kind": "pull-request-image",
+      "bytes": 126294,
+      "sha256": "1c18b60c743aede8da5fbb5a29d83c25244232cb1c00f16e68ab69ba444b87ea",
+      "slideId": "lean-mechanical-loop",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "images/pr-case-regression.png",
+      "kind": "pull-request-image",
+      "bytes": 104372,
+      "sha256": "effbfd77ae7587146ab1f83475d4fc7ec1e906c6f4d7c5a622946d92cfcb12fc",
+      "slideId": "regression-caught",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "images/pr-case-compatibility-light.png",
+      "kind": "pull-request-image",
+      "bytes": 60206,
+      "sha256": "2f5666481fc70d9d19ed35a568d131173b10b3c7beb870814fe3411a105eabfb",
+      "comparisonTheme": "light",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "images/pr-case-compatibility-dark.png",
+      "kind": "pull-request-image",
+      "bytes": 60179,
+      "sha256": "237b2450eb06805a1fec4ce993cb21fa3420fe68f4a9e766b2fd0de0a8a8250d",
+      "comparisonTheme": "dark",
+      "width": 1600,
+      "height": 900
+    }
+  ]
+}
