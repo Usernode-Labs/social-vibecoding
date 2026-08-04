@@ -303,6 +303,12 @@
       "expectSelector": "#home-featured-list .app-card"
     },
     {
+      "name": "Challenges widget: metered rows, expand toggle and the leaderboard link (#911)",
+      "path": "/?demo=1",
+      "expectSelector": "#home-body.home-column article.home-panel .home-panel-rows--metered .home-panel-row .home-panel-bar-track[role=progressbar] .home-panel-bar-fill",
+      "expectText": "Go to leaderboard"
+    },
+    {
       "name": "Home feed sits in the 1024px centred column, featured card full width in it",
       "path": "/?demo=1",
       "expectSelector": "#home-body.home-column #home-find-more > .home-find-more-card"
@@ -323,9 +329,9 @@
       "expectSelector": "#home-body.home-body-fill > #home-create-section:not(.home-bottom-anchor)"
     },
     {
-      "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
-      "path": "/?shot=home-search",
-      "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
+      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
+      "path": "/?shot=secrets#app/usernode-2d5619/dev",
+      "expectSelector": "#app-secrets-list code"
     },
     {
       "name": "Browse renders app-store rows with an Add button (no \"…\" menu)",
@@ -334,14 +340,14 @@
       "expectText": "All apps"
     },
     {
+      "name": "The hidden search bar is revealed by a pull (?shot=home-search)",
+      "path": "/?shot=home-search",
+      "expectSelector": "#home-search-bar[data-revealed=\"true\"] #home-search-input"
+    },
+    {
       "name": "Admins get a Featured apps console section",
       "path": "/admin/featured-apps",
       "expectText": "Featured apps"
-    },
-    {
-      "name": "Platform variables panel renders on the platform app (#826 folded into app secrets)",
-      "path": "/?shot=secrets#app/usernode-2d5619/dev",
-      "expectSelector": "#app-secrets-list code"
     },
     {
       "name": "Platform variables panel is titled for the platform, not \"App secrets\"",

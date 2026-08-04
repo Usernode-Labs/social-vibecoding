@@ -7924,6 +7924,39 @@ async function seedStagingTopochain(pool, config) {
        ON CONFLICT (id) DO NOTHING`
     );
 
+    // ─── Challenge templates for the home-screen Challenges card (#911) ──
+    // Three NUMERIC-metric templates, because that card's progress bar only
+    // renders for a challenge with a metric target and the five templates
+    // above give it only 'blocks_produced' (which reads from snapshots,
+    // not the ledger). The second one's reward is the bare string '1500'
+    // on purpose — it exercises the card's "append pts to a plain number"
+    // path alongside the "render organiser prose verbatim" one.
+    //
+    // The third (900507) is the FINISHED numeric: its challenge is credited
+    // to the target below, so the card draws a full bar AND the ✓ glyph on
+    // the same row. Without it the only completed state a reviewer could
+    // see was the binary one, and "numeric, but finished" — the state a bar
+    // spends its whole life heading towards — was never on screen.
+    await pool.query(
+      `INSERT INTO challenge_templates
+         (id, category, goal, task, reward, description, kind,
+          metric_type, metric_target, metric_label, created_at, updated_at)
+       VALUES
+         (900505, 'onchain', 'Staging demo challenge — test the demo dApps',
+          'Open eight of the demo dApps and leave a note on each.',
+          'Up to 2,100 pts', 'Numeric-metric challenge template (home panel fixture).',
+          'SEND_TRANSACTION_CHALLENGE', 'count', 8, 'Apps tested', NOW(), NOW()),
+         (900506, 'social', 'Staging demo challenge — give kudos to five builders',
+          'Send kudos on five merged proposals from other builders.',
+          '1500', 'Numeric-metric challenge template (bare-number reward fixture).',
+          'SOCIAL_SHARE_CHALLENGE', 'count', 5, 'Kudos', NOW(), NOW()),
+         (900507, 'community', 'Staging demo challenge — vote on five proposals',
+          'Cast a vote on five open proposals from other builders.',
+          '900 pts', 'Numeric-metric challenge template (completed fixture).',
+          'SOCIAL_SHARE_CHALLENGE', 'count', 5, 'Proposals voted', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`
+    );
+
     // ─── Challenges (8): 5 on the regular event, 3 on the season-type event ──
     await pool.query(
       `INSERT INTO challenges
@@ -7973,6 +8006,50 @@ async function seedStagingTopochain(pool, config) {
           'SEND_TRANSACTION_CHALLENGE', TRUE, 2, TRUE, TRUE, 1, NOW(), NOW())
        ON CONFLICT (id) DO NOTHING`,
       [EVENT_REGULAR_ID, EVENT_SEASON_ID, EVENT_ENDED_ID]
+    );
+
+    // ─── OPEN challenges for the home-screen Challenges card (#911) ─────
+    // The eight challenges above are all organiser-`completed` (or sit on
+    // the future-windowed season event), so the card's "open" filter —
+    // enabled AND NOT completed AND inside its window — matches almost
+    // none of them and the card would render empty in every preview.
+    // These five are live for the next ten days and cover every state the
+    // card can draw: binary not-done, binary done, a featured numeric one
+    // the viewer is part-way through, a numeric one the viewer has taken
+    // partway, and a numeric one CREDITED TO ITS TARGET (900514) so the
+    // full bar and the ✓ appear on the same row. The per-viewer activity
+    // rows that produce all that progress are seeded in the
+    // VIEWER_USERNAMES loop below.
+    await pool.query(
+      `INSERT INTO challenges
+         (id, season_event_id, challenge_template_id, goal, task, reward,
+          description, kind, enabled, display_order, completed, featured,
+          featured_order, schedule_start, schedule_end, created_at, updated_at)
+       VALUES
+         (900510, $1, 900500, 'Staging demo challenge — report a reproducible bug',
+          'Find and file a reproducible bug report against the testnet client.',
+          '250 points', 'Open binary challenge (home panel fixture, not done).',
+          'REPORT_BUG_CHALLENGE', TRUE, 10, FALSE, FALSE, NULL,
+          NOW() - INTERVAL '5 days', NOW() + INTERVAL '10 days', NOW(), NOW()),
+         (900511, $1, 900502, 'Staging demo challenge — share the season announcement',
+          'Share the season announcement post on social media.',
+          '50 points', 'Open binary challenge (home panel fixture, done by the viewer).',
+          'SOCIAL_SHARE_CHALLENGE', TRUE, 11, FALSE, FALSE, NULL,
+          NOW() - INTERVAL '5 days', NOW() + INTERVAL '10 days', NOW(), NOW()),
+         (900512, $1, 900505, NULL, NULL, NULL,
+          'Open numeric challenge (home panel fixture, viewer at 3/8), featured.',
+          'SEND_TRANSACTION_CHALLENGE', TRUE, 12, FALSE, TRUE, 1,
+          NOW() - INTERVAL '5 days', NOW() + INTERVAL '10 days', NOW(), NOW()),
+         (900513, $1, 900506, NULL, NULL, NULL,
+          'Open numeric challenge (home panel fixture, viewer at 3/5).',
+          'SOCIAL_SHARE_CHALLENGE', TRUE, 13, FALSE, FALSE, NULL,
+          NOW() - INTERVAL '5 days', NOW() + INTERVAL '10 days', NOW(), NOW()),
+         (900514, $1, 900507, NULL, NULL, NULL,
+          'Open numeric challenge (home panel fixture, viewer at 5/5 — DONE).',
+          'SOCIAL_SHARE_CHALLENGE', TRUE, 14, FALSE, FALSE, NULL,
+          NOW() - INTERVAL '5 days', NOW() + INTERVAL '10 days', NOW(), NOW())
+       ON CONFLICT (id) DO NOTHING`,
+      [EVENT_REGULAR_ID]
     );
 
     // ─── User enrollments (mix of season-wide and event-scoped; the
@@ -8216,7 +8293,11 @@ async function seedStagingTopochain(pool, config) {
     // another identity appears or disappears between boots — that would
     // re-insert its rows under fresh ids and defeat ON CONFLICT (id).
     // 900500-900516 is fully used above, so the viewers start at 900520
-    // with a 10-wide block each.
+    // with a 20-wide block each. Twenty, not ten: the home-panel fixtures
+    // below need fourteen user_activities rows per viewer (five of them
+    // just to credit the 5-of-5 challenge), and a block that overflows into
+    // its neighbour is silently swallowed by ON CONFLICT (id) rather than
+    // failing — the exact trap the per-username keying above avoids.
     const VIEWER_USERNAMES = [
       config.adminUsername, 'usernode-capture', 'usernode-capture-admin',
     ];
@@ -8231,7 +8312,7 @@ async function seedStagingTopochain(pool, config) {
       const viewerId = viewer.id;
       const slot = VIEWER_USERNAMES.indexOf(viewer.username);
       if (slot < 0) continue;
-      const base = 900520 + slot * 10;
+      const base = 900520 + slot * 20;
       // Two forms of the same identity, mirroring the fixture accounts
       // above: `address` is the bech32m form the UI shows, `public_key` the
       // VRF-side key. epoch_stats keys off the address form. Both are
@@ -8268,6 +8349,29 @@ async function seedStagingTopochain(pool, config) {
       );
       // Two completed challenges → the profile's "completed" list and its
       // points header both have content.
+      //
+      // Rows base+2…base+5 additionally give the home-screen Challenges
+      // card (#911) something to draw: one completion on the binary 900511
+      // (→ "✓ Done"), and three units on the numeric 900512 (→ 3 of 8;
+      // that card derives numeric progress by counting ledger rows, see
+      // resolveProgress in src/routes/home-panels.js). 900510 and 900513
+      // are deliberately left uncredited so the not-done chip and the
+      // empty bar are both on screen too. ONE statement per table per
+      // viewer, deliberately — tests/topochain-staging-seed.test.js pins
+      // that shape ("seeded once per viewer, not once in total").
+      //
+      // Rows base+6…base+8 additionally put 900513 at 3 of 5 — a clear
+      // MID-PROGRESS bar (the outlined track visibly part-filled), which
+      // 0/5 and 3/8 alone didn't give a reviewer. 900511 (base+2) is the
+      // binary the viewer has COMPLETED, so the ✓ state is seeded too.
+      //
+      // Rows base+9…base+13 credit 900514 to its full target of five,
+      // which is the FINISHED NUMERIC state: a bar filled end to end with
+      // the ✓ beside it. It sits next to the completed binary (900511) in
+      // the expanded list, which is where a reviewer can compare the two
+      // kinds of "done" side by side.
+      //
+      // Ids base+2…base+13 all sit inside the viewer's 20-wide block.
       await pool.query(
         `INSERT INTO user_activities
            (id, user_id, season_event_id, activity_type, points, description,
@@ -8276,7 +8380,31 @@ async function seedStagingTopochain(pool, config) {
            (${base},     $1, $2, 'challenge_completion', 250, 'Reported a reproducible bug.',
             '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '4 days', 900500),
            (${base + 1}, $1, $2, 'challenge_completion', 100, 'Sent a testnet transaction.',
-            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '3 days', 900501)
+            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '3 days', 900501),
+           (${base + 2}, $1, $2, 'challenge_completion', 50, 'Shared the season announcement.',
+            '{"kind": "challenge_completion"}'::jsonb, NOW() - INTERVAL '2 days', 900511),
+           (${base + 6}, $1, $2, 'COMMUNITY', 250, 'Gave kudos to a builder (1 of 5).',
+            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '30 hours', 900513),
+           (${base + 7}, $1, $2, 'COMMUNITY', 250, 'Gave kudos to a builder (2 of 5).',
+            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '20 hours', 900513),
+           (${base + 8}, $1, $2, 'COMMUNITY', 250, 'Gave kudos to a builder (3 of 5).',
+            '{"kind": "kudos_given"}'::jsonb, NOW() - INTERVAL '10 hours', 900513),
+           (${base + 3}, $1, $2, 'COMMUNITY', 200, 'Tested a demo dApp (1 of 8).',
+            '{"kind": "app_tested"}'::jsonb, NOW() - INTERVAL '2 days', 900512),
+           (${base + 4}, $1, $2, 'COMMUNITY', 200, 'Tested a demo dApp (2 of 8).',
+            '{"kind": "app_tested"}'::jsonb, NOW() - INTERVAL '1 days', 900512),
+           (${base + 5}, $1, $2, 'COMMUNITY', 200, 'Tested a demo dApp (3 of 8).',
+            '{"kind": "app_tested"}'::jsonb, NOW() - INTERVAL '6 hours', 900512),
+           (${base + 9},  $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (1 of 5).',
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '4 days', 900514),
+           (${base + 10}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (2 of 5).',
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '3 days', 900514),
+           (${base + 11}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (3 of 5).',
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '2 days', 900514),
+           (${base + 12}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (4 of 5).',
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '28 hours', 900514),
+           (${base + 13}, $1, $2, 'COMMUNITY', 180, 'Voted on a proposal (5 of 5).',
+            '{"kind": "vote_cast"}'::jsonb, NOW() - INTERVAL '5 hours', 900514)
          ON CONFLICT (id) DO NOTHING`,
         [viewerId, EVENT_REGULAR_ID]
       );

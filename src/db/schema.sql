@@ -79,6 +79,34 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS daily_limit_cents INTEGER;
 -- POST /api/me/ai-progress-estimate.
 ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_progress_estimate BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- Home-screen panels the viewer has dismissed (issue #911) — the keys of
+-- the cards that sit on the home screen next to the app grid ('challenges'
+-- today; see PANEL_REGISTRY in src/routes/home-panels.js, the only reader
+-- and writer of this column). ABSENCE MEANS VISIBLE: an empty array — the
+-- default for every existing and future row — means every panel in the
+-- registry shows, which is what makes the challenges card default-on for
+-- everyone with no backfill. Written only through
+-- POST /api/home-panels/:key/visibility, which validates the key against
+-- the registry, so the array can never accumulate unknown values. Called
+-- "panels" and not "widgets" deliberately: public/js/home.js already uses
+-- "widget" for the iOS home-screen widget's pinned app grid.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panels_hidden TEXT[] NOT NULL DEFAULT '{}';
+
+-- Where each home-screen panel sits among the app-grid rows (issue #911) —
+-- an iOS-homescreen-style drag position, one entry per panel key:
+--   { "challenges": 4 }   -- 4 app cards above the block
+-- The value counts APP CARDS above the panel, not rows: the panel is a
+-- col-span-full grid item, so it always breaks onto its own line and the
+-- cards above it fill whatever rows the current breakpoint gives them.
+-- That keeps the stored position correct across breakpoints (a row index
+-- would mean something different at 2 columns than at 5).
+-- An ABSENT key means "the default slot" — directly under the whole grid —
+-- so every existing account keeps today's layout with no backfill. Keys
+-- are validated against the server registry on write, same as
+-- home_panels_hidden above; read and written only by
+-- src/routes/home-panels.js.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS home_panel_positions JSONB NOT NULL DEFAULT '{}';
+
 -- Platform-level user language preference (issue #757). A BCP-47 language
 -- tag ("id", "pt-BR", …) or NULL for "unset/auto — use device language".
 -- Set from Settings → Language via POST /api/me/locale; exposed to apps as
