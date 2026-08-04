@@ -20,9 +20,9 @@ export type PlatformBottomNavigationProps = {
 }
 
 /**
- * Three-destination mobile switcher. The full PlatformNavigation drawer owns
- * the broader information architecture; this persistent Overlay owns only the
- * Home, Work, and Search destinations approved for frequent one-handed use.
+ * Candidate three-destination mobile switcher. The full PlatformNavigation
+ * drawer owns the broader information architecture. This component remains
+ * available for isolated evaluation but is not mounted by PlatformShell.
  */
 export function PlatformBottomNavigation({
   items,

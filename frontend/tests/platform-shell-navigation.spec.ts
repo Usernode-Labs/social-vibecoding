@@ -177,89 +177,22 @@ test("renders the accepted platform IA with one current destination", async ({ p
   })).toBe(true)
 })
 
-test("keeps Home, Work, and Search reachable through the sole persistent mobile Overlay", async ({ page }, testInfo) => {
+test("keeps the candidate bottom navigation out of the production shell", async ({ page }) => {
   await page.goto("/react/")
 
   const bottomNavigation = page.locator('[data-slot="platform-bottom-navigation"]')
-  await expect(bottomNavigation).toHaveCount(1)
-  await expect(bottomNavigation).toHaveAttribute("data-surface", "overlay")
-  await expect(bottomNavigation).toHaveAttribute("data-surface-persistence", "persistent")
-  await expect(page.locator('[data-surface="overlay"][data-surface-persistence="persistent"]')).toHaveCount(1)
-
-  if (testInfo.project.name === "desktop") {
-    await expect(bottomNavigation).toBeHidden()
-    return
-  }
-
-  await expect(bottomNavigation).toBeVisible()
-  const links = bottomNavigation.getByRole("link")
-  await expect(links).toHaveCount(3)
-  await expect(links).toHaveText(["Home", "Work", "Search"])
+  await expect(bottomNavigation).toHaveCount(0)
+  await expect(page.getByRole("navigation", { name: "Mobile primary navigation" })).toHaveCount(0)
   const paper = page.locator('[data-slot="sidebar-inset"]')
   await expect(page.locator('[data-surface="paper"]')).toHaveCount(1)
-  await expect.poll(() => paper.evaluate((node) =>
-    node.contains(document.querySelector('[data-slot="platform-bottom-navigation"]'))
-  )).toBe(false)
-
-  const currentLink = () => bottomNavigation.locator('[aria-current="page"]')
-  await expect(currentLink()).toHaveCount(1)
-  await expect(bottomNavigation.getByRole("link", { name: "Home" })).toHaveAttribute("aria-current", "page")
-
-  const targets = await Promise.all(["Home", "Work", "Search"].map((name) =>
-    probeHitTarget(bottomNavigation.getByRole("link", { name }))
-  ))
-  for (const target of targets) {
-    expect(target.visualHeight).toBeGreaterThanOrEqual(48)
-    expect(target.effectiveHeight).toBeGreaterThanOrEqual(48)
-    expect(target.effectiveWidth).toBeGreaterThanOrEqual(48)
-  }
-  expect(hitTargetOverlap(targets[0], targets[1])).toBe(0)
-  expect(hitTargetOverlap(targets[1], targets[2])).toBe(0)
+  await expect(paper).not.toHaveAttribute("data-bottom-navigation", "true")
 
   await page.evaluate(() => {
-    const root = document.documentElement
-    root.style.setProperty("--safe-area-bottom", "31px")
-    root.style.setProperty("--safe-area-left", "21px")
-    root.style.setProperty("--safe-area-right", "25px")
+    document.documentElement.style.setProperty("--safe-area-bottom", "31px")
   })
-  await expect.poll(async () => {
-    const box = await bottomNavigation.boundingBox()
-    const paperBox = await paper.boundingBox()
-    const viewport = page.viewportSize()
-    if (!box || !paperBox || !viewport) return null
-    return {
-      bottom: Math.round(viewport.height - box.y - box.height),
-      left: Math.round(box.x),
-      paperBottomClearance: Math.round(viewport.height - paperBox.y - paperBox.height),
-      paperDoesNotOverlapNavigation: paperBox.y + paperBox.height <= box.y,
-      right: Math.round(viewport.width - box.x - box.width),
-    }
-  }).toEqual({
-    bottom: 31,
-    left: 21,
-    paperBottomClearance: 111,
-    paperDoesNotOverlapNavigation: true,
-    right: 25,
-  })
-
-  for (const dark of [false, true]) {
-    await page.locator("html").evaluate((node, nextDark) => node.classList.toggle("dark", nextDark), dark)
-    await expect.poll(async () => (
-      await bottomNavigation.evaluate((node) => getComputedStyle(node).backgroundColor)
-    )).toBe(await paper.evaluate((node) => getComputedStyle(node).backgroundColor))
-  }
-
-  await bottomNavigation.getByRole("link", { name: "Work" }).click()
-  await expect(page).toHaveURL(/\/react\/work$/)
-  await expect(page.locator('[data-slot="platform-bottom-navigation"] [aria-current="page"]')).toHaveText("Work")
-
-  await page.locator('[data-slot="platform-bottom-navigation"]').getByRole("link", { name: "Search" }).click()
-  await expect(page).toHaveURL(/\/react\/explore$/)
-  await expect(page.locator('[data-slot="platform-bottom-navigation"] [aria-current="page"]')).toHaveText("Search")
-
-  await page.locator('[data-slot="platform-bottom-navigation"]').getByRole("link", { name: "Home" }).click()
-  await expect(page).toHaveURL(/\/react\/$/)
-  await expect(page.locator('[data-slot="platform-bottom-navigation"] [aria-current="page"]')).toHaveText("Home")
+  await expect.poll(() => page.locator('[data-slot="sidebar-wrapper"]').evaluate((node) =>
+    getComputedStyle(node).paddingBottom
+  )).toBe("0px")
 })
 
 test("keeps one inset Paper on the shell Canvas", async ({ page }, testInfo) => {

@@ -104,7 +104,7 @@
           "job": "Switch among Home, Work and Search with persistent one-handed access on narrow screens."
         }
       ],
-      "rationale": "Both change global platform scope, but the drawer is a complete map while the bottom Overlay is a deliberately fixed three-destination quick switcher. Combining them would either overload the mobile bar or impoverish the drawer.",
+      "rationale": "Both change global platform scope, but the drawer is a complete map while the candidate bottom Overlay is a deliberately fixed three-destination quick switcher. The candidate remains isolated and is not mounted by PlatformShell until separate product acceptance. Combining the patterns would either overload the mobile bar or impoverish the drawer.",
       "substitutionBoundary": "Share canonical destinations, matchers and PlatformIcon. Never add Activity, Node, utilities, authorization state or attention counts to PlatformBottomNavigation, and never remove those broader jobs from PlatformNavigation."
     },
     {

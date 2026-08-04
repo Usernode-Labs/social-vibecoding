@@ -19,7 +19,7 @@ Every view has one Paper. Print content; never stack Cards.
 | Paper | One lighter shell-owned sheet on Canvas | Nest Paper or spell `div` as Card |
 | Print | Bare inherited content | Add opaque fill, ring, or shadow |
 | Container | Alpha grouping; compounds at any depth | Paint opaque Paper |
-| Overlay | Transient; bottom navigation is the persistent tenant | Add another persistent Overlay |
+| Overlay | Transient; candidate navigation only | Persist another |
 
 `Sheet` is the drawer, never a surface. Wrappers use
 `data-surface="canvas|paper|print|container|overlay"`; absent means Print.
@@ -27,8 +27,8 @@ Persistent structural fill, edge, ring, shadow, and elevation require a declared
 role. Undeclared painters, painted Print, and multiple elevated roles are debt;
 primitive anatomy and semantic status, identity, progress, or media ink are not.
 Canvas/Paper are opaque. Container alpha darkens light and lightens dark;
-nesting is intentional. Only
-`data-slot="platform-bottom-navigation"` persists as Overlay.
+nesting is intentional. Only the `platform-bottom-navigation` slot may persist;
+`PlatformShell` does not mount it.
 Sidebar stays shell navigation on Canvas as Paper moves; never a Rail. Popover
 aliases Paper. Container neutral ink is black at 6 percent in light mode and
 white at 5 percent in dark; foreground neutral ink is 80, 65, and 57 percent.

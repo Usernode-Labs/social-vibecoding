@@ -164,9 +164,9 @@
   bottom: max(1rem, var(--safe-area-bottom-active));
   left: max(1rem, var(--safe-area-left));
 }
-/* The mobile quick switcher is the sole persistent Overlay. It sits outside
- * Paper, owns the active bottom/side insets, and receives a real Canvas band
- * so route content can never hide behind it. */
+/* The candidate mobile quick switcher is the only component permitted to
+ * become a persistent Overlay. PlatformShell does not currently mount it. A
+ * host that opts in must reserve a Canvas band so Paper cannot sit behind it. */
 [data-slot="platform-bottom-navigation"] {
   bottom: max(0.75rem, var(--safe-area-bottom-active));
   inset-inline-start: max(0.75rem, var(--safe-area-left));
@@ -186,7 +186,7 @@
     overflow-y: auto;
     overscroll-behavior: contain;
   }
-  [data-slot="external-link-feedback"] {
+  [data-slot="sidebar-wrapper"]:has(> [data-slot="platform-bottom-navigation"]) [data-slot="external-link-feedback"] {
     bottom: calc(5rem + max(1rem, var(--safe-area-bottom-active)));
   }
 }

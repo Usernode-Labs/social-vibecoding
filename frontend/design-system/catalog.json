@@ -2312,13 +2312,14 @@
           "Render exactly three visible links named Home, Work and Search in that order.",
           "Only the matching destination owns aria-current, and Search preserves the existing Explore route.",
           "Each link has non-overlapping 48 CSS-pixel reach for coarse pointers.",
-          "The persistent Overlay stays outside and does not geometrically overlap Paper; the route scroll owner remains inside Paper and the Overlay clears the active device safe area."
+          "When enabled, the persistent Overlay stays outside and does not geometrically overlap Paper; the route scroll owner remains inside Paper and the Overlay clears the active device safe area.",
+          "The production shell does not mount this candidate until a separate product acceptance reopens its integration."
         ],
-        "evidence": "Home, Work, Search and dark Storybook states plus actual-route mobile and desktop browser contracts for selection, reach, safe area, theme, persistence and Paper separation."
+        "evidence": "Home, Work, Search and dark Storybook states preserve the isolated component contract. The production-shell browser contract proves the candidate is absent at mobile and desktop widths."
       },
       "dataBoundary": {
         "kind": "props-only",
-        "contract": "PlatformBottomNavigation receives exactly three canonical mobile destinations and the current pathname from the shell. It fetches no route, authorization, attention, or platform state."
+        "contract": "When mounted by an approved host composition, PlatformBottomNavigation receives exactly three canonical mobile destinations and the current pathname through props. PlatformShell does not currently mount it. It fetches no route, authorization, attention, or platform state."
       },
       "responsive": [
         "narrow-mobile",

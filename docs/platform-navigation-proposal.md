@@ -1,6 +1,6 @@
 # Platform navigation proposal
 
-**Status:** Accepted drawer direction; mobile quick-navigation amendment active
+**Status:** Accepted drawer direction; mobile quick-navigation candidate retained, rollout paused
 
 **Date:** 2026-07-29
 
@@ -11,13 +11,15 @@ Implementation authority, including the delivery waves:
 
 ## Decision
 
-Use a platform Home, a push drawer, a three-destination mobile bottom
-navigation, and focused mini-app cards.
+Use a platform Home, a push drawer, and focused mini-app cards. Retain the
+three-destination mobile bottom navigation as an isolated candidate without
+mounting it in the production shell.
 
 - Global navigation lives in the drawer.
-- Narrow screens keep Home, Work, and Search persistently reachable in the one
-  permitted bottom Overlay. Search keeps the existing Explore route. The
-  Overlay occupies a Canvas band below Paper instead of covering route content.
+- The drawer remains the only production navigation on narrow screens.
+- The unmounted candidate preserves Home, Work, and Search as its three labels;
+  Search keeps the existing Explore route. If later accepted, its Overlay must
+  occupy a Canvas band below Paper instead of covering route content.
 - Home is a personalized launch surface.
 - Explore is the ecosystem catalog.
 - An open app is a visually contained card on the platform plane.
@@ -42,9 +44,10 @@ and a conditionally visible Admin entry sit below it.
 ### Navigation should match switching frequency
 
 The complete platform map is too broad for a persistent bottom bar. The
-owner-approved amendment keeps only Home, Work, and Search there because those
-three support repeated launch, contribution, and discovery without copying the
-drawer’s Activity, Node, account, settings, feedback, or administration jobs:
+retained candidate limits itself to Home, Work, and Search because those three
+support repeated launch, contribution, and discovery without copying the
+drawer’s Activity, Node, account, settings, feedback, or administration jobs.
+Product rollout remains paused:
 
 1. enter through a personal app shortcut or attention item;
 2. use or contribute to an app;
@@ -95,16 +98,17 @@ or app.
   permissions, administration, and infrastructure actions.
 - **Device context:** one-handed mobile first and small-screen safe; adaptive
   sidebar behavior on wide screens.
-- **Chosen pattern:** platform Home, a persistent Home/Work/Search mobile
-  Overlay, pushed app routes, same-plane push drawer, and contextual app chrome.
+- **Chosen pattern:** platform Home, pushed app routes, same-plane push drawer,
+  and contextual app chrome. The Home/Work/Search mobile Overlay remains an
+  unmounted candidate.
 - **Primary action placement:** current-route or current-app action in the app
   bar; at most one primary action plus overflow.
 - **Escape routes:** Close returns an app to Home; Back handles genuine nested
   routes; the menu opens global scope.
-- **Rejected alternatives:** expanding the bottom navigation beyond
-  Home/Work/Search, a six-icon global toolbar, an unlabeled Home icon,
-  overlaying the drawer on top of the app, and treating the Dev Console as a
-  platform destination.
+- **Rejected alternatives:** mounting the candidate before product acceptance,
+  expanding it beyond Home/Work/Search, a six-icon global toolbar, an unlabeled
+  Home icon, overlaying the drawer on top of the app, and treating the Dev
+  Console as a platform destination.
 
 ## Information architecture
 
@@ -426,7 +430,8 @@ Keep route- and app-specific actions contextual:
 
 ## Deliberate v1 removals
 
-- Any persistent bottom destination beyond Home, Work, and Search.
+- Persistent bottom navigation in the production shell. The isolated
+  Home/Work/Search candidate remains available for later evaluation.
 - The six-icon global toolbar.
 - An unlabeled Home icon in app chrome.
 - A long My Apps list in the drawer.
