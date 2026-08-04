@@ -12,6 +12,7 @@ test("component review discovers representative patterns, primitives, and sub-ex
   assert.deepEqual(report.discoveryCases.map((item) => item.target.id), [
     "home-app-shortcut",
     "primitive-toggle-group",
+    "action-link",
     "status-dot",
     "primitive-card",
   ])
@@ -28,6 +29,7 @@ test("discovery battery fails when the target story disappears", () => {
 
 test("discovery battery fails when a named sub-export disappears", () => {
   const report = collectProgressiveContext()
-  report.discoveryCases[1].target.exports = ["ToggleGroup"]
-  assert.ok(evaluateProgressiveContext(report).some((item) => item.includes("ToggleGroupItem")))
+  const actionLink = report.discoveryCases.find((item) => item.fixture.exportName === "ActionAnchor")
+  actionLink.target.exports = ["ActionLink"]
+  assert.ok(evaluateProgressiveContext(report).some((item) => item.includes("ActionAnchor")))
 })

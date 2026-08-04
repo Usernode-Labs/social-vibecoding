@@ -17,6 +17,7 @@ export const progressiveContextFixture = Object.freeze({
 export const progressiveContextFixtures = Object.freeze([
   progressiveContextFixture,
   Object.freeze({ query: "ToggleGroupItem", componentId: "primitive-toggle-group", exportName: "ToggleGroupItem" }),
+  Object.freeze({ query: "ActionAnchor", componentId: "action-link", exportName: "ActionAnchor" }),
   Object.freeze({ query: "StatusDot", componentId: "status-dot", exportName: "StatusDot" }),
   Object.freeze({ query: "primitive-card", componentId: "primitive-card", exportName: "Card" }),
 ])

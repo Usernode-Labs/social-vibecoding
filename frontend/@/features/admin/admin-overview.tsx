@@ -3,10 +3,11 @@ import { useEffect, useState, type ReactNode } from "react"
 
 import { ActionAnchor, ActionLink } from "@/components/action-link"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { Metric } from "@/components/metric"
 import { TopBar } from "@/components/top-bar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty"
 import { Skeleton } from "@/components/ui/skeleton"
 import { PlatformIcon } from "@/components/platform-icon"
@@ -79,11 +80,11 @@ export function AdminOperationsOverview({ user, overview }: { user: AdminUser; o
   const isReadOnly = !user.canAdminWrite
   return <>
     {isReadOnly ? <Alert><PlatformIcon icon={ShieldAlert} /><AlertTitle>View-only administrator</AlertTitle><AlertDescription>You can inspect platform health. Mutating controls remain unavailable.</AlertDescription></Alert> : null}
-    <section aria-label="Operations summary" className="grid gap-4 sm:grid-cols-3">
-      <Metric title="Stuck apps" value={stuckApps.length} description="Creating or error state" />
-      <Metric title="LLM spend today" value={formatMoney(overview.llmToday?.totalSpendCents)} description="Current UTC day" />
-      <Metric title="Orphan workers" value={orphanWorkers.length} description="Needs operator attention" />
-    </section>
+    <dl aria-label="Operations summary" className="grid gap-4 rounded-4xl bg-container p-4 sm:grid-cols-3" data-surface="container">
+      <Metric className="gap-2 [&_dd]:text-3xl" label={<span className="flex flex-col gap-1"><span>Stuck apps</span><span className="text-xs">Creating or error state</span></span>} numeric value={stuckApps.length} />
+      <Metric className="gap-2 [&_dd]:text-3xl" label={<span className="flex flex-col gap-1"><span>LLM spend today</span><span className="text-xs">Current UTC day</span></span>} numeric value={formatMoney(overview.llmToday?.totalSpendCents)} />
+      <Metric className="gap-2 [&_dd]:text-3xl" label={<span className="flex flex-col gap-1"><span>Orphan workers</span><span className="text-xs">Needs operator attention</span></span>} numeric value={orphanWorkers.length} />
+    </dl>
     <section className="grid gap-4 lg:grid-cols-2">
       <ListCard title="Stuck apps" empty="No apps are stuck." items={stuckApps.map((app) => <div key={app.slug} className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-mono text-sm">{app.slug || "Unknown app"}</p><p className="text-sm text-muted-foreground">{app.dbStatus || "Unknown state"}{app.createdBy ? ` · created by ${app.createdBy}` : ""}</p></div><Badge variant="outline">{app.dbStatus || "Unknown"}</Badge></div>)} />
       <ListCard title="Orphan workers" empty="No orphan workers found." items={orphanWorkers.map((worker) => <div key={worker.name} className="flex flex-wrap items-center justify-between gap-2"><div><p className="font-mono text-sm">{worker.name || "Unknown worker"}</p><p className="text-sm text-muted-foreground">{worker.appSlug ? `App ${worker.appSlug}` : "No associated app"}{worker.sessionArchived ? " · archived session" : ""}</p></div><Badge variant="outline">Up {formatUptime(worker.uptimeSeconds)}</Badge></div>)} />
@@ -93,10 +94,6 @@ export function AdminOperationsOverview({ user, overview }: { user: AdminUser; o
         : <ActionAnchor href={tool.href} key={tool.href} size="sm" variant="outline">{tool.label}<PlatformIcon data-icon="inline-end" icon={ExternalLink} /></ActionAnchor>)}</CardContent></Card>
     </section>
   </>
-}
-
-function Metric({ title, value, description }: { title: string; value: string | number; description: string }) {
-  return <Card><CardHeader><CardDescription>{title}</CardDescription><CardTitle className="text-3xl tabular-nums">{value}</CardTitle></CardHeader><CardContent className="text-sm text-muted-foreground">{description}</CardContent></Card>
 }
 
 function ListCard({ title, empty, items }: { title: string; empty: string; items: ReactNode[] }) {

@@ -38,7 +38,7 @@ function storyStates(source) {
     .map((match) => match[1])
 }
 
-function namedExports(source) {
+export function namedExports(source) {
   const exports = new Set()
   for (const match of source.matchAll(/\bexport\s+(?:async\s+)?(?:const|function|class|let|var)\s+([A-Za-z_$][\w$]*)/g)) {
     exports.add(match[1])
@@ -108,13 +108,15 @@ export function renderCatalog() {
   }
   const patterns = manifest.patterns.map((pattern) => {
     const contract = mergeContract(authority.defaults, authority.overrides[pattern.id])
+    const source = fs.readFileSync(path.join(frontendRoot, pattern.module), "utf8")
+    const exports = namedExports(source)
     return {
       id: pattern.id,
       name: pattern.name,
       tier: pattern.tier,
       module: pattern.module,
       export: pattern.export,
-      exports: [pattern.export],
+      exports,
       owner: contract.owner,
       maturity: contract.maturity,
       distribution: contract.distribution,

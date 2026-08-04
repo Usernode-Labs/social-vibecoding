@@ -7,6 +7,10 @@ const sourceExtensions = new Set([".ts", ".tsx"])
 const governedImportPrefix = "@/components/"
 const rawInteractiveElements = new Set(["button", "input", "select", "textarea"])
 const surfaceRoles = new Set(["canvas", "paper", "print", "container", "overlay"])
+const paintedSurfaceRoles = new Set(["canvas", "paper", "container", "overlay"])
+const structuralSurfaceElements = new Set(["article", "aside", "blockquote", "div", "dl", "fieldset", "footer", "form", "header", "li", "main", "nav", "ol", "pre", "section", "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul"])
+const semanticInkRoles = new Set(["img", "progressbar"])
+const radiusLadder = new Set(["none", "sm", "md", "lg", "xl", "2xl", "3xl", "4xl", "full"])
 const ephemeralVariant = /^(?:group-|peer-)?(?:hover|focus|focus-visible|focus-within|active)(?:\/.*)?$/
 
 function normalize(value) {
@@ -46,10 +50,14 @@ export function governedInterfaceFiles(frontendRoot) {
     .sort()
 }
 
-function staticAttribute(opening, name, sourceFile) {
-  const attribute = opening.attributes.properties.find((item) => (
+function jsxAttribute(opening, name, sourceFile) {
+  return opening.attributes.properties.find((item) => (
     ts.isJsxAttribute(item) && item.name.getText(sourceFile) === name
   ))
+}
+
+function staticAttribute(opening, name, sourceFile) {
+  const attribute = jsxAttribute(opening, name, sourceFile)
   if (!attribute?.initializer) return null
   if (ts.isStringLiteral(attribute.initializer)) return attribute.initializer.text
   const expression = attribute.initializer.expression
@@ -96,8 +104,48 @@ function isMargin(token) {
   return /^(?:m|mx|my|mt|mr|mb|ml|ms|me)-/.test(splitTailwindVariant(token).utility)
 }
 
-function isArbitraryRadius(token) {
-  return /^rounded(?:-[trblsexy]{1,2})?-\[/.test(splitTailwindVariant(token).utility)
+function radiusUtility(token) {
+  const { variants, utility } = splitTailwindVariant(token)
+  const normalized = utility.replace(/!$/, "")
+  const match = normalized.match(/^rounded(?:-([trblse]{1,2}))?(?:-(.+))?$/)
+  if (!match) return null
+  return { variants, direction: match[1] || null, value: match[2] || null }
+}
+
+function isOffLadderRadius(token) {
+  const radius = radiusUtility(token)
+  return radius ? !radiusLadder.has(radius.value) : false
+}
+
+function uniformRadiusRem(tokens, radiusBaseRem) {
+  const radii = tokens.map(radiusUtility).filter((radius) => (
+    radius && radius.variants.length === 0 && radius.direction === null && radiusLadder.has(radius.value)
+  ))
+  if (radii.length !== 1) return null
+  const multiplier = { sm: 0.6, md: 0.8, lg: 1, xl: 1.4, "2xl": 1.8, "3xl": 2.2, "4xl": 2.6 }[radii[0].value]
+  return typeof multiplier === "number" ? radiusBaseRem * multiplier : null
+}
+
+function uniformInsetRem(tokens) {
+  const values = tokens.map((token) => splitTailwindVariant(token)).filter(({ variants, utility }) => (
+    variants.length === 0 && /^p-(?:0|\d+(?:\.5)?)$/.test(utility)
+  ))
+  if (values.length !== 1) return null
+  return Number(values[0].utility.slice(2)) * 0.25
+}
+
+function persistentSurfaceTokens(tokens) {
+  return tokens.filter(addsPersistentSurface)
+}
+
+function paintsStructuralSurface(tokens) {
+  const surfaceTokens = persistentSurfaceTokens(tokens)
+  const utilities = surfaceTokens.map((token) => splitTailwindVariant(token).utility)
+  const hasFill = utilities.some((utility) => utility.startsWith("bg-"))
+  const hasElevation = utilities.some((utility) => /^(?:ring|shadow)(?:-|$)/.test(utility))
+  const hasContainerEdge = utilities.some((utility) => utility === "border" || /^border-\d/.test(utility))
+  const hasRadius = tokens.some((token) => radiusUtility(token) !== null)
+  return surfaceTokens.length && (hasFill || hasElevation || (hasContainerEdge && hasRadius)) ? surfaceTokens : []
 }
 
 function isDisabledOpacity(token) {
@@ -133,6 +181,19 @@ function ancestorOpening(node) {
   return null
 }
 
+function hasSemanticInkMarker(opening, sourceFile) {
+  let current = opening
+  while (current) {
+    if (
+      jsxAttribute(current, "data-status-tone", sourceFile)
+      || jsxAttribute(current, "data-identity-slot", sourceFile)
+      || semanticInkRoles.has(staticAttribute(current, "role", sourceFile))
+    ) return true
+    current = ancestorOpening(current)
+  }
+  return false
+}
+
 function hasOuterLayoutZone(opening, sourceFile) {
   let current = opening
   while (current) {
@@ -144,13 +205,16 @@ function hasOuterLayoutZone(opening, sourceFile) {
 
 export function scanInterfaceSource(frontendRoot, fileName, source) {
   const tokens = JSON.parse(fs.readFileSync(path.join(frontendRoot, "design-system", "tokens.json"), "utf8"))
-  if (tokens.foundation?.radius?.base?.$type !== "dimension") {
+  const radiusBase = tokens.foundation?.radius?.base
+  if (radiusBase?.$type !== "dimension" || radiusBase.$value?.unit !== "rem" || typeof radiusBase.$value.value !== "number") {
     throw new Error("design-system/tokens.json must define foundation.radius.base before interface-law scanning")
   }
+  const radiusBaseRem = radiusBase.$value.value
 
   const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)
   const governedComponents = importedGovernedComponents(sourceFile)
   const findings = []
+  const elevatedStructuralSurfaces = []
   const isPrimitiveModule = fileName.includes(`${path.sep}components${path.sep}ui${path.sep}`)
 
   const visit = (node) => {
@@ -186,8 +250,44 @@ export function scanInterfaceSource(frontendRoot, fileName, source) {
         ts.isJsxAttribute(item) && item.name.getText(sourceFile) === "className"
       ))
       const classes = classTokens(className, sourceFile)
-      for (const token of classes.filter(isArbitraryRadius)) {
+      if (!isPrimitiveModule && structuralSurfaceElements.has(name) && !hasSemanticInkMarker(node, sourceFile)) {
+        const paint = paintsStructuralSurface(classes)
+        if (paint.length) {
+          if (!jsxAttribute(node, "data-surface", sourceFile)) {
+            findings.push(finding(frontendRoot, fileName, sourceFile, node, "implicit-surface-painter", `<${name}> ${paint.join(" ")}`, "Declare the structural surface role or remove the feature-owned paint; absent data-surface means unpainted Print."))
+          } else if (surface === "print") {
+            findings.push(finding(frontendRoot, fileName, sourceFile, node, "print-surface-painter", `<${name}> ${paint.join(" ")}`, "Print cannot paint a background, container edge, ring, or elevation."))
+          }
+          const elevation = paint.filter((token) => /^shadow(?:-|$)/.test(splitTailwindVariant(token).utility))
+          if (elevation.length) elevatedStructuralSurfaces.push({ node, name, elevation })
+        }
+      }
+      for (const token of classes.filter(isOffLadderRadius)) {
         findings.push(finding(frontendRoot, fileName, sourceFile, className, "radius-ladder-only", token, "Use the radius ladder derived from foundation.radius.base."))
+      }
+      if (paintedSurfaceRoles.has(surface)) {
+        const parent = ancestorOpening(node)
+        const parentSurface = parent ? staticAttribute(parent, "data-surface", sourceFile) : null
+        if (parent && paintedSurfaceRoles.has(parentSurface)) {
+          const parentClassName = parent.attributes.properties.find((item) => (
+            ts.isJsxAttribute(item) && item.name.getText(sourceFile) === "className"
+          ))
+          const parentClasses = classTokens(parentClassName, sourceFile)
+          const outerRadius = uniformRadiusRem(parentClasses, radiusBaseRem)
+          const innerRadius = uniformRadiusRem(classes, radiusBaseRem)
+          const inset = uniformInsetRem(parentClasses)
+          if (outerRadius !== null && innerRadius !== null && inset !== null && outerRadius + Number.EPSILON < innerRadius + inset) {
+            findings.push(finding(
+              frontendRoot,
+              fileName,
+              sourceFile,
+              node,
+              "radius-concentricity",
+              `${parentClasses.find((token) => uniformRadiusRem([token], radiusBaseRem) !== null)} > ${classes.find((token) => uniformRadiusRem([token], radiusBaseRem) !== null)} + ${parentClasses.find((token) => uniformInsetRem([token]) !== null)}`,
+              "Keep painted corners concentric: outer radius must be at least inner radius plus the inset gap.",
+            ))
+          }
+        }
       }
       if (governedComponents.has(name)) {
         for (const token of classes.filter(isMargin)) {
@@ -205,6 +305,11 @@ export function scanInterfaceSource(frontendRoot, fileName, source) {
     ts.forEachChild(node, visit)
   }
   visit(sourceFile)
+  if (elevatedStructuralSurfaces.length > 1) {
+    for (const { node, name, elevation } of elevatedStructuralSurfaces) {
+      findings.push(finding(frontendRoot, fileName, sourceFile, node, "elevated-surface-multiplicity", `<${name}> ${elevation.join(" ")}`, "Keep at most one persistent structural elevation per governed module; prefer printed or Container composition."))
+    }
+  }
   if (isPrimitiveModule) {
     const visitDisabledOpacity = (node) => {
       if (ts.isStringLiteralLike(node)) {

@@ -42,6 +42,32 @@ test("paper, container, spacing, margin, radius, and primitive rules are structu
   assert.ok(!findings.some((item) => item.rule === "invalid-surface-role"))
 })
 
+test("radius enforcement rejects named off-ladder values and non-concentric painted nesting", () => {
+  const findings = scanInterfaceSource(
+    frontendRoot,
+    fixtureFile,
+    `export function Fixture() {
+      return <><div className="rounded-xs" /><section className="rounded-3xl p-1" data-surface="paper"><div className="rounded-3xl" data-surface="container" /></section><section className="rounded-4xl p-1" data-surface="paper"><div className="rounded-3xl" data-surface="container" /></section></>
+    }`,
+  )
+  assert.deepEqual(findings.filter((item) => item.rule === "radius-ladder-only").map((item) => item.match), ["rounded-xs"])
+  assert.deepEqual(findings.filter((item) => item.rule === "radius-concentricity").map((item) => item.match), ["rounded-3xl > rounded-3xl + p-1"])
+})
+
+test("implicit Print painters and repeated structural elevation enter the ratchet while semantic ink does not", () => {
+  const findings = scanInterfaceSource(
+    frontendRoot,
+    fixtureFile,
+    `export function Fixture() {
+      return <><section className="rounded-2xl bg-muted shadow-sm" /><form className="rounded-2xl bg-background shadow-lg" /><main className="bg-background" data-surface="print" /><div role="progressbar"><div className="bg-primary" /></div></>
+    }`,
+  )
+  assert.equal(findings.filter((item) => item.rule === "implicit-surface-painter").length, 2)
+  assert.equal(findings.filter((item) => item.rule === "elevated-surface-multiplicity").length, 2)
+  assert.deepEqual(findings.filter((item) => item.rule === "print-surface-painter").map((item) => item.match), ["<main> bg-background"])
+  assert.ok(!findings.some((item) => item.match.includes("bg-primary")))
+})
+
 test("Sheet remains a legal drawer primitive name and the persistent overlay tenant is exact", () => {
   const findings = scanInterfaceSource(frontendRoot, fixtureFile, `
     import { Sheet } from "@/components/ui/sheet"

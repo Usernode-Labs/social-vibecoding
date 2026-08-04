@@ -28,6 +28,11 @@ test("renders the read-only operations snapshot and preserves legacy tools", asy
   await expect(page.getByRole("heading", { exact: true, level: 1, name: "Operations" })).toHaveCount(1)
   await expect(overview).toContainText("View-only administrator")
   await expect(overview).toContainText("recipebot")
+  const summary = overview.locator('dl[aria-label="Operations summary"]')
+  await expect(summary).toHaveAttribute("data-surface", "container")
+  await expect(summary.locator("dt")).toHaveCount(3)
+  await expect(summary.locator("dd")).toHaveCount(3)
+  await expect(summary.locator('[data-slot="card"]')).toHaveCount(0)
   const routerTools = [
     ["Users", "/react/admin/users"],
     ["Activation codes", "/react/admin/codes"],

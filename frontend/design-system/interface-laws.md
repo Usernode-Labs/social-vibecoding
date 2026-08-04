@@ -24,6 +24,12 @@ Every view has one Paper. Print content; never stack Cards.
 
 `Sheet` is the drawer, never a surface. Wrappers use
 `data-surface="canvas|paper|print|container|overlay"`; absent means Print.
+Native structural elements that add persistent fill, container edge, ring, or
+shadow without that declaration are implicit painters and enter the warning
+ratchet. Print cannot carry those treatments. Primitive anatomy, status ink,
+identity ink, progress ink, and media remain outside the structural role count.
+More than one persistently elevated structural surface in a governed module is
+reported as multiplicity debt; use Print or compositing Container instead.
 Canvas/Paper are opaque. Container alpha darkens light mode and lightens dark;
 stacking is intentional, never a hole or lint condition. Only
 `data-slot="platform-bottom-navigation"` persists as Overlay.
@@ -50,7 +56,10 @@ media. Medium radii belong to controls, status treatments, and inset sections.
 Small radii belong to compact rows, focus contours, and tight nesting. Full
 radii are reserved for true pills, circular controls, and content-shaped chips.
 Inner geometry remains visually concentric and never appears rounder than its
-container.
+container. For statically nested painted surfaces, the outer radius is at least
+the inner radius plus the inset gap. Named radii must resolve to the governed
+`sm` through `4xl` ladder, `none`, or `full`; arbitrary and unnamed defaults are
+outside the contract.
 
 Spacing uses four semantic densities: tight inline relation, compact control
 cluster, standard component rhythm, and generous page-section separation.
