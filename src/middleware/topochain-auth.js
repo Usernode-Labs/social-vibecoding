@@ -193,6 +193,14 @@ function mobileTokenAuth(config, { ability = 'session', forbiddenMessage } = {})
     }
 
     req.user = { id: row.user_id, username: row.username, isAdmin: false };
+    // Push registration mutations revalidate this credential inside their
+    // transaction before copying its expiry bound. Never expose the raw token
+    // or hash on the request object.
+    req.mobileAuth = {
+      tokenId: row.id,
+      ability: row.ability,
+      expiresAt: row.expires_at,
+    };
 
     // Fire-and-forget last_used_at bump — never blocks/fails the request
     // over a bookkeeping write.

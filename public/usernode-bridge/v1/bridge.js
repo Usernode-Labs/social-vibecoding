@@ -106,6 +106,10 @@
     startNode: true,
     stopNode: true,
     getAuthStatus: true,
+    getSocialPushState: true,
+    setSocialPushEnabled: true,
+    claimPendingSocialNotification: true,
+    ackPendingSocialNotification: true,
   };
   var _SESSION_WALLET_METHODS = {
     getNodeAddress: true,
@@ -4285,6 +4289,44 @@
     if (!window.usernode.isNative) return Promise.resolve(null);
     return callNativeChromeRead(
       "getAuthStatus", {}, _CHROME_PROBE_TIMEOUT_MS, null
+    );
+  };
+
+  // =====================================================================
+  //  Public API: Social activity notifications
+  // =====================================================================
+  // These methods are available only to the trusted top-level Social shell
+  // and use the same per-navigation capability as the other native settings
+  // actions. Push content and credentials never cross this bridge; a tap
+  // exposes one opaque notification id after the normal v4 session admission.
+
+  var _SOCIAL_PUSH_TIMEOUT_MS = 12000;
+  var _SOCIAL_PUSH_PERMISSION_TIMEOUT_MS = 120000;
+
+  window.usernode.getSocialPushState = function () {
+    if (!window.usernode.isNative) return Promise.resolve(null);
+    return callNativeChromeRead(
+      "getSocialPushState", {}, _SOCIAL_PUSH_TIMEOUT_MS, null
+    );
+  };
+
+  window.usernode.setSocialPushEnabled = function (enabled) {
+    return callNativeChromeAction(
+      "setSocialPushEnabled", { enabled: !!enabled },
+      _SOCIAL_PUSH_PERMISSION_TIMEOUT_MS
+    );
+  };
+
+  window.usernode.claimPendingSocialNotification = function () {
+    return callNativeChromeAction(
+      "claimPendingSocialNotification", {}, _SOCIAL_PUSH_TIMEOUT_MS
+    );
+  };
+
+  window.usernode.ackPendingSocialNotification = function (notificationId) {
+    return callNativeChromeAction(
+      "ackPendingSocialNotification", { notificationId: notificationId },
+      _SOCIAL_PUSH_TIMEOUT_MS
     );
   };
 

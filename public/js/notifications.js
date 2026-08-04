@@ -138,6 +138,43 @@ const Notifications = {
     }
   },
 
+  // Native foreground push is only an invalidation signal. Re-read the
+  // authenticated notification feed; no notification copy crosses the
+  // WebView bridge.
+  async refreshAfterInvalidation() {
+    if (!window.App || !App.user) return false;
+    await Notifications.refresh();
+    return true;
+  },
+
+  // Resolve a native push's opaque id through the current Social session,
+  // then reuse the existing click router and mark-read behavior. The exact
+  // endpoint is ownership-scoped and intentionally returns no route from the
+  // untrusted push payload.
+  async openById(rawId) {
+    const id = Number(rawId);
+    if (!Number.isSafeInteger(id) || id <= 0 || id > 2147483647) return false;
+    let item = Notifications.items.find((candidate) => candidate.id === id);
+    if (!item) {
+      try {
+        const res = await fetch(`/api/notifications/${id}`, {
+          credentials: 'same-origin',
+          cache: 'no-store',
+        });
+        if (!res.ok) return false;
+        const data = await res.json();
+        item = data && data.notification;
+        if (!item || item.id !== id) return false;
+        Notifications.items.unshift(item);
+      } catch (err) {
+        console.warn('[notifications] exact lookup failed', err);
+        return false;
+      }
+    }
+    Notifications._onItemClick(id);
+    return true;
+  },
+
   async loadMore() {
     if (Notifications.loading || !Notifications.hasMore || !Notifications.nextBefore) return;
     Notifications.loading = true;

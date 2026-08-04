@@ -2484,7 +2484,7 @@ const AdminConsole = {
 
   // ── Database export ────────────────────────────────────────────────────
   //
-  // Downloads a full, unredacted pg_dump of the platform database as a
+  // Downloads an unredacted pg_dump of durable platform data as a
   // gzip-compressed plain-SQL file (`.sql.gz`, restored with gunzip + psql).
   // The file is a live credential bundle — every password hash, every valid
   // session token, every app credential — so this section is deliberately sober:
@@ -2550,7 +2550,7 @@ const AdminConsole = {
         <div class="rounded-lg border border-red-300 dark:border-red-900 bg-red-50 dark:bg-red-950/40 p-4">
           <h2 class="text-lg font-semibold text-red-700 dark:text-red-300">Database export — handle as a credential</h2>
           <p class="text-sm text-red-800 dark:text-red-200 mt-2">
-            This downloads a complete, unredacted copy of the platform database.
+            This downloads an unredacted copy of durable platform data. Ephemeral mobile push registrations and delivery rows are excluded.
             Anyone holding the file can take over accounts and reach every app's data.
             It contains:
           </p>

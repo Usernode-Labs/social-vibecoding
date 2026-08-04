@@ -1,0 +1,63 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const schema = fs.readFileSync(path.join(__dirname, '../src/db/schema.sql'), 'utf8');
+const debugAccess = require('../src/services/debug-access');
+const dbExport = require('../src/services/db-export');
+
+const PRIVATE_TABLES = [
+  'mobile_push_deployment_state',
+  'mobile_push_installation_mutations',
+  'mobile_push_registrations',
+  'mobile_push_deliveries',
+];
+
+test('push schema keeps deployment and user device state private with bounded expiry', () => {
+  for (const table of PRIVATE_TABLES) {
+    assert.match(schema, new RegExp(`CREATE TABLE IF NOT EXISTS ${table} \\(`));
+    assert.match(schema, new RegExp(`COMMENT ON TABLE ${table} IS 'staging:private'`));
+    assert.ok(debugAccess.DENIED_TABLES.has(table));
+    assert.ok(dbExport.EXCLUDED_TABLE_DATA.includes(table));
+  }
+  assert.match(schema, /user_id\s+INTEGER NOT NULL REFERENCES users\(id\) ON DELETE CASCADE/);
+  assert.match(schema, /session_expires_at TIMESTAMPTZ NOT NULL/);
+  assert.doesNotMatch(schema, /mobile_auth_token_id/);
+  assert.match(schema, /registration_id[\s\S]*ON DELETE SET NULL/);
+  assert.match(
+    schema,
+    /idx_mobile_push_deliveries_registration[\s\S]*ON mobile_push_deliveries \(registration_id\)/
+  );
+  assert.match(schema, /UNIQUE \(notification_id, environment, installation_id\)/);
+  assert.match(schema, /CHECK \(NOT send_enabled OR send_not_before IS NOT NULL\)/);
+});
+
+test('notification trigger enqueues only reviewed completion kinds', () => {
+  const body = schema.match(
+    /CREATE OR REPLACE FUNCTION enqueue_mobile_push_deliveries\(\)[\s\S]*?END;\n\$\$;/
+  )?.[0];
+  assert.ok(body, 'enqueue function exists');
+  assert.match(body, /NEW\.kind NOT IN \('session_done', 'auto_solve_done'\)/);
+  assert.match(body, /permission_status IN \('authorized', 'provisional'\)/);
+  assert.match(body, /JOIN mobile_push_deployment_state s ON s\.environment = r\.environment/);
+  assert.match(body, /s\.send_enabled/);
+  assert.match(body, /NEW\.created_at[\s\S]*>= s\.send_not_before/);
+  assert.match(body, /r\.user_id = NEW\.user_id/);
+  assert.match(body, /r\.session_expires_at > NOW\(\)/);
+  assert.match(body, /notification_id, registration_id, environment, installation_id/);
+  assert.doesNotMatch(body, /mention|reaction|pr_proposed/);
+  assert.match(schema, /AFTER INSERT ON notifications/);
+  const stateLock = body.indexOf('FROM mobile_push_deployment_state');
+  const registrationLock = body.indexOf('FOR KEY SHARE OF r');
+  assert.ok(stateLock >= 0 && stateLock < registrationLock,
+    'deployment state is locked before registration rows');
+});
+
+test('no old handoff/provider-control tables were reintroduced', () => {
+  assert.doesNotMatch(schema, /mobile_web_session_handoffs/);
+  assert.doesNotMatch(schema, /mobile_push_provider_state/);
+  assert.doesNotMatch(schema, /push_mutation_fingerprint|provider_attempted|canary/);
+});
