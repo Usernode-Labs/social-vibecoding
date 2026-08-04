@@ -1084,6 +1084,15 @@ function workerContainerName(sessionId) {
   return `usernode-worker-${sessionId}`;
 }
 
+// Runtime object name for a session worker. Keep the Docker name stable for
+// single-server installs, while Kubernetes callers address the Deployment /
+// Pod through the name used by kubernetes.ensureWorker().
+function workerRuntimeName(sessionId) {
+  return usesKubernetesWorkers()
+    ? kubernetes.dnsName(`sv-worker-s${sessionId}`)
+    : workerContainerName(sessionId);
+}
+
 // Per-turn journal file inside the CC volume (/home/node/.claude). The
 // detached `docker exec` wrapper redirects run-cc.sh's combined output
 // here so the turn's progress stream survives a platform restart: the
@@ -1707,9 +1716,7 @@ async function ensureWorker(sessionId, {
   repoOwner, repoName, branchName,
   onProgress,
 } = {}) {
-  const containerName = usesKubernetesWorkers()
-    ? kubernetes.dnsName(`sv-worker-s${sessionId}`)
-    : workerContainerName(sessionId);
+  const containerName = workerRuntimeName(sessionId);
 
   // Coalesce concurrent ensures — if one's already racing, await it.
   const existing = _registryGet(sessionId);
@@ -3111,7 +3118,7 @@ async function execPushFromWorker(sessionId, branchName) {
     throw err;
   }
 
-  const containerName = workerContainerName(sessionId);
+  const containerName = _registryGet(sessionId)?.containerName || workerRuntimeName(sessionId);
 
   // Inline credential helper: prints `username=x-access-token` and
   // `password=$PAT` to stdout when git asks for credentials. `-c
@@ -3218,6 +3225,7 @@ module.exports = {
   buildTurnStopScript,
   // exposed for the routes' container-name lookups
   workerContainerName,
+  workerRuntimeName,
   // platform-side git push proxy (called from src/routes/internal.js)
   execPushFromWorker,
   mintWorkerJwt,
