@@ -1,4 +1,5 @@
 import fs from "node:fs"
+import { createRequire } from "node:module"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
@@ -8,6 +9,10 @@ const builtWorkerPath = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../../public/react/react-sw.js",
 )
+const require = createRequire(import.meta.url)
+const { SW_VERSION: legacyWorkerVersion } = require("../../public/sw.js") as {
+  SW_VERSION: string
+}
 
 function workerRevision(source: string) {
   const match = source.match(/const BUILD_REVISION = "([^"]+)"/)
@@ -236,20 +241,18 @@ test("real web logout clears legacy user caches while preserving unrelated cache
   await page.goto("/react/settings")
   await expect.poll(() => page.locator("html").getAttribute("data-react-shell-ready")).toBe("true")
   const status = await workerStatus(page)
+  const legacyApiCacheName = `usernode-api-${legacyWorkerVersion}`
 
-  await page.evaluate(async ({ reactCacheName }) => {
+  await page.evaluate(async ({ reactCacheName, legacyApiCacheName }) => {
     const request = (path: string) => new Request(new URL(path, window.location.href))
     const response = (label: string) => new Response(JSON.stringify({ label }), {
       headers: { "Content-Type": "application/json" },
     })
-    const workerSource = await fetch("/sw.js", { cache: "no-store" }).then((result) => result.text())
-    const version = workerSource.match(/const SW_VERSION = ['"]([^'"]+)['"];/)?.[1]
-    if (!version) throw new Error("Unable to resolve the legacy service-worker version")
-    await (await caches.open(`usernode-api-${version}`)).put(request("/api/auth/me"), response("current user"))
+    await (await caches.open(legacyApiCacheName)).put(request("/api/auth/me"), response("current user"))
     await (await caches.open("usernode-api-v0")).put(request("/api/me/history"), response("old user"))
     await (await caches.open(reactCacheName)).put(request("/react/logout-sentinel.js"), response("shell"))
     await (await caches.open("unrelated-app-cache")).put(request("/unrelated"), response("keep"))
-  }, { reactCacheName: status.cacheName })
+  }, { reactCacheName: status.cacheName, legacyApiCacheName })
 
   await page.getByRole("button", { name: "Log out" }).click()
   await expect(page.getByRole("heading", { name: "Log out of Social Vibecoding?" })).toBeVisible()

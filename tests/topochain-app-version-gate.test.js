@@ -55,7 +55,7 @@ function makeApp(queryImpl) {
 }
 
 async function post(app, body) {
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   await new Promise((r) => server.once('listening', r));
   try {
     const res = await fetch(`http://127.0.0.1:${server.address().port}/api/v4/app-version/check`, {

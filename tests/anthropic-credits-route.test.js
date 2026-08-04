@@ -56,7 +56,7 @@ function mount(name, user) {
   app.use(express.json());
   app.use((req, _res, next) => { req.user = user; next(); });
   app.use(adminRoutes({ jwtSecret: 'test' }));
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   servers[name] = server;
   return new Promise((r) => server.once('listening', () => {
     bases[name] = `http://127.0.0.1:${server.address().port}`;
