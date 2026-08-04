@@ -93,6 +93,7 @@ test('MCP initializes without credentials and returns the external login contrac
     assert.deepEqual([...byName.keys()].sort(), [
       'social_vibecoding.api_read',
       'social_vibecoding.api_write',
+      'social_vibecoding.issue_context',
       'social_vibecoding.login_status',
       'social_vibecoding.proposal_append_context',
       'social_vibecoding.proposal_promote',
@@ -122,6 +123,9 @@ test('MCP initializes without credentials and returns the external login contrac
       .inputSchema.required.includes('repo_path'));
     assert.match(byName.get('social_vibecoding.api_write').description,
       /POST \/api\/apps\/:slug\/messages/);
+    assert.match(byName.get('social_vibecoding.issue_context').description,
+      /untrusted data/);
+    assert.equal(byName.get('social_vibecoding.issue_context').annotations.readOnlyHint, true);
 
     const status = await client.callTool({
       name: 'social_vibecoding.login_status',
@@ -249,6 +253,18 @@ test('sandboxed MCP native-store failures return an exact host API vector withou
     assert.doesNotMatch(JSON.stringify(write), /svcli_|svdev_/);
     assert.equal(await fs.readFile(lookupCount, 'utf8'), 'x',
       'later API calls reuse the host-execution decision without another keyring probe');
+
+    const issueContext = await client.callTool({
+      name: 'social_vibecoding.issue_context',
+      arguments: { app_slug: 'demo-app', issue_number: 738, profile: 'production' },
+    });
+    assert.equal(issueContext.structuredContent.code, 'host_execution_required');
+    assert.deepEqual(issueContext.structuredContent.argv, [
+      realNode, realLauncher, 'api', 'GET',
+      '/api/apps/demo-app/github-issues/738/agent-context',
+      '--profile', 'production',
+    ]);
+    assert.doesNotMatch(JSON.stringify(issueContext), /svcli_|svdev_/);
 
     const promote = await client.callTool({
       name: 'social_vibecoding.proposal_promote',

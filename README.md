@@ -280,10 +280,15 @@ The agent then retries the original API operation; you do not need to type setup
 or login commands.
 
 The MCP exposes generic read and mutation tools for allowed user-facing JSON
-API paths, so endpoints are not hardcoded into individual tools. Existing
-platform app visibility, ownership, role, lock, and quota checks remain
-authoritative. Operations such as opening a PR go through the app/session
-platform APIs, never directly to GitHub.
+API paths, so endpoints are not hardcoded into individual tools. It also
+offers a read-only `social_vibecoding.issue_context` convenience tool for
+external PR agents. Given an app slug and issue number, it returns the app's
+exact repository base, the issue, bounded native and repository discussions,
+and checkout guidance in one response. Issue and discussion prose is explicitly
+untrusted data; the tool grants no external provider, credential, GitHub-write,
+file, shell, or host capability. Existing platform app visibility, ownership,
+role, lock, and quota checks remain authoritative. Operations such as opening a
+PR go through the app/session platform APIs, never directly to GitHub.
 
 Credentials are bound to the selected server profile and are stored
 outside the checkout. The ignored `.codex/config.toml` contains absolute
