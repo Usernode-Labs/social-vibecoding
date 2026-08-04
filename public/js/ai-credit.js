@@ -54,11 +54,11 @@
     row.classList.toggle('hidden', !visible);
   }
 
-  // The figure is rendered EXACTLY as the dev chat renders its own meter
-  // (see DevChat.renderBudget) — "limit $13.60/$20.00 · your key $129.11"
-  // — so the two places a user reads their AI spend agree glyph for
-  // glyph instead of offering two different mental models of the same
-  // number. No pill: .drawer-meter is nowrap mono text, and the row's
+  // The figure leads with spend-versus-cap, then makes the amount still
+  // available explicit — "limit $13.60/$20.00 · $6.40 left". Before this
+  // row gained the second figure, "left" lived only in its hover tooltip,
+  // forcing people to subtract while deciding whether they could start a
+  // new turn. No pill: .drawer-meter is nowrap mono text, and the row's
   // `flex-wrap` drops an over-wide value onto its own line intact rather
   // than splitting it mid-figure.
   //
@@ -152,6 +152,11 @@
           + '<span class="' + spentTone + '">' + escapeHtml(money(spent)) + '</span>'
           + '<span class="drawer-meter-dim">/' + escapeHtml(money(limit)) + '</span>'
           + '</span>';
+        html += ' <span class="drawer-meter-part">'
+          + '<span class="drawer-meter-dim">· </span>'
+          + '<span class="drawer-meter-dim">left </span>'
+          + '<span class="' + (exhausted ? SPENT_TONE.high : SPENT_TONE.low) + '">'
+          + escapeHtml(money(remaining)) + '</span></span>';
         if (byok > 0) {
           // Own .drawer-meter-part so the two figures break apart at the
           // "·" rather than either of them splitting mid-number — and the
@@ -164,7 +169,7 @@
         }
 
         slot.innerHTML =
-          '<span class="ai-budget-meter drawer-meter" title="' + escapeAttr(tip) + '">'
+          '<span class="ai-budget-pill ai-budget-meter drawer-meter" title="' + escapeAttr(tip) + '">'
           + html
           + '</span>';
         setRowVisible('drawer-row-ai-budget', true);

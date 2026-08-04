@@ -71,6 +71,15 @@ test('the budget row carries no global spend or cap', () => {
     'no global spend/cap fields anywhere in the user-facing renderer');
 });
 
+test('the visible drawer meter includes the remaining platform allowance', () => {
+  assert.match(creditJs, /drawer-meter-dim">left <\/span>/,
+    'the remaining label is rendered in the meter, not only its tooltip');
+  assert.match(creditJs, /escapeHtml\(money\(remaining\)\)/,
+    'the displayed amount comes from the server-provided remaining balance');
+  assert.match(creditJs, /exhausted \? SPENT_TONE\.high : SPENT_TONE\.low/,
+    'zero remaining remains visually distinct from available allowance');
+});
+
 test('the pill carries the class hook the dapp.json check asserts on', () => {
   assert.match(creditJs, /ai-budget-pill/, '#ai-budget-slot pill has a stable hook class');
 });
