@@ -595,6 +595,45 @@ async function getFileContent(owner, repo, filePath, ref) {
   }
 }
 
+// Read-only primitives for repository-wide source audits. Keeping tree/blob
+// access here means callers use the same authenticated client selection as
+// every other GitHub read instead of creating a second credential path.
+// The caller deliberately owns filtering and resource limits: different
+// audits have different definitions of relevant source, while this layer
+// preserves GitHub's completeness/encoding metadata so they can fail closed.
+async function getRepoTree(owner, repo, ref) {
+  const octokit = await getOctokit(owner);
+  const { data: repository } = await octokit.rest.repos.get({ owner, repo });
+  const branch = ref || repository.default_branch;
+  if (!branch) throw new Error(`Repository ${owner}/${repo} has no default branch`);
+
+  const { data: commit } = await octokit.rest.repos.getCommit({ owner, repo, ref: branch });
+  const treeSha = commit && commit.commit && commit.commit.tree && commit.commit.tree.sha;
+  if (!treeSha) throw new Error(`Repository ${owner}/${repo} returned no commit tree`);
+
+  const { data: tree } = await octokit.rest.git.getTree({
+    owner,
+    repo,
+    tree_sha: treeSha,
+    recursive: 'true',
+  });
+  return {
+    sha: tree && tree.sha ? tree.sha : treeSha,
+    truncated: !!(tree && tree.truncated),
+    entries: Array.isArray(tree && tree.tree) ? tree.tree : null,
+  };
+}
+
+async function getRepoBlob(owner, repo, sha) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.rest.git.getBlob({ owner, repo, file_sha: sha });
+  return {
+    encoding: data && data.encoding,
+    content: data && data.content,
+    size: data && data.size,
+  };
+}
+
 // `fromBranch` (default 'main') lets callers fork off an arbitrary existing
 // branch — used by the headless-session clone flow (#155), which branches a
 // user's new dev branch off the auto session's branch so any pushed commits
@@ -1979,6 +2018,8 @@ module.exports = {
   _isRepoNameExistsError: isRepoNameExistsError,
   pushFiles,
   getFileContent,
+  getRepoTree,
+  getRepoBlob,
   createBranch,
   ensureBranchAtSha,
   compareCommitAncestry,

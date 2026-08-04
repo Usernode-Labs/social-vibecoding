@@ -29,12 +29,12 @@
  *
  * WHAT IT DOES
  *
- * Read-only. For every `apps` row with a repo_url, fetch the repo's server
- * source through the existing services/github.js helpers and report whether
- * it references `process.env.JWT_SECRET`. Nothing is written, no container is
- * touched, no PR is opened. The output is a plain report plus a machine
- * summary, so it can be pasted into the follow-up issue as the record of how
- * much work the retirement actually is.
+ * Read-only. For every `apps` row with a repo_url, enumerate the repository's
+ * complete source tree through the existing services/github.js helpers and
+ * report whether it references `process.env.JWT_SECRET`. Nothing is written,
+ * no container is touched, no PR is opened. The output is a plain report plus
+ * a machine summary, so it can be pasted into the follow-up issue as the
+ * record of how much work the retirement actually is.
  *
  * USAGE
  *
@@ -54,10 +54,12 @@
  */
 
 const path = require('path');
+const { TextDecoder } = require('util');
+const UTF8_DECODER = new TextDecoder('utf-8', { fatal: true });
 
-// The files worth checking, in priority order. An app's auth middleware
-// lives in its entrypoint in every scaffold generation; the others are where
-// a hand-edited app tends to move it.
+// Likely files first so reader-positive repos usually need only one blob
+// request. This is ordering only: every eligible source blob is scanned before
+// a repo is allowed to report clean.
 const CANDIDATE_FILES = [
   'server.js',
   'index.js',
@@ -66,6 +68,25 @@ const CANDIDATE_FILES = [
   'src/index.js',
   'lib/dapp-server.js',
 ];
+
+const SOURCE_EXTENSIONS = new Set([
+  '.js', '.cjs', '.mjs', '.jsx', '.ts', '.cts', '.mts', '.tsx',
+  '.coffee', '.vue', '.svelte',
+]);
+const EXCLUDED_SEGMENTS = new Set([
+  'node_modules', 'coverage', '.cache', 'public', 'assets', 'static',
+  'fixtures', '__fixtures__', 'test', 'tests', '__tests__',
+]);
+const AMBIGUOUS_GENERATED_SEGMENTS = new Set([
+  'vendor', 'dist', 'build', '.next', '.nuxt', '.output',
+]);
+const MAX_TREE_ENTRIES = 5000;
+// 35 repos × 120 blobs plus tree/commit lookups stays below a standard
+// installation-token request budget even in the all-at-the-cap worst case.
+const MAX_SOURCE_FILES = 120;
+const MAX_FILE_BYTES = 256 * 1024;
+const MAX_TOTAL_BYTES = 4 * 1024 * 1024;
+const FETCH_CONCURRENCY = 4;
 
 // `process.env.JWT_SECRET` in any of the shapes real code uses — direct
 // member access, bracket access, or a destructure out of process.env.
@@ -76,11 +97,17 @@ const READER_PATTERNS = [
 ];
 
 function findReader(source) {
-  const lines = String(source || '').split('\n');
-  for (let i = 0; i < lines.length; i++) {
-    for (const re of READER_PATTERNS) {
-      if (re.test(lines[i])) return { line: i + 1, text: lines[i].trim().slice(0, 160) };
-    }
+  const full = String(source || '');
+  const lines = full.split('\n');
+  for (const re of READER_PATTERNS) {
+    const match = re.exec(full);
+    if (!match) continue;
+    // For a multi-line destructure, point at JWT_SECRET itself rather than
+    // the opening `const {`, so the report remains immediately actionable.
+    const within = match[0].indexOf('JWT_SECRET');
+    const offset = match.index + (within >= 0 ? within : 0);
+    const line = full.slice(0, offset).split('\n').length;
+    return { line, text: (lines[line - 1] || '').trim().slice(0, 160) };
   }
   return null;
 }
@@ -88,6 +115,179 @@ function findReader(source) {
 function parseRepoUrl(repoUrl) {
   const m = String(repoUrl || '').match(/github\.com\/([^/]+)\/([^/.]+)/);
   return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+function auditError(message) {
+  const err = new Error(message);
+  err.code = 'incomplete_audit';
+  return err;
+}
+
+function isEligibleSource(filePath) {
+  if (!isSafeRepoPath(filePath)) return false;
+  const segments = filePath.split('/');
+  if (segments.some((segment) => EXCLUDED_SEGMENTS.has(segment.toLowerCase())
+      || AMBIGUOUS_GENERATED_SEGMENTS.has(segment.toLowerCase()))) return false;
+  const lower = filePath.toLowerCase();
+  if (lower.endsWith('.min.js') || lower.endsWith('.map')) return false;
+  return SOURCE_EXTENSIONS.has(path.posix.extname(lower));
+}
+
+function isSafeRepoPath(filePath) {
+  if (typeof filePath !== 'string' || !filePath || filePath.includes('\\')
+      || filePath.includes('\0') || filePath.startsWith('/')) return false;
+  return filePath.split('/').every((segment) => segment && segment !== '.' && segment !== '..');
+}
+
+function isAmbiguousGeneratedSource(filePath) {
+  if (!isSafeRepoPath(filePath)) return false;
+  const lower = filePath.toLowerCase();
+  const extension = path.posix.extname(lower);
+  if (!SOURCE_EXTENSIONS.has(extension)) return false;
+  return lower.endsWith('.min.js')
+    || filePath.split('/').some(
+      (segment) => AMBIGUOUS_GENERATED_SEGMENTS.has(segment.toLowerCase())
+    );
+}
+
+function orderSourceEntries(entries) {
+  const rank = new Map(CANDIDATE_FILES.map((file, index) => [file, index]));
+  return entries.slice().sort((a, b) => {
+    const ar = rank.has(a.path) ? rank.get(a.path) : CANDIDATE_FILES.length;
+    const br = rank.has(b.path) ? rank.get(b.path) : CANDIDATE_FILES.length;
+    return ar - br || a.path.localeCompare(b.path);
+  });
+}
+
+function decodeBlob(blob, filePath, maxFileBytes = MAX_FILE_BYTES) {
+  if (!blob || blob.encoding !== 'base64' || typeof blob.content !== 'string') {
+    throw auditError(`${filePath}: unsupported or missing blob encoding`);
+  }
+  const encoded = blob.content.replace(/\s/g, '');
+  if (encoded.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+    throw auditError(`${filePath}: malformed base64 blob`);
+  }
+  const bytes = Buffer.from(encoded, 'base64');
+  if (bytes.toString('base64') !== encoded) {
+    throw auditError(`${filePath}: malformed base64 blob`);
+  }
+  if (bytes.length > maxFileBytes) {
+    throw auditError(`${filePath}: source blob exceeds ${maxFileBytes} bytes`);
+  }
+  if (Number.isFinite(blob.size)
+      && (!Number.isSafeInteger(blob.size) || blob.size < 0 || blob.size !== bytes.length)) {
+    throw auditError(`${filePath}: blob size metadata does not match content`);
+  }
+  if (bytes.includes(0)) throw auditError(`${filePath}: source blob is not text`);
+  try {
+    UTF8_DECODER.decode(bytes);
+  } catch {
+    throw auditError(`${filePath}: source blob is not valid UTF-8`);
+  }
+  return bytes;
+}
+
+async function scanRepository(github, owner, repo, limits = {}) {
+  const maxTreeEntries = limits.maxTreeEntries || MAX_TREE_ENTRIES;
+  const maxSourceFiles = limits.maxSourceFiles || MAX_SOURCE_FILES;
+  const maxFileBytes = limits.maxFileBytes || MAX_FILE_BYTES;
+  const maxTotalBytes = limits.maxTotalBytes || MAX_TOTAL_BYTES;
+  const concurrency = limits.concurrency || FETCH_CONCURRENCY;
+
+  let tree;
+  try {
+    tree = await github.getRepoTree(owner, repo);
+  } catch (err) {
+    return { state: 'unreadable', reason: `tree fetch failed: ${err.message}` };
+  }
+  if (!tree || tree.truncated || !Array.isArray(tree.entries)) {
+    return { state: 'unreadable', reason: 'repository tree is missing or truncated' };
+  }
+  if (tree.entries.length > maxTreeEntries) {
+    return { state: 'unreadable', reason: `repository tree exceeds ${maxTreeEntries} entries` };
+  }
+
+  const sourceEntries = [];
+  for (const entry of tree.entries) {
+    if (!entry || typeof entry.path !== 'string' || typeof entry.type !== 'string') {
+      return { state: 'unreadable', reason: 'repository tree contains a malformed entry' };
+    }
+    if (!isSafeRepoPath(entry.path)) {
+      return { state: 'unreadable', reason: 'repository tree contains an unsafe path' };
+    }
+    if (entry.type === 'blob' && isAmbiguousGeneratedSource(entry.path)) {
+      return {
+        state: 'unreadable',
+        reason: `${entry.path}: generated or vendored source requires manual corroboration`,
+      };
+    }
+    if (entry.type !== 'blob' || !isEligibleSource(entry.path)) continue;
+    if (typeof entry.sha !== 'string' || !entry.sha) {
+      return { state: 'unreadable', reason: `${entry.path}: source entry has no blob id` };
+    }
+    if (entry.size !== undefined
+        && (!Number.isSafeInteger(entry.size) || entry.size < 0)) {
+      return { state: 'unreadable', reason: `${entry.path}: source entry has invalid size metadata` };
+    }
+    if (Number.isFinite(entry.size) && entry.size > maxFileBytes) {
+      return { state: 'unreadable', reason: `${entry.path}: source blob exceeds ${maxFileBytes} bytes` };
+    }
+    sourceEntries.push(entry);
+  }
+  if (!sourceEntries.length) {
+    return { state: 'unreadable', reason: 'no eligible source files found' };
+  }
+  if (sourceEntries.length > maxSourceFiles) {
+    return { state: 'unreadable', reason: `repository has more than ${maxSourceFiles} source files` };
+  }
+  const knownBytes = sourceEntries.reduce(
+    (sum, entry) => sum + (Number.isFinite(entry.size) ? entry.size : 0), 0
+  );
+  if (knownBytes > maxTotalBytes) {
+    return { state: 'unreadable', reason: `source inventory exceeds ${maxTotalBytes} bytes` };
+  }
+
+  const ordered = orderSourceEntries(sourceEntries);
+  const hits = new Array(ordered.length);
+  let nextIndex = 0;
+  let totalBytes = 0;
+  let failure = null;
+  let readerFound = false;
+  const worker = async () => {
+    while (!failure && !readerFound) {
+      const index = nextIndex++;
+      if (index >= ordered.length) return;
+      const entry = ordered[index];
+      try {
+        const blob = await github.getRepoBlob(owner, repo, entry.sha);
+        const bytes = decodeBlob(blob, entry.path, maxFileBytes);
+        totalBytes += bytes.length;
+        if (totalBytes > maxTotalBytes) {
+          failure = auditError(`decoded source exceeds ${maxTotalBytes} bytes`);
+          return;
+        }
+        const found = findReader(bytes.toString('utf8'));
+        if (found) {
+          hits[index] = { file: entry.path, ...found };
+          readerFound = true;
+          return;
+        }
+      } catch (err) {
+        failure = err;
+        return;
+      }
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(Math.max(1, concurrency), ordered.length) }, () => worker()
+  ));
+
+  // A positive hit is safe even if a concurrent fetch failed: either result
+  // keeps the alias. Prefer the actionable file/line over a generic error.
+  const hit = hits.find(Boolean);
+  if (hit) return { state: 'reader', hit, checked: ordered.length };
+  if (failure) return { state: 'unreadable', reason: `source fetch failed: ${failure.message}` };
+  return { state: 'clean', checked: ordered.length };
 }
 
 async function main() {
@@ -127,33 +327,15 @@ async function main() {
       unreadable.push({ slug: app.slug, reason: `unparseable repo_url: ${app.repo_url}` });
       continue;
     }
-    let hit = null;
-    let checked = 0;
-    let lastErr = null;
-    for (const file of CANDIDATE_FILES) {
-      let source;
-      try {
-        source = await github.getFileContent(parsed.owner, parsed.repo, file);
-      } catch (err) {
-        lastErr = err.message;
-        continue;
-      }
-      if (source == null) continue;   // 404 — this app doesn't have that file
-      checked += 1;
-      const found = findReader(source);
-      if (found) { hit = { file, ...found }; break; }
-    }
-
-    if (hit) {
+    const result = await scanRepository(github, parsed.owner, parsed.repo);
+    if (result.state === 'reader') {
+      const hit = result.hit;
       readers.push({ slug: app.slug, status: app.status, repo: app.repo_url, ...hit });
       say(`  READS   ${app.slug}  →  ${hit.file}:${hit.line}`);
       say(`                       ${hit.text}`);
-    } else if (checked === 0) {
-      unreadable.push({
-        slug: app.slug,
-        reason: lastErr ? `fetch failed: ${lastErr}` : 'no candidate entrypoint file found',
-      });
-      say(`  ?       ${app.slug}  →  no readable entrypoint`);
+    } else if (result.state === 'unreadable') {
+      unreadable.push({ slug: app.slug, reason: result.reason });
+      say(`  ?       ${app.slug}  →  ${result.reason}`);
     } else {
       clean.push({ slug: app.slug });
       say(`  clean   ${app.slug}`);
@@ -208,4 +390,23 @@ if (require.main === module) {
   });
 }
 
-module.exports = { findReader, parseRepoUrl, CANDIDATE_FILES, READER_PATTERNS };
+module.exports = {
+  findReader,
+  parseRepoUrl,
+  isEligibleSource,
+  isSafeRepoPath,
+  isAmbiguousGeneratedSource,
+  orderSourceEntries,
+  decodeBlob,
+  scanRepository,
+  CANDIDATE_FILES,
+  READER_PATTERNS,
+  SOURCE_EXTENSIONS,
+  EXCLUDED_SEGMENTS,
+  AMBIGUOUS_GENERATED_SEGMENTS,
+  MAX_TREE_ENTRIES,
+  MAX_SOURCE_FILES,
+  MAX_FILE_BYTES,
+  MAX_TOTAL_BYTES,
+  FETCH_CONCURRENCY,
+};
