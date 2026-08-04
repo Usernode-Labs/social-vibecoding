@@ -22,6 +22,11 @@
   same-origin JSON API tools; resolve the appropriate user-facing platform
   route from `src/routes/` rather than adding a tool-specific endpoint or
   calling GitHub directly.
+- Native app discussion threads are readable with
+  `GET /api/apps/:slug/messages?thread_type=issue&thread_ref=:number` and
+  writable with `POST /api/apps/:slug/messages` using
+  `{ "content": "...", "thread_type": "issue", "thread_ref": number }`.
+  The POST writes the Usernode issue thread, not a GitHub issue comment.
 - For a feature/proposal authored from a local Codex or Claude session, keep
   the browser workflow's lifecycle while allowing the whole job to finish
   locally:

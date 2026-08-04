@@ -92,10 +92,11 @@ async function isCollaborator(pool, appId, userId) {
 // throwing on falsy rather than merely on absent is the stricter invariant.
 //
 // Blast radius is deliberate and bounded: getAppForUser and the two
-// id-scoped router guards below all sit inside route-level try/catch
-// blocks that answer 500, and both ws.js call sites already wrap this in
-// `.catch(() => false)` — so a throw fails CLOSED there (a 4004 close, a
-// dropped write), never an unhandled rejection.
+// id-scoped router guards below all sit inside route-level try/catch blocks
+// that answer 500. The ws.js handshake maps failures to a denied connection,
+// while its per-message write gate catches and drops the write with a
+// structured internal result. Both paths fail closed, never with an
+// unhandled rejection.
 //
 // The check runs BEFORE the admin short-circuit on purpose. Admins are
 // exactly who the screenshot and proposal-checks runners authenticate as,
