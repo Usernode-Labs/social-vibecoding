@@ -76,7 +76,7 @@
         ]
       }
     },
-    "postRoutingRatchetBytes": 21412,
+    "postRoutingRatchetBytes": 21268,
     "postRoutingEntries": [
       {
         "path": "frontend/design-system/content-guidelines.md",
@@ -92,7 +92,7 @@
       },
       {
         "path": "frontend/design-system/interface-laws.md",
-        "acceptedBytes": 7585
+        "acceptedBytes": 7441
       },
       {
         "path": "agent-skills/ui-development/references/evidence.md",
@@ -108,16 +108,7 @@
     "alwaysLoadedBytes": 17427,
     "skillActivationBytes": 7772
   },
-  "exceptions": [
-    {
-      "id": "slice-7-enforcement-law-growth",
-      "metric": "postRoutingBytes",
-      "allowedBytes": 22127,
-      "owner": "frontend-platform",
-      "reason": "Temporary exact allowance for the Slice 7 prerequisite law text covering structural surface painters and radius concentricity; Slice 7 audit-method extraction must restore the ratchet.",
-      "expires": "2026-08-11"
-    }
-  ],
+  "exceptions": [],
   "routingSlice": {
     "startRevision": "1ae9d002489234652d7de40008a447d3083d2565",
     "activatedAt": "2026-08-03T11:48:55.010Z",

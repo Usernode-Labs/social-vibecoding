@@ -1,14 +1,13 @@
 # Usernode shell interface laws
 
-These laws govern the platform shell. They were ratified on 2026-07-31 against
+Platform-shell laws were ratified on 2026-07-31 at
 `a09473723e988cf309ac12974e45efd8eb749528` and review rubric SHA-256
 `3f972005def9e2a580373ae2f14a8836f0f92e78c661bd846107976654ac7a5c`.
 Receipt: `a2c93c597a7966312e4edc4798e3d6edea6b7cf66d6e4a442e6ced99fc06dffc`.
 
-The Quiet Money amendment was owner-locked on 2026-08-03 in Buzz event
+Quiet Money was owner-locked on 2026-08-03 in Buzz event
 `9626471f2ea679b95328ba4cfa940dcee1bf59cdfbce6dfab5ffa44decabb76c`
-against implementation baseline
-`49e5e47f89329bfbd999cec2ba6b516d622ee712`.
+from baseline `49e5e47f89329bfbd999cec2ba6b516d622ee712`.
 
 ## 1. Surface role
 
@@ -24,30 +23,24 @@ Every view has one Paper. Print content; never stack Cards.
 
 `Sheet` is the drawer, never a surface. Wrappers use
 `data-surface="canvas|paper|print|container|overlay"`; absent means Print.
-Native structural elements that add persistent fill, container edge, ring, or
-shadow without that declaration are implicit painters and enter the warning
-ratchet. Print cannot carry those treatments. Primitive anatomy, status ink,
-identity ink, progress ink, and media remain outside the structural role count.
-More than one persistently elevated structural surface in a governed module is
-reported as multiplicity debt; use Print or compositing Container instead.
-Canvas/Paper are opaque. Container alpha darkens light mode and lightens dark;
-stacking is intentional, never a hole or lint condition. Only
+Persistent structural fill, edge, ring, shadow, and elevation require a declared
+role. Undeclared painters, painted Print, and multiple elevated roles are debt;
+primitive anatomy and semantic status, identity, progress, or media ink are not.
+Canvas/Paper are opaque. Container alpha darkens light and lightens dark;
+nesting is intentional. Only
 `data-slot="platform-bottom-navigation"` persists as Overlay.
-Sidebar is shell navigation on Canvas, including when Paper moves or shrinks;
-it never creates a separate Rail surface. Popover aliases Paper. Container is
-canonical neutral ink: black at 6 percent in light mode and white at 5 percent
-in dark mode. Foreground primary, secondary, and tertiary remain neutral ink at
-80, 65, and 57 percent alpha respectively.
+Sidebar stays shell navigation on Canvas as Paper moves; never a Rail. Popover
+aliases Paper. Container neutral ink is black at 6 percent in light mode and
+white at 5 percent in dark; foreground neutral ink is 80, 65, and 57 percent.
 
 Status is ink, not Paper. Metric is one definition list, never a
 Card per value. Stream rows use dividers, whitespace, and quiet interaction.
 
-At a governed invocation, callers may remove treatment and own external layout;
-they may not add persistent fill, border, ring, or shadow. `hover`, `focus`,
-`focus-visible`, `focus-within`, `active`, and their group/peer forms are
-ephemeral exceptions; attribute states are not. Bare radius paints nothing.
-Repeated caller recipes become named variants. Primitive roots, variants,
-anatomy, and internal state stay owned; governed-to-governed calls still count.
+Callers may remove treatment and own layout, but cannot add persistent fill,
+border, ring, or shadow. `hover`, `focus`, `focus-visible`, `focus-within`,
+`active`, and group/peer forms are ephemeral; attribute states are not. Bare
+radius paints nothing. Repeated recipes become variants. Primitive anatomy and
+internal state stay owned; governed-to-governed calls still count.
 
 ## 2. Radius and spacing
 
@@ -55,11 +48,8 @@ Large radii belong to independent raised surfaces, dialogs, and substantial
 media. Medium radii belong to controls, status treatments, and inset sections.
 Small radii belong to compact rows, focus contours, and tight nesting. Full
 radii are reserved for true pills, circular controls, and content-shaped chips.
-Inner geometry remains visually concentric and never appears rounder than its
-container. For statically nested painted surfaces, the outer radius is at least
-the inner radius plus the inset gap. Named radii must resolve to the governed
-`sm` through `4xl` ladder, `none`, or `full`; arbitrary and unnamed defaults are
-outside the contract.
+Inner geometry stays concentric: a painted outer radius covers its inner radius
+plus inset. Use only governed `none`, `sm`–`4xl`, or `full`; arbitrary radii fail.
 
 Spacing uses four semantic densities: tight inline relation, compact control
 cluster, standard component rhythm, and generous page-section separation.
@@ -131,18 +121,16 @@ tokens for the disabled treatment while preserving native disabled behavior.
   Mark read action; neither interactive element contains the other.
 - Destination precedes the secondary action in keyboard order. The secondary
   action mutates read state without navigation.
-- Both targets provide at least 48 by 48 CSS-pixel reach for coarse pointers,
-  and their hit regions do not overlap.
-- Anatomy is a stable caller-owned left anchor, title, one quiet metadata line,
-  optional quiet trailing value, and at most one sibling action. Read-state
-  streams may use the anchor for an unread indicator; comparable domain streams
-  use rank, identity, or category. Unread rows require a sibling action; read rows
-  never carry one. No repeated Open/View control remains.
+- Both targets provide non-overlapping 48-by-48 CSS-pixel coarse-pointer reach.
+- Anatomy is a stable caller-owned anchor, title, one quiet metadata line,
+  optional trailing value, and at most one sibling action. The anchor may show
+  unread, rank, identity, or category. Unread rows require the sibling action;
+  read rows never carry one. No repeated Open/View control remains.
 - A read row renders no secondary action and reserves no dead gutter for it.
   The content anchor remains stable when the mutation lands.
-- Evidence covers read/unread side by side, loading, empty, fetch error,
-  invitation error, pagination, live connection, read-only, long content,
-  light/dark, desktop/mobile, focus, navigation, and mutation.
+- Evidence covers read/unread, loading, empty, errors, pagination, live and
+  read-only states, long content, both themes and widths, focus, navigation,
+  and mutation.
 
 The Activity representative passed the Codex engineering gate and Claude craft
 gate before route-family adoption. New consumers preserve this anatomy and keep

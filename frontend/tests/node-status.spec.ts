@@ -49,6 +49,8 @@ test("makes probe failures explicit without hiding the other snapshot data", asy
   const status = page.getByTestId("node-status")
   await expect(status).toContainText("Partial UTXO database")
   await expect(status).toContainText("Node unavailable")
+  await expect(status).toContainText("The node did not respond.")
+  await expect(status).toContainText("Technical detail: request timeout")
   await expect(status).toContainText("Explorer unavailable")
   await expect(status).toContainText("The explorer did not respond.")
   await expect(status).toContainText("Technical detail: connection refused")

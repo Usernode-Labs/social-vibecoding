@@ -68,6 +68,9 @@ test("renders the public operational snapshot without admin diagnostics or contr
   await expect(status).toContainText("RecipeBot")
   await expect(status).toContainText("recipebot · session 11")
   await expect(status).toContainText("Container drift detected")
+  const driftAlert = status.getByTestId("operational-drift-alert")
+  await expect(driftAlert).toContainText("Service availability may be incomplete while operators restore the missing containers.")
+  await expect(driftAlert.getByRole("listitem")).toHaveText(["Production container: app-recipebot"])
   await expect(status).toContainText("Deploy in progress")
   await expect(status).not.toContainText("private-model")
   await expect(status).not.toContainText("secret progress text")
@@ -86,6 +89,19 @@ test("renders the public operational snapshot without admin diagnostics or contr
   await expect(status.getByRole("img", { name: "Node, synced" })).toBeVisible()
   await expect(status.getByRole("img", { name: "RecipeBot, running" })).toBeVisible()
   await expect(status.locator('[data-slot="badge"]')).toHaveCount(0)
+})
+
+test("explains node probe failures before exposing technical detail", async ({ page }) => {
+  await page.route("**/api/status", (route) => route.fulfill({ json: {
+    ...publicSnapshot,
+    node: { ...publicSnapshot.node, status: "unreachable", error: "AggregateError" },
+  } }))
+  await page.goto("/react/status")
+
+  const nodeCard = page.getByTestId("operational-node-card")
+  await expect(nodeCard).toContainText("Node probe failed")
+  await expect(nodeCard).toContainText("The node did not respond.")
+  await expect(nodeCard).toContainText("Technical detail: AggregateError")
 })
 
 test("routes attention before the app wall and keeps healthy rows quiet", async ({ page }) => {
