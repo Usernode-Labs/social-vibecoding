@@ -48,6 +48,14 @@ const VENDOR_FILES = [
   '/vendor/purify-3.4.4.min.js',
 ];
 
+// The pinned Tailwind browser runtime this platform serves to CHILD APPS
+// (the shell itself compiles its own stylesheet and never loads this).
+// Its digest is the same one recorded in public/vendor/README.md and pinned
+// in scripts/vendor-assets.js, which is what proves the bytes we hand the
+// whole fleet are the ones cdn.tailwindcss.com/3.4.17 serves.
+const HOSTED_TAILWIND = 'public/usernode-tailwind/v1/tailwind.js';
+const HOSTED_TAILWIND_SHA384 = 'igm5BeiBt36UU4gqwWS7imYmelpTsZlQ45FZf+XBn9MuJbn4nQr7yx1yFydocC/K';
+
 test('the committed stylesheet is in sync with its sources', () => {
   const stamped = readStamp(css);
   assert.ok(stamped, `${OUTPUT_FILE} has no build stamp on its first line — run \`npm run build:css\``);
@@ -185,6 +193,56 @@ test('each vendored library matches the sha384 recorded in its provenance row', 
       `${name} does not match its recorded sha384 — re-run \`npm run vendor:assets\` `
       + '(or, if the file was edited by hand, restore it: vendored copies are verbatim upstream)');
   }
+});
+
+// Same guarantee for the runtime we serve to every child app, and it matters
+// more here: this file is fetched from a URL rather than copied out of
+// node_modules, so a truncated download or an upstream swap would otherwise
+// be invisible. The digest is asserted against a literal in this file (not
+// just the README) so both the artifact and its provenance must move together.
+test('the hosted Tailwind runtime matches its pinned digest', () => {
+  const file = path.join(ROOT, HOSTED_TAILWIND);
+  assert.ok(fs.existsSync(file),
+    `${HOSTED_TAILWIND} is missing — run \`npm run vendor:assets\` (it fetches this one over the network)`);
+  const bytes = fs.readFileSync(file);
+  const actual = crypto.createHash('sha384').update(bytes).digest('base64');
+  assert.equal(actual, HOSTED_TAILWIND_SHA384,
+    `${HOSTED_TAILWIND} does not match the pinned Tailwind 3.4.17 digest. `
+    + 'Re-run `npm run vendor:assets`; do not update the digest without checking why upstream moved.');
+
+  // Verbatim upstream: the bundle reads the inline tailwind.config an app
+  // sets beside the tag, which is what makes a CDN swap behaviour-identical.
+  assert.ok(bytes.includes('tailwind.config'), 'the runtime should still read the inline tailwind.config global');
+
+  const provenance = fs.readFileSync(path.join(ROOT, 'public', 'vendor', 'README.md'), 'utf8');
+  assert.ok(provenance.includes('/usernode-tailwind/v1/tailwind.js'),
+    'README.md should record where the hosted runtime is served');
+  assert.ok(provenance.includes(HOSTED_TAILWIND_SHA384),
+    'README.md should record the hosted runtime digest');
+});
+
+// The auth gate runs before express.static, so a path that isn't allowlisted
+// gets a redirect-to-root HTML body where a script was expected. Child apps
+// fetch this cross-origin with no platform session, so the whole app would
+// render unstyled. /vendor/ hit exactly this during the shell work.
+test('the hosted Tailwind path is publicly fetchable', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'src', 'middleware', 'auth.js'), 'utf8');
+  const block = src.match(/const PUBLIC_PATHS = \[([\s\S]*?)\];/);
+  assert.ok(block, 'PUBLIC_PATHS array found');
+  const entries = [...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+  assert.ok(entries.includes('/usernode-tailwind/'),
+    'PUBLIC_PATHS must allowlist /usernode-tailwind/ so apps can load it without a session');
+
+  // Tests (this one and tests/history.test.js) read this array by regex, so a
+  // quoted string inside a COMMENT is indistinguishable from a real entry.
+  // Apostrophes in prose already produce such fragments; they are harmless
+  // because they are not paths. What must never appear is a fragment that
+  // reads as an over-broad prefix — a bare "/" would make every route look
+  // public to any check built on this parse.
+  const pathLike = entries.filter((e) => e.startsWith('/'));
+  assert.ok(!pathLike.includes('/'),
+    'a quoted bare "/" in PUBLIC_PATHS (entry or comment) reads as an allowlist of every route');
+  assert.ok(pathLike.length >= 10, 'expected the real path entries to parse out of PUBLIC_PATHS');
 });
 
 test('vendored tags carry no integrity/crossorigin attributes', () => {

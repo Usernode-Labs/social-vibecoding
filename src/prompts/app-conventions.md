@@ -1845,9 +1845,11 @@ apps.
 2. Add `viewport-fit=cover` to the viewport meta; put `.un-safe-top` /
    `.un-safe-bottom` (or the `-extend` variants) on fixed headers /
    bottom bars.
-3. Add `future: { hoverOnlyWhenSupported: true }` to the page's inline
-   `tailwind.config` so `hover:` styles stop sticking after taps on
-   touch screens.
+3. Add `future: { hoverOnlyWhenSupported: true }` so `hover:` styles stop
+   sticking after taps on touch screens — in `tailwind.config.js` on the
+   precompiled path (the scaffold already sets it), or in the page's inline
+   `tailwind.config` for an app still on the hosted runtime. See the
+   Tailwind section below for which path an app is on.
 4. Swap checkbox-style toggles to `class="un-switch"`.
 5. Wire `attachSwipeActions` on list rows with row-level actions
    (delete / archive / mark read), `attachPullToRefresh` on
@@ -1859,6 +1861,90 @@ apps.
    (`'push'`/`'pop'`; `'zoom-in'`/`'zoom-out'` for tile/card → detail);
    leave tabs/menus/panels instant.
 7. Optionally override `--un-*` variables to match the app's branding.
+
+## Tailwind — precompiled per app, runtime centrally hosted
+
+Every app on this platform styles itself with Tailwind. There are two ways
+to get it, and **the precompiled one is the default for new and edited
+apps**:
+
+### 1. Precompiled (default) — no styling script at all
+
+The scaffold ships a `tailwind.config.js`, a `styles/tailwind-input.css`,
+and a **builder stage in the app's Dockerfile** that compiles them to
+`public/tailwind.css`. The HTML just links it:
+
+```html
+<link rel="stylesheet" href="/tailwind.css">
+```
+
+Why this is the default: it is ~7 KB of finished CSS instead of a ~400 KB
+in-browser compiler, it paints instantly with no flash of unstyled content,
+and the visitor's device does no styling work.
+
+**There is no artifact to keep in sync and no rebuild step to remember.**
+The compile runs during `docker build`, which the platform does on a fresh
+clone for every production deploy *and* every staging preview — so the
+stylesheet is always generated from the markup in that exact commit.
+Nothing is committed to the repo; `public/tailwind.css` exists only inside
+the image.
+
+The one rule this path asks of you:
+
+- **Write class names as whole literals.** Tailwind's extractor is a regex
+  over your source text, so `class="bg-violet-600"` and
+  `cls = isError ? 'bg-red-500' : 'bg-zinc-500'` both work, including
+  inside JS strings. A name *assembled* at runtime —
+  `'bg-' + tone + '-500'` — is invisible to the compiler and will not be
+  styled. Pick whole strings out of a map or ternary instead; that is how
+  the platform's own shell does it.
+- Need a Tailwind plugin (`forms`, `typography`)? Add it to
+  `tailwind.config.js` `plugins` — strictly better than the CDN's
+  `?plugins=` query, which this path does not use.
+
+### 2. The centrally-hosted runtime — the escape hatch and migration target
+
+For an app that genuinely must generate class names at runtime, and as the
+one-line migration target for apps still pointing at the third-party CDN,
+the platform serves a pinned copy of the Tailwind browser engine from its
+own origin — exactly like the bridge and the native UI kit:
+
+```
+https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js
+```
+
+Canonical source: `social-vibecoding/public/usernode-tailwind/v1/tailwind.js`.
+
+```html
+<script src="https://social-vibecoding.usernodelabs.org/usernode-tailwind/v1/tailwind.js"></script>
+<script>tailwind.config = { darkMode: 'class' }</script>
+```
+
+Rules:
+
+- **Migrating off `cdn.tailwindcss.com` is a one-line change.** These are
+  byte-for-byte the same bytes that CDN serves (Tailwind 3.4.17, digest
+  recorded in `public/vendor/README.md`), and the inline `tailwind.config`
+  beside the tag keeps working untouched — so the swap is
+  behaviour-identical, with no visual difference and no rebuild.
+- **Why bother:** the CDN is one outside dependency shared by the entire
+  fleet. When that host is blocked or down, *every* app it serves loads
+  unstyled, not just one. Same reasoning as the bridge.
+- **`no-cache, must-revalidate`**, so a patch bump inside `/v1/` reaches
+  every app on its next page load (304s when unchanged).
+- **Versioning.** `/v1/` is OUR contract, not Tailwind's. A future Tailwind
+  major changes utility semantics and would ship at `/usernode-tailwind/v2/`,
+  with `/v1/` staying live until the last consumer moves.
+- **Rollback.** Revert in `social-vibecoding/` and redeploy the platform;
+  every app recovers on its next page load, no per-app redeploy.
+- **Expect one console warning.** The bundle logs Tailwind's own "should not
+  be used in production" notice. It is a `warn`, not an error, so it does
+  not affect proposal checks — it is kept because the file is verbatim
+  upstream, which is what makes its digest verifiable. Nothing to chase.
+- **Self-hosting caveat.** Fleet apps hard-code the
+  `social-vibecoding.usernodelabs.org` host; newly scaffolded apps derive
+  the platform origin from the deployment's own `USERNODE_DOMAIN`, so forks
+  get their own. See [SELF-HOSTING.md](../../SELF-HOSTING.md).
 
 ## Vendored shared files
 
