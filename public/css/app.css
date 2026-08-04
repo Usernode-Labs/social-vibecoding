@@ -488,6 +488,14 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
 }
+/* The row is a keyboard link as well as a pointer target. Keep its focus
+   ring inside the clipped panel so it remains visible on the first/last row
+   and does not alter the fixed-height layout. */
+.home-panel-row:focus-visible {
+  outline: 2px solid var(--accent, #7c3aed);
+  outline-offset: -2px;
+  z-index: 1;
+}
 .home-panel-row + .home-panel-row {
   border-top: 1px solid var(--border-light);
 }

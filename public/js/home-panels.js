@@ -458,9 +458,11 @@ const HomePanels = {
     // The task is the row's tooltip — the one place the dropped detail
     // still surfaces without costing height.
     const tip = c.task ? `${c.goal || ''} — ${c.task}` : (c.goal || '');
+    const destinationLabel = `Open challenge: ${c.goal || 'Challenge'}`;
     return `
       <div class="home-panel-row flex items-center gap-2 px-2.5 cursor-pointer hover:bg-violet-500/[0.04] dark:hover:bg-violet-500/10 transition-colors"
-           data-challenge-id="${esc(c.id)}" title="${esc(tip)}">
+           data-challenge-id="${esc(c.id)}" role="link" tabindex="0"
+           aria-label="${esc(destinationLabel)}" title="${esc(tip)}">
         ${glyph}
         <span class="home-panel-goal flex-1 min-w-0 truncate whitespace-nowrap text-[13px] text-zinc-900 dark:text-zinc-100">${esc(c.goal || '')}</span>
         ${countHtml}
@@ -491,6 +493,15 @@ const HomePanels = {
     // Rows and the footer's "Open" button both go to the Challenges screen.
     section.querySelectorAll('.home-panel-row').forEach((row) => {
       row.addEventListener('click', HomePanels.goToChallenges);
+      row.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return;
+        // Space normally scrolls the page. Once a row advertises link
+        // semantics it must activate from the keyboard instead, just as a
+        // pointer press does. Enter is handled explicitly too because this
+        // is a drag-capable grid item rather than a native anchor.
+        e.preventDefault();
+        HomePanels.goToChallenges();
+      });
     });
     section.querySelectorAll('.home-panel-open').forEach((btn) => {
       btn.addEventListener('click', (e) => { e.stopPropagation(); HomePanels.goToChallenges(); });

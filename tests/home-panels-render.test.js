@@ -245,6 +245,50 @@ test('render: a binary not-done row is one line — hollow glyph, no bar', () =>
   assert.match(html, /Report a reproducible bug/);
 });
 
+test('render: challenge rows expose a keyboard-focusable destination', () => {
+  const p = panel({
+    challenges: [challenge({ goal: 'Review \"quoted\" feedback' })],
+  });
+  const { html } = renderWith({ registry: [], hidden: [], panels: [p] });
+  assert.match(html, /home-panel-row[^>]*role="link"/);
+  assert.match(html, /home-panel-row[^>]*tabindex="0"/);
+  assert.match(html, /aria-label="Open challenge: Review &quot;quoted&quot; feedback"/,
+    'the destination is named and organiser text remains attribute-safe');
+});
+
+test('challenge rows activate from Enter and Space, without Space scrolling', () => {
+  const { HP, sandbox } = makeHomePanels();
+  const listeners = {};
+  const row = { addEventListener: (type, fn) => { listeners[type] = fn; } };
+  const host = {
+    querySelectorAll: (selector) => (selector === '.home-panel-row' ? [row] : []),
+  };
+  HP._wire(host);
+
+  let prevented = 0;
+  listeners.keydown({ key: 'Enter', preventDefault: () => { prevented += 1; } });
+  assert.equal(sandbox.location.hash, '#leaderboard/challenges');
+  assert.equal(prevented, 1);
+
+  sandbox.location.hash = '';
+  listeners.keydown({ key: ' ', preventDefault: () => { prevented += 1; } });
+  assert.equal(sandbox.location.hash, '#leaderboard/challenges');
+  assert.equal(prevented, 2, 'Space activates instead of scrolling the home feed');
+
+  sandbox.location.hash = '';
+  listeners.keydown({ key: 'ArrowDown', preventDefault: () => { prevented += 1; } });
+  assert.equal(sandbox.location.hash, '', 'unrelated keys keep their native behavior');
+  assert.equal(prevented, 2);
+});
+
+test('keyboard-focused rows keep a visible ring inside the clipped widget', () => {
+  const css = read('public/css/app.css');
+  const rule = css.match(/\.home-panel-row:focus-visible \{[^}]*\}/)[0];
+  assert.match(rule, /outline:\s*2px solid/);
+  assert.match(rule, /outline-offset:\s*-2px/,
+    'an inset ring is not clipped off the first or last fixed-height row');
+});
+
 test('render: a done row gets the ✓ glyph, not a chip or an earned-points line', () => {
   const p = panel({
     done: 1,
