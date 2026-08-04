@@ -14,17 +14,34 @@
 - For a feature/proposal authored from a local Codex or Claude session, keep
   the browser workflow's lifecycle while allowing the whole job to finish
   locally:
-  1. Inspect the app/repository and write the complete markdown spec first.
-  2. Call `proposal_start` with the base commit, spec, and durable history.
-     History contains exact user-visible requests plus concise agent summaries
-     with stable event IDs. Never upload hidden reasoning, credentials, raw
-     tool logs, or unrelated conversation.
-  3. Implement and test in the local checkout, commit the result, and push the
-     exact commit to the platform branch returned by `proposal_start`.
-  4. Call `proposal_submit_build` with that head SHA, any new durable history,
-     and structured local test results. Usernode verifies ancestry and runs the
-     normal staging and proposal-check pipeline.
-  5. Poll `proposal_status` until it reports `ready` or `failed`. Fix and
+  1. Resolve the app, repository, and exact base commit through Usernode.
+  2. Reuse a local checkout only when its `HEAD` is that exact base
+     commit. If the repository must be downloaded, do not fetch its full
+     history: use `git clone --depth 1` only when the remote default `HEAD` is
+     that base commit; otherwise initialize an empty repository, add the
+     remote, run `git fetch --depth=1 origin <base-sha>`, and detach-checkout
+     `FETCH_HEAD`. Verify `git rev-parse HEAD` equals the proposal base SHA.
+     Deepen the checkout only when the requested work genuinely requires
+     older history.
+  3. Inspect that checkout, write the complete markdown spec, and call
+     `proposal_start` with the base commit, spec, and durable history. History
+     contains exact user-visible requests plus concise agent summaries with
+     stable event IDs. Never upload hidden reasoning, credentials, raw tool
+     logs, or unrelated conversation.
+  4. Implement and test in the same local checkout, then commit locally. Do
+     not use personal GitHub credentials for the bot-owned platform branch and
+     do not dispatch a web coding agent merely to obtain push access. Call
+     `proposal_push_commit` with the local commit and repository path, execute
+     its returned host CLI `argv`, and use the returned bot-owned `headSha`.
+     Usernode reconstructs the commit through its GitHub App and rejects it
+     unless the resulting Git tree exactly matches the tested local tree.
+     Upload local commits oldest-first; after each upload, local and bot commit
+     SHAs may differ but their trees are identical, so the next local commit
+     continues safely without rebasing merely for the SHA difference.
+  5. Call `proposal_submit_build` with that returned head SHA, any new durable
+     history, and structured local test results. Usernode verifies ancestry and
+     runs the normal staging and proposal-check pipeline.
+  6. Poll `proposal_status` until it reports `ready` or `failed`. Fix and
      submit a later fast-forwarding commit when needed. Once ready, call
      `proposal_promote` when the user wants the proposal opened for voting.
   The returned `webPath` opens this same native session in the web Dev page,
@@ -43,6 +60,12 @@
   grant, run `node ./tools/social-vibecoding logout --profile <profile>` and
   retry the original API command so it starts fresh browser consent. Do not
   ask the user to run either command.
+- A sandboxed Codex stdio MCP process may return `host_execution_required`
+  when it cannot reach the OS native credential store. Do not retry that MCP
+  tool. Execute its exact `argv` in its `cwd` with host/out-of-sandbox
+  permission, use the CLI's JSON response, and use the external CLI path for
+  later Usernode calls in that sandboxed session. This is neither missing
+  authentication nor permission to copy credentials into the repository.
 - For an explicitly local request, check `http://localhost:3000/health` first.
   If it is unavailable, run `make up`, wait for health to report `ok`, and
   continue. Do not start the local stack for a production request.

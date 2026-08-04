@@ -198,13 +198,13 @@ app.use((req, res, next) => {
   if (req.path === '/api/me/cli-tokens'
       || req.path.startsWith('/api/me/cli-tokens/')) return next();
   // Native CLI proposal payloads deliberately carry a bounded spec, durable
-  // history, and structured local test summaries. Their combined valid shape
-  // can exceed Express's 100 KiB default, so the three write endpoints own a
-  // scoped 512 KiB parser in routes/proposal-handoff.js. Do not widen the
-  // rest of the app's JSON surface.
+  // history, structured local test summaries, and (for /commits) a bounded
+  // base64 snapshot of the changed Git blobs. These endpoints own scoped
+  // parsers in routes/proposal-handoff.js (512 KiB normally, 12 MiB only for
+  // commit upload). Do not widen the rest of the app's JSON surface.
   if (req.method === 'POST'
       && (/^\/api\/apps\/[^/]+\/proposal-handoffs$/.test(req.path)
-          || /^\/api\/sessions\/[^/]+\/proposal-handoff\/(?:context|build)$/.test(req.path))) {
+          || /^\/api\/sessions\/[^/]+\/proposal-handoff\/(?:context|build|commits)$/.test(req.path))) {
     return next();
   }
   // Agent-file uploads (#460) carry up to 48 KB of file content, which

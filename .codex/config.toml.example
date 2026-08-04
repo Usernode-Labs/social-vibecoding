@@ -20,6 +20,7 @@ enabled_tools = [
   "social_vibecoding.api_write",
   "social_vibecoding.proposal_start",
   "social_vibecoding.proposal_append_context",
+  "social_vibecoding.proposal_push_commit",
   "social_vibecoding.proposal_submit_build",
   "social_vibecoding.proposal_status",
   "social_vibecoding.proposal_promote",
