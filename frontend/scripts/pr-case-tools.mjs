@@ -42,12 +42,32 @@ function fileAt(revision, fileName) {
 }
 
 function physicalLinesAt(revision, fileNames) {
-  return fileNames.reduce((total, fileName) => {
-    const bytes = fileAt(revision, fileName)
-    let lines = 0
-    for (const byte of bytes) if (byte === 10) lines += 1
-    return total + lines
-  }, 0)
+  if (!fileNames.length) return 0
+  const input = `${fileNames.map((fileName) => `${revision}:${fileName}`).join("\n")}\n`
+  const batch = execFileSync("git", ["cat-file", "--batch"], {
+    cwd: repoRoot,
+    input,
+    maxBuffer: 64 * 1024 * 1024,
+  })
+  let offset = 0
+  let total = 0
+  for (const fileName of fileNames) {
+    const headerEnd = batch.indexOf(10, offset)
+    if (headerEnd < 0) throw new Error(`missing batch header for ${revision}:${fileName}`)
+    const [, type, rawSize] = batch.subarray(offset, headerEnd).toString("utf8").split(" ")
+    const size = Number(rawSize)
+    if (type !== "blob" || !Number.isSafeInteger(size)) {
+      throw new Error(`invalid batch object for ${revision}:${fileName}`)
+    }
+    const contentStart = headerEnd + 1
+    const contentEnd = contentStart + size
+    if (batch[contentEnd] !== 10) throw new Error(`missing batch separator for ${revision}:${fileName}`)
+    for (let index = contentStart; index < contentEnd; index += 1) {
+      if (batch[index] === 10) total += 1
+    }
+    offset = contentEnd + 1
+  }
+  return total
 }
 
 function measuredFiles(revision, fileNames) {
