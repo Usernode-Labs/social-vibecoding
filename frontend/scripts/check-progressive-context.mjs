@@ -116,6 +116,7 @@ export function evaluateProgressiveContext(report) {
     }
   }
   for (const bulkPath of [
+    "agent-skills/ui-development/references/usernode-api.md",
     "frontend/design-system/catalog.json",
     "frontend/design-system.manifest.json",
     "frontend/@/components/ui",

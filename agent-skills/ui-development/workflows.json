@@ -23,6 +23,35 @@
     "tool/"
   ],
   "workflows": {
+    "usernode-api": {
+      "priority": 120,
+      "description": "Inspect or change Usernode platform state and carry local proposals through the authenticated platform lifecycle.",
+      "terms": [
+        "usernode api",
+        "usernode proposal",
+        "social_vibecoding",
+        "proposal_start",
+        "proposal_push_commit",
+        "proposal_submit_build",
+        "proposal_status",
+        "proposal_promote"
+      ],
+      "paths": [],
+      "suppresses": [
+        "route",
+        "review"
+      ],
+      "context": [
+        "agent-skills/ui-development/references/usernode-api.md"
+      ],
+      "checks": [],
+      "evidence": [
+        "The exact platform profile, app, repository, and proposal base are named.",
+        "Local and uploaded commit trees match, and platform status reaches the requested lifecycle state.",
+        "Credentials, hidden reasoning, and unrelated conversation never enter proposal history or repository content."
+      ],
+      "stop": "Stop for browser approval only when a newly started device login requires the user's consent; never delegate setup or login commands."
+    },
     "harness": {
       "priority": 110,
       "description": "Maintain agent instructions, skills, discovery adapters, workflow routing, fitness evidence, or agent batteries.",
@@ -355,6 +384,13 @@
     }
   },
   "routingCases": [
+    {
+      "id": "usernode-api-task",
+      "task": "Use the Usernode API to start and submit a local Usernode proposal",
+      "files": [],
+      "expected": ["usernode-api"],
+      "forbidden": ["route", "review", "harness"]
+    },
     {
       "id": "harness-task",
       "task": "Audit whether the agent harness is equally usable by Claude and Codex",
