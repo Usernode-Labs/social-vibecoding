@@ -43,6 +43,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -77,7 +78,7 @@ jobs:
       - name: Upload harness fitness report
         uses: actions/upload-artifact@v4
         with:
-          name: harness-fitness-${{ github.sha }}
+          name: harness-fitness-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/harness-fitness.json
           if-no-files-found: error
           retention-days: 30
@@ -93,7 +94,7 @@ jobs:
       - run: npm run test:native-bridge-contract
       - name: Build immutable React shell
         env:
-          SV_REACT_SHELL_REVISION: ${{ github.sha }}
+          SV_REACT_SHELL_REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
         run: npm run build
       - name: Run authoritative root suite
         run: npm test
@@ -130,7 +131,7 @@ jobs:
       - run: npm run check:storybook-build
       - name: Package verified React shell
         env:
-          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           STAGE="$RUNNER_TEMP/verified-react-shell"
@@ -160,7 +161,7 @@ jobs:
       - name: Upload verified React shell
         uses: actions/upload-artifact@v4
         with:
-          name: react-shell-${{ github.sha }}
+          name: react-shell-${{ github.event.pull_request.head.sha || github.sha }}
           path: ${{ runner.temp }}/verified-react-shell
           if-no-files-found: error
           retention-days: 30

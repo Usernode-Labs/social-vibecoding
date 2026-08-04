@@ -367,6 +367,22 @@ for (const boundaryEvidence of [
   }
 }
 
+const pullRequestHeadRevision = "${{ github.event.pull_request.head.sha || github.sha }}"
+for (const revisionEvidence of [
+  `ref: ${pullRequestHeadRevision}`,
+  `name: harness-fitness-${pullRequestHeadRevision}`,
+  `SV_REACT_SHELL_REVISION: ${pullRequestHeadRevision}`,
+  `SOURCE_SHA: ${pullRequestHeadRevision}`,
+  `name: react-shell-${pullRequestHeadRevision}`,
+]) {
+  if (!ci.includes(revisionEvidence)) {
+    violations.push(`continuous integration must use the real pull-request head revision: ${revisionEvidence}`)
+  }
+}
+if (/\${{\s*github\.sha\s*}}/.test(ci)) {
+  violations.push("continuous integration must not stamp or package GitHub's synthetic pull-request merge revision")
+}
+
 if (process.env.CI || process.env.SLICE_BOUNDARY_CHECK === "true") {
   try {
     for (const checkpoint of wipCommitsInPublishRange(repoRoot)) {
