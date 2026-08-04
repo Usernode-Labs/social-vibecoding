@@ -349,8 +349,26 @@ const AppView = {
   TOKEN_REFRESH_MS: 45 * 60 * 1000,
 
   async open(slug) {
+    // #931: the token mint runs ALONGSIDE the detail fetch, not after it.
+    // These used to be strictly sequential, which cost a full extra round
+    // trip before the app iframe could even be built — the thing that made
+    // a tapped app animate in as an empty window. The mint needs nothing
+    // but the slug (and enforces its own access gate server-side), and it
+    // is single-flight, so on the eager-launch path this call just joins
+    // the mint the launch already started.
+    const tokenReady = AppView.refreshToken(slug);
     const res = await fetch(`/api/apps/${slug}`);
-    if (!res.ok) return;
+    if (!res.ok) {
+      // The server won't confirm this app, but a launch surface may already
+      // be mounted and pointing at it (beginLaunch runs off the cached list
+      // record). Drop both, so the switchTab that follows lands on
+      // renderAppTab's "App not available" branch instead of leaving an
+      // orphan frame under a cover that would never reveal.
+      await tokenReady;
+      if (AppView.appData && AppView.appData.slug === slug) AppView.appData = null;
+      AppView._teardownLaunch();
+      return;
+    }
     const { app: appData } = await res.json();
     AppView.appData = appData;
 
@@ -364,7 +382,7 @@ const AppView = {
     // after this fetch resolves, on the same lifecycle as the drawer's
     // app-scoped rows. Nothing to toggle here any more.
 
-    await AppView.refreshToken(slug);
+    await tokenReady;
     AppView.startActivityTracking(slug);
     AppView.startTokenRefresh();
     if (window.DevConsole) DevConsole.setCurrentApp(slug);
@@ -485,6 +503,9 @@ const AppView = {
     AppView.stopActivityTracking();
     AppView.stopTokenRefresh();
     AppView._issueStateSource = null;
+    // #931: retire any in-flight eager launch (generation bump + timers), so
+    // a frame we're about to unmount can't reveal itself over the next screen.
+    AppView._teardownLaunch();
     GroupChat.disconnect();
     // Detach kit scroll/keyboard handles for every app-scoped screen.
     ['dev-chat', 'group-chat', 'gc-thread', 'dev-feed'].forEach((k) => PlatformUI.detachScreenFx(k));
@@ -520,6 +541,63 @@ const AppView = {
   // opened app is never sent to a different app's iframe (it would fail
   // that app's audience check anyway; omitting it keeps the failure mode
   // "no token" rather than "rejected token").
+  //
+  // #931: minting goes through a small single-flight + short-freshness
+  // layer, because the launch path now asks for a token up to three times
+  // for the same app within a few hundred milliseconds (prewarm on
+  // pointerdown, beginLaunch on the tap, open() alongside the detail
+  // fetch). Without it those would be three mints and — worse — the eager
+  // iframe src could differ from the one renderAppTab rebuilds, which is
+  // what makes the double-load-free adoption in renderAppTab possible.
+  //
+  // 60s is deliberately short. Tokens live an hour and the long-session
+  // refresh below runs at 45min, so this window only ever covers
+  // "pointerdown → click → open" and expires long before anything that
+  // would need cache invalidation (logout, user switch) could matter.
+  TOKEN_FRESH_MS: 60 * 1000,
+  _tokenInflight: {},
+  _tokenFresh: null,
+
+  // Resolves the token string for `slug`, or null on any failure. Never
+  // rejects, and never touches iframeToken/iframeTokenSlug — a prewarm for
+  // an app the user hasn't opened must not repoint the held token away from
+  // the app that IS open (that would make its next iframe render tokenless).
+  _mintToken(slug) {
+    if (!slug) return Promise.resolve(null);
+    const fresh = AppView._tokenFresh;
+    if (fresh && fresh.slug === slug
+        && (Date.now() - fresh.at) < AppView.TOKEN_FRESH_MS) {
+      return Promise.resolve(fresh.token);
+    }
+    const inflight = AppView._tokenInflight[slug];
+    if (inflight) return inflight;
+    const p = (async () => {
+      try {
+        const res = await fetch(`/api/iframe-token?app=${encodeURIComponent(slug)}`);
+        if (!res.ok) return null;
+        const { token } = await res.json();
+        if (!token) return null;
+        AppView._tokenFresh = { slug, token, at: Date.now() };
+        return token;
+      } catch {
+        return null;
+      } finally {
+        delete AppView._tokenInflight[slug];
+      }
+    })();
+    AppView._tokenInflight[slug] = p;
+    return p;
+  },
+
+  // True when a token for `slug` is already in hand, i.e. beginLaunch can
+  // assign the iframe src synchronously on the tap instead of waiting a
+  // round trip for the mint.
+  hasFreshToken(slug) {
+    const fresh = AppView._tokenFresh;
+    return !!(slug && fresh && fresh.slug === slug
+      && (Date.now() - fresh.at) < AppView.TOKEN_FRESH_MS);
+  },
+
   async refreshToken(slug) {
     const target = slug || (AppView.appData && AppView.appData.slug) || null;
     if (!target) {
@@ -527,19 +605,16 @@ const AppView = {
       AppView.iframeTokenSlug = null;
       return;
     }
-    try {
-      const res = await fetch(`/api/iframe-token?app=${encodeURIComponent(target)}`);
-      if (res.ok) {
-        const { token } = await res.json();
-        AppView.iframeToken = token;
-        AppView.iframeTokenSlug = target;
-      } else {
-        // 404 (unknown app / no view access) or 400 — drop any stale token
-        // rather than keeping one that no longer matches the open app.
-        AppView.iframeToken = null;
-        AppView.iframeTokenSlug = null;
-      }
-    } catch {}
+    const token = await AppView._mintToken(target);
+    if (token) {
+      AppView.iframeToken = token;
+      AppView.iframeTokenSlug = target;
+    } else {
+      // 404 (unknown app / no view access) or 400 — drop any stale token
+      // rather than keeping one that no longer matches the open app.
+      AppView.iframeToken = null;
+      AppView.iframeTokenSlug = null;
+    }
   },
 
   // The token to attach for `slug`, or null when the held token was minted
@@ -593,6 +668,357 @@ const AppView = {
     }
   },
 
+  // ==========================================================================
+  // #931: eager app launch.
+  //
+  // The old sequence was: tap → zoom-in animates an EMPTY #app-view (opaque
+  // --un-zoom-bg) → the animation finishes → open() fetches the detail →
+  // then mints a token → only THEN is the iframe created. So the app's first
+  // byte wasn't even requested until after the 380ms zoom, and the app
+  // "popped in" over a white window.
+  //
+  // Now the iframe is mounted and pointed at the app INSIDE the transition's
+  // reveal callback, off the cached list record (which already carries `url`),
+  // so it loads during the animation. A cover — the app's own icon and name
+  // on the theme background, so it reads as the app opening rather than as a
+  // blank frame — sits on top and cross-fades out the moment the frame
+  // reports load. When open() later resolves and switchTab renders the App
+  // tab, renderAppTab ADOPTS this frame instead of rebuilding it, so there
+  // is exactly one document load.
+  // ==========================================================================
+
+  // Reveal ladder (all relative to the src assignment):
+  //   0ms      cover up, iframe at opacity 0, loading.
+  //   500ms    add a small spinner to the cover — enough of a wait that a
+  //            still frame would start to read as stuck.
+  //   on load  cross-fade: iframe → 1, cover → 0, cover removed after the
+  //            fade. This is the normal exit and usually lands mid-zoom.
+  //   2000ms   reveal anyway. A `load` event can be arbitrarily late (or
+  //            never fire, e.g. a download-disposition response); holding
+  //            the cover past two seconds hides an app that is very likely
+  //            already painting.
+  //   20000ms  swap the cover note to a "taking longer" line. Only reachable
+  //            when the cap was skipped because the mint hadn't settled.
+  LAUNCH_SPINNER_MS: 500,
+  LAUNCH_REVEAL_CAP_MS: 2000,
+  LAUNCH_SLOW_MS: 20000,
+  // Keep in sync with `.app-launch-cover` / `#app-iframe` transition
+  // durations in public/css/app.css.
+  LAUNCH_FADE_MS: 160,
+
+  // Generation counter. Every launch, teardown and close bumps it; every
+  // async callback (load, error, each timer, the post-mint src assignment)
+  // re-checks it, so a superseded launch can never touch the DOM of the one
+  // that replaced it.
+  _launchId: 0,
+  _launchTimers: [],
+  // Set by beginLaunch to the exact (launchId, slug, src) it mounted, read
+  // ONCE by renderAppTab to decide adopt-vs-rebuild.
+  _launchAdopt: null,
+
+  _reduceMotion() {
+    try {
+      return !!(window.matchMedia
+        && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    } catch { return false; }
+  },
+
+  // Cleared IN PLACE, not reassigned: watchSurfaceLoad captures the array
+  // it pushes into, so swapping in a fresh one would leave a re-armed
+  // ladder pushing timers nobody can cancel.
+  _clearLaunchTimers() {
+    AppView._launchTimers.forEach((t) => clearTimeout(t));
+    AppView._launchTimers.length = 0;
+  },
+
+  // Abandon any in-flight launch: bump the generation (so pending callbacks
+  // go inert), drop the adoption offer, stop the timers. Does NOT touch the
+  // DOM — callers either replace #app-content wholesale or are hiding it.
+  _teardownLaunch() {
+    AppView._launchId += 1;
+    AppView._launchAdopt = null;
+    AppView._clearLaunchTimers();
+  },
+
+  // home.js is a classic script: its `const Home = {…}` is a top-level
+  // LEXICAL binding, reachable as a bareword from other classic scripts but
+  // NOT a property of window (the same trap the `window.AppView = AppView`
+  // note at the bottom of this file documents — home.js never made that
+  // assignment). Gating on `window.Home` here would be permanently false in
+  // a real browser and would silently disable the whole eager launch.
+  _home() {
+    try {
+      if (typeof Home !== 'undefined' && Home) return Home;
+    } catch { /* not defined in this context */ }
+    return (typeof window !== 'undefined' && window.Home) || null;
+  },
+
+  // The cached list record for `slug`, from whichever surface the user
+  // tapped. Both caches hold the /api/apps payload, which carries `url`,
+  // `status` and the icon fields — everything the launch surface needs.
+  launchRecordFor(slug) {
+    if (!slug) return null;
+    const home = AppView._home();
+    const fromHome = home && Array.isArray(home._apps)
+      ? home._apps.find((a) => a && a.slug === slug) : null;
+    if (fromHome) return fromHome;
+    const fromBrowse = window.Browse && typeof Browse.appBySlug === 'function'
+      ? Browse.appBySlug(slug) : null;
+    return fromBrowse || null;
+  },
+
+  // Only launch eagerly when the frame we'd mount is the same frame
+  // renderAppTab would build. Anything else (a self-hosted app, whose
+  // default tab is Dev; a demo card, which has no real origin; an explicit
+  // non-app tab; offline) falls back to the old path untouched.
+  canEagerLaunch(slug, tab) {
+    if (tab && tab !== 'app') return false;
+    if (window.Offline && Offline.isOffline()) return false;
+    const rec = AppView.launchRecordFor(slug);
+    if (!rec) return false;
+    if (rec.demo) return false;
+    if (rec.self_hosted) return false;
+    if (rec.status !== 'running' || !rec.url) return false;
+    return true;
+  },
+
+  // The one place the sandboxed-iframe attribute contract is written.
+  // NOTE: when `src` is null the attribute is OMITTED entirely — `src=""`
+  // resolves against the parent document, which would load the platform
+  // shell inside its own app frame.
+  _appIframeHtml({ src = null, hidden = false } = {}) {
+    const srcAttr = src ? `\n        src="${src}"` : '';
+    const styleAttr = hidden ? '\n        style="opacity:0"' : '';
+    return `
+      <iframe
+        id="app-iframe"${srcAttr}${styleAttr}
+        class="w-full h-full border-0"
+        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"
+        allow="clipboard-write; pointer-lock"
+      ></iframe>`;
+  },
+
+  // The cover: app icon + name on the theme background. `pinned` marks a
+  // cover that must never be revealed away (the screenshot state).
+  _launchCoverHtml(record, { id = 'app-launch-cover', pinned = false } = {}) {
+    const home = AppView._home();
+    const tile = home && typeof home.iconTileFor === 'function'
+      ? home.iconTileFor(record || {})
+      : { kind: 'letter', html: escapeHtml(((record && record.name) || '?').charAt(0).toUpperCase()) };
+    const name = escapeHtml((record && record.name) || '');
+    return `
+      <div id="${id}" class="app-launch-cover"${pinned ? ' data-pinned="true"' : ''} aria-hidden="true">
+        <div class="app-icon-tile app-launch-cover-icon" data-icon="${tile.kind}">${tile.html}</div>
+        <p class="app-launch-cover-name">${name}</p>
+        <p class="app-launch-cover-note" id="${id}-note">Opening…</p>
+        <div class="dc-status-spinner-arc app-launch-cover-spinner hidden" id="${id}-spinner"></div>
+      </div>`;
+  },
+
+  // Mount the launch surface and start the app loading. Called from inside
+  // PlatformUI.transition's reveal callback in App.navigateToApp, so the
+  // frame exists before the zoom's first frame paints. Returns true when it
+  // took over; false leaves the old (empty-then-render) path in place.
+  beginLaunch(slug, tab) {
+    if (!AppView.canEagerLaunch(slug, tab)) return false;
+    const content = document.getElementById('app-content');
+    if (!content) return false;
+    const rec = AppView.launchRecordFor(slug);
+
+    AppView._launchId += 1;
+    const launchId = AppView._launchId;
+    AppView._clearLaunchTimers();
+    AppView._launchAdopt = null;
+    // #685: a new frame invalidates any prior issue-state announcement,
+    // same reason renderAppTab clears it.
+    AppView._issueStateSource = null;
+
+    // Stand appData up from the list record so buildAppIframeSrc (and any
+    // status-driven re-render that arrives mid-launch) has something
+    // consistent to read. open() replaces it with the full detail payload.
+    AppView.appData = rec;
+
+    content.innerHTML = `
+      <div class="app-launch-host w-full h-full">
+        ${AppView._appIframeHtml({ hidden: true })}
+        ${AppView._launchCoverHtml(rec)}
+      </div>`;
+
+    const iframe = document.getElementById('app-iframe');
+    if (!iframe) return false;
+
+    const proceed = (src) => {
+      if (launchId !== AppView._launchId) return;
+      if (!src || !iframe.isConnected) return;
+      // Record the exact src so renderAppTab can prove the frame it finds
+      // is the frame it would have built — a mismatch (deep link, token
+      // refresh, different app) rebuilds instead of adopting.
+      AppView._launchAdopt = { launchId, slug, src };
+      AppView._watchLaunchLoad(iframe, launchId);
+      iframe.src = src;
+    };
+
+    if (AppView.hasFreshToken(slug)) {
+      // Prewarm landed: no await, so the document request goes out in the
+      // same tick as the tap.
+      AppView.iframeToken = AppView._tokenFresh.token;
+      AppView.iframeTokenSlug = slug;
+      proceed(AppView.buildAppIframeSrc());
+    } else {
+      // Wait for the mint to SETTLE (not just resolve successfully) before
+      // assigning src, so the eager src is byte-identical to the one
+      // renderAppTab builds — including the no-token case.
+      AppView.refreshToken(slug).then(() => {
+        if (launchId !== AppView._launchId) return;
+        if (!AppView.appData || AppView.appData.slug !== slug) return;
+        proceed(AppView.buildAppIframeSrc());
+      });
+      // A mint that never settles would leave a src-less frame under the
+      // cover; the spinner and slow-note rungs still run, and the reveal
+      // cap deliberately does not (see _watchLaunchLoad).
+      AppView._watchLaunchLoad(iframe, launchId);
+    }
+    return true;
+  },
+
+  // The reveal ladder, over any (iframe, cover) pair. Two callers: the App
+  // tab's launch (below) and the anonymous landing viewer, which mounts the
+  // same cover over #app-viewer-frame. `isCurrent` is the caller's
+  // "still the surface on screen" predicate — every async branch re-checks
+  // it, so a superseded surface can never touch the DOM. Timers are pushed
+  // into the caller's own array so it can cancel them on teardown.
+  watchSurfaceLoad(iframe, { iframeId, coverId, isCurrent, timers }) {
+    const current = () => !!isCurrent() && iframe.isConnected;
+    const reveal = () => AppView._revealLaunch({ iframeId, coverId, timers });
+
+    iframe.onload = () => {
+      // A src-less mount navigates to about:blank, which fires `load`.
+      // Ignore it — revealing here would show an empty frame.
+      if (!iframe.getAttribute('src')) return;
+      if (!current()) return;
+      if (iframeId === 'app-iframe') AppView.iframeFocused = true;
+      reveal();
+    };
+    iframe.onerror = () => {
+      if (!iframe.getAttribute('src')) return;
+      if (!current()) return;
+      // Nothing better to show than the app's own frame: it will render
+      // whatever the origin returned (its own error page, usually).
+      reveal();
+    };
+
+    const at = (ms, fn) => timers.push(setTimeout(() => {
+      if (!current()) return;
+      fn();
+    }, ms));
+
+    at(AppView.LAUNCH_SPINNER_MS, () => {
+      document.getElementById(`${coverId}-spinner`)?.classList.remove('hidden');
+    });
+    at(AppView.LAUNCH_REVEAL_CAP_MS, () => {
+      // Never strip the cover off a frame that has no src yet (a stalled
+      // mint) — that would reveal a blank white iframe, the exact bug this
+      // whole change removes.
+      if (!iframe.getAttribute('src')) return;
+      reveal();
+    });
+    at(AppView.LAUNCH_SLOW_MS, () => {
+      const note = document.getElementById(`${coverId}-note`);
+      if (note) note.textContent = 'This is taking longer than expected…';
+    });
+  },
+
+  // Arm the ladder for the App tab's launch. Idempotent per generation:
+  // called once when the src is known synchronously, or once up-front plus
+  // once more after the mint settles — re-arming resets the same handlers,
+  // and clearing first re-bases every rung on the src assignment.
+  _watchLaunchLoad(iframe, launchId) {
+    if (launchId !== AppView._launchId) return;
+    AppView._clearLaunchTimers();
+    AppView.watchSurfaceLoad(iframe, {
+      iframeId: 'app-iframe',
+      coverId: 'app-launch-cover',
+      isCurrent: () => launchId === AppView._launchId,
+      timers: AppView._launchTimers,
+    });
+  },
+
+  // Cross-fade the app in and the cover out. Safe to call more than once.
+  _revealLaunch(opts = {}) {
+    const iframeId = opts.iframeId || 'app-iframe';
+    const coverId = opts.coverId || 'app-launch-cover';
+    // Once revealed, the remaining rungs (spinner, cap, slow note) are moot.
+    const timers = opts.timers || AppView._launchTimers;
+    timers.forEach((t) => clearTimeout(t));
+    timers.length = 0;
+    const iframe = document.getElementById(iframeId);
+    if (iframe) iframe.style.opacity = '1';
+    const cover = document.getElementById(coverId);
+    if (!cover) return;
+    // The screenshot state pins its cover: it is the subject of the shot.
+    if (cover.dataset.pinned === 'true') return;
+    if (AppView._reduceMotion()) {
+      cover.remove();
+      return;
+    }
+    cover.classList.add('app-launch-cover--out');
+    setTimeout(() => cover.remove(), AppView.LAUNCH_FADE_MS + 40);
+  },
+
+  // #931: the anonymous landing viewer's launch surface. Its iframe is a
+  // fixed element in index.html rather than markup this module writes, so
+  // instead of replacing a container the cover is APPENDED to the viewer
+  // host (which the CSS makes a positioning context) and the frame is faded
+  // in underneath. Same cover markup and same ladder as the App tab; the
+  // caller owns the generation counter and the timer array, and removes the
+  // cover on close. No token is involved — landing apps are public.
+  mountViewerCover(host, iframe, record, { timers, isCurrent }) {
+    if (!host || !iframe) return;
+    host.classList.add('app-launch-host');
+    const coverId = 'app-viewer-cover';
+    document.getElementById(coverId)?.remove();
+    iframe.style.opacity = '0';
+    // insertAdjacentHTML, not innerHTML: the frame is a long-lived element
+    // in the document — replacing the host's children would destroy it.
+    host.insertAdjacentHTML('beforeend', AppView._launchCoverHtml(record, { id: coverId }));
+    AppView.watchSurfaceLoad(iframe, {
+      iframeId: iframe.id,
+      coverId,
+      isCurrent,
+      timers,
+    });
+  },
+
+  // #931: paint the launch surface with NO app behind it, spinner showing.
+  // Screenshot-state deep link only (`?shot=app-launching`) — a real launch
+  // always goes through beginLaunch. The record falls back to a self-
+  // contained stub so this renders against a fresh, empty database.
+  showLaunchCoverShot() {
+    const content = document.getElementById('app-content');
+    if (!content) return;
+    const home = AppView._home();
+    const apps = (home && Array.isArray(home._apps)) ? home._apps : [];
+    // Prefer an app a tap could really open (so the shot shows a real icon),
+    // then any app at all, then a self-contained stub — the fallback is what
+    // makes this link work against a fresh, empty checks database.
+    const rec = apps.find((a) => a && a.status === 'running' && a.url && !a.demo)
+      || apps[0]
+      || { slug: 'staging-demo-launch', name: 'Staging demo app', icon_emoji: '🚀' };
+    AppView._launchId += 1;
+    AppView._clearLaunchTimers();
+    AppView._launchAdopt = null;
+    // Pinned: nothing may reveal this away, and no iframe is mounted at all
+    // (the shot is the cover, and a frame would try to load a real origin).
+    content.innerHTML = `
+      <div class="app-launch-host w-full h-full">
+        ${AppView._launchCoverHtml(rec, { pinned: true })}
+      </div>`;
+    document.getElementById('app-launch-cover-spinner')?.classList.remove('hidden');
+    document.getElementById('home-screen')?.classList.add('hidden');
+    document.getElementById('app-view')?.classList.remove('hidden');
+    document.getElementById('back-btn')?.classList.remove('hidden');
+  },
+
   renderAppTab() {
     const content = document.getElementById('app-content');
     const appData = AppView.appData;
@@ -604,6 +1030,10 @@ const AppView = {
     AppView._issueStateSource = null;
 
     if (!appData || appData.status !== 'running' || !appData.url) {
+      // #931: this branch replaces #app-content, so any launch surface under
+      // it is gone — retire the generation so its pending callbacks and the
+      // adoption offer can't outlive the frame they belong to.
+      AppView._teardownLaunch();
       let inner;
       if (appData?.status === 'creating') {
         inner = '<div class="status-dot creating"></div><p class="text-sm">App is spinning up...</p>';
@@ -672,6 +1102,7 @@ const AppView = {
     // offline the iframe would render a broken frame. Show a placeholder
     // instead and re-render automatically once connectivity returns.
     if (window.Offline && Offline.isOffline()) {
+      AppView._teardownLaunch();
       content.innerHTML = `
         <div class="flex flex-col items-center justify-center h-full text-zinc-500 dark:text-zinc-400 gap-2 p-4 text-center">
           <p class="text-sm">This app needs a connection — reconnect to open it.</p>
@@ -688,14 +1119,26 @@ const AppView = {
 
     const iframeSrc = AppView.buildAppIframeSrc();
 
-    content.innerHTML = `
-      <iframe
-        id="app-iframe"
-        src="${iframeSrc}"
-        class="w-full h-full border-0"
-        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-pointer-lock"
-        allow="clipboard-write; pointer-lock"
-      ></iframe>`;
+    // #931: one-shot adoption. beginLaunch may already have mounted this
+    // exact frame during the open animation; read the offer and null it in
+    // the same breath, so only the FIRST render after a launch can adopt.
+    // Every later render (WS status flip, swapToProduction, the offline
+    // retry, a post-merge reload) rebuilds as it always did.
+    const adopt = AppView._launchAdopt;
+    AppView._launchAdopt = null;
+    if (adopt
+        && adopt.launchId === AppView._launchId
+        && adopt.slug === appData.slug
+        && adopt.src === iframeSrc
+        && document.getElementById('app-iframe')) {
+      // Same app, same URL, frame already loading (or loaded) — touching
+      // the DOM here would restart the document load and undo the whole
+      // point of the eager launch.
+      return;
+    }
+    AppView._teardownLaunch();
+
+    content.innerHTML = AppView._appIframeHtml({ src: iframeSrc });
 
     const iframe = document.getElementById('app-iframe');
     iframe.addEventListener('load', () => {

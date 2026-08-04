@@ -245,6 +245,26 @@
     _openAppSlug: null,
     _openAppName: null,
 
+    // #931: launch-cover state for the in-page viewer. The generation
+    // counter makes a superseded open's `load`/timers inert (same contract
+    // as AppView._launchId); the timer array is the one the shared ladder
+    // pushes its rungs into.
+    _viewerLaunchId: 0,
+    _viewerTimers: [],
+
+    _clearViewerCover() {
+      AuthScreens._viewerTimers.forEach((t) => clearTimeout(t));
+      // In place — the ladder captured this array (see AppView).
+      AuthScreens._viewerTimers.length = 0;
+      const frame = document.getElementById('app-viewer-frame');
+      if (frame) {
+        frame.onload = null;
+        frame.onerror = null;
+        frame.style.opacity = '';
+      }
+      document.getElementById('app-viewer-cover')?.remove();
+    },
+
     // Assigned real implementations by _wireLanding (they close over the
     // viewer elements). No-ops until then, so header CTAs wired on other
     // screens can call them unconditionally.
@@ -262,6 +282,9 @@
       if (!viewer || viewer.classList.contains('hidden')) return;
       AuthScreens._openAppSlug = null;
       AuthScreens._openAppName = null;
+      // #931: retire the launch generation and drop the cover with it.
+      AuthScreens._viewerLaunchId = (AuthScreens._viewerLaunchId || 0) + 1;
+      AuthScreens._clearViewerCover();
       viewer.classList.add('hidden');
       const frame = byId('app-viewer-frame');
       if (frame) frame.src = 'about:blank';
@@ -385,6 +408,22 @@
         const slug = app.slug || '';
         AuthScreens._openAppSlug = slug;
         AuthScreens._openAppName = app.name || slug;
+        // #931: the anonymous viewer had the same white-window problem as
+        // the signed-in App tab — the frame started loading here, but the
+        // zoom animated a blank iframe and the app popped in afterwards. It
+        // needs no token (public apps only), so the src assignment was
+        // already immediate; what was missing is something to look at while
+        // it loads. Mount the same cover over the frame and cross-fade it
+        // out on load, using the shared ladder in AppView.
+        AuthScreens._viewerLaunchId = (AuthScreens._viewerLaunchId || 0) + 1;
+        const launchId = AuthScreens._viewerLaunchId;
+        AuthScreens._clearViewerCover();
+        if (window.AppView && typeof AppView.mountViewerCover === 'function') {
+          AppView.mountViewerCover(viewer, viewerFrame, app, {
+            timers: AuthScreens._viewerTimers,
+            isCurrent: () => launchId === AuthScreens._viewerLaunchId,
+          });
+        }
         viewerFrame.src = app.url;
         history.pushState({ svAnonAppViewer: true }, '', location.href);
         zoomFx(() => {
@@ -405,6 +444,11 @@
         const slug = AuthScreens._openAppSlug;
         AuthScreens._openAppSlug = null;
         AuthScreens._openAppName = null;
+        // #931: retire the launch generation and drop the cover before the
+        // zoom-out, so a `load` still in flight can't fade a cover back in
+        // over the shrinking overlay.
+        AuthScreens._viewerLaunchId = (AuthScreens._viewerLaunchId || 0) + 1;
+        AuthScreens._clearViewerCover();
         // fallback 'none': a View Transition snapshot of a LIVE app
         // iframe can flash on iOS Safari, so the non-kit path cuts
         // instantly — same choice App.navigateHome makes leaving the App
