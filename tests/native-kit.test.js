@@ -311,8 +311,14 @@ test('native.css: .un-sheet does not clip its overscroll filler', () => {
 
 test('native.css: Android action sheets use a cohesive Material-style surface', () => {
   const sheet = cssBlock('html.un-android .un-action-sheet');
-  assert.match(sheet, /padding:\s*0\s+16px/,
-    'Android action sheets need material side insets rather than the iOS card gutter');
+  assert.match(sheet, /safe-area-inset-right/,
+    'Android action sheets need a landscape-notch-aware right inset');
+  assert.match(sheet, /safe-area-inset-left/,
+    'Android action sheets need a landscape-notch-aware left inset');
+
+  const keyboardSheet = cssBlock('html.un-android.un-kb .un-action-sheet');
+  assert.match(keyboardSheet, /padding-bottom:\s*8px/,
+    'the Android shorthand must not re-add the home-indicator inset above the keyboard');
 
   const firstCard = cssBlock('html.un-android .un-action-card:first-child');
   assert.match(firstCard, /border-radius:\s*28px\s+28px\s+0\s+0/,
@@ -331,6 +337,34 @@ test('native.css: Android action sheets use a cohesive Material-style surface', 
     'Android action rows must retain a touch-sized target');
   assert.match(action, /text-align:\s*left/,
     'Material action-sheet rows are left aligned');
+
+  const destructive = cssBlock('html.un-android .un-action-btn.un-destructive');
+  assert.match(destructive, /color:\s*var\(--un-action-danger\)/,
+    'the more-specific Android row skin must preserve destructive emphasis');
+});
+
+test('native.js: action sheets preserve modal accessibility and reduced-motion contracts', () => {
+  const js = fs.readFileSync(
+    path.join(__dirname, '..', 'public', 'usernode-native', 'v1', 'native.js'),
+    'utf8'
+  );
+  const start = js.indexOf('function actionSheet(options)');
+  const end = js.indexOf('function popover(options)', start);
+  assert.ok(start !== -1 && end > start, 'native.js lost the actionSheet implementation');
+  const actionSheet = js.slice(start, end);
+
+  assert.match(actionSheet, /setAttribute\('role',\s*'dialog'\)/,
+    'screen readers need action sheets exposed as dialogs');
+  assert.match(actionSheet, /setAttribute\('aria-modal',\s*'true'\)/,
+    'the action sheet backdrop represents a modal surface');
+  assert.match(actionSheet, /modalStack\.push\(entry\)/,
+    'Escape must dismiss action sheets through the shared topmost-modal stack');
+  assert.match(actionSheet, /prevFocus\.focus/,
+    'closing an action sheet must restore focus to its invoker');
+  assert.match(actionSheet, /e\.key !== 'Tab'/,
+    'modal action-sheet focus must not escape into the obscured page');
+  assert.match(actionSheet, /prefersReducedMotion/,
+    'action-sheet springs must become instant when reduced motion is requested');
 });
 
 // ── Side panel contract ────────────────────────────────────────────────

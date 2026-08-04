@@ -761,6 +761,11 @@ html.un-kb .un-action-sheet {
 .un-action-btn.un-action-cancel {
   font-weight: 600;
 }
+.un-action-btn:focus-visible {
+  outline: 2px solid var(--un-accent);
+  outline-offset: -2px;
+  background: var(--un-surface);
+}
 
 /* Material action-sheet skin. Keep the markup and behavior shared with
    iOS: the two cards become contiguous sections of one large-radius sheet,
@@ -768,7 +773,17 @@ html.un-kb .un-action-sheet {
    This is deliberately scoped to Android so the existing iOS action-sheet
    idiom remains intact. */
 html.un-android .un-action-sheet {
+  /* The first declaration is the older-WebView fallback; modern engines
+     then widen either side for a landscape display cutout. */
   padding: 0 16px calc(8px + env(safe-area-inset-bottom, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+}
+/* The sheet already moves above the keyboard via --un-kb-inset. As with
+   the base skin, do not stack the home-indicator inset on top of it. This
+   rule must follow the Android padding shorthand above. */
+html.un-android.un-kb .un-action-sheet {
+  padding-bottom: 8px;
 }
 html.un-android .un-action-card {
   border-radius: 0;
@@ -797,6 +812,9 @@ html.un-android .un-action-btn {
   font-size: 0.875rem;
   font-weight: 500;
   color: inherit;
+}
+html.un-android .un-action-btn.un-destructive {
+  color: var(--un-action-danger);
 }
 html.un-android .un-action-btn.un-action-cancel {
   text-align: right;

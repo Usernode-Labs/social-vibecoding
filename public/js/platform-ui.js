@@ -112,7 +112,7 @@
         });
     },
 
-    /** iOS-style action sheet. Resolves the chosen action or null.
+    /** Platform-adaptive action sheet. Resolves the chosen action or null.
         Returns Promise.resolve(null) when the kit is missing — callers
         should only route here when isTouch() (or hasKit()) is true. */
     actionSheet(opts) {

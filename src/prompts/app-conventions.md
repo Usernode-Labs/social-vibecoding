@@ -1652,11 +1652,13 @@ Loading `native.js` sets `html.un-ios` / `html.un-android` /
   Prefer this to a bottom sheet for persistent navigation, and a bottom
   sheet for transient trays.
 - **Action sheet.** `unNative.actionSheet({ title?, actions: [{ label,
-  destructive?, handler? }], cancelLabel? })` — platform-adaptive actions:
+  destructive?, handler? }], cancelLabel?, ariaLabel? })` — platform-adaptive actions:
   an iOS-style stack with a red destructive action and separate Cancel card
   on iOS, or a Material-style bottom sheet with left-aligned touch rows on
-  Android; backdrop cancels. Resolves a Promise with the chosen action
-  object, or `null`.
+  Android; backdrop or Escape cancels. It exposes modal dialog semantics,
+  focuses the first action, restores the invoking control's focus on close,
+  and resolves a Promise with the chosen action object, or `null`. Supply
+  `ariaLabel` when deliberately omitting the visible title.
 - **Alert dialog.** `unNative.alert({ title, message?, field?:
   { placeholder?, value? }, buttons?: [{ label, style?:
   'cancel'|'default'|'destructive', handler? }] })` — the compact

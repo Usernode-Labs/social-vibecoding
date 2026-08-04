@@ -2616,16 +2616,23 @@
    * chosen action object, or null on cancel/backdrop.
    * ──────────────────────────────────────────────────────────────────── */
 
-  // actionSheet({ title?, actions: [{ label, destructive?, handler? }],
-  // cancelLabel? }) — returns a Promise.
+  // actionSheet({ title?, ariaLabel?,
+  // actions: [{ label, destructive?, handler? }], cancelLabel? }) — returns
+  // a Promise. ariaLabel is useful when the visible title is intentionally
+  // omitted; adding it is backwards-compatible within the frozen v1 API.
   function actionSheet(options) {
     var opts = options || {};
     var actions = opts.actions || [];
     return new Promise(function (resolve) {
       var backdrop = document.createElement('div');
       backdrop.className = 'un-backdrop';
+      backdrop.setAttribute('aria-hidden', 'true');
       var wrap = document.createElement('div');
       wrap.className = 'un-action-sheet';
+      wrap.setAttribute('role', 'dialog');
+      wrap.setAttribute('aria-modal', 'true');
+      wrap.setAttribute('aria-label', opts.ariaLabel || opts.title || 'Actions');
+      wrap.tabIndex = -1;
 
       var card = document.createElement('div');
       card.className = 'un-action-card';
@@ -2658,10 +2665,13 @@
       document.body.appendChild(backdrop);
       document.body.appendChild(wrap);
 
+      var prevFocus = document.activeElement;
       var height = wrap.offsetHeight || 1;
       var y = height;
       var activeSpring = null;
       var settled = false;
+      var entry = { dismissible: true, dismiss: function () { settle(null); } };
+      modalStack.push(entry);
 
       function render(val) {
         y = val;
@@ -2671,6 +2681,12 @@
 
       function springTo(to, velocity, onRest) {
         if (activeSpring) activeSpring.stop();
+        if (prefersReducedMotion) {
+          activeSpring = null;
+          render(to);
+          if (onRest) onRest();
+          return;
+        }
         activeSpring = spring(function (v) { render(v); }, {
           from: y, to: to, velocity: velocity || 0, preset: 'sheet',
           onRest: function () { activeSpring = null; if (onRest) onRest(); },
@@ -2682,6 +2698,10 @@
         if (unwatch) unwatch();
         if (backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
         if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+        if (prevFocus && typeof prevFocus.focus === 'function') {
+          try { prevFocus.focus({ preventScroll: true }); }
+          catch (e) { try { prevFocus.focus(); } catch (err) { /* ignore */ } }
+        }
         if (settleAction && settleAction.handler) settleAction.handler();
         resolve(settleAction || null);
       }
@@ -2689,11 +2709,29 @@
       function settle(action) {
         if (settled) return;
         settled = true;
+        var i = modalStack.indexOf(entry);
+        if (i >= 0) modalStack.splice(i, 1);
         settleAction = action || null;
         springTo(height, 0, finishSettle);
       }
 
       backdrop.addEventListener('click', function () { settle(null); });
+      // aria-modal must be true in behavior as well as markup: keep Tab
+      // inside the action surface until the user chooses or cancels.
+      wrap.addEventListener('keydown', function (e) {
+        if (e.key !== 'Tab') return;
+        var buttons = wrap.querySelectorAll('button:not(:disabled)');
+        if (!buttons.length) { e.preventDefault(); wrap.focus(); return; }
+        var first = buttons[0];
+        var last = buttons[buttons.length - 1];
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === wrap)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      });
 
       // Same present-time height assumption as the bottom sheet (issue
       // #742). The API can't receive late content, but a re-measure (e.g.
@@ -2712,6 +2750,12 @@
 
       render(height);
       springTo(0, 0);
+      requestAnimationFrame(function () {
+        if (settled || !wrap.parentNode) return;
+        var target = card.querySelector('button') || cancelBtn || wrap;
+        try { target.focus({ preventScroll: true }); }
+        catch (e) { try { target.focus(); } catch (err) { /* ignore */ } }
+      });
     });
   }
 
