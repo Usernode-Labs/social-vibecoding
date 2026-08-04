@@ -223,6 +223,7 @@ test('place moves an item into a free cell and touches nothing else', () => {
   assert.deepEqual([before[0].col, before[0].row], [0, 0]);
 });
 
+// Still a swap — it falls out of displacement preferring the vacated cells.
 test('place swaps two single cells', () => {
   const before = [A('a', 0, 0), A('b', 3, 2)];
   const after = HomeLayout.place(before, before[0], 3, 2, 5);
@@ -230,15 +231,105 @@ test('place swaps two single cells', () => {
   assert.deepEqual([after[1].col, after[1].row], [0, 0]);
 });
 
-test('place refuses anything that is not a clean 1x1 swap', () => {
-  const layout = [A('a', 0, 0), W('challenges', 2, 0), W('discover', 0, 2)];
-  // A widget onto an occupied cell: no meaning-preserving exchange exists
-  // between two rectangles, so it springs back rather than half-applying.
-  assert.equal(HomeLayout.place(layout, layout[1], 0, 2, 5), null);
-  // A 1x1 onto a cell a WIDGET covers is likewise refused.
-  assert.equal(HomeLayout.place(layout, layout[0], 2, 0, 5), null);
-  // An item that isn't in the layout at all.
+// DISPLACEMENT, not refusal. Dropping onto something occupied pushes the
+// occupant out of the way — this is the behaviour the flow reorder had and
+// the free-form grid initially lost.
+test('place displaces the occupant of the target rather than refusing', () => {
+  const layout = [A('a', 0, 0), A('b', 2, 2), A('c', 4, 4)];
+  const after = HomeLayout.place(layout, layout[0], 2, 2, 5);
+  assert.ok(after, 'the drop is legal');
+  const at = (id) => {
+    const it = after.find((x) => HomeLayout.idOf(x) === id);
+    return [it.col, it.row];
+  };
+  assert.deepEqual(at('app:a'), [2, 2], 'the dragged tile takes the target');
+  // The occupant lands in the cells the dragged tile vacated — a swap, which
+  // is the least surprising outcome and keeps it near where it was.
+  assert.deepEqual(at('app:b'), [0, 0]);
+  assert.deepEqual(at('app:c'), [4, 4], 'an untouched tile does not move');
+  assert.equal(after.length, 3, 'nothing is lost');
+  assertNoOverlap(after, 5);
+});
+
+// A WIDGET dropped onto occupied cells displaces every tile it covers — the
+// old rule refused this outright, which is what made a crowded grid
+// impossible to rearrange without first clearing space by hand.
+test('place displaces every item a multi-cell footprint covers', () => {
+  const layout = [
+    W('challenges', 0, 0),          // 2x2 at (0,0)
+    A('a', 3, 3), A('b', 4, 3), A('c', 3, 4), A('d', 4, 4),
+    A('far', 0, 7),
+  ];
+  const after = HomeLayout.place(layout, layout[0], 3, 3, 5);
+  assert.ok(after);
+  const ch = after.find((i) => i.key === 'challenges');
+  assert.deepEqual([ch.col, ch.row], [3, 3]);
+  assert.equal(after.length, 6, 'all four displaced tiles survive');
+  assertNoOverlap(after, 5);
+  // The four tiles it covered went into the 2x2 the widget vacated.
+  const moved = ['a', 'b', 'c', 'd'].map((slug) => {
+    const it = after.find((x) => x.slug === slug);
+    return `${it.col},${it.row}`;
+  }).sort().join(' ');
+  assert.equal(moved, '0,0 0,1 1,0 1,1');
+  // ...and the item nowhere near the target held completely still.
+  const far = after.find((i) => i.slug === 'far');
+  assert.deepEqual([far.col, far.row], [0, 7]);
+});
+
+// The second reported bug: a 2x2 widget nudged one cell over overlaps its OWN
+// footprint. Excluding the dragged item from the occupancy test is what makes
+// that the common case it should be, rather than an impossible move.
+test('place allows a target overlapping the item’s own footprint', () => {
+  const layout = [W('challenges', 0, 0), A('keep', 4, 4)];
+  for (const [col, row] of [[1, 0], [0, 1], [1, 1]]) {
+    const after = HomeLayout.place(layout, layout[0], col, row, 5);
+    assert.ok(after, `(${col},${row}) must be reachable`);
+    const ch = after.find((i) => i.key === 'challenges');
+    assert.deepEqual([ch.col, ch.row], [col, row]);
+    assert.equal(after.length, 2);
+    assertNoOverlap(after, 5);
+  }
+  // ...and canPlace agrees, so the overlay tints it.
+  assert.equal(HomeLayout.canPlace(layout, layout[0], 1, 1, 5), true);
+});
+
+// Displacement must not become a general re-pack: a hole the user left
+// somewhere unrelated is still there afterwards.
+test('place preserves holes and every untouched item', () => {
+  const layout = [A('a', 0, 0), A('b', 4, 0), A('c', 2, 5), A('d', 0, 2)];
+  const after = HomeLayout.place(layout, layout[3], 4, 0, 5);
+  const at = (slug) => {
+    const it = after.find((x) => x.slug === slug);
+    return [it.col, it.row];
+  };
+  assert.deepEqual(at('d'), [4, 0]);
+  assert.deepEqual(at('b'), [0, 2], 'displaced into the vacated cell');
+  // Everything else is byte-identical, gaps and all.
+  assert.deepEqual(at('a'), [0, 0]);
+  assert.deepEqual(at('c'), [2, 5]);
+  assertNoOverlap(after, 5);
+});
+
+// When the vacated region can't take the occupant (different footprint), it
+// goes to the first free rectangle in reading order instead of being dropped.
+test('place falls back to the first free cell when the vacated spot won’t fit', () => {
+  // A 1x1 dragged onto a 2x2 widget: the widget cannot fit in one cell.
+  const layout = [A('a', 4, 7), W('challenges', 0, 0)];
+  const after = HomeLayout.place(layout, layout[0], 0, 0, 5);
+  const a = after.find((i) => i.slug === 'a');
+  const ch = after.find((i) => i.key === 'challenges');
+  assert.deepEqual([a.col, a.row], [0, 0]);
+  assert.ok(ch, 'the widget is re-placed, never dropped');
+  assert.ok(!(ch.col === 0 && ch.row === 0));
+  assertNoOverlap(after, 5);
+});
+
+// The one genuinely illegal drop: an item that isn't in the layout.
+test('place refuses only an item that is not in the layout', () => {
+  const layout = [A('a', 0, 0)];
   assert.equal(HomeLayout.place(layout, A('ghost', 0, 0), 4, 4, 5), null);
+  assert.equal(HomeLayout.canPlace(layout, A('ghost', 0, 0), 4, 4, 5), false);
 });
 
 test('place clamps at the right and bottom edges instead of refusing', () => {

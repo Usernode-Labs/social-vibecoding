@@ -271,23 +271,69 @@ const HomeLayout = {
 
   // ── The drop rule ──────────────────────────────────────────────────
 
+  // Do two rectangles overlap at all?
+  _overlaps(a, b) {
+    return a.col < b.col + b.w && b.col < a.col + a.w
+      && a.row < b.row + b.h && b.row < a.row + a.h;
+  },
+
+  // The item's rectangle at this column count.
+  _rectOf(item, cols) {
+    const [w, h] = HomeLayout.sizeOf(item, cols);
+    return { col: item.col, row: item.row, w, h };
+  },
+
+  // First free spot for `size` INSIDE `region`, in reading order, or null.
+  // Used to prefer the cells the dragged item just vacated when pushing an
+  // occupant out of the way — which is what makes a same-size collision read
+  // as a straight swap rather than a trip to the top-left corner.
+  _fitWithin(region, size, taken, cols) {
+    const [w, h] = size;
+    for (let row = region.row; row <= region.row + region.h - h; row++) {
+      for (let col = region.col; col <= region.col + region.w - w; col++) {
+        if (HomeLayout.fits(taken, col, row, w, h, cols)) return { col, row };
+      }
+    }
+    return null;
+  },
+
   // Can `item` land with its top-left at (col,row)? Clamped first, so a drag
-  // toward the right or bottom edge reports the nudged-inward position
-  // rather than "no". A 1x1 onto an occupied 1x1 is a SWAP and therefore
-  // legal; anything else needs its whole footprint free.
+  // toward an edge reports the nudged-inward position rather than "no".
+  //
+  // Essentially everything on the canvas is a legal target now: an occupied
+  // one DISPLACES its occupants rather than refusing the drop (see place).
+  // That is what lets the drag overlay tint every cell the finger crosses,
+  // and it is why this is a thin wrapper rather than its own predicate — the
+  // highlight the user sees and the drop that commits must be the same
+  // decision, or the grid lies about where a release will land.
   canPlace(layout, item, col, row, cols) {
     return HomeLayout.place(layout, item, col, row, cols) !== null;
   },
 
-  // Apply a drop. Returns a NEW layout array, or null when the drop is
-  // illegal (the caller springs the ghost back).
+  // Apply a drop. Returns a NEW layout array, or null only when the item
+  // isn't in the layout at all (nothing to move).
   //
-  // Two cases:
-  //   * 1x1 onto an occupied 1x1 → swap the two items' cells. This is what
-  //     makes a crowded grid rearrangeable without first making room.
-  //   * anything else → the whole footprint must be free.
-  // Either way the footprint is clamped inside the canvas first, so a widget
-  // dragged past the right or bottom edge lands flush against it.
+  // DISPLACEMENT, not swap-or-refuse. Whatever sits in the target rectangle
+  // is pushed out of the way; the dragged item takes the spot. Each displaced
+  // occupant goes, in reading order:
+  //
+  //   1. into the cells the dragged item just VACATED, if its own footprint
+  //      fits there — so two 1x1s exchange places, and two same-size widgets
+  //      exchange places, which is the least surprising outcome and matches
+  //      what a home screen does;
+  //   2. otherwise the first free rectangle in reading order;
+  //   3. otherwise the overflow region below the canvas, which is never a
+  //      dropped tile.
+  //
+  // What it deliberately does NOT do is re-pack the grid. Only items whose
+  // footprint actually intersects the target move at all — every other item,
+  // and every intentional hole, is left exactly as it was. That is the whole
+  // difference between this and the flow reorder it replaced.
+  //
+  // The dragged item's own footprint is excluded from the occupancy test, so
+  // a widget may be dropped at ANY position overlapping where it already is
+  // (nudged one cell over, say) — the common case for a 2x2 block, and one
+  // that a naive "target must be empty" rule rejects outright.
   place(layout, item, col, row, cols) {
     const id = HomeLayout.idOf(item);
     const [w, h] = HomeLayout.sizeOf(item, cols);
@@ -298,28 +344,41 @@ const HomeLayout = {
     const current = (layout || []).find((it) => HomeLayout.idOf(it) === id);
     if (!current) return null;
 
-    const taken = HomeLayout.occupancy(layout, cols, id);
-    if (HomeLayout.fits(taken, c, r, w, h, cols)) {
-      return (layout || []).map((it) => (
-        HomeLayout.idOf(it) === id ? { ...it, col: c, row: r } : it
-      ));
+    const vacated = HomeLayout._rectOf(current, cols);
+    const target = { col: c, row: r, w, h };
+    const others = (layout || []).filter((it) => HomeLayout.idOf(it) !== id);
+
+    // Only what the target rectangle actually touches is disturbed. Overflow
+    // items are off-canvas and can never be in the way.
+    const displaced = HomeLayout.readingOrder(others.filter((it) => (
+      it.row < HomeLayout.MAX_ROWS && HomeLayout._overlaps(HomeLayout._rectOf(it, cols), target)
+    )));
+    const displacedIds = new Set(displaced.map(HomeLayout.idOf));
+
+    // Resolve each displaced occupant against a working set that already
+    // holds the dragged item at its new spot, so nothing lands under it.
+    // Untouched items keep their exact cells — holes included.
+    const settled = others.filter((it) => !displacedIds.has(HomeLayout.idOf(it)));
+    settled.push({ ...current, col: c, row: r });
+    const moves = new Map([[id, { col: c, row: r }]]);
+
+    for (const d of displaced) {
+      const size = HomeLayout.sizeOf(d, cols);
+      const taken = HomeLayout.occupancy(settled, cols);
+      const spot = HomeLayout._fitWithin(vacated, size, taken, cols)
+        || HomeLayout.firstFreeCell(settled, size, cols)
+        || { col: 0, row: HomeLayout.MAX_ROWS };
+      settled.push({ ...d, col: spot.col, row: spot.row });
+      moves.set(HomeLayout.idOf(d), spot);
     }
 
-    // Occupied. A swap is only well-defined between two single cells — two
-    // rectangles of different shapes have no meaning-preserving exchange.
-    if (w !== 1 || h !== 1) return null;
-    const target = (layout || []).find((it) => {
-      if (HomeLayout.idOf(it) === id) return false;
-      const [tw, th] = HomeLayout.sizeOf(it, cols);
-      return tw === 1 && th === 1 && it.col === c && it.row === r;
-    });
-    if (!target) return null;
-    const targetId = HomeLayout.idOf(target);
+    // Rebuilt in the INPUT's array order. Nothing downstream depends on it
+    // (reflow / repair / toWire all sort by reading order), but a drop that
+    // silently reshuffled the array would be a trap for anything that ever
+    // does.
     return (layout || []).map((it) => {
-      const itId = HomeLayout.idOf(it);
-      if (itId === id) return { ...it, col: c, row: r };
-      if (itId === targetId) return { ...it, col: current.col, row: current.row };
-      return it;
+      const spot = moves.get(HomeLayout.idOf(it));
+      return spot ? { ...it, col: spot.col, row: spot.row } : it;
     });
   },
 

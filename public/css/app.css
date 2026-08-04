@@ -643,10 +643,23 @@ html, body {
   z-index: 0;
 }
 .home-grid-cell {
+  position: relative;
   pointer-events: auto;
   border: 1px dashed var(--border-light);
   border-radius: 0.75rem;   /* rounded-xl, same as a tile */
   transition: background-color 120ms, border-color 120ms;
+}
+/* The cell's HIT AREA bleeds into the surrounding gap. The overlay is a real
+   grid, so the gap between cells belongs to no cell — and a pointer resting
+   there would resolve to nothing, dropping the highlight and making a
+   release over a gap spring the item back. A pseudo-element hit-tests as its
+   originating cell, so half the gap in each direction closes the seams with
+   no arithmetic. Adjacent areas overlap by a pixel or two; elementFromPoint
+   takes the later cell in DOM order, which is deterministic. */
+.home-grid-cell::before {
+  content: '';
+  position: absolute;
+  inset: -4px;
 }
 /* The cells the drop would land in. A widget tints its whole footprint, so
    "this doesn't fit here" is legible before releasing; an ILLEGAL cell is
@@ -667,6 +680,26 @@ html, body {
 #app-list > .home-panel-slot {
   position: relative;
   z-index: 1;
+}
+
+/* ...but they must be TRANSPARENT TO HIT-TESTING for the duration of a drag.
+   This is load-bearing, not a polish detail. The overlay's cells are what
+   Home._cellFromPoint resolves a pointer to, and they sit BELOW the tiles
+   (they have to — a dashed outline painted over an app icon would be
+   nonsense). So while the tiles keep their pointer events, elementFromPoint
+   under the finger returns a TILE for every occupied cell, cellFromPoint
+   returns null, and the drop is treated as "not over the grid":
+
+     • dropping onto another app or widget did nothing at all — the target
+       was never even resolvable, so displacement could not be reached;
+     • and a widget could not be moved to any position overlapping its OWN
+       footprint, because its own drop slot swallowed the hit-test.
+
+   The kit puts .un-reordering on the list for exactly the span of a lift, so
+   scoping it there means normal taps are untouched. */
+#app-list.un-reordering > .app-card,
+#app-list.un-reordering > .home-panel-slot {
+  pointer-events: none;
 }
 
 /* ── Discover widget ────────────────────────────────────────

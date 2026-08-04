@@ -236,6 +236,11 @@ const Home = {
       }
     }
     const { layout, changed } = HomeLayout.repair(base, cols, present);
+    // ALWAYS cache what we are about to render. The drag handlers resolve a
+    // dragged element to its layout item through this (Home._itemFor), so a
+    // path that left it stale made every drop a no-op — canPlace could not
+    // find the item and vetoed the whole gesture.
+    Home._layoutCache = layout;
     // A repair of a STORED layout is a real correction (an app was added or
     // deleted, a widget was hidden, a size changed) and is worth persisting
     // so the next load is clean. A repair of a derivation is not — writing it
@@ -243,8 +248,6 @@ const Home = {
     if (changed && Array.isArray(stored) && stored.length) {
       Home._layouts[String(cols)] = layout;
       Home._persistLayout(cols, layout);
-    } else {
-      Home._layoutCache = layout;
     }
     return layout;
   },
@@ -414,10 +417,14 @@ const Home = {
     const app = (Home._apps || []).find((a) => a.slug === item.slug);
     if (!app) return '';
     let card = Home.renderAppCard(app);
-    card = card.replace('class="app-card ', 'data-yours="true" class="app-card ');
+    // ONE splice for both attributes, onto the card's root element. Two
+    // sequential replaces looked equivalent and was not: inserting
+    // `data-yours` ahead of `class=` moved the anchor the placement replace
+    // was matching on, so every app tile silently lost its cell and fell
+    // back to flowing — the grid looked plausible and was not placed at all.
+    card = card.replace('class="app-card ',
+      `data-yours="true"${style} class="app-card `);
     card = card.replace('cursor-pointer', 'cursor-grab');
-    // Splice the placement onto the card's own root element.
-    if (style) card = card.replace('<div class="app-card ', `<div${style} class="app-card `);
     return card;
   },
 
@@ -2450,13 +2457,14 @@ const Home = {
     Home._overlayEl = null;
   },
 
-  // Tint the cells the drop would land in. A widget highlights its whole
-  // footprint, so "this doesn't fit here" is legible before releasing; an
-  // illegal cell is left untinted rather than tinted red — the absence of the
-  // affordance is the clearer signal, and it matches the ghost springing back.
+  // Tint the cells the drop would land in — the whole footprint for a widget,
+  // so the user sees the block they are about to occupy rather than just the
+  // cell under the finger.
   //
-  // Inline styles, not classes: mid-gesture is exactly when a Tailwind JIT
-  // round trip would show, and this repaints on every cell change.
+  // Occupied targets tint too: a drop there DISPLACES the occupant rather
+  // than being refused (HomeLayout.place), so refusing to highlight it would
+  // be the grid lying about where a release lands. The only untinted state is
+  // the pointer genuinely leaving the canvas.
   _highlightCell(el, cell, ok, cols) {
     const overlay = Home._overlayEl;
     if (!overlay) return;
@@ -2498,6 +2506,13 @@ const Home = {
     if (Home._dragActive) return; // a real gesture owns the overlay
     const cols = Home.currentCols();
     Home._showGridOverlay(listEl, cols, null);
+    // The kit sets .un-reordering for the span of a real lift, and the CSS
+    // hangs the tiles' pointer-events:none off it — the thing that makes an
+    // occupied cell resolvable as a drop target at all. Setting it here makes
+    // this link a TRUE rendering of the mid-drag state rather than just the
+    // outlines, so a check at this URL can catch that regression instead of
+    // only noticing the overlay went missing.
+    listEl.classList.add('un-reordering');
     const first = Home._overlayEl && Home._overlayEl.querySelector('[data-cell="0,0"]');
     if (first) first.classList.add('home-grid-cell--on');
   },

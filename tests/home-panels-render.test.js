@@ -818,6 +818,18 @@ test('the drag overlay draws the whole canvas and doubles as the hit-test', () =
   assert.match(CSS, /\.home-grid-cell \{[^}]*pointer-events: auto/);
   // Tiles paint above it.
   assert.match(CSS, /#app-list > \.app-card,\s*\n#app-list > \.home-panel-slot \{[^}]*z-index: 1/);
+
+  // ...and are TRANSPARENT TO HIT-TESTING for the duration of a lift. This is
+  // the regression guard for the bug that made occupied cells undroppable:
+  // the overlay's cells sit below the tiles, so with tiles still taking
+  // pointer events elementFromPoint returned a TILE for every occupied cell,
+  // cellFromPoint returned null, and both "drop onto another app" and "move a
+  // widget over its own footprint" silently sprang back.
+  assert.match(CSS,
+    /#app-list\.un-reordering > \.app-card,\s*\n#app-list\.un-reordering > \.home-panel-slot \{[^}]*pointer-events: none/);
+  // The gap between cells belongs to no cell, so each one's hit area bleeds
+  // into it — otherwise a pointer resting on a seam resolves to nothing.
+  assert.match(CSS, /\.home-grid-cell::before \{[^}]*inset: -4px/);
 });
 
 // A gesture-only surface is invisible to the before/after captures and to
@@ -829,6 +841,11 @@ test('the overlay and the locked create tile are both URL-reachable', () => {
   // overlay with it. An overlay is idempotent decoration; a menu is not.
   assert.doesNotMatch(HOME, /_shotGridDone/);
   assert.match(HOME, /if \(Home\._dragActive\) return; \/\/ a real gesture owns the overlay/);
+  // It also sets .un-reordering, so the link renders the state the CSS keys
+  // the tiles' pointer-events:none off — making the hit-test regression
+  // (occupied cells undroppable) visible from a URL rather than only from a
+  // real gesture nothing can navigate to.
+  assert.match(HOME, /listEl\.classList\.add\('un-reordering'\)/);
   const canCreate = HOME.match(/canCreate\(\) \{[\s\S]*?\n {2}\},/)[0];
   assert.match(canCreate, /'shot'\) === 'create-disabled'/);
   // Pure UI state: neither link writes anything or is env-gated, so the

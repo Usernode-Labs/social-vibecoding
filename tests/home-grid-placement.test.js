@@ -274,17 +274,79 @@ test('dropping a 1x1 onto another 1x1 swaps them', async () => {
     [items.find((i) => i.slug === 'b').col, items.find((i) => i.slug === 'b').row], [0, 0]);
 });
 
-test('an illegal drop persists nothing', async () => {
+// Dropping a widget onto cells another widget occupies DISPLACES it — the
+// old rule refused this, which is what made a crowded grid unrearrangeable.
+test('a drop onto occupied cells displaces the occupant and persists', async () => {
   const { Home, fetchCalls } = makeHome();
   seedLayout(Home);
   Home.render = () => {};
 
-  // Onto a cell the 2x2 Discover widget occupies — a widget needs its whole
-  // footprint free and a tile can only swap with another single cell.
+  // Challenges (2x2 at 3,1) onto the cells Discover (2x2 at 0,1) holds.
   Home._onGridPlace({ dataset: { panelSlot: 'challenges' },
     classList: { contains: (c) => c === 'home-panel-slot' } }, { col: 0, row: 1 }, 5);
   await flush();
+
+  const writes = fetchCalls.filter((c) => c.method === 'PUT');
+  assert.equal(writes.length, 1, 'the drop commits');
+  const items = writes[0].body.items;
+  const at = (pred) => {
+    const it = items.find(pred);
+    return [it.col, it.row];
+  };
+  assert.deepEqual(at((i) => i.key === 'challenges'), [0, 1]);
+  // Same footprint, so it takes the vacated cells — a swap.
+  assert.deepEqual(at((i) => i.key === 'discover'), [3, 1]);
+  // The app tiles nowhere near the target held still.
+  assert.deepEqual(at((i) => i.slug === 'a'), [0, 0]);
+  assert.deepEqual(at((i) => i.slug === 'b'), [4, 0]);
+  assert.equal(items.length, 5, 'nothing is lost');
+});
+
+// The second reported bug: a 2x2 widget nudged one cell over overlaps its own
+// footprint. The dragged item is excluded from the occupancy test, so this is
+// an ordinary move rather than an impossible one.
+test('a widget can be dropped overlapping its own footprint', async () => {
+  const { Home, fetchCalls } = makeHome();
+  seedLayout(Home);
+  Home.render = () => {};
+
+  // Challenges is at (3,1); nudge it to (3,2) — one row down, overlapping.
+  Home._onGridPlace({ dataset: { panelSlot: 'challenges' },
+    classList: { contains: (c) => c === 'home-panel-slot' } }, { col: 3, row: 2 }, 5);
+  await flush();
+
+  const writes = fetchCalls.filter((c) => c.method === 'PUT');
+  assert.equal(writes.length, 1, 'the self-overlapping drop commits');
+  const ch = writes[0].body.items.find((i) => i.key === 'challenges');
+  assert.deepEqual([ch.col, ch.row], [3, 2]);
+});
+
+// Only an item that isn't in the layout at all is refused now.
+test('a drop of an unknown item persists nothing', async () => {
+  const { Home, fetchCalls } = makeHome();
+  seedLayout(Home);
+  Home.render = () => {};
+
+  Home._onGridPlace({ dataset: { slug: 'not-in-the-layout' },
+    classList: { contains: () => false } }, { col: 2, row: 2 }, 5);
+  await flush();
   assert.equal(fetchCalls.filter((c) => c.method === 'PUT').length, 0);
+});
+
+// The overlay must tint an occupied target, or the grid lies about where a
+// release will land. canPlace and place are the same decision.
+test('canPlace accepts occupied targets and self-overlap', () => {
+  const { Home, attachCalls } = makeHome();
+  seedLayout(Home);
+  Home._apps = [app('a'), app('b')];
+  Home._wireCards({ querySelectorAll: () => [], appendChild: () => {} }, true, 2);
+  const { opts } = attachCalls[0];
+  const challenges = { dataset: { panelSlot: 'challenges' },
+    classList: { contains: (c) => c === 'home-panel-slot' } };
+
+  assert.equal(opts.canPlace(challenges, { col: 0, row: 1 }), true, 'occupied by Discover');
+  assert.equal(opts.canPlace(challenges, { col: 3, row: 2 }), true, 'overlaps itself');
+  assert.equal(opts.canPlace(challenges, { col: 0, row: 0 }), true, 'occupied by a tile');
 });
 
 test('a rejected write reverts to server truth', async () => {
