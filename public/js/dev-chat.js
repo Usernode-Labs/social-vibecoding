@@ -380,12 +380,13 @@ const DevChat = {
       const byok = (byokCents / 100).toFixed(2);
       const spent = (DevChat.budget.spentCents / 100).toFixed(2);
       const limit = (DevChat.budget.limitCents / 100).toFixed(2);
+      const remaining = (Math.max(0, DevChat.budget.limitCents - DevChat.budget.spentCents) / 100).toFixed(2);
       const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
       const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
-      const tip = `Today: $${spent} of your $${limit} platform daily limit`
+      const tip = `Today: $${spent} of your $${limit} platform daily limit ($${remaining} left)`
         + (byokCents > 0 ? ` + $${byok} billed to your Anthropic key (…${last4})` : '')
         + `. The daily limit is used first; your key (…${last4}) takes over once it runs out. Resets at midnight UTC.`;
-      let html = `<span class="text-zinc-600">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+      let html = `<span class="text-zinc-600">limit </span><span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit} · left </span><span class="${remaining === '0.00' ? 'text-red-400' : 'text-emerald-400'}">$${remaining}</span>`;
       if (byokCents > 0) {
         html += `<span class="text-zinc-600"> · </span><span class="text-emerald-400">your key $${byok}</span>`;
       }
@@ -395,16 +396,17 @@ const DevChat = {
     if (!DevChat.budget) return;
     const spent = (DevChat.budget.spentCents / 100).toFixed(2);
     const limit = (DevChat.budget.limitCents / 100).toFixed(2);
+    const remaining = (Math.max(0, DevChat.budget.limitCents - DevChat.budget.spentCents) / 100).toFixed(2);
     // #463: exhausted (no key saved) keeps the familiar $spent/$limit
     // pair — just unmistakably red, with the tooltip pointing at the
     // BYOK escape hatch. The banner carries the wordy explanation.
     if (DevChat._creditsExhausted()) {
-      el.innerHTML = `<span title="Your free daily AI credits are used up. Resets at midnight UTC — or add your own Anthropic API key in Settings to keep working."><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit}</span></span>`;
+      el.innerHTML = `<span title="Your free daily AI credits are used up. Resets at midnight UTC — or add your own Anthropic API key in Settings to keep working."><span class="text-red-500 font-semibold">$${spent}</span><span class="text-red-400">/$${limit} · left $${remaining}</span></span>`;
       return;
     }
     const pct = Math.min(100, (DevChat.budget.spentCents / DevChat.budget.limitCents) * 100);
     const color = pct > 80 ? 'text-red-400' : pct > 50 ? 'text-yellow-400' : 'text-emerald-400';
-    el.innerHTML = `<span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit}</span>`;
+    el.innerHTML = `<span class="${color}">$${spent}</span><span class="text-zinc-600">/$${limit} · left </span><span class="text-emerald-400">$${remaining}</span>`;
   },
 
   // #463: true when the signed-in user is out of free credits AND has no

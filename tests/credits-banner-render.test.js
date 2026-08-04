@@ -92,6 +92,7 @@ test('exhausted meter keeps the $spent/$limit pair, styled red', () => {
   assert.match(meterHtml(), /\$25\.00/, 'the spent figure stays visible');
   assert.match(meterHtml(), /\/\$25\.00/, 'the limit figure stays visible');
   assert.match(meterHtml(), /text-red-500/, 'exhausted pair is unmistakably red');
+  assert.match(meterHtml(), /left \$0\.00/, 'exhausted state explicitly says none remains');
   assert.match(meterHtml(), /free daily AI credits are used up/, 'tooltip still explains the state');
   assert.doesNotMatch(meterHtml(), /free credits used up</, 'no replacement label — the numbers remain');
 });
@@ -113,6 +114,7 @@ test('headroom left → no banner, normal $spent/$limit meter', () => {
   assert.equal(DevChat._renderCreditsBannerHtml(), '');
   DevChat.renderBudget();
   assert.match(meterHtml(), /\$1\.00/, 'normal meter rendering');
+  assert.match(meterHtml(), /left.*\$24\.00/, 'normal meter exposes the allowance still available');
 });
 
 test('global cap spent (user under) → banner with the shared-budget copy', () => {
