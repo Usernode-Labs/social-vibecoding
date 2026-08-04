@@ -55,12 +55,17 @@ const notifications = require('../services/notifications');
 // monkey-patch individual functions, mirroring how worker.isInFlight
 // is stubbed in the route suites.
 const syncMainSvc = require('../services/sync-main');
-const { runSyncMain, persistBehindMain } = syncMainSvc;
+const { runSyncMain, persistBehindMain, advanceSharedReviewAfterSync } = syncMainSvc;
 
 // Track sessions with active Claude Code workers. The Set lives in a
 // shared module so services/sync-main.js writes to the same instance
 // the chat handler and server.js's drain logic read.
-const { activeWorkers, getActiveWorkerCount } = require('../services/active-workers');
+const {
+  activeWorkers,
+  beginSessionOperation,
+  getActiveWorkerCount,
+  isSessionBusy,
+} = require('../services/active-workers');
 const turnWatchdog = require('../services/turn-watchdog');
 const estimateGuard = require('../services/estimate-guard');
 // #892: what an unearned "nearly done" phrase is replaced with. Mirrors the
@@ -362,7 +367,8 @@ const { stripSpecWrapperFence } = require('../services/spec-format');
 // preview card with the returned version, so clicking an OLDER card
 // opens exactly the content it represented — instead of always falling
 // back to the latest spec. Since #69 retired the manual "Save version"
-// route, this is the SOLE writer of new rows in chat_session_specs;
+// route, this and the native CLI proposal-handoff route are the only writers
+// of new rows in chat_session_specs;
 // it uses MAX(version)+1. Best-effort: returns null on failure so the
 // card falls back to the latest spec rather than blocking the edit.
 async function snapshotSessionSpec(pool, sessionId, content) {
@@ -453,7 +459,7 @@ function sessionRoutes(config) {
       );
       const sessions = rows.map((s) => ({
         ...s,
-        busy: activeWorkers.has(s.id) || worker.isInFlight(s.id),
+        busy: isSessionBusy(s.id),
       }));
       const totals = sessions.reduce(
         (acc, s) => {
@@ -687,7 +693,7 @@ function sessionRoutes(config) {
       );
       const sessions = rows.map((s) => ({
         ...s,
-        busy: activeWorkers.has(s.id) || worker.isInFlight(s.id),
+        busy: isSessionBusy(s.id),
       }));
 
       // Staging-only demo rows (?demo=1): read-only visual states a boot
@@ -2096,7 +2102,7 @@ function sessionRoutes(config) {
         );
         let freed = false;
         for (const victim of lruRows) {
-          if (worker.isInFlight(victim.id)) continue;
+          if (isSessionBusy(victim.id)) continue;
           const { paused } = await sessionLifecycle.pauseSession({
             pool, sessionId: victim.id, userId: req.user.id, reason: 'lru',
           });
@@ -2194,7 +2200,7 @@ function sessionRoutes(config) {
       // instead. When the in-flight turn IS a sync, fall through:
       // runSyncMain coalesces and this caller joins the running sync.
       if (!syncMainSvc.getSyncState(sessionId)
-          && (activeWorkers.has(sessionId) || worker.isInFlight(sessionId))) {
+          && isSessionBusy(sessionId)) {
         return res.status(409).json({
           error: 'Claude is still working in this session — wait for the turn to finish before syncing.',
           busy: true,
@@ -2414,7 +2420,6 @@ function sessionRoutes(config) {
           [userMsgRows[0].id, attIds]
         );
       }
-
       // Mark the session as freshly active so the auto-pause sweeper
       // leaves it alone (see server.js session sweeper + schema
       // last_activity_at). A chat turn is the strongest activity signal.
@@ -2507,6 +2512,7 @@ function sessionRoutes(config) {
       // were implicit globals which leaked across concurrent requests.
       let ccLog = null;
       let stagingUrl = null;
+      let releaseDispatchOperation = null;
 
       // Register a stop handle for this turn so POST /stop can cancel the
       // in-flight Mayor stream and/or running Claude Code worker. We reuse
@@ -2683,7 +2689,7 @@ function sessionRoutes(config) {
         // alive". Treating warm-idle as busy here would falsely lock
         // the Mayor out of dispatch_scout / dispatch_claude_code for
         // the entire idle-eviction window of a previous turn.
-        const isWorkerBusy = activeWorkers.has(session.id) || worker.isInFlight(session.id);
+        const isWorkerBusy = isSessionBusy(session.id);
         // Inject the live spec_md into the Mayor's system prompt every
         // turn so revisions anchor against real content instead of
         // regenerating from scratch. Re-read before phase-2 below in
@@ -3174,7 +3180,7 @@ function sessionRoutes(config) {
         // gating on container-status would reject every scout/build
         // for ~10 min after the first dispatch finishes (warm idle is
         // not busy).
-        if (activeWorkers.has(session.id) || worker.isInFlight(session.id)) {
+        if (isSessionBusy(session.id)) {
           // #894: this status line IS the turn — no assistant row follows,
           // so it carries the pills (the run in flight is the only useful
           // thing to ask about next).
@@ -3184,6 +3190,11 @@ function sessionRoutes(config) {
           res.end();
           return;
         }
+        // Claim the session before any async dispatch preparation. Local MCP
+        // proposal submissions use the same registry, so neither surface can
+        // pass a point-in-time busy check and then mutate the branch while the
+        // other is awaiting DB/GitHub work.
+        releaseDispatchOperation = beginSessionOperation(session.id);
 
         // Seal the phase-1 assistant bubble so the phase-2 wrap-up
         // lands in a fresh bubble below the CC status/progress events.
@@ -3543,6 +3554,7 @@ function sessionRoutes(config) {
           );
         }
       } finally {
+        if (releaseDispatchOperation) releaseDispatchOperation();
         // Clear the stop handle for this session only if it's still the
         // one we registered (another turn may have replaced it if the
         // client somehow fired a second POST before this one finished).
@@ -3906,7 +3918,7 @@ function sessionRoutes(config) {
     // actual `docker exec`) — redundant in normal flow, but a useful
     // safety net for adopted workers and the brief period between
     // adding to activeWorkers and registering with the warm registry.
-    let busy = activeWorkers.has(sessionId) || worker.isInFlight(sessionId);
+    let busy = isSessionBusy(sessionId);
     // #906 staging fixtures — see stagingCohortFixtureSessions above.
     if (!busy) {
       const fixtures = await stagingCohortFixtureSessions();
@@ -4408,6 +4420,16 @@ function sessionRoutes(config) {
 
       // Coalesce repeat clicks.
       if (recheckInFlight.has(sessionId)) {
+        return res.json({ status: 'running' });
+      }
+      // A local proposal submission holds a non-worker session operation
+      // through staging + capture. Starting a manual recheck inside that
+      // window would queue a second capture that can outlive the operation
+      // claim and overlap the next web coding turn. Treat every existing
+      // session-owned pipeline as the run the user is trying to request.
+      if (isSessionBusy(sessionId)
+          || staging.hasInFlightBuild(sessionId)
+          || visuals.hasInFlightCapture(sessionId)) {
         return res.json({ status: 'running' });
       }
       recheckInFlight.add(sessionId);
@@ -6666,7 +6688,17 @@ function buildMayorMessages(history, attachmentsByMessageId = new Map()) {
           : CODING_AGENT_COMPLETED_MARKER;
       pushAssistant(`${label}:\n${summary}`);
     } else if (row.role === 'assistant') {
-      pushAssistant(row.content);
+      if (row.metadata?.handoffSummary) {
+        // A native CLI handoff summary was authored by the local coding
+        // agent, not by this Mayor. Label it in model context (while keeping
+        // the stored/web-visible transcript clean) so a later web Dev turn
+        // understands which local phase already happened and does not mistake
+        // the summary for its own conversational reply.
+        const phase = row.metadata.phase ? ` — ${String(row.metadata.phase).slice(0, 64)}` : '';
+        pushAssistant(`[LOCAL AGENT HANDOFF${phase}]\n${row.content}`);
+      } else {
+        pushAssistant(row.content);
+      }
     } else if (row.role === 'user') {
       // #450: rows with attachments become content-block arrays (image
       // blocks + one text block); plain rows stay strings. Assistant-row
@@ -8652,4 +8684,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };

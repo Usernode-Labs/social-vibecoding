@@ -345,13 +345,16 @@ function classifyConsole(frames) {
 }
 
 // Latest-only snapshot on the session, mirroring the merge-conflict trio.
-async function storeConsoleCheck(pool, sessionId, result) {
-  await pool.query(
+async function storeConsoleCheck(pool, sessionId, result, expectedCommitSha) {
+  const write = await pool.query(
     `UPDATE chat_sessions
        SET console_check_state = $1, console_errors = $2, console_checked_at = NOW()
-     WHERE id = $3`,
-    [result.state, JSON.stringify(result.errors || []), sessionId]
+     WHERE id = $3
+       AND status IN ('active', 'paused', 'promoted', 'merging')
+       AND checks_commit_sha IS NOT DISTINCT FROM $4::text`,
+    [result.state, JSON.stringify(result.errors || []), sessionId, expectedCommitSha || null]
   );
+  return write.rowCount !== 0;
 }
 
 // ── Test suite (#47, "CI for proposals") ─────────────────────────────────
@@ -436,11 +439,11 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
     // failure count (so the first failure waits ~2m). `errorDetail` is the
     // concise reason (see summarizeBootFailure) — kept across retries via
     // COALESCE so a later retry that fails to collect logs doesn't blank it.
-    await pool.query(
+    const write = await pool.query(
       `UPDATE chat_sessions
           SET check_state = $1,
               test_results = $2,
-              checks_commit_sha = $3,
+              checks_commit_sha = $3::text,
               checks_checked_at = NOW(),
               check_phase = NULL,
               check_error_detail = COALESCE($5, check_error_detail),
@@ -449,17 +452,19 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
               last_check_failure_at = NOW(),
               check_next_retry_at = NOW() + make_interval(
                 secs => LEAST(120 * power(2, consecutive_check_failures), 1800)::double precision)
-        WHERE id = $4`,
+        WHERE id = $4
+          AND status IN ('active', 'paused', 'promoted', 'merging')
+          AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
       [result.state, JSON.stringify(result.results || []), commitSha || null, sessionId, errorDetail]
     );
-    return;
+    return write.rowCount !== 0;
   }
   // A real verdict ('passing' / 'failing'): clear the failure streak so a
   // later transient error starts its backoff fresh, and drop the now-stale
   // error detail / retry schedule / notify stamp.
-  await pool.query(
+  const write = await pool.query(
     `UPDATE chat_sessions
-       SET check_state = $1, test_results = $2, checks_commit_sha = $3, checks_checked_at = NOW(),
+       SET check_state = $1, test_results = $2, checks_commit_sha = $3::text, checks_checked_at = NOW(),
            check_phase = NULL,
            check_error_detail = NULL,
            consecutive_check_failures = 0,
@@ -467,9 +472,12 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
            last_check_failure_at = NULL,
            check_next_retry_at = NULL,
            check_error_notified_at = NULL
-     WHERE id = $4`,
+     WHERE id = $4
+       AND status IN ('active', 'paused', 'promoted', 'merging')
+       AND checks_commit_sha IS NOT DISTINCT FROM $3::text`,
     [result.state, JSON.stringify(result.results || []), commitSha || null, sessionId]
   );
+  return write.rowCount !== 0;
 }
 
 // #461: record an explicit terminal 'skipped' verdict for a proposal whose
@@ -480,10 +488,16 @@ async function storeChecks(pool, sessionId, commitSha, result, errorDetail = nul
 // running its tests" forever. `reason` lands in check_error_detail (the same
 // column the badge tooltip / gate message already surface). Clears the
 // failure-streak bookkeeping exactly like a real passing/failing verdict.
-async function storeChecksSkipped(pool, sessionId, commitSha, reason) {
-  await pool.query(
+// `expectedCommitSha` is normally the same SHA, but recovery may discover
+// that a branch has no commits beyond a newer main commit. In that case it
+// atomically replaces the prior pin with the compared base SHA without
+// allowing a concurrent newer build to be overwritten.
+async function storeChecksSkipped(
+  pool, sessionId, commitSha, reason, expectedCommitSha = commitSha
+) {
+  const write = await pool.query(
     `UPDATE chat_sessions
-       SET check_state = 'skipped', test_results = '[]', checks_commit_sha = $1,
+       SET check_state = 'skipped', test_results = '[]', checks_commit_sha = $1::text,
            checks_checked_at = NOW(),
            check_phase = NULL,
            check_error_detail = $2,
@@ -492,9 +506,12 @@ async function storeChecksSkipped(pool, sessionId, commitSha, reason) {
            last_check_failure_at = NULL,
            check_next_retry_at = NULL,
            check_error_notified_at = NULL
-     WHERE id = $3`,
-    [commitSha || null, reason || null, sessionId]
+     WHERE id = $3
+       AND status IN ('active', 'paused', 'promoted', 'merging')
+       AND checks_commit_sha IS NOT DISTINCT FROM $4::text`,
+    [commitSha || null, reason || null, sessionId, expectedCommitSha || null]
   );
+  return write.rowCount !== 0;
 }
 
 // Set 'pending' the instant a (re)check starts so a stale 'passing' can't
@@ -521,7 +538,7 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null) {
   // then survived into the merge gate while a rebuild was in flight.
   // $3 needs the same explicit ::text treatment as $2 for the same reason —
   // an uncast parameter in this statement is how it silently no-op'd before.
-  await pool.query(
+  const write = await pool.query(
     `UPDATE chat_sessions
        SET check_state = 'pending', checks_commit_sha = $2::text, checks_checked_at = NOW(),
            check_phase = $3::text,
@@ -534,9 +551,11 @@ async function setChecksPending(pool, sessionId, commitSha, phase = null) {
                                           THEN NULL ELSE check_error_detail END,
            check_error_notified_at = CASE WHEN checks_commit_sha IS DISTINCT FROM $2::text
                                           THEN NULL ELSE check_error_notified_at END
-     WHERE id = $1`,
+     WHERE id = $1
+       AND status IN ('active', 'paused', 'promoted', 'merging')`,
     [sessionId, commitSha || null, normalizeCheckPhase(phase)]
   );
+  return write.rowCount !== 0;
 }
 
 // The two stages a 'pending' run can be in. Anything else (undefined, a
@@ -831,6 +850,19 @@ async function patchPrBody(pool, session, repoOwner, repoName, block) {
 const _inFlight = new Set();
 const _queued = new Map();
 
+function captureKey(sessionId) {
+  return String(sessionId);
+}
+
+// Shared local/web proposal submission uses this to avoid adopting a new
+// commit while an older revision can still write screenshots or checks.
+// Include the depth-one queue: after a newer web build supersedes an active
+// capture, that queued run is still part of the current proposal pipeline.
+function hasInFlightCapture(sessionId) {
+  const key = captureKey(sessionId);
+  return _inFlight.has(key) || _queued.has(key);
+}
+
 // Main entry point. Fire-and-forget from the staging-success sites
 // (routes/sessions.js interactive + headless tails, routes/votes.js
 // post-promote clone build) — always AFTER staging_ready is sent so the
@@ -883,34 +915,38 @@ function maybeAutoMergeAfterChecks(config, pool, session, state) {
 }
 
 // #866: which git ref identifies this session's code in the app's OWN repo.
-// Native rows push their work to a branch there, so the branch name resolves.
-// An imported PR may be headed by a FORK: `branch_name` is the PR's head ref,
-// which need not exist in the base repo at all, so compares and file reads
-// against it 404 (and, worse, silently resolve to an unrelated same-named
-// branch when one does exist). The head SHA is always reachable in the base
-// repo — GitHub publishes every PR head under refs/pull/<N>/head — so pin to
-// that for imported rows and keep the branch for native ones.
+// Ordinary native rows push their work to a platform-owned branch, so the
+// branch name resolves. Two sources require an immutable commit instead:
+// imported PRs may be fork-headed (their branch name need not exist in the
+// base repo), and native CLI handoffs allow the local checkout to push the
+// managed branch directly while an older capture is running. Pin both to the
+// recorded/build SHA so changed-file detection and dapp.json test discovery
+// describe the same code as the staging container and terminal verdict.
 function sessionGitRef(session, commitHash) {
   if (session && session.source === 'imported') {
     return session.imported_pr_head_sha || commitHash || null;
+  }
+  if (session && session.source === 'cli_handoff') {
+    return commitHash || session.checks_commit_sha || session.handoff_head_sha || null;
   }
   return (session && session.branch_name) || null;
 }
 
 async function captureForSession(config, session, app, commitHash, stagingResult, { send } = {}) {
-  if (_inFlight.has(session.id)) {
+  const key = captureKey(session.id);
+  if (_inFlight.has(key)) {
     // Re-queue instead of dropping: park the NEWER run's arguments (latest
     // wins, depth 1) for the in-flight run's finally block to re-drive.
     // `send` is deliberately NOT carried over — by the time the queued run
     // fires, the requesting turn's SSE stream is long closed, so the queued
     // run publishes via the session bus + global WS instead.
-    _queued.set(session.id, { config, session, app, commitHash, stagingResult });
+    _queued.set(key, { config, session, app, commitHash, stagingResult });
     log.info('visuals', 'Capture already in flight — re-queued for after it finishes', {
       sessionId: session.id, commitHash: commitHash || null,
     });
     return;
   }
-  _inFlight.add(session.id);
+  _inFlight.add(key);
   const pool = getPool(config);
   // Per-run timing trace (kind='checks'). Nothing recorded how long a checks
   // run took, so diagnosing the slowdown that motivated this meant reading a
@@ -1324,15 +1360,23 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       durationMs: Date.now() - runStartedAt,
     });
     try {
-      await storeChecks(pool, session.id, commitHash, checksResult);
-      await storeConsoleCheck(pool, session.id, consoleSnapshotFromTests(checksResult));
-      log.info('visuals', 'Checks stored', {
-        sessionId: session.id, state: checksResult.state,
-        tests: checksResult.results.length,
-        failing: failingCount,
-        durationMs: Date.now() - runStartedAt,
-      });
-      notifyChecks(session.id, checksResult, commitHash, send);
+      const stored = await storeChecks(pool, session.id, commitHash, checksResult);
+      if (stored) {
+        await storeConsoleCheck(
+          pool, session.id, consoleSnapshotFromTests(checksResult), commitHash
+        );
+        log.info('visuals', 'Checks stored', {
+          sessionId: session.id, state: checksResult.state,
+          tests: checksResult.results.length,
+          failing: failingCount,
+          durationMs: Date.now() - runStartedAt,
+        });
+        notifyChecks(session.id, checksResult, commitHash, send);
+      } else {
+        log.info('visuals', 'Discarded stale checks result', {
+          sessionId: session.id, commitHash: commitHash || null,
+        });
+      }
     } catch (err) {
       log.warn('visuals', 'Checks store failed (non-fatal)', {
         sessionId: session.id, err: err.message,
@@ -1354,7 +1398,11 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       );
       if (appRows[0]?.self_hosted) {
         const verdict = await platformEnvCheck.refreshPlatformEnvCheck({
-          pool, app: appRows[0], session,
+          pool,
+          app: appRows[0],
+          session: session.source === 'cli_handoff'
+            ? { ...session, checks_commit_sha: commitHash || null }
+            : session,
         });
         if (verdict) {
           log.info('visuals', 'Platform-env check stored', {
@@ -1457,8 +1505,8 @@ async function captureForSession(config, session, app, commitHash, stagingResult
     // 'error' so the gate blocks fail-closed with a visible "couldn't run"
     // rather than an indefinite spinner. Best-effort.
     try {
-      await storeChecks(pool, session.id, commitHash, { state: 'error', results: [] });
-      notifyChecks(session.id, { state: 'error', results: [] }, commitHash, send);
+      const stored = await storeChecks(pool, session.id, commitHash, { state: 'error', results: [] });
+      if (stored) notifyChecks(session.id, { state: 'error', results: [] }, commitHash, send);
     } catch { /* nothing more we can do */ }
   } finally {
     // Close the timing trace whatever happened, so a run never sits at
@@ -1469,25 +1517,26 @@ async function captureForSession(config, session, app, commitHash, stagingResult
       status: traceStatus,
       summary: `checks ${traceStatus} in ${Math.round(totalMs / 1000)}s`,
     });
-    _inFlight.delete(session.id);
+    _inFlight.delete(key);
     // Improvement 5: drain a re-queued capture (a rebuild that arrived while
     // this run was shooting). Dispatched detached — awaiting it here would
     // hold this call open for the queued run's whole duration, and every
     // caller is fire-and-forget. The recursive call re-enters the _inFlight
     // guard normally, so a request that lands during the queued run parks
     // itself in turn (still depth 1 — latest wins).
-    const next = _queued.get(session.id);
+    const next = _queued.get(key);
     if (next) {
-      _queued.delete(session.id);
+      _queued.delete(key);
       log.info('visuals', 'Draining re-queued capture', {
         sessionId: session.id, commitHash: next.commitHash || null,
       });
-      setImmediate(() => {
-        captureForSession(next.config, next.session, next.app, next.commitHash, next.stagingResult)
-          .catch((err) => log.warn('visuals', 'Re-queued capture failed (non-fatal)', {
-            sessionId: session.id, err: err.message,
-          }));
-      });
+      // Calling the async function directly claims _inFlight synchronously
+      // before its first await. This avoids a one-tick gap where another
+      // surface could observe neither an active nor queued capture.
+      captureForSession(next.config, next.session, next.app, next.commitHash, next.stagingResult)
+        .catch((err) => log.warn('visuals', 'Re-queued capture failed (non-fatal)', {
+          sessionId: session.id, err: err.message,
+        }));
     }
   }
 }
@@ -1595,6 +1644,7 @@ function notifyChecks(sessionId, result, commitSha, send) {
 
 module.exports = {
   captureForSession,
+  hasInFlightCapture,
   storeArtifacts,
   getForSession,
   shapeAgg,

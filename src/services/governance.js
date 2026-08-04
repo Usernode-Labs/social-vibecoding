@@ -197,10 +197,10 @@ function computeGate(gov, active, yesCount, noCount, openedAt, now, opts = {}) {
 // every vote (policy 'anyone'); an array restricts to those users.
 //
 // #687 Slice 3: `headSha` (optional, PR kind only) scopes the count to
-// votes cast against that exact PR head commit — imported proposals stamp
-// pr_votes.head_sha at vote time, so a head change re-opens approval and
-// the gate counts only approvals matching the current head. NULL/undefined
-// (legacy/local proposals + every issue vote) applies no head filter.
+// votes cast against that exact PR head commit. Imported proposals use
+// imported_pr_head_sha and native proposals use reviewed_head_sha; a head
+// change therefore re-opens approval. NULL/undefined (legacy rows + every
+// issue vote) applies no head filter.
 async function qualifiedCounts(pool, kind, id, approverIds, headSha = null) {
   const table = kind === 'issue' ? 'issue_votes' : 'pr_votes';
   const keyCol = kind === 'issue' ? 'issue_id' : 'session_id';

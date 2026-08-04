@@ -391,8 +391,8 @@ test('#906: /status reports the cohort fixtures as busy in staging only', () => 
   assert.match(sessions, /if \(fixtures && fixtures\.has\(sessionId\)\) busy = true;/,
     'a seeded fixture session must report busy so the row renders live');
   // It must never be able to mask a genuinely idle non-fixture session.
-  assert.match(sessions, /let busy = activeWorkers\.has\(sessionId\) \|\| worker\.isInFlight\(sessionId\);/,
-    'the real worker registries must still be the primary source');
+  assert.match(sessions, /let busy = isSessionBusy\(sessionId\);/,
+    'the shared worker/operation registry must still be the primary source');
 });
 
 // ── 4. Reliability for long runs (#323) ─────────────────────────────────

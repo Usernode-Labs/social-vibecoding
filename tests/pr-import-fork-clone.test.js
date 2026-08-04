@@ -251,6 +251,27 @@ test('sessionGitRef: an imported session with no recorded SHA falls back to the 
     null, 'nothing to name → the callers skip their GitHub reads rather than guess');
 });
 
+test('sessionGitRef: a CLI handoff stays pinned to the commit being checked', () => {
+  assert.equal(
+    visuals.sessionGitRef({
+      source: 'cli_handoff',
+      branch_name: 'dev/cli-u7-feature',
+      checks_commit_sha: 'older-reviewed-head',
+    }, SHA),
+    SHA,
+    'a direct branch push cannot change the GitHub inputs for an in-flight capture'
+  );
+  assert.equal(
+    visuals.sessionGitRef({
+      source: 'cli_handoff',
+      branch_name: 'dev/cli-u7-feature',
+      checks_commit_sha: SHA,
+    }),
+    SHA,
+    'recovery without an explicit argument still uses the durable checked SHA'
+  );
+});
+
 test('sessionGitRef: native sessions keep their branch (unchanged behaviour)', () => {
   assert.equal(visuals.sessionGitRef({ branch_name: 'dev/native' }, 'ignored'), 'dev/native');
   assert.equal(visuals.sessionGitRef({ source: 'chat', branch_name: 'dev/native' }), 'dev/native');

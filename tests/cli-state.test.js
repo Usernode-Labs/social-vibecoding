@@ -317,6 +317,11 @@ test('Codex setup table contains only canonical launcher data and reviewed tools
   assert.match(document, /"social_vibecoding\.whoami"/);
   assert.match(document, /"social_vibecoding\.api_read"/);
   assert.match(document, /"social_vibecoding\.api_write"/);
+  assert.match(document, /"social_vibecoding\.proposal_start"/);
+  assert.match(document, /"social_vibecoding\.proposal_append_context"/);
+  assert.match(document, /"social_vibecoding\.proposal_submit_build"/);
+  assert.match(document, /"social_vibecoding\.proposal_status"/);
+  assert.match(document, /"social_vibecoding\.proposal_promote"/);
   assert.doesNotMatch(document, /\benv\s*=|bearer_token|SOCIAL_VIBECODING_TOKEN/);
   assert.doesNotMatch(document, new RegExp(PRODUCTION_ORIGIN));
 

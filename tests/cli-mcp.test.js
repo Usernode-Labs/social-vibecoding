@@ -71,10 +71,19 @@ test('MCP initializes without credentials and returns the external login contrac
       'social_vibecoding.api_read',
       'social_vibecoding.api_write',
       'social_vibecoding.login_status',
+      'social_vibecoding.proposal_append_context',
+      'social_vibecoding.proposal_promote',
+      'social_vibecoding.proposal_start',
+      'social_vibecoding.proposal_status',
+      'social_vibecoding.proposal_submit_build',
       'social_vibecoding.whoami',
     ]);
     for (const [name, tool] of byName) {
-      const mutating = name === 'social_vibecoding.api_write';
+      const mutating = name === 'social_vibecoding.api_write'
+        || name === 'social_vibecoding.proposal_start'
+        || name === 'social_vibecoding.proposal_append_context'
+        || name === 'social_vibecoding.proposal_submit_build'
+        || name === 'social_vibecoding.proposal_promote';
       assert.equal(tool.annotations.readOnlyHint, !mutating);
       assert.equal(tool.annotations.destructiveHint, mutating);
       assert.equal(tool.annotations.openWorldHint, false);
@@ -202,6 +211,189 @@ test('generic MCP API calls classify 429 and 5xx responses as retryable service 
       assert.deepEqual(result.structuredContent.body, body);
     }
     assert.equal(calls, 2);
+  } finally {
+    await client.close().catch(() => {});
+    await new Promise((resolve) => server.close(resolve));
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+test('proposal MCP tools call the native handoff lifecycle and gate promotion on ready status', async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-proposal-'));
+  await fs.chmod(home, 0o700);
+  const directory = path.join(home, '.config', 'social-vibecoding');
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  const checkout = path.resolve(__dirname, '..');
+  const token = makeAccessToken();
+  const requests = [];
+  let promoted = false;
+  const server = http.createServer(async (req, res) => {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    requests.push({
+      method: req.method,
+      url: req.url,
+      body: raw ? JSON.parse(raw) : undefined,
+      authorization: req.headers.authorization,
+    });
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'POST' && req.url === '/api/apps/demo/proposal-handoffs') {
+      res.statusCode = 201;
+      res.end(JSON.stringify({ sessionId: 41, state: 'draft', branch: 'dev/cli-u7-feature-0001' }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/api/sessions/41/proposal-handoff/context') {
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, inserted: 1 }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/api/sessions/41/proposal-handoff/build') {
+      res.statusCode = 202;
+      res.end(JSON.stringify({ sessionId: 41, status: 'deploying', headSha: 'b'.repeat(40) }));
+      return;
+    }
+    if (req.method === 'GET' && req.url === '/api/sessions/41/proposal-handoff') {
+      res.statusCode = 200;
+      res.end(JSON.stringify({
+        sessionId: 41,
+        state: promoted ? 'promoted' : 'ready',
+        headSha: 'b'.repeat(40),
+      }));
+      return;
+    }
+    if (req.method === 'POST' && req.url === '/api/sessions/41/promote') {
+      promoted = true;
+      res.statusCode = 200;
+      res.end(JSON.stringify({ ok: true, prNumber: 88 }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: 'not_found' }));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  await fs.writeFile(path.join(directory, 'config.json'), `${JSON.stringify({
+    version: 1,
+    default_profile: 'lab',
+    profiles: { lab: { origin } },
+    credential_backends: { [origin]: 'file' },
+  })}\n`, { mode: 0o600 });
+  await fs.writeFile(path.join(directory, 'credentials.json'), `${JSON.stringify({
+    version: 1,
+    servers: {
+      [origin]: {
+        access_token: token,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        scopes: REQUIRED_SCOPES,
+        client_id: CLIENT_ID,
+      },
+    },
+  })}\n`, { mode: 0o600 });
+
+  const bootstrap = [
+    "const os = require('node:os');",
+    'const original = os.userInfo();',
+    'os.userInfo = () => ({ ...original, homedir: process.argv[1] });',
+    "const path = require('node:path');",
+    "const { main } = require(path.join(process.argv[2], 'src/cli/main'));",
+    "main(['mcp', '--profile', 'lab'], {",
+    "  launcherPath: path.join(process.argv[2], 'tools/social-vibecoding')",
+    '}).then((code) => { process.exitCode = code; });',
+  ].join('\n');
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ['-e', bootstrap, home, checkout],
+    cwd: checkout,
+    env: { PATH: '/definitively-unavailable-for-cli-mcp-test' },
+    stderr: 'pipe',
+  });
+  const client = new Client({ name: 'cli-mcp-proposal-test', version: '1.0.0' });
+  try {
+    await client.connect(transport);
+    const start = await client.callTool({
+      name: 'social_vibecoding.proposal_start',
+      arguments: {
+        app_slug: 'demo',
+        request_id: 'feature-0001',
+        base_sha: 'a'.repeat(40),
+        title: 'Feature',
+        spec: '# Spec',
+        history: [{ id: 'u1', kind: 'user', content: 'Build it.' }],
+        linked_issues: [12],
+      },
+    });
+    assert.equal(start.structuredContent.status, 201);
+    assert.equal(start.structuredContent.body.sessionId, 41);
+
+    const append = await client.callTool({
+      name: 'social_vibecoding.proposal_append_context',
+      arguments: {
+        session_id: 41,
+        history: [{ id: 's2', kind: 'summary', content: 'Implemented it.', phase: 'build' }],
+      },
+    });
+    assert.equal(append.structuredContent.body.inserted, 1);
+
+    const submit = await client.callTool({
+      name: 'social_vibecoding.proposal_submit_build',
+      arguments: {
+        session_id: 41,
+        head_sha: 'b'.repeat(40),
+        history: [{ id: 's3', kind: 'summary', content: 'Verified it.', phase: 'test' }],
+        tests: [{ command: 'npm test', status: 'passed', summary: 'Green.' }],
+      },
+    });
+    assert.equal(submit.structuredContent.status, 202);
+
+    const status = await client.callTool({
+      name: 'social_vibecoding.proposal_status',
+      arguments: { session_id: 41 },
+    });
+    assert.equal(status.structuredContent.body.state, 'ready');
+
+    const promote = await client.callTool({
+      name: 'social_vibecoding.proposal_promote',
+      arguments: { session_id: 41 },
+    });
+    assert.equal(promote.structuredContent.status, 200);
+    assert.equal(promote.structuredContent.body.prNumber, 88);
+
+    const promoteRetry = await client.callTool({
+      name: 'social_vibecoding.proposal_promote',
+      arguments: { session_id: 41 },
+    });
+    assert.equal(promoteRetry.structuredContent.body.state, 'promoted',
+      'a lost promote response can be retried without issuing a second mutation');
+
+    assert.deepEqual(requests.map((request) => [request.method, request.url]), [
+      ['POST', '/api/apps/demo/proposal-handoffs'],
+      ['POST', '/api/sessions/41/proposal-handoff/context'],
+      ['POST', '/api/sessions/41/proposal-handoff/build'],
+      ['GET', '/api/sessions/41/proposal-handoff'],
+      ['GET', '/api/sessions/41/proposal-handoff'],
+      ['POST', '/api/sessions/41/promote'],
+      ['GET', '/api/sessions/41/proposal-handoff'],
+    ]);
+    assert.deepEqual(requests[0].body, {
+      schemaVersion: 1,
+      requestId: 'feature-0001',
+      baseSha: 'a'.repeat(40),
+      title: 'Feature',
+      spec: '# Spec',
+      history: [{ id: 'u1', kind: 'user', content: 'Build it.' }],
+      linkedIssues: [12],
+    });
+    assert.deepEqual(requests[1].body, {
+      schemaVersion: 1,
+      history: [{ id: 's2', kind: 'summary', content: 'Implemented it.', phase: 'build' }],
+    });
+    assert.deepEqual(requests[2].body, {
+      schemaVersion: 1,
+      headSha: 'b'.repeat(40),
+      history: [{ id: 's3', kind: 'summary', content: 'Verified it.', phase: 'test' }],
+      tests: [{ command: 'npm test', status: 'passed', summary: 'Green.' }],
+    });
+    assert.ok(requests.every((request) => request.authorization === `Bearer ${token}`));
   } finally {
     await client.close().catch(() => {});
     await new Promise((resolve) => server.close(resolve));

@@ -109,3 +109,22 @@ test('a terminal verdict clears the phase so a settled card never shows a stage'
   await visuals.storeChecksSkipped(pool, 42, 'abc123', 'nothing to test');
   assert.match(queries[0].sql, /check_phase = NULL/);
 });
+
+test('the rolling-deploy console snapshot is bound to the same live commit', async () => {
+  const queries = [];
+  const pool = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const stored = await visuals.storeConsoleCheck(
+    pool, 42, { state: 'clean', errors: [] }, 'abc123'
+  );
+  assert.equal(stored, true);
+  assert.match(queries[0].sql,
+    /status IN \('active', 'paused', 'promoted', 'merging'\)/);
+  assert.match(queries[0].sql,
+    /checks_commit_sha IS NOT DISTINCT FROM \$4::text/);
+  assert.deepEqual(queries[0].params, ['clean', '[]', 42, 'abc123']);
+});

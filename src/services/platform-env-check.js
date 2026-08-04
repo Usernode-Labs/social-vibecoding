@@ -159,12 +159,19 @@ function isUnwritableWithOverlay(entry, overlay) {
   return overlay.prefixes.some((p) => entry.key.startsWith(p));
 }
 
-// Same ref-selection rule as app-admins.headRefForSession: an imported
-// PR is identified by its head sha, a native proposal by its branch.
+// Imported PRs and native CLI handoffs are identified by immutable commits;
+// ordinary native proposals remain branch-addressed. A local checkout can
+// push its managed branch while an older capture is still finishing, so using
+// that mutable branch here would stamp the platform-env verdict from different
+// code than the staging/check revision.
 function headRefForSession(session) {
-  return session?.source === 'imported'
-    ? (session.imported_pr_head_sha || session.branch_name || null)
-    : (session?.branch_name || null);
+  if (session?.source === 'imported') {
+    return session.imported_pr_head_sha || session.branch_name || null;
+  }
+  if (session?.source === 'cli_handoff') {
+    return session.checks_commit_sha || session.handoff_head_sha || null;
+  }
+  return session?.branch_name || null;
 }
 
 const SKIP = (reason) => ({
@@ -368,17 +375,24 @@ async function resolvePlatformEnvCheck({ pool, app, session }) {
  * different input. Best-effort — a stamp failure must not break the
  * caller, which is always some other pipeline's happy path.
  */
-async function storePlatformEnvCheck(pool, sessionId, result) {
+async function storePlatformEnvCheck(pool, sessionId, result, expectedCommitSha = null) {
   try {
-    await pool.query(
+    const commitGuard = expectedCommitSha
+      ? ` AND status IN ('active', 'paused', 'promoted', 'merging')
+          AND checks_commit_sha IS NOT DISTINCT FROM $4::text`
+      : '';
+    const write = await pool.query(
       `UPDATE chat_sessions
           SET platform_env_state = $2,
               platform_env_detail = $3::jsonb
-        WHERE id = $1`,
-      [sessionId, result.state, JSON.stringify(result.detail || {})]
+        WHERE id = $1${commitGuard}`,
+      [sessionId, result.state, JSON.stringify(result.detail || {}),
+        ...(expectedCommitSha ? [expectedCommitSha] : [])]
     );
+    return write.rowCount !== 0;
   } catch (err) {
     log.warn('platform-env-check', 'Verdict stamp failed', { sessionId, err: err.message });
+    return false;
   }
 }
 
@@ -386,7 +400,11 @@ async function storePlatformEnvCheck(pool, sessionId, result) {
 async function refreshPlatformEnvCheck({ pool, app, session }) {
   try {
     const result = await resolvePlatformEnvCheck({ pool, app, session });
-    await storePlatformEnvCheck(pool, session.id, result);
+    const expectedCommitSha = session?.source === 'cli_handoff'
+      ? (session.checks_commit_sha || session.handoff_head_sha || null)
+      : null;
+    const stored = await storePlatformEnvCheck(pool, session.id, result, expectedCommitSha);
+    if (!stored) return null;
     return result;
   } catch (err) {
     log.warn('platform-env-check', 'Refresh failed', { sessionId: session?.id, err: err.message });

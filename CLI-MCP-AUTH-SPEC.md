@@ -1171,6 +1171,11 @@ enabled_tools = [
   "social_vibecoding.whoami",
   "social_vibecoding.api_read",
   "social_vibecoding.api_write",
+  "social_vibecoding.proposal_start",
+  "social_vibecoding.proposal_append_context",
+  "social_vibecoding.proposal_submit_build",
+  "social_vibecoding.proposal_status",
+  "social_vibecoding.proposal_promote",
 ]
 ```
 
@@ -1338,6 +1343,11 @@ The protected tools are:
 social_vibecoding.whoami
 social_vibecoding.api_read
 social_vibecoding.api_write
+social_vibecoding.proposal_start
+social_vibecoding.proposal_append_context
+social_vibecoding.proposal_submit_build
+social_vibecoding.proposal_status
+social_vibecoding.proposal_promote
 ```
 
 `whoami` is backed only by `GET /api/cli/rpc/me` and
@@ -1347,6 +1357,63 @@ path, and an optional JSON body. Both API tools use `api:access`, preserve the
 platform endpoint's HTTP status and JSON body, never accept an origin/header/
 cookie/token input, and never call GitHub directly. This path-based bridge
 means a new user-facing platform endpoint needs no CLI/MCP registry change.
+
+The five proposal tools are reviewed convenience wrappers around those same
+user-facing APIs, not a hardcoded API registry. They preserve the browser Dev
+workflow for work authored in a local Codex or Claude session:
+
+1. The agent writes a complete markdown spec before implementation and calls
+   `proposal_start` with the app, exact base SHA, stable request ID, spec, and
+   durable history. Usernode creates a native `source='cli_handoff'` Dev
+   session and a platform-managed branch at that exact base.
+2. History contains exact user-visible requests and concise agent summaries,
+   each with a stable event ID. It never contains hidden reasoning, secrets,
+   credentials, or raw tool logs. Event IDs are unique per session, making
+   retries idempotent. `proposal_start` fingerprints its full normalized
+   request and atomically commits the session, initial spec, and initial
+   history, so retrying remains read-only even after later local/web edits.
+   The spec is stored in both the live session document and immutable spec
+   history.
+3. The agent implements and tests in its local checkout, commits, and pushes
+   the exact head to the returned branch. `proposal_submit_build` accepts that
+   SHA only after GitHub proves it belongs to the app repository and is a
+   descendant of the agreed base and the session's current checked head
+   (whether produced locally or on the web). Usernode
+   then runs the ordinary staging, preview, screenshot, and proposal-check
+   pipeline against the pinned commit.
+4. The agent polls `proposal_status` until `ready` or `failed`, iterating with
+   later fast-forward commits as needed. `proposal_promote` first verifies the
+   session is ready, then uses the existing Usernode promotion route to create
+   the app PR lazily and enter the normal vote flow; it never opens a GitHub PR
+   directly.
+
+The returned `webPath` opens the exact same native session on the web Dev
+page. Continuing there is optional: its user/assistant transcript, spec,
+branch, staging preview, checks, and later PR context are shared, but the local
+agent can also complete the entire workflow through promotion without opening
+the page. Opening or editing in the web page never transfers ownership or
+changes provenance. Local and web turns may alternate on the same branch;
+web-worker commits advance the ordinary `checks_commit_sha`, while
+`handoff_head_sha` remains the audit record of the latest commit explicitly
+submitted by a local agent.
+
+Before promotion, `checks_commit_sha` (falling back to `handoff_head_sha`
+before the first check) identifies the exact revision whose staging preview
+and checks are ready. Promotion re-reads the managed branch and refuses if it
+no longer matches that checked head. The ordinary native-proposal promotion
+path then records the live PR head in `reviewed_head_sha`; votes and the final
+GitHub merge use that common native revision pin, including for CLI handoffs.
+
+A late direct push therefore cannot be merged under earlier checks or votes.
+The shared native revision reconciler advances `reviewed_head_sha`, removes
+only votes stamped for the older revision, invalidates an older checks result,
+and runs checks against the new head while the proposal remains in review. If
+GitHub reports a moved head at merge time, the same reconciliation runs before
+another vote or merge attempt. CLI handoffs do not carry a parallel
+merge-specific state machine.
+
+This is deliberately not the imported-PR path, whose Dev chat is read-only and
+cannot preserve cross-surface continuation.
 
 The API tools use the MCP server's pinned profile when `profile` is omitted.
 They accept only the immutable `production` or `local` names as an explicit
@@ -1769,7 +1836,7 @@ This keeps global platform identity separate from child-app identity.
 ### MCP tests
 
 - MCP initializes without credentials.
-- In MCP mode stdout contains only protocol messages, both tools publish the
+- In MCP mode stdout contains only protocol messages, all tools publish the
   documented output schemas/read-only annotations, and initialization
   instructions describe external login without blocking.
 - A protected tool returns `login_required` when unauthenticated.
@@ -1801,7 +1868,7 @@ This keeps global platform identity separate from child-app identity.
   and retries the original request after health or browser approval.
 - Project-local configuration launches the checked-in CLI as `mcp` and may
   select only a validated profile name, never an origin, environment value, or
-  nonallowlisted forwarded variable; its tool allowlist contains only the four
+  nonallowlisted forwarded variable; its tool allowlist contains only the nine
   reviewed tools.
 - `codex setup` writes canonical absolute Node/script/checkout paths to the
   ignored project config, works across Codex working-directory differences,
@@ -1840,4 +1907,7 @@ This keeps global platform identity separate from child-app identity.
 7. Add automatic production/local selection guidance plus
    `local_setup_required`, `login_required`, and
    `reauthorization_required` retry contracts.
-8. Add operational metrics and audit-retention monitoring.
+8. Add native CLI proposal handoff storage/routes, pinned-commit branch
+   adoption, shared transcript/spec context, staging/check orchestration, and
+   the five proposal workflow tools for Codex and Claude.
+9. Add operational metrics and audit-retention monitoring.

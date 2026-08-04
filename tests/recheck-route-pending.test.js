@@ -105,6 +105,26 @@ test('recheck stamps pending + broadcasts before responding', async () => {
   }
 });
 
+test('recheck refuses to queue behind an existing capture pipeline', async () => {
+  poolQueryHandler = async (sql) => {
+    if (/FROM chat_sessions cs JOIN apps a/.test(String(sql))) {
+      return { rows: [sessionRow()] };
+    }
+    return { rows: [] };
+  };
+  const original = visuals.hasInFlightCapture;
+  visuals.hasInFlightCapture = () => true;
+  const server = await startServer();
+  try {
+    const { res, body } = await postRecheck(server);
+    assert.equal(res.status, 200);
+    assert.deepEqual(body, { status: 'running' });
+  } finally {
+    server.close();
+    visuals.hasInFlightCapture = original;
+  }
+});
+
 // Regression for the campaign-dashboard 403: req.user carries camelCase
 // isAdmin/canAdminWrite (middleware/auth.js) — the route once checked the
 // nonexistent `is_admin`, so admins were rejected on every proposal they

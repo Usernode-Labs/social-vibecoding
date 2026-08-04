@@ -612,6 +612,122 @@ async function createBranch(owner, repo, branchName, fromBranch = 'main') {
   log.info('github', 'Branch created', { repo: `${owner}/${repo}`, branch: branchName, from: fromBranch });
 }
 
+// Create a platform-managed branch at an exact commit supplied by a native
+// CLI handoff. Unlike createBranch(), this does not infer `main`: the local
+// agent and Usernode agree on one audited base SHA. Retrying after a DB
+// failure is safe when the orphaned ref still points at that SHA; a different
+// ref is a hard conflict rather than something we silently overwrite.
+async function ensureBranchAtSha(owner, repo, branchName, sha) {
+  const octokit = await getOctokit(owner);
+  await octokit.request('GET /repos/{owner}/{repo}/git/commits/{commit_sha}', {
+    owner, repo, commit_sha: sha,
+  });
+
+  try {
+    const { data: ref } = await octokit.request(
+      'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+      { owner, repo, ref: `heads/${branchName}` }
+    );
+    if (String(ref.object.sha).toLowerCase() !== String(sha).toLowerCase()) {
+      const err = new Error('The CLI handoff branch already exists at a different commit');
+      err.code = 'branch_conflict';
+      throw err;
+    }
+    return { sha: ref.object.sha, created: false };
+  } catch (err) {
+    if (err.code === 'branch_conflict') throw err;
+    if (err.status !== 404) throw err;
+  }
+
+  try {
+    await octokit.request('POST /repos/{owner}/{repo}/git/refs', {
+      owner, repo, ref: `refs/heads/${branchName}`, sha,
+    });
+  } catch (createErr) {
+    // Two retries of the same proposal_start can both observe the ref as
+    // absent. GitHub lets one POST win and returns 422 to the other. Re-read
+    // on that exact race: the matching ref is the idempotent success case; a
+    // different ref remains a hard conflict. If no ref appeared, preserve the
+    // original validation error instead of disguising it.
+    if (createErr.status !== 422) throw createErr;
+    try {
+      const { data: racedRef } = await octokit.request(
+        'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+        { owner, repo, ref: `heads/${branchName}` }
+      );
+      if (String(racedRef.object.sha).toLowerCase() === String(sha).toLowerCase()) {
+        return { sha: racedRef.object.sha, created: false };
+      }
+      const conflict = new Error('The CLI handoff branch already exists at a different commit');
+      conflict.code = 'branch_conflict';
+      throw conflict;
+    } catch (readErr) {
+      if (readErr.code === 'branch_conflict') throw readErr;
+      throw createErr;
+    }
+  }
+  log.info('github', 'Branch created at exact SHA', {
+    repo: `${owner}/${repo}`, branch: branchName, sha,
+  });
+  return { sha, created: true };
+}
+
+// Prove `headSha` is the same commit as, or a descendant of, `baseSha`.
+// The compare endpoint also proves both objects belong to this repository.
+// Callers use this for both the immutable handoff base and the branch's
+// current head, preventing history rewrites on a later submission.
+async function compareCommitAncestry(owner, repo, baseSha, headSha) {
+  const octokit = await getOctokit(owner);
+  const { data } = await octokit.request(
+    'GET /repos/{owner}/{repo}/compare/{basehead}',
+    { owner, repo, basehead: `${baseSha}...${headSha}`, per_page: 1 }
+  );
+  return {
+    status: data.status,
+    aheadBy: Number(data.ahead_by || 0),
+    behindBy: Number(data.behind_by || 0),
+    mergeBaseSha: data.merge_base_commit?.sha || null,
+  };
+}
+
+async function getBranchSha(owner, repo, branchName) {
+  const octokit = await getOctokit(owner);
+  const { data: ref } = await octokit.request(
+    'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+    { owner, repo, ref: `heads/${branchName}` }
+  );
+  return ref.object.sha;
+}
+
+// Fast-forward a CLI handoff's platform branch to an exact pushed commit.
+// `force:false` is intentional even though callers preflight ancestry: it
+// closes the race if another writer moves the ref between compare + update.
+async function advanceBranchToSha(owner, repo, branchName, sha) {
+  const octokit = await getOctokit(owner);
+  const { data: ref } = await octokit.request(
+    'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+    { owner, repo, ref: `heads/${branchName}` }
+  );
+  const currentSha = ref.object.sha;
+  if (String(currentSha).toLowerCase() === String(sha).toLowerCase()) {
+    return { previousSha: currentSha, sha: currentSha, updated: false };
+  }
+  const ancestry = await compareCommitAncestry(owner, repo, currentSha, sha);
+  if (ancestry.status !== 'ahead' || ancestry.aheadBy < 1) {
+    const err = new Error('Submitted commit does not fast-forward the CLI handoff branch');
+    err.code = 'non_fast_forward';
+    throw err;
+  }
+  const { data: updated } = await octokit.request(
+    'PATCH /repos/{owner}/{repo}/git/refs/{+ref}',
+    { owner, repo, ref: `heads/${branchName}`, sha, force: false }
+  );
+  log.info('github', 'CLI handoff branch advanced', {
+    repo: `${owner}/${repo}`, branch: branchName, from: currentSha, to: updated.object.sha,
+  });
+  return { previousSha: currentSha, sha: updated.object.sha, updated: true };
+}
+
 // Log-safe description of a GitHub/Octokit error. Octokit's
 // RequestError.message is EMPTY when GitHub answers with an empty or
 // non-JSON body (the 2026-07-24 create-PR outage logged `{"err":""}` for
@@ -771,12 +887,11 @@ async function reopenPR(owner, repo, prNumber) {
   return data;
 }
 
-// #687 Slice 4: distinct "head moved" outcome. When a `sha` is passed to
-// mergePR (proposal callers pin the exact reviewed commit) GitHub returns 409
-// if the PR head has moved since — someone pushed between the vote and the
-// merge. checkAndMerge treats this NOT as a proposal error but as "wait for
-// the sync poller to pick up the new head (reset votes/checks) and retry on
-// the next qualifying vote". `err.headMoved === true` is the sentinel.
+// Distinct "head moved" outcome. Proposal callers pin the exact reviewed
+// commit, so GitHub returns 409 if someone pushes between the vote and merge.
+// Imported proposals defer to their sync poller; native proposals (including
+// CLI handoffs) reconcile their live reviewed head immediately.
+// `err.headMoved === true` is the shared sentinel.
 class HeadMovedError extends Error {
   constructor(message) {
     super(message || 'PR head moved since the reviewed commit');
@@ -1645,6 +1760,10 @@ module.exports = {
   pushFiles,
   getFileContent,
   createBranch,
+  ensureBranchAtSha,
+  compareCommitAncestry,
+  getBranchSha,
+  advanceBranchToSha,
   createPR,
   describeGithubError,
   _setCreatePrRetryDelaysForTests,

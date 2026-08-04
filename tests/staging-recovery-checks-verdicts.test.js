@@ -73,8 +73,8 @@ function loadRecovery() {
   const originals = [
     [paths.logger, stubModule(paths.logger, { info() {}, warn() {}, error() {}, debug() {} })],
     [paths.visuals, stubModule(paths.visuals, {
-      storeChecksSkipped: async (_pool, sessionId, commitSha, reason) => {
-        skippedCalls.push({ sessionId, commitSha, reason });
+      storeChecksSkipped: async (_pool, sessionId, commitSha, reason, expectedCommitSha) => {
+        skippedCalls.push({ sessionId, commitSha, reason, expectedCommitSha });
       },
       storeChecks: async (_pool, sessionId, commitSha, result, detail) => {
         errorChecks.push({ sessionId, commitSha, result, detail });
@@ -151,10 +151,12 @@ test('recordChecksSkipped: writes the verdict, broadcasts checks_ready, re-drive
   try {
     await subject.recordChecksSkipped({
       config: {}, pool: makeRecordingPool(), session: { ...SESSION },
-      commitSha: 'beef5678', reason: 'branch has no commits beyond main — nothing to test',
+      commitSha: 'beef5678', expectedCommitSha: 'cafe1234',
+      reason: 'branch has no commits beyond main — nothing to test',
     });
     assert.equal(skippedCalls.length, 1);
     assert.equal(skippedCalls[0].commitSha, 'beef5678');
+    assert.equal(skippedCalls[0].expectedCommitSha, 'cafe1234');
     assert.match(skippedCalls[0].reason, /nothing to test/);
     const ev = broadcasts.find((m) => m.event === 'checks_ready');
     assert.ok(ev, 'checks_ready broadcast emitted');
@@ -212,7 +214,12 @@ test("storeChecksSkipped: writes 'skipped' + reason and clears the failure strea
     assert.match(q.sql, /last_check_failure_at = NULL/);
     assert.match(q.sql, /check_next_retry_at = NULL/);
     assert.match(q.sql, /check_error_notified_at = NULL/);
-    assert.deepEqual(q.params, ['cafe1234', 'branch has no commits beyond main — nothing to test', 42]);
+    assert.match(q.sql, /status IN \('active', 'paused', 'promoted', 'merging'\)/,
+      'an archived or merged session cannot regain a terminal checks verdict');
+    assert.match(q.sql, /checks_commit_sha IS NOT DISTINCT FROM \$4::text/);
+    assert.deepEqual(q.params, [
+      'cafe1234', 'branch has no commits beyond main — nothing to test', 42, 'cafe1234',
+    ]);
   } finally { restore(); }
 });
 
@@ -221,7 +228,21 @@ test('storeChecksSkipped: null commit/reason degrade to NULLs, never "undefined"
   const pool = makeRecordingPool();
   try {
     await subject.storeChecksSkipped(pool, 42, null, null);
-    assert.deepEqual(pool.queries[0].params, [null, null, 42]);
+    assert.deepEqual(pool.queries[0].params, [null, null, 42, null]);
+  } finally { restore(); }
+});
+
+test('storeChecksSkipped can atomically move a no-commit verdict to the compared base SHA', async () => {
+  const { subject, restore } = loadVisuals();
+  const pool = makeRecordingPool();
+  try {
+    await subject.storeChecksSkipped(
+      pool, 42, 'new-main-sha', 'nothing to test', 'previous-reviewed-sha'
+    );
+    const q = pool.queries[0];
+    assert.deepEqual(q.params, [
+      'new-main-sha', 'nothing to test', 42, 'previous-reviewed-sha',
+    ]);
   } finally { restore(); }
 });
 
@@ -233,6 +254,8 @@ test("setChecksPending returns a 'skipped' row to 'pending' for the next commit 
     assert.equal(pool.queries.length, 1);
     const q = pool.queries[0];
     assert.match(q.sql, /SET check_state = 'pending'/);
+    assert.match(q.sql, /status IN \('active', 'paused', 'promoted', 'merging'\)/,
+      'a delayed retry cannot resurrect checks on archived or merged rows');
     // $3 is check_phase — NULL when the caller names no stage.
     assert.deepEqual(q.params, [42, 'feed0042', null]);
   } finally { restore(); }
@@ -247,8 +270,26 @@ test("storeChecks 'error' branch keeps the backoff bookkeeping the compare-throw
     const q = pool.queries[0];
     assert.match(q.sql, /consecutive_check_failures = consecutive_check_failures \+ 1/);
     assert.match(q.sql, /check_next_retry_at = NOW\(\) \+ make_interval/);
+    assert.match(q.sql, /status IN \('active', 'paused', 'promoted', 'merging'\)/,
+      'a detached failure cannot mutate a withdrawn session');
+    assert.match(q.sql, /checks_commit_sha IS NOT DISTINCT FROM \$3::text/);
     assert.equal(q.params[0], 'error');
     assert.match(String(q.params[4]), /could not compare/);
+  } finally { restore(); }
+});
+
+test('terminal check writes are discarded after a newer commit owns the session', async () => {
+  const { subject, restore } = loadVisuals();
+  const pool = {
+    async query() { return { rows: [], rowCount: 0 }; },
+  };
+  try {
+    assert.equal(await subject.storeChecks(
+      pool, 42, 'old-head', { state: 'passing', results: [] }
+    ), false);
+    assert.equal(await subject.storeChecksSkipped(
+      pool, 42, 'old-head', 'stale no-op'
+    ), false);
   } finally { restore(); }
 });
 
@@ -350,6 +391,14 @@ test('the heal compares and pins the IMPORTED head sha, never the fork branch na
   assert.match(RECOVERY_SRC, /base: 'main', head: compareHead/, 'the compare uses it');
   assert.match(RECOVERY_SRC, /const commitHash = importedHead\s*\n\s*\|\|/,
     'and the build is pinned to it, not to the compare tip');
+});
+
+test('the heal claims the resolved commit before staging can fail', () => {
+  assert.match(
+    RECOVERY_SRC,
+    /const commitHash = [\s\S]*?await visuals\.setChecksPending\(pool, session\.id, commitHash\)[\s\S]*?buildAndDeployStaging\(config, session, app, commitHash\)/,
+    'a boot failure must be stored against the same commit the rebuild attempted'
+  );
 });
 
 test('an imported row with no recorded head sha records a terminal skip', () => {

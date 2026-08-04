@@ -163,6 +163,7 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     await recordChecksSkipped({
       config, pool, session,
       commitSha: compare.base_commit?.sha || session.checks_commit_sha || null,
+      expectedCommitSha: session.checks_commit_sha || null,
       reason: imported
         ? 'imported PR has no commits beyond main — nothing to test'
         : 'branch has no commits beyond main — nothing to test',
@@ -187,6 +188,18 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
     || compare.commits[compare.commits.length - 1]?.sha
     || 'latest';
   const app = { id: session.app_id, slug: session.app_slug, name: session.app_name, repo_url: session.repo_url };
+  const visuals = require('./visuals');
+
+  // Recovery can discover a newer native branch tip than the verdict stored
+  // on the row. Claim that exact commit before the build so a boot failure is
+  // allowed through storeChecks' latest-head CAS instead of being discarded
+  // as stale and leaving the old commit permanently pending. Imported rows
+  // remain pinned to importedHead above.
+  await visuals.setChecksPending(pool, session.id, commitHash).catch((err) =>
+    log.warn('staging-recovery', 'rebuild setChecksPending failed (non-fatal)', {
+      sessionId: session.id, err: err.message,
+    }));
+  visuals.notifyChecksPending(session.id, commitHash);
 
   // Create PR if missing (active-session recovery only). Route through
   // applyPrMetadata — NOT a bare createPR — so the PR gets a real
@@ -326,7 +339,6 @@ async function rebuildSessionStaging({ config, pool, session, reason }) {
   // Fire-and-forget with the same failure-swallowing as the dev-turn
   // callers; captureForSession is itself _inFlight-guarded so a concurrent
   // live capture isn't duplicated.
-  const visuals = require('./visuals');
   visuals.captureForSession(config, session, app, commitHash, stagingResult, { send: () => {} })
     .catch((err) => log.warn('staging-recovery', 'Post-rebuild checks capture failed (non-fatal)', {
       sessionId: session.id, err: err.message,
@@ -404,10 +416,20 @@ async function announceRebuildStarted({ pool, session, imported }) {
 // tell open clients and re-drive the auto-merge drain — a proposal whose vote
 // already passed should merge the moment its checks resolve to 'skipped',
 // exactly as it would on 'passing'. Best-effort: never throws.
-async function recordChecksSkipped({ config, pool, session, commitSha, reason }) {
+async function recordChecksSkipped({
+  config, pool, session, commitSha, expectedCommitSha = commitSha, reason,
+}) {
   const visuals = require('./visuals');
   try {
-    await visuals.storeChecksSkipped(pool, session.id, commitSha, reason);
+    const stored = await visuals.storeChecksSkipped(
+      pool, session.id, commitSha, reason, expectedCommitSha
+    );
+    if (stored === false) {
+      log.info('staging-recovery', 'Discarded stale skipped-checks result', {
+        sessionId: session.id, commitSha: commitSha || null,
+      });
+      return;
+    }
   } catch (err) {
     log.warn('staging-recovery', 'skipped-verdict write failed', {
       sessionId: session.id, err: err.message,
@@ -436,7 +458,15 @@ async function recordStagingBootFailure({ config, pool, session, commitHash, err
   const visuals = require('./visuals');
   const detail = visuals.summarizeBootFailure(err);
 
-  await visuals.storeChecks(pool, session.id, commitHash, { state: 'error', results: [] }, detail);
+  const stored = await visuals.storeChecks(
+    pool, session.id, commitHash, { state: 'error', results: [] }, detail
+  );
+  if (stored === false) {
+    log.info('staging-recovery', 'Discarded stale staging failure', {
+      sessionId: session.id, commitHash: commitHash || null,
+    });
+    return;
+  }
 
   // Read back the streak bookkeeping to decide whether this is the first
   // failure of the streak (→ notify + post) or a quiet backoff retry.
