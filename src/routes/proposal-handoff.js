@@ -14,6 +14,14 @@ const { effectiveSessionCaps } = require('../services/session-caps');
 const { drainGuard } = require('../services/lifecycle');
 const events = require('../services/events');
 const log = require('../services/logger');
+const {
+  MAX_UPLOAD_FILES,
+  MAX_UPLOAD_FILE_BYTES,
+  MAX_UPLOAD_TOTAL_BYTES,
+  MAX_COMMIT_MESSAGE_BYTES,
+  ALLOWED_FILE_MODES,
+  validateUploadPath,
+} = require('../services/proposal-commit-upload');
 
 const SOURCE = 'cli_handoff';
 const SHA_RE = /^[0-9a-f]{40}$/i;
@@ -25,6 +33,8 @@ const MAX_HISTORY_BYTES = 40 * 1024;
 const MAX_EVENT_BYTES = 8 * 1024;
 const MAX_HISTORY_EVENTS = 80;
 const MAX_TESTS = 50;
+const COMMIT_UPLOAD_JSON_LIMIT = '12mb';
+const RFC3339_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 // A user can submit a newer local commit while an earlier HTTP request is
 // still proving ancestry/updating GitHub. Serialize that adoption per session
@@ -222,10 +232,89 @@ function parseBuildBody(body) {
   };
 }
 
+function parseCommitUploadBody(body) {
+  exactKeys(body, [
+    'schemaVersion', 'localCommitSha', 'parentSha', 'parentTreeSha', 'treeSha', 'message',
+    'authoredAt', 'committedAt', 'files',
+  ], 'body');
+  if (body.schemaVersion !== 1) throw new ValidationError('schemaVersion must be 1');
+  const localCommitSha = parseSha(body.localCommitSha, 'localCommitSha');
+  const parentSha = parseSha(body.parentSha, 'parentSha');
+  const parentTreeSha = parseSha(body.parentTreeSha, 'parentTreeSha');
+  const treeSha = parseSha(body.treeSha, 'treeSha');
+  const message = boundedText(body.message, {
+    label: 'message', min: 1, max: MAX_COMMIT_MESSAGE_BYTES,
+  });
+  const parseDate = (value, label) => {
+    if (typeof value !== 'string' || !RFC3339_RE.test(value)
+        || !Number.isFinite(Date.parse(value))) {
+      throw new ValidationError(`${label} must be an RFC 3339 timestamp`);
+    }
+    return value;
+  };
+  if (!Array.isArray(body.files) || body.files.length < 1
+      || body.files.length > MAX_UPLOAD_FILES) {
+    throw new ValidationError(`files must contain 1-${MAX_UPLOAD_FILES} entries`);
+  }
+  const seen = new Set();
+  let totalBytes = 0;
+  const files = body.files.map((file, index) => {
+    exactKeys(file, ['path', 'mode', 'contentBase64', 'delete'], `files[${index}]`);
+    let filePath;
+    try { filePath = validateUploadPath(file.path); } catch {
+      throw new ValidationError(`files[${index}].path is invalid`);
+    }
+    if (seen.has(filePath)) throw new ValidationError(`files[${index}].path is duplicated`);
+    seen.add(filePath);
+    if (file.delete === true) {
+      if (file.mode !== undefined || file.contentBase64 !== undefined
+          || Object.keys(file).some((key) => !['path', 'delete'].includes(key))) {
+        throw new ValidationError(`files[${index}] deletion contains unsupported fields`);
+      }
+      return { path: filePath, delete: true };
+    }
+    if (file.delete !== undefined) {
+      throw new ValidationError(`files[${index}].delete must be true when present`);
+    }
+    if (!ALLOWED_FILE_MODES.has(file.mode)) {
+      throw new ValidationError(`files[${index}].mode is unsupported`);
+    }
+    if (typeof file.contentBase64 !== 'string'
+        || file.contentBase64.length % 4 !== 0
+        || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(file.contentBase64)) {
+      throw new ValidationError(`files[${index}].contentBase64 is invalid`);
+    }
+    const content = Buffer.from(file.contentBase64, 'base64');
+    if (content.toString('base64') !== file.contentBase64
+        || content.length > MAX_UPLOAD_FILE_BYTES) {
+      throw new ValidationError(`files[${index}] content exceeds its limit`);
+    }
+    totalBytes += content.length;
+    if (totalBytes > MAX_UPLOAD_TOTAL_BYTES) {
+      throw new ValidationError('uploaded file content exceeds the total limit');
+    }
+    return { path: filePath, mode: file.mode, contentBase64: file.contentBase64 };
+  });
+  return {
+    localCommitSha,
+    parentSha,
+    parentTreeSha,
+    treeSha,
+    message,
+    authoredAt: parseDate(body.authoredAt, 'authoredAt'),
+    committedAt: parseDate(body.committedAt, 'committedAt'),
+    files,
+  };
+}
+
 function requireCli(req, res) {
   if (req.cliAuthenticated) return true;
   res.status(404).json({ error: 'not_found' });
   return false;
+}
+
+function requireCliMiddleware(req, res, next) {
+  if (requireCli(req, res)) next();
 }
 
 function repoCoordinates(app) {
@@ -282,10 +371,32 @@ function currentCheckedHead(session) {
   return session?.checks_commit_sha || session?.handoff_head_sha || null;
 }
 
+function hasUnsubmittedUpload(session) {
+  if (!session?.handoff_uploaded_sha
+      || session.handoff_uploaded_sha === session.handoff_head_sha) return false;
+  return (session.checks_commit_sha || null)
+    === (session.handoff_upload_checked_sha || null);
+}
+
+// An upload advances the managed Git branch before proposal_submit_build
+// starts checks. Once that uploaded SHA has been submitted, ordinary web Dev
+// turns own the branch/checks head again. This distinction prevents a stale
+// local audit SHA from hiding a newer web-authored branch tip.
+function currentProposalBranchHead(session) {
+  if (hasUnsubmittedUpload(session)) {
+    return session.handoff_uploaded_sha;
+  }
+  return currentCheckedHead(session)
+    || session?.handoff_uploaded_sha
+    || session?.handoff_base_sha
+    || null;
+}
+
 function publicSessionStatus(session) {
   let state;
   const headSha = currentCheckedHead(session);
   if (session.status !== 'active') state = session.status;
+  else if (hasUnsubmittedUpload(session)) state = 'uploaded';
   else if (!headSha) state = 'draft';
   else if (['failing', 'error'].includes(session.check_state)) state = 'failed';
   else if (staging.hasInFlightBuild(Number(session.id)) || !session.staging_url) state = 'deploying';
@@ -303,7 +414,9 @@ function publicSessionStatus(session) {
     branch: session.branch_name,
     baseSha: session.handoff_base_sha,
     headSha,
-    localHeadSha: session.handoff_head_sha || null,
+    localHeadSha: session.handoff_local_commit_sha || session.handoff_head_sha || null,
+    submittedHeadSha: session.handoff_head_sha || null,
+    uploadedHeadSha: session.handoff_uploaded_sha || null,
     stagingUrl: session.staging_url || null,
     checkState: session.check_state || null,
     checkError: session.check_error_detail || null,
@@ -540,6 +653,7 @@ function proposalHandoffRoutes(config) {
   const router = express.Router();
   const pool = getPool(config);
   const proposalJson = express.json({ limit: '512kb' });
+  const commitUploadJson = express.json({ limit: COMMIT_UPLOAD_JSON_LIMIT });
 
   router.post('/api/apps/:slug/proposal-handoffs', proposalJson, drainGuard, async (req, res) => {
     if (!requireCli(req, res)) return;
@@ -697,6 +811,157 @@ function proposalHandoffRoutes(config) {
     }
   });
 
+  router.post(
+    '/api/sessions/:id/proposal-handoff/commits',
+    requireCliMiddleware,
+    drainGuard,
+    commitUploadJson,
+    async (req, res) => {
+      if (!requireCli(req, res)) return;
+      const sessionId = parseSessionId(req.params.id);
+      if (!sessionId) return res.status(404).json({ error: 'Active handoff session not found' });
+      let input;
+      try {
+        input = parseCommitUploadBody(req.body);
+      } catch (err) {
+        if (err instanceof ValidationError) {
+          return res.status(400).json({ error: 'invalid_request', message: err.message });
+        }
+        log.error('proposal-handoff', 'Commit upload validation failed unexpectedly', { err: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+      try {
+        return await serializeHandoffSubmission(sessionId, async () => {
+        const session = await loadOwnedHandoff(pool, sessionId, req.user.id);
+        if (!session || session.status !== 'active') {
+          return res.status(404).json({ error: 'Active handoff session not found' });
+        }
+        if (!(await appAccess.checkAppAccess(pool, accessRow(session), req.user, 'collab'))) {
+          return res.status(404).json({ error: 'Active handoff session not found' });
+        }
+        if (isSessionBusy(Number(session.id))
+            || hasInFlightHandoffPipeline(session.id)
+            || staging.hasInFlightBuild(Number(session.id))
+            || visuals.hasInFlightCapture(session.id)) {
+          return res.status(409).json({
+            error: 'session_busy',
+            message: 'The shared proposal is currently changing. Retry when it finishes.',
+          });
+        }
+        const expectedParent = currentProposalBranchHead(session);
+        const releaseOperation = beginSessionOperation(session.id);
+        try {
+          const repo = repoCoordinates(session);
+          if (!github.isEnabled() || !repo) {
+            return res.status(400).json({ error: 'No GitHub repo configured for this app' });
+          }
+          let uploaded;
+          try {
+            uploaded = await github.createProposalCommit(repo.owner, repo.repo, {
+              branchName: session.branch_name,
+              expectedRemoteParentSha: expectedParent,
+              localParentSha: input.parentSha,
+              localParentTreeSha: input.parentTreeSha,
+              expectedTreeSha: input.treeSha,
+              localCommitSha: input.localCommitSha,
+              message: input.message,
+              authoredAt: input.authoredAt,
+              committedAt: input.committedAt,
+              files: input.files,
+            });
+          } catch (err) {
+            if (err.code === 'branch_moved') {
+              return res.status(409).json({
+                error: 'branch_moved',
+                message: 'The proposal branch changed. Fetch its current head and rebase the local commit before retrying.',
+              });
+            }
+            if (err.code === 'tree_mismatch') {
+              return res.status(409).json({
+                error: 'tree_mismatch',
+                message: 'The uploaded files did not reconstruct the tested local Git tree.',
+              });
+            }
+            if (err.code === 'parent_tree_mismatch') {
+              return res.status(409).json({
+                error: 'parent_tree_mismatch',
+                message: 'The local commit parent does not match the current proposal tree. Upload local commits in order or rebase onto the current proposal branch.',
+              });
+            }
+            const detail = github.describeGithubError(err);
+            // Never log GitHub's response data on this endpoint: a provider
+            // validation error may echo fields from the source upload.
+            log.warn('proposal-handoff', 'Bot-owned commit upload failed', {
+              sessionId: session.id,
+              status: detail.status,
+              requestId: detail.requestId,
+              message: detail.message,
+            });
+            return res.status(503).json({ error: 'github_unavailable' });
+          }
+          // The exact local/platform pair is already durable. This can be a
+          // retry before submission or long after its staging checks passed.
+          // Rewriting the row would wrongly erase a valid verdict and preview
+          // even though createProposalCommit just proved the branch unchanged.
+          if (session.handoff_uploaded_sha === uploaded.sha
+              && session.handoff_local_commit_sha === input.localCommitSha) {
+            return res.status(200).json({
+              ok: true,
+              sessionId: Number(session.id),
+              localCommitSha: input.localCommitSha,
+              headSha: uploaded.sha,
+              treeSha: uploaded.treeSha,
+              branch: session.branch_name,
+              uploaded: false,
+              webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+            });
+          }
+          const advanced = await pool.query(
+            `UPDATE chat_sessions
+                SET handoff_uploaded_sha = $1, handoff_local_commit_sha = $5,
+                    handoff_upload_checked_sha = checks_commit_sha,
+                    check_state = NULL, check_phase = NULL,
+                    check_error_detail = NULL, test_results = '[]'::jsonb,
+                    checks_checked_at = NULL, consecutive_check_failures = 0,
+                    first_check_failure_at = NULL, last_check_failure_at = NULL,
+                    check_next_retry_at = NULL, check_error_notified_at = NULL,
+                    capture_state = NULL, capture_detail = NULL, captured_at = NULL,
+                    last_activity_at = NOW()
+              WHERE id = $2 AND status = 'active' AND source = $3
+                AND (CASE
+                       WHEN handoff_uploaded_sha IS NOT NULL
+                        AND handoff_uploaded_sha IS DISTINCT FROM handoff_head_sha
+                        AND checks_commit_sha IS NOT DISTINCT FROM handoff_upload_checked_sha
+                         THEN handoff_uploaded_sha
+                       ELSE COALESCE(checks_commit_sha, handoff_uploaded_sha,
+                                     handoff_head_sha, handoff_base_sha)
+                     END) IS NOT DISTINCT FROM $4`,
+            [uploaded.sha, session.id, SOURCE, expectedParent, input.localCommitSha]
+          );
+          if (!advanced.rowCount) {
+            return res.status(409).json({ error: 'session_state_changed' });
+          }
+          return res.status(uploaded.created ? 201 : 200).json({
+            ok: true,
+            sessionId: Number(session.id),
+            localCommitSha: input.localCommitSha,
+            headSha: uploaded.sha,
+            treeSha: uploaded.treeSha,
+            branch: session.branch_name,
+            uploaded: uploaded.created,
+            webPath: `/#app/${session.app_slug}/dev/sessions/${session.id}`,
+          });
+        } finally {
+          releaseOperation();
+        }
+        });
+      } catch (err) {
+        log.error('proposal-handoff', 'Failed to upload local commit', { err: err.message });
+        return res.status(500).json({ error: 'Internal server error' });
+      }
+    }
+  );
+
   router.post('/api/sessions/:id/proposal-handoff/build', proposalJson, drainGuard, async (req, res) => {
     if (!requireCli(req, res)) return;
     const sessionId = parseSessionId(req.params.id);
@@ -743,6 +1008,18 @@ function proposalHandoffRoutes(config) {
           return res.status(409).json({
             error: 'session_busy',
             message: 'The shared proposal is currently changing in another local or web turn. Retry when it finishes.',
+          });
+        }
+        // The upload endpoint is the only credential-safe path from a local
+        // checkout to the bot-owned branch. Do not retain the old handoff
+        // behavior that accepted any repository commit supplied by SHA: that
+        // would bypass exact-tree reconstruction and let callers submit code
+        // that Usernode never received through proposal_push_commit.
+        if (!session.handoff_uploaded_sha
+            || session.handoff_uploaded_sha !== input.headSha) {
+          return res.status(409).json({
+            error: 'head_not_uploaded',
+            message: 'Upload this exact local commit with proposal_push_commit before submitting it for staging.',
           });
         }
         // Claim the shared session synchronously after the final busy check
@@ -799,12 +1076,24 @@ function proposalHandoffRoutes(config) {
           await snapshotSpec(pool, session.id, spec, input.headSha);
           const adopted = await pool.query(
             `UPDATE chat_sessions
-                SET handoff_head_sha = $1, check_state = 'pending', checks_commit_sha = $1,
+                SET handoff_head_sha = $1,
+                    handoff_local_commit_sha = CASE
+                      WHEN handoff_uploaded_sha = $1 THEN handoff_local_commit_sha
+                      ELSE NULL
+                    END,
+                    handoff_uploaded_sha = $1,
+                    handoff_upload_checked_sha = NULL,
+                    check_state = 'pending', checks_commit_sha = $1,
                     check_error_detail = NULL,
                     staging_container_id = NULL, staging_url = NULL,
                     last_activity_at = NOW()
-              WHERE id = $2 AND status = 'active' AND source = $3`,
-            [input.headSha, session.id, SOURCE]
+              WHERE id = $2 AND status = 'active' AND source = $3
+                AND handoff_uploaded_sha = $1
+                AND checks_commit_sha IS NOT DISTINCT FROM $4
+                AND handoff_head_sha IS NOT DISTINCT FROM $5
+                AND handoff_upload_checked_sha IS NOT DISTINCT FROM $6`,
+            [input.headSha, session.id, SOURCE, session.checks_commit_sha || null,
+              session.handoff_head_sha || null, session.handoff_upload_checked_sha || null]
           );
           // Manual archive/pause is intentionally allowed to abort work. If
           // it won while the GitHub checks above were in flight, keep the
@@ -822,6 +1111,7 @@ function proposalHandoffRoutes(config) {
           const freshSession = {
             ...session,
             handoff_head_sha: input.headSha,
+            handoff_uploaded_sha: input.headSha,
             checks_commit_sha: input.headSha,
             spec_md: spec,
           };
@@ -948,6 +1238,7 @@ module.exports = {
   parseStartBody,
   parseContextBody,
   parseBuildBody,
+  parseCommitUploadBody,
   parseSessionId,
   startRequestFingerprint,
   publicSessionStatus,

@@ -1173,6 +1173,7 @@ enabled_tools = [
   "social_vibecoding.api_write",
   "social_vibecoding.proposal_start",
   "social_vibecoding.proposal_append_context",
+  "social_vibecoding.proposal_push_commit",
   "social_vibecoding.proposal_submit_build",
   "social_vibecoding.proposal_status",
   "social_vibecoding.proposal_promote",
@@ -1291,9 +1292,13 @@ same non-retryable configuration error without making a network request.
 Initialization returns concise server instructions telling the client agent to
 use production unless the user explicitly requests local, invoke the generic
 API tool first, execute a returned local-setup or login argument vector itself,
-and retry once after health/approval. It never asks the user to type those
-commands and does not wait for login during initialization. All tools declare
-output schemas. Diagnostic, identity, and GET tools use
+and retry once after health/approval. If a sandboxed stdio process cannot read
+an existing native-store credential, the instructions instead require the
+agent to execute the tool's returned API argument vector with host execution,
+never retry the same MCP call, and use that external CLI path for later calls
+in the same sandboxed session. It never asks the user to type those commands
+and does not wait for login during initialization. All tools declare output
+schemas. Diagnostic, identity, and GET tools use
 `readOnlyHint: true`; the generic mutation tool uses `readOnlyHint: false`
 and `destructiveHint: true`. All use `openWorldHint: false`.
 
@@ -1337,6 +1342,32 @@ are restricted by the CLI grammar above and are never interpolated as
 arbitrary shell text. Human-readable command text uses platform-appropriate
 quoting and strips control characters; `argv` remains authoritative.
 
+An existing `native` backend may be readable by the host CLI but inaccessible
+to a sandboxed Codex stdio process (for example, because the sandbox cannot
+reach the desktop keyring service). For an API or proposal tool, that exact
+native-store access failure returns `host_execution_required` with
+`retryable: false`, `requires_host_execution: true`, and an exact canonical
+`argv`/`cwd` for the equivalent `social-vibecoding api` call. The commit-upload
+wrapper returns the corresponding `social-vibecoding proposal push` vector
+immediately, without first probing a credential store it expects the sandbox
+cannot reach. The display command contains placeholders rather than
+interpolating the untrusted API path or request body; only the argument vector
+is executable. The agent asks
+for host execution once, consumes the CLI's JSON result, and uses the direct
+CLI path for later Usernode calls in the same sandboxed session. It must not
+retry the doomed MCP call, start a second login, copy a bearer token into the
+repository, or silently migrate the credential to the fallback file. Other
+native-store errors remain fail-closed configuration errors. The MCP process
+caches this access failure for that origin for its lifetime, so an accidental
+later tool call returns the host vector without another keyring probe or
+timeout.
+
+`proposal_push_commit` requires an explicit absolute repository path because
+the MCP server's own working directory is the Usernode platform checkout, not
+necessarily the app checkout. Its returned host command uses a two-minute HTTP
+deadline for the bounded upload/GitHub reconstruction operation; ordinary API
+calls retain the generic 30-second deadline.
+
 The protected tools are:
 
 ```text
@@ -1345,6 +1376,7 @@ social_vibecoding.api_read
 social_vibecoding.api_write
 social_vibecoding.proposal_start
 social_vibecoding.proposal_append_context
+social_vibecoding.proposal_push_commit
 social_vibecoding.proposal_submit_build
 social_vibecoding.proposal_status
 social_vibecoding.proposal_promote
@@ -1358,30 +1390,56 @@ platform endpoint's HTTP status and JSON body, never accept an origin/header/
 cookie/token input, and never call GitHub directly. This path-based bridge
 means a new user-facing platform endpoint needs no CLI/MCP registry change.
 
-The five proposal tools are reviewed convenience wrappers around those same
+The six proposal tools are reviewed convenience wrappers around those same
 user-facing APIs, not a hardcoded API registry. They preserve the browser Dev
 workflow for work authored in a local Codex or Claude session:
 
-1. The agent writes a complete markdown spec before implementation and calls
-   `proposal_start` with the app, exact base SHA, stable request ID, spec, and
-   durable history. Usernode creates a native `source='cli_handoff'` Dev
-   session and a platform-managed branch at that exact base.
-2. History contains exact user-visible requests and concise agent summaries,
-   each with a stable event ID. It never contains hidden reasoning, secrets,
-   credentials, or raw tool logs. Event IDs are unique per session, making
-   retries idempotent. `proposal_start` fingerprints its full normalized
+1. The agent resolves the app, repository, and exact base SHA through Usernode.
+   It reuses an existing checkout only if its `HEAD` is that exact base SHA;
+   otherwise it retrieves a shallow
+   checkout, never the repository's full history: `git clone --depth 1` is
+   sufficient when the remote default `HEAD` equals the base SHA; for any other
+   base it initializes an empty repository and runs
+   `git fetch --depth=1 origin <base-sha>` followed by a detached checkout of
+   `FETCH_HEAD`. It verifies `git rev-parse HEAD` against the base SHA and
+   deepens the checkout only when the requested work genuinely needs older
+   history.
+2. The agent inspects that checkout, writes a complete markdown spec before
+   implementation, and calls `proposal_start` with the app, exact base SHA,
+   stable request ID, spec, and durable history. Usernode creates a native
+   `source='cli_handoff'` Dev session and a platform-managed branch at that
+   exact base. History contains exact user-visible requests and concise agent
+   summaries, each with a stable event ID. It never contains hidden reasoning,
+   secrets, credentials, or raw tool logs. Event IDs are unique per session,
+   making retries idempotent. `proposal_start` fingerprints its full normalized
    request and atomically commits the session, initial spec, and initial
    history, so retrying remains read-only even after later local/web edits.
    The spec is stored in both the live session document and immutable spec
    history.
-3. The agent implements and tests in its local checkout, commits, and pushes
-   the exact head to the returned branch. `proposal_submit_build` accepts that
-   SHA only after GitHub proves it belongs to the app repository and is a
-   descendant of the agreed base and the session's current checked head
-   (whether produced locally or on the web). Usernode
+3. The agent implements and tests in its local checkout and creates one normal
+   non-merge commit. It does not push the bot-owned branch with personal
+   GitHub credentials and does not dispatch a web worker merely to obtain push
+   access. `proposal_push_commit` returns an exact host CLI argument vector;
+   the agent executes it outside the stdio sandbox. The CLI reads only the
+   named committed Git objects, never the working tree, and sends the local
+   commit/parent/tree identities plus a bounded base64 snapshot of its changed
+   blobs and deletions to
+   `POST /api/sessions/:id/proposal-handoff/commits`.
+4. Usernode uses the app's GitHub installation credential to reconstruct the
+   changed tree on the managed branch. The current remote tip's tree must equal
+   the local parent tree, and GitHub's reconstructed tree SHA must equal the
+   tested local commit's tree SHA. Only then does Usernode create a bot-owned
+   commit and non-force advance the managed ref. The returned platform
+   `headSha` may differ from the local commit SHA because author, committer, and
+   message metadata differ; tree equality is the exact-code invariant. A
+   subsequent local adjustment works because its local parent tree equals the
+   preceding bot commit's tree even though their commit IDs differ. Commits are
+   uploaded oldest-first when a local change spans more than one commit.
+5. The agent passes that returned platform `headSha` to
+   `proposal_submit_build`. Usernode re-verifies ancestry and branch ownership,
    then runs the ordinary staging, preview, screenshot, and proposal-check
-   pipeline against the pinned commit.
-4. The agent polls `proposal_status` until `ready` or `failed`, iterating with
+   pipeline against that exact bot-owned commit.
+6. The agent polls `proposal_status` until `ready` or `failed`, iterating with
    later fast-forward commits as needed. `proposal_promote` first verifies the
    session is ready, then uses the existing Usernode promotion route to create
    the app PR lazily and enter the normal vote flow; it never opens a GitHub PR
@@ -1395,7 +1453,40 @@ the page. Opening or editing in the web page never transfers ownership or
 changes provenance. Local and web turns may alternate on the same branch;
 web-worker commits advance the ordinary `checks_commit_sha`, while
 `handoff_head_sha` remains the audit record of the latest commit explicitly
-submitted by a local agent.
+submitted to staging by a local agent. `handoff_uploaded_sha` records the
+newest reconstructed local tree separately; upload invalidates the prior
+verdict and artifacts but does not overwrite `checks_commit_sha`, set
+`handoff_head_sha`, or start a check. The previous checked SHA remains the
+identity of any still-visible old preview until the new upload is submitted;
+an uploaded-but-not-submitted commit is never presented as checked or ready.
+`handoff_upload_checked_sha` snapshots that previous checked identity. An
+unchanged value means the upload is still pending; a later web turn advances
+`checks_commit_sha` and thereby supersedes it without destroying either audit
+identity. A subsequent local upload snapshots the new web head and becomes the
+pending branch tip normally.
+
+`handoff_local_commit_sha` retains the corresponding local identity for audit;
+status reports it as `localHeadSha`, while `uploadedHeadSha` and
+`submittedHeadSha` are the bot-owned GitHub identities.
+
+The commit-upload parser is isolated from the ordinary 100 KiB API parser and
+accepts at most 200 changed paths, 4 MiB per blob, 8 MiB of decoded blob data,
+and 8 KiB of commit message within a 12 MiB JSON envelope. Paths must be
+relative canonical UTF-8 names outside `.git`; only regular, executable, and
+symbolic-link blob modes are accepted. Empty, root, merge, submodule,
+non-UTF-8-path, and over-limit commits fail locally before authentication.
+The server independently repeats all payload, path, mode, base64, timestamp,
+and size validation before any GitHub call. Upload is available only to an
+authenticated CLI bearer whose user still has collaboration access to the
+active handoff session.
+
+Uploads are serialized with web/session work. The persisted expected branch
+tip is compare-and-swapped after GitHub mutation, and GitHub ref updates use
+`force: false`. A lost-response retry is recognized from an exact
+`Usernode-Local-Commit` trailer and matching tip tree before another commit is
+created; the database update is retryable after either side of that boundary.
+An unrelated branch movement, parent-tree mismatch, or reconstructed-tree
+mismatch fails closed and never rewrites the ref.
 
 Before promotion, `checks_commit_sha` (falling back to `handoff_head_sha`
 before the first check) identifies the exact revision whose staging preview
@@ -1840,6 +1931,11 @@ This keeps global platform identity separate from child-app identity.
   documented output schemas/read-only annotations, and initialization
   instructions describe external login without blocking.
 - A protected tool returns `login_required` when unauthenticated.
+- A sandboxed API tool whose existing native backend is inaccessible returns
+  one non-retryable `host_execution_required` result with the exact equivalent
+  host CLI `argv`/`cwd`; read and write bodies round-trip without shell
+  interpolation, and the response never suggests another MCP retry or login.
+  A second tool call for that origin does not probe the keyring again.
 - The returned login command always pins the MCP process's selected profile,
   including `production`, and is unaffected by later default-profile changes.
 - Its authoritative login `argv`/`cwd` use canonical setup paths and remain
@@ -1862,13 +1958,26 @@ This keeps global platform identity separate from child-app identity.
 - `social_vibecoding.whoami` calls only the identity-read endpoint;
   `api_read` and `api_write` cover allowed user-facing JSON APIs without a
   hardcoded per-endpoint registry or direct GitHub access.
+- `proposal_push_commit` returns the canonical host `proposal push` vector
+  without a native-store probe. The host CLI snapshots only the exact named
+  one-parent commit, and its payload preserves blob bytes, deletions, modes,
+  parent tree, and final tree without reading uncommitted working-tree data.
+- Commit upload reconstructs through GitHub App credentials, rejects path/
+  mode/base64/size violations, parent-tree or final-tree mismatches, stale
+  branch tips, merge commits, and non-fast-forward ref races. It supports a
+  second local commit whose parent commit SHA differs from the preceding bot
+  SHA but whose parent tree is identical, and lost-response retries create no
+  duplicate commit.
+- Upload alone records an `uploaded` revision, invalidates any earlier check
+  verdict, and starts no staging/check run; only `proposal_submit_build` may
+  mark it pending and start staging.
 - Production is selected unless the prompt explicitly requests local. A local
   call with no ready stack returns an authoritative `make up` vector, and a
   missing credential returns a login vector; the agent executes either itself
   and retries the original request after health or browser approval.
 - Project-local configuration launches the checked-in CLI as `mcp` and may
   select only a validated profile name, never an origin, environment value, or
-  nonallowlisted forwarded variable; its tool allowlist contains only the nine
+  nonallowlisted forwarded variable; its tool allowlist contains only the ten
   reviewed tools.
 - `codex setup` writes canonical absolute Node/script/checkout paths to the
   ignored project config, works across Codex working-directory differences,
@@ -1907,7 +2016,8 @@ This keeps global platform identity separate from child-app identity.
 7. Add automatic production/local selection guidance plus
    `local_setup_required`, `login_required`, and
    `reauthorization_required` retry contracts.
-8. Add native CLI proposal handoff storage/routes, pinned-commit branch
-   adoption, shared transcript/spec context, staging/check orchestration, and
-   the five proposal workflow tools for Codex and Claude.
+8. Add native CLI proposal handoff storage/routes, GitHub-App-backed exact-tree
+   commit upload, pinned-commit branch adoption, shared transcript/spec
+   context, staging/check orchestration, and the six proposal workflow tools
+   for Codex and Claude.
 9. Add operational metrics and audit-retention monitoring.

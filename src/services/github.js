@@ -728,6 +728,226 @@ async function advanceBranchToSha(owner, repo, branchName, sha) {
   return { previousSha: currentSha, sha: updated.object.sha, updated: true };
 }
 
+function proposalCommitMessage(message, localCommitSha) {
+  const body = safeMention(String(message || 'Local proposal update').trim())
+    || 'Local proposal update';
+  return `${body}\n\nUsernode-Local-Commit: ${localCommitSha}`;
+}
+
+async function createProposalCommit(owner, repo, {
+  branchName,
+  expectedRemoteParentSha,
+  localParentSha,
+  localParentTreeSha,
+  expectedTreeSha,
+  localCommitSha,
+  message,
+  authoredAt,
+  committedAt,
+  files,
+}) {
+  const octokit = await getOctokit(owner);
+  const readCommit = async (sha) => {
+    const { data } = await octokit.request(
+      'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
+      { owner, repo, commit_sha: sha }
+    );
+    return data;
+  };
+  const readHead = async () => {
+    const { data } = await octokit.request(
+      'GET /repos/{owner}/{repo}/git/ref/{+ref}',
+      { owner, repo, ref: `heads/${branchName}` }
+    );
+    return data.object.sha;
+  };
+  const fullMessage = proposalCommitMessage(message, localCommitSha);
+  const currentSha = String(await readHead()).toLowerCase();
+  const current = await readCommit(currentSha);
+  // A retry can arrive before or after the database records the new head.
+  // Before persistence, expectedRemoteParentSha is this commit's parent;
+  // afterward it is the commit itself. Require one of those exact shapes as
+  // well as the complete generated message and tree. A copied trailer on an
+  // unrelated branch movement must never be mistaken for our lost response.
+  const currentParentSha = String(current.parents?.[0]?.sha || '').toLowerCase();
+  const isRetry = (currentSha === expectedRemoteParentSha
+      || currentParentSha === expectedRemoteParentSha)
+    && String(current.message || '').trimEnd() === fullMessage.trimEnd()
+    && String(current.tree?.sha || '').toLowerCase() === expectedTreeSha;
+  if (isRetry) {
+    return {
+      sha: currentSha,
+      treeSha: expectedTreeSha,
+      previousSha: currentParentSha || null,
+      localParentSha,
+      created: false,
+    };
+  }
+  if (currentSha !== expectedRemoteParentSha) {
+    const err = new Error('The proposal branch moved before the local commit was uploaded');
+    err.code = 'branch_moved';
+    err.currentSha = currentSha;
+    throw err;
+  }
+  if (String(current.tree?.sha || '').toLowerCase() !== localParentTreeSha) {
+    const err = new Error('The local parent tree does not match the proposal branch tree');
+    err.code = 'parent_tree_mismatch';
+    err.remoteTreeSha = current.tree?.sha;
+    err.localParentTreeSha = localParentTreeSha;
+    throw err;
+  }
+  const treeEntries = new Array(files.length);
+  let next = 0;
+  const uploadOne = async () => {
+    while (next < files.length) {
+      const index = next++;
+      const file = files[index];
+      if (file.delete) {
+        treeEntries[index] = {
+          path: file.path, mode: '100644', type: 'blob', sha: null,
+        };
+        continue;
+      }
+      const { data: blob } = await octokit.request(
+        'POST /repos/{owner}/{repo}/git/blobs',
+        {
+          owner,
+          repo,
+          content: file.contentBase64,
+          encoding: 'base64',
+        }
+      );
+      treeEntries[index] = {
+        path: file.path,
+        mode: file.mode,
+        type: 'blob',
+        sha: blob.sha,
+      };
+    }
+  };
+  await Promise.all(Array.from(
+    { length: Math.min(8, Math.max(1, files.length)) },
+    () => uploadOne()
+  ));
+
+  const deletions = treeEntries.filter((entry) => entry.sha === null);
+  const writes = treeEntries.filter((entry) => entry.sha !== null);
+  const hasParentChildConflict = deletions.some((deletion) => writes.some((write) => (
+    write.path.startsWith(`${deletion.path}/`)
+      || deletion.path.startsWith(`${write.path}/`)
+  )));
+  let tree;
+  if (hasParentChildConflict) {
+    // Git cannot contain a blob and children below that blob at the same time.
+    // File<->directory commits therefore carry paths such as a deletion of
+    // `config` plus an addition of `config/index.js` (or the reverse). Apply
+    // deletions first, then build the writes on the intermediate tree. The
+    // final SHA check below still proves byte-for-byte tree equality.
+    const { data: deletedTree } = await octokit.request(
+      'POST /repos/{owner}/{repo}/git/trees',
+      {
+        owner,
+        repo,
+        base_tree: current.tree.sha,
+        tree: deletions,
+      }
+    );
+    const result = await octokit.request(
+      'POST /repos/{owner}/{repo}/git/trees',
+      {
+        owner,
+        repo,
+        base_tree: deletedTree.sha,
+        tree: writes,
+      }
+    );
+    tree = result.data;
+  } else {
+    const result = await octokit.request(
+      'POST /repos/{owner}/{repo}/git/trees',
+      {
+        owner,
+        repo,
+        base_tree: current.tree.sha,
+        tree: treeEntries,
+      }
+    );
+    tree = result.data;
+  }
+  if (String(tree.sha).toLowerCase() !== expectedTreeSha) {
+    const err = new Error('The uploaded GitHub tree does not match the tested local tree');
+    err.code = 'tree_mismatch';
+    err.actualTreeSha = tree.sha;
+    throw err;
+  }
+
+  const identity = {
+    name: 'Usernode CLI',
+    email: 'cli@usernodelabs.org',
+  };
+  const { data: commit } = await octokit.request(
+    'POST /repos/{owner}/{repo}/git/commits',
+    {
+      owner,
+      repo,
+      message: fullMessage,
+      tree: tree.sha,
+      parents: [currentSha],
+      author: { ...identity, date: authoredAt },
+      committer: { ...identity, date: committedAt },
+    }
+  );
+  const createdSha = String(commit.sha || '').toLowerCase();
+  if (!/^[0-9a-f]{40}$/.test(createdSha)) {
+    throw new Error('GitHub returned an invalid proposal commit SHA');
+  }
+  try {
+    await octokit.request(
+      'PATCH /repos/{owner}/{repo}/git/refs/{+ref}',
+      {
+        owner,
+        repo,
+        ref: `heads/${branchName}`,
+        sha: createdSha,
+        force: false,
+      }
+    );
+  } catch (err) {
+    // The update response can be lost after GitHub commits the ref. Confirm
+    // the live tip before classifying any transport/API error so a safe retry
+    // does not report a false branch conflict.
+    let observedSha = null;
+    try { observedSha = String(await readHead()).toLowerCase(); } catch {}
+    if (observedSha === createdSha) {
+      log.warn('github', 'Confirmed proposal ref update after an ambiguous response', {
+        repo: `${owner}/${repo}`, branch: branchName, to: createdSha,
+      });
+    } else {
+      if (![409, 422].includes(err.status)) throw err;
+      const moved = new Error('The proposal branch moved while the local commit was uploaded');
+      moved.code = 'branch_moved';
+      moved.currentSha = observedSha;
+      throw moved;
+    }
+  }
+  log.info('github', 'Created bot-owned proposal commit from local tree', {
+    repo: `${owner}/${repo}`,
+    branch: branchName,
+    from: currentSha,
+    to: createdSha,
+    localCommitSha,
+    localParentSha,
+    fileCount: files.length,
+  });
+  return {
+    sha: createdSha,
+    treeSha: expectedTreeSha,
+    previousSha: currentSha,
+    localParentSha,
+    created: true,
+  };
+}
+
 // Log-safe description of a GitHub/Octokit error. Octokit's
 // RequestError.message is EMPTY when GitHub answers with an empty or
 // non-JSON body (the 2026-07-24 create-PR outage logged `{"err":""}` for
@@ -1764,6 +1984,7 @@ module.exports = {
   compareCommitAncestry,
   getBranchSha,
   advanceBranchToSha,
+  createProposalCommit,
   createPR,
   describeGithubError,
   _setCreatePrRetryDelaysForTests,

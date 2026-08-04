@@ -13,6 +13,7 @@ const {
 const { makeAccessToken } = require('../src/services/cli-auth');
 const {
   CLIENT_ID,
+  PRODUCTION_ORIGIN,
   REQUIRED_SCOPES,
 } = require('../src/services/cli-auth-constants');
 
@@ -33,6 +34,28 @@ test('every protected MCP API checks local readiness before credential lookup', 
     const readiness = route.indexOf('localProfileReady(profile)');
     const credential = route.indexOf('resolvedCredential(profile)');
     assert.ok(readiness >= 0 && readiness < credential, `${label} checks local health first`);
+  }
+});
+
+test('proposal guidance requires a shallow checkout pinned to the exact base SHA', () => {
+  const root = path.resolve(__dirname, '..');
+  const guidance = require('node:fs').readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  const spec = require('node:fs').readFileSync(
+    path.join(root, 'CLI-MCP-AUTH-SPEC.md'),
+    'utf8'
+  );
+  const cli = require('node:fs').readFileSync(path.join(root, 'src/cli/main.js'), 'utf8');
+
+  for (const [label, source] of [
+    ['agent guidance', guidance],
+    ['auth spec', spec],
+    ['MCP initialization instructions', cli],
+  ]) {
+    assert.match(source, /git clone --depth 1/, `${label} rejects full default clones`);
+    assert.match(source, /git fetch --depth=1 origin <base-sha>/,
+      `${label} describes an exact shallow base fetch`);
+    assert.match(source, /HEAD.*base SHA|base SHA.*HEAD/i,
+      `${label} requires base identity verification`);
   }
 });
 
@@ -73,6 +96,7 @@ test('MCP initializes without credentials and returns the external login contrac
       'social_vibecoding.login_status',
       'social_vibecoding.proposal_append_context',
       'social_vibecoding.proposal_promote',
+      'social_vibecoding.proposal_push_commit',
       'social_vibecoding.proposal_start',
       'social_vibecoding.proposal_status',
       'social_vibecoding.proposal_submit_build',
@@ -82,6 +106,7 @@ test('MCP initializes without credentials and returns the external login contrac
       const mutating = name === 'social_vibecoding.api_write'
         || name === 'social_vibecoding.proposal_start'
         || name === 'social_vibecoding.proposal_append_context'
+        || name === 'social_vibecoding.proposal_push_commit'
         || name === 'social_vibecoding.proposal_submit_build'
         || name === 'social_vibecoding.proposal_promote';
       assert.equal(tool.annotations.readOnlyHint, !mutating);
@@ -89,6 +114,12 @@ test('MCP initializes without credentials and returns the external login contrac
       assert.equal(tool.annotations.openWorldHint, false);
       assert.ok(tool.outputSchema);
     }
+    assert.match(byName.get('social_vibecoding.proposal_start').description,
+      /proposal_push_commit/);
+    assert.doesNotMatch(byName.get('social_vibecoding.proposal_start').description,
+      /branch to push/i);
+    assert.ok(byName.get('social_vibecoding.proposal_push_commit')
+      .inputSchema.required.includes('repo_path'));
 
     const status = await client.callTool({
       name: 'social_vibecoding.login_status',
@@ -130,6 +161,92 @@ test('MCP initializes without credentials and returns the external login contrac
       'production',
     ]);
     assert.doesNotMatch(stderr, /svcli_|svdev_/);
+  } finally {
+    await client.close().catch(() => {});
+    await fs.rm(home, { recursive: true, force: true });
+  }
+});
+
+test('sandboxed MCP native-store failures return an exact host API vector without retrying', async () => {
+  const home = await fs.mkdtemp(path.join(os.tmpdir(), 'sv-cli-mcp-host-api-'));
+  await fs.chmod(home, 0o700);
+  const directory = path.join(home, '.config', 'social-vibecoding');
+  const fakeBin = path.join(home, 'bin');
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  await fs.mkdir(fakeBin, { mode: 0o700 });
+  await fs.writeFile(path.join(directory, 'config.json'), `${JSON.stringify({
+    version: 1,
+    default_profile: 'production',
+    profiles: {},
+    credential_backends: { [PRODUCTION_ORIGIN]: 'native' },
+  })}\n`, { mode: 0o600 });
+  const secretTool = path.join(fakeBin, 'secret-tool');
+  const lookupCount = path.join(home, 'secret-tool-calls');
+  await fs.writeFile(
+    secretTool,
+    '#!/bin/sh\nprintf x >> "$SV_TEST_SECRET_TOOL_CALLS"\nexit 2\n',
+    { mode: 0o700 }
+  );
+
+  const checkout = path.resolve(__dirname, '..');
+  const launcher = path.join(checkout, 'tools', 'social-vibecoding');
+  const bootstrap = [
+    "const os = require('node:os');",
+    'const original = os.userInfo();',
+    'os.userInfo = () => ({ ...original, homedir: process.argv[1] });',
+    "const path = require('node:path');",
+    "const { main } = require(path.join(process.argv[2], 'src/cli/main'));",
+    "main(['mcp', '--profile', 'production'], {",
+    "  launcherPath: path.join(process.argv[2], 'tools/social-vibecoding')",
+    '}).then((code) => { process.exitCode = code; });',
+  ].join('\n');
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: ['-e', bootstrap, home, checkout],
+    cwd: checkout,
+    env: { PATH: fakeBin, SV_TEST_SECRET_TOOL_CALLS: lookupCount },
+    stderr: 'pipe',
+  });
+  const client = new Client({ name: 'cli-mcp-host-api-test', version: '1.0.0' });
+  try {
+    await client.connect(transport);
+    const realNode = await fs.realpath(process.execPath);
+    const realLauncher = await fs.realpath(launcher);
+    const realCheckout = await fs.realpath(checkout);
+    const read = await client.callTool({
+      name: 'social_vibecoding.api_read',
+      arguments: { path: '/api/apps?view=mine&limit=5', profile: 'production' },
+    });
+    assert.equal(read.isError, true);
+    assert.equal(read.structuredContent.code, 'host_execution_required');
+    assert.equal(read.structuredContent.profile, 'production');
+    assert.equal(read.structuredContent.retryable, false);
+    assert.equal(read.structuredContent.requires_host_execution, true);
+    assert.equal(read.structuredContent.cwd, realCheckout);
+    assert.deepEqual(read.structuredContent.argv, [
+      realNode, realLauncher, 'api', 'GET', '/api/apps?view=mine&limit=5',
+      '--profile', 'production',
+    ]);
+    assert.match(read.structuredContent.message, /Do not retry this MCP tool/);
+    assert.doesNotMatch(read.structuredContent.command, /view=mine|limit=5/);
+    assert.doesNotMatch(read.structuredContent.message, /login/i);
+
+    const body = { title: 'Literal $() & content', enabled: true };
+    const write = await client.callTool({
+      name: 'social_vibecoding.api_write',
+      arguments: {
+        method: 'POST', path: '/api/apps/demo/issues', body, profile: 'production',
+      },
+    });
+    assert.equal(write.structuredContent.code, 'host_execution_required');
+    assert.deepEqual(write.structuredContent.argv, [
+      realNode, realLauncher, 'api', 'POST', '/api/apps/demo/issues',
+      '--profile', 'production', '--data', JSON.stringify(body),
+    ]);
+    assert.doesNotMatch(write.structuredContent.command, /Literal|demo\/issues/);
+    assert.doesNotMatch(JSON.stringify(write), /svcli_|svdev_/);
+    assert.equal(await fs.readFile(lookupCount, 'utf8'), 'x',
+      'later API calls reuse the host-execution decision without another keyring probe');
   } finally {
     await client.close().catch(() => {});
     await fs.rm(home, { recursive: true, force: true });
@@ -333,6 +450,26 @@ test('proposal MCP tools call the native handoff lifecycle and gate promotion on
       },
     });
     assert.equal(append.structuredContent.body.inserted, 1);
+
+    const push = await client.callTool({
+      name: 'social_vibecoding.proposal_push_commit',
+      arguments: {
+        session_id: 41,
+        local_commit_sha: 'b'.repeat(40),
+        repo_path: checkout,
+      },
+    });
+    assert.equal(push.isError, true);
+    assert.equal(push.structuredContent.code, 'host_execution_required');
+    assert.equal(push.structuredContent.requires_host_execution, true);
+    assert.equal(push.structuredContent.retryable, false);
+    assert.deepEqual(push.structuredContent.argv, [
+      await fs.realpath(process.execPath),
+      await fs.realpath(path.join(checkout, 'tools', 'social-vibecoding')),
+      'proposal', 'push', '--session', '41', '--commit', 'b'.repeat(40),
+      '--repo', await fs.realpath(checkout), '--profile', 'lab',
+    ]);
+    assert.match(push.structuredContent.message, /do not dispatch another coding agent/i);
 
     const submit = await client.callTool({
       name: 'social_vibecoding.proposal_submit_build',

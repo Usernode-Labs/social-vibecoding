@@ -933,16 +933,19 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_author   VARCHAR(
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS reviewed_head_sha     VARCHAR(40);
 -- Native CLI handoff sessions. A local Codex/Claude agent can author the
 -- spec and code in the user's checkout, then attach that durable context and
--- an exact pushed commit to an ordinary platform-owned dev session. The row
+-- an exact-tree bot-owned commit to an ordinary platform-owned dev session. The row
 -- remains a native session (not an imported PR), so the same chat can be
 -- opened and continued from the web Dev page and uses the normal
 -- staging/checks/promotion pipeline.
 --
 -- handoff_request_id is a caller-generated idempotency key scoped to the
--- owner. base is the immutable audit anchor and head is the latest revision
--- explicitly accepted from the local checkout. A web Dev turn may advance the
--- shared branch/checks_commit_sha without overwriting that local audit value;
--- later local submissions must still fast-forward the current branch.
+-- owner. base is the immutable audit anchor, uploaded is the latest bot-owned
+-- commit reconstructed from a local tree, and head is the latest uploaded
+-- revision explicitly submitted to staging/checks. A web Dev turn may advance
+-- the shared branch/checks_commit_sha without overwriting those local audit
+-- values. local_commit is the corresponding commit identity in the user's
+-- checkout; it may differ from uploaded while their trees are identical.
+-- Later local uploads must still continue from the current branch tree.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_request_id VARCHAR(64);
 -- Immutable digest of proposal_start's normalized app/base/title/spec/history/
 -- issue payload. Live session fields legitimately change after local or web
@@ -950,6 +953,13 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_request_id VARCHAR(64
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_request_fingerprint VARCHAR(64);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_base_sha   VARCHAR(40);
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_head_sha   VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_uploaded_sha VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_local_commit_sha VARCHAR(40);
+-- Snapshot of checks_commit_sha immediately before handoff_uploaded_sha was
+-- written. Equality means the upload is still awaiting submission; a later
+-- web turn naturally changes checks_commit_sha and supersedes that upload
+-- without needing to know about CLI-specific state.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_upload_checked_sha VARCHAR(40);
 -- Deliberately scoped independently of source: a delayed proposal_start retry
 -- must always resolve to the same cross-surface session.
 CREATE UNIQUE INDEX IF NOT EXISTS chat_sessions_handoff_request_idx
