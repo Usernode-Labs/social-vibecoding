@@ -395,6 +395,43 @@ html, body {
   max-width: var(--home-panel-max-w);
 }
 
+/* THE WHOLE TITLE BAR IS THE DRAG HANDLE (#911). No ⠿ grip: the drag
+   surface has always been the whole grid item, so a dedicated grabber
+   beside a bar that is itself grabbable advertised the opposite — "only
+   this glyph moves it" — which is how the widget got reported as
+   undraggable in the first place.
+
+   There is no `handle:` option on the kit's attachReorder call, and that
+   is deliberate: `handle` is declared per LIST, and #app-list's other
+   items are the app cards, which must keep long-press-to-lift on touch
+   and drag-from-anywhere on desktop. With no handle the kit already gives
+   this bar exactly what was asked for — a desktop drag lifts as soon as
+   it passes the slop, a touch drag lifts on the long press — and a touch
+   that merely rests here still scrolls the feed, which an immediate-lift
+   grabber spanning a full-width 28px bar would have broken.
+
+   The cursor is scoped to the IN-GRID host: in the #home-panels fallback
+   section (search view, or before the grid has painted) there is no
+   reorder wiring at all, so a grab cursor there would be a lie. */
+.home-panel-bar {
+  user-select: none;
+  -webkit-user-select: none;
+}
+.home-panel-slot .home-panel-bar {
+  cursor: grab;
+}
+/* The kit puts .un-reordering on the LIST for the duration of a lift, and
+   the slot is one of #app-list's children. */
+.un-reordering .home-panel-slot .home-panel-bar {
+  cursor: grabbing;
+}
+/* …but a control is a control. The ⋮ menu is excluded from the drag in JS
+   (home-panels.js _wire stops its pointerdown), so it must not wear the
+   handle's cursor either. */
+.home-panel-bar button {
+  cursor: pointer;
+}
+
 /* The rows list must be allowed to SHRINK below its content height —
    min-height: 0 is what makes overflow: hidden clip instead of the flex
    item refusing to compress and pushing the article past the cap. */
@@ -421,7 +458,8 @@ html, body {
    38px, not 44: the whole row is the tap target and it spans the column
    (~366px on a phone), so its hit AREA is far past what the 44px
    minimum-dimension guideline protects — that rule is about small icon
-   controls, and the one of those here (the ✕) keeps .un-touch-target. */
+   controls, and the one of those here (the ⋮ menu) keeps
+   .un-touch-target. */
 .home-panel-row {
   position: relative;
   height: 2.375rem; /* 38px */

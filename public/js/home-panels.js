@@ -12,11 +12,16 @@
 //
 // LAYOUT — each panel is its OWN bordered <article class="home-panel">,
 // stacked with a gap, so a second widget lands as a distinct block rather
-// than another row inside a shared card. The title (and the ✕) travel
+// than another row inside a shared card. The title (and the ⋮ menu) travel
 // INSIDE each block: the panel area holds N widgets with N titles, so the
 // shared heading-above-the-section shape that "Featured apps" uses cannot
 // work here. Blocks are plain full-width children — .home-column bounds
 // the feed (see app.css; #922 removed the per-box bound).
+//
+// DRAGGING — the block is an item of the app grid itself (home.js plants
+// #home-panel-slot inside #app-list), so ONE recognizer — the kit's
+// attachReorder the app cards already use — carries it. The whole title bar
+// is the handle; the ⋮ button is the one thing excluded from it (_wire).
 //
 // DENSITY — the block is capped at two app-grid rows (--home-panel-max-h,
 // derived in app.css) and spends that budget on a ~28px title bar plus
@@ -271,21 +276,34 @@ const HomePanels = {
     return '';
   },
 
-  // The bordered block: drag handle + title bar, rows list, optional
-  // footer. `flex-none` on the bar/footer and .home-panel-rows on the list
-  // are what make the CSS cap clip rather than grow (app.css
-  // --home-panel-max-h); `.home-panel--expanded` lifts the cap entirely.
+  // The bordered block: title bar, rows list, optional footer. `flex-none`
+  // on the bar/footer and .home-panel-rows on the list are what make the CSS
+  // cap clip rather than grow (app.css --home-panel-max-h);
+  // `.home-panel--expanded` lifts the cap entirely.
+  //
+  // THE WHOLE TITLE BAR IS THE DRAG HANDLE. It carries no ⠿ grip any more:
+  // the grip never owned the gesture (the drag surface has always been the
+  // whole grid item), so a dedicated grabber beside a bar that is ITSELF
+  // grabbable read as "only this glyph works" — which is how the widget got
+  // reported as undraggable. `select-none` is what stops a desktop drag from
+  // sweeping a text selection across the title instead; app.css supplies the
+  // grab cursor, scoped to the in-grid host that can actually move.
+  //
+  // The one control on the bar is the ⋮ menu, and it is deliberately NOT
+  // part of the handle — see _wire, which stops its pointerdown before the
+  // grid's reorder recognizer can see it.
   _panelShell(key, titleHtml, bodyHtml, footerHtml) {
     const esc = HomePanels.esc;
     const expanded = !!HomePanels._expanded[key];
     return `
       <article class="home-panel home-panel-card${expanded ? ' home-panel--expanded' : ''} rounded-xl border border-zinc-200 dark:border-zinc-800 bg-zinc-50/70 dark:bg-zinc-900/50 overflow-hidden" data-panel="${esc(key)}">
-        <div class="home-panel-bar flex-none flex items-center gap-2 px-2.5 py-1 border-b border-zinc-200 dark:border-zinc-800">
-          <span class="home-panel-grip shrink-0 whitespace-nowrap text-zinc-300 dark:text-zinc-600 cursor-grab select-none leading-none" aria-hidden="true" title="Drag to move this widget">⠿</span>
+        <div class="home-panel-bar flex-none flex items-center gap-2 px-2.5 py-1 border-b border-zinc-200 dark:border-zinc-800 select-none" title="Drag to move this widget">
           ${titleHtml}
-          <button type="button" class="home-panel-hide un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 text-sm leading-none"
-            data-panel-key="${esc(key)}"
-            title="Hide this widget" aria-label="Hide this widget">&times;</button>
+          <button type="button" class="home-panel-menu un-touch-target shrink-0 w-4 h-4 flex items-center justify-center rounded-full text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 leading-none"
+            data-panel-key="${esc(key)}" aria-haspopup="menu"
+            title="Widget options" aria-label="Widget options">
+            <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true"><circle cx="10" cy="4.2" r="1.6"/><circle cx="10" cy="10" r="1.6"/><circle cx="10" cy="15.8" r="1.6"/></svg>
+          </button>
         </div>
         ${bodyHtml}
         ${footerHtml || ''}
@@ -429,18 +447,31 @@ const HomePanels = {
       </div>`;
   },
 
-  // The overflow slot. Occupies one of the four rows, only when total
-  // exceeds them, so nothing is hidden behind a gesture.
+  // Real hash navigation (not a router call) so the Challenges screen gets a
+  // history entry and the device back gesture returns to the home screen.
+  goToChallenges() {
+    location.hash = '#leaderboard/challenges';
+  },
+
   _wire(section) {
-    // Rows and the footer's "Open" button both go to the existing
-    // Challenges screen. Real hash navigation so the router gets a history
-    // entry and the device back gesture returns here.
-    const toChallenges = () => { location.hash = '#leaderboard/challenges'; };
+    // EVERY control in the block is excluded from the drag. The grid's
+    // reorder recognizer listens for pointerdown on #app-list, of which this
+    // block is one item (home.js: itemSelector includes .home-panel-slot),
+    // and it bubbles — so stopping pointerdown AT the button is what keeps a
+    // press on ⋮ from arming a desktop drag, and a finger resting on it from
+    // tripping the kit's long-press lift. Without this, opening the menu on a
+    // phone would grab the widget instead. Everything the guard does NOT
+    // cover — the title bar, the counter, the rows — stays the drag surface.
+    section.querySelectorAll('.home-panel button').forEach((btn) => {
+      btn.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
+    });
+
+    // Rows and the footer's "Open" button both go to the Challenges screen.
     section.querySelectorAll('.home-panel-row').forEach((row) => {
-      row.addEventListener('click', toChallenges);
+      row.addEventListener('click', HomePanels.goToChallenges);
     });
     section.querySelectorAll('.home-panel-open').forEach((btn) => {
-      btn.addEventListener('click', (e) => { e.stopPropagation(); toChallenges(); });
+      btn.addEventListener('click', (e) => { e.stopPropagation(); HomePanels.goToChallenges(); });
     });
     section.querySelectorAll('.home-panel-expand').forEach((btn) => {
       btn.addEventListener('click', (e) => {
@@ -448,11 +479,67 @@ const HomePanels = {
         HomePanels.toggleExpanded(btn.dataset.panelKey);
       });
     });
-    section.querySelectorAll('.home-panel-hide').forEach((btn) => {
+    section.querySelectorAll('.home-panel-menu').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        HomePanels.setHidden(btn.dataset.panelKey, true);
+        HomePanels.openMenu(btn.dataset.panelKey, btn);
       });
+    });
+  },
+
+  // ── The widget menu ────────────────────────────────────────────────
+  //
+  // Replaces the bare ✕ the title bar used to carry. A single destructive
+  // control with no undo, one press away, on a block whose whole job is to
+  // sit quietly on the home screen was too easy to hit by accident — and it
+  // left nowhere to put anything else. The menu is the standard home-screen
+  // widget affordance and it makes "Hide widget" a deliberate two-step.
+
+  // The rows, as data so they can be asserted without a DOM. `Hide widget`
+  // is exactly what the ✕ did: persisted per user, restorable from
+  // Settings → Preferences → Home screen widgets.
+  menuItems(key) {
+    const items = [];
+    // Only where the panel HAS a destination. A future widget without one
+    // still gets a working menu rather than a row that goes nowhere.
+    if (key === 'challenges') {
+      items.push({ label: 'Open challenges', handler: () => { HomePanels.goToChallenges(); } });
+    }
+    items.push({
+      label: 'Hide widget',
+      destructive: true,
+      handler: () => { HomePanels.setHidden(key, true); },
+    });
+    return items;
+  },
+
+  // The kit's ADAPTIVE menu: a bottom action sheet on touch, an anchored
+  // popover on desktop, from one call site with no platform branching.
+  // PlatformUI.menu is the repo's wrapper for it (platform-ui.js) and is
+  // preferred; unNative.menu is the direct fallback for a page that loads the
+  // kit without the wrapper.
+  _menuApi() {
+    const pui = window.PlatformUI;
+    if (pui && typeof pui.menu === 'function') return (o) => pui.menu(o);
+    const un = window.unNative;
+    if (un && typeof un.menu === 'function') return (o) => un.menu(o);
+    return null;
+  },
+
+  openMenu(key, anchorEl) {
+    if (!key) return Promise.resolve(null);
+    const present = HomePanels._menuApi();
+    // No kit at all (the legacy/no-JS-kit path): send the press where the
+    // rows go rather than swallowing it. Hiding stays reachable in Settings.
+    if (!present) {
+      HomePanels.goToChallenges();
+      return Promise.resolve(null);
+    }
+    const panel = HomePanels.panelFor(key);
+    return present({
+      anchorEl,
+      title: (panel && panel.title) || 'Widget',
+      items: HomePanels.menuItems(key),
     });
   },
 

@@ -585,8 +585,9 @@
 
            HomePanels fills this with a STACK of sibling bordered
            <article class="home-panel"> blocks — one per widget, each
-           carrying its own title bar and ✕ — so a second widget lands as
-           its own distinct box rather than another row in a shared card.
+           carrying its own title bar and ⋮ menu — so a second widget
+           lands as its own distinct box rather than another row in a
+           shared card.
            The blocks are plain FULL-WIDTH children: .home-column on
            #home-body bounds and centres the feed, so don't wrap them in a
            per-box width bound (see app.css .home-column). Each block is
@@ -1050,10 +1051,11 @@
               <!-- #911: which home-screen cards ("widgets" to the user,
                    panels in the code) are shown. Every registry entry is
                    on by default — users.home_panels_hidden lists only the
-                   ones this viewer dismissed with the card's own ✕, so an
-                   unticked box here is the way to get one back. Rows are
-                   rendered by settings.js _renderHomePanelsSection() from
-                   GET /api/home-panels's `registry` + `hidden`. -->
+                   ones this viewer dismissed from the card's own ⋮ menu
+                   ("Hide widget"), so an unticked box here is the way to
+                   get one back. Rows are rendered by settings.js
+                   _renderHomePanelsSection() from GET /api/home-panels's
+                   `registry` + `hidden`. -->
               <div id="settings-home-panels-section">
                 <h3 class="text-sm font-bold text-zinc-900 dark:text-zinc-100 mb-1">Home screen widgets</h3>
                 <p class="text-xs text-zinc-500 dark:text-zinc-500 mb-3">

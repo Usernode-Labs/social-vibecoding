@@ -82,6 +82,10 @@ function makeHomePanels({ user = { id: 1, isAdmin: false }, search = '' } = {}) 
   return { HP: sandbox.__HP, section, sandbox };
 }
 
+// Menu rows come back from the vm realm, whose Array fails deepStrictEqual's
+// prototype check — compare the labels as one string instead.
+const labels = (items) => Array.from(items, (i) => i.label).join(' | ');
+
 const challenge = (over = {}) => ({
   id: 1,
   label: 'COMMUNITY',
@@ -396,14 +400,14 @@ test('the expanded cap lift and the footer are declared in CSS', () => {
   assert.match(css, /\.home-panel-footer \{/);
 });
 
-test('render: the title bar carries the title, the counter and the ✕ — no extra rows', () => {
+test('render: the title bar carries the title, the counter and the ⋮ menu — no extra rows', () => {
   const { html } = renderWith({
     registry: [], hidden: [], panels: [panel({ total: 6, done: 1, points_remaining: 3900 })],
   });
   assert.match(html, /home-panel-bar/);
   assert.match(html, /Challenges/);
   assert.match(html, /1 of 6 · 3,900 pts left/, 'the summary folds into the bar');
-  assert.match(html, /home-panel-hide[^>]*data-panel-key="challenges"/);
+  assert.match(html, /home-panel-menu[^>]*data-panel-key="challenges"/);
   // The bar is flex-none so the ROWS list is what the cap compresses.
   assert.match(html, /home-panel-bar flex-none/);
 });
@@ -484,7 +488,7 @@ test('render: each panel is its own bordered article, stacked as siblings', () =
   assert.equal((pair.match(/<article class="home-panel /g) || []).length, 2,
     'one bordered block per widget');
   assert.equal((pair.match(/home-panel-bar/g) || []).length, 2,
-    'each block carries its OWN title bar and ✕');
+    'each block carries its OWN title bar and ⋮ menu');
   // Siblings: one article must close before the next opens (no nesting).
   const first = pair.indexOf('</article>');
   const second = pair.indexOf('<article', first);
@@ -704,6 +708,130 @@ test('the "Your apps" heading is gone from the grid', () => {
   // The trailing sections keep theirs — they genuinely need naming.
   assert.match(INDEX, /home-section-header">Featured apps/);
   assert.match(INDEX, /home-section-header">Create an app/);
+});
+
+// ── The whole title bar is the handle ─────────────────────────────
+//
+// There is no `handle:` option on the attachReorder call and there must not
+// be one: `handle` is declared per LIST, and #app-list's other items are the
+// app cards, which have to keep drag-from-anywhere on desktop (native.js
+// returns early on a non-handle press) and long-press-to-lift on touch. With
+// no handle the kit already treats the whole grid item as grabbable, so what
+// the bar needed was the AFFORDANCE plus one real gap: nothing stopped a
+// press on a control inside the block from arming that drag.
+
+test('the bar advertises the drag it has always had, and carries no ⠿ grip', () => {
+  const { html } = renderWith({ registry: [], hidden: [], panels: [panel()] });
+  assert.match(html, /home-panel-bar[^"]*select-none"/,
+    'a desktop drag must not sweep a text selection across the title instead');
+  assert.match(html, /home-panel-bar[^>]*title="Drag to move this widget"/);
+  assert.doesNotMatch(html, /⠿/,
+    'a grabber beside a bar that is itself grabbable read as "only this glyph moves it"');
+  assert.doesNotMatch(html, /home-panel-grip/);
+});
+
+test('the grab cursor is scoped to the host that can actually move', () => {
+  const css = read('public/css/app.css');
+  assert.match(css, /\.home-panel-slot \.home-panel-bar \{[^}]*cursor:\s*grab/,
+    'the #home-panels fallback section has no reorder wiring — a grab cursor there would lie');
+  // The kit puts .un-reordering on the LIST (#app-list) for the duration of a
+  // lift, and the slot is a child of it — so the descendant rule holds.
+  assert.match(css, /\.un-reordering \.home-panel-slot \.home-panel-bar \{[^}]*cursor:\s*grabbing/);
+  const kit = read('public/usernode-native/v1/native.css');
+  assert.match(kit, /\.un-reordering[^{]*\{[^}]*cursor:\s*grabbing/,
+    'the class the scoping depends on is the kit\'s, not ours');
+  // A control is a control, even sitting on the handle.
+  assert.match(css, /\.home-panel-bar button \{[^}]*cursor:\s*pointer/);
+});
+
+test('a press on a control in the block never arms the grid drag', () => {
+  // The kit binds pointerdown on #app-list and it BUBBLES, so stopping the
+  // event at the button is what keeps the ⋮ from lifting the widget instead
+  // of opening — on desktop (armed → lift past the slop) and on touch (the
+  // 400ms long-press timer) alike.
+  const wire = SRC.match(/_wire\(section\) \{[\s\S]*?\n {2}\},/)[0];
+  assert.match(wire, /querySelectorAll\('\.home-panel button'\)[\s\S]*?'pointerdown'[\s\S]*?stopPropagation\(\)/,
+    'every control, not just the menu — the footer buttons sit inside the item too');
+  const kit = read('public/usernode-native/v1/native.js');
+  assert.match(kit, /listEl\.addEventListener\('pointerdown', onPointerDown\)/,
+    'bubble-phase on the LIST is what makes stopping it at the button enough');
+  // And no second recognizer was bolted on: the reorder instance the app
+  // cards use is still the only thing that moves the block.
+  assert.doesNotMatch(SRC, /attachReorder\(|draggable=|'dragstart'/);
+});
+
+// ── The widget menu ───────────────────────────────────────────────
+//
+// Replaces the bare ✕: a destructive control with no undo, one press away on
+// a block whose whole job is to sit quietly on the home screen.
+
+test('the ⋮ button is a real touch target with menu semantics', () => {
+  const { html } = renderWith({ registry: [], hidden: [], panels: [panel()] });
+  const btn = html.match(/<button[^>]*home-panel-menu[\s\S]*?<\/button>/)[0];
+  assert.match(btn, /un-touch-target/, 'the kit pads a small glyph out to a finger');
+  assert.match(btn, /aria-haspopup="menu"/);
+  assert.match(btn, /aria-label="Widget options"/);
+  assert.doesNotMatch(html, /home-panel-hide/, 'the ✕ is gone, not merely restyled');
+});
+
+test('the menu offers the destination and a deliberate hide', () => {
+  const { HP, sandbox } = makeHomePanels();
+  HP._data = { registry: [{ key: 'challenges', title: 'Challenges' }], hidden: [], panels: [panel()] };
+
+  const items = HP.menuItems('challenges');
+  // Joined rather than deep-equalled: the module runs in a vm realm, so its
+  // arrays fail deepStrictEqual's prototype check.
+  assert.equal(labels(items), 'Open challenges | Hide widget');
+  assert.equal(items[1].destructive, true, 'hiding is the destructive row');
+  assert.ok(!items[0].destructive);
+
+  // Row 1 is a real hash navigation, so the device back gesture returns here.
+  items[0].handler();
+  assert.equal(sandbox.location.hash, '#leaderboard/challenges');
+
+  // Row 2 is exactly what the ✕ did — persisted, and still restorable from
+  // Settings → Home screen widgets.
+  const calls = [];
+  sandbox.fetch = async (url) => { calls.push(url); return { ok: true, json: async () => ({}) }; };
+  items[1].handler();
+  assert.equal(Array.from(HP._data.hidden).join(), 'challenges');
+  assert.deepEqual(calls, ['/api/home-panels/challenges/visibility']);
+
+  // A future widget with no destination still gets a working menu rather
+  // than a row that goes nowhere.
+  assert.equal(labels(HP.menuItems('future-widget')), 'Hide widget');
+});
+
+test('openMenu goes through the kit\'s ADAPTIVE menu — one call site, both idioms', () => {
+  const { HP, sandbox } = makeHomePanels();
+  HP._data = { registry: [], hidden: [], panels: [panel()] };
+  const anchor = { tagName: 'BUTTON' };
+
+  // The repo wrapper is preferred (platform-ui.js: "New menu call sites
+  // should use PlatformUI.menu()"), and it is the kit's action-sheet-on-touch
+  // / anchored-popover-on-desktop menu underneath — no branching here.
+  const seen = [];
+  sandbox.PlatformUI = { menu: (o) => { seen.push(o); return Promise.resolve(null); } };
+  HP.openMenu('challenges', anchor);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].anchorEl, anchor, 'the anchor is what makes it a popover on desktop');
+  assert.equal(seen[0].title, 'Challenges', 'the sheet needs a heading; a popover ignores it');
+  assert.equal(labels(seen[0].items), 'Open challenges | Hide widget');
+  assert.match(read('public/js/platform-ui.js'), /unNative[\s\S]{0,400}?\.menu\(/);
+
+  // Kit but no wrapper (a page that loads native.js directly).
+  delete sandbox.PlatformUI;
+  const direct = [];
+  sandbox.unNative = { menu: (o) => { direct.push(o); return Promise.resolve(null); } };
+  HP.openMenu('challenges', anchor);
+  assert.equal(direct.length, 1);
+
+  // No kit at all: send the press where the rows go rather than swallowing
+  // it. Hiding stays reachable in Settings.
+  delete sandbox.unNative;
+  sandbox.location.hash = '';
+  HP.openMenu('challenges', anchor);
+  assert.equal(sandbox.location.hash, '#leaderboard/challenges');
 });
 
 // ── Height cap ────────────────────────────────────────────────────
