@@ -26,7 +26,7 @@ test("claim manifest pins revisions, units, commands, and stable slide identifie
       capture: evidence.generatedFrom.projectionAuthority.capture,
     },
   })
-  assert.equal(evidence.claims.length, 12)
+  assert.equal(evidence.claims.length, 14)
   assert.equal(new Set(evidence.claims.map((claim) => claim.id)).size, evidence.claims.length)
   assert.equal(new Set(evidence.claims.map((claim) => claim.slideId)).size, evidence.claims.length)
   for (const claim of evidence.claims) {
@@ -43,4 +43,24 @@ test("claim manifest pins revisions, units, commands, and stable slide identifie
     }
   }
   assert.equal(evidence.claims[8].slideId, "regression-caught")
+  assert.deepEqual(evidence.facts.surfaceSize, {
+    legacy: {
+      markup: { files: 14, lines: 3671 },
+      styling: { files: 2, lines: 4624 },
+      scripts: { files: 47, lines: 53856 },
+      total: { files: 63, lines: 62151 },
+    },
+    react: {
+      product: { files: 174, lines: 25138 },
+      proof: { files: 246, lines: 37416 },
+      configuration: { files: 28, lines: 2786 },
+      total: { files: 448, lines: 65340 },
+    },
+  })
+  assert.deepEqual(evidence.facts.routeShape, {
+    basename: "/react",
+    proposalPattern: "/apps/:slug/dev/proposals/:proposalId",
+    legacyExample: "/#app/usernode-2d5619/dev/proposals/2971",
+    reactExample: "/react/apps/usernode-2d5619/dev/proposals/2971",
+  })
 })

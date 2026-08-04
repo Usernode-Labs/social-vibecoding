@@ -91,7 +91,7 @@ export function challengesPath() {
   return "/community/challenges"
 }
 
-/** Read-only detail route. Voting and other proposal actions stay in legacy Dev. */
+/** Proposal detail with voting and kudos; force-merge and moderation stay in legacy Dev. */
 export function appDevProposalPath(slug: string, proposalId: number | string) {
   return `${appDevPath(slug)}/proposals/${encodeURIComponent(proposalId)}`
 }

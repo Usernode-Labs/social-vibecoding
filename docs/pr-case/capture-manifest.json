@@ -161,6 +161,7 @@
       "sha256": "f81e4f4e4bb44ba1a5ce5e328a8294a4dc6284bed37caed840f070519f647c5e",
       "width": 1280,
       "height": 720,
+      "route": "/",
       "theme": "light",
       "bodyFontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
       "rasterBoundary": {
@@ -173,6 +174,7 @@
       "sha256": "79074808fbc83bd5d9c85a82f130cd1a296e8c31ae9e2141a20c61cf225ea2d7",
       "width": 1280,
       "height": 720,
+      "route": "/react/",
       "theme": "light",
       "bodyFontFamily": "\"Geist Variable\", sans-serif",
       "rasterBoundary": {
@@ -185,6 +187,7 @@
       "sha256": "24e8990740bf559fe93c295eb692a661317f1945da44de2db163bd41b6adef79",
       "width": 1280,
       "height": 720,
+      "route": "/",
       "theme": "dark",
       "bodyFontFamily": "ui-sans-serif, system-ui, sans-serif, \"Apple Color Emoji\", \"Segoe UI Emoji\", \"Segoe UI Symbol\", \"Noto Color Emoji\"",
       "rasterBoundary": {
@@ -197,6 +200,7 @@
       "sha256": "ea915bbf5af3da0a5f68834a81d5100789a84a8e3b8db265c89a8081a3a775f3",
       "width": 1280,
       "height": 720,
+      "route": "/react/",
       "theme": "dark",
       "bodyFontFamily": "\"Geist Variable\", sans-serif",
       "rasterBoundary": {

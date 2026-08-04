@@ -193,6 +193,10 @@ function validateEvidence(evidence, captureManifest, html) {
       errors.push(`capture raster boundary is missing or changed: ${capture.file}`)
     }
   }
+  const expectedCaptureRoutes = ["/", "/react/", "/", "/react/"]
+  if (JSON.stringify(captureManifest.captures.map((capture) => capture.route)) !== JSON.stringify(expectedCaptureRoutes)) {
+    errors.push("capture routes must identify legacy / and staged React /react/ for both themes")
+  }
   if (captureManifest.revisions.base !== PR_CASE_BASE_REVISION || captureManifest.revisions.branch !== PR_CASE_BRANCH_REVISION) {
     errors.push("capture revisions do not match the case revisions")
   }
@@ -226,7 +230,7 @@ function validateEvidence(evidence, captureManifest, html) {
   for (const pattern of forbidden) if (pattern.test(html)) errors.push(`generated HTML contains forbidden private or local text: ${pattern}`)
   const slideIds = [...html.matchAll(/<section class="slide[^"]*" data-slide-id="([^"]+)"/g)].map((match) => match[1])
   if (new Set(slideIds).size !== slideIds.length) errors.push("generated HTML has duplicate slide identifiers")
-  if (slideIds.length !== 32) errors.push(`generated HTML must contain 32 reviewer deck slides, received ${slideIds.length}`)
+  if (slideIds.length !== 34) errors.push(`generated HTML must contain 34 reviewer deck slides, received ${slideIds.length}`)
   for (const stableId of ["token-authority-demo", "lean-mechanical-loop", "regression-caught"]) {
     if (!slideIds.includes(stableId)) errors.push(`generated HTML is missing stable selected slide ${stableId}`)
   }
@@ -316,4 +320,4 @@ validateEvidence(evidence, captureManifest, html)
 writeOrCheck("claims.json", `${JSON.stringify(evidence, null, 2)}\n`)
 writeOrCheck("index.html", html)
 validateExportManifest()
-console.log(`Pull-request case ${checkOnly ? "is current" : "generated"}: 13 narrative slides, 19 detail slides, ${evidence.claims.length} reproducible claims.`)
+console.log(`Pull-request case ${checkOnly ? "is current" : "generated"}: 13 narrative slides, 21 detail slides, ${evidence.claims.length} reproducible claims.`)

@@ -221,7 +221,7 @@ async function settle(page) {
   })
 }
 
-async function capture(browser, { name, url, theme, before, tailwindPlay }) {
+async function capture(browser, { name, url, route, theme, before, tailwindPlay }) {
   const context = await browser.newContext({
     viewport: { width: 1280, height: 720 },
     deviceScaleFactor: 1,
@@ -300,6 +300,7 @@ async function capture(browser, { name, url, theme, before, tailwindPlay }) {
     sha256: sha256(fs.readFileSync(outputPath)),
     width: 1280,
     height: 720,
+    route,
     theme,
     bodyFontFamily,
     rasterBoundary,
@@ -328,10 +329,12 @@ try {
     for (const theme of ["light", "dark"]) {
       captures.push(await capture(browser, {
         name: "home-before", theme, before: true, tailwindPlay,
+        route: "/",
         url: `http://127.0.0.1:${legacyPort}/`,
       }))
       captures.push(await capture(browser, {
         name: "home-after", theme, before: false, tailwindPlay,
+        route: "/react/",
         url: `http://127.0.0.1:${reactPort}/react/`,
       }))
     }

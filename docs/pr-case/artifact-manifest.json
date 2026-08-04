@@ -13,26 +13,26 @@
     {
       "file": "index.html",
       "kind": "self-contained-html",
-      "bytes": 310475,
-      "sha256": "3628bd43309cdb61dc0897496d0ee4faa7cdbf543f9f03c99ba33ad7e8040265"
+      "bytes": 316462,
+      "sha256": "8dec58a664a043f09e21af147543ee3d174659c98d3a711e77d03831ee09ee8b"
     },
     {
       "file": "README.md",
       "kind": "artifact-documentation",
-      "bytes": 1033,
-      "sha256": "b203f03be3dc6c3005ae371b90a6ac4935797d89ae5eeccf4ac0c99562906286"
+      "bytes": 1087,
+      "sha256": "f8f67fd06a5e80425a3a3fbfb226729b705af3ebebc5ef545b4356921621d7ca"
     },
     {
       "file": "claims.json",
       "kind": "claim-manifest",
-      "bytes": 22858,
-      "sha256": "08c86a7a1135bb99b5f87dce07642ef236b77d44aafa47305180ede66685cde0"
+      "bytes": 30616,
+      "sha256": "9bd4cc473a8fa696ef597e770ba7fed59e1220ed58ad1721dc6452a95121647a"
     },
     {
       "file": "capture-manifest.json",
       "kind": "capture-manifest",
-      "bytes": 5705,
-      "sha256": "7eaa89f528485a5f6e8b9277c5bc673a67104a0ce24016f6efc86f9d61269a02"
+      "bytes": 5797,
+      "sha256": "18d346f9710508538a6633945959bbbfe02c5200c85e6955da71c1f06d0681b1"
     },
     {
       "file": "capture-fixtures/README.md",
@@ -55,9 +55,9 @@
     {
       "file": "pr-case.pdf",
       "kind": "portable-document",
-      "bytes": 428186,
-      "sha256": "484efd62e2f92d8c9d8a27d09ff15b52959a6cfb06ea8b04cc8e9d43127073e4",
-      "pages": 32,
+      "bytes": 534442,
+      "sha256": "987949f642ec2b1be88975544ad4344cfba08cb9207aac453ab0022d3d8b4cdd",
+      "pages": 34,
       "aspectRatio": 1.7774617845716316
     },
     {
@@ -95,8 +95,8 @@
     {
       "file": "slides/01-nv-1.png",
       "kind": "slide-image",
-      "bytes": 60932,
-      "sha256": "4ee8ca71de7070da906ec8c04b6b9f2c002b4869d9dfec89ef0175781fc0a3a6",
+      "bytes": 62542,
+      "sha256": "46331752c7a1c6c882ed2c324ead6a5eada9b621f3dafc4805cb2c00e786def4",
       "slideId": "nv-1",
       "width": 1600,
       "height": 900
@@ -293,8 +293,8 @@
     {
       "file": "slides/23-nv-10.png",
       "kind": "slide-image",
-      "bytes": 56227,
-      "sha256": "731236fd81232ff80bb7bcd5491f421f64654ed157d8a618e1ef52c641e52866",
+      "bytes": 78857,
+      "sha256": "94c96added9db6b684031a4d8311b2935d9e1f77617e92f90ba82842836d9d9a",
       "slideId": "nv-10",
       "width": 1600,
       "height": 900
@@ -309,16 +309,25 @@
       "height": 900
     },
     {
-      "file": "slides/25-nv-11.png",
+      "file": "slides/25-surface-size-contrast.png",
       "kind": "slide-image",
-      "bytes": 70343,
-      "sha256": "c0eeafe65c19f407941cc32f3ffaa602500f080536328808d32d396deac55d54",
+      "bytes": 113988,
+      "sha256": "04ea134809ff5695f74d118a097fb1317d79d6a0154c1ec94d91fd222fc82d3a",
+      "slideId": "surface-size-contrast",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/26-nv-11.png",
+      "kind": "slide-image",
+      "bytes": 75534,
+      "sha256": "922f04670ef979105f3dbbb618ad619dbd61ff4846ee97093ffaf19f4484eba1",
       "slideId": "nv-11",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/26-claim-R11.png",
+      "file": "slides/27-claim-R11.png",
       "kind": "slide-image",
       "bytes": 77451,
       "sha256": "8ffc1e814579fc1744c1fee21ef6ec8aa372df3d0defe733072d1529783b42db",
@@ -327,56 +336,65 @@
       "height": 900
     },
     {
-      "file": "slides/27-claim-R12.png",
+      "file": "slides/28-claim-R12.png",
       "kind": "slide-image",
-      "bytes": 78362,
-      "sha256": "e7cb7d27841ae2d635a89f4dffef8525accf4b253139676a9c87f30def0f25bd",
+      "bytes": 76944,
+      "sha256": "462440d4218eb40063e660fc9e4d201ed2f08f60d03e05a21c2dc8558bac94f4",
       "slideId": "claim-R12",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/28-before-and-after-light.png",
+      "file": "slides/29-staged-route-shape.png",
       "kind": "slide-image",
-      "bytes": 58243,
-      "sha256": "c43cefd0b14df0dbb377694c39b07a6996ce10c82e4bbd23205ee5973a3724b5",
+      "bytes": 100168,
+      "sha256": "ccb95322ae11f9a77ee0f12b69c14dab0d46030e8a066e8cd51d8538b04f76ea",
+      "slideId": "staged-route-shape",
+      "width": 1600,
+      "height": 900
+    },
+    {
+      "file": "slides/30-before-and-after-light.png",
+      "kind": "slide-image",
+      "bytes": 61110,
+      "sha256": "a8066a7a7fd744e421724f7af9557e441eb0345ac48da0629569aab7099c4efb",
       "slideId": "before-and-after-light",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/29-before-and-after-dark.png",
+      "file": "slides/31-before-and-after-dark.png",
       "kind": "slide-image",
-      "bytes": 58918,
-      "sha256": "85f762a47b54aea1e654c71d9e3619b3e2fc51ded6c7f48c6c60c80642f91807",
+      "bytes": 60728,
+      "sha256": "0ac1f6b4b4b5627eee19d4cf287c33f121201adab01ba6a2d8d771c7c8b20e27",
       "slideId": "before-and-after-dark",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/30-nv-12.png",
+      "file": "slides/32-nv-12.png",
       "kind": "slide-image",
-      "bytes": 71790,
-      "sha256": "1edb179dadb033e4c42c622603811d45062c1669d83bdc9029a0c2098269d3ea",
+      "bytes": 71898,
+      "sha256": "7519b49bf3e4e524ccf9bd36919b4fe7362a0fe308ccfc04ff479ad333c0a0aa",
       "slideId": "nv-12",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/31-nv-13.png",
+      "file": "slides/33-nv-13.png",
       "kind": "slide-image",
-      "bytes": 66063,
-      "sha256": "f47f59820619389b1c58efbee5d7f61587ef384b76eb3b94a708f9ddda88acd5",
+      "bytes": 65630,
+      "sha256": "acc02599b7fc8d73805f6f923e0ce832b5e3ec1cae49886bd4f8947e1b8cd89d",
       "slideId": "nv-13",
       "width": 1600,
       "height": 900
     },
     {
-      "file": "slides/32-twelve-probes-one-command.png",
+      "file": "slides/34-fourteen-probes-one-command.png",
       "kind": "slide-image",
-      "bytes": 77265,
-      "sha256": "8037d987286293e9fd6c67523de6b6ec3cd2de9a7b9f40735b70393b736ac026",
-      "slideId": "twelve-probes-one-command",
+      "bytes": 84337,
+      "sha256": "4cf822069059ff2cb3e428c2c3f680a693e8c3e80f2a44398f9fbad7b34719e8",
+      "slideId": "fourteen-probes-one-command",
       "width": 1600,
       "height": 900
     },

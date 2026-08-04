@@ -41,6 +41,19 @@ function fileAt(revision, fileName) {
   return git(["show", `${revision}:${fileName}`], { encoding: "buffer" })
 }
 
+function physicalLinesAt(revision, fileNames) {
+  return fileNames.reduce((total, fileName) => {
+    const bytes = fileAt(revision, fileName)
+    let lines = 0
+    for (const byte of bytes) if (byte === 10) lines += 1
+    return total + lines
+  }, 0)
+}
+
+function measuredFiles(revision, fileNames) {
+  return { files: fileNames.length, lines: physicalLinesAt(revision, fileNames) }
+}
+
 function fileContains(revision, fileName, pattern) {
   try {
     git(["grep", "-l", "-e", pattern, revision, "--", fileName], { stdio: ["ignore", "pipe", "ignore"] })
@@ -175,6 +188,63 @@ export function collectPrCaseEvidence() {
   const guardedInvalidMutations = (fs.readFileSync(path.join(frontendRoot, "scripts", "check-design-tokens.mjs"), "utf8")
     .match(/expectRejected\(/g) || []).length - 1
   const canonicalTokenSources = filesAt(PR_CASE_BRANCH_REVISION, "frontend/design-system", /(?:^|\/)tokens\.json$/).length
+  const legacyMarkupFiles = filesAt(PR_CASE_BASE_REVISION, "public", /\.html$/)
+  const legacyStyleFiles = filesAt(PR_CASE_BASE_REVISION, "public/css", /./)
+  const legacyScriptFiles = filesAt(PR_CASE_BASE_REVISION, "public/js", /./)
+  const frontendFiles = filesAt(PR_CASE_BRANCH_REVISION, "frontend", /./)
+    .filter((fileName) => fileName !== "frontend/package-lock.json")
+  const frontendProductFiles = filesAt(PR_CASE_BRANCH_REVISION, "frontend", /^(?:frontend\/@\/|frontend\/src\/)/)
+    .filter((fileName) => !/\.stories\.[jt]sx?$/.test(fileName))
+  const frontendProofFiles = [
+    ...filesAt(PR_CASE_BRANCH_REVISION, "frontend", /\.stories\.[jt]sx?$/),
+    ...filesAt(PR_CASE_BRANCH_REVISION, "frontend/tests", /./),
+    ...filesAt(PR_CASE_BRANCH_REVISION, "frontend/scripts", /./),
+    ...filesAt(PR_CASE_BRANCH_REVISION, "frontend/design-system", /./),
+  ]
+  const frontendProductSet = new Set(frontendProductFiles)
+  const frontendProofSet = new Set(frontendProofFiles)
+  if (frontendProductSet.size !== frontendProductFiles.length || frontendProofSet.size !== frontendProofFiles.length) {
+    throw new Error("front-end size evidence contains duplicate files")
+  }
+  for (const fileName of frontendProductSet) {
+    if (frontendProofSet.has(fileName)) throw new Error(`front-end size evidence overlaps at ${fileName}`)
+  }
+  const frontendConfigurationFiles = frontendFiles.filter((fileName) => (
+    !frontendProductSet.has(fileName) && !frontendProofSet.has(fileName)
+  ))
+  const surfaceSize = {
+    legacy: {
+      markup: measuredFiles(PR_CASE_BASE_REVISION, legacyMarkupFiles),
+      styling: measuredFiles(PR_CASE_BASE_REVISION, legacyStyleFiles),
+      scripts: measuredFiles(PR_CASE_BASE_REVISION, legacyScriptFiles),
+      total: measuredFiles(PR_CASE_BASE_REVISION, [...legacyMarkupFiles, ...legacyStyleFiles, ...legacyScriptFiles]),
+    },
+    react: {
+      product: measuredFiles(PR_CASE_BRANCH_REVISION, frontendProductFiles),
+      proof: measuredFiles(PR_CASE_BRANCH_REVISION, frontendProofFiles),
+      configuration: measuredFiles(PR_CASE_BRANCH_REVISION, frontendConfigurationFiles),
+      total: measuredFiles(PR_CASE_BRANCH_REVISION, frontendFiles),
+    },
+  }
+  const mainSource = fileAt(PR_CASE_BRANCH_REVISION, "frontend/src/main.tsx").toString("utf8")
+  const routesSource = fileAt(PR_CASE_BRANCH_REVISION, "frontend/@/lib/routes.ts").toString("utf8")
+  const proposalSource = fileAt(PR_CASE_BRANCH_REVISION, "frontend/@/features/dev/dev-proposal-detail.tsx").toString("utf8")
+  const basename = mainSource.match(/<BrowserRouter basename="([^"]+)"/)?.[1]
+  const proposalPattern = mainSource.match(/<Route element={<DevProposalDetail \/>} path="([^"]+)"/)?.[1]
+  const routeExample = { slug: "usernode-2d5619", proposalId: "2971" }
+  if (basename !== "/react" || proposalPattern !== "/apps/:slug/dev/proposals/:proposalId") {
+    throw new Error("pinned React proposal route no longer matches the staged route contract")
+  }
+  if (!routesSource.includes("appDevProposalPath") || !proposalSource.includes("castProposalVote")
+    || !proposalSource.includes("giveProposalKudos") || !proposalSource.includes("More proposal actions")) {
+    throw new Error("pinned React proposal route no longer exposes the measured compatibility seam")
+  }
+  const routeShape = {
+    basename,
+    proposalPattern,
+    legacyExample: `/#app/${routeExample.slug}/dev/proposals/${routeExample.proposalId}`,
+    reactExample: `${basename}/apps/${routeExample.slug}/dev/proposals/${routeExample.proposalId}`,
+  }
 
   const facts = {
     revisions: { base: PR_CASE_BASE_REVISION, branch: PR_CASE_BRANCH_REVISION },
@@ -237,7 +307,10 @@ export function collectPrCaseEvidence() {
       width: captureManifest.viewport.width,
       height: captureManifest.viewport.height,
       themes: new Set(captureManifest.captures.map((capture) => capture.theme)).size,
+      routes: [...new Set(captureManifest.captures.map((capture) => capture.route))],
     },
+    surfaceSize,
+    routeShape,
     guardedInvalidMutations,
     canonicalTokenSources,
     tokenDemo,
@@ -392,18 +465,56 @@ export function collectPrCaseEvidence() {
     }),
     manifestClaim({
       id: "R12", slideId: "compatibility-evidence",
-      statement: "Four pinned Home captures compare current main and the integrated branch under one deterministic data fixture in light and dark themes.",
+      statement: "Four pinned Home captures compare legacy / with staged React /react/ under one deterministic data fixture in light and dark themes.",
       metrics: [
         metric("captureImages", facts.capture.images, "capture images", captureAuthorityRevision, "capture manifest"),
         metric("captureWidth", facts.capture.width, "pixels", captureAuthorityRevision, "capture viewport"),
         metric("captureHeight", facts.capture.height, "pixels", captureAuthorityRevision, "capture viewport"),
         metric("captureThemes", facts.capture.themes, "themes", captureAuthorityRevision, "capture manifest"),
+        metric("baseRoute", facts.capture.routes[0], "route", captureAuthorityRevision, "pinned main capture"),
+        metric("branchRoute", facts.capture.routes[1], "route", captureAuthorityRevision, "integrated branch capture"),
         metric("baseRootNodeTestFiles", facts.base.rootNodeTestFiles, "root Node test files", PR_CASE_BASE_REVISION, "pinned main"),
         metric("branchRootNodeTestFiles", facts.branch.rootNodeTestFiles, "root Node test files", PR_CASE_BRANCH_REVISION, "integrated branch"),
         metric("retainedBaseRootNodeTestFiles", facts.branch.retainedBaseTestFiles, "root Node test files", PR_CASE_BRANCH_REVISION, "base-path retention"),
         metric("removedBaseRootNodeTestFiles", facts.branch.removedBaseTestFiles, "root Node test files", PR_CASE_BRANCH_REVISION, "base-path retention"),
       ],
       sources: ["docs/pr-case/capture-manifest.json", "docs/pr-case/images/"],
+    }),
+    manifestClaim({
+      id: "R13", slideId: "surface-size-contrast",
+      statement: `${facts.surfaceSize.legacy.total.files} legacy shell files carry ${facts.surfaceSize.legacy.total.lines} physical lines; the staged React front end carries ${facts.surfaceSize.react.total.files} files and ${facts.surfaceSize.react.total.lines} physical lines excluding its lockfile.`,
+      metrics: [
+        metric("legacyMarkupFiles", facts.surfaceSize.legacy.markup.files, "files", PR_CASE_BASE_REVISION, "legacy HTML"),
+        metric("legacyMarkupLines", facts.surfaceSize.legacy.markup.lines, "physical lines", PR_CASE_BASE_REVISION, "legacy HTML"),
+        metric("legacyStyleFiles", facts.surfaceSize.legacy.styling.files, "files", PR_CASE_BASE_REVISION, "legacy CSS"),
+        metric("legacyStyleLines", facts.surfaceSize.legacy.styling.lines, "physical lines", PR_CASE_BASE_REVISION, "legacy CSS"),
+        metric("legacyScriptFiles", facts.surfaceSize.legacy.scripts.files, "files", PR_CASE_BASE_REVISION, "legacy JavaScript"),
+        metric("legacyScriptLines", facts.surfaceSize.legacy.scripts.lines, "physical lines", PR_CASE_BASE_REVISION, "legacy JavaScript"),
+        metric("legacyTotalFiles", facts.surfaceSize.legacy.total.files, "files", PR_CASE_BASE_REVISION, "legacy shell"),
+        metric("legacyTotalLines", facts.surfaceSize.legacy.total.lines, "physical lines", PR_CASE_BASE_REVISION, "legacy shell"),
+        metric("reactProductFiles", facts.surfaceSize.react.product.files, "files", PR_CASE_BRANCH_REVISION, "React product source"),
+        metric("reactProductLines", facts.surfaceSize.react.product.lines, "physical lines", PR_CASE_BRANCH_REVISION, "React product source"),
+        metric("reactProofFiles", facts.surfaceSize.react.proof.files, "files", PR_CASE_BRANCH_REVISION, "React stories, tests, harness and design system"),
+        metric("reactProofLines", facts.surfaceSize.react.proof.lines, "physical lines", PR_CASE_BRANCH_REVISION, "React stories, tests, harness and design system"),
+        metric("reactConfigurationFiles", facts.surfaceSize.react.configuration.files, "files", PR_CASE_BRANCH_REVISION, "React configuration and manifests"),
+        metric("reactConfigurationLines", facts.surfaceSize.react.configuration.lines, "physical lines", PR_CASE_BRANCH_REVISION, "React configuration and manifests"),
+        metric("reactTotalFiles", facts.surfaceSize.react.total.files, "files", PR_CASE_BRANCH_REVISION, "React front end excluding package-lock.json"),
+        metric("reactTotalLines", facts.surfaceSize.react.total.lines, "physical lines", PR_CASE_BRANCH_REVISION, "React front end excluding package-lock.json"),
+      ],
+      sources: ["public/", "frontend/"],
+    }),
+    manifestClaim({
+      id: "R14", slideId: "staged-route-shape",
+      statement: `The legacy proposal address ${facts.routeShape.legacyExample} becomes ${facts.routeShape.reactExample} in the staged React shell, whose router basename is ${facts.routeShape.basename}.`,
+      metrics: [
+        metric("reactBasename", facts.routeShape.basename, "route prefix", PR_CASE_BRANCH_REVISION, "React router"),
+        metric("proposalRoutePattern", facts.routeShape.proposalPattern, "route pattern", PR_CASE_BRANCH_REVISION, "React router"),
+        metric("legacyExample", facts.routeShape.legacyExample, "address path", PR_CASE_BRANCH_REVISION, "legacy compatibility route"),
+        metric("reactExample", facts.routeShape.reactExample, "address path", PR_CASE_BRANCH_REVISION, "staged React route"),
+        metric("reactProposalReadsVotesAndKudos", true, "boolean", PR_CASE_BRANCH_REVISION, "proposal detail implementation"),
+        metric("legacyProposalModerationFallback", true, "boolean", PR_CASE_BRANCH_REVISION, "proposal detail implementation"),
+      ],
+      sources: ["frontend/src/main.tsx", "frontend/@/lib/routes.ts", "frontend/@/features/dev/dev-proposal-detail.tsx"],
     }),
   ]
 

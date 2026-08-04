@@ -6,7 +6,7 @@
     "projectionAuthority": {
       "tokenHarness": "sha256:e497489ef8db686bcf3237eb294ef4c056be458b31aa4acd83c7764a79febb18",
       "contextHarness": "sha256:65024a7ecc1fc9568a545a26e7efe85a73dfa2aecb6128781f5fc53ee53c6538",
-      "capture": "sha256:7eaa89f528485a5f6e8b9277c5bc673a67104a0ce24016f6efc86f9d61269a02"
+      "capture": "sha256:18d346f9710508538a6633945959bbbfe02c5200c85e6955da71c1f06d0681b1"
     }
   },
   "facts": {
@@ -75,7 +75,55 @@
       "images": 4,
       "width": 1280,
       "height": 720,
-      "themes": 2
+      "themes": 2,
+      "routes": [
+        "/",
+        "/react/"
+      ]
+    },
+    "surfaceSize": {
+      "legacy": {
+        "markup": {
+          "files": 14,
+          "lines": 3671
+        },
+        "styling": {
+          "files": 2,
+          "lines": 4624
+        },
+        "scripts": {
+          "files": 47,
+          "lines": 53856
+        },
+        "total": {
+          "files": 63,
+          "lines": 62151
+        }
+      },
+      "react": {
+        "product": {
+          "files": 174,
+          "lines": 25138
+        },
+        "proof": {
+          "files": 246,
+          "lines": 37416
+        },
+        "configuration": {
+          "files": 28,
+          "lines": 2786
+        },
+        "total": {
+          "files": 448,
+          "lines": 65340
+        }
+      }
+    },
+    "routeShape": {
+      "basename": "/react",
+      "proposalPattern": "/apps/:slug/dev/proposals/:proposalId",
+      "legacyExample": "/#app/usernode-2d5619/dev/proposals/2971",
+      "reactExample": "/react/apps/usernode-2d5619/dev/proposals/2971"
     },
     "guardedInvalidMutations": 7,
     "canonicalTokenSources": 1,
@@ -582,35 +630,49 @@
     {
       "id": "R12",
       "slideId": "compatibility-evidence",
-      "statement": "Four pinned Home captures compare current main and the integrated branch under one deterministic data fixture in light and dark themes.",
+      "statement": "Four pinned Home captures compare legacy / with staged React /react/ under one deterministic data fixture in light and dark themes.",
       "metrics": [
         {
           "id": "captureImages",
           "value": 4,
           "unit": "capture images",
-          "revision": "sha256:7eaa89f528485a5f6e8b9277c5bc673a67104a0ce24016f6efc86f9d61269a02",
+          "revision": "sha256:18d346f9710508538a6633945959bbbfe02c5200c85e6955da71c1f06d0681b1",
           "scope": "capture manifest"
         },
         {
           "id": "captureWidth",
           "value": 1280,
           "unit": "pixels",
-          "revision": "sha256:7eaa89f528485a5f6e8b9277c5bc673a67104a0ce24016f6efc86f9d61269a02",
+          "revision": "sha256:18d346f9710508538a6633945959bbbfe02c5200c85e6955da71c1f06d0681b1",
           "scope": "capture viewport"
         },
         {
           "id": "captureHeight",
           "value": 720,
           "unit": "pixels",
-          "revision": "sha256:7eaa89f528485a5f6e8b9277c5bc673a67104a0ce24016f6efc86f9d61269a02",
+          "revision": "sha256:18d346f9710508538a6633945959bbbfe02c5200c85e6955da71c1f06d0681b1",
           "scope": "capture viewport"
         },
         {
           "id": "captureThemes",
           "value": 2,
           "unit": "themes",
-          "revision": "sha256:7eaa89f528485a5f6e8b9277c5bc673a67104a0ce24016f6efc86f9d61269a02",
+          "revision": "sha256:18d346f9710508538a6633945959bbbfe02c5200c85e6955da71c1f06d0681b1",
           "scope": "capture manifest"
+        },
+        {
+          "id": "baseRoute",
+          "value": "/",
+          "unit": "route",
+          "revision": "sha256:18d346f9710508538a6633945959bbbfe02c5200c85e6955da71c1f06d0681b1",
+          "scope": "pinned main capture"
+        },
+        {
+          "id": "branchRoute",
+          "value": "/react/",
+          "unit": "route",
+          "revision": "sha256:18d346f9710508538a6633945959bbbfe02c5200c85e6955da71c1f06d0681b1",
+          "scope": "integrated branch capture"
         },
         {
           "id": "baseRootNodeTestFiles",
@@ -645,6 +707,185 @@
       "sources": [
         "docs/pr-case/capture-manifest.json",
         "docs/pr-case/images/"
+      ]
+    },
+    {
+      "id": "R13",
+      "slideId": "surface-size-contrast",
+      "statement": "63 legacy shell files carry 62151 physical lines; the staged React front end carries 448 files and 65340 physical lines excluding its lockfile.",
+      "metrics": [
+        {
+          "id": "legacyMarkupFiles",
+          "value": 14,
+          "unit": "files",
+          "revision": "472de79151060300df68fc6e98e242351d76eef0",
+          "scope": "legacy HTML"
+        },
+        {
+          "id": "legacyMarkupLines",
+          "value": 3671,
+          "unit": "physical lines",
+          "revision": "472de79151060300df68fc6e98e242351d76eef0",
+          "scope": "legacy HTML"
+        },
+        {
+          "id": "legacyStyleFiles",
+          "value": 2,
+          "unit": "files",
+          "revision": "472de79151060300df68fc6e98e242351d76eef0",
+          "scope": "legacy CSS"
+        },
+        {
+          "id": "legacyStyleLines",
+          "value": 4624,
+          "unit": "physical lines",
+          "revision": "472de79151060300df68fc6e98e242351d76eef0",
+          "scope": "legacy CSS"
+        },
+        {
+          "id": "legacyScriptFiles",
+          "value": 47,
+          "unit": "files",
+          "revision": "472de79151060300df68fc6e98e242351d76eef0",
+          "scope": "legacy JavaScript"
+        },
+        {
+          "id": "legacyScriptLines",
+          "value": 53856,
+          "unit": "physical lines",
+          "revision": "472de79151060300df68fc6e98e242351d76eef0",
+          "scope": "legacy JavaScript"
+        },
+        {
+          "id": "legacyTotalFiles",
+          "value": 63,
+          "unit": "files",
+          "revision": "472de79151060300df68fc6e98e242351d76eef0",
+          "scope": "legacy shell"
+        },
+        {
+          "id": "legacyTotalLines",
+          "value": 62151,
+          "unit": "physical lines",
+          "revision": "472de79151060300df68fc6e98e242351d76eef0",
+          "scope": "legacy shell"
+        },
+        {
+          "id": "reactProductFiles",
+          "value": 174,
+          "unit": "files",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "React product source"
+        },
+        {
+          "id": "reactProductLines",
+          "value": 25138,
+          "unit": "physical lines",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "React product source"
+        },
+        {
+          "id": "reactProofFiles",
+          "value": 246,
+          "unit": "files",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "React stories, tests, harness and design system"
+        },
+        {
+          "id": "reactProofLines",
+          "value": 37416,
+          "unit": "physical lines",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "React stories, tests, harness and design system"
+        },
+        {
+          "id": "reactConfigurationFiles",
+          "value": 28,
+          "unit": "files",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "React configuration and manifests"
+        },
+        {
+          "id": "reactConfigurationLines",
+          "value": 2786,
+          "unit": "physical lines",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "React configuration and manifests"
+        },
+        {
+          "id": "reactTotalFiles",
+          "value": 448,
+          "unit": "files",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "React front end excluding package-lock.json"
+        },
+        {
+          "id": "reactTotalLines",
+          "value": 65340,
+          "unit": "physical lines",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "React front end excluding package-lock.json"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R13 --base 472de79151060300df68fc6e98e242351d76eef0 --branch 2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+      "sources": [
+        "public/",
+        "frontend/"
+      ]
+    },
+    {
+      "id": "R14",
+      "slideId": "staged-route-shape",
+      "statement": "The legacy proposal address /#app/usernode-2d5619/dev/proposals/2971 becomes /react/apps/usernode-2d5619/dev/proposals/2971 in the staged React shell, whose router basename is /react.",
+      "metrics": [
+        {
+          "id": "reactBasename",
+          "value": "/react",
+          "unit": "route prefix",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "React router"
+        },
+        {
+          "id": "proposalRoutePattern",
+          "value": "/apps/:slug/dev/proposals/:proposalId",
+          "unit": "route pattern",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "React router"
+        },
+        {
+          "id": "legacyExample",
+          "value": "/#app/usernode-2d5619/dev/proposals/2971",
+          "unit": "address path",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "legacy compatibility route"
+        },
+        {
+          "id": "reactExample",
+          "value": "/react/apps/usernode-2d5619/dev/proposals/2971",
+          "unit": "address path",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "staged React route"
+        },
+        {
+          "id": "reactProposalReadsVotesAndKudos",
+          "value": true,
+          "unit": "boolean",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "proposal detail implementation"
+        },
+        {
+          "id": "legacyProposalModerationFallback",
+          "value": true,
+          "unit": "boolean",
+          "revision": "2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+          "scope": "proposal detail implementation"
+        }
+      ],
+      "command": "node frontend/scripts/pr-case-tools.mjs --probe R14 --base 472de79151060300df68fc6e98e242351d76eef0 --branch 2f8605304ba9812474b2a8d8a8a0ff3fc3a83bf9",
+      "sources": [
+        "frontend/src/main.tsx",
+        "frontend/@/lib/routes.ts",
+        "frontend/@/features/dev/dev-proposal-detail.tsx"
       ]
     }
   ]
