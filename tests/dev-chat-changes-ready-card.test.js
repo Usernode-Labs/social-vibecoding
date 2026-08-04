@@ -121,6 +121,77 @@ const activeSession = (over) => ({
   id: 7, status: 'active', pr_url: null, pr_number: null, ...over,
 });
 
+test('a CLI handoff reload derives the missing card from authoritative session state', () => {
+  const { DevChat, render } = makeDevChat();
+  const session = activeSession({
+    id: 2969,
+    source: 'cli_handoff',
+    handoff_head_sha: 'a'.repeat(40),
+    checks_commit_sha: 'a'.repeat(40),
+    check_state: 'passing',
+    checks_checked_at: '2026-08-04T10:00:00.000Z',
+    staging_url: 'https://crypto-predictions--s2969.example.test',
+    pr_number: 4,
+    pr_url: 'https://github.com/usernode-bot/crypto-predictions/pull/4',
+  });
+
+  const hydrated = DevChat._hydrateChangesReadyFromSession(session, [
+    { role: 'assistant', content: 'Local test results reported by the CLI agent.' },
+  ]);
+  assert.equal(hydrated.length, 2);
+  assert.equal(hydrated[1]._derivedFromSession, true);
+  assert.equal(hydrated[1].stagingUrl, session.staging_url);
+  assert.equal(hydrated[1].changesReady, true);
+
+  const html = render(hydrated, session);
+  assert.match(html, /dc-pr-card/, 'the repaired session renders its Changes ready card');
+  assert.match(html, /Preview staging/, 'the authoritative preview is available');
+  assert.match(html, /PR #4/, 'the authoritative proposal link is available');
+});
+
+test('authoritative hydration never duplicates a persisted Changes ready card', () => {
+  const { DevChat } = makeDevChat();
+  const persisted = {
+    id: 88, role: 'system', content: 'Staging deployed!',
+    changesReady: true, stagingUrl: 'https://persisted.example.test',
+  };
+  const messages = [persisted];
+  const hydrated = DevChat._hydrateChangesReadyFromSession(
+    activeSession({ staging_url: 'https://current.example.test' }), messages
+  );
+
+  assert.equal(hydrated, messages, 'the original history array wins unchanged');
+  assert.equal(hydrated.filter((m) => m.changesReady || m.stagingUrl).length, 1);
+});
+
+test('CLI terminal checks derive a card without a preview, but drafts and pending builds do not', () => {
+  const { DevChat } = makeDevChat();
+  const submitted = activeSession({
+    source: 'cli_handoff', handoff_head_sha: 'b'.repeat(40), staging_url: null,
+  });
+
+  const failed = DevChat._hydrateChangesReadyFromSession(
+    { ...submitted, check_state: 'error' }, []
+  );
+  assert.equal(failed.length, 1);
+  assert.equal(failed[0].changesReady, true);
+  assert.equal(failed[0].stagingUrl, null);
+  assert.match(failed[0].content, /checks need attention/i);
+
+  assert.equal(DevChat._hydrateChangesReadyFromSession(
+    { ...submitted, check_state: 'pending' }, []
+  ).length, 0, 'an in-flight build does not claim changes are ready');
+  assert.equal(DevChat._hydrateChangesReadyFromSession(
+    activeSession({ source: 'cli_handoff', check_state: null, staging_url: null }), []
+  ).length, 0, 'an untouched CLI draft does not get a card');
+  assert.equal(DevChat._hydrateChangesReadyFromSession(
+    activeSession({ check_state: 'passing', checks_commit_sha: 'c'.repeat(40) }), []
+  ).length, 0, 'a non-CLI session needs an actual preview or persisted card');
+  assert.equal(DevChat._hydrateChangesReadyFromSession(
+    { ...submitted, status: 'archived', check_state: 'passing', staging_url: 'https://leaked.example.test' }, []
+  ).length, 0, 'an archived teardown leak does not become a fresh interactive card');
+});
+
 test('changesReady WITHOUT stagingUrl renders the card with Propose + an ACTIVE (rebuild-on-click) Preview (#439)', () => {
   const { render } = makeDevChat();
   const html = render([
