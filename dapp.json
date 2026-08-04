@@ -429,6 +429,17 @@
       "expectText": "Staging demo perf"
     },
     {
+      "name": "Dev board renders the Set priority / Set category / Unassigned metadata chips",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "button.attr-chip[data-attr-field=\"priority\"]",
+      "expectText": "Set priority"
+    },
+    {
+      "name": "Dev board metadata chips keep their compiled utility styling (no console error from the cascade self-check)",
+      "path": "/?demo=1#app/usernode-2d5619/dev",
+      "expectSelector": "button.attr-chip[data-attr-field=\"assignee\"] .attr-avatar-empty"
+    },
+    {
       "name": "Restart-recovery pill fixtures are seeded (#786)",
       "path": "/?demo=1#app/usernode-2d5619/dev",
       "expectText": "Staging demo: pills after a recovered build turn"
