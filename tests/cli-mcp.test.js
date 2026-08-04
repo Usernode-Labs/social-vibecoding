@@ -39,7 +39,19 @@ test('every protected MCP API checks local readiness before credential lookup', 
 
 test('proposal guidance requires a shallow checkout pinned to the exact base SHA', () => {
   const root = path.resolve(__dirname, '..');
-  const guidance = require('node:fs').readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  const route = JSON.parse(require('node:child_process').execFileSync(process.execPath, [
+    path.join(root, 'tool/ui-workflow.mjs'),
+    '--task', 'Use the Usernode API to start and submit a local Usernode proposal',
+    '--files', '',
+    '--json',
+  ], { cwd: root, encoding: 'utf8' }));
+  assert.deepEqual(route.classifications, ['usernode-api']);
+  assert.deepEqual(route.context, [
+    'agent-skills/ui-development/references/usernode-api.md',
+  ]);
+  const guidance = route.context.map((relativePath) => (
+    require('node:fs').readFileSync(path.join(root, relativePath), 'utf8')
+  )).join('\n');
   const spec = require('node:fs').readFileSync(
     path.join(root, 'CLI-MCP-AUTH-SPEC.md'),
     'utf8'
@@ -47,7 +59,7 @@ test('proposal guidance requires a shallow checkout pinned to the exact base SHA
   const cli = require('node:fs').readFileSync(path.join(root, 'src/cli/main.js'), 'utf8');
 
   for (const [label, source] of [
-    ['agent guidance', guidance],
+    ['routed agent guidance', guidance],
     ['auth spec', spec],
     ['MCP initialization instructions', cli],
   ]) {

@@ -7,14 +7,29 @@ const path = require('node:path');
 
 const root = path.resolve(__dirname, '..');
 
-test('Claude imports the shared API-agent guidance', () => {
+test('Claude imports the shared API-agent router and its routed guidance', () => {
   const claude = fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8');
   assert.equal(claude, '@AGENTS.md\n');
 
-  const guidance = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  const instructions = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
+  assert.match(instructions, /Begin UI or Usernode API work/);
+  assert.match(instructions, /tool\/ui-workflow\.mjs/);
+  const route = JSON.parse(require('node:child_process').execFileSync(process.execPath, [
+    path.join(root, 'tool/ui-workflow.mjs'),
+    '--task', 'Use the Usernode API to inspect platform state',
+    '--files', '',
+    '--json',
+  ], { cwd: root, encoding: 'utf8' }));
+  assert.deepEqual(route.classifications, ['usernode-api']);
+  assert.deepEqual(route.context, [
+    'agent-skills/ui-development/references/usernode-api.md',
+  ]);
+  const guidance = route.context.map((relativePath) => (
+    fs.readFileSync(path.join(root, relativePath), 'utf8')
+  )).join('\n');
   assert.match(guidance, /social-vibecoding codex setup/);
   assert.match(guidance, /social-vibecoding claude setup/);
-  assert.match(guidance, /`production` unless the user explicitly says/);
+  assert.match(guidance, /`production` unless the user explicitly/);
   assert.match(guidance, /Browser approval/);
   assert.match(guidance, /still-valid legacy credential lacks the API/);
   assert.match(guidance, /social-vibecoding logout --profile/);
