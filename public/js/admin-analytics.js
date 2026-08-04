@@ -168,6 +168,7 @@ const AdminAnalytics = (() => {
     'include-admins': 'Admin accounts (including view-only admins) are excluded from every number on this page by default, so operator/test activity does not skew the stats. Tick this to include them.',
     counters: 'At-a-glance totals. WAU | MAU are two independent counts — distinct users active in the last 7 vs 30 days, not a ratio. "Promoted (open)" is sessions live in promoted/merging right now; the all-time counts never leave their bucket.',
     spend: 'LLM spend per day for the last 30 days. <b>Platform key</b> is spend billed to the platform key (this is what the daily caps track); <b>User key</b> is spend billed to users\' own Anthropic keys (display only); <b>Both</b> stacks them.',
+    dropoffs: 'Privacy-minimized server milestones for five platform workflows. A signal appears only when a fully matured recent 7-day cohort and the preceding 28-day baseline each have at least 20 starts, and completion fell by 20 or more percentage points. Every start gets seven days to complete. Signals suggest where to investigate; they do not prove a regression.',
     funnels: 'Each stage shows the count reaching that milestone and the step-over-step conversion. "Promoted" = a session opened for group vote; "Merged" = landed in production. Use the cohort buttons to scope to recent signups.',
     growth: 'New signups, apps, and promoted/merged PRs bucketed per ISO week. Hover any bar for that week\'s exact count.',
     'general-users': 'A general user is anyone active during the period (any tracked action — used a dapp, sent a chat message, or sent a dev-session message). <b>DAU</b> is distinct users active that day; <b>WAU</b> is a 7-day rolling window (distinct users in the trailing 7 days, recomputed every day); <b>MAU</b> is a 30-day rolling window. Daily points over the last 90 days. Hover for the exact date and count.',
@@ -351,6 +352,103 @@ const AdminAnalytics = (() => {
       { label: 'Promoted a PR', value: u.promoted, admin: u.promoted_admin },
       { label: 'Got a PR merged', value: u.merged, admin: u.merged_admin },
     ]);
+  }
+
+  function renderDropoffs(data) {
+    const el = $('engagement-dropoffs');
+    if (!el) return;
+    if (!data) {
+      el.innerHTML = '<p class="text-sm text-zinc-500">Feature completion signals are temporarily unavailable.</p>';
+      return;
+    }
+    const items = Array.isArray(data?.workflows) ? data.workflows : [];
+    if (!items.length) {
+      el.innerHTML = '<p class="text-sm text-zinc-500">No feature milestones have been collected yet.</p>';
+      return;
+    }
+    const formatRate = (value) => value == null ? '—' : `${Number(value).toFixed(1)}%`;
+    const canCreateIssue = !!(data.selfAppSlug && window.AdminConsole?.canWrite?.());
+    el.innerHTML = items.map((item, index) => {
+      const flagged = item.status === 'dropoff';
+      const enough = item.status !== 'insufficient_data';
+      const badge = flagged
+        ? '<span class="text-xs font-medium text-amber-700 dark:text-amber-300">Drop-off signal</span>'
+        : enough
+          ? '<span class="text-xs font-medium text-emerald-700 dark:text-emerald-300">Within baseline</span>'
+          : '<span class="text-xs text-zinc-500">Collecting data</span>';
+      const decline = item.declinePoints == null
+        ? ''
+        : ` · ${Math.abs(Number(item.declinePoints)).toFixed(1)} pp ${Number(item.declinePoints) >= 0 ? 'lower' : 'higher'} than baseline`;
+      return `<article class="rounded-md border ${flagged
+        ? 'border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/20'
+        : 'border-zinc-200 dark:border-zinc-800'} p-3">
+        <div class="flex items-start justify-between gap-3">
+          <div>
+            <h4 class="text-sm font-semibold">${esc(item.label)}</h4>
+            <p class="text-xs text-zinc-500">${esc(item.startLabel)} → ${esc(item.completionLabel)}</p>
+          </div>
+          <div class="flex flex-col items-end gap-2">
+            ${badge}
+            ${flagged && canCreateIssue
+              ? `<button type="button" data-dropoff-issue="${index}" class="text-xs rounded border border-amber-400 dark:border-amber-700 px-2 py-1 text-amber-800 dark:text-amber-300 hover:bg-amber-100 dark:hover:bg-amber-950">Create issue</button>`
+              : ''}
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-zinc-600 dark:text-zinc-400">
+          Recent: <b>${formatRate(item.recentRate)}</b> (${fmtInt(item.recentCompletions)}/${fmtInt(item.recentStarts)})
+          · baseline: <b>${formatRate(item.baselineRate)}</b> (${fmtInt(item.baselineCompletions)}/${fmtInt(item.baselineStarts)})${esc(decline)}
+        </p>
+      </article>`;
+    }).join('');
+    el.querySelectorAll('[data-dropoff-issue]').forEach((button) => {
+      button.addEventListener('click', () => createDropoffIssue(data, button));
+    });
+  }
+
+  async function createDropoffIssue(data, button) {
+    const item = data.workflows?.[Number(button.dataset.dropoffIssue)];
+    const slug = typeof data.selfAppSlug === 'string' ? data.selfAppSlug : '';
+    if (!item || !slug || item.status !== 'dropoff') return;
+    const title = `Investigate ${item.label} drop-off signal`.slice(0, 300);
+    const line = (rateValue, complete, starts) =>
+      `${Number(rateValue).toFixed(1)}% (${Number(complete)}/${Number(starts)})`;
+    const description = [
+      `Admin Analytics detected an aggregate feature-completion signal for “${item.label}”.`,
+      '',
+      `Workflow: ${item.startLabel} → ${item.completionLabel}`,
+      `Recent fully matured 7-day cohort: ${line(item.recentRate, item.recentCompletions, item.recentStarts)}`,
+      `Preceding 28-day baseline: ${line(item.baselineRate, item.baselineCompletions, item.baselineStarts)}`,
+      `Change: ${Number(item.declinePoints).toFixed(1)} percentage points lower`,
+      `Completion allowance: ${Number(data.detector?.completionWindowDays) || 7} days`,
+      '',
+      'This is a privacy-minimized aggregate signal, not a confirmed regression. Investigate product changes, traffic mix, and instrumentation health before proposing a fix.',
+    ].join('\n');
+    const confirmed = window.PlatformUI?.confirm
+      ? await PlatformUI.confirm({
+        title: 'Create investigation issue?',
+        message: `Create a prefilled issue for the ${item.label} signal? Nothing is filed automatically.`,
+        confirmLabel: 'Create issue',
+      })
+      : window.confirm(`Create a prefilled issue for the ${item.label} signal?`);
+    if (!confirmed) return;
+    button.disabled = true;
+    try {
+      const response = await fetch(`/api/apps/${encodeURIComponent(slug)}/issues`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: 'general', title, description }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || `HTTP ${response.status}`);
+      button.textContent = 'Issue created';
+      window.PlatformUI?.toast?.('Investigation issue created');
+    } catch (err) {
+      button.disabled = false;
+      window.PlatformUI?.alert?.({
+        title: 'Could not create issue',
+        message: err.message || 'Try again shortly.',
+      });
+    }
   }
 
   // Horizontal gridlines for a chart of height H drawn over usable height
@@ -1213,7 +1311,7 @@ const AdminAnalytics = (() => {
   // Fetch every analytics endpoint (with the current includeAdmins flag)
   // and (re)render. Shared by first load and the admin-checkbox toggle.
   async function loadAll() {
-    const [overview, spend, growth, retention, generalUsers, powerUsers, topUsers, kudos, spendByBuilder, spendDistribution, limits] =
+    const [overview, spend, growth, retention, generalUsers, powerUsers, topUsers, kudos, spendByBuilder, spendDistribution, dropoffs, limits] =
       await Promise.all([
         getJSON(withAdmins('/api/admin/analytics/overview')),
         getJSON(withAdmins('/api/admin/analytics/spend')),
@@ -1225,6 +1323,10 @@ const AdminAnalytics = (() => {
         getJSON(withAdmins('/api/admin/analytics/kudos')),
         getJSON(withAdmins('/api/admin/analytics/spend-by-builder')),
         getJSON(withAdmins('/api/admin/analytics/spend-distribution')),
+        // A new insight surface must not blank the established analytics page
+        // during a transient query/migration problem. Its card carries its own
+        // unavailable state while every older chart continues to render.
+        getJSON(withAdmins('/api/admin/analytics/dropoffs')).catch(() => null),
         // #361: system-token cap for the "today / cap" readout. Tolerate a
         // failure (non-admin-write tokens still GET it) — default stays 2500.
         getJSON('/api/admin/limits').catch(() => null),
@@ -1249,6 +1351,7 @@ const AdminAnalytics = (() => {
     renderSpendByBuilder();
     lastSpendDistribution = spendDistribution;
     renderSpendDistribution();
+    renderDropoffs(dropoffs);
     await loadFunnels();
   }
 
@@ -1340,6 +1443,15 @@ const AdminAnalytics = (() => {
           </div>
           <p class="text-xs text-zinc-500 mb-4">LLM spend per day, last 30 days. Hover a bar for the amount.</p>
           <div id="spend"></div>
+        </section>
+
+        <!-- Privacy-minimized feature drop-off signals (#917) -->
+        <section class="bg-zinc-50 dark:bg-zinc-900 rounded-lg p-4 border border-zinc-200 dark:border-zinc-800">
+          <h3 class="text-lg font-semibold mb-1 inline-flex items-center">Feature completion signals
+            <span class="dc-info" data-info="dropoffs" tabindex="0" role="button" aria-label="What is this?">?</span>
+          </h3>
+          <p class="text-xs text-zinc-500 mb-4">Admin-excluded platform milestones only. Fully matured cohorts prevent unfinished recent journeys from looking like failures; raw rows expire after 90 days.</p>
+          <div id="engagement-dropoffs" class="grid lg:grid-cols-2 gap-3" aria-live="polite"></div>
         </section>
 
         <!-- Funnels -->

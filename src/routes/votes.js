@@ -11,6 +11,7 @@ const { getActiveUserStats, isUserActive } = require('../services/active-users')
 const notifications = require('../services/notifications');
 const { isAppLocked, hasAdminYesVote } = require('../services/admin-approval');
 const events = require('../services/events');
+const featureEngagement = require('../services/feature-engagement');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const { effectiveSessionCaps } = require('../services/session-caps');
@@ -1436,6 +1437,21 @@ function voteRoutes(config) {
         sessionId: session.id,
         metadata: { prNumber: session.pr_number || null },
       });
+      featureEngagement.recordComplete(
+        pool,
+        featureEngagement.WORKFLOW_IDS.PROPOSAL_SUBMISSION,
+        { userId: session.user_id || req.user.id, appId: session.app_id, sessionId: session.id }
+      );
+      for (const workflow of [
+        featureEngagement.WORKFLOW_IDS.PROPOSAL_REVIEW,
+        featureEngagement.WORKFLOW_IDS.PROPOSAL_DELIVERY,
+      ]) {
+        featureEngagement.recordStart(pool, workflow, {
+          userId: session.user_id || req.user.id,
+          appId: session.app_id,
+          sessionId: session.id,
+        });
+      }
       // #183: return the PR info so the dev-chat staging card can flip
       // its "Changes ready" header to the PR link without a refetch —
       // the promote may have just created the PR lazily.
@@ -1827,6 +1843,14 @@ function voteRoutes(config) {
           metadata: { prNumber, source: 'imported' },
         });
       } catch { /* events are best-effort */ }
+      for (const workflow of [
+        featureEngagement.WORKFLOW_IDS.PROPOSAL_REVIEW,
+        featureEngagement.WORKFLOW_IDS.PROPOSAL_DELIVERY,
+      ]) {
+        featureEngagement.recordStart(pool, workflow, {
+          userId: req.user.id, appId: app.id, sessionId,
+        });
+      }
 
       log.info('votes', 'PR imported as proposal', { sessionId, prNumber, appId: app.id });
       res.json({ ok: true, sessionId, prNumber });
@@ -2065,6 +2089,11 @@ function voteRoutes(config) {
           sessionId: session.id,
           metadata: { vote, voterId: req.user.id },
         });
+        featureEngagement.recordComplete(
+          pool,
+          featureEngagement.WORKFLOW_IDS.PROPOSAL_REVIEW,
+          { userId: session.user_id, appId: session.app_id, sessionId: session.id }
+        );
       }
       res.json({ ok: true, merged: false });
 
@@ -3231,6 +3260,13 @@ async function finalizeMerge({ config, pool, session, mergeCommitSha, required, 
         ...(force && forceBy ? { forcedBy: forceBy.username } : {}),
       },
     });
+    if (session.user_id) {
+      featureEngagement.recordComplete(
+        pool,
+        featureEngagement.WORKFLOW_IDS.PROPOSAL_DELIVERY,
+        { userId: session.user_id, appId: session.app_id, sessionId: session.id }
+      );
+    }
 
     // Resolve any open issue bounties for the issues this PR closes (declared
     // through the session's linked_issues → `Closes #N` in the PR body).

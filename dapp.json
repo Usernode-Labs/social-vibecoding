@@ -604,6 +604,12 @@
       "expectSelector": "#spend-distribution"
     },
     {
+      "name": "Analytics feature completion signals render (#917)",
+      "path": "/?demo=1#admin/analytics",
+      "expectText": "Drop-off signal",
+      "expectSelector": "#engagement-dropoffs article"
+    },
+    {
       "name": "Analytics General-users section renders",
       "path": "/#admin/analytics",
       "expectSelector": "#gu-mau"

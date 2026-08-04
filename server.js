@@ -696,6 +696,20 @@ async function start() {
     runCliAuthCleanup();
   }, 6 * 60 * 60 * 1000).unref?.();
 
+  // #917: short-lived feature-funnel rows have a strict 90-day ceiling.
+  // Account deletion cascades immediately; this boot + six-hour bounded pass
+  // handles time-based retention without putting cleanup on product requests.
+  const featureEngagement = require('./src/services/feature-engagement');
+  const runFeatureEngagementCleanup = () => featureEngagement.cleanupExpired(getPool(config))
+    .then((deleted) => {
+      if (deleted > 0) log.info('feature-engagement', 'Retention cleanup completed', { deleted });
+    })
+    .catch((err) => {
+      log.warn('feature-engagement', 'Retention cleanup failed', { message: err.message });
+    });
+  runFeatureEngagementCleanup();
+  setInterval(runFeatureEngagementCleanup, 6 * 60 * 60 * 1000).unref?.();
+
   // #616: ensure the read-only prod-debug Postgres role (fresh in-memory
   // password every boot) and refresh its deny-listed grants so tables
   // added by this deploy's migrations are covered. On failure the

@@ -30,6 +30,7 @@ const log = require('./logger');
 const github = require('./github');
 const appManifest = require('./app-manifest');
 const events = require('./events');
+const featureEngagement = require('./feature-engagement');
 
 function renamePrTitle(newName) {
   return `Rename to "${newName}"`;
@@ -151,6 +152,16 @@ async function createManifestPR(config, pool, app, actor, opts) {
     sessionId,
     metadata: { prNumber: prData.number, ...(opts.eventMetadata || {}) },
   });
+  if (actor.id) {
+    for (const workflow of [
+      featureEngagement.WORKFLOW_IDS.PROPOSAL_REVIEW,
+      featureEngagement.WORKFLOW_IDS.PROPOSAL_DELIVERY,
+    ]) {
+      featureEngagement.recordStart(pool, workflow, {
+        userId: actor.id, appId: app.id, sessionId,
+      });
+    }
+  }
 
   // Vote-request fan-out — same as the normal promote path. Non-fatal:
   // the rename PR is already open, so a notification hiccup must not

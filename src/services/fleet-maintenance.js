@@ -407,6 +407,7 @@ async function openCampaignProposal({ config, pool, campaign, app, files, summar
   const { sendSystemMessage, pushVoteUpdate, pushNotificationToUser } = require('./ws');
   const notifications = require('./notifications');
   const events = require('./events');
+  const featureEngagement = require('./feature-engagement');
   const { getActiveUserStats } = require('./active-users');
   const { active: activeUsers, majority } = await getActiveUserStats(pool, app.id);
 
@@ -426,6 +427,14 @@ async function openCampaignProposal({ config, pool, campaign, app, files, summar
     sessionId,
     metadata: { prNumber: prData.number, maintenanceCampaignId: campaign.id },
   });
+  for (const workflow of [
+    featureEngagement.WORKFLOW_IDS.PROPOSAL_REVIEW,
+    featureEngagement.WORKFLOW_IDS.PROPOSAL_DELIVERY,
+  ]) {
+    featureEngagement.recordStart(pool, workflow, {
+      userId: platformUserId, appId: app.id, sessionId,
+    });
+  }
 
   try {
     const notifRows = await notifications.createPrProposedNotifications(pool, {

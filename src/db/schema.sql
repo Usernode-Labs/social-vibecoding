@@ -1891,6 +1891,41 @@ CREATE INDEX IF NOT EXISTS idx_events_user_created ON events(user_id, created_at
 -- clones rather than leaking social history into previews.
 COMMENT ON TABLE events IS 'staging:private';
 
+-- Privacy-minimized feature-funnel milestones (#917). Unlike `events`, this
+-- table is deliberately NOT a general telemetry sink: callers may only write
+-- a catalogued workflow and a start/complete stage through
+-- services/feature-engagement.js. There is no metadata/free-text column, so
+-- prompts, URLs, usernames, IPs, user agents, and hosted-app payloads cannot
+-- accidentally land here. Raw rows are short lived (the server deletes them
+-- after 90 days) and account deletion removes the user's rows immediately.
+-- Existing domain-table analytics remain the historical source of truth; no
+-- feature-funnel history is fabricated at migration time.
+CREATE TABLE IF NOT EXISTS feature_engagement_events (
+  id               BIGSERIAL PRIMARY KEY,
+  catalog_version  SMALLINT NOT NULL CHECK (catalog_version > 0),
+  workflow         VARCHAR(64) NOT NULL
+                     CHECK (workflow ~ '^[a-z][a-z0-9_]{1,63}$'),
+  stage            VARCHAR(8) NOT NULL CHECK (stage IN ('start', 'complete')),
+  user_id          INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  app_id           INTEGER REFERENCES apps(id) ON DELETE SET NULL,
+  session_id       INTEGER REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  occurred_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- One milestone per workflow subject. Separate partial indexes make the
+-- subject explicit and prevent an attribution bug from counting one session
+-- twice under two users.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_feature_engagement_user_milestone
+  ON feature_engagement_events (catalog_version, workflow, stage, user_id)
+  WHERE session_id IS NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_feature_engagement_session_milestone
+  ON feature_engagement_events (catalog_version, workflow, stage, session_id)
+  WHERE session_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_feature_engagement_cohorts
+  ON feature_engagement_events (catalog_version, workflow, stage, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_feature_engagement_retention
+  ON feature_engagement_events (occurred_at);
+COMMENT ON TABLE feature_engagement_events IS 'staging:private';
+
 -- Per-app visibility (collaborator & viewer privacy).
 --   collab_visibility: who may participate in building the app (group
 --     chat, dev sessions, voting, issues, kudos). 'public' = everyone.

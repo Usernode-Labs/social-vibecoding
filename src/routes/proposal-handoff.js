@@ -13,6 +13,7 @@ const { beginSessionOperation, isSessionBusy } = require('../services/active-wor
 const { effectiveSessionCaps } = require('../services/session-caps');
 const { drainGuard } = require('../services/lifecycle');
 const events = require('../services/events');
+const featureEngagement = require('../services/feature-engagement');
 const log = require('../services/logger');
 const {
   MAX_UPLOAD_FILES,
@@ -647,6 +648,25 @@ async function runStaging(config, pool, session, app, headSha) {
   // runner failure escape. Awaiting it here keeps status honest while still
   // running entirely outside the original HTTP request.
   await visuals.captureForSession(config, session, app, headSha, result);
+  const { rows: verdictRows } = await pool.query(
+    `SELECT user_id, app_id, check_state
+       FROM chat_sessions
+      WHERE id = $1 AND source = $2 AND status = 'active'
+        AND checks_commit_sha = $3`,
+    [session.id, SOURCE, headSha]
+  ).catch(() => ({ rows: [] }));
+  const verdict = verdictRows[0];
+  if (verdict && ['passing', 'skipped'].includes(verdict.check_state)) {
+    const ids = {
+      userId: verdict.user_id, appId: verdict.app_id, sessionId: session.id,
+    };
+    featureEngagement.recordComplete(
+      pool, featureEngagement.WORKFLOW_IDS.PROPOSAL_AUTHORING, ids
+    );
+    featureEngagement.recordStart(
+      pool, featureEngagement.WORKFLOW_IDS.PROPOSAL_SUBMISSION, ids
+    );
+  }
 }
 
 function proposalHandoffRoutes(config) {
@@ -769,6 +789,11 @@ function proposalHandoffRoutes(config) {
           sessionId: created.id,
           metadata: { source: SOURCE },
         });
+        featureEngagement.recordStart(
+          pool,
+          featureEngagement.WORKFLOW_IDS.PROPOSAL_AUTHORING,
+          { userId: req.user.id, appId: app.id, sessionId: created.id }
+        );
       }
       res.status(insertedSession ? 201 : 200)
         .json(publicSessionStatus({ ...created, app_slug: app.slug }));

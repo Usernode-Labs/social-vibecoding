@@ -28,6 +28,7 @@ const models = require('../services/models');
 const limits = require('../services/limits');
 const { effectiveSessionCaps } = require('../services/session-caps');
 const events = require('../services/events');
+const featureEngagement = require('../services/feature-engagement');
 const modelFallback = require('../services/model-fallback');
 const { getActiveUserStats } = require('../services/active-users');
 const { chatLimiter, attachmentUploadLimiter } = require('../middleware/rate-limits');
@@ -852,6 +853,11 @@ function sessionRoutes(config) {
         appId: app.id,
         sessionId: rows[0].id,
       });
+      featureEngagement.recordStart(
+        pool,
+        featureEngagement.WORKFLOW_IDS.PROPOSAL_AUTHORING,
+        { userId: req.user.id, appId: app.id, sessionId: rows[0].id }
+      );
       res.status(201).json({ session: rows[0] });
     } catch (err) {
       log.error('sessions', 'Failed to create session', { message: err.message });
@@ -985,6 +991,11 @@ function sessionRoutes(config) {
         sessionId: session.id,
         metadata: { headless: true, issueNumber },
       });
+      featureEngagement.recordStart(
+        pool,
+        featureEngagement.WORKFLOW_IDS.PROPOSAL_AUTHORING,
+        { userId: req.user.id, appId: app.id, sessionId: session.id }
+      );
 
       // Fire-and-forget: the run continues after this response. Failures
       // inside the runner mark the row 'failed' (and a platform restart
@@ -1184,6 +1195,11 @@ function sessionRoutes(config) {
         sessionId: session.id,
         metadata: { clonedFrom: src.id, headlessIssue: src.headless_issue_number },
       });
+      featureEngagement.recordStart(
+        pool,
+        featureEngagement.WORKFLOW_IDS.PROPOSAL_AUTHORING,
+        { userId: req.user.id, appId: src.app_id, sessionId: session.id }
+      );
 
       // #161 auto-dismiss: cloning the auto session resolves its
       // completion notification for the cloner. Fire-and-forget;
@@ -1965,6 +1981,11 @@ function sessionRoutes(config) {
         sessionId: session.id,
         metadata: { forkedFromSession: src.id },
       });
+      featureEngagement.recordStart(
+        pool,
+        featureEngagement.WORKFLOW_IDS.PROPOSAL_AUTHORING,
+        { userId: req.user.id, appId: src.app_id, sessionId: session.id }
+      );
 
       log.info('sessions', 'Forked shared dev chat', { src: src.id, sessionId: session.id, user: req.user.username });
       res.status(201).json({ session });
@@ -8112,6 +8133,16 @@ path: /another/changed/view
           sessionId: session.id,
           metadata: { prNumber: prResult.prNumber },
         });
+        featureEngagement.recordComplete(
+          pool,
+          featureEngagement.WORKFLOW_IDS.PROPOSAL_AUTHORING,
+          { userId: req.user.id, appId: session.app_id, sessionId: session.id }
+        );
+        featureEngagement.recordStart(
+          pool,
+          featureEngagement.WORKFLOW_IDS.PROPOSAL_SUBMISSION,
+          { userId: req.user.id, appId: session.app_id, sessionId: session.id }
+        );
         // Tail milestone: a resume must not open a second PR-opened event
         // (applyPrMetadata itself is update-safe once pr_number is set).
         await worker.noteTailMilestone(session.id, {

@@ -9,6 +9,7 @@ const { authLimiter, walletCheckLimiter } = require('../middleware/rate-limits')
 const genesisAccounts = require('../services/genesis-accounts');
 const waitlist = require('../services/waitlist');
 const events = require('../services/events');
+const featureEngagement = require('../services/feature-engagement');
 const { validatePassword } = require('../services/password-policy');
 const {
   accountRecovery,
@@ -175,6 +176,9 @@ function authRoutes(config) {
 
       log.info('auth', 'User registered', { userId, username: username.trim(), codeId });
       events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId, metadata: { via: 'activation_code' } });
+      featureEngagement.recordStart(
+        pool, featureEngagement.WORKFLOW_IDS.ONBOARDING_FIRST_APP, { userId }
+      );
       res.json({ user: { id: userId, username: username.trim(), ...roleFields(false, false) } });
     } catch (err) {
       if (err.code === '23505') {
@@ -894,6 +898,9 @@ function authRoutes(config) {
 
       log.info('wallet-auth', 'Wallet-gated registration', { userId, username: username.trim() });
       events.record(pool, { type: events.EVENT_TYPES.USER_SIGNED_UP, userId, metadata: { via: 'wallet' } });
+      featureEngagement.recordStart(
+        pool, featureEngagement.WORKFLOW_IDS.ONBOARDING_FIRST_APP, { userId }
+      );
       res.json({
         user: { id: userId, username: username.trim(), ...roleFields(false, false) },
         walletLink: {

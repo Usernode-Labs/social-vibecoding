@@ -3,6 +3,7 @@ const { getPool } = require('../db/pool');
 const { adminMiddleware } = require('../middleware/admin');
 const log = require('../services/logger');
 const analyticsDemo = require('../services/analytics-demo');
+const featureEngagement = require('../services/feature-engagement');
 // #892: read-only access to the estimator's COMMITTED run-length priors so
 // the estimator card can show them beside the live numbers and say when a
 // refresh is due. This is a plain module-constant read — it does NOT call
@@ -304,6 +305,50 @@ function dashboardRoutes(config) {
       });
     } catch (err) {
       log.error('dashboard', 'funnels failed', { message: err.message });
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  // ── Feature drop-off insights (#917) ─────────────────────────
+  // Aggregates only: raw actors/event rows never cross the admin API. The
+  // service uses fully matured cohorts and excludes admin accounts so recent
+  // starts are not penalized for conversions that have not had time to occur.
+  router.get('/api/admin/analytics/dropoffs', async (req, res) => {
+    try {
+      const [data, selfAppResult] = await Promise.all([
+        featureEngagement.insights(pool),
+        pool.query(
+          `SELECT slug FROM apps
+            WHERE self_hosted = TRUE AND status <> 'deleted'
+            ORDER BY id ASC LIMIT 1`
+        ).catch(() => ({ rows: [] })),
+      ]);
+      const response = { ...data, selfAppSlug: selfAppResult.rows[0]?.slug || null };
+      if (wantsDemo(req)
+          && data.workflows.every((item) => item.recentStarts === 0 && item.baselineStarts === 0)) {
+        const demoCounts = {
+          onboarding_first_app: [34, 25, 120, 97],
+          proposal_authoring: [29, 12, 108, 78],
+          proposal_submission: [22, 17, 91, 72],
+          proposal_review: [18, 13, 83, 62],
+          proposal_delivery: [15, 9, 67, 43],
+        };
+        const workflows = Object.keys(featureEngagement.CATALOG).map((id) => {
+          const [recentStarts, recentCompletions, baselineStarts, baselineCompletions] = demoCounts[id];
+          return featureEngagement.evaluateWorkflow(id, {
+            recentStarts, recentCompletions, baselineStarts, baselineCompletions,
+          });
+        });
+        return res.json({
+          ...response,
+          workflows,
+          insights: workflows.filter((item) => item.insight),
+          demo: true,
+        });
+      }
+      res.json(response);
+    } catch (err) {
+      log.error('dashboard', 'drop-off insights failed', { message: err.message });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

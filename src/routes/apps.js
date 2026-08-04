@@ -18,6 +18,7 @@ const { drainGuard } = require('../services/lifecycle');
 const deployFailure = require('../services/deploy-failure');
 const { appCreateLimiter, issueCreateLimiter } = require('../middleware/rate-limits');
 const events = require('../services/events');
+const featureEngagement = require('../services/feature-engagement');
 const appAccess = require('../services/app-access');
 const appAdmins = require('../services/app-admins');
 const approverInvites = require('../services/approver-invites');
@@ -2680,6 +2681,11 @@ function appRoutes(config) {
           userId: req.user.id,
           appId: appRows[0].id,
         });
+        featureEngagement.recordComplete(
+          pool,
+          featureEngagement.WORKFLOW_IDS.ONBOARDING_FIRST_APP,
+          { userId: req.user.id, appId: appRows[0].id }
+        );
       }
 
       res.json({ ok: true });
