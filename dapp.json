@@ -274,6 +274,12 @@
   ],
   "tests": [
     {
+      "name": "Tapping an app shows its icon and name while it loads, not a blank window (#931)",
+      "path": "/?shot=app-launching",
+      "expectSelector": "#app-launch-cover .app-icon-tile",
+      "expectText": "Opening…"
+    },
+    {
       "name": "The app detail page opens from a browse row (?shot=browse-detail)",
       "path": "/?shot=browse-detail#apps",
       "expectText": "Fork this app",

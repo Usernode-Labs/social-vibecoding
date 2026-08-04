@@ -4722,3 +4722,79 @@ html:not(.dark) #admin-node-root {
 #admin-merges-root .step-detail { white-space: pre-wrap; word-break: break-word; }
 #admin-merges-root .spin { animation: admin-merges-spin 1s linear infinite; }
 @keyframes admin-merges-spin { to { transform: rotate(360deg); } }
+
+/* ── App launch surface (#931) ────────────────────────────────────────
+
+   Tapping an app used to animate in an empty #app-view (opaque zoom
+   background) and then pop the app in once two round trips had resolved.
+   The frame is now mounted and loading before the zoom's first frame,
+   behind this cover: the app's own icon and name on the theme
+   background, so the animation has a stable surface to expand and the
+   user sees the app they tapped rather than a white rectangle.
+
+   Opacity-only transitions, no blur / backdrop-filter (#787) — this
+   runs concurrently with the kit's transform animation on mid-range
+   phones, so it must not add a compositing layer that can't be
+   promoted cheaply. */
+.app-launch-host {
+  position: relative;
+}
+.app-launch-cover {
+  position: absolute;
+  inset: 0;
+  /* Above the frame it covers; both are the only children of the host. */
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 1rem;
+  text-align: center;
+  background-color: var(--bg-primary);
+  transition: opacity 160ms linear;
+}
+.app-launch-cover--out {
+  opacity: 0;
+  /* The app underneath is already interactive at this point — don't let
+     the fading cover swallow the first tap. */
+  pointer-events: none;
+}
+/* Size and layout only: the face (background, ring, letter colour) comes
+   from .app-icon-tile, which owns every icon tile on the platform. */
+.app-launch-cover-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 4rem;
+  height: 4rem;
+  border-radius: 0.75rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  overflow: hidden;
+}
+.app-launch-cover-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.app-launch-cover-note {
+  font-size: 0.8125rem;
+  color: var(--text-faint);
+}
+/* Both app frames the cover can sit over: the signed-in App tab and the
+   anonymous landing viewer. */
+#app-iframe,
+#app-viewer-frame {
+  transition: opacity 140ms linear;
+}
+/* Reduced motion keeps the cover (it's information, not decoration) but
+   swaps both cross-fades for an instant swap — _revealLaunch removes the
+   cover outright on this path rather than waiting out a fade. */
+@media (prefers-reduced-motion: reduce) {
+  .app-launch-cover,
+  #app-iframe,
+  #app-viewer-frame {
+    transition: none;
+  }
+}

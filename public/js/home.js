@@ -559,6 +559,7 @@ const Home = {
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
         App.navigateToApp(card.dataset.slug);
       });
+      Home._wirePrewarm(card);
     });
     listEl.querySelectorAll('.card-add-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
@@ -613,6 +614,21 @@ const Home = {
 
   // ===== Per-render card wiring =====
 
+  // #931: start warming the app the finger is already on — the token mint
+  // and the TCP/TLS handshake to its origin — so the tap that follows can
+  // point the iframe at the app in its own tick. `pointerdown` is the real
+  // lever on touch (it fires ~100ms before click, and long-press-to-drag
+  // still ends up here harmlessly); `mouseenter` buys much more on desktop.
+  // Passive: this never calls preventDefault and must not delay scrolling.
+  _wirePrewarm(card) {
+    const slug = card.dataset.slug;
+    if (!slug || card.dataset.demo === 'true') return;
+    if (card.dataset.status !== 'running') return;
+    const warm = () => { try { App.prewarmApp(slug); } catch (err) { /* ignore */ } };
+    card.addEventListener('pointerdown', warm, { passive: true });
+    card.addEventListener('mouseenter', warm);
+  },
+
   // `yoursCount` is the "Your apps" section size in the sectioned view
   // (0 included — adds must work with an empty section), or null when
   // drag is off entirely (search view). Only the kit path consumes it;
@@ -641,6 +657,7 @@ const Home = {
         if (card.dataset.status !== 'running' && card.dataset.status !== 'awaiting_secrets') return;
         App.navigateToApp(card.dataset.slug);
       });
+      Home._wirePrewarm(card);
       // Gesture wiring, two eras (spec: reorder migration, old path
       // kept behind a temporary flag for one release):
       //

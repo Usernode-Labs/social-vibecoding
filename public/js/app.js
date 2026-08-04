@@ -227,6 +227,7 @@ const App = {
     }));
     App.restoreFromHash();
     App._applyMenuShot();
+    App._applyLaunchShot();
 
     // Re-poll the platform version every 10s so the header pill flips to
     // its "deploying" state within seconds of the deploy workflow signaling
@@ -275,6 +276,32 @@ const App = {
     setTimeout(() => {
       try { App.HeaderMenu.open(); } catch (err) { /* ignore */ }
     }, 50);
+  },
+
+  // Screenshot-state deep link `?shot=app-launching` (#931): paint the app
+  // launch surface — icon, name and spinner over the theme background —
+  // which otherwise exists only for the few hundred milliseconds between a
+  // tap and the app's first paint, and so was invisible to the before/after
+  // screenshots and the dapp.json checks. Pure UI state, no app is loaded
+  // behind it, not env-gated (same reasoning as ?shot=menu above).
+  _applyLaunchShot() {
+    let shot = null;
+    try { shot = new URLSearchParams(location.search).get('shot'); } catch (err) { /* ignore */ }
+    if (shot !== 'app-launching') return;
+    // Wait (briefly, and bounded) for the home feed's app list to land, so
+    // the cover shows a REAL app's icon and name rather than the stub —
+    // Home.load's fetch is in flight while boot finishes. Paints regardless
+    // once the budget is spent, which is what keeps the link working against
+    // an empty checks database.
+    let tries = 0;
+    const paint = () => {
+      // Bareword, not window.Home: home.js's `const Home` is a lexical
+      // top-level binding, not a window property (see AppView._home).
+      const ready = typeof Home !== 'undefined' && Array.isArray(Home._apps) && Home._apps.length;
+      if (!ready && tries++ < 20) { setTimeout(paint, 50); return; }
+      try { AppView.showLaunchCoverShot(); } catch (err) { /* ignore */ }
+    };
+    setTimeout(paint, 50);
   },
 
   renderAdminButton() {
@@ -3803,6 +3830,48 @@ const App = {
     return document.getElementById(App._inBrowse ? 'browse-screen' : 'home-screen');
   },
 
+  // Origins we've already asked the browser to connect to this page-load.
+  // Preconnect is a hint, not a promise — repeating it per hover is just
+  // noise, and one entry per app origin is a handful of strings.
+  _preconnected: {},
+
+  // #931: warm the two things a launch would otherwise wait on, on
+  // pointerdown/hover — before the click even resolves:
+  //
+  //   1. The iframe token. AppView._mintToken is single-flight with a 60s
+  //      freshness window, so the launch a moment later finds it in hand and
+  //      can assign the iframe src synchronously in the tap's own tick.
+  //      Deliberately NOT refreshToken(): that writes iframeToken /
+  //      iframeTokenSlug, and merely hovering app B must not repoint the
+  //      token held for the app that is currently OPEN (a token refresh or
+  //      re-render for app A would then build a tokenless src).
+  //   2. The TCP+TLS handshake to the app's origin, via preconnect. Every
+  //      app lives on its own subdomain, so this is a fresh connection the
+  //      first time — the one part of the launch the client can't overlap
+  //      with anything else once the request is already out.
+  //
+  // Best-effort throughout: a miss just means the launch does the work
+  // itself, exactly as it did before.
+  prewarmApp(slug) {
+    if (!slug || !window.AppView) return;
+    const rec = AppView.launchRecordFor(slug);
+    if (!rec || rec.demo || rec.self_hosted || rec.status !== 'running' || !rec.url) return;
+    if (window.Offline && Offline.isOffline()) return;
+    try { AppView._mintToken(slug); } catch (err) { /* ignore */ }
+    try {
+      const origin = new URL(resolveDevHost(rec.url), location.origin).origin;
+      if (origin === location.origin || App._preconnected[origin]) return;
+      App._preconnected[origin] = true;
+      const link = document.createElement('link');
+      link.rel = 'preconnect';
+      // No `crossorigin`: an iframe DOCUMENT load uses the credentialed
+      // connection pool, and a preconnect made with crossorigin (anonymous)
+      // warms the *other* pool — the socket would go unused.
+      link.href = origin;
+      document.head.appendChild(link);
+    } catch (err) { /* unparseable url — nothing to warm */ }
+  },
+
   async navigateToApp(slug, tab, ref, subTab) {
     // Clean up whatever app we had mounted. This is a no-op on the first
     // navigation into any app, but without it a direct app-A → app-B
@@ -3820,13 +3889,26 @@ const App = {
     // featured row, or the #apps browse screen) the app view expands out
     // of the clicked tile (kit 'zoom-in'); from anywhere else (deep link,
     // history restore, tile off-screen, reduced motion) the kit falls
-    // back to its native push. The app iframe isn't mounted yet at this
-    // point (app-content is empty), so neither path animates over a live
-    // iframe on the way in. The departing screen stays visible beneath
-    // the zoom (fn reveals, `after` conceals — kit contract).
+    // back to its native push.
+    //
+    // #931: the app frame IS mounted here now — beginLaunch runs inside the
+    // reveal callback, so the app's document request goes out before the
+    // zoom's first frame and the app loads *during* the animation instead of
+    // after it. It mounts behind an opaque cover (the app's own icon and
+    // name), so the zoom still animates a stable surface rather than a
+    // half-painted iframe, and the cover cross-fades away the moment the
+    // frame loads — often mid-zoom. Putting the call inside `fn` rather
+    // than before the transition keeps it correct on the `push` fallback
+    // too: either way it runs exactly when #app-view is revealed.
+    // The departing screen stays visible beneath the zoom (fn reveals,
+    // `after` conceals — kit contract).
     const departing = App._departingScreen();
     PlatformUI.transition(() => {
       document.getElementById('app-view').classList.remove('hidden');
+      // Best-effort: returns false (and changes nothing) for anything whose
+      // App tab wouldn't be a plain production iframe — self-hosted apps,
+      // demo cards, non-running apps, an explicit non-app tab, offline.
+      try { AppView.beginLaunch(slug, tab); } catch (err) { /* fall back to the plain path */ }
     }, {
       type: 'zoom-in',
       el: document.getElementById('app-view'),
