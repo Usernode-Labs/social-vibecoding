@@ -231,6 +231,14 @@ const importedSession = {
   pr_title: 'Imported change', user_id: 4, behind_main: 0,
   source: 'imported', imported_pr_head_sha: 'reviewedhead',
 };
+const cliSession = {
+  id: 13, app_id: 5, app_slug: 'demo', app_self_hosted: false,
+  repo_url: 'https://github.com/acme/demo', pr_number: 32,
+  pr_title: 'CLI handoff change', user_id: 5, behind_main: 0,
+  source: 'cli_handoff', handoff_head_sha: 'lastlocalhead',
+  checks_commit_sha: 'sharedreviewedhead',
+  reviewed_head_sha: 'sharedreviewedhead',
+};
 
 function mergeReadyPool() {
   return makeRecordingPool([
@@ -240,19 +248,24 @@ function mergeReadyPool() {
   ]);
 }
 
-test('checkAndMerge: imported and native merges pin their reviewed head SHA', async () => {
+test('checkAndMerge: imported, native, and CLI handoff merges pin their reviewed head SHA', async () => {
   const { subject, mergeCalls, restore } = loadVotes({
     mergeImpl: () => ({ sha: 'squashsha', merged: true }),
   });
   try {
     await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...importedSession }, { force: true });
+    await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...cliSession }, { force: true });
     await subject.checkAndMerge({ jwtSecret: 's' }, mergeReadyPool(), { ...nativeSession }, { force: true });
 
     const imported = mergeCalls.find((c) => c.prNumber === 31);
+    const cli = mergeCalls.find((c) => c.prNumber === 32);
     const native = mergeCalls.find((c) => c.prNumber === 30);
     assert.equal(imported.sha, 'reviewedhead', 'imported merge pins the reviewed head sha');
+    assert.equal(cli.sha, cliSession.reviewed_head_sha,
+      'CLI handoff merge pins its reviewed head sha');
     assert.equal(native.sha, nativeSession.reviewed_head_sha,
       'native merge pins its reviewed head sha');
+    assert.equal(subject.reviewedHeadForSession(cliSession), cliSession.reviewed_head_sha);
   } finally {
     restore();
   }

@@ -95,6 +95,7 @@ test('applyPrMetadata feeds ALL turns (requests + summaries) to the LLM on a PR 
       { role: 'system', content: 'cc', metadata: { ccOutput: 'Built the login form component' } },
       { role: 'user', content: 'Now add password reset', metadata: {} },
       { role: 'system', content: 'cc', metadata: { ccOutput: 'Added password reset flow' } },
+      { role: 'assistant', content: 'CLI handoff: verified the migration path', metadata: { handoffSummary: true } },
       { role: 'user', content: 'Also add remember-me', metadata: {} },
     ];
     const pool = mockPool(rows, {
@@ -119,6 +120,7 @@ test('applyPrMetadata feeds ALL turns (requests + summaries) to the LLM on a PR 
     assert.deepEqual(summaries, [
       'Built the login form component',
       'Added password reset flow',
+      'CLI handoff: verified the migration path',
       'Wired up the remember-me checkbox',
     ], 'all prior summaries plus the in-flight summary passed in order');
 

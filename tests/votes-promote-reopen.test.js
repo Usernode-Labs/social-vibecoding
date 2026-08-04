@@ -55,11 +55,12 @@ const sessionRow = {
   checks_commit_sha: HEAD,
 };
 
-function promotePool(session = sessionRow) {
+function promotePool(session = sessionRow, { promotionMatches = true } = {}) {
   return makeRecordingPool([
     [/cs\.status = 'active'/, [{ ...session }]],
     [/COUNT\(\*\) AS cnt FROM chat_sessions/i, [{ cnt: '0' }]],
-    [/SET status = 'promoted', promoted_at = NOW\(\),[\s\S]*reviewed_head_sha/, []],
+    [/SET status = 'promoted', promoted_at = NOW\(\),[\s\S]*reviewed_head_sha/,
+      { rows: [], rowCount: promotionMatches ? 1 : 0 }],
   ]);
 }
 
@@ -142,12 +143,18 @@ function loadVotesRouter({ getPRImpl, reopenImpl, pool } = {}) {
   return { voteRoutes, getPRCalls, reopenCalls, systemMessages, restore };
 }
 
-async function withServer({ getPRImpl, reopenImpl, session } = {}, fn) {
-  const pool = promotePool(session);
+async function withServer({
+  getPRImpl, reopenImpl, session, expectedHandoffHead, promotionMatches,
+} = {}, fn) {
+  const pool = promotePool(session, { promotionMatches });
   const ctx = loadVotesRouter({ getPRImpl, reopenImpl, pool });
   const app = express();
   app.use(express.json());
-  app.use((req, _res, next) => { req.user = { id: 3, username: 'evan' }; next(); });
+  app.use((req, _res, next) => {
+    req.user = { id: 3, username: 'evan' };
+    if (expectedHandoffHead) req.cliHandoffCheckedHead = expectedHandoffHead;
+    next();
+  });
   app.use(ctx.voteRoutes({ jwtSecret: 's', maxUserPromotedSessions: 3 }));
   const server = app.listen(0);
   await new Promise((r) => server.once('listening', r));
@@ -172,6 +179,38 @@ test('promote: an open PR captures its head and promotes (no reopen call)', asyn
       'session promoted with a reviewed head');
     const update = ctx.pool.queries.find((q) => /reviewed_head_sha/.test(q.sql));
     assert.equal(update.params[1], HEAD, 'live PR head persisted as the reviewed revision');
+  });
+});
+
+test('promote: a CLI handoff refuses a PR head that moved after its ready preflight', async () => {
+  const moved = 'c'.repeat(40);
+  await withServer({
+    session: { ...sessionRow, source: 'cli_handoff' },
+    expectedHandoffHead: HEAD,
+    getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: moved } }),
+  }, async (ctx) => {
+    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(r.status, 409);
+    const body = await r.json();
+    assert.equal(body.error, 'branch_head_changed');
+    assert.ok(!ctx.pool.issued(/SET status = 'promoted', promoted_at = NOW\(\)/),
+      'the raced, unchecked PR revision never enters voting');
+    const invalidation = ctx.pool.queries.find((q) => /SET check_state = 'error'/.test(q.sql));
+    assert.ok(invalidation, 'the stale ready verdict is invalidated for status/UI callers');
+    assert.deepEqual(invalidation.params.slice(1), [7, HEAD]);
+  });
+});
+
+test('promote: a concurrent pause/archive cannot be overwritten by the final promotion write', async () => {
+  await withServer({
+    getPRImpl: async () => ({ state: 'open', merged: false, head: { sha: HEAD } }),
+    promotionMatches: false,
+  }, async (ctx) => {
+    const r = await fetch(`${ctx.base}/api/sessions/7/promote`, { method: 'POST' });
+    assert.equal(r.status, 409);
+    assert.deepEqual(await r.json(), { error: 'session_state_changed' });
+    assert.equal(ctx.systemMessages.length, 0,
+      'a promotion that lost the active-state CAS emits no proposal announcement');
   });
 });
 

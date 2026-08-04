@@ -11,6 +11,27 @@
   same-origin JSON API tools; resolve the appropriate user-facing platform
   route from `src/routes/` rather than adding a tool-specific endpoint or
   calling GitHub directly.
+- For a feature/proposal authored from a local Codex or Claude session, keep
+  the browser workflow's lifecycle while allowing the whole job to finish
+  locally:
+  1. Inspect the app/repository and write the complete markdown spec first.
+  2. Call `proposal_start` with the base commit, spec, and durable history.
+     History contains exact user-visible requests plus concise agent summaries
+     with stable event IDs. Never upload hidden reasoning, credentials, raw
+     tool logs, or unrelated conversation.
+  3. Implement and test in the local checkout, commit the result, and push the
+     exact commit to the platform branch returned by `proposal_start`.
+  4. Call `proposal_submit_build` with that head SHA, any new durable history,
+     and structured local test results. Usernode verifies ancestry and runs the
+     normal staging and proposal-check pipeline.
+  5. Poll `proposal_status` until it reports `ready` or `failed`. Fix and
+     submit a later fast-forwarding commit when needed. Once ready, call
+     `proposal_promote` when the user wants the proposal opened for voting.
+  The returned `webPath` opens this same native session in the web Dev page,
+  so work can optionally continue there. Opening it is never required: the
+  local agent may carry the proposal through staging and promotion itself.
+  Local and web turns may alternate on the shared branch without an ownership
+  handoff; always continue from its current head.
 - If the MCP tools are unavailable, configure the active client yourself:
   Codex runs `node ./tools/social-vibecoding codex setup`; Claude Code runs
   `node ./tools/social-vibecoding claude setup`. Pass `--profile production`

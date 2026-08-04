@@ -12,7 +12,9 @@ const log = require('./logger');
 const worker = require('./worker');
 const limits = require('./limits');
 const events = require('./events');
-const { activeWorkers } = require('./active-workers');
+const { activeWorkers, beginSessionOperation } = require('./active-workers');
+
+const COMMIT_SHA_RE = /^[0-9a-f]{40}$/i;
 
 // Translate the worker's terse "[sync_*]" phase markers into the
 // human-readable lines that stream into the timeline's collapsible
@@ -80,6 +82,64 @@ async function persistConflictState(pool, session, { state, files }) {
 //   sessionId(Number) -> { phase, startedAt, promise }
 const _inFlightSyncs = new Map();
 
+// A main-sync changes the branch commit without changing the proposal patch.
+// Ordinary web-native sessions intentionally keep their existing checks and
+// votes across that operation. Shared local/web sessions pin those same
+// checks and votes to exact SHAs, so advance both the checked revision and,
+// once promoted, the reviewed PR revision (plus only matching vote stamps) to
+// the pushed sync commit. This lives in the service—not the HTTP route—so
+// resume auto-sync and conflict resolution get identical semantics while
+// runSyncMain's cross-surface operation claim is still held.
+async function advanceSharedReviewAfterSync(pool, session, result) {
+  if (!session || session.source !== 'cli_handoff') return false;
+  if (!['clean', 'resolved'].includes(result?.syncResult)
+      || !result.pushOk || typeof result.sha !== 'string'
+      || !COMMIT_SHA_RE.test(result.sha)) return false;
+  const nextSha = result.sha.toLowerCase();
+  const priorChecksSha = session.checks_commit_sha || session.handoff_head_sha || null;
+  const priorReviewedSha = session.reviewed_head_sha || null;
+  const { rows = [] } = await pool.query(
+    `WITH advanced AS (
+       UPDATE chat_sessions
+          SET checks_commit_sha = $1,
+              reviewed_head_sha = CASE
+                WHEN $3::varchar IS NOT NULL
+                 AND reviewed_head_sha IS NOT DISTINCT FROM $3::varchar
+                THEN $1
+                ELSE reviewed_head_sha
+              END,
+              last_activity_at = NOW()
+        WHERE id = $2 AND source = 'cli_handoff'
+          AND status IN ('active', 'promoted', 'merging')
+          AND checks_commit_sha IS NOT DISTINCT FROM $4::varchar
+        RETURNING id, reviewed_head_sha
+     ), moved_votes AS (
+       UPDATE pr_votes SET head_sha = $1
+        WHERE session_id IN (SELECT id FROM advanced)
+          AND $3::varchar IS NOT NULL
+          AND head_sha IS NOT DISTINCT FROM $3::varchar
+          AND EXISTS (
+            SELECT 1 FROM advanced WHERE reviewed_head_sha = $1
+          )
+        RETURNING 1
+     )
+     SELECT reviewed_head_sha FROM advanced`,
+    [nextSha, session.id, priorReviewedSha, priorChecksSha]
+  );
+  if (!rows.length) return false;
+  session.checks_commit_sha = nextSha;
+  if (priorReviewedSha && rows[0].reviewed_head_sha === nextSha) {
+    session.reviewed_head_sha = nextSha;
+  }
+  log.info('sync-main', 'Shared proposal review advanced after sync', {
+    sessionId: session.id,
+    checksFrom: priorChecksSha,
+    reviewedFrom: priorReviewedSha,
+    to: nextSha,
+  });
+  return true;
+}
+
 // Read by GET /api/sessions/:id/status for reload recovery and the
 // client's poll fallback. Null when nothing is syncing.
 function getSyncState(sessionId) {
@@ -135,11 +195,13 @@ async function runSyncMain(config, pool, sessionId, opts = {}) {
   const existing = _inFlightSyncs.get(key);
   if (existing) return existing.promise;
 
+  const releaseOperation = beginSessionOperation(key);
   const entry = { phase: 'starting', startedAt: Date.now(), promise: null };
   _inFlightSyncs.set(key, entry);
   entry.promise = runSyncMainInner(config, pool, sessionId, opts, entry)
     .finally(() => {
       if (_inFlightSyncs.get(key) === entry) _inFlightSyncs.delete(key);
+      releaseOperation();
     });
   return entry.promise;
 }
@@ -360,6 +422,12 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
       await require('./app-admins').refreshExplicitApproval(pool, session, session);
     }
 
+    await advanceSharedReviewAfterSync(pool, session, {
+      syncResult,
+      pushOk: !!result.pushOk,
+      sha: result.sha || null,
+    });
+
     // Close the activity with a terminal status. Routing through
     // sendStatus both persists the breadcrumb row (so it survives reload)
     // AND broadcasts a live status event (so open viewers see the outcome
@@ -426,4 +494,10 @@ async function runSyncMainInner(config, pool, sessionId, { sessionRow, trigger, 
   }
 }
 
-module.exports = { runSyncMain, persistBehindMain, persistConflictState, getSyncState };
+module.exports = {
+  runSyncMain,
+  persistBehindMain,
+  persistConflictState,
+  getSyncState,
+  advanceSharedReviewAfterSync,
+};

@@ -27,7 +27,7 @@ const vm = require('node:vm');
 const analyticsDemo = require('../src/services/analytics-demo.js');
 
 const SRC = fs.readFileSync(
-  path.join(__dirname, '..', 'public', 'js', 'admin-analytics.js'), 'utf8'
+  path.join(__dirname, '..', 'public', 'js', 'admin-estimator.js'), 'utf8'
 );
 
 // ── A DOM shim: enough for the estimator card, no more ──────────────────
@@ -89,7 +89,7 @@ function loadCard() {
     "\n  globalThis.__renderEstimator = renderEstimator;\n  return {"
   );
   assert.notEqual(hoisted, SRC, 'the IIFE tail must be found for hoisting');
-  vm.runInContext(hoisted, sandbox, { filename: 'admin-analytics.js' });
+  vm.runInContext(hoisted, sandbox, { filename: 'admin-estimator.js' });
   assert.equal(typeof sandbox.__renderEstimator, 'function',
     'renderEstimator must be reachable');
   return { sandbox, byId };
@@ -112,7 +112,7 @@ test('#892: the estimator card renders the demo payload without throwing', () =>
   const err = render(sandbox, analyticsDemo.estimatorAccuracy());
   assert.equal(err, null, err && `renderEstimator threw: ${err.stack || err.message}`);
 
-  const html = byId('estimator').innerHTML;
+  const html = byId('admin-estimator-card').innerHTML;
   assert.ok(html.length > 500, 'the card must actually render content');
   // Nothing unresolved may leak into the output.
   assert.ok(!/undefined/.test(html), 'no "undefined" may reach the rendered card');
@@ -123,7 +123,7 @@ test('#892: the estimator card renders the demo payload without throwing', () =>
 test('#892: the rendered card shows the version split, baselines and priors', () => {
   const { sandbox, byId } = loadCard();
   assert.equal(render(sandbox, analyticsDemo.estimatorAccuracy()), null);
-  const html = byId('estimator').innerHTML;
+  const html = byId('admin-estimator-card').innerHTML;
 
   assert.match(html, /Prompt generation/, 'the v1-vs-v2 comparison must render');
   assert.match(html, /candidate/, 'the candidate generation must be marked');
@@ -144,7 +144,7 @@ test('#892: the card renders the not-yet verdict off the demo payload', () => {
   // than a green light nobody has earned off mock data.
   const { sandbox, byId } = loadCard();
   assert.equal(render(sandbox, analyticsDemo.estimatorAccuracy()), null);
-  const html = byId('estimator').innerHTML;
+  const html = byId('admin-estimator-card').innerHTML;
   assert.match(html, /Stays experimental/, 'the demo must not render a green verdict');
   assert.doesNotMatch(html, /Ready to leave experimental/,
     'mock data must never claim the feature is ready');
@@ -165,7 +165,7 @@ test('#892: the verdict is judged on the candidate version, not the pooled windo
   payload.monotonicity.displayed.increasedRate = 0.01;
   payload.completionClaims.overFiveMinLeftRate = 0.04;
   assert.equal(render(sandbox, payload), null);
-  const html = byId('estimator').innerHTML;
+  const html = byId('admin-estimator-card').innerHTML;
   assert.match(html, /Ready to leave experimental/,
     'a passing candidate must be recognised even though the pooled window fails');
   // And the headline tiles must describe v2, not the 30-day pool.
@@ -187,7 +187,7 @@ test('#892: a candidate that only fails the display gates is still held back', (
   payload.monotonicity.displayed.laterRate = 0.60;   // the treadmill is back
   payload.monotonicity.displayed.increasedRate = 0.01;
   assert.equal(render(sandbox, payload), null);
-  const html = byId('estimator').innerHTML;
+  const html = byId('admin-estimator-card').innerHTML;
   assert.match(html, /Stays experimental/, 'good numbers must not excuse a moving finish line');
   assert.match(html, /finish pushed later too often/, 'the verdict must name what failed');
 });
@@ -202,7 +202,7 @@ test('#892: the card survives a payload with the new sections absent', () => {
   }
   const err = render(sandbox, legacy);
   assert.equal(err, null, err && `threw on a legacy payload: ${err.stack}`);
-  assert.ok(byId('estimator').innerHTML.length > 200, 'the card must still render');
+  assert.ok(byId('admin-estimator-card').innerHTML.length > 200, 'the card must still render');
 });
 
 test('#892: an empty payload renders the empty state rather than throwing', () => {
@@ -210,6 +210,6 @@ test('#892: an empty payload renders the empty state rather than throwing', () =
   for (const payload of [null, undefined, {}, { allTime: { ticks: 0 } }]) {
     const err = render(sandbox, payload);
     assert.equal(err, null, err && `threw on ${JSON.stringify(payload)}: ${err.stack}`);
-    assert.match(byId('estimator').innerHTML, /Not enough data yet/);
+    assert.match(byId('admin-estimator-card').innerHTML, /Not enough data yet/);
   }
 });

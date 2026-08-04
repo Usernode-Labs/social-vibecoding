@@ -907,7 +907,9 @@ CREATE INDEX IF NOT EXISTS chat_sessions_created_from_issue_idx
 -- the vote flow rather than opened by the group's AI dev-chat. Append-only:
 -- existing rows read as native (source NULL/'native').
 --   source               = 'native' (implicit for every existing row; a
---                          NULL value is treated as native) vs 'imported'.
+--                          NULL value is treated as native), 'imported', or
+--                          one of the native workflow provenance markers
+--                          documented below (`cli_handoff`, `maintenance`).
 --                          Drives the "Imported PR" source badge + GitHub
 --                          link and the read-only dev surface for imported
 --                          proposals.
@@ -929,6 +931,37 @@ ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS imported_pr_author   VARCHAR(
 -- imported_pr_head_sha as their existing source of truth; native votes,
 -- checks, and merges are bound to this live GitHub PR head instead.
 ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS reviewed_head_sha     VARCHAR(40);
+-- Native CLI handoff sessions. A local Codex/Claude agent can author the
+-- spec and code in the user's checkout, then attach that durable context and
+-- an exact pushed commit to an ordinary platform-owned dev session. The row
+-- remains a native session (not an imported PR), so the same chat can be
+-- opened and continued from the web Dev page and uses the normal
+-- staging/checks/promotion pipeline.
+--
+-- handoff_request_id is a caller-generated idempotency key scoped to the
+-- owner. base is the immutable audit anchor and head is the latest revision
+-- explicitly accepted from the local checkout. A web Dev turn may advance the
+-- shared branch/checks_commit_sha without overwriting that local audit value;
+-- later local submissions must still fast-forward the current branch.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_request_id VARCHAR(64);
+-- Immutable digest of proposal_start's normalized app/base/title/spec/history/
+-- issue payload. Live session fields legitimately change after local or web
+-- continuation, so they cannot serve as the idempotency comparison.
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_request_fingerprint VARCHAR(64);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_base_sha   VARCHAR(40);
+ALTER TABLE chat_sessions ADD COLUMN IF NOT EXISTS handoff_head_sha   VARCHAR(40);
+-- Deliberately scoped independently of source: a delayed proposal_start retry
+-- must always resolve to the same cross-surface session.
+CREATE UNIQUE INDEX IF NOT EXISTS chat_sessions_handoff_request_idx
+  ON chat_sessions(user_id, handoff_request_id)
+  WHERE handoff_request_id IS NOT NULL;
+
+-- Each local transcript item carries a stable handoffEventId in metadata.
+-- This partial expression index makes append/retry idempotent without
+-- constraining ordinary web-chat rows, whose metadata has no such key.
+CREATE UNIQUE INDEX IF NOT EXISTS chat_session_messages_handoff_event_idx
+  ON chat_session_messages(session_id, (metadata->>'handoffEventId'))
+  WHERE metadata ? 'handoffEventId';
 -- source = 'maintenance' marks proposals opened by a fleet maintenance
 -- campaign (services/fleet-maintenance.js): platform-authored PRs fanned
 -- out to child apps after a maintenance_campaign governance vote passes.

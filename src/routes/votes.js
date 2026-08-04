@@ -1301,6 +1301,26 @@ function voteRoutes(config) {
               error: 'GitHub did not return a valid pull-request head commit.',
             });
           }
+          if (req.cliHandoffCheckedHead
+              && String(promotedHeadSha).toLowerCase()
+                !== String(req.cliHandoffCheckedHead).toLowerCase()) {
+            // A direct push landed after the CLI-handoff middleware verified
+            // the managed branch but before lazy PR creation / this PR read.
+            // Keep the session active so the new head can be rebuilt; never
+            // open voting on code that did not produce the ready verdict.
+            const detail = 'The proposal branch changed after checks. Rebuild the new head locally or from the web Dev session before promoting.';
+            await pool.query(
+              `UPDATE chat_sessions SET check_state = 'error', check_error_detail = $1
+                WHERE id = $2 AND status = 'active' AND source = 'cli_handoff'
+                  AND COALESCE(checks_commit_sha, handoff_head_sha)
+                      IS NOT DISTINCT FROM $3`,
+              [detail, session.id, req.cliHandoffCheckedHead]
+            ).catch(() => {});
+            return res.status(409).json({
+              error: 'branch_head_changed',
+              message: detail,
+            });
+          }
 
           // Mark PR as ready for review on GitHub. We deliberately DO NOT
           // touch the title here — previously this overwrote the LLM-
@@ -1325,14 +1345,17 @@ function voteRoutes(config) {
       // promoted_at anchors the stale-PR sweeper's "no interest since"
       // clock; clearing stale_notified_at handles the re-promote case
       // (a previously-stale PR that's proposed again starts fresh).
-      await pool.query(
+      const promoted = await pool.query(
         `UPDATE chat_sessions
             SET status = 'promoted', promoted_at = NOW(),
                 stale_notified_at = NULL,
                 reviewed_head_sha = COALESCE($2, reviewed_head_sha)
-          WHERE id = $1`,
+          WHERE id = $1 AND status = 'active'`,
         [session.id, promotedHeadSha]
       );
+      if (!promoted.rowCount) {
+        return res.status(409).json({ error: 'session_state_changed' });
+      }
       if (promotedHeadSha) {
         session.reviewed_head_sha = promotedHeadSha;
 

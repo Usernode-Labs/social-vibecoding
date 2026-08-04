@@ -12,9 +12,31 @@
 // share — server.js's graceful-shutdown drain (getActiveWorkerCount)
 // reads the same Set the chat handler and sync turns write to.
 const activeWorkers = new Set();
+const activeSessionOperations = new Map();
+
+// Register non-worker operations that must not overlap a coding turn (for
+// example, adopting and checking an exact commit submitted by a local agent).
+// Reference counts make independent callers safe, and the returned release
+// closure is idempotent so every owner can clean up in a finally block.
+function beginSessionOperation(sessionId) {
+  const key = Number(sessionId);
+  activeSessionOperations.set(key, (activeSessionOperations.get(key) || 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = (activeSessionOperations.get(key) || 1) - 1;
+    if (remaining > 0) activeSessionOperations.set(key, remaining);
+    else activeSessionOperations.delete(key);
+  };
+}
+
+function hasSessionOperation(sessionId) {
+  return activeSessionOperations.has(Number(sessionId));
+}
 
 function getActiveWorkerCount() {
-  return activeWorkers.size;
+  return new Set([...activeWorkers, ...activeSessionOperations.keys()]).size;
 }
 
 // Shared "any part of a turn is running" predicate — the same one the
@@ -27,10 +49,17 @@ function getActiveWorkerCount() {
 // of the bare isInFlight, or they can tear a session down mid-wrap-up
 // (the sessions 2391/2386 incident).
 function isSessionBusy(sessionId) {
+  if (hasSessionOperation(sessionId)) return true;
   // Lazy require: worker.js is pulled in by the route layer that also
   // requires this module — a top-level require here would be a cycle.
   const worker = require('./worker');
   return activeWorkers.has(sessionId) || worker.isInFlight(sessionId);
 }
 
-module.exports = { activeWorkers, getActiveWorkerCount, isSessionBusy };
+module.exports = {
+  activeWorkers,
+  beginSessionOperation,
+  hasSessionOperation,
+  getActiveWorkerCount,
+  isSessionBusy,
+};

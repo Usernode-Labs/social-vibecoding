@@ -111,8 +111,15 @@ test('a child app is out of scope', async () => {
   assert.match(result.detail.reason, /platform's own proposals/);
 });
 
-test('an imported PR is compared at its head sha, a native proposal at its branch', () => {
+test('imported and CLI proposals use immutable heads; ordinary native uses its branch', () => {
   assert.equal(check.headRefForSession({ source: 'imported', imported_pr_head_sha: 'abc', branch_name: 'b' }), 'abc');
+  assert.equal(check.headRefForSession({
+    source: 'cli_handoff', checks_commit_sha: 'checked',
+    handoff_head_sha: 'local', branch_name: 'dev/cli',
+  }), 'checked');
+  assert.equal(check.headRefForSession({
+    source: 'cli_handoff', handoff_head_sha: 'local', branch_name: 'dev/cli',
+  }), 'local');
   assert.equal(check.headRefForSession({ source: 'native', branch_name: 'dev/x' }), 'dev/x');
   assert.equal(check.headRefForSession({}), null);
 });
@@ -466,6 +473,25 @@ test('the verdict is stamped on its own columns, never on check_state', async ()
   assert.ok(!/check_state/.test(calls[0].sql),
     'check_state is owned by the staging-capture pipeline and rewritten wholesale by storeChecks');
   assert.equal(calls[0].params[1], 'failing');
+});
+
+test('a CLI platform-env verdict is commit-bound and cannot land after withdrawal', async () => {
+  const calls = [];
+  const pool = {
+    query: async (sql, params) => {
+      calls.push({ sql, params });
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const stored = await check.storePlatformEnvCheck(
+    pool, 42, { state: 'passing', detail: {} }, 'a'.repeat(40)
+  );
+  assert.equal(stored, false);
+  assert.match(calls[0].sql,
+    /status IN \('active', 'paused', 'promoted', 'merging'\)/);
+  assert.match(calls[0].sql,
+    /checks_commit_sha IS NOT DISTINCT FROM \$4::text/);
+  assert.equal(calls[0].params[3], 'a'.repeat(40));
 });
 
 test('a stamp failure never propagates to the caller', async () => {

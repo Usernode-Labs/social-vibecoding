@@ -10,6 +10,7 @@ const { authRoutes } = require('./src/routes/auth');
 const { appRoutes } = require('./src/routes/apps');
 const { chatRoutes } = require('./src/routes/chat');
 const { sessionRoutes } = require('./src/routes/sessions');
+const { proposalHandoffRoutes } = require('./src/routes/proposal-handoff');
 const { voteRoutes } = require('./src/routes/votes');
 const { kudosRoutes } = require('./src/routes/kudos');
 const { publicApiRoutes } = require('./src/routes/public-api');
@@ -196,6 +197,16 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/api/cli/')) return next();
   if (req.path === '/api/me/cli-tokens'
       || req.path.startsWith('/api/me/cli-tokens/')) return next();
+  // Native CLI proposal payloads deliberately carry a bounded spec, durable
+  // history, and structured local test summaries. Their combined valid shape
+  // can exceed Express's 100 KiB default, so the three write endpoints own a
+  // scoped 512 KiB parser in routes/proposal-handoff.js. Do not widen the
+  // rest of the app's JSON surface.
+  if (req.method === 'POST'
+      && (/^\/api\/apps\/[^/]+\/proposal-handoffs$/.test(req.path)
+          || /^\/api\/sessions\/[^/]+\/proposal-handoff\/(?:context|build)$/.test(req.path))) {
+    return next();
+  }
   // Agent-file uploads (#460) carry up to 48 KB of file content, which
   // can exceed the 100kb default once JSON-escaped — the route mounts
   // its own 256kb parser (see routes/user-agent-files.js).
@@ -455,6 +466,7 @@ app.use(appRoutes(config));
 // storage bridge handler on behalf of the app iframe.
 app.use(appFileShellRoutes(config));
 app.use(chatRoutes(config));
+app.use(proposalHandoffRoutes(config));
 app.use(sessionRoutes(config));
 app.use(voteRoutes(config));
 app.use(kudosRoutes(config));
@@ -920,7 +932,7 @@ async function start() {
   // and self-swallowing: sweepStale never throws, and boot must not wait on
   // docker.
   if (stagingReap.staleSweepDue()) {
-    stagingReap.sweepStale(config, { isInFlight: (id) => worker.isInFlight(id) })
+    stagingReap.sweepStale(config, { isInFlight: (id) => activeWorkersSvc.isSessionBusy(id) })
       .catch((err) => log.warn('server', 'Boot stale-preview sweep failed', { err: err.message }));
   }
 
@@ -1365,7 +1377,7 @@ async function reconcileStuckChecks(config) {
   let rechecked = 0;
   for (const session of rows) {
     if (rechecked >= MAX_RECHECKS) break;
-    if (worker.isInFlight(session.id)) continue;
+    if (activeWorkersSvc.isSessionBusy(session.id)) continue;
     rechecked++;
     try {
       await stagingRecovery.recheckSessionChecks({
@@ -3200,7 +3212,7 @@ function startSessionAutoPauseSweeper(config) {
       let healed = 0;
       for (const session of rows) {
         if (healed >= MAX_HEALS_PER_SWEEP) break;
-        if (worker.isInFlight(session.id)) continue;
+        if (activeWorkersSvc.isSessionBusy(session.id)) continue;
         // #866: worker.isInFlight only covers agent turns. An imported
         // proposal's first staging build runs from the import path with no
         // worker attached, and it can take minutes — during which
@@ -3259,7 +3271,7 @@ function startSessionAutoPauseSweeper(config) {
       let rechecked = 0;
       for (const session of rows) {
         if (rechecked >= MAX_RECHECKS_PER_SWEEP) break;
-        if (worker.isInFlight(session.id)) continue;
+        if (activeWorkersSvc.isSessionBusy(session.id)) continue;
         const last = checkRecheckAttempts.get(session.id) || 0;
         if (Date.now() - last < STAGING_HEAL_COOLDOWN_MS) continue;
         // Stamp BEFORE the (minutes-long) recheck so a later tick won't kick
@@ -3387,7 +3399,7 @@ function startSessionAutoPauseSweeper(config) {
       // tick and the boot run share one throttle. sweepStale never throws and
       // bounds its own work per pass.
       if (stagingReap.staleSweepDue()) {
-        await stagingReap.sweepStale(config, { isInFlight: (id) => worker.isInFlight(id) });
+        await stagingReap.sweepStale(config, { isInFlight: (id) => activeWorkersSvc.isSessionBusy(id) });
       }
     } catch (err) {
       log.warn('server', 'Stale-preview sweep failed', { err: err.message });
@@ -3471,7 +3483,7 @@ function startStalePrSweeper(config) {
           LIMIT 100`
       );
       for (const session of rows) {
-        if (worker.isInFlight(session.id)) continue;
+        if (activeWorkersSvc.isSessionBusy(session.id)) continue;
         try {
           // Native PR branches can be updated outside Usernode. Refresh their
           // immutable reviewed revision before any timed governance decision,
@@ -3649,7 +3661,7 @@ function startStalePrSweeper(config) {
           [config.prStaleGraceMs]
         );
         for (const row of rows) {
-          if (worker.isInFlight(row.id)) continue;
+          if (activeWorkersSvc.isSessionBusy(row.id)) continue;
           try {
             await sessionLifecycle.archiveSession({ pool, sessionId: row.id, reason: 'stale-pr' });
           } catch (err) {
