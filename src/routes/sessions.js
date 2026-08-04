@@ -2859,7 +2859,10 @@ function sessionRoutes(config) {
             if (mayor1.usage) {
               dataCost = llm.estimateCostCents(mayor1.usage, servedModelIter);
               await limits.recordSpend(pool, req.user.id, dataCost, { byok: !!userApiKey });
-              send('usage', { costCents: dataCost, model: servedModelIter, byok: !!userApiKey });
+              send('usage', {
+                costCents: dataCost, model: servedModelIter, byok: !!userApiKey,
+                ...cacheUsageTelemetry(mayor1.usage),
+              });
             }
 
             // Persist any preamble text this iteration produced ("Let me
@@ -3013,7 +3016,10 @@ function sessionRoutes(config) {
           if (mayor1.usage) {
             const baseCost = llm.estimateCostCents(mayor1.usage, servedModelBase);
             await limits.recordSpend(pool, req.user.id, baseCost, { byok: !!userApiKey });
-            send('usage', { costCents: baseCost, model: servedModelBase, byok: !!userApiKey });
+            send('usage', {
+              costCents: baseCost, model: servedModelBase, byok: !!userApiKey,
+              ...cacheUsageTelemetry(mayor1.usage),
+            });
           }
           // Seal the (empty) bubble so the retry's tokens land in a fresh
           // one below the status line, mirroring the data-loop flow.
@@ -3147,7 +3153,10 @@ function sessionRoutes(config) {
         // platform-key spend counts against the daily caps.
         if (mayor1.usage) {
           await limits.recordSpend(pool, req.user.id, costCents1, { byok: !!userApiKey });
-          send('usage', { costCents: costCents1, model: servedModel1, byok: !!userApiKey });
+          send('usage', {
+            costCents: costCents1, model: servedModel1, byok: !!userApiKey,
+            ...cacheUsageTelemetry(mayor1.usage),
+          });
         }
 
         // Pick which tool the Mayor invoked, with server-side priority
@@ -3532,7 +3541,10 @@ function sessionRoutes(config) {
         // phase 2, and costs one cheap UPDATE either way.
         await worker.noteTailMilestone(session.id, { wrapUpPosted: true });
         await limits.recordSpend(pool, req.user.id, costCents2, { byok: !!userApiKey });
-        send('usage', { costCents: costCents2, model: servedModel2, byok: !!userApiKey });
+        send('usage', {
+          costCents: costCents2, model: servedModel2, byok: !!userApiKey,
+          ...cacheUsageTelemetry(mayor2.usage),
+        });
       } catch (err) {
         activeWorkers.delete(session.id);
         workerProgress.clear(session.id);
@@ -4787,7 +4799,10 @@ async function runHeadlessSession({
     const billModel = servedModel || selectedModel;
     const cost = llm.estimateCostCents(usage, billModel);
     await limits.recordSpend(pool, user.id, cost, { byok: !!userApiKey });
-    send('usage', { costCents: cost, model: billModel, byok: !!userApiKey });
+    send('usage', {
+      costCents: cost, model: billModel, byok: !!userApiKey,
+      ...cacheUsageTelemetry(usage),
+    });
     return cost;
   };
 
@@ -6600,6 +6615,17 @@ function dataToolStatusLine(calls) {
     }
   }
   return "Reading the repo's GitHub issues...";
+}
+
+// Provider prompt-cache counters ride on the existing usage SSE event so
+// production measurements can distinguish a cache write, a cache hit, and
+// ordinary uncached input. The browser may ignore these additive fields;
+// costCents remains the authoritative billed value.
+function cacheUsageTelemetry(usage) {
+  return {
+    cacheCreationInputTokens: usage?.cache_creation_input_tokens || 0,
+    cacheReadInputTokens: usage?.cache_read_input_tokens || 0,
+  };
 }
 
 // Build the Mayor's message history from chat_session_messages rows.
@@ -8684,4 +8710,4 @@ CMD ["node", "server.js"]
   return { containerId, stagingUrl, hostname };
 }
 
-module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine };
+module.exports = { sessionRoutes, getActiveWorkerCount, runSyncMain, persistBehindMain, buildSpecPreview, buildOpenProposalsBlock, stripSpecWrapperFence, snapshotSessionSpec, advanceSharedReviewAfterSync, resumeHeadlessRuns, runRecoveredWrapUp, describeStagingFailure, notifySessionDone, notifyAutoSolveDone, buildHeadlessSeed, buildHeadlessDecisionAddendum, buildHeadlessFollowUpMessage, buildHeadlessFollowUpQuickReplies, shouldPostHeadlessQuestionComment, specHasBlockingQuestions, sanitizeSuggestedAnswers, resolveSuggestedAnswers, sanitizeQuickReplies, resolveQuickReplies, shouldFallbackQuickReplies, salvageAssistantText, needsEmptyReplyFallback, shouldRepromptForDataSummary, buildDataSummaryReprompt, DATA_SUMMARY_FALLBACK_TEXT, describeTurnError, describeMarkerlessExit, shouldRetryHeadlessTurn, stripFakeCompletionMarker, buildMayorMessages, CODING_AGENT_COMPLETED_MARKER, getMayorSystemPrompt, DATA_TOOL_NAMES, GET_PROD_STATUS_TOOL, resolveDataToolResult, resolveProdStatusToolResult, dataToolStatusLine, cacheUsageTelemetry };

@@ -25,6 +25,37 @@ const FABLE_MODEL = 'claude-fable-5';
 const FALLBACK_TARGET_MODEL = 'claude-opus-5';
 const FALLBACK_BETA = 'server-side-fallback-2026-06-01';
 
+// Mayor prompts carry the authoritative platform conventions on every turn.
+// That document is deliberately large (and deliberately repeated verbatim so
+// instruction updates take effect immediately), but re-billing the same
+// prefix on every tool continuation and follow-up is pure cost.  Anthropic's
+// ephemeral prompt cache keeps the content and its ordering unchanged: the
+// cache_control marker is metadata on the final block of the stable prefix.
+//
+// Keep the marker tied to the explicit boundary owned by
+// getMayorSystemPrompt.  Other streamChat callers stay on the legacy string
+// path, and editing any byte before this boundary naturally produces a cache
+// miss rather than serving stale instructions.
+const PLATFORM_CONVENTIONS_END = '==== END PLATFORM CONVENTIONS ====';
+
+function cacheableSystemPrompt(systemPrompt) {
+  if (typeof systemPrompt !== 'string') return systemPrompt;
+  const markerAt = systemPrompt.indexOf(PLATFORM_CONVENTIONS_END);
+  if (markerAt === -1) return systemPrompt;
+
+  const prefixEnd = markerAt + PLATFORM_CONVENTIONS_END.length;
+  const prefix = systemPrompt.slice(0, prefixEnd);
+  const suffix = systemPrompt.slice(prefixEnd);
+  return [
+    {
+      type: 'text',
+      text: prefix,
+      cache_control: { type: 'ephemeral' },
+    },
+    ...(suffix ? [{ type: 'text', text: suffix }] : []),
+  ];
+}
+
 // A fallback-served response is detected reliably ONLY via
 // usage.iterations carrying a 'fallback_message' entry. A sticky-served
 // turn (conversation already pinned to the fallback model) carries NO
@@ -146,7 +177,7 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
       const params = {
         model: runModel,
         max_tokens: 8192,
-        system: systemPrompt,
+        system: cacheableSystemPrompt(systemPrompt),
         messages,
         stream: true,
       };
@@ -195,6 +226,8 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
 
     const inputTokens = finalMessage.usage?.input_tokens || 0;
     const outputTokens = finalMessage.usage?.output_tokens || 0;
+    const cacheCreationInputTokens = finalMessage.usage?.cache_creation_input_tokens || 0;
+    const cacheReadInputTokens = finalMessage.usage?.cache_read_input_tokens || 0;
 
     // Walk the assembled content blocks so callers can orchestrate a
     // tool-use loop without having to re-derive text vs. tool_use from
@@ -223,7 +256,12 @@ async function streamChat({ messages, systemPrompt, model, tools, toolChoice, on
       toolUses,
       stopReason,
       rawContent,
-      usage: { input_tokens: inputTokens, output_tokens: outputTokens },
+      usage: {
+        input_tokens: inputTokens,
+        output_tokens: outputTokens,
+        cache_creation_input_tokens: cacheCreationInputTokens,
+        cache_read_input_tokens: cacheReadInputTokens,
+      },
       // Fable 5 fallback surface (see module header). servedModel names
       // the model that actually produced the message; fallbackServed is
       // the usage.iterations detection (plus the recommended_model retry
@@ -261,6 +299,12 @@ function estimateCostCents(usage, model) {
 
   return (
     (usage.input_tokens / 1000) * inputPer1k * 100 +
+    // Anthropic's default ephemeral cache has a 5-minute lifetime. Cache
+    // writes cost 1.25x normal input; reads cost 0.1x. Missing fields are
+    // zero so historical callers and non-cacheable prompts price exactly as
+    // before.
+    ((usage.cache_creation_input_tokens || 0) / 1000) * inputPer1k * 1.25 * 100 +
+    ((usage.cache_read_input_tokens || 0) / 1000) * inputPer1k * 0.1 * 100 +
     (usage.output_tokens / 1000) * outputPer1k * 100
   );
 }
@@ -856,5 +900,6 @@ module.exports = {
   // Fable 5 classifier-fallback surface (+ tests)
   detectFallback, sanitizeFallbackContent, fallbackBoundary,
   FABLE_MODEL, FALLBACK_TARGET_MODEL, FALLBACK_BETA,
+  cacheableSystemPrompt, PLATFORM_CONVENTIONS_END,
   _setClientForTests,
 };
