@@ -4564,7 +4564,7 @@ ${SCREENSHOT_FETCH_NOTE}`;
 // attachments.js buildDispatchBlock): the worker has curl + outbound
 // network, and Claude Code's Read tool views local image files. Appended
 // to the headless addendum and both worker prompts (scout + build).
-const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds a screenshot URL like `https://…/issue-images/<id>` (a **Screenshot:** image line), it is a screenshot the reporter captured as context — the agent working the issue should download it with `curl -sS -o /tmp/issue-screenshot.png <url>` (run via Bash) and use its Read tool on /tmp/issue-screenshot.png to view it before working.';
+const SCREENSHOT_FETCH_NOTE = 'If the issue body embeds one or more screenshot URLs like `https://…/issue-images/<id>` (a **Screenshot:** line or **Screenshots:** block), they are reporter context — the agent working the issue should download every URL to a distinct path such as `/tmp/issue-screenshot-1.png`, then use its Read tool on each image before working.';
 
 // #170: the addendum for the headless DECISION turn — the one extra Mayor
 // call offered after a successful scout, where the run may proceed straight

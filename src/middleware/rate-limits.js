@@ -212,13 +212,13 @@ const appFileUploadLimiter = makeLimiter({
   message: 'Too many file uploads — slow down for a minute.',
 });
 
-// #683: feedback-modal screenshot uploads. Each is a ≤4 MB bytea INSERT;
-// honest use is one per filed issue, so 10 / 10 min never bites, while a
-// scripted loop trying to balloon the DB bounces off quickly (orphans are
-// additionally GC'd after 24h). Per-user keyed for shared-NAT fairness.
+// #683/#824: feedback-modal screenshot uploads. Each is a ≤4 MB bytea
+// INSERT; one report may contain three images, so 30 / 10 min leaves room
+// for several reports while a scripted DB-growth loop still bounces quickly
+// (orphans are additionally GC'd after 24h). Per-user for NAT fairness.
 const issueScreenshotLimiter = makeLimiter({
   windowMs: 10 * 60 * 1000,
-  max: 10,
+  max: 30,
   name: 'issue-screenshot-upload',
   keyByUser: true,
   message: 'Too many screenshot uploads — slow down for a few minutes.',

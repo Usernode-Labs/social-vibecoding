@@ -2389,20 +2389,25 @@ const App = {
       titleDirty = feedbackTitle.value.trim().length > 0;
     });
 
-    // ── #683: drag-to-select screenshot attachment ─────────────────
-    // The button only renders where the Screen Capture API exists
-    // (ScreenshotSelect.isSupported()); capture is real screen pixels
-    // via public/js/screenshot-select.js. One screenshot per issue: the
-    // button is swapped for the thumbnail row while one is attached.
+    // ── #683/#824: screenshot and image attachments ─────────────────
+    // Desktop keeps area capture; the standard file input provides camera /
+    // library access in mobile browsers and WebViews. Pasted image files use
+    // the same normalization and upload path. Three entries keeps memory and
+    // persisted bytea bounded while covering before/after/detail reports.
     const screenshotBtn = document.getElementById('feedback-screenshot-btn');
-    const screenshotPreview = document.getElementById('feedback-screenshot-preview');
-    const screenshotImg = document.getElementById('feedback-screenshot-img');
-    const screenshotState = document.getElementById('feedback-screenshot-state');
-    const screenshotRemove = document.getElementById('feedback-screenshot-remove');
+    const photoButton = document.getElementById('feedback-photo-btn');
+    const photoLabelText = document.getElementById('feedback-photo-label-text');
+    const photoInput = document.getElementById('feedback-photo-input');
+    const screenshotStrip = document.getElementById('feedback-screenshot-strip');
+    const screenshotError = document.getElementById('feedback-screenshot-error');
     const screenshotSupported = typeof ScreenshotSelect !== 'undefined' && ScreenshotSelect.isSupported();
-    let screenshotId = null;          // server row id, set once uploaded
-    let screenshotUploading = false;  // blocks submit while in flight
-    let screenshotObjectUrl = null;
+    const MAX_SCREENSHOTS = 3;
+    let screenshots = [];
+    let screenshotProcessing = 0;
+    let screenshotGeneration = 0;
+    photoLabelText.textContent = (typeof PlatformUI !== 'undefined'
+      && typeof PlatformUI.isTouch === 'function' && PlatformUI.isTouch())
+      ? 'Add screenshot' : 'Choose image';
 
     const showFeedbackNotice = (text, isError) => {
       feedbackStatus.textContent = text;
@@ -2410,16 +2415,123 @@ const App = {
       feedbackStatus.classList.remove('hidden');
     };
 
+    const setScreenshotError = (message = '') => {
+      screenshotError.textContent = message;
+      screenshotError.classList.toggle('hidden', !message);
+    };
+
+    const removeScreenshot = (entry) => {
+      entry.removed = true;
+      screenshots = screenshots.filter((item) => item !== entry);
+      if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl);
+      renderScreenshotStrip();
+    };
+
+    const renderScreenshotStrip = () => {
+      screenshotStrip.replaceChildren();
+      screenshots.forEach((entry, index) => {
+        const chip = document.createElement('div');
+        chip.className = 'flex items-center gap-2 rounded-lg border border-zinc-300 dark:border-zinc-700 p-1.5';
+        const img = document.createElement('img');
+        img.src = entry.objectUrl;
+        img.alt = `Screenshot ${index + 1} preview`;
+        img.className = 'h-14 max-w-[8rem] rounded-md object-cover';
+        const state = document.createElement('span');
+        state.className = 'text-xs text-zinc-500 dark:text-zinc-400';
+        state.textContent = entry.uploading ? 'Uploading…' : '';
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.setAttribute('aria-label', `Remove screenshot ${index + 1}`);
+        remove.className = 'rounded-full w-6 h-6 flex items-center justify-center text-xs bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 transition-colors';
+        remove.textContent = '✕';
+        remove.addEventListener('click', () => removeScreenshot(entry));
+        chip.append(img, state, remove);
+        screenshotStrip.appendChild(chip);
+      });
+      const full = screenshots.length >= MAX_SCREENSHOTS;
+      photoInput.disabled = full;
+      photoButton.disabled = full;
+      photoButton.classList.toggle('cursor-not-allowed', full);
+      photoButton.classList.toggle('opacity-50', full);
+      photoButton.title = full ? `Up to ${MAX_SCREENSHOTS} images per issue` : '';
+      screenshotBtn.classList.toggle('hidden', !screenshotSupported || full);
+      screenshotBtn.disabled = full;
+    };
+
     const resetScreenshotState = () => {
-      screenshotId = null;
-      screenshotUploading = false;
-      if (screenshotObjectUrl) { URL.revokeObjectURL(screenshotObjectUrl); screenshotObjectUrl = null; }
-      screenshotPreview.classList.add('hidden');
-      screenshotPreview.classList.remove('flex');
-      screenshotImg.removeAttribute('src');
-      screenshotState.textContent = '';
-      screenshotBtn.classList.toggle('hidden', !screenshotSupported);
-      screenshotBtn.disabled = false;
+      screenshotGeneration++;
+      screenshots.forEach((entry) => {
+        entry.removed = true;
+        if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl);
+      });
+      screenshots = [];
+      photoInput.value = '';
+      setScreenshotError();
+      renderScreenshotStrip();
+    };
+
+    const uploadScreenshotBlob = async (blob) => {
+      if (screenshots.length >= MAX_SCREENSHOTS) {
+        setScreenshotError(`Up to ${MAX_SCREENSHOTS} images per issue.`);
+        return;
+      }
+      const entry = {
+        id: null,
+        objectUrl: URL.createObjectURL(blob),
+        uploading: true,
+        removed: false,
+      };
+      screenshots.push(entry);
+      setScreenshotError();
+      renderScreenshotStrip();
+      try {
+        const res = await fetch('/api/feedback/screenshot', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: blob,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.id) throw new Error(data.error || 'Screenshot upload failed');
+        if (!entry.removed) entry.id = data.id;
+      } catch (err) {
+        if (!entry.removed) {
+          removeScreenshot(entry);
+          setScreenshotError(err.message || 'Screenshot upload failed — network error');
+        }
+      } finally {
+        entry.uploading = false;
+        if (!entry.removed) renderScreenshotStrip();
+      }
+    };
+
+    const addImageFiles = async (fileList) => {
+      const files = Array.from(fileList || []).filter((file) =>
+        !file.type || file.type.startsWith('image/'));
+      if (!files.length) {
+        setScreenshotError('Choose a PNG, JPEG, HEIC, or another image your device can read.');
+        return;
+      }
+      const remaining = MAX_SCREENSHOTS - screenshots.length;
+      if (files.length > remaining) setScreenshotError(`Up to ${MAX_SCREENSHOTS} images per issue.`);
+      const generation = screenshotGeneration;
+      for (const file of files.slice(0, remaining)) {
+        screenshotProcessing++;
+        try {
+          const blob = await ScreenshotSelect.normalizeImageFile(file);
+          if (generation === screenshotGeneration) await uploadScreenshotBlob(blob);
+        } catch (err) {
+          if (generation === screenshotGeneration) {
+            const message = err?.code === 'image_rejected'
+              ? err.message
+              : err?.code === 'capture_failed'
+                ? "Couldn't shrink that image enough — try a smaller one."
+                : "Couldn't read that image — try a PNG or JPEG screenshot.";
+            setScreenshotError(message);
+          }
+        } finally {
+          screenshotProcessing--;
+        }
+      }
     };
 
     screenshotBtn.addEventListener('click', async () => {
@@ -2436,35 +2548,7 @@ const App = {
           onCaptureStart: () => { modal.classList.add('hidden'); modalHidden = true; },
         });
         if (modalHidden) modal.classList.remove('hidden');
-        // Thumbnail immediately; upload in the background with Submit
-        // blocked (screenshotUploading) until the id lands.
-        screenshotObjectUrl = URL.createObjectURL(blob);
-        screenshotImg.src = screenshotObjectUrl;
-        screenshotBtn.classList.add('hidden');
-        screenshotPreview.classList.remove('hidden');
-        screenshotPreview.classList.add('flex');
-        screenshotState.textContent = 'Uploading…';
-        screenshotUploading = true;
-        try {
-          const res = await fetch('/api/feedback/screenshot', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/octet-stream' },
-            body: blob,
-          });
-          const data = res.ok ? await res.json() : await res.json().catch(() => ({}));
-          if (res.ok && data.id) {
-            screenshotId = data.id;
-            screenshotState.textContent = '';
-          } else {
-            resetScreenshotState();
-            showFeedbackNotice(data.error || 'Screenshot upload failed', true);
-          }
-        } catch {
-          resetScreenshotState();
-          showFeedbackNotice('Screenshot upload failed — network error', true);
-        } finally {
-          screenshotUploading = false;
-        }
+        await uploadScreenshotBlob(blob);
       } catch (err) {
         if (modalHidden) modal.classList.remove('hidden');
         screenshotBtn.disabled = false;
@@ -2478,10 +2562,18 @@ const App = {
       }
     });
 
-    screenshotRemove.addEventListener('click', () => {
-      // Client-side forget only — the orphaned server row (if the upload
-      // already finished) is GC'd by the 24h sweeper.
-      resetScreenshotState();
+    photoButton.addEventListener('click', () => photoInput.click());
+
+    photoInput.addEventListener('change', async () => {
+      const files = Array.from(photoInput.files || []);
+      photoInput.value = ''; // re-selecting the same camera image must fire
+      await addImageFiles(files);
+    });
+
+    feedbackText.addEventListener('paste', (event) => {
+      const files = Array.from(event.clipboardData?.files || []).filter((file) =>
+        !file.type || file.type.startsWith('image/'));
+      if (files.length) void addImageFiles(files);
     });
 
     const submitFeedback = async () => {
@@ -2492,10 +2584,10 @@ const App = {
       // then, but a stale cmd+enter on a focused button could still
       // land here).
       if (feedbackBtn.disabled) return;
-      // #683: a screenshot upload is still in flight — the id isn't known
-      // yet, so filing now would silently drop the attachment.
-      if (screenshotUploading) {
-        showFeedbackNotice('Screenshot is still uploading — one moment…', false);
+      // #683/#824: every upload must have landed before filing or its id
+      // would be silently omitted from the ordered array.
+      if (screenshotProcessing > 0 || screenshots.some((entry) => entry.uploading)) {
+        showFeedbackNotice('Screenshots are still uploading — one moment…', false);
         return;
       }
       // #732: freeze the title snapshot for this submit — cancel the
@@ -2523,9 +2615,11 @@ const App = {
         const customTitle = feedbackTitle.value.trim();
         if (customTitle && (titleDirty || text === lastGeneratedFor)) body.title = customTitle;
         if (target === 'app') body.appSlug = App.currentApp;
-        // #683: attach the uploaded screenshot — the server appends the
-        // embed line and links the row to the filed issue.
-        if (screenshotId) body.screenshotId = screenshotId;
+        // #683/#824: the server appends ordered embed lines and links each
+        // upload to the filed issue. Old cached clients may still send the
+        // legacy scalar screenshotId, which remains supported server-side.
+        const screenshotIds = screenshots.filter((entry) => entry.id).map((entry) => entry.id);
+        if (screenshotIds.length) body.screenshotIds = screenshotIds;
         // #685: collect the app's state snapshot at submit time (fresh
         // state, and the modal only overlays the still-running iframe).
         // Never blocks filing: a null (provider gone, error, 5 s
@@ -2609,8 +2703,8 @@ const App = {
       feedbackBtn.disabled = false; feedbackBtn.textContent = 'Submit';
       feedbackStatus.classList.add('hidden');
       resetTitleGenState();
-      // #683: each open starts screenshot-less; the attach button shows
-      // only where the Screen Capture API exists.
+      // #683/#824: each open starts attachment-less. Picker/camera remains
+      // available everywhere; area capture is feature-detected separately.
       resetScreenshotState();
 
       // "This app" is only selectable when an app with a real repo is

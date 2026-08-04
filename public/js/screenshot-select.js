@@ -301,6 +301,28 @@
     };
   }
 
+  // Picker/camera inputs can be much larger than a phone screenshot. Bound
+  // source bytes before decode (avoids easy WebView OOMs) and canvas pixels
+  // before re-encoding. The canvas round-trip also removes EXIF metadata.
+  const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // mirrors the server cap
+  const MAX_SOURCE_BYTES = 40 * 1024 * 1024;
+  const MAX_EDGE_PX = 2400;
+
+  function planImageAttach({ size, width, height } = {}) {
+    if (!Number.isFinite(size) || size < 0 || size > MAX_SOURCE_BYTES) {
+      return { reject: 'That image is too large to process' };
+    }
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+      return { reject: "Couldn't read that image" };
+    }
+    const scale = Math.min(1, MAX_EDGE_PX / Math.max(width, height));
+    return {
+      targetW: Math.max(1, Math.round(width * scale)),
+      targetH: Math.max(1, Math.round(height * scale)),
+      rescaled: scale < 1,
+    };
+  }
+
   const pure = {
     MARKER,
     markerCssCenters,
@@ -309,6 +331,10 @@
     detectMarkers,
     classifyCorners,
     solveRegistration,
+    planImageAttach,
+    MAX_UPLOAD_BYTES,
+    MAX_SOURCE_BYTES,
+    MAX_EDGE_PX,
   };
 
   // Node test import — no browser globals touched beyond this point at
@@ -319,8 +345,6 @@
   if (typeof window === 'undefined') return;
 
   // ── Browser orchestration ─────────────────────────────────────────
-
-  const MAX_UPLOAD_BYTES = 4 * 1024 * 1024; // mirrors the server cap
 
   function isSupported() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
@@ -383,6 +407,51 @@
     }
     if (!blob || blob.size > MAX_UPLOAD_BYTES) throw fail('capture_failed', 'Screenshot too large');
     return blob;
+  }
+
+  async function normalizeImageFile(file) {
+    const initial = planImageAttach({ size: file?.size, width: 1, height: 1 });
+    if (initial.reject) throw fail('image_rejected', initial.reject);
+
+    let source = null;
+    let objectUrl = null;
+    try {
+      if (typeof createImageBitmap === 'function') {
+        try {
+          source = await createImageBitmap(file, { imageOrientation: 'from-image' });
+        } catch {
+          // Engines predating the options bag may still decode the image.
+          try { source = await createImageBitmap(file); } catch { /* use img fallback */ }
+        }
+      }
+      if (!source) {
+        objectUrl = URL.createObjectURL(file);
+        source = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = () => reject(fail('image_decode_failed'));
+          img.src = objectUrl;
+        });
+      }
+
+      const width = source.width || source.naturalWidth;
+      const height = source.height || source.naturalHeight;
+      const plan = planImageAttach({ size: file.size, width, height });
+      if (plan.reject) throw fail('image_rejected', plan.reject);
+      const canvas = document.createElement('canvas');
+      canvas.width = plan.targetW;
+      canvas.height = plan.targetH;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw fail('image_decode_failed');
+      ctx.drawImage(source, 0, 0, plan.targetW, plan.targetH);
+      return await exportBlob(canvas);
+    } catch (err) {
+      if (err?.code) throw err;
+      throw fail('image_decode_failed');
+    } finally {
+      if (source && typeof source.close === 'function') source.close();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    }
   }
 
   // One nested-squares finder pattern as DOM (crisper than a scaled
@@ -643,5 +712,5 @@
     }
   }
 
-  window.ScreenshotSelect = Object.assign({ isSupported, start }, pure);
+  window.ScreenshotSelect = Object.assign({ isSupported, start, normalizeImageFile }, pure);
 })();

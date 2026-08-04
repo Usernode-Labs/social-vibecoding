@@ -48,7 +48,10 @@ const {
   feedbackRoutes,
   validateScreenshotUpload,
   buildScreenshotEmbed,
+  buildScreenshotsEmbed,
+  normalizeScreenshotIds,
   MAX_SCREENSHOT_BYTES,
+  MAX_SCREENSHOTS,
 } = require('../src/routes/feedback');
 const { issueImageRoutes } = require('../src/routes/issue-images');
 const { USERNODE_DOMAIN } = require('../src/services/caddy');
@@ -102,6 +105,30 @@ test('buildScreenshotEmbed: exact markdown suffix', () => {
   assert.equal(
     buildScreenshotEmbed('deadbeef'.repeat(4), 'example.org'),
     '\n\n**Screenshot:**\n![Screenshot](https://example.org/issue-images/deadbeefdeadbeefdeadbeefdeadbeef)'
+  );
+});
+
+test('normalizeScreenshotIds validates, de-duplicates, and keeps legacy input', () => {
+  const other = 'cd'.repeat(16);
+  assert.deepEqual(normalizeScreenshotIds({}), { ids: [] });
+  assert.deepEqual(normalizeScreenshotIds({ screenshotId: GOOD_ID }), { ids: [GOOD_ID] });
+  assert.deepEqual(
+    normalizeScreenshotIds({ screenshotIds: [GOOD_ID, other, GOOD_ID] }),
+    { ids: [GOOD_ID, other] }
+  );
+  assert.match(normalizeScreenshotIds({ screenshotIds: 'nope' }).error, /array/);
+  assert.match(normalizeScreenshotIds({ screenshotIds: Array(MAX_SCREENSHOTS + 1).fill(GOOD_ID) }).error, /many/);
+  assert.match(normalizeScreenshotIds({ screenshotIds: ['nope'] }).error, /Invalid/);
+  assert.match(normalizeScreenshotIds({ screenshotIds: [GOOD_ID], screenshotId: other }).error, /not both/);
+});
+
+test('buildScreenshotsEmbed preserves one-image output and numbers several images', () => {
+  const other = 'cd'.repeat(16);
+  assert.equal(buildScreenshotsEmbed([], 'example.org'), '');
+  assert.equal(buildScreenshotsEmbed([GOOD_ID], 'example.org'), buildScreenshotEmbed(GOOD_ID, 'example.org'));
+  assert.equal(
+    buildScreenshotsEmbed([GOOD_ID, other], 'example.org'),
+    `\n\n**Screenshots:**\n![Screenshot 1](https://example.org/issue-images/${GOOD_ID})\n![Screenshot 2](https://example.org/issue-images/${other})`
   );
 });
 
@@ -160,7 +187,7 @@ test('valid screenshotId appends the exact embed line and links the row', async 
   reset();
   // The ownership lookup finds the row; every other query is a no-op.
   poolHandler = async (sql) => {
-    if (sql.includes('FROM issue_screenshots')) return { rows: [{ '?column?': 1 }] };
+    if (sql.includes('FROM issue_screenshots')) return { rows: [{ id: GOOD_ID }] };
     return { rows: [] };
   };
   const server = await startServer();
@@ -175,7 +202,88 @@ test('valid screenshotId appends the exact embed line and links the row', async 
       `issue body should end with the embed line, got: ${ghCreates[0].body}`);
     const link = poolQueries.find((q) => q.sql.includes('UPDATE issue_screenshots'));
     assert.ok(link, 'expected the row to be linked to the filed issue');
-    assert.deepEqual(link.params, [GOOD_ID, 'plat', 'repo', 42]);
+    assert.deepEqual(link.params, [[GOOD_ID], 'plat', 'repo', 42, 7]);
+  } finally {
+    server.close();
+  }
+});
+
+test('screenshotIds appends ordered plural embeds and links all rows in one update', async () => {
+  reset();
+  const other = 'cd'.repeat(16);
+  poolHandler = async (sql) => {
+    if (sql.includes('FROM issue_screenshots')) return { rows: [{ id: other }, { id: GOOD_ID }] };
+    return { rows: [] };
+  };
+  const server = await startServer();
+  try {
+    const res = await postFeedback(server, {
+      description: 'Two views', title: 'My title', screenshotIds: [GOOD_ID, other],
+    });
+    assert.equal(res.status, 200);
+    assert.ok(ghCreates[0].body.endsWith(buildScreenshotsEmbed([GOOD_ID, other], USERNODE_DOMAIN)));
+    const lookups = poolQueries.filter((q) => q.sql.includes('FROM issue_screenshots'));
+    const links = poolQueries.filter((q) => q.sql.includes('UPDATE issue_screenshots'));
+    assert.equal(lookups.length, 1);
+    assert.equal(links.length, 1);
+    assert.deepEqual(lookups[0].params, [[GOOD_ID, other], 7]);
+    assert.deepEqual(links[0].params, [[GOOD_ID, other], 'plat', 'repo', 42, 7]);
+  } finally {
+    server.close();
+  }
+});
+
+test('one unknown id among valid screenshotIds rejects before filing or linking', async () => {
+  reset();
+  const other = 'cd'.repeat(16);
+  poolHandler = async (sql) => sql.includes('FROM issue_screenshots')
+    ? { rows: [{ id: GOOD_ID }] } : { rows: [] };
+  const server = await startServer();
+  try {
+    const res = await postFeedback(server, {
+      description: 'Two views', title: 'My title', screenshotIds: [GOOD_ID, other],
+    });
+    assert.equal(res.status, 400);
+    assert.equal(ghCreates.length, 0);
+    assert.equal(poolQueries.some((q) => q.sql.includes('UPDATE issue_screenshots')), false);
+  } finally {
+    server.close();
+  }
+});
+
+test('too many or malformed screenshotIds reject without DB or GitHub work', async () => {
+  reset();
+  const server = await startServer();
+  try {
+    const four = [GOOD_ID, 'cd'.repeat(16), 'ef'.repeat(16), '12'.repeat(16)];
+    let res = await postFeedback(server, {
+      description: 'Too many', title: 'My title', screenshotIds: four,
+    });
+    assert.equal(res.status, 400);
+    res = await postFeedback(server, {
+      description: 'Bad id', title: 'My title', screenshotIds: [GOOD_ID, 'nope'],
+    });
+    assert.equal(res.status, 400);
+    assert.equal(poolQueries.some((q) => q.sql.includes('issue_screenshots')), false);
+    assert.equal(ghCreates.length, 0);
+  } finally {
+    server.close();
+  }
+});
+
+test('duplicate screenshotIds produce one lookup, embed, and link', async () => {
+  reset();
+  poolHandler = async (sql) => sql.includes('FROM issue_screenshots')
+    ? { rows: [{ id: GOOD_ID }] } : { rows: [] };
+  const server = await startServer();
+  try {
+    const res = await postFeedback(server, {
+      description: 'Duplicate picker event', title: 'My title', screenshotIds: [GOOD_ID, GOOD_ID],
+    });
+    assert.equal(res.status, 200);
+    assert.ok(ghCreates[0].body.endsWith(buildScreenshotEmbed(GOOD_ID, USERNODE_DOMAIN)));
+    const link = poolQueries.find((q) => q.sql.includes('UPDATE issue_screenshots'));
+    assert.deepEqual(link.params[0], [GOOD_ID]);
   } finally {
     server.close();
   }

@@ -27,7 +27,35 @@ const {
   detectMarkers,
   classifyCorners,
   solveRegistration,
+  planImageAttach,
+  MAX_SOURCE_BYTES,
+  MAX_EDGE_PX,
 } = require('../public/js/screenshot-select.js');
+
+test('planImageAttach keeps phone screenshots within bounds', () => {
+  assert.deepEqual(planImageAttach({ size: 2_000_000, width: 1290, height: 2796 }), {
+    targetW: 1107,
+    targetH: MAX_EDGE_PX,
+    rescaled: true,
+  });
+  assert.deepEqual(planImageAttach({ size: 1000, width: 800, height: 600 }), {
+    targetW: 800,
+    targetH: 600,
+    rescaled: false,
+  });
+});
+
+test('planImageAttach preserves aspect ratio when downscaling', () => {
+  const plan = planImageAttach({ size: 5_000_000, width: 4032, height: 3024 });
+  assert.deepEqual(plan, { targetW: 2400, targetH: 1800, rescaled: true });
+  assert.ok(Math.abs(plan.targetW / plan.targetH - 4032 / 3024) < 0.001);
+});
+
+test('planImageAttach rejects oversized sources and invalid dimensions', () => {
+  assert.match(planImageAttach({ size: MAX_SOURCE_BYTES + 1, width: 10, height: 10 }).reject, /large/);
+  assert.match(planImageAttach({ size: 10, width: 0, height: 10 }).reject, /read/);
+  assert.match(planImageAttach({ size: 10, width: 10 }).reject, /read/);
+});
 
 // ── Mapping ──────────────────────────────────────────────────────────
 

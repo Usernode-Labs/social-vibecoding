@@ -18,6 +18,7 @@ const { feedbackTitleLimiter, issueScreenshotLimiter } = require('../middleware/
 // the created issue and appends the public embed line the coding agents
 // and GitHub's camo proxy can fetch (GET /issue-images/:id).
 const MAX_SCREENSHOT_BYTES = 4 * 1024 * 1024;
+const MAX_SCREENSHOTS = 3;
 const SCREENSHOT_ID_RE = /^[a-f0-9]{32}$/;
 
 // Pure (exported for tests): validate an uploaded screenshot body.
@@ -43,6 +44,49 @@ function validateScreenshotUpload(data) {
 // issue body for an attached screenshot.
 function buildScreenshotEmbed(id, domain) {
   return `\n\n**Screenshot:**\n![Screenshot](https://${domain}/issue-images/${id})`;
+}
+
+// Accept the new ordered array while retaining the original scalar wire
+// format for cached clients. Empty entries are ignored and duplicate ids are
+// collapsed before the ownership query, preserving first-seen order.
+function normalizeScreenshotIds(body = {}) {
+  const hasArray = Object.prototype.hasOwnProperty.call(body, 'screenshotIds')
+    && body.screenshotIds !== null && body.screenshotIds !== '';
+  const hasScalar = Object.prototype.hasOwnProperty.call(body, 'screenshotId')
+    && body.screenshotId !== null && body.screenshotId !== '';
+  if (hasArray && hasScalar) return { error: 'Provide screenshotIds or screenshotId, not both' };
+
+  let values = [];
+  if (hasArray) {
+    if (!Array.isArray(body.screenshotIds)) return { error: 'screenshotIds must be an array' };
+    if (body.screenshotIds.length > MAX_SCREENSHOTS) {
+      return { error: `Too many screenshots (max ${MAX_SCREENSHOTS})` };
+    }
+    values = body.screenshotIds;
+  } else if (hasScalar) {
+    values = [body.screenshotId];
+  }
+
+  const ids = [];
+  const seen = new Set();
+  for (const id of values) {
+    if (id === null || id === '') continue;
+    if (typeof id !== 'string' || !SCREENSHOT_ID_RE.test(id)) {
+      return { error: 'Invalid screenshotId' };
+    }
+    if (!seen.has(id)) {
+      seen.add(id);
+      ids.push(id);
+    }
+  }
+  return { ids };
+}
+
+function buildScreenshotsEmbed(ids, domain) {
+  if (!Array.isArray(ids) || ids.length === 0) return '';
+  if (ids.length === 1) return buildScreenshotEmbed(ids[0], domain);
+  return `\n\n**Screenshots:**\n${ids.map((id, i) =>
+    `![Screenshot ${i + 1}](https://${domain}/issue-images/${id})`).join('\n')}`;
 }
 
 // #685: app-provided state snapshots ("Include app state" checkbox).
@@ -177,29 +221,29 @@ function feedbackRoutes(config) {
       customTitle = req.body.title.trim() || null;
     }
 
-    // #683: optional attached screenshot. Must be a 32-hex id referencing
-    // an existing, not-yet-linked upload owned by this user — verified
-    // before any GitHub call so a bad id fails fast and files nothing.
-    let screenshotId = null;
-    if (req.body.screenshotId !== undefined && req.body.screenshotId !== null && req.body.screenshotId !== '') {
-      const sid = req.body.screenshotId;
-      if (typeof sid !== 'string' || !SCREENSHOT_ID_RE.test(sid)) {
-        return res.status(400).json({ error: 'Invalid screenshotId' });
-      }
+    // #683/#824: optional ordered screenshots. Every id must reference an
+    // existing, not-yet-linked upload owned by this user. Validate before any
+    // GitHub call so malformed, foreign, or already-used ids file nothing.
+    const normalizedScreenshots = normalizeScreenshotIds(req.body);
+    if (normalizedScreenshots.error) {
+      return res.status(400).json({ error: normalizedScreenshots.error });
+    }
+    const screenshotIds = normalizedScreenshots.ids;
+    if (screenshotIds.length) {
       try {
         const { rows } = await pool.query(
-          `SELECT 1 FROM issue_screenshots
-            WHERE id = $1 AND user_id = $2 AND issue_number IS NULL`,
-          [sid, req.user?.id]
+          `SELECT id FROM issue_screenshots
+            WHERE id = ANY($1::varchar[]) AND user_id = $2 AND issue_number IS NULL`,
+          [screenshotIds, req.user?.id]
         );
-        if (!rows.length) {
+        const owned = new Set(rows.map((row) => row.id));
+        if (owned.size !== screenshotIds.length || screenshotIds.some((id) => !owned.has(id))) {
           return res.status(400).json({ error: 'Unknown or already-used screenshot' });
         }
       } catch (err) {
         log.error('feedback', 'Screenshot lookup failed', { message: err.message });
         return res.status(500).json({ error: 'Internal server error' });
       }
-      screenshotId = sid;
     }
 
     // #685: optional app-provided state snapshot. Validated whenever
@@ -322,24 +366,24 @@ function feedbackRoutes(config) {
       // the public /issue-images/:id URL GitHub's camo proxy, the in-app
       // topic view, and the coding agents can all fetch. Appended after
       // the description-length validation, so it never eats user budget.
-      const screenshotSuffix = screenshotId
-        ? buildScreenshotEmbed(screenshotId, require('../services/caddy').USERNODE_DOMAIN)
-        : '';
-      // Stamp the row with the filed issue so the orphan GC skips it.
+      const screenshotSuffix = buildScreenshotsEmbed(
+        screenshotIds, require('../services/caddy').USERNODE_DOMAIN
+      );
+      // Stamp the rows with the filed issue so the orphan GC skips them.
       // Best-effort: the issue is already on GitHub by the time this
       // runs, so a failure only risks the image 404ing after the 24h
       // sweep — never a failed request.
-      const linkScreenshot = async (owner, repo, issueNumber) => {
-        if (!screenshotId) return;
+      const linkScreenshots = async (owner, repo, issueNumber) => {
+        if (!screenshotIds.length) return;
         try {
           await pool.query(
             `UPDATE issue_screenshots
                 SET issue_owner = $2, issue_repo = $3, issue_number = $4
-              WHERE id = $1`,
-            [screenshotId, owner, repo, issueNumber]
+              WHERE id = ANY($1::varchar[]) AND user_id = $5 AND issue_number IS NULL`,
+            [screenshotIds, owner, repo, issueNumber, req.user?.id]
           );
         } catch (err) {
-          log.warn('feedback', 'Screenshot link failed', { screenshotId, message: err.message });
+          log.warn('feedback', 'Screenshot link failed', { screenshotIds, message: err.message });
         }
       };
 
@@ -369,7 +413,7 @@ function feedbackRoutes(config) {
           });
         }
         await queueTitleHeal(issueOwner, issueRepo, issue.number);
-        await linkScreenshot(issueOwner, issueRepo, issue.number);
+        await linkScreenshots(issueOwner, issueRepo, issue.number);
         await announceIssueCreated(pool, issueOwner, issueRepo, issue, appContext);
         return res.json({ url: issue.html_url, title, titleFallback });
       }
@@ -411,7 +455,7 @@ function feedbackRoutes(config) {
 
       const issue = await ghRes.json();
       await queueTitleHeal(issueOwner, issueRepo, issue.number);
-      await linkScreenshot(issueOwner, issueRepo, issue.number);
+      await linkScreenshots(issueOwner, issueRepo, issue.number);
       // Platform feedback: the platform repo is itself an app on
       // self-hosted instances, so its Open Issues panel should refresh
       // too. announceIssueCreated resolves the app row by repo (no-op
@@ -432,7 +476,10 @@ module.exports = {
   // #683: pure helpers exported for tests/issue-screenshots.test.js.
   validateScreenshotUpload,
   buildScreenshotEmbed,
+  buildScreenshotsEmbed,
+  normalizeScreenshotIds,
   MAX_SCREENSHOT_BYTES,
+  MAX_SCREENSHOTS,
   // #685: pure helpers exported for tests/feedback-page-state.test.js.
   buildPageStateEmbed,
   MAX_PAGE_STATE_CHARS,
